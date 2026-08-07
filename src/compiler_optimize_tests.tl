@@ -22788,9 +22788,13 @@
           (& direct-clean-built)
           (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols writer)))
         63]
-      [(opt_i64_i64_map.contains?
-          (& direct-clean-built)
-          (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols leaf)))
+      ;; #6299: the map's polarity is "callee writes nothing", so an ordinary
+      ;; clean leaf is RETAINED (previously only self-recursive functions were,
+      ;; which made clean leaves look opaque to the LICM call-site lever).
+      [(not
+          (opt_i64_i64_map.contains?
+            (& direct-clean-built)
+            (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols leaf))))
         64]
       ;; A descriptor load crosses the two-Gep data-buffer store chain.
       [(not
@@ -35850,7 +35854,9 @@
           instrs)
         (compiler_ir_types.CompilerIrBlockList.Nil)))
     (opt_i64_i64_map.with-capacity 1)
-    call-memory
+    (compiler_optimize.OptCallMemoryMaps
+      call-memory
+      (opt_i64_i64_map.with-capacity 1))
     (compiler_optimize.opt-load-cse-state-with-caps-and-facts
       (compiler_optimize.opt-load-cse-table-cap-for-size
         (compiler_ir_types.compiler-ir-instr-list-count instrs))
@@ -38130,6 +38136,380 @@
       [(not (= (opt-count-load-instrs global-base-form-mismatch) 2)) 96]
       [(not (= (opt-count-mov-dst-instrs global-base-form-mismatch 4) 0)) 97]
       [else 44])))
+
+;; --- scalar-element call transparency (P6) --------------------------------------
+;;
+;; The dual call-memory summaries: `full` records every memory write, `element`
+;; only the scalar-element writes (a scalar-typed StorePtr through a
+;; descriptor's loaded data pointer). An element write can never touch a
+;; descriptor header, a descriptor-pointer slot, or a global cell, so load GVN
+;; keeps those facts across element-writing callees.
+(define (opt-call-memory-element-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "xs"
+      (compiler_ast_types.ast-ty-mut-ref
+        0
+        (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+      0)
+    (compiler_ir_types.CompilerIrParamList.Nil)))
+
+;; `store_ptr` through the data pointer of the slice parameter: scalar element
+;; write -- sets the bit in BOTH summaries.
+(define (opt-call-memory-element-writer-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-call-memory-element-test-params)
+    (compiler_ast_types.AstType.Unit)
+    16
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            2
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              3
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ast_types.AstType.U64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                4
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.StorePtr
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.I64 7)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; `store_ptr` through the descriptor's length slot: a header-class write --
+;; full bit only.
+(define (opt-call-memory-header-writer-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-call-memory-element-test-params)
+    (compiler_ast_types.AstType.Unit)
+    16
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            2
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; The Vec-cell fetch shape (`gep %cell, 0 : u8; load : (Array i64)`) resolves
+;; the loaded descriptor to the cell's root, so the element write through it
+;; lands in BOTH summaries -- the descriptor-typed-load rebind.
+(define (opt-call-memory-cell-chain-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-load-cse-mixed-ref-params)
+    (compiler_ast_types.AstType.Unit)
+    16
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            2
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.U8))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              3
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ast_types.ast-ty-dyn-array
+                (compiler_ast_types.AstType.I64)))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                4
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Load
+                  5
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ast_types.AstType.U64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Gep
+                    6
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    (compiler_ir_types.CompilerIrValue.I64 0)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.StorePtr
+                      (compiler_ir_types.CompilerIrValue.Var 6)
+                      (compiler_ir_types.CompilerIrValue.I64 7)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstrList.Nil))))))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-call-memory-element-test-functions
+  [element-writer : i64]
+  [header-writer : i64]
+  [cell-chain : i64]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-call-memory-element-writer-function element-writer)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-call-memory-header-writer-function header-writer)
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-call-memory-cell-chain-function cell-chain)
+        (compiler_ir_types.CompilerIrFunctionList.Nil)))))
+
+(define (opt-load-cse-run-with-params-and-call-maps
+  [params : compiler_ir_types.CompilerIrParamList]
+  [call-maps : compiler_optimize.OptCallMemoryMaps]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_optimize.opt-load-cse-instrs-from
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-load-header-set-from-function
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      params
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "entry")
+          instrs)
+        (compiler_ir_types.CompilerIrBlockList.Nil)))
+    (opt_i64_i64_map.with-capacity 1)
+    call-maps
+    (compiler_optimize.opt-load-cse-state-with-caps-and-facts
+      (compiler_optimize.opt-load-cse-table-cap-for-size
+        (compiler_ir_types.compiler-ir-instr-list-count instrs))
+      (compiler_optimize.opt-load-cse-kinds-cap-for-size
+        (compiler_ir_types.compiler-ir-instr-list-count instrs))
+      (compiler_optimize.opt-alias-seed-params
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        params))
+    instrs))
+
+;; Load a descriptor pointer, call, load it again: whether the reload folds
+;; depends on the callee's write CLASS through the argument root.
+(define (opt-call-element-cse-instrs [name : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Load
+      3
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Call
+        4
+        name
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Var 0))
+        (compiler_ast_types.AstType.Unit))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          5
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+;; Same shape through an unclassified pointer temp: the Field entry is
+;; descriptor-typed but NOT header-typed (the Vec-cell word level).
+(define (opt-call-element-cse-cell-instrs [name : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.U8))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          name
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var 0))
+          (compiler_ast_types.AstType.Unit))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            5
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ast_types.ast-ty-dyn-array
+              (compiler_ast_types.AstType.I64)))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+;; A global cell's descriptor fetch across a call: the global-bases bindings
+;; (and the GlobalField entry) survive exactly when the callee cannot write the
+;; cell -- scalar-element writes never can, and header-class writes only when
+;; they ride a `GlobalAddr` argument.
+(define (opt-call-element-global-instrs
+  [name : i64]
+  [global : i64]
+  [addr-arg? : bool]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Global global)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.U8))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          name
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (if addr-arg?
+              (compiler_ir_types.CompilerIrValue.GlobalAddr global)
+              (compiler_ir_types.CompilerIrValue.Var 0)))
+          (compiler_ast_types.AstType.Unit))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            5
+            (compiler_ir_types.CompilerIrValue.Global global)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.U8))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              6
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.ast-ty-dyn-array
+                (compiler_ast_types.AstType.I64)))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+(define (opt-call-memory-test-map-pair
+  [name : i64]
+  [full : i64]
+  [element : i64]) : compiler_optimize.OptCallMemoryMaps
+  (let
+    [full-map : opt_i64_i64_map.Map (opt-call-memory-test-map name full)]
+    [element-map : opt_i64_i64_map.Map (opt-call-memory-test-map name element)]
+    (compiler_optimize.OptCallMemoryMaps full-map element-map)))
+
+(define (compiler-optimize-call-memory-element-self-test) : i64
+  (let
+    [element-writer : i64 (opt-test-symbol "call_memory_element_writer")]
+    [header-writer : i64 (opt-test-symbol "call_memory_header_writer")]
+    [cell-chain : i64 (opt-test-symbol "call_memory_cell_chain")]
+    [maps : compiler_optimize.OptCallMemoryMaps
+      (compiler_optimize.opt-call-memory-build-pair
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-call-memory-element-test-functions
+          element-writer
+          header-writer
+          cell-chain)
+        32)]
+    [full : opt_i64_i64_map.Map (struct-get maps full)]
+    [element : opt_i64_i64_map.Map (struct-get maps element)]
+    [dyn-ty : compiler_ast_types.AstType
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64))]
+    [call-touch : i64 (opt-test-symbol "call_memory_element_touch")]
+    ;; A pure-reader callee (empty summary) is fully transparent: descriptor
+    ;; reloads fold across the call...
+    [call-clean-folds : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-maps
+        (opt-call-memory-element-test-params)
+        (opt-call-memory-test-map-pair call-touch 0 0)
+        (opt-call-element-cse-instrs call-touch))]
+    ;; ...while ANY callee write class keeps them (measured: keeping
+    ;; descriptor entries across element-writing calls extends their live
+    ;; ranges across those calls and loses more to spill churn than the
+    ;; reload costs -- intern_table's it-intern-slice). Both classes block.
+    [call-element-blocks : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-maps
+        (opt-call-memory-element-test-params)
+        (opt-call-memory-test-map-pair call-touch 1 1)
+        (opt-call-element-cse-instrs call-touch))]
+    [call-header-blocks : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-maps
+        (opt-call-memory-element-test-params)
+        (opt-call-memory-test-map-pair call-touch 1 0)
+        (opt-call-element-cse-instrs call-touch))]
+    ;; Same pair on the unclassified-pointer (Vec-cell word) level.
+    [cell-element-blocks : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-maps
+        (opt-load-cse-mixed-ref-params)
+        (opt-call-memory-test-map-pair call-touch 1 1)
+        (opt-call-element-cse-cell-instrs call-touch))]
+    [cell-header-blocks : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-maps
+        (opt-load-cse-mixed-ref-params)
+        (opt-call-memory-test-map-pair call-touch 1 0)
+        (opt-call-element-cse-cell-instrs call-touch))]
+    [global-tokens : i64 (opt-test-symbol "gvn_element_tokens")]
+    ;; Global-bases: the old code dropped the bindings on EVERY direct call,
+    ;; so global-based descriptor reloads never folded across ANY callee.
+    ;; A pure-reader or element-only callee keeps the bindings AND the
+    ;; GlobalField entry -- the reload folds now...
+    [global-clean-var-arg : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-maps
+        (opt-load-cse-mixed-ref-params)
+        (opt-call-memory-test-map-pair call-touch 0 0)
+        (opt-call-element-global-instrs call-touch global-tokens false))]
+    [global-clean-addr-arg : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-maps
+        (opt-load-cse-mixed-ref-params)
+        (opt-call-memory-test-map-pair call-touch 0 0)
+        (opt-call-element-global-instrs call-touch global-tokens true))]
+    ;; ...while a header/struct write through the cell's own address clears
+    ;; them (the write can change the cell content), and any header-class
+    ;; callee write drops the GlobalField entry itself.
+    [global-header-addr-arg : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-maps
+        (opt-load-cse-mixed-ref-params)
+        (opt-call-memory-test-map-pair call-touch 1 0)
+        (opt-call-element-global-instrs call-touch global-tokens true))]
+    [global-header-var-arg : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-maps
+        (opt-load-cse-mixed-ref-params)
+        (opt-call-memory-test-map-pair call-touch 1 0)
+        (opt-call-element-global-instrs call-touch global-tokens false))]
+    [global-element-addr-arg : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-maps
+        (opt-load-cse-mixed-ref-params)
+        (opt-call-memory-test-map-pair call-touch 1 1)
+        (opt-call-element-global-instrs call-touch global-tokens true))]
+    (cond
+      [(not (opt-call-memory-summary-is? full element-writer 1)) 1]
+      [(not (opt-call-memory-summary-is? element element-writer 1)) 2]
+      [(not (opt-call-memory-summary-is? full header-writer 1)) 3]
+      [(not (opt-call-memory-summary-is? element header-writer 0)) 4]
+      [(not (opt-call-memory-summary-is? full cell-chain 2)) 5]
+      [(not (opt-call-memory-summary-is? element cell-chain 2)) 6]
+      [(not (= (opt-count-load-instrs call-clean-folds) 1)) 7]
+      [(not (= (opt-count-mov-dst-var-src call-clean-folds 5 3 dyn-ty) 1)) 8]
+      [(not (= (opt-count-load-instrs call-element-blocks) 2)) 9]
+      [(not (= (opt-count-load-instrs call-header-blocks) 2)) 10]
+      [(not (= (opt-count-load-instrs cell-element-blocks) 2)) 11]
+      [(not (= (opt-count-load-instrs cell-header-blocks) 2)) 12]
+      [(not (= (opt-count-load-instrs global-clean-var-arg) 1)) 13]
+      [(not (= (opt-count-mov-dst-var-src global-clean-var-arg 6 3 dyn-ty) 1))
+        14]
+      [(not (= (opt-count-load-instrs global-clean-addr-arg) 1)) 15]
+      [(not (= (opt-count-mov-dst-var-src global-clean-addr-arg 6 3 dyn-ty) 1))
+        16]
+      [(not (= (opt-count-load-instrs global-header-addr-arg) 2)) 17]
+      [(not (= (opt-count-load-instrs global-header-var-arg) 2)) 18]
+      [(not (= (opt-count-load-instrs global-element-addr-arg) 2)) 19]
+      [else 42])))
 
 ;; --- constant-trip full unroll + byte-compose load combining fixtures -----------
 ;;

@@ -32445,7 +32445,7 @@
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : ir.CompilerIrParamList]
-  [call-memory : opt_i64_i64_map.Map]
+  [call-maps : OptCallMemoryMaps]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
     [sources : opt_i64_i64_map.Map
@@ -32463,7 +32463,7 @@
       sources
       hs
       params
-      call-memory
+      call-maps
       gvn)))
 
 (define (opt-gvn-blocks-with-context
@@ -32475,7 +32475,9 @@
     type-segment-bases
     context
     params
-    (opt_i64_i64_map.with-capacity 1)
+    (OptCallMemoryMaps
+      (opt_i64_i64_map.with-capacity 1)
+      (opt_i64_i64_map.with-capacity 1))
     blocks))
 
 (define (opt-gvn-blocks
@@ -35040,6 +35042,12 @@
   ;; Absence means unresolved (including recursive cycles) and remains a full
   ;; memory barrier.
   (call-memory opt_i64_i64_map.Map)
+  ;; The scalar-element subset of `call-memory` (same keys): a param bit here
+  ;; certifies the callee's writes through that parameter touch only scalar
+  ;; data-buffer bytes -- never descriptor headers, descriptor-pointer slots,
+  ;; or global cells. Load GVN uses it to keep descriptor/global-cell facts
+  ;; across element-writing callees.
+  (call-memory-element opt_i64_i64_map.Map)
   (argc-return opt_i64_i64_map.Map)
   ;; Whole-program table of never-written literal-i64 globals, mapping
   ;; global name -> constant value. Carried alongside the BCE summaries (rather
@@ -35091,6 +35099,7 @@
   (OptLoopBceSummaries
     false
     (profile_state.compiler-profile-state-new)
+    (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -38441,7 +38450,10 @@
   (let
     [index : i64 0]
     [sources : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
-    [call-memory : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [call-maps : OptCallMemoryMaps
+      (OptCallMemoryMaps
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1))]
     [load-state : OptLoadCseState state]
     [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -38451,7 +38463,7 @@
         hs
         false
         sources
-        call-memory
+        call-maps
         load-state
         (ir.compiler-ir-instr-seq-ref instrs index))
         [(OptLoadCseResult.Result next-load loaded)
@@ -61176,7 +61188,9 @@
                               type-segment-bases
                               ssa-context
                               params
-                              (struct-get summaries call-memory)
+                              (OptCallMemoryMaps
+                                (struct-get summaries call-memory)
+                                (struct-get summaries call-memory-element))
                               ssa-blocks)
                             ssa-blocks))]
                       [_p-gvn : unit
@@ -70882,55 +70896,6 @@
         (ir.compiler-ir-block-seq-to-list seq)
         clean)]))
 
-(define (opt-loop-bce-direct-call-self-recursive-instr?
-  [name : i64]
-  [instr : ir.CompilerIrInstr]) : bool
-  (match instr
-    [(ir.CompilerIrInstr.Call _ callee _ _)
-      (ir.compiler-ir-symbol-eq? name callee)]
-    [(ir.CompilerIrInstr.TailCall callee _ _)
-      (ir.compiler-ir-symbol-eq? name callee)]
-    [_ false]))
-
-(define (opt-loop-bce-direct-call-self-recursive-seq?
-  [name : i64]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    false
-    (or
-      (opt-loop-bce-direct-call-self-recursive-instr?
-        name
-        (ir.compiler-ir-instr-seq-ref instrs index))
-      (opt-loop-bce-direct-call-self-recursive-seq? name instrs (+ index 1)))))
-
-(define (opt-loop-bce-direct-call-self-recursive-blocks?
-  [name : i64]
-  [blocks : ir.CompilerIrBlockList]) : bool
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) false]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (or
-            (opt-loop-bce-direct-call-self-recursive-seq? name instrs 0)
-            (opt-loop-bce-direct-call-self-recursive-blocks?
-              name
-              (box-get rest)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-loop-bce-direct-call-self-recursive-blocks?
-        name
-        (ir.compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-loop-bce-function-direct-call-hoist-target?
-  [func : ir.CompilerIrFunction]
-  [clean : opt_i64_i64_map.Map]) : bool
-  (match func
-    [(ir.CompilerIrFunction.Function name _ _ _ blocks)
-      (and
-        (opt-loop-bce-direct-call-self-recursive-blocks? name blocks)
-        (opt-loop-bce-direct-call-clean-blocks? blocks clean))]))
-
 (define (opt-loop-bce-direct-call-clean-all-functions
   [functions : ir.CompilerIrFunctionList]
   [map : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
@@ -70959,14 +70924,22 @@
     [(ir.CompilerIrFunctionList.Nil) (OptLoopBceIdCleanPass.Pass out changed)]
     [(ir.CompilerIrFunctionList.Cons func rest)
       (match func
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
+        [(ir.CompilerIrFunction.Function name _ _ _ blocks)
           (let
             [name-id : i64 (ir.compiler-ir-symbol-id name)]
             [was-clean : bool (opt_i64_i64_map.contains? (& current) name-id)]
+            ;; #6299: membership means "this callee writes nothing" (the LICM
+            ;; call-site reading). Retain EVERY function whose body is clean
+            ;; given the current map -- ordinary clean leaves included -- not
+            ;; only self-recursive ones. Iterating to the greatest fixed point
+            ;; from the all-functions seed is sound: any function that (maybe
+            ;; transitively) writes loses membership at the round its writer
+            ;; instruction is seen, and a mutually-recursive clean SCC stays
+            ;; only because no member writes.
             [keep : bool
               (and
                 was-clean
-                (opt-loop-bce-function-direct-call-hoist-target? func current))]
+                (opt-loop-bce-direct-call-clean-blocks? blocks current))]
             [_record : unit
               (if keep
                 (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)
@@ -71118,90 +71091,370 @@
           (opt-call-memory-summary-add-unknown summary)))]
     [(OptLicmRoot.NoRoot) (opt-call-memory-summary-add-unknown summary)]))
 
-;; Summary construction runs before scalar SSA. Track roots only through vars
-;; with one whole-function source, so textual block order or a reused lowered
-;; var can never manufacture provenance. A second scan resolves same-root phis
-;; and later-listed definitions without weakening that single-source gate.
-(define (opt-call-memory-root-update-instr!
+;; Summary construction runs before scalar SSA. Track roots, pointer kinds, and
+;; value types only through vars with one whole-function source, so textual
+;; block order or a reused lowered var can never manufacture provenance. A
+;; second scan resolves same-root phis and later-listed definitions without
+;; weakening that single-source gate. The kinds/types envs exist so the
+;; StorePtr classifier can tell an element write (through a descriptor's
+;; loaded data pointer) from a header/struct write: the kind chain is exactly
+;; the LICM store-state provenance, plus one extra root rebind for
+;; descriptor-typed loads (see the Load arm below).
+(defstruct OptCallMemoryScan
+  (roots OptLicmRootEnv)
+  (kinds OptLicmPtrEnv)
+  (types OptSsaVarTypes))
+
+;; A store with a scalar IR type writes bytes no pointer-typed slot can alias:
+;; descriptor pointers, descriptor header words, and global cells are never
+;; scalar buffer elements.
+(define (opt-call-memory-root-var? [root : OptLicmRoot]) : i64
+  (match root
+    [(OptLicmRoot.Exclusive v) v]
+    [(OptLicmRoot.Shared v) v]
+    [_ -1]))
+
+(define (opt-call-memory-scalar-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.I32) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.I8) true]
+    [(ast.AstType.U64) true]
+    [(ast.AstType.U32) true]
+    [(ast.AstType.U16) true]
+    [(ast.AstType.U8) true]
+    [(ast.AstType.F64) true]
+    [(ast.AstType.F32) true]
+    [(ast.AstType.Bool) true]
+    [(ast.AstType.Char) true]
+    [_ false]))
+
+(define (opt-call-memory-element-ptr-kind? [kind : OptLicmPtrKind]) : bool
+  (match kind
+    [(OptLicmPtrKind.DataBuffer _) true]
+    [(OptLicmPtrKind.DataElement _) true]
+    [_ false]))
+
+(define (opt-call-memory-scan-empty [capacity : i64]) : OptCallMemoryScan
+  (OptCallMemoryScan
+    (opt-licm-root-env-with-capacity capacity)
+    (OptLicmPtrEnv.Nil)
+    (opt-ssa-var-types-new)))
+
+(define (opt-call-memory-scan-type-instr
+  [scan : OptCallMemoryScan (:consume)]
+  [dst : i64]
+  [instr : ir.CompilerIrInstr]) : OptCallMemoryScan
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ _ ty)
+      (OptCallMemoryScan
+        (struct-get scan roots)
+        (struct-get scan kinds)
+        (opt-ssa-var-types-set (struct-get scan types) dst ty))]
+    [(ir.CompilerIrInstr.Load _ _ ty)
+      (OptCallMemoryScan
+        (struct-get scan roots)
+        (struct-get scan kinds)
+        (opt-ssa-var-types-set (struct-get scan types) dst ty))]
+    [(ir.CompilerIrInstr.Call _ _ _ ty)
+      (OptCallMemoryScan
+        (struct-get scan roots)
+        (struct-get scan kinds)
+        (opt-ssa-var-types-set (struct-get scan types) dst ty))]
+    [(ir.CompilerIrInstr.CallIndirect _ _ _ ty)
+      (OptCallMemoryScan
+        (struct-get scan roots)
+        (struct-get scan kinds)
+        (opt-ssa-var-types-set (struct-get scan types) dst ty))]
+    [(ir.CompilerIrInstr.CallIndirectC _ _ _ ty)
+      (OptCallMemoryScan
+        (struct-get scan roots)
+        (struct-get scan kinds)
+        (opt-ssa-var-types-set (struct-get scan types) dst ty))]
+    [(ir.CompilerIrInstr.Phi _ _ ty)
+      (OptCallMemoryScan
+        (struct-get scan roots)
+        (struct-get scan kinds)
+        (opt-ssa-var-types-set (struct-get scan types) dst ty))]
+    [_ scan]))
+
+(define (opt-call-memory-scan-update-instr
+  [type-segment-bases : i64]
   [sources : opt_i64_i64_map.Map]
-  [roots : (&mut roots OptLicmRootEnv)]
-  [instr : ir.CompilerIrInstr]) : unit
+  [scan : OptCallMemoryScan (:consume)]
+  [instr : ir.CompilerIrInstr]) : OptCallMemoryScan
   (match (opt-instr-def-var instr)
-    [(option_i64.None) unit]
+    [(option_i64.None) scan]
     [(option_i64.Some dst)
       (if (not (opt-gvn-stable-var? sources dst))
-        (opt-licm-root-env-remove! roots dst)
+        (begin
+          (opt-licm-root-env-remove! (&mut (struct-get scan roots)) dst)
+          (OptCallMemoryScan
+            (struct-get scan roots)
+            (opt-licm-ptr-unbind (struct-get scan kinds) dst)
+            (struct-get scan types)))
         (match instr
           [(ir.CompilerIrInstr.Alloc _ _)
-            (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))]
-          [(ir.CompilerIrInstr.Gep _ base _ _)
-            (opt-licm-root-env-copy! roots dst base)]
+            (begin
+              (opt-licm-root-env-bind!
+                (&mut (struct-get scan roots))
+                dst
+                (OptLicmRoot.Fresh dst))
+              (OptCallMemoryScan
+                (struct-get scan roots)
+                (opt-licm-ptr-unbind (struct-get scan kinds) dst)
+                (struct-get scan types)))]
+          [(ir.CompilerIrInstr.Gep _ base offset ty)
+            (let
+              [kind : OptLicmPtrKind
+                (opt-licm-gep-kind
+                  type-segment-bases
+                  (struct-get scan types)
+                  (struct-get scan kinds)
+                  base
+                  offset
+                  ty)]
+              (begin
+                (opt-licm-root-env-copy!
+                  (&mut (struct-get scan roots))
+                  dst
+                  base)
+                (OptCallMemoryScan
+                  (struct-get scan roots)
+                  (opt-licm-ptr-bind (struct-get scan kinds) dst kind)
+                  (struct-get scan types))))]
           [(ir.CompilerIrInstr.Mov _ src _)
-            (opt-licm-root-env-copy! roots dst src)]
+            (begin
+              (opt-licm-root-env-copy! (&mut (struct-get scan roots)) dst src)
+              (opt-call-memory-scan-type-instr
+                (OptCallMemoryScan
+                  (struct-get scan roots)
+                  (match src
+                    [(ir.CompilerIrValue.Var src-var)
+                      (opt-licm-ptr-bind
+                        (struct-get scan kinds)
+                        dst
+                        (opt-licm-ptr-lookup (struct-get scan kinds) src-var))]
+                    [_ (opt-licm-ptr-unbind (struct-get scan kinds) dst)])
+                  (struct-get scan types))
+                dst
+                instr))]
           [(ir.CompilerIrInstr.Cast _ src _ _)
-            (opt-licm-root-env-copy! roots dst src)]
+            (begin
+              (opt-licm-root-env-copy! (&mut (struct-get scan roots)) dst src)
+              (OptCallMemoryScan
+                (struct-get scan roots)
+                (opt-licm-ptr-unbind (struct-get scan kinds) dst)
+                (struct-get scan types)))]
           [(ir.CompilerIrInstr.Bitcast _ src _ _)
-            (opt-licm-root-env-copy! roots dst src)]
+            (begin
+              (opt-licm-root-env-copy! (&mut (struct-get scan roots)) dst src)
+              (OptCallMemoryScan
+                (struct-get scan roots)
+                (opt-licm-ptr-unbind (struct-get scan kinds) dst)
+                (struct-get scan types)))]
           [(ir.CompilerIrInstr.Phi _ inputs _)
-            (match (opt-licm-phi-root roots inputs (OptMaybeLicmRoot.No))
-              [(OptMaybeLicmRoot.No) (opt-licm-root-env-remove! roots dst)]
-              [(OptMaybeLicmRoot.Some root)
-                (opt-licm-root-env-bind! roots dst root)])]
+            (begin
+              (match (opt-licm-phi-root
+                (& (struct-get scan roots))
+                inputs
+                (OptMaybeLicmRoot.No))
+                [(OptMaybeLicmRoot.No)
+                  (opt-licm-root-env-remove! (&mut (struct-get scan roots)) dst)]
+                [(OptMaybeLicmRoot.Some root)
+                  (opt-licm-root-env-bind!
+                    (&mut (struct-get scan roots))
+                    dst
+                    root)])
+              (opt-call-memory-scan-type-instr
+                (OptCallMemoryScan
+                  (struct-get scan roots)
+                  (opt-licm-ptr-unbind (struct-get scan kinds) dst)
+                  (struct-get scan types))
+                dst
+                instr))]
+          [(ir.CompilerIrInstr.Load _ src load-ty)
+            (match src
+              [(ir.CompilerIrValue.Var ptr-var)
+                (match (opt-licm-ptr-lookup (struct-get scan kinds) ptr-var)
+                  [(OptLicmPtrKind.DataSlot object)
+                    ;; A descriptor-data load: the data pointer belongs to the
+                    ;; descriptor's object (LICM's provenance rebind).
+                    (begin
+                      (opt-licm-root-env-bind!
+                        (&mut (struct-get scan roots))
+                        dst
+                        (opt-licm-root-env-lookup
+                          (struct-get scan roots)
+                          object))
+                      (opt-call-memory-scan-type-instr
+                        (OptCallMemoryScan
+                          (struct-get scan roots)
+                          (opt-licm-ptr-bind
+                            (struct-get scan kinds)
+                            dst
+                            (OptLicmPtrKind.DataBuffer object))
+                          (struct-get scan types))
+                        dst
+                        instr))]
+                  [_
+                    (if (opt-licm-array-header-var?
+                      type-segment-bases
+                      (struct-get scan types)
+                      ptr-var)
+                      (begin
+                        (opt-licm-root-env-bind!
+                          (&mut (struct-get scan roots))
+                          dst
+                          (opt-licm-root-env-lookup
+                            (struct-get scan roots)
+                            ptr-var))
+                        (opt-call-memory-scan-type-instr
+                          (OptCallMemoryScan
+                            (struct-get scan roots)
+                            (opt-licm-ptr-bind
+                              (struct-get scan kinds)
+                              dst
+                              (OptLicmPtrKind.DataBuffer ptr-var))
+                            (struct-get scan types))
+                          dst
+                          instr))
+                      (if (opt-licm-array-header-type?
+                        type-segment-bases
+                        load-ty)
+                        ;; Descriptor-typed load through an unclassified
+                        ;; single-source pointer (the `gep %vec, 0; load :
+                        ;; (Array T)` cell fetch): the loaded descriptor is
+                        ;; owned by the source's object, so it keeps the
+                        ;; source root. This is what resolves element writes
+                        ;; through a Vec cell's descriptor to the Vec param.
+                        (begin
+                          (opt-licm-root-env-copy!
+                            (&mut (struct-get scan roots))
+                            dst
+                            src)
+                          (opt-call-memory-scan-type-instr
+                            (OptCallMemoryScan
+                              (struct-get scan roots)
+                              (opt-licm-ptr-unbind (struct-get scan kinds) dst)
+                              (struct-get scan types))
+                            dst
+                            instr))
+                        (begin
+                          (opt-licm-root-env-remove!
+                            (&mut (struct-get scan roots))
+                            dst)
+                          (opt-call-memory-scan-type-instr
+                            (OptCallMemoryScan
+                              (struct-get scan roots)
+                              (opt-licm-ptr-unbind (struct-get scan kinds) dst)
+                              (struct-get scan types))
+                            dst
+                            instr))))])]
+              [_
+                (begin
+                  (opt-licm-root-env-remove! (&mut (struct-get scan roots)) dst)
+                  (opt-call-memory-scan-type-instr
+                    (OptCallMemoryScan
+                      (struct-get scan roots)
+                      (opt-licm-ptr-unbind (struct-get scan kinds) dst)
+                      (struct-get scan types))
+                    dst
+                    instr))])]
           [(ir.CompilerIrInstr.Call _ name _ _)
-            (if (ir.compiler-ir-symbol-eq?
-              name
-              cbi.compiler-builtin-id-tl-alloc)
-              (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))
-              (opt-licm-root-env-remove! roots dst))]
-          [_ (opt-licm-root-env-remove! roots dst)]))]))
+            (begin
+              (if (ir.compiler-ir-symbol-eq?
+                name
+                cbi.compiler-builtin-id-tl-alloc)
+                (opt-licm-root-env-bind!
+                  (&mut (struct-get scan roots))
+                  dst
+                  (OptLicmRoot.Fresh dst))
+                (opt-licm-root-env-remove! (&mut (struct-get scan roots)) dst))
+              (opt-call-memory-scan-type-instr
+                (OptCallMemoryScan
+                  (struct-get scan roots)
+                  (opt-licm-ptr-unbind (struct-get scan kinds) dst)
+                  (struct-get scan types))
+                dst
+                instr))]
+          [_
+            (begin
+              (opt-licm-root-env-remove! (&mut (struct-get scan roots)) dst)
+              (OptCallMemoryScan
+                (struct-get scan roots)
+                (opt-licm-ptr-unbind (struct-get scan kinds) dst)
+                (struct-get scan types)))]))]))
 
-(define (opt-call-memory-root-scan-instrs!
+(define (opt-call-memory-scan-instrs
+  [type-segment-bases : i64]
   [sources : opt_i64_i64_map.Map]
-  [roots : (&mut roots OptLicmRootEnv)]
+  [scan : OptCallMemoryScan (:consume)]
   [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : unit
+  [index : i64]) : OptCallMemoryScan
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    unit
-    (begin
-      (opt-call-memory-root-update-instr!
+    scan
+    (opt-call-memory-scan-instrs
+      type-segment-bases
+      sources
+      (opt-call-memory-scan-update-instr
+        type-segment-bases
         sources
-        roots
+        scan
         (ir.compiler-ir-instr-seq-ref instrs index))
-      (opt-call-memory-root-scan-instrs! sources roots instrs (+ index 1)))))
+      instrs
+      (+ index 1))))
 
-(define (opt-call-memory-root-scan-blocks!
+(define (opt-call-memory-scan-blocks
+  [type-segment-bases : i64]
   [sources : opt_i64_i64_map.Map]
-  [roots : (&mut roots OptLicmRootEnv)]
-  [blocks : ir.CompilerIrBlockList]) : unit
+  [blocks : ir.CompilerIrBlockList]
+  [scan : OptCallMemoryScan (:consume)]) : OptCallMemoryScan
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Nil) scan]
     [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (opt-call-memory-root-scan-instrs! sources roots instrs 0)])
-        (opt-call-memory-root-scan-blocks! sources roots (box-get rest)))]
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-call-memory-scan-blocks
+            type-segment-bases
+            sources
+            (box-get rest)
+            (opt-call-memory-scan-instrs
+              type-segment-bases
+              sources
+              scan
+              instrs
+              0))])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-call-memory-root-scan-blocks!
+      (opt-call-memory-scan-blocks
+        type-segment-bases
         sources
-        roots
-        (ir.compiler-ir-block-seq-to-list seq))]))
+        (ir.compiler-ir-block-seq-to-list seq)
+        scan)]))
 
 (define (opt-call-memory-roots
   [type-segment-bases : i64]
   [params : ir.CompilerIrParamList]
-  [blocks : ir.CompilerIrBlockList]) : OptLicmRootEnv
+  [blocks : ir.CompilerIrBlockList]) : OptCallMemoryScan
   (let
     [sources : opt_i64_i64_map.Map
       (opt-gvn-sources-blocks
         blocks
         (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 32)))]
-    [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
-    (begin
-      (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)
-      (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
-      (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
-      roots)))
+    [initial : OptCallMemoryScan
+      (OptCallMemoryScan
+        (opt-licm-root-env-with-capacity 17)
+        (OptLicmPtrEnv.Nil)
+        (opt-licm-type-env-add-params params (opt-ssa-var-types-new)))]
+    [_seed : unit
+      (opt-licm-root-env-seed-params!
+        type-segment-bases
+        (&mut (struct-get initial roots))
+        params)]
+    [first : OptCallMemoryScan
+      (opt-call-memory-scan-blocks type-segment-bases sources blocks initial)]
+    (opt-call-memory-scan-blocks type-segment-bases sources blocks first)))
 
 (define (opt-call-memory-arg-at [args : ir.CompilerIrCallArgs] [index : i64]) : ir.CompilerIrMaybeValue
   (match args
@@ -71220,74 +71473,151 @@
         (ir.CompilerIrMaybeValue.Some (array-ref values index))
         (ir.CompilerIrMaybeValue.No))]))
 
+;; Two packed summaries per callee, built together:
+;;   - full:    every memory write (bits 0..59 param writes, 60 global, 61
+;;              unknown), exactly the legacy `opt-call-memory` map's meaning.
+;;   - element: only the SCALAR-ELEMENT writes -- `StorePtr`s through a
+;;              descriptor's loaded data pointer whose stored type is scalar.
+;;              Such a write touches data-buffer bytes that can never hold a
+;;              descriptor pointer, a descriptor header word, or a global cell,
+;;              so descriptor-typed and global-cell load facts survive it
+;;              (type safety: a scalar buffer holds no pointer-typed slots).
+;; `element` is always a subset of `full` (same global/unknown flags; a param
+;; bit is set in `element` only when every proof step classified the write as
+;; scalar element storage).
 (defenum OptCallMemoryCandidate
   (Unresolved)
-  (Known i64))
+  (Known i64 i64))
 
+;; Map one callee's resolved write set through the call-site arguments onto the
+;; caller's pair. A callee param bit maps to the caller param whose root the
+;; corresponding argument carries; fresh caller storage ignores the bit (the
+;; write cannot reach the caller's params or globals); an unrooted/missing
+;; argument poisons both summaries (the write's footprint is no longer
+;; classifiable, so element-class survival cannot be certified either).
 (define (opt-call-memory-map-callee-param-writes
   [candidate : OptCallMemoryCandidate]
-  [callee-summary : i64]
+  [callee-full : i64]
+  [callee-element : i64]
   [params : ir.CompilerIrParamList]
-  [roots : OptLicmRootEnv]
+  [scan : OptCallMemoryScan]
   [args : ir.CompilerIrCallArgs]
   [index : i64]) : OptCallMemoryCandidate
   (if (>= index (opt-call-memory-param-limit))
     candidate
     (match candidate
       [(OptCallMemoryCandidate.Unresolved) candidate]
-      [(OptCallMemoryCandidate.Known summary)
-        (if (not (opt-call-memory-summary-param-write? callee-summary index))
-          (opt-call-memory-map-callee-param-writes
-            candidate
-            callee-summary
-            params
-            roots
-            args
-            (+ index 1))
-          (match (opt-call-memory-arg-at args index)
-            [(ir.CompilerIrMaybeValue.No)
-              (OptCallMemoryCandidate.Known
-                (opt-call-memory-summary-add-unknown summary))]
-            [(ir.CompilerIrMaybeValue.Some value)
-              (opt-call-memory-map-callee-param-writes
+      [(OptCallMemoryCandidate.Known full element)
+        (let
+          [full-bit? : bool
+            (opt-call-memory-summary-param-write? callee-full index)]
+          [elem-bit? : bool
+            (opt-call-memory-summary-param-write? callee-element index)]
+          (if (not (or full-bit? elem-bit?))
+            (opt-call-memory-map-callee-param-writes
+              candidate
+              callee-full
+              callee-element
+              params
+              scan
+              args
+              (+ index 1))
+            (match (opt-call-memory-arg-at args index)
+              [(ir.CompilerIrMaybeValue.No)
                 (OptCallMemoryCandidate.Known
-                  (opt-call-memory-summary-add-root-write
-                    summary
-                    params
-                    (opt-licm-root-of-value roots value)))
-                callee-summary
-                params
-                roots
-                args
-                (+ index 1))]))])))
+                  (opt-call-memory-summary-add-unknown full)
+                  (opt-call-memory-summary-add-unknown element))]
+              [(ir.CompilerIrMaybeValue.Some value)
+                (let
+                  [value-root : OptLicmRoot
+                    (opt-licm-root-of-value (struct-get scan roots) value)]
+                  (match value-root
+                    [(OptLicmRoot.Fresh _)
+                      (opt-call-memory-map-callee-param-writes
+                        candidate
+                        callee-full
+                        callee-element
+                        params
+                        scan
+                        args
+                        (+ index 1))]
+                    [(OptLicmRoot.NoRoot)
+                      (OptCallMemoryCandidate.Known
+                        (opt-call-memory-summary-add-unknown full)
+                        (opt-call-memory-summary-add-unknown element))]
+                    [_
+                      (let
+                        [arg-index : i64
+                          (opt-call-memory-param-index-from
+                            params
+                            (opt-call-memory-root-var? value-root)
+                            0)]
+                        (if (and
+                          (>= arg-index 0)
+                          (< arg-index (opt-call-memory-param-limit)))
+                          (opt-call-memory-map-callee-param-writes
+                            (OptCallMemoryCandidate.Known
+                              (if full-bit?
+                                (bit-or full (shl 1 arg-index))
+                                full)
+                              (if elem-bit?
+                                (bit-or element (shl 1 arg-index))
+                                element))
+                            callee-full
+                            callee-element
+                            params
+                            scan
+                            args
+                            (+ index 1))
+                          (OptCallMemoryCandidate.Known
+                            (opt-call-memory-summary-add-unknown full)
+                            (opt-call-memory-summary-add-unknown element))))]))])))])))
 
 (define (opt-call-memory-apply-direct-call
   [candidate : OptCallMemoryCandidate]
-  [summaries : opt_i64_i64_map.Map]
+  [summaries-full : opt_i64_i64_map.Map]
+  [summaries-element : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [params : ir.CompilerIrParamList]
-  [roots : OptLicmRootEnv]
+  [scan : OptCallMemoryScan]
   [name : i64]
   [args : ir.CompilerIrCallArgs]) : OptCallMemoryCandidate
   (match candidate
     [(OptCallMemoryCandidate.Unresolved) candidate]
-    [(OptCallMemoryCandidate.Known summary)
-      (match (opt_i64_i64_map.get (& summaries) (ir.compiler-ir-symbol-id name))
-        [(opt_i64_i64_map.LookupFound callee-summary)
-          (opt-call-memory-map-callee-param-writes
-            (OptCallMemoryCandidate.Known
-              (bit-or
-                summary
-                (bit-and
-                  callee-summary
-                  (bit-or
-                    (opt-call-memory-global-bit)
-                    (opt-call-memory-unknown-bit)))))
-            callee-summary
-            params
-            roots
-            args
-            0)]
+    [(OptCallMemoryCandidate.Known full element)
+      (match (opt_i64_i64_map.get
+        (& summaries-full)
+        (ir.compiler-ir-symbol-id name))
+        [(opt_i64_i64_map.LookupFound callee-full)
+          (let
+            [callee-element : i64
+              (match (opt_i64_i64_map.get
+                (& summaries-element)
+                (ir.compiler-ir-symbol-id name))
+                [(opt_i64_i64_map.LookupFound summary) summary]
+                [(opt_i64_i64_map.LookupMissing) 0])]
+            (opt-call-memory-map-callee-param-writes
+              (OptCallMemoryCandidate.Known
+                (bit-or
+                  full
+                  (bit-and
+                    callee-full
+                    (bit-or
+                      (opt-call-memory-global-bit)
+                      (opt-call-memory-unknown-bit))))
+                (bit-or
+                  element
+                  (bit-and
+                    callee-element
+                    (bit-or
+                      (opt-call-memory-global-bit)
+                      (opt-call-memory-unknown-bit)))))
+              callee-full
+              callee-element
+              params
+              scan
+              args
+              0))]
         [(opt_i64_i64_map.LookupMissing)
           (if (opt_i64_i64_map.contains?
             (& function-set)
@@ -71297,50 +71627,112 @@
               [(ir.CompilerIrEffect.MemoryRead) candidate]
               [_
                 (OptCallMemoryCandidate.Known
-                  (opt-call-memory-summary-add-unknown summary))]))])]))
+                  (opt-call-memory-summary-add-unknown full)
+                  (opt-call-memory-summary-add-unknown element))]))])]))
+
+;; Fold one instruction into the function's candidate pair. StorePtrs are
+;; classified: a scalar-typed store through a descriptor-data pointer (the
+;; scan's ptr kinds) is a scalar-element write -- it sets the matching bit in
+;; BOTH summaries -- while every other rooted store sets only the full bit
+;; (header/struct-class), and an unrooted store sets unknown in both.
+(define (opt-call-memory-candidate-store-ptr
+  [candidate : OptCallMemoryCandidate]
+  [params : ir.CompilerIrParamList]
+  [scan : OptCallMemoryScan]
+  [ptr : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptCallMemoryCandidate
+  (match candidate
+    [(OptCallMemoryCandidate.Unresolved) candidate]
+    [(OptCallMemoryCandidate.Known full element)
+      (let
+        [store-root : OptLicmRoot
+          (opt-licm-root-of-value (struct-get scan roots) ptr)]
+        (match store-root
+          [(OptLicmRoot.Fresh _) candidate]
+          [(OptLicmRoot.NoRoot)
+            (OptCallMemoryCandidate.Known
+              (opt-call-memory-summary-add-unknown full)
+              (opt-call-memory-summary-add-unknown element))]
+          [_
+            (let
+              [index : i64
+                (opt-call-memory-param-index-from
+                  params
+                  (opt-call-memory-root-var? store-root)
+                  0)]
+              (if (or (< index 0) (>= index (opt-call-memory-param-limit)))
+                (OptCallMemoryCandidate.Known
+                  (opt-call-memory-summary-add-unknown full)
+                  (opt-call-memory-summary-add-unknown element))
+                (let
+                  [element-write? : bool
+                    (and
+                      (opt-call-memory-scalar-type? ty)
+                      (match ptr
+                        [(ir.CompilerIrValue.Var ptr-var)
+                          (opt-call-memory-element-ptr-kind?
+                            (opt-licm-ptr-lookup
+                              (struct-get scan kinds)
+                              ptr-var))]
+                        [_ false]))]
+                  (OptCallMemoryCandidate.Known
+                    (bit-or full (shl 1 index))
+                    (if element-write?
+                      (bit-or element (shl 1 index))
+                      element)))))]))]))
 
 (define (opt-call-memory-candidate-instr
   [candidate : OptCallMemoryCandidate]
-  [summaries : opt_i64_i64_map.Map]
+  [summaries-full : opt_i64_i64_map.Map]
+  [summaries-element : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [params : ir.CompilerIrParamList]
-  [roots : OptLicmRootEnv]
+  [scan : OptCallMemoryScan]
   [instr : ir.CompilerIrInstr]) : OptCallMemoryCandidate
   (match candidate
     [(OptCallMemoryCandidate.Unresolved) candidate]
-    [(OptCallMemoryCandidate.Known summary)
+    [(OptCallMemoryCandidate.Known full element)
       (match instr
-        [(ir.CompilerIrInstr.StorePtr ptr _ _)
-          (OptCallMemoryCandidate.Known
-            (opt-call-memory-summary-add-root-write
-              summary
-              params
-              (opt-licm-root-of-value roots ptr)))]
+        [(ir.CompilerIrInstr.StorePtr ptr _ ty)
+          (opt-call-memory-candidate-store-ptr candidate params scan ptr ty)]
         [(ir.CompilerIrInstr.CopyBytes dst _ _)
-          (OptCallMemoryCandidate.Known
-            (opt-call-memory-summary-add-root-write
-              summary
-              params
-              (opt-licm-root-of-value roots dst)))]
+          ;; A raw byte copy can overwrite descriptor fields inside struct
+          ;; elements, so it is never scalar-element-class.
+          (let
+            [copy-root : OptLicmRoot
+              (opt-licm-root-of-value (struct-get scan roots) dst)]
+            (match copy-root
+              [(OptLicmRoot.Fresh _) candidate]
+              [(OptLicmRoot.NoRoot)
+                (OptCallMemoryCandidate.Known
+                  (opt-call-memory-summary-add-unknown full)
+                  (opt-call-memory-summary-add-unknown element))]
+              [_
+                (OptCallMemoryCandidate.Known
+                  (opt-call-memory-summary-add-root-write full params copy-root)
+                  element)]))]
         [(ir.CompilerIrInstr.Store _ _ _)
           (OptCallMemoryCandidate.Known
-            (opt-call-memory-summary-add-global summary))]
+            (opt-call-memory-summary-add-global full)
+            (opt-call-memory-summary-add-global element))]
         [(ir.CompilerIrInstr.Call _ name args _)
           (opt-call-memory-apply-direct-call
             candidate
-            summaries
+            summaries-full
+            summaries-element
             function-set
             params
-            roots
+            scan
             name
             args)]
         [(ir.CompilerIrInstr.TailCall name args _)
           (opt-call-memory-apply-direct-call
             candidate
-            summaries
+            summaries-full
+            summaries-element
             function-set
             params
-            roots
+            scan
             name
             args)]
         [(ir.CompilerIrInstr.Alloc _ _) candidate]
@@ -71351,14 +71743,16 @@
             [(ir.CompilerIrEffect.ControlFlow) candidate]
             [_
               (OptCallMemoryCandidate.Known
-                (opt-call-memory-summary-add-unknown summary))])])]))
+                (opt-call-memory-summary-add-unknown full)
+                (opt-call-memory-summary-add-unknown element))])])]))
 
 (define (opt-call-memory-candidate-instrs
   [candidate : OptCallMemoryCandidate]
-  [summaries : opt_i64_i64_map.Map]
+  [summaries-full : opt_i64_i64_map.Map]
+  [summaries-element : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [params : ir.CompilerIrParamList]
-  [roots : OptLicmRootEnv]
+  [scan : OptCallMemoryScan]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : OptCallMemoryCandidate
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
@@ -71366,24 +71760,27 @@
     (opt-call-memory-candidate-instrs
       (opt-call-memory-candidate-instr
         candidate
-        summaries
+        summaries-full
+        summaries-element
         function-set
         params
-        roots
+        scan
         (ir.compiler-ir-instr-seq-ref instrs index))
-      summaries
+      summaries-full
+      summaries-element
       function-set
       params
-      roots
+      scan
       instrs
       (+ index 1))))
 
 (define (opt-call-memory-candidate-blocks
   [candidate : OptCallMemoryCandidate]
-  [summaries : opt_i64_i64_map.Map]
+  [summaries-full : opt_i64_i64_map.Map]
+  [summaries-element : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [params : ir.CompilerIrParamList]
-  [roots : OptLicmRootEnv]
+  [scan : OptCallMemoryScan]
   [blocks : ir.CompilerIrBlockList]) : OptCallMemoryCandidate
   (match candidate
     [(OptCallMemoryCandidate.Unresolved) candidate]
@@ -71396,24 +71793,27 @@
               (opt-call-memory-candidate-blocks
                 (opt-call-memory-candidate-instrs
                   candidate
-                  summaries
+                  summaries-full
+                  summaries-element
                   function-set
                   params
-                  roots
+                  scan
                   instrs
                   0)
-                summaries
+                summaries-full
+                summaries-element
                 function-set
                 params
-                roots
+                scan
                 (box-get rest))])]
         [(ir.CompilerIrBlockList.Array seq)
           (opt-call-memory-candidate-blocks
             candidate
-            summaries
+            summaries-full
+            summaries-element
             function-set
             params
-            roots
+            scan
             (ir.compiler-ir-block-seq-to-list seq))])]))
 
 (define (opt-call-memory-direct-needs-roots?
@@ -71466,80 +71866,118 @@
 
 (define (opt-call-memory-function-candidate
   [type-segment-bases : i64]
-  [summaries : opt_i64_i64_map.Map]
+  [summaries-full : opt_i64_i64_map.Map]
+  [summaries-element : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [func : ir.CompilerIrFunction]) : OptCallMemoryCandidate
   (match func
     [(ir.CompilerIrFunction.Function _ params _ _ blocks)
       (opt-call-memory-candidate-blocks
-        (OptCallMemoryCandidate.Known 0)
-        summaries
+        (OptCallMemoryCandidate.Known 0 0)
+        summaries-full
+        summaries-element
         function-set
         params
-        (if (opt-call-memory-blocks-need-roots? summaries blocks)
+        (if (opt-call-memory-blocks-need-roots? summaries-full blocks)
           (opt-call-memory-roots type-segment-bases params blocks)
-          (opt-licm-root-env-with-capacity 1))
+          (opt-call-memory-scan-empty 1))
         blocks)]))
 
+;; The resolved pair for one program: `full` is the legacy
+;; `opt-call-memory-build` map (every memory write); `element` marks only the
+;; scalar-element writes (see OptCallMemoryCandidate). Keys are identical
+;; between the two maps.
+(defstruct OptCallMemoryMaps
+  (full opt_i64_i64_map.Map)
+  (element opt_i64_i64_map.Map))
+
 (defenum OptCallMemoryBuildPass
-  (Pass opt_i64_i64_map.Map bool))
+  (Pass opt_i64_i64_map.Map opt_i64_i64_map.Map bool))
 
 (define (opt-call-memory-build-pass
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionList]
-  [current : opt_i64_i64_map.Map]
+  [current-full : opt_i64_i64_map.Map]
+  [current-element : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map (:consume)]
+  [out-full : opt_i64_i64_map.Map (:consume)]
+  [out-element : opt_i64_i64_map.Map (:consume)]
   [changed : bool]) : OptCallMemoryBuildPass
   (match functions
-    [(ir.CompilerIrFunctionList.Nil) (OptCallMemoryBuildPass.Pass out changed)]
+    [(ir.CompilerIrFunctionList.Nil)
+      (OptCallMemoryBuildPass.Pass out-full out-element changed)]
     [(ir.CompilerIrFunctionList.Cons func rest)
       (match func
         [(ir.CompilerIrFunction.Function name _ _ _ _)
           (let
             [name-id : i64 (ir.compiler-ir-symbol-id name)]
-            (match (opt_i64_i64_map.get (& current) name-id)
+            (match (opt_i64_i64_map.get (& current-full) name-id)
               [(opt_i64_i64_map.LookupFound summary)
-                (begin
-                  (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
-                  (opt-call-memory-build-pass
-                    type-segment-bases
-                    (box-get rest)
-                    current
-                    function-set
-                    out
-                    changed))]
+                (let
+                  [element-summary : i64
+                    (match (opt_i64_i64_map.get (& current-element) name-id)
+                      [(opt_i64_i64_map.LookupFound found) found]
+                      [(opt_i64_i64_map.LookupMissing) 0])]
+                  (begin
+                    (opt_i64_i64_map.insert-ref!
+                      (&mut out-full)
+                      name-id
+                      summary)
+                    (opt_i64_i64_map.insert-ref!
+                      (&mut out-element)
+                      name-id
+                      element-summary)
+                    (opt-call-memory-build-pass
+                      type-segment-bases
+                      (box-get rest)
+                      current-full
+                      current-element
+                      function-set
+                      out-full
+                      out-element
+                      changed)))]
               [(opt_i64_i64_map.LookupMissing)
                 (match (opt-call-memory-function-candidate
                   type-segment-bases
-                  current
+                  current-full
+                  current-element
                   function-set
                   func)
                   [(OptCallMemoryCandidate.Unresolved)
                     (opt-call-memory-build-pass
                       type-segment-bases
                       (box-get rest)
-                      current
+                      current-full
+                      current-element
                       function-set
-                      out
+                      out-full
+                      out-element
                       changed)]
-                  [(OptCallMemoryCandidate.Known summary)
+                  [(OptCallMemoryCandidate.Known full element)
                     (begin
-                      (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                      (opt_i64_i64_map.insert-ref! (&mut out-full) name-id full)
+                      (opt_i64_i64_map.insert-ref!
+                        (&mut out-element)
+                        name-id
+                        element)
                       (opt-call-memory-build-pass
                         type-segment-bases
                         (box-get rest)
-                        current
+                        current-full
+                        current-element
                         function-set
-                        out
+                        out-full
+                        out-element
                         true))])]))])]
     [(ir.CompilerIrFunctionList.Array seq)
       (opt-call-memory-build-pass
         type-segment-bases
         (ir.compiler-ir-function-seq-to-list seq)
-        current
+        current-full
+        current-element
         function-set
-        out
+        out-full
+        out-element
         changed)]))
 
 ;; Three runtime builtins have a memory footprint precise enough to summarize,
@@ -71590,49 +72028,80 @@
       cbi.compiler-builtin-id-tl-mem-fill8
       (shl 1 0))))
 
+;; Seed both summary maps: the full map gets the four precise footprints; the
+;; element map only records tl_alloc as write-free (a fill builtin writes raw
+;; bytes, which is not provably scalar-element storage).
+(define (opt-call-memory-seed-builtins-pair
+  [full : opt_i64_i64_map.Map (:consume)]
+  [element : opt_i64_i64_map.Map (:consume)]) : OptCallMemoryMaps
+  (OptCallMemoryMaps
+    (opt-call-memory-seed-builtins full)
+    (opt-call-memory-seed-builtin element cbi.compiler-builtin-id-tl-alloc 0)))
+
 (define (opt-call-memory-build-fixed
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionList]
   [function-set : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
+  [current-full : opt_i64_i64_map.Map]
+  [current-element : opt_i64_i64_map.Map]
   [capacity : i64]
-  [remaining : i64]) : opt_i64_i64_map.Map
+  [remaining : i64]) : OptCallMemoryMaps
   (if (<= remaining 0)
-    current
+    (OptCallMemoryMaps current-full current-element)
     ;; Each round builds a fresh `out` and copies rows in per function name, so
     ;; the builtin seeds are re-applied here as well as to the initial map --
     ;; otherwise they would vanish after round one.
-    (match (opt-call-memory-build-pass
-      type-segment-bases
-      functions
-      current
-      function-set
-      (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
-      false)
-      [(OptCallMemoryBuildPass.Pass next changed)
-        (if changed
-          (opt-call-memory-build-fixed
-            type-segment-bases
-            functions
-            function-set
-            next
-            capacity
-            (- remaining 1))
-          next)])))
+    (match (opt-call-memory-seed-builtins-pair
+      (opt_i64_i64_map.with-capacity capacity)
+      (opt_i64_i64_map.with-capacity capacity))
+      [(OptCallMemoryMaps seed-full seed-element)
+        (match (opt-call-memory-build-pass
+          type-segment-bases
+          functions
+          current-full
+          current-element
+          function-set
+          seed-full
+          seed-element
+          false)
+          [(OptCallMemoryBuildPass.Pass next-full next-element changed)
+            (if changed
+              (opt-call-memory-build-fixed
+                type-segment-bases
+                functions
+                function-set
+                next-full
+                next-element
+                capacity
+                (- remaining 1))
+              (OptCallMemoryMaps next-full next-element))])])))
+
+(define (opt-call-memory-build-pair
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionList]
+  [capacity : i64]) : OptCallMemoryMaps
+  (match (opt-call-memory-seed-builtins-pair
+    (opt_i64_i64_map.with-capacity capacity)
+    (opt_i64_i64_map.with-capacity capacity))
+    [(OptCallMemoryMaps seed-full seed-element)
+      (opt-call-memory-build-fixed
+        type-segment-bases
+        functions
+        (opt-call-memory-function-set
+          functions
+          (opt_i64_i64_map.with-capacity capacity))
+        seed-full
+        seed-element
+        capacity
+        (+ (opt-function-list-count functions) 1))]))
 
 (define (opt-call-memory-build
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionList]
   [capacity : i64]) : opt_i64_i64_map.Map
-  (opt-call-memory-build-fixed
-    type-segment-bases
-    functions
-    (opt-call-memory-function-set
-      functions
-      (opt_i64_i64_map.with-capacity capacity))
-    (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
-    capacity
-    (+ (opt-function-list-count functions) 1)))
+  (struct-get
+    (opt-call-memory-build-pair type-segment-bases functions capacity)
+    full))
 
 ;; Prove which globals are compile-time constants so their value can be
 ;; substituted for the global at its uses. The win is twofold: (a) every global
@@ -72190,10 +72659,13 @@
         functions
         (opt_i64_i64_map.with-capacity capacity))
         [(OptLoopBceCleanPass.Pass clean _) clean])]
-    [call-memory : opt_i64_i64_map.Map
+    [call-maps : OptCallMemoryMaps
       (if build-call-memory
-        (opt-call-memory-build type-segment-bases functions capacity)
-        (opt_i64_i64_map.with-capacity 1))]
+        (opt-call-memory-build-pair type-segment-bases functions capacity)
+        (OptCallMemoryMaps
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)))]
+    [call-memory : opt_i64_i64_map.Map (struct-get call-maps full)]
     ;; `call-memory` is built first so the clean map can union in its
     ;; provably-write-nothing leaves. `build-direct-call-clean` is the level>=2
     ;; gate, so opt0/opt1 keep an empty map and stay byte-identical.
@@ -72210,6 +72682,7 @@
       length-clean
       direct-call-clean
       call-memory
+      (struct-get call-maps element)
       argc-return
       (opt_i64_i64_map.with-capacity 1)
       (opt-global-cell-summary-empty))))
@@ -72223,6 +72696,7 @@
     (struct-get summaries length-clean)
     (struct-get summaries direct-call-clean)
     (struct-get summaries call-memory)
+    (struct-get summaries call-memory-element)
     (struct-get summaries argc-return)
     const-divisors
     (struct-get summaries global-cell)))
@@ -72236,6 +72710,7 @@
     (struct-get summaries length-clean)
     (struct-get summaries direct-call-clean)
     (struct-get summaries call-memory)
+    (struct-get summaries call-memory-element)
     (struct-get summaries argc-return)
     (struct-get summaries const-divisors)
     global-cell))
@@ -72249,6 +72724,7 @@
     (struct-get summaries length-clean)
     (struct-get summaries direct-call-clean)
     (struct-get summaries call-memory)
+    (struct-get summaries call-memory-element)
     (struct-get summaries argc-return)
     (struct-get summaries const-divisors)
     (struct-get summaries global-cell)))
@@ -78408,9 +78884,11 @@
           [(option_i64.None) bases]))]))
 
 ;; How a classified store writes memory (Unknown clears the whole table).
+;; Element carries a scalar? flag: only a SCALAR-element store provably cannot
+;; write a descriptor-pointer-typed slot (a struct element may embed one).
 (defenum OptLoadStoreClass
   (OptLoadStoreUnknown)
-  (OptLoadStoreElement)
+  (OptLoadStoreElement bool)
   (OptLoadStoreField i64 i64 i64 bool))
 
 (define (opt-load-key-eq
@@ -78803,12 +79281,27 @@
   [class : OptLoadStoreClass]
   [entry : OptLoadEntry]) : bool
   (match class
-    [(OptLoadStoreElement)
-      ;; Element stores write data-buffer memory; only descriptor-field
-      ;; entries (header-typed base) are provably outside every buffer.
-      (match (opt-load-entry-key entry)
-        [(OptLoadKey.Field _ _ _ header?) header?]
-        [_ false])]
+    [(OptLoadStoreElement scalar?)
+      ;; Element stores write data-buffer memory, provably outside every
+      ;; global cell (static storage never lives inside a heap buffer) and
+      ;; every descriptor header (descriptors are their own allocations). A
+      ;; descriptor-pointer-typed entry survives only a SCALAR-element store:
+      ;; a struct element may embed a descriptor field, a scalar element can
+      ;; never occupy the same slot as a descriptor-typed word.
+      (let
+        [entry-key : OptLoadKey (opt-load-entry-key entry)]
+        (match entry-key
+          [(OptLoadKey.Field _ _ ety header?)
+            (or
+              header?
+              (and scalar? (opt-licm-array-header-type? type-segment-bases ety)))]
+          [(OptLoadKey.GlobalField _ _ _ _) true]
+          [_
+            (and
+              scalar?
+              (opt-licm-array-header-type?
+                type-segment-bases
+                (opt-load-key-type entry-key)))]))]
     [(OptLoadStoreField sbase slo swidth sheader?)
       (match (opt-load-entry-key entry)
         [(OptLoadKey.Raw _ _ element?)
@@ -78890,23 +79383,25 @@
           tail))]))
 
 ;; Classify a store's target from the pointer kinds; `width` is the byte size
-;; actually written (StorePtr type width / CopyBytes size).
+;; actually written (StorePtr type width / CopyBytes size) and `scalar?` the
+;; stored type's scalar-ness (see OptLoadStoreClass).
 (define (opt-load-classify-store
   [kinds : OptLoadPtrKinds]
   [ptr : ir.CompilerIrValue]
-  [width : i64]) : OptLoadStoreClass
+  [width : i64]
+  [scalar? : bool]) : OptLoadStoreClass
   (if (<= width 0)
     (OptLoadStoreUnknown)
     (match ptr
       [(ir.CompilerIrValue.Var p)
         (match (opt-load-kinds-lookup kinds p)
-          [(OptLoadLocElement) (OptLoadStoreElement)]
+          [(OptLoadLocElement) (OptLoadStoreElement scalar?)]
           [(OptLoadLocField base off _ header?)
             (OptLoadStoreField base off width header?)]
           ;; A scaled element store writes data-buffer memory (base is the
           ;; loaded data pointer), exactly like an Element store: descriptor
           ;; fields are provably outside it, so header-typed entries survive.
-          [(OptLoadLocScaledField _ _ _ _) (OptLoadStoreElement)]
+          [(OptLoadLocScaledField _ _ _ _) (OptLoadStoreElement scalar?)]
           [(OptLoadLocUnknown) (OptLoadStoreUnknown)])]
       [_ (OptLoadStoreUnknown)])))
 
@@ -78956,13 +79451,13 @@
   [candidate : OptLoadStoreClass]) : bool
   (match access
     [(OptLoadStoreUnknown) false]
-    [(OptLoadStoreElement)
+    [(OptLoadStoreElement _)
       (match candidate
         [(OptLoadStoreField _ _ _ header?) header?]
         [_ false])]
     [(OptLoadStoreField abase aoff awidth aheader?)
       (match candidate
-        [(OptLoadStoreElement) aheader?]
+        [(OptLoadStoreElement _) aheader?]
         [(OptLoadStoreField bbase boff bwidth _)
           (and
             (= abase bbase)
@@ -79091,7 +79586,8 @@
               (opt-load-classify-store
                 kinds
                 ptr
-                (opt-load-loc-type-size type-segment-bases ty))]
+                (opt-load-loc-type-size type-segment-bases ty)
+                (opt-call-memory-scalar-type? ty))]
             (opt-dead-store-add-current
               (opt-dead-store-filter-store pending dead class)
               index
@@ -79102,7 +79598,8 @@
             (opt-load-classify-store
               kinds
               src
-              (opt-load-loc-type-size type-segment-bases ty)))]
+              (opt-load-loc-type-size type-segment-bases ty)
+              (opt-call-memory-scalar-type? ty)))]
         [(ir.CompilerIrInstr.CopyBytes _ _ _)
           (opt-dead-store-set-clear pending)]
         [_
@@ -79335,12 +79832,18 @@
 ;; summary carries no byte-range fact, so filtering is root-only: a write
 ;; through a fresh/exclusive argument preserves entries on different proven
 ;; roots; missing/unrooted/shared arguments conservatively empty the table.
+;; `class` is the write footprint of the bits being applied: the legacy
+;; Unknown (drops everything rooted at the argument root) for header/struct
+;; writes, or scalar-element for writes the summary proves touch only scalar
+;; data-buffer bytes (descriptor-typed, header and global-cell entries then
+;; survive, mirroring a local element store).
 (define (opt-load-table-filter-call-writes
   [type-segment-bases : i64]
   [table : OptLoadTable]
   [facts : OptAliasFacts]
   [args : ir.CompilerIrCallArgs]
   [summary : i64]
+  [class : OptLoadStoreClass]
   [index : i64]) : OptLoadTable
   (if (>= index (opt-call-memory-param-limit))
     table
@@ -79351,6 +79854,7 @@
         facts
         args
         summary
+        class
         (+ index 1))
       (match (opt-call-memory-arg-at args index)
         [(ir.CompilerIrMaybeValue.No) (OptLoadTable.Nil)]
@@ -79362,34 +79866,67 @@
               table
               facts
               (opt-alias-root-of-value facts value)
-              (OptLoadStoreUnknown))
+              class)
             facts
             args
             summary
+            class
             (+ index 1))]))))
+
+;; Does any header/struct-class callee write bit ride a `GlobalAddr` argument?
+;; Only a write through a cell ADDRESS can change the cell content a
+;; global-bases binding records; header/struct writes through `Global`
+;; (cell-content) arguments hit the pointee struct, never the cell itself, and
+;; scalar-element writes never touch cells at all.
+(define (opt-load-call-header-writes-cell?
+  [args : ir.CompilerIrCallArgs]
+  [summary : i64]
+  [index : i64]) : bool
+  (if (>= index (opt-call-memory-param-limit))
+    false
+    (or
+      (and
+        (opt-call-memory-summary-param-write? summary index)
+        (match (opt-call-memory-arg-at args index)
+          [(ir.CompilerIrMaybeValue.Some value)
+            (match value
+              [(ir.CompilerIrValue.GlobalAddr _) true]
+              [_ false])]
+          [(ir.CompilerIrMaybeValue.No) false]))
+      (opt-load-call-header-writes-cell? args summary (+ index 1)))))
 
 (define (opt-load-cse-state-direct-call
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
-  [call-memory : opt_i64_i64_map.Map]
+  [call-maps : OptCallMemoryMaps]
   [state : OptLoadCseState]
   [dst : i64]
   [name : i64]
   [args : ir.CompilerIrCallArgs]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
   (match state
-    ;; A callee may write globals, so the base map clears here even when the
-    ;; summary lets table entries live: those entries survive only where the
-    ;; callee provably cannot reach them, while a base map binding would have to
-    ;; re-prove that the global SLOT is untouched, which no summary states.
+    ;; The base map clears only where the callee can change a global cell's
+    ;; content: a direct store to any global (summary global bit), an
+    ;; unclassifiable write (unknown bit), a header/struct write through a
+    ;; `GlobalAddr` argument, or an unresolved/effectful callee. Scalar-element
+    ;; parameter writes and writes through `Global` (cell-content) arguments
+    ;; cannot touch a cell, so their bindings survive.
     [(OptLoadCseState.State facts table kinds table-cap epoch bases)
       (let
+        [name-id : i64 (ir.compiler-ir-symbol-id name)]
+        [lookup-full : opt_i64_i64_map.Lookup
+          (opt_i64_i64_map.get (& (struct-get call-maps full)) name-id)]
         ;; Filtering reads the PRE-call facts and table, so a tl_alloc call
-        ;; cannot use its own (not yet bound) fresh root to keep entries.
+        ;; cannot use its own (not yet bound) fresh root to keep entries. All
+        ;; callee parameter writes filter with the Unknown class on purpose:
+        ;; the finer scalar-element class was measured (intern_table's
+        ;; it-intern-slice) to keep descriptor entries across element-writing
+        ;; calls, which extends their live ranges ACROSS those calls and costs
+        ;; more in spill churn than the reload saves -- the same cross-call
+        ;; trade the LICM Gep arm already refuses. A pure-reader callee (no
+        ;; param bits, no flags) applies no filter at all, exactly as before.
         [filtered : OptLoadTable
-          (match (opt_i64_i64_map.get
-            (& call-memory)
-            (ir.compiler-ir-symbol-id name))
+          (match lookup-full
             [(opt_i64_i64_map.LookupFound summary)
               (if (or
                 (opt-call-memory-summary-global? summary)
@@ -79401,6 +79938,7 @@
                   facts
                   args
                   summary
+                  (OptLoadStoreUnknown)
                   0))]
             [(opt_i64_i64_map.LookupMissing)
               (match (ir.compiler-ir-direct-call-effect-id name)
@@ -79418,7 +79956,27 @@
           (opt-load-kinds-step type-segment-bases kinds hs instr)
           table-cap
           next-epoch
-          (opt-load-global-bases-clear bases)))]))
+          (match lookup-full
+            [(opt_i64_i64_map.LookupFound summary)
+              (if (or
+                (opt-call-memory-summary-global? summary)
+                (opt-call-memory-summary-unknown? summary)
+                (opt-load-call-header-writes-cell?
+                  args
+                  (bit-xor
+                    summary
+                    (match (opt_i64_i64_map.get
+                      (& (struct-get call-maps element))
+                      name-id)
+                      [(opt_i64_i64_map.LookupFound found) found]
+                      [(opt_i64_i64_map.LookupMissing) 0]))
+                  0))
+                (opt-load-global-bases-clear bases)
+                bases)]
+            [(opt_i64_i64_map.LookupMissing)
+              (match (ir.compiler-ir-direct-call-effect-id name)
+                [(ir.CompilerIrEffect.MemoryRead) bases]
+                [_ (opt-load-global-bases-clear bases)])])))]))
 
 ;; StorePtr: granular invalidation, then store-to-load forwarding. The
 ;; forwarded value must be a copy-safe source (no hidden global reads). Sub-word
@@ -79441,7 +79999,12 @@
     [(OptLoadCseState.State facts table kinds table-cap epoch bases)
       (let
         [width : i64 (opt-load-loc-type-size type-segment-bases ty)]
-        [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
+        [class : OptLoadStoreClass
+          (opt-load-classify-store
+            kinds
+            ptr
+            width
+            (opt-call-memory-scalar-type? ty))]
         [store-root : OptAliasRoot (opt-alias-root-of-value facts ptr)]
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         [facts2 : OptAliasFacts
@@ -79526,8 +80089,10 @@
     ;; pointer may write a global slot, so the base map clears here too.
     [(OptLoadCseState.State facts table kinds table-cap epoch bases)
       (let
-        [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
-        [src-class : OptLoadStoreClass (opt-load-classify-store kinds src size)]
+        [class : OptLoadStoreClass
+          (opt-load-classify-store kinds dst size false)]
+        [src-class : OptLoadStoreClass
+          (opt-load-classify-store kinds src size false)]
         [store-root : OptAliasRoot (opt-alias-root-of-value facts dst)]
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         [facts2 : OptAliasFacts
@@ -79553,7 +80118,7 @@
               table-cap
               next-epoch
               (opt-load-global-bases-clear bases))]
-          [(OptLoadStoreElement)
+          [(OptLoadStoreElement _)
             (OptLoadCseState.State
               facts2
               filtered
@@ -79689,7 +80254,7 @@
   [hs : OptLoadHeaderSet]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
-  [call-memory : opt_i64_i64_map.Map]
+  [call-maps : OptCallMemoryMaps]
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseResult
   (match instr
@@ -79734,7 +80299,7 @@
         (opt-load-cse-state-direct-call
           type-segment-bases
           hs
-          call-memory
+          call-maps
           state
           dst
           name
@@ -79758,7 +80323,7 @@
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
-  [call-memory : opt_i64_i64_map.Map]
+  [call-maps : OptCallMemoryMaps]
   [state : OptLoadCseState]
   [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
   (match instrs
@@ -79769,7 +80334,7 @@
         hs
         false
         sources
-        call-memory
+        call-maps
         state
         instr)
         [(OptLoadCseResult.Result next-state new-instr)
@@ -79779,7 +80344,7 @@
               type-segment-bases
               hs
               sources
-              call-memory
+              call-maps
               next-state
               (box-get rest)))])]))
 
@@ -79792,7 +80357,9 @@
     type-segment-bases
     hs
     (opt_i64_i64_map.with-capacity 1)
-    (opt_i64_i64_map.with-capacity 1)
+    (OptCallMemoryMaps
+      (opt_i64_i64_map.with-capacity 1)
+      (opt_i64_i64_map.with-capacity 1))
     state
     instrs))
 
@@ -80278,7 +80845,7 @@
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [sources : opt_i64_i64_map.Map]
-  [call-memory : opt_i64_i64_map.Map]
+  [call-maps : OptCallMemoryMaps]
   [instrs : ir.CompilerIrInstrSeq]) : OptLoadGvnBlockRewrite
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -80296,7 +80863,7 @@
               hs
               true
               sources
-              call-memory
+              call-maps
               current
               (ir.compiler-ir-instr-seq-ref instrs index))
               [(OptLoadCseResult.Result next-state new-instr)
@@ -80313,7 +80880,7 @@
   [hs : OptLoadHeaderSet]
   [entry-state : OptLoadCseState]
   [sources : opt_i64_i64_map.Map]
-  [call-memory : opt_i64_i64_map.Map]
+  [call-maps : OptCallMemoryMaps]
   [block : ir.CompilerIrBlock]) : OptLoadGvnBlockRewrite
   (match block
     [(ir.CompilerIrBlock.Block _ instrs)
@@ -80322,7 +80889,7 @@
         hs
         entry-state
         sources
-        call-memory
+        call-maps
         instrs)]))
 
 (define (opt-load-gvn-process-id
@@ -80330,7 +80897,7 @@
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
-  [call-memory : opt_i64_i64_map.Map]
+  [call-maps : OptCallMemoryMaps]
   [loop-safe : OptLabelSet]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
@@ -80359,7 +80926,7 @@
               hs
               entry-state
               sources
-              call-memory
+              call-maps
               block)
               [(OptLoadGvnBlockRewrite.Rewrite exit-state instrs)
                 (begin
@@ -80379,7 +80946,7 @@
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
-  [call-memory : opt_i64_i64_map.Map]
+  [call-maps : OptCallMemoryMaps]
   [loop-safe : OptLabelSet]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
@@ -80399,7 +80966,7 @@
             context
             hs
             sources
-            call-memory
+            call-maps
             loop-safe
             exit-states
             processed
@@ -80411,7 +80978,7 @@
             context
             hs
             sources
-            call-memory
+            call-maps
             loop-safe
             exit-states
             processed
@@ -80468,7 +81035,7 @@
   [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
   [params : ir.CompilerIrParamList]
-  [call-memory : opt_i64_i64_map.Map]
+  [call-maps : OptCallMemoryMaps]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (if (not (opt-load-gvn-blocks-have-load? blocks))
     ;; No loads: no rewrite can fire, so the pass output equals the input; skip
@@ -80501,7 +81068,7 @@
           context
           hs
           sources
-          call-memory
+          call-maps
           loop-safe
           exit-states
           processed

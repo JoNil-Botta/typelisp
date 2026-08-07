@@ -3424,6 +3424,10 @@
       (compiler_optimize_tests.compiler-optimize-load-cse-self-test)
       44)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-call-memory-element-self-test"
+      (compiler_optimize_tests.compiler-optimize-call-memory-element-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-dead-store-self-test"
       (compiler_optimize_tests.compiler-optimize-dead-store-self-test)
       42)
@@ -3506,6 +3510,13 @@
     (compiler_optimize_tests.compiler-optimize-load-cse-self-test)
     44
     "load-cse copybytes forwarding"))
+
+(test
+  call-memory-element-transparency
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-call-memory-element-self-test)
+    42
+    "scalar-element call transparency for descriptor/global-cell loads"))
 
 (test
   optimizer-alias-fact-model

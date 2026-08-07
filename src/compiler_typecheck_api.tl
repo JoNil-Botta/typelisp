@@ -47,6 +47,8 @@
   ;; typecheck. The downstream specialize call re-normalizes harmlessly.
   (begin
     (tc_core.tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-macro-call-site-state-reset!
+      (tc_core.tc-job-state-macro-call-sites job-state))
     (tc_core.tc-typecheck-result-with-pool-check
       (let
         [generated-result : spec.ResultGenProgramWithPaths
@@ -282,6 +284,8 @@
   [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
   (begin
     (tc_core.tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-macro-call-site-state-reset!
+      (tc_core.tc-job-state-macro-call-sites job-state))
     (let
       [generated-result : spec.ResultGenProgramWithPaths
         (spec.gen-normalize-program-with-paths-and-pools program paths "" pools)]
@@ -345,6 +349,8 @@
   [intern-state : ci.InternCompatState]) : tc_core.ResultCompilerTypecheckChecked
   (begin
     (tc_core.tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-macro-call-site-state-reset!
+      (tc_core.tc-job-state-macro-call-sites job-state))
     (tc_core.tc-typecheck-checked-result-with-pool-check
       (let
         [generated-result : spec.ResultGenProgramWithPaths

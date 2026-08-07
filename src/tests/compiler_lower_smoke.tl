@@ -287,7 +287,7 @@
         (sym_i64_env.sym-i64-empty)
         roots)
         [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-          (match (compiler_lower.lower-compiler-program-with-decl-paths
+          (match (compiler_lower_tests.lower-compiler-program-with-decl-paths
             entry
             (ast.ast-program decls)
             paths)
@@ -513,7 +513,7 @@
   (match (parser.parse-ast-source
     (compiler_lower_tests.compiler-lower-module-entry-main-source))
     [(parser.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (compiler_lower_tests.lower-compiler-program-with-decl-paths
         "stdlib/arena.tl"
         program
         (ast.ast-decl-path-list-new))
@@ -616,7 +616,7 @@
   (match (parser.parse-ast-source
     (compiler-lower-smoke-stdlib-string-public-substring-source))
     [(parser.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (compiler_lower_tests.lower-compiler-program-with-decl-paths
         "stdlib/string.tl"
         program
         (compiler-lower-smoke-stdlib-string-public-substring-paths))

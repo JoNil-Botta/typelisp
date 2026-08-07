@@ -6694,17 +6694,6 @@
               "this argument carries an arena region that the parameter does not accept")]
           [(TcMaybeAstSourceSpan.No) message])])))
 
-;; This sits on successful type-render paths used while constructing compiler
-;; keys, not only on diagnostics. Expand the common intern-id case in place so
-;; structural display safety does not add a function call or eagerly construct
-;; the numeric fallback during every ordinary lifetime render.
-(defmacro (tc-lifetime-name-render [name : comptime.Expr]) : comptime.Expr
-  `(let
-    [lifetime-name-id : i64 ,name]
-    (ci.intern-syntax-name-text-or
-      lifetime-name-id
-      (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">"))))
-
 (define (tc-spanned-escape-error
   [inner : ast.AstExpr]
   [span : ast.AstSourceSpan]
@@ -11670,6 +11659,11 @@
 
 (define (tc-elided-lifetime-name-prefix) : String
   "\n__typelisp_signature_elided_lifetime_")
+
+(define (tc-lifetime-name-render [name : i64]) : String
+  (ci.intern-syntax-name-text-or
+    name
+    (str_cat.str-cat "<id:" (string.int->string name) ">")))
 
 (define (tc-elaborated-lifetime-hidden? [name : i64]) : bool
   (or

@@ -21,6 +21,8 @@
 (import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector i64 core) as i64vec)
 
 (define nb-modulus : i64
   1000000007)
@@ -97,12 +99,15 @@
 (define (nb-draw [state : i64]) : i64
   (bit-and (shr state 33) 2147483647))
 
+(define (nb-zero-vec [n : i64]) : i64vec.Vec
+  (i64vec.Vec (array.make-array i64 n) n))
+
 (define (nb-seed
-  [px : (Array i64)]
-  [py : (Array i64)]
-  [vx : (Array i64)]
-  [vy : (Array i64)]
-  [mass : (Array i64)]
+  [px : (&mut px (Slice i64))]
+  [py : (&mut py (Slice i64))]
+  [vx : (&mut vx (Slice i64))]
+  [vy : (&mut vy (Slice i64))]
+  [mass : (&mut mass (Slice i64))]
   [n : i64]
   [seed : i64]) : i64
   (let
@@ -125,11 +130,11 @@
       state)))
 
 (define (nb-forces
-  [px : (Array i64)]
-  [py : (Array i64)]
-  [mass : (Array i64)]
-  [ax : (Array i64)]
-  [ay : (Array i64)]
+  [px : (&mut px (Slice i64))]
+  [py : (&mut py (Slice i64))]
+  [mass : (&mut mass (Slice i64))]
+  [ax : (&mut ax (Slice i64))]
+  [ay : (&mut ay (Slice i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -163,12 +168,12 @@
       unit)))
 
 (define (nb-integrate
-  [px : (Array i64)]
-  [py : (Array i64)]
-  [vx : (Array i64)]
-  [vy : (Array i64)]
-  [ax : (Array i64)]
-  [ay : (Array i64)]
+  [px : (&mut px (Slice i64))]
+  [py : (&mut py (Slice i64))]
+  [vx : (&mut vx (Slice i64))]
+  [vy : (&mut vy (Slice i64))]
+  [ax : (&mut ax (Slice i64))]
+  [ay : (&mut ay (Slice i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -216,10 +221,10 @@
   (% (+ (% value nb-modulus) nb-modulus) nb-modulus))
 
 (define (nb-checksum
-  [px : (Array i64)]
-  [py : (Array i64)]
-  [vx : (Array i64)]
-  [vy : (Array i64)]
+  [px : (&mut px (Slice i64))]
+  [py : (&mut py (Slice i64))]
+  [vx : (&mut vx (Slice i64))]
+  [vy : (&mut vy (Slice i64))]
   [n : i64]) : i64
   (let
     [i : i64 0]
@@ -236,24 +241,46 @@
 
 (define (nb-bench [n : i64] [rounds : i64]) : i64
   (let
-    [px : (Array i64) (array.make-array i64 n)]
-    [py : (Array i64) (array.make-array i64 n)]
-    [vx : (Array i64) (array.make-array i64 n)]
-    [vy : (Array i64) (array.make-array i64 n)]
-    [ax : (Array i64) (array.make-array i64 n)]
-    [ay : (Array i64) (array.make-array i64 n)]
-    [mass : (Array i64) (array.make-array i64 n)]
+    [px : i64vec.Vec (nb-zero-vec n)]
+    [py : i64vec.Vec (nb-zero-vec n)]
+    [vx : i64vec.Vec (nb-zero-vec n)]
+    [vy : i64vec.Vec (nb-zero-vec n)]
+    [ax : i64vec.Vec (nb-zero-vec n)]
+    [ay : i64vec.Vec (nb-zero-vec n)]
+    [mass : i64vec.Vec (nb-zero-vec n)]
     [round : i64 0]
     [acc : i64 0]
     (begin
-      (nb-seed px py vx vy mass n 1)
-      (while (< round rounds)
+      (let
+        [px-slots : (&mut px (Slice i64)) (i64vec.view-mut (&mut px))]
+        [py-slots : (&mut py (Slice i64)) (i64vec.view-mut (&mut py))]
+        [vx-slots : (&mut vx (Slice i64)) (i64vec.view-mut (&mut vx))]
+        [vy-slots : (&mut vy (Slice i64)) (i64vec.view-mut (&mut vy))]
+        [ax-slots : (&mut ax (Slice i64)) (i64vec.view-mut (&mut ax))]
+        [ay-slots : (&mut ay (Slice i64)) (i64vec.view-mut (&mut ay))]
+        [mass-slots : (&mut mass (Slice i64)) (i64vec.view-mut (&mut mass))]
         (begin
-          (nb-forces px py mass ax ay n)
-          (nb-integrate px py vx vy ax ay n)
-          (set! acc (% (+ (* acc 31) (nb-checksum px py vx vy n)) nb-modulus))
-          (set! round (+ round 1))))
-      acc)))
+          (nb-seed px-slots py-slots vx-slots vy-slots mass-slots n 1)
+          (while (< round rounds)
+            (begin
+              (nb-forces px-slots py-slots mass-slots ax-slots ay-slots n)
+              (nb-integrate
+                px-slots
+                py-slots
+                vx-slots
+                vy-slots
+                ax-slots
+                ay-slots
+                n)
+              (set!
+                acc
+                (%
+                  (+
+                    (* acc 31)
+                    (nb-checksum px-slots py-slots vx-slots vy-slots n))
+                  nb-modulus))
+              (set! round (+ round 1))))
+          acc)))))
 
 (define (main) : i64
   (let

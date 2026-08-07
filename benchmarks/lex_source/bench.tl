@@ -42,7 +42,7 @@
 ;# arms are unreachable), building the `(Array token.SpannedToken)` output,
 ;# interning symbol and string lexemes (that path is benchmarks/intern_table),
 ;# converting integer literals to values, and unescaping string literals into a
-;# TextBuf. The corpus is copied once into an `(Array u8)` rather than being
+;# TextBuf. The corpus is copied once into a `u8vec.Vec` rather than being
 ;# walked as the compiler's `String`, so the row measures byte-class dispatch
 ;# and not `string.string-ref` dispatch.
 ;#
@@ -53,10 +53,12 @@
 ;# arguments, so nothing can be constant folded. All arithmetic wraps modulo
 ;# 2^64 in both languages, so the printed decimal matches the C baseline's
 ;# `%lld`.
-(import stdlib.array)
 (import stdlib.byte_buf)
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector u8) as u8vec)
 
 ;; Token-kind tags, kept in the numbering of src/token.tl `tag`.
 (define ls-tag-lparen : i64
@@ -123,13 +125,13 @@
 (define (ls-space? [c : i64]) : bool
   (or (= c 32) (= c 9) (= c 10) (= c 13)))
 
-(define (ls-byte [buf : (Array u8)] [index : i64]) : i64
-  (cast (array-ref buf index) : i64))
+(define (ls-byte [buf : (& buf u8vec.Vec)] [index : i64]) : i64
+  (cast (array-ref (u8vec.slots buf) index) : i64))
 
 ;; ---- scanners (src/lex.tl) ----
 ;; `scan-int-end`: the digit run starting at `start`. The bounds check is kept
 ;; outside the element read, matching the lexer's discipline.
-(define (ls-scan-int-end [buf : (Array u8)] [start : i64] [n : i64]) : i64
+(define (ls-scan-int-end [buf : (& buf u8vec.Vec)] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
     [keep : bool true]
@@ -143,7 +145,7 @@
       j)))
 
 (define (ls-scan-based-int-end
-  [buf : (Array u8)]
+  [buf : (& buf u8vec.Vec)]
   [start : i64]
   [n : i64]
   [base : i64]) : i64
@@ -163,19 +165,19 @@
           (set! keep false)))
       j)))
 
-(define (ls-float-tail? [buf : (Array u8)] [int-end : i64] [n : i64]) : bool
+(define (ls-float-tail? [buf : (& buf u8vec.Vec)] [int-end : i64] [n : i64]) : bool
   (if (< (+ int-end 1) n)
     (if (= (ls-byte buf int-end) 46)
       (ls-digit? (ls-byte buf (+ int-end 1)))
       false)
     false))
 
-(define (ls-number-digits-start [buf : (Array u8)] [start : i64]) : i64
+(define (ls-number-digits-start [buf : (& buf u8vec.Vec)] [start : i64]) : i64
   (if (= (ls-byte buf start) 45)
     (+ start 1)
     start))
 
-(define (ls-number-prefixed? [buf : (Array u8)] [start : i64] [n : i64]) : bool
+(define (ls-number-prefixed? [buf : (& buf u8vec.Vec)] [start : i64] [n : i64]) : bool
   (let
     [digits-start : i64 (ls-number-digits-start buf start)]
     (if (< (+ digits-start 1) n)
@@ -186,14 +188,17 @@
         false)
       false)))
 
-(define (ls-number-prefix-base [buf : (Array u8)] [start : i64]) : i64
+(define (ls-number-prefix-base [buf : (& buf u8vec.Vec)] [start : i64]) : i64
   (let
     [prefix : i64 (ls-byte buf (+ (ls-number-digits-start buf start) 1))]
     (if (or (= prefix 120) (= prefix 88))
       16
       2)))
 
-(define (ls-scan-decimal-number-end [buf : (Array u8)] [start : i64] [n : i64]) : i64
+(define (ls-scan-decimal-number-end
+  [buf : (& buf u8vec.Vec)]
+  [start : i64]
+  [n : i64]) : i64
   (let
     [digits-start : i64 (ls-number-digits-start buf start)]
     [int-end : i64 (ls-scan-int-end buf digits-start n)]
@@ -201,20 +206,23 @@
       (ls-scan-int-end buf (+ int-end 1) n)
       int-end)))
 
-(define (ls-scan-prefixed-int-end [buf : (Array u8)] [start : i64] [n : i64]) : i64
+(define (ls-scan-prefixed-int-end
+  [buf : (& buf u8vec.Vec)]
+  [start : i64]
+  [n : i64]) : i64
   (let
     [digits-start : i64 (ls-number-digits-start buf start)]
     [base : i64 (ls-number-prefix-base buf start)]
     (ls-scan-based-int-end buf (+ digits-start 2) n base)))
 
-(define (ls-scan-number-end [buf : (Array u8)] [start : i64] [n : i64]) : i64
+(define (ls-scan-number-end [buf : (& buf u8vec.Vec)] [start : i64] [n : i64]) : i64
   (if (ls-number-prefixed? buf start n)
     (ls-scan-prefixed-int-end buf start n)
     (ls-scan-decimal-number-end buf start n)))
 
 ;; `number-float?`: a prefixed literal is never a float, otherwise the integer
 ;; run is rescanned to look for a `.digit` tail. The rescan is the lexer's.
-(define (ls-number-float? [buf : (Array u8)] [start : i64] [n : i64]) : bool
+(define (ls-number-float? [buf : (& buf u8vec.Vec)] [start : i64] [n : i64]) : bool
   (if (ls-number-prefixed? buf start n)
     false
     (ls-float-tail?
@@ -222,7 +230,10 @@
       (ls-scan-int-end buf (ls-number-digits-start buf start) n)
       n)))
 
-(define (ls-negative-number-start? [buf : (Array u8)] [start : i64] [n : i64]) : bool
+(define (ls-negative-number-start?
+  [buf : (& buf u8vec.Vec)]
+  [start : i64]
+  [n : i64]) : bool
   (if (= (ls-byte buf start) 45)
     (if (< (+ start 1) n)
       (ls-digit? (ls-byte buf (+ start 1)))
@@ -231,15 +242,7 @@
 
 ;; `symbol-slice-eq?` at its two call sites: the `pkg` prefix that lets a `:`
 ;; continue a symbol run, and the `:as` import keyword.
-(define (ls-slice-pkg? [buf : (Array u8)] [start : i64] [end : i64]) : bool
-  (if (= (- end start) 3)
-    (and
-      (= (ls-byte buf start) 112)
-      (= (ls-byte buf (+ start 1)) 107)
-      (= (ls-byte buf (+ start 2)) 103))
-    false))
-
-(define (ls-slice-colon-as? [buf : (Array u8)] [start : i64] [end : i64]) : bool
+(define (ls-slice-colon-as? [buf : (& buf u8vec.Vec)] [start : i64] [end : i64]) : bool
   (if (= (- end start) 3)
     (and
       (= (ls-byte buf start) 58)
@@ -247,16 +250,26 @@
       (= (ls-byte buf (+ start 2)) 115))
     false))
 
-(define (ls-scan-symbol-end [buf : (Array u8)] [start : i64] [n : i64]) : i64
+(define (ls-scan-symbol-end [buf : (& buf u8vec.Vec)] [start : i64] [n : i64]) : i64
   (let
+    [slots (u8vec.slots buf)]
     [j : i64 start]
     [keep : bool true]
     (begin
       (while keep
         (if (< j n)
           (let
-            [c : i64 (ls-byte buf j)]
-            (if (and (= c 58) (> j start) (not (ls-slice-pkg? buf start j)))
+            [c : i64 (cast (array-ref slots j) : i64)]
+            (if (and
+              (= c 58)
+              (> j start)
+              (not
+                (if (= (- j start) 3)
+                  (and
+                    (= (cast (array-ref slots start) : i64) 112)
+                    (= (cast (array-ref slots (+ start 1)) : i64) 107)
+                    (= (cast (array-ref slots (+ start 2)) : i64) 103))
+                  false)))
               (set! keep false)
               (if (ls-symbol-char? c)
                 (set! j (+ j 1))
@@ -266,7 +279,7 @@
 
 ;; `colon-symbol-head?`: a `:` opens a keyword symbol only when the first
 ;; non-space byte before it is `(`, so annotations stay standalone `:` tokens.
-(define (ls-colon-symbol-head? [buf : (Array u8)] [start : i64]) : bool
+(define (ls-colon-symbol-head? [buf : (& buf u8vec.Vec)] [start : i64]) : bool
   (let
     [j : i64 (- start 1)]
     [keep : bool true]
@@ -284,7 +297,7 @@
                 (set! keep false))))))
       result)))
 
-(define (ls-colon-token-end [buf : (Array u8)] [start : i64] [n : i64]) : i64
+(define (ls-colon-token-end [buf : (& buf u8vec.Vec)] [start : i64] [n : i64]) : i64
   (let
     [end : i64 (ls-scan-symbol-end buf start n)]
     (if (or
@@ -295,7 +308,7 @@
 
 ;; `scan-str-end-result`: forward to the first unescaped `"`. A backslash
 ;; escapes the following byte, so `\"` stays inside the literal.
-(define (ls-scan-str-end [buf : (Array u8)] [start : i64] [n : i64]) : i64
+(define (ls-scan-str-end [buf : (& buf u8vec.Vec)] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
     [keep : bool true]
@@ -314,7 +327,7 @@
           (set! keep false)))
       j)))
 
-(define (ls-scan-comment-end [buf : (Array u8)] [start : i64] [n : i64]) : i64
+(define (ls-scan-comment-end [buf : (& buf u8vec.Vec)] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
     [keep : bool true]
@@ -333,7 +346,7 @@
 
 ;; `apostrophe-char-literal-result`, collapsed to the end index of the literal
 ;; or -1 for "this apostrophe is a quote prefix, not a character literal".
-(define (ls-apostrophe-char-end [buf : (Array u8)] [i : i64] [n : i64]) : i64
+(define (ls-apostrophe-char-end [buf : (& buf u8vec.Vec)] [i : i64] [n : i64]) : i64
   (if (< (+ i 1) n)
     (let
       [payload : i64 (ls-byte buf (+ i 1))]
@@ -367,7 +380,7 @@
 ;; One pass over the corpus. Line and column advance exactly as they do in
 ;; `into-spanned-tokens-result`, including the `advance-position` rescan
 ;; a string literal needs because it may contain newlines.
-(define (ls-tokenize [buf : (Array u8)] [n : i64] [seed-acc : i64]) : i64
+(define (ls-tokenize [buf : (& buf u8vec.Vec)] [n : i64] [seed-acc : i64]) : i64
   (let
     [i : i64 0]
     [line : i64 1]
@@ -503,12 +516,13 @@
       (+ (* acc 1000003) (+ (* line 31) (+ (* col 131) count))))))
 
 ;; Load the corpus once, then tokenize it `rounds` times. The corpus text is
-;; copied into an `(Array u8)` so both implementations walk the same bytes
+;; copied into a `u8vec.Vec` so both implementations walk the same bytes
 ;; through the same kind of indexed byte access.
-(define (ls-string-to-array [text : String]) : (Array u8)
+(define (ls-string-to-vec [text : String]) : u8vec.Vec
   (let
     [n : i64 (string-length text)]
-    [out : (Array u8) (array.make-array u8 n)]
+    [out : u8vec.Vec (u8vec.Vec (array.make-array u8 n) n)]
+    [slots (u8vec.slots-mut (&mut out))]
     [src : (Ptr u8)
       (unsafe
         (string-data (& text)))]
@@ -517,7 +531,7 @@
       (while (< i n)
         (begin
           (array-set!
-            out
+            slots
             i
             (unsafe
               (ptr-read (ptr-offset src i))))
@@ -527,14 +541,14 @@
 (define (ls-bench [path : String] [rounds : i64]) : i64
   (let
     [text : String (byte_buf.to-string (io.read-file path))]
-    [buf : (Array u8) (ls-string-to-array text)]
-    [n : i64 (array-length buf)]
+    [buf : u8vec.Vec (ls-string-to-vec text)]
+    [n : i64 (u8vec.len (& buf))]
     [round : i64 0]
     [acc : i64 0]
     (begin
       (while (< round rounds)
         (begin
-          (set! acc (ls-tokenize buf n acc))
+          (set! acc (ls-tokenize (& buf) n acc))
           (set! round (+ round 1))))
       acc)))
 

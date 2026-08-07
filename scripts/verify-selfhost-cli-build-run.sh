@@ -1176,7 +1176,7 @@ status=$?
 set -e
 assert_status package-graph-github-cache-hit "$status" 0
 assert_empty package-graph-github-cache-hit "$WORKDIR/package-graph-github-cache-hit.err"
-assert_contains package-graph-github-cache-hit "$WORKDIR/package-graph-github-cache-hit.out" "Built $(generated_path "$GITHUB_CACHE_EXE")"
+assert_contains package-graph-github-cache-hit "$WORKDIR/package-graph-github-cache-hit.out" "Fresh $(generated_path "$GITHUB_CACHE_EXE")"
 
 mv "$GITHUB_CACHE_REMOTE_OFFLINE" "$GITHUB_CACHE_REMOTE"
 printf 'typelisp-package-cache-v1\nurl=%s\ncommit=stale\n' "$GITHUB_CACHE_URL" > "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt"
@@ -1187,7 +1187,7 @@ status=$?
 set -e
 assert_status package-graph-github-cache-refetch "$status" 0
 assert_empty package-graph-github-cache-refetch "$WORKDIR/package-graph-github-cache-refetch.err"
-assert_contains package-graph-github-cache-refetch "$WORKDIR/package-graph-github-cache-refetch.out" "Built $(generated_path "$GITHUB_CACHE_EXE")"
+assert_contains package-graph-github-cache-refetch "$WORKDIR/package-graph-github-cache-refetch.out" "Fresh $(generated_path "$GITHUB_CACHE_EXE")"
 [ -d "$GITHUB_CACHE_ENTRY.corrupt.1" ] || fail "package-graph-github-cache-refetch did not preserve corrupt cache entry"
 assert_contains package-graph-github-cache-refetch "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt" "commit=$GITHUB_CACHE_REV"
 

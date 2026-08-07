@@ -4942,7 +4942,7 @@
 
 (define (build-package-stage-dir-attempt
   [output-dir : String]
-  [name : String]
+  [_name : String]
   [attempt : i64]) : ResultBuildString
   (if (> attempt 64)
     (ResultBuildString.Err "build: package artifact staging has no free path")
@@ -4950,13 +4950,9 @@
       [candidate : String
         (load.compiler-load-join-root-path
           output-dir
-          (str_cat.str-cat
-            ".typelisp-stage-"
-            name
-            "-"
-            (string.int->string attempt)))]
+          (str_cat.str-cat ".t" (string.int->string attempt)))]
       (if (build-package-path-present? candidate)
-        (build-package-stage-dir-attempt output-dir name (+ attempt 1))
+        (build-package-stage-dir-attempt output-dir _name (+ attempt 1))
         (if (build-mkdir-ok-owned? candidate)
           (ResultBuildString.Ok candidate)
           (ResultBuildString.Err
@@ -4964,8 +4960,17 @@
               "build: failed to create package artifact staging directory "
               candidate)))))))
 
-(define (build-package-stage-file [dir : String] [final-path : String]) : String
-  (load.compiler-load-join-root-path dir (fs.basename (& final-path))))
+(define (build-package-stage-file
+  [dir : String]
+  [stem : String]
+  [final-path : String]) : String
+  (let
+    [extension : String (fs.extension (& final-path))]
+    (load.compiler-load-join-root-path
+      dir
+      (if (= (string.string-length extension) 0)
+        stem
+        (str_cat.str-cat stem "." extension)))))
 
 (define (build-package-stage-paths
   [output-dir : String]
@@ -4981,11 +4986,11 @@
       (ResultBuildPackageStagePaths.Ok
         (BuildPackageStagePaths
           dir
-          (build-package-stage-file dir asm-path)
-          (build-package-stage-file dir obj-path)
-          (build-package-stage-file dir artifact-path)
-          (build-package-stage-file dir fingerprint-path)
-          (build-package-stage-file dir tlci-path)))]))
+          (build-package-stage-file dir "a" asm-path)
+          (build-package-stage-file dir "o" obj-path)
+          (build-package-stage-file dir "r" artifact-path)
+          (build-package-stage-file dir "f" fingerprint-path)
+          (build-package-stage-file dir "t" tlci-path)))]))
 
 (define (build-package-remove-staged-file [path : String]) : unit
   (begin

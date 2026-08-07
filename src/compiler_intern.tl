@@ -416,6 +416,55 @@
     (intern-macro-global-source-name-id id)
     fallback))
 
+;; Hygienic macro locals occupy the structural lane immediately above macro
+;; globals. The typechecker owns the full packing scheme (macro, lexical depth,
+;; and source name), while every consumer only needs the range predicate and
+;; the source-name remainder in order to render the identity safely.
+(define (intern-macro-local-structural-base) : i64
+  (let
+    [stride : i64 (intern-capacity)]
+    (+ (intern-macro-global-structural-base) (* 2 (* stride stride)))))
+
+(define (intern-macro-local-structural-top) : i64
+  (let
+    [stride : i64 (intern-capacity)]
+    [stride2 : i64 (* stride stride)]
+    (+
+      (intern-macro-local-structural-base)
+      (* 1024 (* stride (+ stride2 (+ stride 1)))))))
+
+(define (intern-macro-local-structural-id? [id : i64]) : bool
+  (and
+    (>= id (intern-macro-local-structural-base))
+    (< id (intern-macro-local-structural-top))))
+
+(define (intern-macro-local-source-name-id [id : i64]) : i64
+  (% (- id (intern-macro-local-structural-base)) (intern-capacity)))
+
+;; Name-bearing AST fields accept pool ids plus several structural syntax-id
+;; families. Collapse any documented family to its renderable source spelling;
+;; callers retain the original integer wherever identity, rather than display,
+;; matters. Unknown structural values return the supplied fallback instead of
+;; reaching intern-str and aborting on an array index.
+(define (intern-syntax-source-name-id-or [id : i64] [fallback : i64]) : i64
+  (cond
+    [(intern-renderable-id? id) id]
+    [(intern-template-source-id? id) (intern-template-source-name-id id)]
+    [(intern-structural-local-id? id)
+      (intern-structural-local-source-name-id id)]
+    [(intern-macro-global-structural-id? id)
+      (intern-macro-global-source-name-id id)]
+    [(intern-macro-local-structural-id? id)
+      (intern-macro-local-source-name-id id)]
+    [else fallback]))
+
+(define (intern-syntax-name-text-or [id : i64] [fallback : String]) : String
+  (let
+    [source-id : i64 (intern-syntax-source-name-id-or id -1)]
+    (if (>= source-id 0)
+      (intern-str source-id)
+      fallback)))
+
 (defstruct InternId
   (value u32))
 
@@ -3351,6 +3400,8 @@
       [template-base : i64 (intern-template-source-base)]
       [local-base : i64 (intern-structural-local-base)]
       [macro-base : i64 (intern-macro-global-structural-base)]
+      [macro-local-base : i64 (intern-macro-local-structural-base)]
+      [macro-local-top : i64 (intern-macro-local-structural-top)]
       [ok : bool true]
       (begin
         ;; A power of two, so `intern-bucket` masks instead of dividing.
@@ -3367,11 +3418,13 @@
         (unless (> macro-base 0) (set! ok false))
         (unless (> local-base 0) (set! ok false))
         (unless (> template-base 0) (set! ok false))
-        ;; ... the ranges stay ordered, with the macro-global range clearing the
-        ;; structural-local base ...
+        ;; ... the ranges stay ordered, with the macro-global lane followed by
+        ;; the wider macro-local lane before compiler structural locals ...
         (unless
-          (< (+ macro-base (* 2 (* capacity capacity))) local-base)
+          (= (+ macro-base (* 2 (* capacity capacity))) macro-local-base)
           (set! ok false))
+        (unless (< macro-local-base macro-local-top) (set! ok false))
+        (unless (<= macro-local-top local-base) (set! ok false))
         (unless (< local-base template-base) (set! ok false))
         ;; ... the quasiquoted range stays below the first composite structural
         ;; key, whose owner ids start at one ...
@@ -3387,6 +3440,7 @@
         (unless (= (% template-base capacity) 0) (set! ok false))
         (unless (= (% local-base capacity) 0) (set! ok false))
         (unless (= (% macro-base capacity) 0) (set! ok false))
+        (unless (= (% macro-local-base capacity) 0) (set! ok false))
         ;; The range predicates hold at both edges and reject one past each.
         (unless (intern-template-source-id? template-base) (set! ok false))
         (unless
@@ -3429,6 +3483,21 @@
         (unless
           (intern-macro-global-structural-id? (+ macro-base 3))
           (set! ok false))
+        (unless
+          (intern-macro-local-structural-id? macro-local-base)
+          (set! ok false))
+        (unless
+          (intern-macro-local-structural-id? (- macro-local-top 1))
+          (set! ok false))
+        (unless
+          (not (intern-macro-local-structural-id? (- macro-local-base 1)))
+          (set! ok false))
+        (unless
+          (not (intern-macro-local-structural-id? macro-local-top))
+          (set! ok false))
+        (unless
+          (= (intern-macro-local-source-name-id (+ macro-local-base 3)) 3)
+          (set! ok false))
         ;; A renderable id is a pool id and nothing else.
         (unless (intern-renderable-id? (- capacity 1)) (set! ok false))
         (unless (not (intern-renderable-id? capacity)) (set! ok false))
@@ -3441,6 +3510,34 @@
         (unless (= (intern-pool-len) 0) (set! ok false))
         (unless (= (intern-generated-count) 0) (set! ok false))
         (unless (= (intern "id-space-lane-probe") 0) (set! ok false))
+        (unless
+          (=
+            (intern-syntax-source-name-id-or (intern-template-source-id 0) -1)
+            0)
+          (set! ok false))
+        (unless
+          (=
+            (intern-syntax-source-name-id-or
+              (intern-structural-local-id 7 0)
+              -1)
+            0)
+          (set! ok false))
+        (unless
+          (= (intern-syntax-source-name-id-or macro-base -1) 0)
+          (set! ok false))
+        (unless
+          (= (intern-syntax-source-name-id-or macro-local-base -1) 0)
+          (set! ok false))
+        (unless
+          (intern-private-string-eq
+            (intern-syntax-name-text-or macro-local-base "missing")
+            "id-space-lane-probe")
+          (set! ok false))
+        (unless
+          (intern-private-string-eq
+            (intern-syntax-name-text-or capacity "missing")
+            "missing")
+          (set! ok false))
         (unless
           (= (intern-generated-name "id-space-lane-probe") (- capacity 1))
           (set! ok false))

@@ -3452,7 +3452,7 @@
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     ""
     (str_cat.str-cat
-      (ci.intern-str
+      (compiler-ir-lifetime-render
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
       (if (>= (+ index 1) (ast.ast-lifetime-list-len lifetimes))
         ""
@@ -3473,15 +3473,9 @@
     (compiler-ir-lifetime-list-render lifetimes)
     ")"))
 
-;; A lifetime id outside the intern table's renderable range would abort the
-;; whole dump on the lookup below. Developer observability must not fail over
-;; an unrenderable annotation: keep the numeric id visible instead.
-(define (compiler-ir-lifetime-renderable? [region : i64]) : bool
-  (and (>= region 0) (< region (ci.intern-capacity))))
-
 (define (compiler-ir-lifetime-render [region : i64]) : String
-  (if (compiler-ir-lifetime-renderable? region)
-    (ci.intern-str region)
+  (ci.intern-syntax-name-text-or
+    region
     (str_cat.str-cat "<id:" (string.int->string region) ">")))
 
 (define (compiler-ir-type-render [type-segment-bases : i64] [ty : ast.AstType]) : String

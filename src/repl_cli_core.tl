@@ -206,7 +206,7 @@
     (string.append
       " "
       (string.append
-        (ci.intern-str
+        (tc.tc-hygiene-name-text-id
           (ast.ast-lifetime-list-get
             lifetimes
             index
@@ -279,7 +279,7 @@
       (string.append
         "(& "
         (string.append
-          (ci.intern-str region)
+          (tc.tc-hygiene-name-text-id region)
           (string.append
             " "
             (string.append (repl-type-render (ast.ty-node-get inner)) ")"))))]
@@ -287,7 +287,7 @@
       (string.append
         "(&mut "
         (string.append
-          (ci.intern-str region)
+          (tc.tc-hygiene-name-text-id region)
           (string.append
             " "
             (string.append (repl-type-render (ast.ty-node-get inner)) ")"))))]
@@ -295,7 +295,7 @@
       (string.append
         "(in "
         (string.append
-          (ci.intern-str region)
+          (tc.tc-hygiene-name-text-id region)
           (string.append
             " "
             (string.append (repl-type-render (ast.ty-node-get inner)) ")"))))]

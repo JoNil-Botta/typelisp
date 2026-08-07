@@ -144,6 +144,28 @@ if ! cmp -s "$SLICE_IR_FIRST_NORMALIZED" "$SLICE_IR_SECOND_NORMALIZED"; then
 fi
 grep -F "(& lifetime (Slice i64))" "$SLICE_IR_FIRST_NORMALIZED" >/dev/null
 
+# Macro hygiene gives generated local bindings structural identities rather
+# than pool ids. Lifetime rendering must decode that documented identity: both
+# call-site borrows below come from the declaration-emitting text-buffer macro.
+MACRO_LIFETIME_SOURCE="$ROOT/tests/golden/macro_hygiene_lifetime_ir.tl"
+MACRO_LIFETIME_IR="$WORKDIR/macro_hygiene_lifetime.ir"
+
+"$COMPILER" compile "$MACRO_LIFETIME_SOURCE" \
+    --dump-ir \
+    --verify-ir \
+    --opt-level 0 \
+    -o "$MACRO_LIFETIME_IR" \
+    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/macro_lifetime.stdout" 2>"$WORKDIR/macro_lifetime.stderr"
+
+if grep -F "<id:" "$MACRO_LIFETIME_IR" >/dev/null; then
+    echo "macro-hygiene lifetime dump retained an undecoded structural id" >&2
+    exit 1
+fi
+grep -F "str-as-bytes" "$MACRO_LIFETIME_IR" | grep -F "(& chunk bytes)" >/dev/null
+grep -F "str-as-bytes" "$MACRO_LIFETIME_IR" | grep -F "(& rendered bytes)" >/dev/null
+
 # #6115 regression: a scaled dump must render with memory proportional to the
 # output, not the retired quadratic recursive concatenation. 6000 tiny
 # functions render ~1.5MB of IR text; the old render copied the remaining

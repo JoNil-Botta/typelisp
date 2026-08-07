@@ -6711,18 +6711,18 @@
                 (tc-rich-error-one-secondary
                   value-span
                   message
-                  (tc-arena-escape-help (ci.intern-str region))
+                  (tc-arena-escape-help (tc-lifetime-name-render region))
                   span
                   (str_cat.str-cat
                     "with-arena `"
-                    (ci.intern-str region)
+                    (tc-lifetime-name-render region)
                     "` scope resets before this value can escape")))]
             [(TcMaybeAstSourceSpan.No)
               (TcMaybeString.Some
                 (tc-rich-error-one-secondary
                   span
                   message
-                  (tc-arena-escape-help (ci.intern-str region))
+                  (tc-arena-escape-help (tc-lifetime-name-render region))
                   span
                   "with-arena scope boundary"))])
           (TcMaybeString.No))]
@@ -11094,11 +11094,16 @@
       (ci.intern-str (ci.intern-structural-local-source-name-id name-id))]
     [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
       (ci.intern-str (macro-hygiene-structural-source-name-id name-id))]
+    [(ci.intern-template-source-id? name-id)
+      (ci.intern-str (ci.intern-template-source-name-id name-id))]
     [(or
         (csym.compiler-composite-pair-key-id? name-id)
         (csym.compiler-composite-triple-key-id? name-id))
       (ast.ast-nominal-name-id-display name-id)]
-    [else (ci.intern-str name-id)]))
+    [else
+      (ci.intern-syntax-name-text-or
+        name-id
+        (str_cat.str-cat "<id:" (string.int->string name-id) ">"))]))
 
 (define (tc-hygiene-global-base [name : String]) : String
   (tc-hygiene-name-base name (tc-hygiene-global-prefix)))
@@ -11640,7 +11645,7 @@
       [head : i64
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback))]
       (str_cat.str-cat
-        (ci.intern-str head)
+        (tc-lifetime-name-render head)
         (if (>= (+ index 1) (ast.ast-lifetime-list-len lifetimes))
           ""
           (str_cat.str-cat
@@ -11655,11 +11660,16 @@
 (define (tc-elided-lifetime-name-prefix) : String
   "\n__typelisp_signature_elided_lifetime_")
 
+(define (tc-lifetime-name-render [name : i64]) : String
+  (ci.intern-syntax-name-text-or
+    name
+    (str_cat.str-cat "<id:" (string.int->string name) ">")))
+
 (define (tc-elaborated-lifetime-hidden? [name : i64]) : bool
   (or
     (= name cbi.compiler-builtin-id-fix-empty)
     (tc-diag-string-prefix?
-      (ci.intern-str name)
+      (ci.intern-syntax-name-text-or name "")
       (tc-elided-lifetime-name-prefix))))
 
 (define (tc-type-render [ty : ast.AstType]) : String
@@ -11714,7 +11724,7 @@
         (str_cat.str-cat "(& " (tc-type-render (ast.ty-node-get inner)) ")")
         (str_cat.str-cat
           "(& "
-          (ci.intern-str region)
+          (tc-lifetime-name-render region)
           " "
           (tc-type-render (ast.ty-node-get inner))
           ")"))]
@@ -11723,14 +11733,14 @@
         (str_cat.str-cat "(&mut " (tc-type-render (ast.ty-node-get inner)) ")")
         (str_cat.str-cat
           "(&mut "
-          (ci.intern-str region)
+          (tc-lifetime-name-render region)
           " "
           (tc-type-render (ast.ty-node-get inner))
           ")"))]
     [(ast.AstType.Region region inner)
       (str_cat.str-cat
         "(Region "
-        (ci.intern-str region)
+        (tc-lifetime-name-render region)
         " "
         (tc-type-render (ast.ty-node-get inner))
         ")")]
@@ -28130,7 +28140,10 @@
   (and
     (>= lifetime-id 0)
     (not (tc-elaborated-lifetime-hidden? lifetime-id))
-    (not (string.eq (ci.intern-str lifetime-id) "program"))
+    (not
+      (and
+        (ci.intern-renderable-id? lifetime-id)
+        (string.eq (ci.intern-str lifetime-id) "program")))
     (not (tc-param-list-has-name-id-at? params lifetime-id 0))))
 
 (define (tc-bind-signature-lifetime-markers
@@ -53410,7 +53423,7 @@
           (ResultTcType.Err
             (string.append
               "typecheck: region-tagged value cannot escape with-arena '"
-              (string.append (ci.intern-str region) "'")))
+              (string.append (tc-lifetime-name-render region) "'")))
           (ResultTcType.Ok body-ty))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
@@ -53428,7 +53441,7 @@
           (ResultTcType.Err
             (string.append
               "typecheck: region-tagged value cannot escape with-arena '"
-              (string.append (ci.intern-str region) "'")))
+              (string.append (tc-lifetime-name-render region) "'")))
           (ResultTcType.Ok body-ty))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
@@ -79339,6 +79352,8 @@
       (> local-top local-base)
       ;; ... the globals lane ends exactly where the locals lane starts ...
       (= local-base (+ global-base (* 2 stride2)))
+      (= local-base (ci.intern-macro-local-structural-base))
+      (= local-top (ci.intern-macro-local-structural-top))
       ;; ... and the whole hygiene range clears the next family above it.
       (<= local-top (ci.intern-structural-local-base))
       (< (ci.intern-structural-local-base) (ci.intern-template-source-base))

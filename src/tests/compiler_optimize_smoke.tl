@@ -1891,6 +1891,189 @@
       [(not (= redefined-index 1)) 9]
       [else 42])))
 
+;; Rotated fixed-array loops enter the body with a literal seed, then guard each
+;; backedge with the stepped value.  The first input does not need a separately
+;; materialized comparison fact when the same literal bound proves it directly;
+;; every nonliteral/backedge input still has to be discharged on its own edge.
+(define (smoke-rotated-bce-params) : ir.CompilerIrParamList
+  (ir.compiler-ir-param-cons
+    (ir.CompilerIrParam.Param "backing-length" (ast.AstType.I64) 4)
+    (ir.compiler-ir-param-cons
+      (ir.CompilerIrParam.Param "other-length" (ast.AstType.I64) 5)
+      (ir.CompilerIrParamList.Nil))))
+
+(define (smoke-rotated-bce-entry
+  [start : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [op : ir.CompilerIrBinOp]) : ir.CompilerIrBlock
+  (ir.compiler-ir-block
+    (ir.compiler-ir-label "entry")
+    (ir.compiler-ir-instr-cons
+      (ir.CompilerIrInstr.BinOp 1 op start bound (ast.AstType.I64))
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var 1)
+          (ir.compiler-ir-label "body")
+          (ir.compiler-ir-label "exit"))
+        (ir.CompilerIrInstrList.Nil)))))
+
+(define (smoke-rotated-bce-body
+  [start : ir.CompilerIrValue]
+  [check-bound : ir.CompilerIrValue]) : ir.CompilerIrBlock
+  (ir.compiler-ir-block
+    (ir.compiler-ir-label "body")
+    (ir.compiler-ir-instr-cons
+      (ir.CompilerIrInstr.Phi
+        0
+        (ir.compiler-ir-phi-input-cons
+          start
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-phi-input-cons
+            (ir.CompilerIrValue.Var 2)
+            (ir.compiler-ir-label "latch")
+            (ir.CompilerIrPhiInputList.Nil)))
+        (ast.AstType.I64))
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.BoundsCheck
+          (ir.CompilerIrValue.Var 0)
+          check-bound
+          (ir.compiler-ir-label "bounds_ok"))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+          (ir.CompilerIrInstrList.Nil))))))
+
+(define (smoke-rotated-bce-latch
+  [bound : ir.CompilerIrValue]
+  [op : ir.CompilerIrBinOp]
+  [both-edges-enter : bool]) : ir.CompilerIrBlock
+  (ir.compiler-ir-block
+    (ir.compiler-ir-label "latch")
+    (ir.compiler-ir-instr-cons
+      (ir.CompilerIrInstr.BinOp
+        2
+        (ir.CompilerIrBinOp.Add)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.I64 1)
+        (ast.AstType.I64))
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.BinOp
+          3
+          op
+          (ir.CompilerIrValue.Var 2)
+          bound
+          (ast.AstType.I64))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var 3)
+            (ir.compiler-ir-label "body")
+            (if both-edges-enter
+              (ir.compiler-ir-label "body")
+              (ir.compiler-ir-label "exit")))
+          (ir.CompilerIrInstrList.Nil))))))
+
+(define (smoke-rotated-bce-blocks
+  [start : ir.CompilerIrValue]
+  [guard-bound : ir.CompilerIrValue]
+  [check-bound : ir.CompilerIrValue]
+  [op : ir.CompilerIrBinOp]
+  [both-edges-enter : bool]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-block-cons
+    (smoke-rotated-bce-entry start guard-bound op)
+    (ir.compiler-ir-block-cons
+      (smoke-rotated-bce-body start check-bound)
+      (ir.compiler-ir-block-cons
+        (smoke-rotated-bce-latch guard-bound op both-edges-enter)
+        (ir.compiler-ir-block-cons
+          (compiler_optimize_tests.opt-loop-bce-test-exit)
+          (ir.CompilerIrBlockList.Nil))))))
+
+(define (smoke-rotated-bce-count
+  [start : ir.CompilerIrValue]
+  [guard-bound : ir.CompilerIrValue]
+  [check-bound : ir.CompilerIrValue]
+  [op : ir.CompilerIrBinOp]
+  [both-edges-enter : bool]) : i64
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (smoke-rotated-bce-blocks
+        start
+        guard-bound
+        check-bound
+        op
+        both-edges-enter)]
+    (opt.opt-count-bounds-blocks
+      (opt.opt-bounds-dom-blocks-with-context
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt.opt-cfg-context-build blocks)
+        (smoke-rotated-bce-params)
+        6
+        blocks))))
+
+(define (smoke-rotated-literal-bce-self-test) : i64
+  (let
+    [fixed : i64
+      (smoke-rotated-bce-count
+        (ir.CompilerIrValue.I64 0)
+        (ir.CompilerIrValue.I64 9)
+        (ir.CompilerIrValue.I64 9)
+        (ir.CompilerIrBinOp.Lt)
+        false)]
+    ;; The dynamic form models a borrowed backing whose exact array-length SSA
+    ;; value feeds both the loop guard and the access check. A Vec live length
+    ;; is a distinct value (the mismatch case below) and proves nothing about
+    ;; backing capacity.
+    [borrowed-backing : i64
+      (smoke-rotated-bce-count
+        (ir.CompilerIrValue.I64 0)
+        (ir.CompilerIrValue.Var 4)
+        (ir.CompilerIrValue.Var 4)
+        (ir.CompilerIrBinOp.Lt)
+        false)]
+    [negative-start : i64
+      (smoke-rotated-bce-count
+        (ir.CompilerIrValue.I64 (- 0 1))
+        (ir.CompilerIrValue.I64 9)
+        (ir.CompilerIrValue.I64 9)
+        (ir.CompilerIrBinOp.Lt)
+        false)]
+    [different-upper : i64
+      (smoke-rotated-bce-count
+        (ir.CompilerIrValue.I64 0)
+        (ir.CompilerIrValue.I64 8)
+        (ir.CompilerIrValue.I64 9)
+        (ir.CompilerIrBinOp.Lt)
+        false)]
+    [different-provenance : i64
+      (smoke-rotated-bce-count
+        (ir.CompilerIrValue.I64 0)
+        (ir.CompilerIrValue.Var 4)
+        (ir.CompilerIrValue.Var 5)
+        (ir.CompilerIrBinOp.Lt)
+        false)]
+    [inclusive-upper : i64
+      (smoke-rotated-bce-count
+        (ir.CompilerIrValue.I64 0)
+        (ir.CompilerIrValue.I64 9)
+        (ir.CompilerIrValue.I64 9)
+        (ir.CompilerIrBinOp.Le)
+        false)]
+    [nondominating-backedge : i64
+      (smoke-rotated-bce-count
+        (ir.CompilerIrValue.I64 0)
+        (ir.CompilerIrValue.I64 9)
+        (ir.CompilerIrValue.I64 9)
+        (ir.CompilerIrBinOp.Lt)
+        true)]
+    (cond
+      [(not (= fixed 0)) 1]
+      [(not (= borrowed-backing 0)) 2]
+      [(not (= negative-start 1)) 3]
+      [(not (= different-upper 1)) 4]
+      [(not (= different-provenance 1)) 5]
+      [(not (= inclusive-upper 1)) 6]
+      [(not (= nondominating-backedge 1)) 7]
+      [else 42])))
+
 (define (smoke-nonlength-guard-header [op : ir.CompilerIrBinOp]) : ir.CompilerIrBlock
   (ir.compiler-ir-block
     (ir.compiler-ir-label "header")
@@ -2474,6 +2657,10 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-ssa-iv-bce-self-test"
       (smoke-ssa-iv-bce-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "smoke-rotated-literal-bce-self-test"
+      (smoke-rotated-literal-bce-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-nonlength-guard-bce-self-test"

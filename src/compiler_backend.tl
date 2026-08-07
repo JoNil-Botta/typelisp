@@ -15923,7 +15923,8 @@
   [reg : String]
   [backend-state : CompilerBackendState]) : String
   (let
-    [forward-src : i64 (compiler-backend-forwarded-addr-of-src id)]
+    [forward-src : i64
+      (compiler-backend-forwarded-addr-of-src backend-state id)]
     ;; AddrOf forwarding suppresses the defining instruction and leaves its
     ;; allocator home uninitialized. Typed copies must therefore rematerialize
     ;; the source slot address just like the ordinary scalar loader does.

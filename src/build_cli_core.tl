@@ -9,6 +9,7 @@
 (import stdlib.byte_buf)
 (import stdlib.env)
 (import stdlib.io)
+(import stdlib.io_core)
 (import stdlib.process)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -95,6 +96,32 @@
 (defstruct BuildPackageArtifactPaths
   (runtime String)
   (tlci String))
+
+(defstruct BuildPackageCommitFile
+  (final-path String)
+  (staged-path String)
+  (backup-path String)
+  (had-old bool))
+
+(defstruct BuildPackageCommitPlan
+  (files (__tl_dyn-array BuildPackageCommitFile))
+  (len i64))
+
+(defstruct BuildPackageStagePaths
+  (dir String)
+  (asm String)
+  (obj String)
+  (artifact String)
+  (fingerprint String)
+  (tlci String))
+
+(defenum ResultBuildPackageStagePaths
+  (Ok BuildPackageStagePaths)
+  (Err String))
+
+(defenum ResultBuildPackageFileDigest
+  (Ok String)
+  (Err String))
 
 (defenum BuildPackageArtifactState
   (Clean)
@@ -2897,38 +2924,6 @@
         obj
         "build: failed to write package direct object artifact")]))
 
-(define (build-package-try-linux-direct-object
-  [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [obj-path : String]
-  [artifact-path : String]
-  [link-inputs : build_run_core.SourceToolLinkInputs]) : build_run_core.SourceToolDirectObjectStatus
-  (match (build-package-try-render-linux-direct-object
-    kind
-    target
-    opt-level
-    mode
-    emit-entry
-    crt-entry
-    decls
-    paths)
-    [(build_run_core.ResultSourceToolString.Ok obj)
-      (build-package-write-linux-direct-object-artifact
-        kind
-        target
-        obj-path
-        artifact-path
-        link-inputs
-        obj)]
-    [(build_run_core.ResultSourceToolString.Err message)
-      (build_run_core.SourceToolDirectObjectStatus.Unavailable message)]))
-
 (define (build-package-direct-object-mode? [mode : backend.CompilerBackendMode]) : bool
   (match mode
     [(backend.CompilerBackendMode.Scalar) true]
@@ -4319,29 +4314,898 @@
         paths
         producer-identity)]))
 
+(define (build-package-runtime-fingerprint-path [artifact-path : String]) : String
+  (str_cat.str-cat artifact-path ".runtime-inputs"))
+
+(define (build-package-file-regular? [path : String]) : bool
+  (match (build-package-artifact-file-state path)
+    [(BuildPackageArtifactState.Clean) true]
+    [_ false]))
+
+(define (build-package-file-text-eq? [path : String] [expected : String]) : bool
+  (if (not (build-package-file-regular? path))
+    false
+    (match (io.try-read-file (& path))
+      [(io.OkIoBytes contents)
+        (string.eq (byte_buf.to-string contents) expected)]
+      [(io.ErrIoBytes _) false])))
+
+(define (build-package-file-digest [path : String] [context : String]) : ResultBuildPackageFileDigest
+  (match (io.try-read-file (& path))
+    [(io.ErrIoBytes error)
+      (ResultBuildPackageFileDigest.Err
+        (str_cat.str-cat context ": " (io.error-message error)))]
+    [(io.OkIoBytes contents)
+      (let
+        [bytes : (__tl_dyn-array u8) (byte_buf.to-array contents)]
+        [count : i64 (array-length bytes)]
+        [hash-a : i64
+          (package_source_core.package-source-binding-hash-bytes
+            (package_source_core.package-source-binding-hash-u64 17 count)
+            bytes)]
+        [hash-b : i64
+          (package_source_core.package-source-binding-hash-bytes
+            (package_source_core.package-source-binding-hash-u64 97 count)
+            bytes)]
+        (ResultBuildPackageFileDigest.Ok
+          (str_cat.str-cat
+            (string.int->string count)
+            ":"
+            (string.int->string hash-a)
+            ":"
+            (string.int->string hash-b))))]))
+
+(define (build-package-sampled-file-digest-text
+  [size : i64]
+  [first : (__tl_dyn-array u8)]
+  [last : (__tl_dyn-array u8)]) : String
+  (let
+    [first-count : i64 (array-length first)]
+    [last-count : i64 (array-length last)]
+    [hash-a0 : i64
+      (package_source_core.package-source-binding-hash-u64 17 size)]
+    [hash-a1 : i64
+      (package_source_core.package-source-binding-hash-bytes
+        (package_source_core.package-source-binding-hash-u64
+          hash-a0
+          first-count)
+        first)]
+    [hash-a : i64
+      (package_source_core.package-source-binding-hash-bytes
+        (package_source_core.package-source-binding-hash-u64 hash-a1 last-count)
+        last)]
+    [hash-b0 : i64
+      (package_source_core.package-source-binding-hash-u64 97 size)]
+    [hash-b1 : i64
+      (package_source_core.package-source-binding-hash-bytes
+        (package_source_core.package-source-binding-hash-u64
+          hash-b0
+          first-count)
+        first)]
+    [hash-b : i64
+      (package_source_core.package-source-binding-hash-bytes
+        (package_source_core.package-source-binding-hash-u64 hash-b1 last-count)
+        last)]
+    (str_cat.str-cat
+      (string.int->string size)
+      ":"
+      (string.int->string hash-a)
+      ":"
+      (string.int->string hash-b))))
+
+(define (build-package-tool-file-digest [path : String] [context : String]) : ResultBuildPackageFileDigest
+  (match (fs.try-file-metadata (& path))
+    [(fs.ErrFsMetadata error)
+      (ResultBuildPackageFileDigest.Err
+        (str_cat.str-cat context ": " (io.error-message error)))]
+    [(fs.OkFsMetadata metadata)
+      (let
+        [size : i64 (fs.metadata-size metadata)]
+        [sample-size : i64 65536]
+        (match (io.file-open (& path) (io.OpenMode.OpenRead))
+          [(io.ErrIoFile error)
+            (ResultBuildPackageFileDigest.Err
+              (str_cat.str-cat context ": " (io.error-message error)))]
+          [(io.OkIoFile handle)
+            (let
+              [first : (__tl_dyn-array u8) (make-array u8 0)]
+              [last : (__tl_dyn-array u8) (make-array u8 0)]
+              [ok : bool true]
+              [error-message : String ""]
+              (begin
+                (match (io.file-read-chunk handle sample-size)
+                  [(io.ErrIoRead error)
+                    (begin
+                      (set! ok false)
+                      (set! error-message (io.error-message error)))]
+                  [(io.OkIoRead read)
+                    (set! first (byte_buf.to-array (io.file-read-bytes read)))])
+                (if (and ok (> size sample-size))
+                  (if (<
+                    (io.platform-lseek
+                      (io_core.io-file-i64-ref
+                        (io_core.io-file-fds-ptr)
+                        (struct-get handle id))
+                      (- size sample-size)
+                      0)
+                    0)
+                    (begin
+                      (set! ok false)
+                      (set! error-message "seek failed"))
+                    (match (io.file-read-chunk handle sample-size)
+                      [(io.ErrIoRead error)
+                        (begin
+                          (set! ok false)
+                          (set! error-message (io.error-message error)))]
+                      [(io.OkIoRead read)
+                        (set!
+                          last
+                          (byte_buf.to-array (io.file-read-bytes read)))]))
+                  unit)
+                (io.file-close handle)
+                (if ok
+                  (ResultBuildPackageFileDigest.Ok
+                    (build-package-sampled-file-digest-text size first last))
+                  (ResultBuildPackageFileDigest.Err
+                    (str_cat.str-cat context ": " error-message)))))]))]))
+
+(define (build-package-transcript-field [name : String] [value : String]) : String
+  (str_cat.str-cat
+    name
+    " "
+    (string.int->string (string.string-length value))
+    ":"
+    value
+    "\n"))
+
+(define (build-package-command-args-transcript
+  [args : process.ProcessStringList]) : String
+  (let
+    [index : i64 0]
+    [count : i64 (process.args-count args)]
+    [out : String
+      (build-package-transcript-field "argc" (string.int->string count))]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (string.append
+              out
+              (build-package-transcript-field
+                "arg"
+                (process.args-ref args index))))
+          (set! index (+ index 1))))
+      out)))
+
+(define (build-package-command-env-transcript [items : process.ProcessEnvList]) : String
+  (let
+    [index : i64 0]
+    [count : i64 (process.env-count items)]
+    [out : String
+      (build-package-transcript-field "envc" (string.int->string count))]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (build-package-transcript-field
+                "env-name"
+                (process.env-name-ref items index))
+              (build-package-transcript-field
+                "env-value"
+                (process.env-value-ref items index))))
+          (set! index (+ index 1))))
+      out)))
+
+(define (build-package-command-transcript
+  [role : String]
+  [command : process.ProcessCommand]) : ResultBuildString
+  (let
+    [executable : String
+      (build_run_core.source-tool-resolve-command
+        (process.command-executable command))]
+    (if (not (build-package-file-regular? executable))
+      (ResultBuildString.Err
+        (str_cat.str-cat
+          "build: cannot fingerprint "
+          role
+          " executable "
+          executable))
+      (match (build-package-tool-file-digest
+        executable
+        (str_cat.str-cat "build: cannot fingerprint " role " executable"))
+        [(ResultBuildPackageFileDigest.Err message)
+          (ResultBuildString.Err message)]
+        [(ResultBuildPackageFileDigest.Ok digest)
+          (ResultBuildString.Ok
+            (str_cat.str-cat
+              (build-package-transcript-field "tool-role" role)
+              (build-package-transcript-field "tool-path" executable)
+              (build-package-transcript-field "tool-digest" digest)
+              (build-package-command-args-transcript
+                (process.command-argv command))
+              (build-package-command-env-transcript
+                (process.command-env command))))]))))
+
+(define (build-package-env-transcript-one [name : String]) : String
+  (match (env.get (& name))
+    [(env.EnvNoString)
+      (build-package-transcript-field
+        (str_cat.str-cat "inherited-env-" name)
+        "<unset>")]
+    [(env.EnvSomeString value)
+      (build-package-transcript-field
+        (str_cat.str-cat "inherited-env-" name)
+        value)]))
+
+(define (build-package-runtime-inherited-env-transcript) : String
+  (str_cat.str-cat
+    (build-package-transcript-field "working-directory" (fs.current-dir))
+    (build-package-env-transcript-one "PATH")
+    (build-package-env-transcript-one "LIB")
+    (build-package-env-transcript-one "LIBPATH")
+    (build-package-env-transcript-one "LIBRARY_PATH")
+    (build-package-env-transcript-one "LD_LIBRARY_PATH")
+    (build-package-env-transcript-one "COMPILER_PATH")
+    (build-package-env-transcript-one "GCC_EXEC_PREFIX")
+    (build-package-env-transcript-one "SDKROOT")))
+
+(define (build-package-link-path-transcript [path : String]) : ResultBuildString
+  (if (build-package-file-regular? path)
+    (match (build-package-file-digest
+      path
+      "build: cannot fingerprint native link input")
+      [(ResultBuildPackageFileDigest.Err message)
+        (ResultBuildString.Err message)]
+      [(ResultBuildPackageFileDigest.Ok digest)
+        (ResultBuildString.Ok
+          (str_cat.str-cat
+            (build-package-transcript-field "link-file-path" path)
+            (build-package-transcript-field "link-file-digest" digest)))])
+    (ResultBuildString.Ok "")))
+
+(define (build-package-link-raw-file-transcript
+  [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
+  (let
+    [args : process.ProcessStringList
+      (build_run_core.source-tool-link-inputs-raw-args inputs)]
+    [index : i64 0]
+    [count : i64 (process.args-count args)]
+    [out : String ""]
+    [ok : bool true]
+    [error : String ""]
+    (begin
+      (while (and ok (< index count))
+        (let
+          [path : String (process.args-ref args index)]
+          (begin
+            (match (build-package-link-path-transcript path)
+              [(ResultBuildString.Err message)
+                (begin
+                  (set! ok false)
+                  (set! error message))]
+              [(ResultBuildString.Ok text) (set! out (string.append out text))])
+            (set! index (+ index 1)))))
+      (if ok
+        (ResultBuildString.Ok out)
+        (ResultBuildString.Err error)))))
+
+(define (build-package-link-library-candidate [dir : String] [name : String]) : String
+  (if (= (string.string-length dir) 0)
+    name
+    (load.compiler-load-join-root-path dir name)))
+
+(define (build-package-link-library-file-transcript
+  [target : backend.CompilerBackendTarget]
+  [dir : String]
+  [library : String]) : ResultBuildString
+  (let
+    [direct : String (build-package-link-library-candidate dir library)]
+    [first : String
+      (build-package-link-library-candidate
+        dir
+        (match target
+          [(backend.CompilerBackendTarget.Linux)
+            (str_cat.str-cat "lib" library ".a")]
+          [(backend.CompilerBackendTarget.Windows)
+            (string.append library ".lib")]))]
+    [second : String
+      (build-package-link-library-candidate
+        dir
+        (match target
+          [(backend.CompilerBackendTarget.Linux)
+            (str_cat.str-cat "lib" library ".so")]
+          [(backend.CompilerBackendTarget.Windows) ""]))]
+    (match (build-package-link-path-transcript direct)
+      [(ResultBuildString.Err message) (ResultBuildString.Err message)]
+      [(ResultBuildString.Ok direct-text)
+        (match (build-package-link-path-transcript first)
+          [(ResultBuildString.Err message) (ResultBuildString.Err message)]
+          [(ResultBuildString.Ok first-text)
+            (if (= (string.string-length second) 0)
+              (ResultBuildString.Ok (string.append direct-text first-text))
+              (match (build-package-link-path-transcript second)
+                [(ResultBuildString.Err message)
+                  (ResultBuildString.Err message)]
+                [(ResultBuildString.Ok second-text)
+                  (ResultBuildString.Ok
+                    (str_cat.str-cat direct-text first-text second-text))]))])])))
+
+(define (build-package-link-library-files-transcript
+  [target : backend.CompilerBackendTarget]
+  [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
+  (let
+    [libraries : process.ProcessStringList
+      (build_run_core.source-tool-link-inputs-libs inputs)]
+    [dirs : process.ProcessStringList
+      (build_run_core.source-tool-link-inputs-search-dirs inputs)]
+    [library-index : i64 0]
+    [library-count : i64 (process.args-count libraries)]
+    [out : String ""]
+    [ok : bool true]
+    [error : String ""]
+    (begin
+      (while (and ok (< library-index library-count))
+        (let
+          [library : String (process.args-ref libraries library-index)]
+          [dir-index : i64 0]
+          [dir-count : i64 (process.args-count dirs)]
+          (begin
+            (if (= dir-count 0)
+              (match (build-package-link-library-file-transcript
+                target
+                ""
+                library)
+                [(ResultBuildString.Err message)
+                  (begin
+                    (set! ok false)
+                    (set! error message))]
+                [(ResultBuildString.Ok text)
+                  (set! out (string.append out text))])
+              (while (and ok (< dir-index dir-count))
+                (begin
+                  (match (build-package-link-library-file-transcript
+                    target
+                    (process.args-ref dirs dir-index)
+                    library)
+                    [(ResultBuildString.Err message)
+                      (begin
+                        (set! ok false)
+                        (set! error message))]
+                    [(ResultBuildString.Ok text)
+                      (set! out (string.append out text))])
+                  (set! dir-index (+ dir-index 1)))))
+            (set! library-index (+ library-index 1)))))
+      (if ok
+        (ResultBuildString.Ok out)
+        (ResultBuildString.Err error)))))
+
+(define (build-package-link-file-transcript
+  [target : backend.CompilerBackendTarget]
+  [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
+  (match (build-package-link-raw-file-transcript inputs)
+    [(ResultBuildString.Err message) (ResultBuildString.Err message)]
+    [(ResultBuildString.Ok raw-text)
+      (match (build-package-link-library-files-transcript target inputs)
+        [(ResultBuildString.Err message) (ResultBuildString.Err message)]
+        [(ResultBuildString.Ok library-text)
+          (ResultBuildString.Ok (string.append raw-text library-text))])]))
+
+(define (build-package-assembler-command-for
+  [target : backend.CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]) : build_run_core.ResultSourceToolCommand
+  (match target
+    [(backend.CompilerBackendTarget.Linux)
+      (build_run_core.ResultSourceToolCommand.Ok
+        (build_run_core.source-tool-assembler-command asm-path obj-path))]
+    [(backend.CompilerBackendTarget.Windows)
+      (build_run_core.ResultSourceToolCommand.Ok
+        (build_run_core.source-tool-windows-assembler-command asm-path obj-path))]))
+
+(define (build-package-artifact-command-for
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : build_run_core.SourceToolLinkInputs]) : build_run_core.ResultSourceToolCommand
+  (match kind
+    [(CompilerPkgKindBin)
+      (match target
+        [(backend.CompilerBackendTarget.Linux)
+          (build_run_core.ResultSourceToolCommand.Ok
+            (build_run_core.source-tool-linker-command
+              obj-path
+              artifact-path
+              link-inputs))]
+        [(backend.CompilerBackendTarget.Windows)
+          (build_run_core.source-tool-windows-linker-command
+            obj-path
+            artifact-path
+            link-inputs)])]
+    [(CompilerPkgKindLib)
+      (match target
+        [(backend.CompilerBackendTarget.Linux)
+          (build_run_core.ResultSourceToolCommand.Ok
+            (build_run_core.source-tool-archiver-command obj-path artifact-path))]
+        [(backend.CompilerBackendTarget.Windows)
+          (build_run_core.source-tool-windows-archiver-command
+            obj-path
+            artifact-path)])]))
+
+(define (build-package-runtime-input-transcript-after-assembler
+  [base : String]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
+  (match (build-package-artifact-command-for
+    kind
+    target
+    obj-path
+    artifact-path
+    link-inputs)
+    [(build_run_core.ResultSourceToolCommand.Err message)
+      (ResultBuildString.Err message)]
+    [(build_run_core.ResultSourceToolCommand.Ok command)
+      (match (build-package-command-transcript "runtime artifact tool" command)
+        [(ResultBuildString.Err message) (ResultBuildString.Err message)]
+        [(ResultBuildString.Ok command-text)
+          (match kind
+            [(CompilerPkgKindLib)
+              (ResultBuildString.Ok
+                (str_cat.str-cat
+                  base
+                  command-text
+                  (build-package-runtime-inherited-env-transcript)))]
+            [(CompilerPkgKindBin)
+              (match (build-package-link-file-transcript target link-inputs)
+                [(ResultBuildString.Err message)
+                  (ResultBuildString.Err message)]
+                [(ResultBuildString.Ok link-file-text)
+                  (ResultBuildString.Ok
+                    (str_cat.str-cat
+                      base
+                      command-text
+                      link-file-text
+                      (build-package-runtime-inherited-env-transcript)))])])])]))
+
+(define (build-package-runtime-input-transcript
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
+  [profile : BuildProfile]
+  [mode : backend.CompilerBackendMode]
+  [opt-level : i64]
+  [producer-identity : String]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : build_run_core.SourceToolLinkInputs]
+  [direct-object : bool]) : ResultBuildString
+  (let
+    [base : String
+      (str_cat.str-cat
+        "typelisp-package-runtime-inputs-v1\n"
+        (build-package-transcript-field "producer" producer-identity)
+        (build-package-transcript-field
+          "target"
+          (build_run_core.source-tool-target-name target))
+        (build-package-transcript-field "profile" (build-profile-name profile))
+        (build-package-transcript-field
+          "backend"
+          (build-backend-mode-name mode))
+        (build-package-transcript-field
+          "opt-level"
+          (string.int->string opt-level))
+        (build-package-transcript-field
+          "debug"
+          (if (ir.compiler-debug-info-enabled?)
+            "true"
+            "false"))
+        (build-package-transcript-field
+          "kind"
+          (match kind
+            [(CompilerPkgKindBin) "bin"]
+            [(CompilerPkgKindLib) "lib"]))
+        (build-package-transcript-field
+          "direct-object"
+          (if direct-object
+            "true"
+            "false")))]
+    (if direct-object
+      (build-package-runtime-input-transcript-after-assembler
+        base
+        kind
+        target
+        obj-path
+        artifact-path
+        link-inputs)
+      (match (build-package-assembler-command-for target asm-path obj-path)
+        [(build_run_core.ResultSourceToolCommand.Err message)
+          (ResultBuildString.Err message)]
+        [(build_run_core.ResultSourceToolCommand.Ok assembler)
+          (match (build-package-command-transcript "assembler" assembler)
+            [(ResultBuildString.Err message) (ResultBuildString.Err message)]
+            [(ResultBuildString.Ok assembler-text)
+              (build-package-runtime-input-transcript-after-assembler
+                (string.append base assembler-text)
+                kind
+                target
+                obj-path
+                artifact-path
+                link-inputs)])]))))
+
+(define (build-package-runtime-output-fingerprint
+  [input-transcript : String]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]) : ResultBuildString
+  (match (build-package-file-digest
+    asm-path
+    "build: cannot fingerprint package assembly")
+    [(ResultBuildPackageFileDigest.Err message) (ResultBuildString.Err message)]
+    [(ResultBuildPackageFileDigest.Ok asm-digest)
+      (match (build-package-file-digest
+        obj-path
+        "build: cannot fingerprint package object")
+        [(ResultBuildPackageFileDigest.Err message)
+          (ResultBuildString.Err message)]
+        [(ResultBuildPackageFileDigest.Ok obj-digest)
+          (match (build-package-file-digest
+            artifact-path
+            "build: cannot fingerprint package runtime artifact")
+            [(ResultBuildPackageFileDigest.Err message)
+              (ResultBuildString.Err message)]
+            [(ResultBuildPackageFileDigest.Ok artifact-digest)
+              (ResultBuildString.Ok
+                (str_cat.str-cat
+                  input-transcript
+                  (build-package-transcript-field "assembly-output" asm-digest)
+                  (build-package-transcript-field "object-output" obj-digest)
+                  (build-package-transcript-field
+                    "runtime-output"
+                    artifact-digest)))])])]))
+
+(define (build-package-runtime-outputs-regular?
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [fingerprint-path : String]) : bool
+  (and
+    (build-package-file-regular? asm-path)
+    (build-package-file-regular? obj-path)
+    (build-package-file-regular? artifact-path)
+    (build-package-file-regular? fingerprint-path)))
+
+(define (build-package-runtime-fingerprint-fresh?
+  [input-transcript : String]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [fingerprint-path : String]) : bool
+  (if (not
+    (build-package-runtime-outputs-regular?
+      asm-path
+      obj-path
+      artifact-path
+      fingerprint-path))
+    false
+    (match (build-package-runtime-output-fingerprint
+      input-transcript
+      asm-path
+      obj-path
+      artifact-path)
+      [(ResultBuildString.Err _) false]
+      [(ResultBuildString.Ok expected)
+        (build-package-file-text-eq? fingerprint-path expected)])))
+
+(define (build-package-runtime-direct-fresh?
+  [input-transcript : String]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [fingerprint-path : String]
+  [object-text : String]) : bool
+  (and
+    (build-package-file-text-eq? obj-path object-text)
+    (build-package-runtime-fingerprint-fresh?
+      input-transcript
+      asm-path
+      obj-path
+      artifact-path
+      fingerprint-path)))
+
+(define (build-package-runtime-assembly-fresh?
+  [input-transcript : String]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [fingerprint-path : String]
+  [asm : String]) : bool
+  (and
+    (build-package-file-text-eq? asm-path asm)
+    (build-package-runtime-fingerprint-fresh?
+      input-transcript
+      asm-path
+      obj-path
+      artifact-path
+      fingerprint-path)))
+
+(define (build-package-path-present? [path : String]) : bool
+  (match (fs.try-file-metadata (& path))
+    [(fs.OkFsMetadata _) true]
+    [(fs.ErrFsMetadata _) false]))
+
+(define (build-package-stage-dir-attempt
+  [output-dir : String]
+  [_name : String]
+  [attempt : i64]) : ResultBuildString
+  (if (> attempt 64)
+    (ResultBuildString.Err "build: package artifact staging has no free path")
+    (let
+      [candidate : String
+        (load.compiler-load-join-root-path
+          output-dir
+          (str_cat.str-cat ".t" (string.int->string attempt)))]
+      (if (build-package-path-present? candidate)
+        (build-package-stage-dir-attempt output-dir _name (+ attempt 1))
+        (if (build-mkdir-ok-owned? candidate)
+          (ResultBuildString.Ok candidate)
+          (ResultBuildString.Err
+            (str_cat.str-cat
+              "build: failed to create package artifact staging directory "
+              candidate)))))))
+
+(define (build-package-stage-file
+  [dir : String]
+  [stem : String]
+  [final-path : String]) : String
+  (let
+    [extension : String (fs.extension (& final-path))]
+    (load.compiler-load-join-root-path
+      dir
+      (if (= (string.string-length extension) 0)
+        stem
+        (str_cat.str-cat stem "." extension)))))
+
+(define (build-package-stage-paths
+  [output-dir : String]
+  [name : String]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [fingerprint-path : String]
+  [tlci-path : String]) : ResultBuildPackageStagePaths
+  (match (build-package-stage-dir-attempt output-dir name 1)
+    [(ResultBuildString.Err message) (ResultBuildPackageStagePaths.Err message)]
+    [(ResultBuildString.Ok dir)
+      (ResultBuildPackageStagePaths.Ok
+        (BuildPackageStagePaths
+          dir
+          (build-package-stage-file dir "a" asm-path)
+          (build-package-stage-file dir "o" obj-path)
+          (build-package-stage-file dir "r" artifact-path)
+          (build-package-stage-file dir "f" fingerprint-path)
+          (build-package-stage-file dir "t" tlci-path)))]))
+
+(define (build-package-remove-staged-file [path : String]) : unit
+  (begin
+    (fs.try-remove-file-if-exists (& path))
+    (let
+      [backup : String (string.append path ".previous")]
+      (fs.try-remove-file-if-exists (& backup)))
+    unit))
+
+(define (build-package-clean-stage [paths : BuildPackageStagePaths]) : unit
+  (begin
+    (build-package-remove-staged-file (struct-get paths asm))
+    (build-package-remove-staged-file (struct-get paths obj))
+    (build-package-remove-staged-file (struct-get paths artifact))
+    (build-package-remove-staged-file (struct-get paths fingerprint))
+    (build-package-remove-staged-file (struct-get paths tlci))
+    (let
+      [dir : String (struct-get paths dir)]
+      (fs.try-remove-dir-if-exists (& dir)))
+    unit))
+
+(define (build-package-commit-plan-new) : BuildPackageCommitPlan
+  (BuildPackageCommitPlan (make-array BuildPackageCommitFile 5) 0))
+
+(define (build-package-commit-plan-add
+  [plan : BuildPackageCommitPlan]
+  [final-path : String]
+  [staged-path : String]) : BuildPackageCommitPlan
+  (let
+    [files : (__tl_dyn-array BuildPackageCommitFile) (struct-get plan files)]
+    [index : i64 (struct-get plan len)]
+    (begin
+      (array-set!
+        files
+        index
+        (BuildPackageCommitFile
+          final-path
+          staged-path
+          (string.append staged-path ".previous")
+          false))
+      (BuildPackageCommitPlan files (+ index 1)))))
+
+(define (build-package-commit-plan-set-had-old!
+  [plan : BuildPackageCommitPlan]
+  [index : i64]) : unit
+  (let
+    [files : (__tl_dyn-array BuildPackageCommitFile) (struct-get plan files)]
+    [item : BuildPackageCommitFile (array-ref files index)]
+    (array-set!
+      files
+      index
+      (BuildPackageCommitFile
+        (struct-get item final-path)
+        (struct-get item staged-path)
+        (struct-get item backup-path)
+        true))))
+
+(define (build-package-commit-plan-preflight [plan : BuildPackageCommitPlan]) : ResultBuildString
+  (let
+    [index : i64 0]
+    [count : i64 (struct-get plan len)]
+    [ok : bool true]
+    [error : String ""]
+    (begin
+      (while (and ok (< index count))
+        (let
+          [item : BuildPackageCommitFile
+            (array-ref (struct-get plan files) index)]
+          [final-state : BuildPackageArtifactState
+            (build-package-artifact-file-state (struct-get item final-path))]
+          (begin
+            (if (not
+              (build-package-file-regular? (struct-get item staged-path)))
+              (begin
+                (set! ok false)
+                (set!
+                  error
+                  (str_cat.str-cat
+                    "build: staged package artifact is missing or non-regular: "
+                    (struct-get item staged-path))))
+              (match final-state
+                [(BuildPackageArtifactState.Stale reason)
+                  (begin
+                    (set! ok false)
+                    (set!
+                      error
+                      (str_cat.str-cat
+                        "build: cannot replace package artifact "
+                        (struct-get item final-path)
+                        ": "
+                        reason)))]
+                [_ unit]))
+            (set! index (+ index 1)))))
+      (if ok
+        (ResultBuildString.Ok "")
+        (ResultBuildString.Err error)))))
+
+(define (build-package-commit-plan-rollback
+  [plan : BuildPackageCommitPlan]
+  [installed : i64]
+  [backed-up : i64]) : unit
+  (let
+    [index : i64 (- installed 1)]
+    (begin
+      (while (>= index 0)
+        (let
+          [item : BuildPackageCommitFile
+            (array-ref (struct-get plan files) index)]
+          (begin
+            (let
+              [path : String (struct-get item final-path)]
+              (fs.try-remove-file-if-exists (& path)))
+            (set! index (- index 1)))))
+      (set! index (- backed-up 1))
+      (while (>= index 0)
+        (let
+          [item : BuildPackageCommitFile
+            (array-ref (struct-get plan files) index)]
+          (begin
+            (if (struct-get item had-old)
+              (let
+                [backup : String (struct-get item backup-path)]
+                [final-path : String (struct-get item final-path)]
+                (fs.try-rename (& backup) (& final-path)))
+              io.OkIoUnit)
+            (set! index (- index 1)))))
+      unit)))
+
+(define (build-package-commit-plan-run [plan : BuildPackageCommitPlan]) : ResultBuildString
+  (match (build-package-commit-plan-preflight plan)
+    [(ResultBuildString.Err message) (ResultBuildString.Err message)]
+    [(ResultBuildString.Ok _)
+      (let
+        [index : i64 0]
+        [count : i64 (struct-get plan len)]
+        [backed-up : i64 0]
+        [installed : i64 0]
+        [ok : bool true]
+        [error : String ""]
+        (begin
+          (while (and ok (< index count))
+            (let
+              [item : BuildPackageCommitFile
+                (array-ref (struct-get plan files) index)]
+              [state : BuildPackageArtifactState
+                (build-package-artifact-file-state (struct-get item final-path))]
+              (begin
+                (match state
+                  [(BuildPackageArtifactState.Clean)
+                    (let
+                      [from : String (struct-get item final-path)]
+                      [to : String (struct-get item backup-path)]
+                      (match (fs.try-rename (& from) (& to))
+                        [(io.OkIoUnit)
+                          (build-package-commit-plan-set-had-old! plan index)]
+                        [(io.ErrIoUnit io-error)
+                          (begin
+                            (set! ok false)
+                            (set!
+                              error
+                              (str_cat.str-cat
+                                "build: failed to stage previous package artifact: "
+                                (io.error-message io-error))))]))]
+                  [(BuildPackageArtifactState.Missing) unit]
+                  [(BuildPackageArtifactState.Stale reason)
+                    (begin
+                      (set! ok false)
+                      (set! error reason))])
+                (if ok
+                  (set! backed-up (+ backed-up 1))
+                  unit)
+                (set! index (+ index 1)))))
+          (set! index 0)
+          (while (and ok (< index count))
+            (let
+              [item : BuildPackageCommitFile
+                (array-ref (struct-get plan files) index)]
+              [from : String (struct-get item staged-path)]
+              [to : String (struct-get item final-path)]
+              (begin
+                (match (fs.try-rename (& from) (& to))
+                  [(io.OkIoUnit) (set! installed (+ installed 1))]
+                  [(io.ErrIoUnit io-error)
+                    (begin
+                      (set! ok false)
+                      (set!
+                        error
+                        (str_cat.str-cat
+                          "build: failed to commit package artifact: "
+                          (io.error-message io-error))))])
+                (set! index (+ index 1)))))
+          (if ok
+            (begin
+              (set! index 0)
+              (while (< index count)
+                (let
+                  [item : BuildPackageCommitFile
+                    (array-ref (struct-get plan files) index)]
+                  (begin
+                    (if (struct-get item had-old)
+                      (let
+                        [backup : String (struct-get item backup-path)]
+                        (fs.try-remove-file-if-exists (& backup)))
+                      io.OkIoUnit)
+                    (set! index (+ index 1)))))
+              (ResultBuildString.Ok ""))
+            (begin
+              (build-package-commit-plan-rollback plan installed backed-up)
+              (ResultBuildString.Err error)))))]))
+
 (define (build-package-write-tlci [path : String] [text : String]) : build_run_core.SourceToolCommandStatus
   (build_run_core.source-tool-write-file
     path
     text
     "build: failed to write package tlci"))
-
-(define (build-package-finish-built-artifact
-  [artifact-path : String]
-  [tlci-path : String]
-  [tlci-text : String]
-  [announce : bool]) : i64
-  (match (build-package-write-tlci tlci-path tlci-text)
-    [(build_run_core.SourceToolCommandStatus.Err message)
-      (begin
-        (io.print-error message)
-        1)]
-    [(build_run_core.SourceToolCommandStatus.Ok)
-      (if announce
-        (begin
-          (io.print-string (str_cat.str-cat "Built " artifact-path "\n"))
-          (io.print-string (str_cat.str-cat "Built " tlci-path "\n"))
-          0)
-        0)]))
 
 (define (build-package-write-assembly
   [path : String]
@@ -4370,106 +5234,6 @@
                   (io.error-message error)))])
           build_run_core.SourceToolCommandStatus.Ok))]))
 
-(define (build-package-finish-artifacts
-  [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
-  [asm-path : String]
-  [obj-path : String]
-  [artifact-path : String]
-  [link-inputs : build_run_core.SourceToolLinkInputs]
-  [tlci-path : String]
-  [tlci-text : String]
-  [asm : String]
-  [direct-object : build_run_core.ResultSourceToolString]
-  [announce : bool]) : i64
-  (match (build-package-write-assembly asm-path asm target)
-    [(build_run_core.SourceToolCommandStatus.Err message)
-      (begin
-        (io.print-error message)
-        1)]
-    [(build_run_core.SourceToolCommandStatus.Ok)
-      (let
-        [direct-status : build_run_core.SourceToolDirectObjectStatus
-          (match direct-object
-            [(build_run_core.ResultSourceToolString.Ok obj)
-              (build-package-write-linux-direct-object-artifact
-                kind
-                target
-                obj-path
-                artifact-path
-                link-inputs
-                obj)]
-            [(build_run_core.ResultSourceToolString.Err message)
-              (build_run_core.SourceToolDirectObjectStatus.Unavailable message)])]
-        (match (build-package-artifact-status
-          kind
-          target
-          asm-path
-          obj-path
-          artifact-path
-          link-inputs
-          direct-status)
-          [(build_run_core.SourceToolCommandStatus.Err message)
-            (begin
-              (io.print-error message)
-              1)]
-          [(build_run_core.SourceToolCommandStatus.Ok)
-            (build-package-finish-built-artifact
-              artifact-path
-              tlci-path
-              tlci-text
-              announce)]))]))
-
-(define (build-package-emit-assembly-fallback
-  [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [owned-paths : ast.AstDeclPathList]
-  [asm-path : String]
-  [obj-path : String]
-  [artifact-path : String]
-  [effective-link-inputs : build_run_core.SourceToolLinkInputs]
-  [tlci-path : String]
-  [tlci-text : String]
-  [direct-message : String]
-  [announce : bool]) : i64
-  (match (compiler_driver_core.compiler-driver-emit-package-loaded
-    ""
-    target
-    true
-    opt-level
-    mode
-    emit-entry
-    crt-entry
-    decls
-    owned-paths)
-    [(compiler_driver_core.ResultCompilerDriver.Err diag)
-      (begin
-        (io.print-error
-          (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (box-get diag)))
-        1)]
-    [(compiler_driver_core.ResultCompilerDriver.Ok asm)
-      (begin
-        (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)
-        (compiler_driver_core.compiler-driver-reset-file-state!)
-        (build-package-finish-artifacts
-          kind
-          target
-          asm-path
-          obj-path
-          artifact-path
-          effective-link-inputs
-          tlci-path
-          tlci-text
-          asm
-          (build_run_core.ResultSourceToolString.Err direct-message)
-          announce))]))
-
 (define (build-package-write-side-assembly
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
@@ -4497,6 +5261,469 @@
       (begin
         (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)
         (build-package-write-assembly asm-path asm target))]))
+
+(define (build-package-announce-freshness
+  [artifact-path : String]
+  [tlci-path : String]
+  [runtime-dirty : bool]
+  [tlci-dirty : bool]
+  [announce : bool]) : i64
+  (if announce
+    (begin
+      (io.print-string
+        (str_cat.str-cat
+          (if runtime-dirty
+            "Built "
+            "Fresh ")
+          artifact-path
+          "\n"))
+      (io.print-string
+        (str_cat.str-cat
+          (if tlci-dirty
+            "Built "
+            "Fresh ")
+          tlci-path
+          "\n"))
+      0)
+    0))
+
+(define (build-package-commit-generated-artifacts
+  [stage : BuildPackageStagePaths]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [fingerprint-path : String]
+  [tlci-path : String]
+  [tlci-text : String]
+  [input-transcript : String]
+  [runtime-dirty : bool]
+  [tlci-dirty : bool]
+  [announce : bool]) : i64
+  (let
+    [ok : bool true]
+    [error : String ""]
+    [plan : BuildPackageCommitPlan (build-package-commit-plan-new)]
+    (begin
+      (if runtime-dirty
+        (match (build-package-runtime-output-fingerprint
+          input-transcript
+          (struct-get stage asm)
+          (struct-get stage obj)
+          (struct-get stage artifact))
+          [(ResultBuildString.Err message)
+            (begin
+              (set! ok false)
+              (set! error message))]
+          [(ResultBuildString.Ok fingerprint)
+            (match (build_run_core.source-tool-write-file
+              (struct-get stage fingerprint)
+              fingerprint
+              "build: failed to stage package runtime fingerprint")
+              [(build_run_core.SourceToolCommandStatus.Err message)
+                (begin
+                  (set! ok false)
+                  (set! error message))]
+              [(build_run_core.SourceToolCommandStatus.Ok)
+                (begin
+                  (set!
+                    plan
+                    (build-package-commit-plan-add
+                      plan
+                      asm-path
+                      (struct-get stage asm)))
+                  (set!
+                    plan
+                    (build-package-commit-plan-add
+                      plan
+                      obj-path
+                      (struct-get stage obj)))
+                  (set!
+                    plan
+                    (build-package-commit-plan-add
+                      plan
+                      artifact-path
+                      (struct-get stage artifact)))
+                  (set!
+                    plan
+                    (build-package-commit-plan-add
+                      plan
+                      fingerprint-path
+                      (struct-get stage fingerprint))))])])
+        unit)
+      (if (and ok tlci-dirty)
+        (match (build-package-write-tlci (struct-get stage tlci) tlci-text)
+          [(build_run_core.SourceToolCommandStatus.Err message)
+            (begin
+              (set! ok false)
+              (set! error message))]
+          [(build_run_core.SourceToolCommandStatus.Ok)
+            (set!
+              plan
+              (build-package-commit-plan-add
+                plan
+                tlci-path
+                (struct-get stage tlci)))])
+        unit)
+      (if ok
+        (match (build-package-commit-plan-run plan)
+          [(ResultBuildString.Err message)
+            (begin
+              (build-package-clean-stage stage)
+              (io.print-error message)
+              1)]
+          [(ResultBuildString.Ok _)
+            (begin
+              (build-package-clean-stage stage)
+              (build-package-announce-freshness
+                artifact-path
+                tlci-path
+                runtime-dirty
+                tlci-dirty
+                announce))])
+        (begin
+          (build-package-clean-stage stage)
+          (io.print-error error)
+          1)))))
+
+(define (build-package-finish-direct-fresh-artifacts
+  [name : String]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : backend.CompilerBackendMode]
+  [producer-identity : String]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : ast.AstDeclList]
+  [owned-paths : ast.AstDeclPathList]
+  [output-dir : String]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : build_run_core.SourceToolLinkInputs]
+  [tlci-path : String]
+  [tlci-text : String]
+  [object-text : String]
+  [announce : bool]) : i64
+  (let
+    [fingerprint-path : String
+      (build-package-runtime-fingerprint-path artifact-path)]
+    [tlci-dirty : bool (not (build-package-file-text-eq? tlci-path tlci-text))]
+    (match (build-package-runtime-input-transcript
+      kind
+      target
+      profile
+      mode
+      opt-level
+      producer-identity
+      asm-path
+      obj-path
+      artifact-path
+      link-inputs
+      true)
+      [(ResultBuildString.Err message)
+        (begin
+          (io.print-error message)
+          1)]
+      [(ResultBuildString.Ok input-transcript)
+        (let
+          [runtime-dirty : bool
+            (not
+              (build-package-runtime-direct-fresh?
+                input-transcript
+                asm-path
+                obj-path
+                artifact-path
+                fingerprint-path
+                object-text))]
+          (if (and (not runtime-dirty) (not tlci-dirty))
+            (begin
+              (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)
+              (compiler_driver_core.compiler-driver-reset-file-state!)
+              (build-package-announce-freshness
+                artifact-path
+                tlci-path
+                false
+                false
+                announce))
+            (match (build-package-stage-paths
+              output-dir
+              name
+              asm-path
+              obj-path
+              artifact-path
+              fingerprint-path
+              tlci-path)
+              [(ResultBuildPackageStagePaths.Err message)
+                (begin
+                  (io.print-error message)
+                  1)]
+              [(ResultBuildPackageStagePaths.Ok stage)
+                (let
+                  [runtime-status : build_run_core.SourceToolDirectObjectStatus
+                    (if runtime-dirty
+                      (build-package-write-linux-direct-object-artifact
+                        kind
+                        target
+                        (struct-get stage obj)
+                        (struct-get stage artifact)
+                        link-inputs
+                        object-text)
+                      build_run_core.SourceToolDirectObjectStatus.Ok)]
+                  (match runtime-status
+                    [(build_run_core.SourceToolDirectObjectStatus.Err message)
+                      (begin
+                        (build-package-clean-stage stage)
+                        (io.print-error message)
+                        1)]
+                    [(build_run_core.SourceToolDirectObjectStatus.Unavailable
+                        message)
+                      (begin
+                        (build-package-clean-stage stage)
+                        (io.print-error message)
+                        1)]
+                    [(build_run_core.SourceToolDirectObjectStatus.Ok)
+                      (let
+                        [asm-status : build_run_core.SourceToolCommandStatus
+                          (if runtime-dirty
+                            (build-package-write-side-assembly
+                              target
+                              opt-level
+                              mode
+                              emit-entry
+                              crt-entry
+                              decls
+                              owned-paths
+                              (struct-get stage asm))
+                            build_run_core.SourceToolCommandStatus.Ok)]
+                        (match asm-status
+                          [(build_run_core.SourceToolCommandStatus.Err message)
+                            (begin
+                              (build-package-clean-stage stage)
+                              (io.print-error message)
+                              1)]
+                          [(build_run_core.SourceToolCommandStatus.Ok)
+                            (begin
+                              (if runtime-dirty
+                                unit
+                                (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!))
+                              (compiler_driver_core.compiler-driver-reset-file-state!)
+                              (build-package-commit-generated-artifacts
+                                stage
+                                asm-path
+                                obj-path
+                                artifact-path
+                                fingerprint-path
+                                tlci-path
+                                tlci-text
+                                input-transcript
+                                runtime-dirty
+                                tlci-dirty
+                                announce))]))]))])))])))
+
+(define (build-package-finish-assembly-fresh-artifacts
+  [name : String]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : backend.CompilerBackendMode]
+  [producer-identity : String]
+  [output-dir : String]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : build_run_core.SourceToolLinkInputs]
+  [tlci-path : String]
+  [tlci-text : String]
+  [asm : String]
+  [announce : bool]) : i64
+  (let
+    [fingerprint-path : String
+      (build-package-runtime-fingerprint-path artifact-path)]
+    [augmented-asm : String
+      (build_run_core.source-tool-augment-assembly-for-target asm target)]
+    [tlci-dirty : bool (not (build-package-file-text-eq? tlci-path tlci-text))]
+    [_release-lower : unit
+      (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)]
+    (match (build-package-runtime-input-transcript
+      kind
+      target
+      profile
+      mode
+      opt-level
+      producer-identity
+      asm-path
+      obj-path
+      artifact-path
+      link-inputs
+      false)
+      [(ResultBuildString.Err message)
+        (begin
+          (io.print-error message)
+          1)]
+      [(ResultBuildString.Ok input-transcript)
+        (let
+          [runtime-dirty : bool
+            (not
+              (build-package-runtime-assembly-fresh?
+                input-transcript
+                asm-path
+                obj-path
+                artifact-path
+                fingerprint-path
+                augmented-asm))]
+          (if (and (not runtime-dirty) (not tlci-dirty))
+            (begin
+              (compiler_driver_core.compiler-driver-reset-file-state!)
+              (build-package-announce-freshness
+                artifact-path
+                tlci-path
+                false
+                false
+                announce))
+            (match (build-package-stage-paths
+              output-dir
+              name
+              asm-path
+              obj-path
+              artifact-path
+              fingerprint-path
+              tlci-path)
+              [(ResultBuildPackageStagePaths.Err message)
+                (begin
+                  (io.print-error message)
+                  1)]
+              [(ResultBuildPackageStagePaths.Ok stage)
+                (let
+                  [runtime-status : build_run_core.SourceToolCommandStatus
+                    (if runtime-dirty
+                      (match (build-package-write-assembly
+                        (struct-get stage asm)
+                        augmented-asm
+                        target)
+                        [(build_run_core.SourceToolCommandStatus.Err message)
+                          (build_run_core.SourceToolCommandStatus.Err message)]
+                        [(build_run_core.SourceToolCommandStatus.Ok)
+                          (build-package-artifact-status
+                            kind
+                            target
+                            (struct-get stage asm)
+                            (struct-get stage obj)
+                            (struct-get stage artifact)
+                            link-inputs
+                            (build_run_core.SourceToolDirectObjectStatus.Unavailable
+                              "freshness fallback"))])
+                      build_run_core.SourceToolCommandStatus.Ok)]
+                  (match runtime-status
+                    [(build_run_core.SourceToolCommandStatus.Err message)
+                      (begin
+                        (build-package-clean-stage stage)
+                        (io.print-error message)
+                        1)]
+                    [(build_run_core.SourceToolCommandStatus.Ok)
+                      (begin
+                        (compiler_driver_core.compiler-driver-reset-file-state!)
+                        (build-package-commit-generated-artifacts
+                          stage
+                          asm-path
+                          obj-path
+                          artifact-path
+                          fingerprint-path
+                          tlci-path
+                          tlci-text
+                          input-transcript
+                          runtime-dirty
+                          tlci-dirty
+                          announce))]))])))])))
+
+(define (build-package-finish-fresh-artifacts
+  [name : String]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : backend.CompilerBackendMode]
+  [producer-identity : String]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : ast.AstDeclList]
+  [owned-paths : ast.AstDeclPathList]
+  [output-dir : String]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : build_run_core.SourceToolLinkInputs]
+  [tlci-path : String]
+  [tlci-text : String]
+  [announce : bool]) : i64
+  (match (build-package-try-render-linux-direct-object
+    kind
+    target
+    opt-level
+    mode
+    emit-entry
+    crt-entry
+    decls
+    owned-paths)
+    [(build_run_core.ResultSourceToolString.Ok object-text)
+      (build-package-finish-direct-fresh-artifacts
+        name
+        kind
+        target
+        opt-level
+        profile
+        mode
+        producer-identity
+        emit-entry
+        crt-entry
+        decls
+        owned-paths
+        output-dir
+        asm-path
+        obj-path
+        artifact-path
+        link-inputs
+        tlci-path
+        tlci-text
+        object-text
+        announce)]
+    [(build_run_core.ResultSourceToolString.Err _)
+      (match (compiler_driver_core.compiler-driver-emit-package-loaded
+        ""
+        target
+        true
+        opt-level
+        mode
+        emit-entry
+        crt-entry
+        decls
+        owned-paths)
+        [(compiler_driver_core.ResultCompilerDriver.Err diag)
+          (begin
+            (io.print-error
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (box-get diag)))
+            1)]
+        [(compiler_driver_core.ResultCompilerDriver.Ok asm)
+          (build-package-finish-assembly-fresh-artifacts
+            name
+            kind
+            target
+            opt-level
+            profile
+            mode
+            producer-identity
+            output-dir
+            asm-path
+            obj-path
+            artifact-path
+            link-inputs
+            tlci-path
+            tlci-text
+            asm
+            announce)])]))
 
 (define (build-package-doctest-paths
   [owner : String]
@@ -4743,70 +5970,29 @@
                               (build_run_core.source-tool-linux-crt-entry?
                                 target
                                 effective-link-inputs))]
-                          ;; Emit linkable ELF before assembly so memory-tight
-                          ;; selfhost package builds do not fork `as` while
-                          ;; holding the full package assembly string.
-                          [direct-status : build_run_core.SourceToolDirectObjectStatus
-                            (build-package-try-linux-direct-object
-                              kind
-                              target
-                              opt-level
-                              mode
-                              emit-entry
-                              crt-entry
-                              decls
-                              owned-paths
-                              obj-path
-                              artifact-path
-                              effective-link-inputs)]
-                          (match direct-status
-                            [(build_run_core.SourceToolDirectObjectStatus.Ok)
-                              (match (build-package-write-side-assembly
-                                target
-                                opt-level
-                                mode
-                                emit-entry
-                                crt-entry
-                                decls
-                                owned-paths
-                                asm-path)
-                                [(build_run_core.SourceToolCommandStatus.Err
-                                    message)
-                                  (begin
-                                    (io.print-error message)
-                                    1)]
-                                [(build_run_core.SourceToolCommandStatus.Ok)
-                                  (begin
-                                    (compiler_driver_core.compiler-driver-reset-file-state!)
-                                    (build-package-finish-built-artifact
-                                      artifact-path
-                                      tlci-path
-                                      tlci-text
-                                      announce))])]
-                            [(build_run_core.SourceToolDirectObjectStatus.Err
-                                message)
-                              (begin
-                                (io.print-error message)
-                                1)]
-                            [(build_run_core.SourceToolDirectObjectStatus.Unavailable
-                                message)
-                              (build-package-emit-assembly-fallback
-                                kind
-                                target
-                                opt-level
-                                mode
-                                emit-entry
-                                crt-entry
-                                decls
-                                owned-paths
-                                asm-path
-                                obj-path
-                                artifact-path
-                                effective-link-inputs
-                                tlci-path
-                                tlci-text
-                                message
-                                announce)]))]))])
+                          (build-package-finish-fresh-artifacts
+                            name
+                            kind
+                            target
+                            opt-level
+                            profile
+                            mode
+                            producer-identity
+                            emit-entry
+                            crt-entry
+                            decls
+                            owned-paths
+                            (build-package-output-dir-profile
+                              manifest-dir
+                              name
+                              profile)
+                            asm-path
+                            obj-path
+                            artifact-path
+                            effective-link-inputs
+                            tlci-path
+                            tlci-text
+                            announce))]))])
               pre-emit-doctest-status))
           inline-test-status)))))
 

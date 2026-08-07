@@ -1,12 +1,12 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	492
-# count	total	all	annotations	492
+# count	total	all	rows	493
+# count	total	all	annotations	493
 # count	total	all	sources	3
-# count	total	all	source-sites	366
+# count	total	all	source-sites	367
 # count	total	all	expanded-cases	159
-# count	gate	public-tools	rows	311
-# count	gate	public-tools	source-sites	202
+# count	gate	public-tools	rows	312
+# count	gate	public-tools	source-sites	203
 # count	gate	public-tools	expanded-cases	125
 # count	gate	selfhost-cli	rows	79
 # count	gate	selfhost-cli	source-sites	78
@@ -14,12 +14,12 @@
 # count	gate	stage1-wrapper	rows	102
 # count	gate	stage1-wrapper	source-sites	86
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	369
+# count	host	all	rows	370
 # count	host	linux	rows	120
 # count	host	windows	rows	3
-# count	platform	linux	rows	489
-# count	platform	windows	rows	372
-# count	kind	delegated	rows	8
+# count	platform	linux	rows	490
+# count	platform	windows	rows	373
+# count	kind	delegated	rows	9
 # count	kind	direct	rows	53
 # count	kind	wrapper	rows	431
 # count	process	compiler	rows	320
@@ -33,7 +33,7 @@
 # count	process	compiler+assembler+linker+test-program	rows	3
 # count	process	compiler+assembler+linker+two-test-programs	rows	2
 # count	process	compiler+git+native-tools	rows	7
-# count	process	compiler+native-tools	rows	64
+# count	process	compiler+native-tools	rows	65
 # count	process	compiler+native-tools+program	rows	60
 # count	process	compiler+native-tools+programs	rows	5
 # count	process	compiler+native-tools+scratch-program	rows	1
@@ -407,6 +407,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	package-test-inline-fail-continues	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp test --target <host-target> --manifest-path <inline-fail-pkg>/typelisp.pkg --stdlib-root <repo>/stdlib	<inline-fail-pkg>/typelisp.pkg	inherited	repository	compiler+native-tools+programs	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	1	assert_contains stdout integration-file-and-package-failed-1-of-2	assert_contains stderr FAILED-package-fails,ok-package-passes-after,and-1-passed-1-failed;assert_not_contains stderr child-exited	continues-to-integration-after-inline-assertion-failure	package-test-inline-fail-continues	-
 1	package-test-empty	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd_cwd	typelisp test --check --target <host-target> --stdlib-root <repo>/stdlib	prepared-by-gate	inherited	<test-empty-pkg>	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains_any stdout \	empty	none	package-test-empty	-
 1	package-test-fail	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp test --target <host-target> --manifest-path <test-fail-pkg>/typelisp.pkg	<test-fail-pkg>/typelisp.pkg	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	1	assert_contains stdout TypeLisp integration test file:	assert_contains stderr typelisp test: test executable exited with exit status: 7	none	package-test-fail	-
+1	package-artifact-freshness	public-tools	scripts/verify-public-tools.sh	delegated	all	stage2/delegated	sh <repo>/scripts/verify-package-artifact-freshness.sh	<repo>/scripts/verify-package-artifact-freshness.sh	inherited	repository	compiler+native-tools	TYPELISP_BIN=stage2	0	asserted-by-delegate	asserted-by-delegate	preserves:no-op-bytes-and-mtimes;skips:no-op-native-tools;independent:runtime-and-tlci;invalidates:tool-and-dependency-inputs;rolls-back:failed-build	package-artifact-freshness	-
 1	package-build	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp build --manifest-path <pkg>/typelisp.pkg	<pkg>/typelisp.pkg	inherited	repository	compiler+native-tools	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Built	empty	[ -f <pkg-asm> ] || fail package build did not write deterministic assembly;[ -s <pkg-tlci> ] || fail package build did not write tlci image;[ -s <math-tlci> ] || fail package build did not write dependency tlci image	package-build	-
 1	package-inspect-tlci	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp inspect <pkg-tlci>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout tlci image;assert_contains stdout package-name: public_tool_pkg;assert_contains stdout metadata-version: v1;assert_contains stdout code: offset=;assert_not_contains stdout code: offset=0 bytes=0;assert_contains stdout source-set-binding-schema: 1;assert_not_contains stdout source-set-digest: unavailable	empty	none	package-inspect-tlci	-
 1	package-inspect-dependency-tlci	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp inspect <math-tlci>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout tlci image;assert_contains stdout package-name: math;assert_contains stdout source-set-binding-schema: 1;assert_not_contains stdout source-set-digest: unavailable;assert_contains stdout code: offset=;assert_not_contains stdout code: offset=0 bytes=0	empty	none	package-inspect-dependency-tlci	-
@@ -527,8 +528,8 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	selfhost-cli-package-graph-chain	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2-built-root-cli/direct	typelisp build --manifest-path <workdir>/package-graph-chain/root/typelisp.pkg --target <host-target> --opt-level 0	root-mid-leaf-path-dependency-chain	inherited	repository	compiler+native-tools	inherited	0	contains:leaf-archive,mid-archive,root-executable	empty	writes:three-artifacts;separate-root-program-exits-42	selfhost-cli-package-graph-chain	-
 1	selfhost-cli-package-graph-github-prefetch	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/package-graph-github-prefetch/root/typelisp.pkg --target <host-target> --opt-level 0	prepopulated-github-dependency-worktree	inherited	repository	compiler+native-tools	inherited	0	contains:remote-archive,root-executable	empty	writes:two-artifacts;separate-root-program-exits-43	selfhost-cli-package-graph-github-prefetch	-
 1	selfhost-cli-package-graph-github-cache-first	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0	local-git-rewrite-with-empty-package-cache	inherited	repository	compiler+git+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	0	contains:root-executable	empty	writes:cache-entry-marker,metadata,lockfile,executable	selfhost-cli-package-graph-github-cache-first	-
-1	selfhost-cli-package-graph-github-cache-hit	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0	offline-remote-with-valid-package-cache	inherited	repository	compiler+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	0	contains:root-executable	empty	reuses:package-cache	selfhost-cli-package-graph-github-cache-hit	-
-1	selfhost-cli-package-graph-github-cache-refetch	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0	restored-remote-with-corrupt-cache-metadata	inherited	repository	compiler+git+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	0	contains:root-executable	empty	preserves:corrupt.1;rewrites:valid-cache-metadata	selfhost-cli-package-graph-github-cache-refetch	-
+1	selfhost-cli-package-graph-github-cache-hit	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0	offline-remote-with-valid-package-cache	inherited	repository	compiler+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	0	contains:Fresh-root-executable	empty	reuses:package-cache	selfhost-cli-package-graph-github-cache-hit	-
+1	selfhost-cli-package-graph-github-cache-refetch	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0	restored-remote-with-corrupt-cache-metadata	inherited	repository	compiler+git+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	0	contains:Fresh-root-executable	empty	preserves:corrupt.1;rewrites:valid-cache-metadata	selfhost-cli-package-graph-github-cache-refetch	-
 1	selfhost-cli-package-graph-github-lock-missing	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/gl/root/typelisp.pkg --target <host-target> --opt-level 0 --locked	branch-dependency-without-lockfile	inherited	repository	compiler	GIT_CONFIG_GLOBAL=<workdir>/gl/gitconfig	1	empty	contains:locked-requires-lock-entry	does-not-write:lockfile	selfhost-cli-package-graph-github-lock-missing	-
 1	selfhost-cli-package-graph-github-lock-first	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/gl/root/typelisp.pkg --target <host-target> --opt-level 0	branch-main-dependency-without-lockfile	inherited	repository	compiler+git+native-tools	GIT_CONFIG_GLOBAL=<workdir>/gl/gitconfig	0	contains:root-executable	empty	writes:lockfile-with-main-pin-and-rev1	selfhost-cli-package-graph-github-lock-first	-
 1	selfhost-cli-package-graph-github-lock-replay	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/gl/root/typelisp.pkg --target <host-target> --opt-level 0	branch-main-advanced-with-existing-lockfile	inherited	repository	compiler+git+native-tools	GIT_CONFIG_GLOBAL=<workdir>/gl/gitconfig	0	contains:root-executable	empty	preserves:lockfile-and-rev1-output	selfhost-cli-package-graph-github-lock-replay	-

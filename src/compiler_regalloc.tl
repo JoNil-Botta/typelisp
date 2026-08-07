@@ -9627,6 +9627,14 @@
 (define (compiler-reg-loop-depth-max) : i64
   8)
 
+;; Loop-depth spill-weight multiplier, applied per ref when the spill-weight
+;; walk scores a candidate. With allocation running on edge-precise liveness
+;; (see compiler-reg-plan-from), loop-carry classes no longer inflate to
+;; [entry, loop-end], so the legacy 2x ladder ranks per-iteration-hot webs
+;; correctly against genuinely cold cross-loop webs. Steeper bases were tried
+;; in the #6248 campaign and rejected: at 8^depth a depth-(d+1) web outranks
+;; a depth-d web with many more refs even when the outer loop is the
+;; genuinely hotter one (the lex_source regression seen there).
 (define (compiler-reg-loop-depth-weight [depth : i64]) : i64
   (cond
     [(<= depth 0) 1]
@@ -23022,8 +23030,33 @@
                 (=
                   (live.compiler-live-set-word-count destructive-fixed-points)
                   0))]
+            ;; The hybrid's conservative input: allocation runs on the
+            ;; edge-precise index (see the EP comment at the plan entry),
+            ;; while the live-out-input phi exclusion's defense in depth is
+            ;; specified against CONSERVATIVE segments, so this gate alone
+            ;; keeps a baseline-liveness index -- computed on the coalescing
+            ;; branch only, so move-free functions never pay the second
+            ;; interval-selection walk. The M-A (RC1) param extension is
+            ;; applied as well, keeping the gate's param hulls identical to
+            ;; what it read before the EP switch. The cold-split plan's
+            ;; allocation index is edge-precise at both levels, exactly what
+            ;; it fed this gate before, so it keeps that same object.
+            [cons-index : CompilerRegIntervalIndex
+              (if (>= forced-spill-from 0)
+                interval-index
+                (match (compiler-reg-live-interval-selection
+                  func
+                  (struct-get liveness-handle baseline))
+                  [(CompilerRegIntervalSelection.Selection _ cons-idx)
+                    (begin
+                      (match func
+                        [(ir.CompilerIrFunction.Function _ params _ _ _)
+                          (compiler-reg-param-intervals-extend-entry!
+                            params
+                            cons-idx)])
+                      cons-idx)]))]
             (compiler-reg-hybrid-coalesce-index
-              interval-index
+              cons-index
               (compiler-reg-live-interval-selection-ep-segments
                 func
                 ep-liveness
@@ -23800,11 +23833,28 @@
         [(ir.CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
     [interval-selection : CompilerRegIntervalSelection
       (if (compiler-reg-scalar-full-intervals? func)
+        ;; ALLOCATION RUNS ON EDGE-PRECISE LIVENESS. The baseline treats a
+        ;; phi's inputs as uses AT the phi block, so a loop's back-edge def
+        ;; appears live-in at the header from EVERY predecessor and leaks
+        ;; backward through the versioning guard chain to function entry:
+        ;; in a multi-loop function the coalesced loop-carry class then spans
+        ;; [entry, loop-end] and the greedy sees one giant cross-function web
+        ;; -- hot loop-carried counters lose first-free against every sibling
+        ;; loop's residents and spill whole, fragmenting into per-iteration
+        ;; mem-to-mem copies (the cfg_domloops/CSR defect, #6248). The EP
+        ;; analysis (compiler-live-analyze-function-edge-precise) attributes
+        ;; each phi input to its own predecessor edge -- the exact SSA
+        ;; interference, identical to the baseline for every var that is not
+        ;; a phi input -- so allocation interference, call-span tests, and
+        ;; same-value eligibility all get exact inputs and stay sound. The
+        ;; coalescing hybrid alone keeps a conservative index (computed on
+        ;; its own branch in compiler-reg-plan-from): the live-out-input phi
+        ;; exclusion is specified against conservative segments. The
+        ;; cold-split caller already used EP for this selection, so it sees
+        ;; no change.
         (compiler-reg-live-interval-selection
           func
-          (if (>= forced-spill-from 0)
-            (compiler-reg-liveness-handle-edge-precise liveness-handle)
-            (struct-get liveness-handle baseline)))
+          (compiler-reg-liveness-handle-edge-precise liveness-handle))
         (let
           [block-intervals : CompilerRegIntervalSeq
             (compiler-reg-block-intervals func)]

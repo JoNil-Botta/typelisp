@@ -48,6 +48,20 @@ retain explicit shells for interpreted fallback. `typelisp inspect <file.tlci>`
 renders the image
 header, sections, and package metadata. General dependency-catalog discovery
 and consumer dispatch remain staged separately from emission.
+
+Runtime outputs and the host comptime image have independent freshness. A
+second identical build reports each as `Fresh`, preserves the assembly,
+object, runtime artifact, and `.tlci` bytes and modification times, and does
+not rerun the native assembler, archiver, or linker. A comptime-only edit may
+therefore update `.tlci` while leaving the runtime side untouched; conversely,
+a target, profile, backend, optimization, debug, link-input, dependency
+archive, or native-tool identity change rebuilds only the affected runtime
+side. The adjacent `<runtime-artifact>.runtime-inputs` file binds the retained
+runtime outputs to those inputs and is managed as package build state. Changed
+outputs are staged and committed together, so a failed build retains the last
+complete artifact set. `typelisp clean` removes the sidecar with the runtime
+artifact.
+
 Self-host bootstrap builds the compiler's exact embedded stdlib source set into
 a source-bound `stdlib.tlci`, embeds it in the next compiler stage, and validates
 all registered macro identities through the production loader. A bootstrapped

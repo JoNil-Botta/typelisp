@@ -5108,6 +5108,17 @@ comptime code. The
 runtime archive (`lib<name>.a` / `<name>.lib`) is separate. This section
 specifies the v2 container and its independently versioned metadata schemas.
 
+Package producers make freshness and commit decisions for the runtime artifact
+and host `.tlci` independently. If the newly emitted bytes and all material
+inputs for a side are unchanged, the producer preserves that side byte-for-byte
+without changing its modification time; a fresh runtime side does not invoke
+the assembler, archiver, or linker. Runtime freshness includes target, profile,
+backend mode, optimization/debug configuration, compiler and native-tool
+identity, exact link inputs/arguments, and dependency archive content. Changed
+outputs are staged before atomic replacement, and a failed build must retain
+the preceding complete runtime/host-image pair. CLI status reports `Built` for
+committed sides and `Fresh` for retained sides.
+
 The container is a custom little-endian binary format shared by Linux and
 Windows. It is not ELF or COFF. The first 176 bytes are a fixed header:
 

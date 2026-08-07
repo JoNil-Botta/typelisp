@@ -11104,8 +11104,9 @@
 
 ;; Returns true when use-after-move is rejected (straight-line and after a
 ;; branch that moves on every arm), while a single move, copyable reuse, ordinary
-;; aggregate/projection sharing, one-shot owner transfers, branch/deferred body
-;; isolation, and conservative repeated-loop owner moves pass.
+;; aggregate/projection sharing, one-shot owner transfers, branch isolation,
+;; and conservative repeated-loop owner moves pass. Creating a closure moves
+;; each move-only capture even though execution of its body remains deferred.
 (define (compiler-typecheck-move-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -11393,8 +11394,9 @@
         (compiler-typecheck-move-branch-arm-isolated-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-move-lambda-body-discard-source))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-lambda-body-discard-source)
+        "typecheck: closure capability would be erased by escaping the direct local binding")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -11413,7 +11415,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-lambda-body-reuse-source)
-        "typecheck: use of moved value `cell`")
+        "typecheck: closure capability would be erased by escaping the direct local binding")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

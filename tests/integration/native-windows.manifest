@@ -193,6 +193,7 @@ i16_min_div_neg1_trap|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expec
 i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/i16_min_rem_neg1_trap/i16_min_rem_neg1_trap.tl:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
 lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|stdlib/string.tl
 lambda_capture_aggregate|tests/integration/lambda_capture_aggregate.tl|42|-|-|stdlib/string.tl
+lambda_capture_capabilities|tests/integration/lambda_capture_capabilities.tl|42|-|-|stdlib/string.tl
 lambda_capture_fixed_array|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-
 lambda_capture_fixed_array_aggregate|tests/integration/lambda_capture_fixed_array_aggregate.tl|42|-|-|stdlib/string.tl
 lambda_capture_nested_aggregate|tests/integration/lambda_capture_nested_aggregate.tl|42|-|-|stdlib/string.tl

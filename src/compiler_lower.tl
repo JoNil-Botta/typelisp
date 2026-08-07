@@ -18339,6 +18339,7 @@
     [(ast.AstType.Bool) true]
     [(ast.AstType.Char) true]
     [(ast.AstType.Ref _ _) true]
+    [(ast.AstType.MutRef _ _) true]
     [(ast.AstType.Func _ _) true]
     [(ast.AstType.Tuple _) true]
     [(ast.AstType.Array _ _) true]

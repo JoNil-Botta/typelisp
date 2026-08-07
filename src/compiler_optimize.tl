@@ -33047,9 +33047,10 @@
                     [_ false]))]
               [_ false])]))]))
 
-;; One phi input, discharged on its own edge: a literal seed needs a dominating
-;; `seed < len`; anything else must be `self + k` for a positive literal k whose
-;; edge was guarded by `self + k < len`.
+;; One phi input, discharged on its own edge: a literal seed needs `seed < len`,
+;; either from a dominating fact or from the same literal bound directly.
+;; Anything else must be `self + k` for a positive literal k whose edge was
+;; guarded by `self + k < len`.
 (define (opt-bounds-dom-counter-input-ok?
   [type-segment-bases : i64]
   [index : OptCfgIndex]
@@ -33074,7 +33075,10 @@
           len
           (ast.AstType.I64))
           [(OptDomCmpLookup.Some decided) decided]
-          [(OptDomCmpLookup.No) false]))]
+          [(OptDomCmpLookup.No)
+            (match len
+              [(ir.CompilerIrValue.I64 bound) (< seed bound)]
+              [_ false])]))]
     [(ir.CompilerIrValue.Var var)
       (and
         (match (opt-bool-branch-def defs var)

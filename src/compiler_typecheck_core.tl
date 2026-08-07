@@ -66785,58 +66785,72 @@
   (let
     [expr-bases : i64 (tc-context-expr-bases ctx)]
     [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
-    [capture-locals : TcMovedSet
-      (tc-lambda-capture-locals expr-bases env params body)]
-    [lambda-env : TcTypeEnv (tc-bind-params ctx env params)]
-    [lambda-locals : TcMovedSet (tc-move-params-locals params capture-locals)]
-    (match (tc-move-check-expr-id
-      ctx
-      expr-bases
-      lambda-env
-      lambda-locals
-      (tc-moved-empty)
-      (tc-moved-empty)
-      body-id)
-      [(TcMoveResult.Ok body-moved)
-        (match (tc-expr-id ctx lambda-env body-id)
-          [(ResultTcType.Ok body-ty)
-            (match (tc-move-check-result-expr
-              ctx
-              expr-bases
-              lambda-env
-              lambda-locals
-              (tc-moved-empty)
-              body-moved
-              body
-              body-ty)
-              [(TcMoveResult.Ok final-moved)
-                (if (tc-lambda-capture-consumed-scan?
+    [has-move-only-capture : bool
+      (tc-lambda-capture-has-move-only? ctx expr-bases env params body)]
+    ;; Only a move-only capture can make a concrete closure mutable or
+    ;; consuming. Keep the common noncapturing/Copy-capture path to one marker
+    ;; scan instead of recursively move-checking and retyping the whole body.
+    (if (not has-move-only-capture)
+      (tc-closure-call-capability-shared)
+      (let
+        [capture-locals : TcMovedSet
+          (tc-lambda-capture-locals expr-bases env params body)]
+        [lambda-env : TcTypeEnv (tc-bind-params ctx env params)]
+        [lambda-locals : TcMovedSet
+          (tc-move-params-locals params capture-locals)]
+        (match (tc-move-check-expr-id
+          ctx
+          expr-bases
+          lambda-env
+          lambda-locals
+          (tc-moved-empty)
+          (tc-moved-empty)
+          body-id)
+          [(TcMoveResult.Ok body-moved)
+            (match (tc-expr-id ctx lambda-env body-id)
+              [(ResultTcType.Ok body-ty)
+                (match (tc-move-check-result-expr
                   ctx
                   expr-bases
-                  (tc-type-env-marker-start env)
-                  (tc-param-bound-names params)
+                  lambda-env
+                  lambda-locals
+                  (tc-moved-empty)
+                  body-moved
                   body
-                  final-moved
-                  TcStringList.Nil)
-                  (tc-closure-call-capability-once)
-                  (if (tc-lambda-capture-has-mut-reference?
-                    expr-bases
-                    env
-                    params
-                    body)
-                    (tc-closure-call-capability-mut)
-                    (tc-closure-call-capability-shared)))]
-              [(TcMoveResult.Err _)
+                  body-ty)
+                  [(TcMoveResult.Ok final-moved)
+                    (if (tc-lambda-capture-consumed-scan?
+                      ctx
+                      expr-bases
+                      (tc-type-env-marker-start env)
+                      (tc-param-bound-names params)
+                      body
+                      final-moved
+                      TcStringList.Nil)
+                      (tc-closure-call-capability-once)
+                      (if (tc-lambda-capture-has-mut-reference?
+                        expr-bases
+                        env
+                        params
+                        body)
+                        (tc-closure-call-capability-mut)
+                        (tc-closure-call-capability-shared)))]
+                  [(TcMoveResult.Err _)
+                    (tc-lambda-call-capability-fallback
+                      ctx
+                      expr-bases
+                      env
+                      params
+                      body)])]
+              [(ResultTcType.Err _)
                 (tc-lambda-call-capability-fallback
                   ctx
                   expr-bases
                   env
                   params
                   body)])]
-          [(ResultTcType.Err _)
-            (tc-lambda-call-capability-fallback ctx expr-bases env params body)])]
-      [(TcMoveResult.Err _)
-        (tc-lambda-call-capability-fallback ctx expr-bases env params body)])))
+          [(TcMoveResult.Err _)
+            (tc-lambda-call-capability-fallback ctx expr-bases env params body)])))))
 
 (define (tc-lambda-init-call-capability
   [ctx : TcContext]

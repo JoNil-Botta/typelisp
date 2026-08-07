@@ -339,6 +339,19 @@
         (str_cat.str-cat "clean: refusing unsafe artifact path " path ""))
       1)))
 
+(define (clean-remove-package-runtime-artifact
+  [manifest-dir : String]
+  [name : String]
+  [dry-run : bool]
+  [path : String]) : i64
+  (clean-merge-status
+    (clean-remove-package-file manifest-dir name dry-run path)
+    (clean-remove-package-file
+      manifest-dir
+      name
+      dry-run
+      (build_cli_core.build-package-runtime-fingerprint-path path))))
+
 (define (clean-remove-package-dir
   [manifest-dir : String]
   [name : String]
@@ -405,7 +418,7 @@
               status
               (clean-merge-status
                 status
-                (clean-remove-package-file
+                (clean-remove-package-runtime-artifact
                   manifest-dir
                   name
                   dry-run
@@ -417,7 +430,7 @@
               status
               (clean-merge-status
                 status
-                (clean-remove-package-file
+                (clean-remove-package-runtime-artifact
                   manifest-dir
                   name
                   dry-run
@@ -429,7 +442,7 @@
               status
               (clean-merge-status
                 status
-                (clean-remove-package-file
+                (clean-remove-package-runtime-artifact
                   manifest-dir
                   name
                   dry-run
@@ -441,7 +454,7 @@
               status
               (clean-merge-status
                 status
-                (clean-remove-package-file
+                (clean-remove-package-runtime-artifact
                   manifest-dir
                   name
                   dry-run

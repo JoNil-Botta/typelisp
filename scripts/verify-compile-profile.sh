@@ -1088,6 +1088,12 @@ fi
 # #5675's shuffle selector lowering and focused coverage crossed
 # ast_expr_pool.macro_expand from 51 to 52 segments; the authoritative Windows
 # probe measured 3,345,585 used nodes and 109,051,904 physical payload bytes.
+# #6173's package artifact freshness and transactional staging support
+# independently crossed that same boundary; its pre-reconciliation Windows
+# probe measured 3,342,684 used nodes and 109,051,904 physical payload bytes.
+# The reconciled #5675/#6173 tree retains 52 segments: the authoritative
+# Windows probe measured 3,357,074 used nodes, 3,407,872 capacity, and
+# 109,051,904 physical payload bytes.
 # #5937's persistent typechecker list storage and focused wide/deep tests
 # crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
 # Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload

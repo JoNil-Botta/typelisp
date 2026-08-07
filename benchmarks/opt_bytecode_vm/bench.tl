@@ -4,10 +4,10 @@
 ;# stack-machine program once, then runs it many rounds with a round-dependent
 ;# input and folds each run's result into a wrapping accumulator. Exercises enum
 ;# `match` with a payload-carrying variant, a fetch/dispatch loop over an
-;# `(Array Inst)`, and stack pushes/pops over an `(Array i64)`. All values are
+;# fixed `(Array Inst 9)`, and stack pushes/pops over a fixed
+;# `(Array i64 2)` scratch buffer (the program's maximum stack depth). All values are
 ;# reduced modulo a prime so they stay non-negative and the printed decimal
 ;# matches the C baseline. The round count is a runtime argument.
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -22,8 +22,8 @@
   (MulOp)
   (XorOp))
 
-(define (vm-build-program) : (Array Inst)
-  (make-array
+(define (vm-build-program) : (Array Inst 9)
+  (array
     (PushInput)
     (PushConst 1000003)
     (MulOp)
@@ -34,59 +34,10 @@
     (PushConst 54321)
     (XorOp)))
 
-(define (vm-run
-  [program : (Array Inst)]
-  [plen : i64]
-  [stack : (Array i64)]
-  [input : i64]) : i64
-  (let
-    [pc : i64 0]
-    [sp : i64 0]
-    (begin
-      (while (< pc plen)
-        (begin
-          (match (array-ref program pc)
-            [(PushInput)
-              (begin
-                (array-set! stack sp input)
-                (set! sp (+ sp 1)))]
-            [(PushConst value)
-              (begin
-                (array-set! stack sp value)
-                (set! sp (+ sp 1)))]
-            [(Dup)
-              (begin
-                (array-set! stack sp (array-ref stack (- sp 1)))
-                (set! sp (+ sp 1)))]
-            [(AddOp)
-              (let
-                [b : i64 (array-ref stack (- sp 1))]
-                [a : i64 (array-ref stack (- sp 2))]
-                (begin
-                  (array-set! stack (- sp 2) (% (+ a b) vm-prime))
-                  (set! sp (- sp 1))))]
-            [(MulOp)
-              (let
-                [b : i64 (array-ref stack (- sp 1))]
-                [a : i64 (array-ref stack (- sp 2))]
-                (begin
-                  (array-set! stack (- sp 2) (% (* a b) vm-prime))
-                  (set! sp (- sp 1))))]
-            [(XorOp)
-              (let
-                [b : i64 (array-ref stack (- sp 1))]
-                [a : i64 (array-ref stack (- sp 2))]
-                (begin
-                  (array-set! stack (- sp 2) (% (bit-xor a b) vm-prime))
-                  (set! sp (- sp 1))))])
-          (set! pc (+ pc 1))))
-      (array-ref stack 0))))
-
 (define (vm-bench [rounds : i64]) : i64
   (let
-    [program : (Array Inst) (vm-build-program)]
-    [plen : i64 (array-length program)]
-    [stack : (Array i64) (array.make-array i64 64)]
+    [program : (Array Inst 9) (vm-build-program)]
+    [stack : (Array i64 2) (array 0 0)]
     [round : i64 0]
     [acc : i64 0]
     (begin
@@ -94,7 +45,47 @@
         (begin
           (let
             [input : i64 (% (+ (* round 2654435761) 12345) vm-prime)]
-            (set! acc (% (+ acc (vm-run program plen stack input)) vm-prime)))
+            [pc : i64 0]
+            [sp : i64 0]
+            (begin
+              (while (< pc 9)
+                (begin
+                  (match (array-ref program pc)
+                    [(PushInput)
+                      (begin
+                        (array-set! stack sp input)
+                        (set! sp (+ sp 1)))]
+                    [(PushConst value)
+                      (begin
+                        (array-set! stack sp value)
+                        (set! sp (+ sp 1)))]
+                    [(Dup)
+                      (begin
+                        (array-set! stack sp (array-ref stack (- sp 1)))
+                        (set! sp (+ sp 1)))]
+                    [(AddOp)
+                      (let
+                        [b : i64 (array-ref stack (- sp 1))]
+                        [a : i64 (array-ref stack (- sp 2))]
+                        (begin
+                          (array-set! stack (- sp 2) (% (+ a b) vm-prime))
+                          (set! sp (- sp 1))))]
+                    [(MulOp)
+                      (let
+                        [b : i64 (array-ref stack (- sp 1))]
+                        [a : i64 (array-ref stack (- sp 2))]
+                        (begin
+                          (array-set! stack (- sp 2) (% (* a b) vm-prime))
+                          (set! sp (- sp 1))))]
+                    [(XorOp)
+                      (let
+                        [b : i64 (array-ref stack (- sp 1))]
+                        [a : i64 (array-ref stack (- sp 2))]
+                        (begin
+                          (array-set! stack (- sp 2) (% (bit-xor a b) vm-prime))
+                          (set! sp (- sp 1))))])
+                  (set! pc (+ pc 1))))
+              (set! acc (% (+ acc (array-ref stack 0)) vm-prime))))
           (set! round (+ round 1))))
       acc)))
 

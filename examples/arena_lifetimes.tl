@@ -148,9 +148,10 @@
   (let
     [level : arena.Arena (arena.make-atomic)]
     [level-name : String (in-arena level (str-cat.str-cat "level:" "docks"))]
+    [worker-level-name : String (in-arena level (clone level-name))]
     (match (thread-i64.spawn
       (lambda () : i64
-        (string.string-length (& level-name))))
+        (string.string-length (& worker-level-name))))
       [(thread-i64.I64SpawnErr _) 1]
       [(thread-i64.I64SpawnOk worker)
         (let

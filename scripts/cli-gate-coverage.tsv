@@ -1,12 +1,12 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	491
-# count	total	all	annotations	491
+# count	total	all	rows	492
+# count	total	all	annotations	492
 # count	total	all	sources	3
-# count	total	all	source-sites	365
+# count	total	all	source-sites	366
 # count	total	all	expanded-cases	159
-# count	gate	public-tools	rows	310
-# count	gate	public-tools	source-sites	201
+# count	gate	public-tools	rows	311
+# count	gate	public-tools	source-sites	202
 # count	gate	public-tools	expanded-cases	125
 # count	gate	selfhost-cli	rows	79
 # count	gate	selfhost-cli	source-sites	78
@@ -14,15 +14,15 @@
 # count	gate	stage1-wrapper	rows	102
 # count	gate	stage1-wrapper	source-sites	86
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	368
+# count	host	all	rows	369
 # count	host	linux	rows	120
 # count	host	windows	rows	3
-# count	platform	linux	rows	488
-# count	platform	windows	rows	371
+# count	platform	linux	rows	489
+# count	platform	windows	rows	372
 # count	kind	delegated	rows	8
 # count	kind	direct	rows	53
-# count	kind	wrapper	rows	430
-# count	process	compiler	rows	319
+# count	kind	wrapper	rows	431
+# count	process	compiler	rows	320
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -192,6 +192,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	lsp-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lsp -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	lsp-short-help	-
 1	missing-command	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp	-	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains_any stderr Usage: usage:	none	missing-command	-
 1	check-hello	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp check examples/hello.tl	examples/hello.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Type checking passed!	empty	none	check-hello	-
+1	check-parser-recovery-diagnostics	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp check <check-parser-recovery-src>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr parse: malformed define;assert_contains stderr typecheck: unbound name missing-a;assert_contains stderr typecheck: unbound name missing-b	assert parser recovery diagnostics preserve source order	check-parser-recovery-diagnostics	-
 1	check-cfg-default-target	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp check <check-cfg-src> --cfg tooling-feature	<check-cfg-src>	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Type checking passed!	empty	none	check-cfg-default-target	-
 1	check-cfg-windows-target	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp check <check-cfg-src> --target windows-x86_64 --cfg tooling-feature	<check-cfg-src>	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Type checking passed!	empty	none	check-cfg-windows-target	-
 1	compile-hello	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp compile examples/hello.tl -o <workdir>/hello.s	examples/hello.tl,<workdir>/hello.s	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Wrote	empty	assert_contains <workdir>/hello.s main:	compile-hello	-

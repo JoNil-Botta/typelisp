@@ -731,6 +731,30 @@
               [_ false]))]
         [_ false]))))
 
+(define (compiler-ir-smoke-structural-lifetime-render-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [source : i64 (ci.intern "macro-local-life")]
+    [lifetime : i64 (+ (ci.intern-macro-local-structural-base) source)]
+    [borrowed : ast.AstType
+      (ast.ast-ty-ref-with-pools pools lifetime ast.AstType.I64)]
+    [invalid : ast.AstType
+      (ast.ast-ty-ref-with-pools pools (ci.intern-capacity) ast.AstType.I64)]
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (and
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-render bases borrowed)
+        "(& macro-local-life i64)")
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-name bases borrowed)
+        "(& macro-local-life i64)")
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-render bases invalid)
+        (string.append
+          "(& <id:"
+          (string.append (string.int->string (ci.intern-capacity)) "> i64)"))))))
+
 ;; The derived-symbol table exists because the fixed intern pool ran out of
 ;; generated ids on a whole-program self-compile (refs #6293), so what has to
 ;; hold is: one id per spelling and that spelling back unchanged, growth past
@@ -955,5 +979,6 @@
     (unless (compiler-ir-smoke-runtime-effect-self-test-ok?) (return 7))
     (unless (compiler-ir-smoke-slice-type-render-clone-ok?) (return 8))
     (unless (compiler-ir-smoke-derived-symbol-table-ok?) (return 9))
-    (unless (compiler-ir-smoke-source-spans-escape-ok?) (return 10))
+    (unless (compiler-ir-smoke-structural-lifetime-render-ok?) (return 10))
+    (unless (compiler-ir-smoke-source-spans-escape-ok?) (return 11))
     (compiler_ir_types.compiler-ir-effect-self-test)))

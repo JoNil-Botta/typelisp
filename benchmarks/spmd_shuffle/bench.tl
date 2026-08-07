@@ -2,8 +2,9 @@
 ;#
 ;# Equivalent to baseline.c. Each pass maps `out[i] = a[i] + r`; the TypeLisp
 ;# spelling routes that value through an identity intra-gang `spmd-shuffle`.
-;# Identity keeps scalar, AVX2, AVX-512, and C observables identical while still
-;# requiring ordered selector validation and a native permutation in SIMD modes.
+;# Identity keeps scalar, AVX2, AVX-512, and C observables identical. SIMD
+;# lowering recognizes this compile-time selector and forwards the source
+;# vector without selector validation or a native permutation.
 ;# The selected output element is folded into an accumulator after every pass.
 (import stdlib.array)
 (import stdlib.io)

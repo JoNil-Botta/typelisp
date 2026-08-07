@@ -2944,6 +2944,30 @@
                     (set! result (lsp-diagnostic-uris-add result diag-uri))))))]))
       result)))
 
+;; The semantic-index pass intentionally stops before producing an index when
+;; parsing fails. On that error-only path, ask the recovery-aware shared checker
+;; for the complete parse + later semantic diagnostic set. Ordinary semantic
+;; failures already carry their complete list and avoid a duplicate check.
+(define (lsp-parser-recovery-diagnostics
+  [path : String]
+  [text : String]
+  [stdlib-roots : lsp_svec.Vec]
+  [diagnostics : cdiag.CompilerDiagnosticList]) : cdiag.CompilerDiagnosticList
+  (let
+    [first : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-list-first diagnostics)]
+    [code : String (cdiag.compiler-diagnostic-code-or-empty first)]
+    (if (string.eq code (cdiag.compiler-diagnostic-code-parse))
+      (match (compiler_check_core.compiler-check-source-with-roots-and-cfg
+        path
+        text
+        stdlib-roots
+        (lsp-language-cfgs))
+        [(compiler_check_core.ResultCompilerCheck.Ok _) diagnostics]
+        [(compiler_check_core.ResultCompilerCheck.Err recovered)
+          (box-get recovered)])
+      diagnostics)))
+
 (define (lsp-analyze-document
   [uri : String]
   [path : String]
@@ -2995,7 +3019,12 @@
           [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Err
               diag)
             (let
-              [diagnostics : cdiag.CompilerDiagnosticList (box-get diag)]
+              [diagnostics : cdiag.CompilerDiagnosticList
+                (lsp-parser-recovery-diagnostics
+                  path
+                  text
+                  stdlib-roots
+                  (box-get diag))]
               [first-diag : cdiag.CompilerDiagnostic
                 (cdiag.compiler-diagnostic-list-first diagnostics)]
               [check-cache : lsp_vector_families.LspCheckCache

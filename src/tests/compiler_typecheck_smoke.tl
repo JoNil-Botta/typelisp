@@ -180,11 +180,58 @@
         (let [f : (-> i64) (lambda () : i64 (read r))]
           f)))))")
 
-(define (compiler-typecheck-reference-lambda-mutable-reject-source) : String
+(define (compiler-typecheck-reference-lambda-mutable-immediate-source) : String
   "(define (read [r : (&mut items i64)]) : i64 42)
 (define (main [items : (__tl_dyn-array i64)]) : i64
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
     ((lambda () : i64 (read r)))))")
+
+(define (compiler-typecheck-reference-lambda-mutable-local-repeat-source) : String
+  "(define (write [r : (&mut items i64)]) : unit unit)
+(define (main [items : (__tl_dyn-array i64)]) : i64
+  (let
+    [r : (&mut items i64) (&mut (array-ref items 0))]
+    [f : (-> unit) (lambda () : unit (write r))]
+    (begin (f) (f) (array-ref items 0))))")
+
+(define (compiler-typecheck-reference-lambda-mutable-alias-source) : String
+  "(define (write [r : (&mut items i64)]) : unit unit)
+(define (main [items : (__tl_dyn-array i64)]) : unit
+  (let
+    [r : (&mut items i64) (&mut (array-ref items 0))]
+    [f : (-> unit) (lambda () : unit (write r))]
+    [alias : (-> unit) f]
+    (alias)))")
+
+(define (compiler-typecheck-closure-fnonce-once-source) : String
+  "(define (main) : String
+  (let
+    [owned : String \"once\"]
+    [take : (-> String) (lambda () : String owned)]
+    (take)))")
+
+(define (compiler-typecheck-closure-fnonce-second-call-source) : String
+  "(define (main) : String
+  (let
+    [owned : String \"once\"]
+    [take : (-> String) (lambda () : String owned)]
+    [first : String (take)]
+    (take)))")
+
+(define (compiler-typecheck-closure-fnonce-escape-source) : String
+  "(define (make) : (-> String)
+  (let
+    [owned : String \"once\"]
+    [take : (-> String) (lambda () : String owned)]
+    take))")
+
+(define (compiler-typecheck-closure-owner-read-repeat-source) : String
+  "(define (read [value : String]) : i64 42)
+(define (main) : i64
+  (let
+    [owned : String \"repeat\"]
+    [f : (-> i64) (lambda () : i64 (read owned))]
+    (begin (f) (f))))")
 
 (define (compiler-typecheck-reference-tuple-return-ok-source) : String
   "(define (main [n : i64]) : (Tuple (& n i64) i64)
@@ -1248,9 +1295,23 @@
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-reference-lambda-inner-arena-return-source)
       "typecheck: reference-capturing closure value would escape lexical scope")
+    (compiler_typecheck.compiler-typecheck-ok?
+      (compiler-typecheck-reference-lambda-mutable-immediate-source))
+    (compiler_typecheck.compiler-typecheck-ok?
+      (compiler-typecheck-reference-lambda-mutable-local-repeat-source))
     (compiler_typecheck.compiler-typecheck-error-ok?
-      (compiler-typecheck-reference-lambda-mutable-reject-source)
-      "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")))
+      (compiler-typecheck-reference-lambda-mutable-alias-source)
+      "typecheck: reference-capturing closure value would escape lexical scope")
+    (compiler_typecheck.compiler-typecheck-ok?
+      (compiler-typecheck-closure-fnonce-once-source))
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-closure-fnonce-second-call-source)
+      "typecheck: use of moved value `take`")
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-closure-fnonce-escape-source)
+      "typecheck: closure capability would be erased by escaping the direct local binding")
+    (compiler_typecheck.compiler-typecheck-ok?
+      (compiler-typecheck-closure-owner-read-repeat-source))))
 
 (define (compiler-typecheck-reference-escape-tests-ok?) : bool
   (and

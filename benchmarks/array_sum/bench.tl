@@ -1,6 +1,6 @@
 ;# benchmarks/array_sum/bench.tl - array-sum micro-benchmark (#1098).
 ;#
-;# Equivalent to benchmarks/array_sum/baseline.c. Both fill an `(Array i64)`
+;# Equivalent to benchmarks/array_sum/baseline.c. Both fill an `i64vec.Vec`
 ;# with a deterministic pattern, then sum it `rounds` times into a wrapping
 ;# 64-bit accumulator and return the low byte as the process exit code.
 ;# TypeLisp `+`/`*` wrap modulo 2^64 (SPEC), matching C `uint64_t`, so both
@@ -14,37 +14,43 @@
 ;# could collapse every round into a single pass times `rounds`.
 (import stdlib.array)
 (import stdlib.io)
+(import stdlib.vector)
+(import (vector.vector i64) as i64vec)
 
 (define base-size : i64
   200003)
 (define base-rounds : i64
   6000)
 
-(define (fill [xs : (Array i64)] [n : i64]) : unit
+(define (fill [xs : (&mut xs i64vec.Vec)] [n : i64]) : unit
   (let
+    [slots (i64vec.slots-mut xs)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! xs i (+ (* i 2654435761) 1013904223))
+        (array-set! slots i (+ (* i 2654435761) 1013904223))
         (set! i (+ i 1))))))
 
 (define (main) : i64
   (let
     [n : i64 (+ base-size (io.arg-count))]
     [rounds : i64 (+ base-rounds (io.arg-count))]
-    [xs : (Array i64) (array.make-array i64 (+ base-size (io.arg-count)))]
+    [xs : i64vec.Vec (i64vec.Vec (array.make-array i64 n) n)]
     [acc : i64 0]
     [r : i64 0]
     (begin
-      (fill xs n)
-      (while (< r rounds)
+      (fill (&mut xs) n)
+      (let
+        [slots (i64vec.slots-mut (&mut xs))]
         (begin
-          (let
-            [i : i64 0]
-            (while (< i n)
-              (begin
-                (set! acc (+ acc (array-ref xs i)))
-                (set! i (+ i 1)))))
-          (array-set! xs r acc)
-          (set! r (+ r 1))))
-      (bit-and acc 255))))
+          (while (< r rounds)
+            (begin
+              (let
+                [i : i64 0]
+                (while (< i n)
+                  (begin
+                    (set! acc (+ acc (array-ref slots i)))
+                    (set! i (+ i 1)))))
+              (array-set! slots r acc)
+              (set! r (+ r 1))))
+          (bit-and acc 255))))))

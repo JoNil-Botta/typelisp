@@ -5,6 +5,7 @@
 ;; operand through the compiler-owned host table and asserts the committed
 ;; result matches the interpreted builders' AST shape. Refs #5212.
 (import compiler_embedded_stdlib_tlci)
+(import compiler_embedded_stdlib_tlci_payload as compressed_payload)
 (import tlci_core)
 (import tlci_loader)
 (import compiler_ast_types)
@@ -16,8 +17,36 @@
 (import stdlib.str_cat)
 (import stdlib.string)
 
+;; Compare expansion with the builder's ordinary, directly mappable format-v2
+;; artifact. This is intentionally a verifier-only second embedding; shipped
+;; compilers carry only the compressed payload.
+(include-bin
+  embedded-verify-raw-image
+  "../../target/embedded-stdlib-tlci/stdlib.tlci")
+
 (define embedded-verify-cookie : i64
   0x5151)
+
+(define (embedded-verify-payload-exact-and-bounded?) : bool
+  (let
+    [expanded : (__tl_dyn-array u8)
+      (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)]
+    [raw-len : i64 (array-length embedded-verify-raw-image)]
+    [compressed-len : i64
+      (array-length compressed_payload.embedded-stdlib-tlci-bytes)]
+    (begin
+      (io.print-error
+        (str_cat.str-cat
+          "embedded stdlib tlci payload: raw="
+          (string.int->string raw-len)
+          " compressed="
+          (string.int->string compressed-len)
+          "\n"))
+      (and
+        (> raw-len 0)
+        (> compressed-len 0)
+        (<= (* compressed-len 100) (* raw-len 40))
+        (tlci_core.tlci-bytes-eq? embedded-verify-raw-image expanded)))))
 
 (define (embedded-verify-result-shape-ok?
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -157,6 +186,7 @@
         count)
       (if (= count 102)
         (if (and
+          (embedded-verify-payload-exact-and-bounded?)
           (embedded-verify-native-array-length-ok?)
           (embedded-verify-native-array-length-error-ok?
             0
@@ -169,7 +199,7 @@
           42
           (begin
             (io.print-error
-              "embedded stdlib tlci native array/length dispatch failed")
+              "embedded stdlib tlci payload/native verification failed")
             3))
         (begin
           (io.print-error

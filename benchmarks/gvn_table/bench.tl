@@ -66,10 +66,30 @@
 ;# FNV-1a fold over per-block (hits, misses, invalidations, final table size)
 ;# with no division, so the printed decimal matches the C baseline's `%lld` bit
 ;# for bit.
-(import stdlib.array)
 (import stdlib.byte_buf)
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector i64) as i64vec)
+
+(define (gvn-zero-vec [n : i64]) : i64vec.Vec
+  (i64vec.Vec (array.make-array i64 n) n))
+
+(define (gvn-vec-ref [items : (& items i64vec.Vec)] [index : i64]) : i64
+  (array-ref (i64vec.slots items) index))
+
+(define (gvn-vec-set!
+  [items : (&mut items i64vec.Vec)]
+  [index : i64]
+  [value : i64]) : unit
+  (array-set! (i64vec.slots-mut items) index value))
+
+(defmacro (gvn-ref [items : Expr] [index : Expr]) : Expr
+  `(gvn-vec-ref (& ,items) ,index))
+
+(defmacro (gvn-set! [items : Expr] [index : Expr] [value : Expr]) : Expr
+  `(gvn-vec-set! (&mut ,items) ,index ,value))
 
 (define gvn-hash-basis : i64
   1469598103934665603)
@@ -118,32 +138,32 @@
   10)
 
 ;; Corpus.
-(define gvn-tokens : (Array i64)
-  (array.make-array i64 1))
-(define gvn-offsets : (Array i64)
-  (array.make-array i64 1))
-(define gvn-ty-width : (Array i64)
-  (array.make-array i64 1))
-(define gvn-ty-int : (Array i64)
-  (array.make-array i64 1))
+(define gvn-tokens : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-offsets : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-ty-width : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-ty-int : i64vec.Vec
+  (gvn-zero-vec 1))
 
 ;; opt-load-header-set-from-function, precomputed per function.
-(define gvn-header : (Array i64)
-  (array.make-array i64 1))
+(define gvn-header : i64vec.Vec
+  (gvn-zero-vec 1))
 
 ;; Dense pointer-kind workspace (OptLoadKindsDenseWork).
-(define gvn-kinds : (Array i64)
-  (array.make-array i64 1))
-(define gvn-kind-stamps : (Array i64)
-  (array.make-array i64 1))
-(define gvn-kind-pos : (Array i64)
-  (array.make-array i64 1))
-(define gvn-refs : (Array i64)
-  (array.make-array i64 1))
-(define gvn-ref-stamps : (Array i64)
-  (array.make-array i64 1))
-(define gvn-active : (Array i64)
-  (array.make-array i64 1))
+(define gvn-kinds : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-kind-stamps : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-kind-pos : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-refs : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-ref-stamps : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-active : i64vec.Vec
+  (gvn-zero-vec 1))
 (define gvn-kinds-len : i64
   0)
 (define gvn-kinds-gen : i64
@@ -152,16 +172,16 @@
   96)
 
 ;; Alias facts: stdlib/hashmap.tl's scalar i64 -> i64 open-addressing map.
-(define gvn-fact-key : (Array i64)
-  (array.make-array i64 1))
-(define gvn-fact-val : (Array i64)
-  (array.make-array i64 1))
-(define gvn-fact-state : (Array i64)
-  (array.make-array i64 1))
-(define gvn-fact-scratch-key : (Array i64)
-  (array.make-array i64 1))
-(define gvn-fact-scratch-val : (Array i64)
-  (array.make-array i64 1))
+(define gvn-fact-key : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-fact-val : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-fact-state : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-fact-scratch-key : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-fact-scratch-val : i64vec.Vec
+  (gvn-zero-vec 1))
 (define gvn-fact-cap : i64
   32)
 (define gvn-fact-len : i64
@@ -172,24 +192,24 @@
 ;; Load table (OptLoadTable): a singly linked list over a node pool with a free
 ;; list, so a rebuilt spine costs one allocation per surviving entry exactly as
 ;; the compiler's `Cons` rebuild does.
-(define gvn-node-kind : (Array i64)
-  (array.make-array i64 1))
-(define gvn-node-a : (Array i64)
-  (array.make-array i64 1))
-(define gvn-node-b : (Array i64)
-  (array.make-array i64 1))
-(define gvn-node-ty : (Array i64)
-  (array.make-array i64 1))
-(define gvn-node-width : (Array i64)
-  (array.make-array i64 1))
-(define gvn-node-hdr : (Array i64)
-  (array.make-array i64 1))
-(define gvn-node-val : (Array i64)
-  (array.make-array i64 1))
-(define gvn-node-epoch : (Array i64)
-  (array.make-array i64 1))
-(define gvn-node-next : (Array i64)
-  (array.make-array i64 1))
+(define gvn-node-kind : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-node-a : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-node-b : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-node-ty : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-node-width : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-node-hdr : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-node-val : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-node-epoch : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-node-next : i64vec.Vec
+  (gvn-zero-vec 1))
 (define gvn-node-bump : i64
   0)
 (define gvn-node-free : i64
@@ -204,16 +224,16 @@
 ;; Scratch for opt-load-table-transfer-copy-fields' source snapshot. The
 ;; compiler walks the persistent source list while threading a fresh output
 ;; list; the list is immutable, so snapshotting it first is equivalent.
-(define gvn-copy-base : (Array i64)
-  (array.make-array i64 1))
-(define gvn-copy-off : (Array i64)
-  (array.make-array i64 1))
-(define gvn-copy-ty : (Array i64)
-  (array.make-array i64 1))
-(define gvn-copy-width : (Array i64)
-  (array.make-array i64 1))
-(define gvn-copy-val : (Array i64)
-  (array.make-array i64 1))
+(define gvn-copy-base : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-copy-off : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-copy-ty : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-copy-width : i64vec.Vec
+  (gvn-zero-vec 1))
+(define gvn-copy-val : i64vec.Vec
+  (gvn-zero-vec 1))
 
 ;; Decoded pointer kind from the last gvn-kinds-lookup.
 (define gvn-k-tag : i64
@@ -268,7 +288,7 @@
 (define (gvn-digit? [byte : i64]) : bool
   (and (>= byte 48) (<= byte 57)))
 
-(define (gvn-scan-ints [text : String] [out : (Array i64)]) : i64
+(define (gvn-scan-ints [text : String] [out : (&mut out i64vec.Vec)]) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -293,7 +313,7 @@
                         value
                         (+ (* value 10) (- (gvn-byte-at text n i) 48)))
                       (set! i (+ i 1))))
-                  (array-set!
+                  (i64vec.set
                     out
                     count
                     (if negative
@@ -316,13 +336,14 @@
       with-floor)))
 
 ;; --- alias facts map --------------------------------------------------------
-(define (gvn-facts-reset) : unit
+(define (gvn-facts-reset [state-vec : (&mut state i64vec.Vec)]) : unit
   (let
+    [state (i64vec.slots-mut state-vec)]
     [i : i64 0]
     (begin
       (while (< i gvn-fact-cap)
         (begin
-          (array-set! gvn-fact-state i 0)
+          (array-set! state i 0)
           (set! i (+ i 1))))
       (set! gvn-fact-cap 32)
       (set! gvn-fact-len 0)
@@ -342,10 +363,10 @@
     (begin
       (while (and (< walked gvn-fact-cap) (not done))
         (let
-          [state : i64 (array-ref gvn-fact-state cursor)]
+          [state : i64 (gvn-ref gvn-fact-state cursor)]
           (cond
             [(= state 2)
-              (if (= (array-ref gvn-fact-key cursor) key)
+              (if (= (gvn-ref gvn-fact-key cursor) key)
                 (begin
                   (set! found cursor)
                   (set! done true))
@@ -375,8 +396,18 @@
           (- 0 (+ 2 first))
           -1)))))
 
-(define (gvn-facts-grow) : unit
+(define (gvn-facts-grow
+  [state-vec : (&mut state i64vec.Vec)]
+  [key-vec : (&mut key i64vec.Vec)]
+  [val-vec : (&mut val i64vec.Vec)]
+  [scratch-key-vec : (&mut scratch-key i64vec.Vec)]
+  [scratch-val-vec : (&mut scratch-val i64vec.Vec)]) : unit
   (let
+    [state (i64vec.slots-mut state-vec)]
+    [key-slots (i64vec.slots-mut key-vec)]
+    [val-slots (i64vec.slots-mut val-vec)]
+    [scratch-key (i64vec.slots-mut scratch-key-vec)]
+    [scratch-val (i64vec.slots-mut scratch-val-vec)]
     [old-cap : i64 gvn-fact-cap]
     [live : i64 0]
     [i : i64 0]
@@ -384,29 +415,32 @@
       (while (< i old-cap)
         (begin
           (when
-            (= (array-ref gvn-fact-state i) 2)
+            (= (array-ref state i) 2)
             (begin
-              (array-set! gvn-fact-scratch-key live (array-ref gvn-fact-key i))
-              (array-set! gvn-fact-scratch-val live (array-ref gvn-fact-val i))
+              (array-set! scratch-key live (array-ref key-slots i))
+              (array-set! scratch-val live (array-ref val-slots i))
               (set! live (+ live 1))))
           (set! i (+ i 1))))
       (set! gvn-fact-cap (* old-cap 2))
       (set! i 0)
       (while (< i gvn-fact-cap)
         (begin
-          (array-set! gvn-fact-state i 0)
+          (array-set! state i 0)
           (set! i (+ i 1))))
       (set! gvn-fact-len 0)
       (set! gvn-fact-deleted 0)
       (set! i 0)
       (while (< i live)
         (let
-          [slot : i64 (gvn-facts-slot (array-ref gvn-fact-scratch-key i))]
-          [index : i64 (- (- 0 slot) 2)]
+          [item-key : i64 (array-ref scratch-key i)]
+          [mask : i64 (- gvn-fact-cap 1)]
+          [index : i64 (bit-and (* item-key 6364136223846793005) mask)]
           (begin
-            (array-set! gvn-fact-state index 2)
-            (array-set! gvn-fact-key index (array-ref gvn-fact-scratch-key i))
-            (array-set! gvn-fact-val index (array-ref gvn-fact-scratch-val i))
+            (while (= (array-ref state index) 2)
+              (set! index (bit-and (+ index 1) mask)))
+            (array-set! state index 2)
+            (array-set! key-slots index item-key)
+            (array-set! val-slots index (array-ref scratch-val i))
             (set! gvn-fact-len (+ gvn-fact-len 1))
             (set! i (+ i 1))))))))
 
@@ -414,20 +448,25 @@
   (begin
     (when
       (>= (* (+ gvn-fact-len gvn-fact-deleted) 4) (* gvn-fact-cap 3))
-      (gvn-facts-grow))
+      (gvn-facts-grow
+        (&mut gvn-fact-state)
+        (&mut gvn-fact-key)
+        (&mut gvn-fact-val)
+        (&mut gvn-fact-scratch-key)
+        (&mut gvn-fact-scratch-val)))
     (let
       [slot : i64 (gvn-facts-slot key)]
       (if (>= slot 0)
-        (array-set! gvn-fact-val slot value)
+        (gvn-set! gvn-fact-val slot value)
         (let
           [index : i64 (- (- 0 slot) 2)]
           (begin
             (when
-              (= (array-ref gvn-fact-state index) 1)
+              (= (gvn-ref gvn-fact-state index) 1)
               (set! gvn-fact-deleted (- gvn-fact-deleted 1)))
-            (array-set! gvn-fact-state index 2)
-            (array-set! gvn-fact-key index key)
-            (array-set! gvn-fact-val index value)
+            (gvn-set! gvn-fact-state index 2)
+            (gvn-set! gvn-fact-key index key)
+            (gvn-set! gvn-fact-val index value)
             (set! gvn-fact-len (+ gvn-fact-len 1))))))))
 
 (define (gvn-facts-remove [key : i64]) : unit
@@ -436,7 +475,7 @@
     (when
       (>= slot 0)
       (begin
-        (array-set! gvn-fact-state slot 1)
+        (gvn-set! gvn-fact-state slot 1)
         (set! gvn-fact-len (- gvn-fact-len 1))
         (set! gvn-fact-deleted (+ gvn-fact-deleted 1))))))
 
@@ -452,7 +491,7 @@
     [slot : i64 (gvn-facts-slot src)]
     (if (>= slot 0)
       (let
-        [code : i64 (array-ref gvn-fact-val slot)]
+        [code : i64 (gvn-ref gvn-fact-val slot)]
         (when
           (not (= dst src))
           (cond
@@ -469,7 +508,7 @@
     [slot : i64 (gvn-facts-slot base)]
     (if (>= slot 0)
       (let
-        [code : i64 (array-ref gvn-fact-val slot)]
+        [code : i64 (gvn-ref gvn-fact-val slot)]
         (cond
           [(>= code 0) (gvn-facts-insert dst code)]
           [(= code -2) (gvn-facts-insert dst base)]
@@ -489,7 +528,7 @@
       (when
         (>= slot 0)
         (let
-          [code : i64 (array-ref gvn-fact-val slot)]
+          [code : i64 (gvn-ref gvn-fact-val slot)]
           (cond
             [(<= code -6)
               (begin
@@ -510,7 +549,7 @@
                 (when
                   (>= root-slot 0)
                   (let
-                    [root-code : i64 (array-ref gvn-fact-val root-slot)]
+                    [root-code : i64 (gvn-ref gvn-fact-val root-slot)]
                     (cond
                       [(<= root-code -6)
                         (begin
@@ -601,30 +640,30 @@
 (define (gvn-kinds-lookup [var : i64]) : unit
   (if (or
     (< var 0)
-    (>= var (array-length gvn-kinds))
-    (not (= (array-ref gvn-kind-stamps var) gvn-kinds-gen)))
+    (>= var (i64vec.len (& gvn-kinds)))
+    (not (= (gvn-ref gvn-kind-stamps var) gvn-kinds-gen)))
     (gvn-kind-decode 0)
-    (gvn-kind-decode (array-ref gvn-kinds var))))
+    (gvn-kind-decode (gvn-ref gvn-kinds var))))
 
 (define (gvn-kinds-ref-count [base : i64]) : i64
   (if (or
     (< base 0)
-    (>= base (array-length gvn-refs))
-    (not (= (array-ref gvn-ref-stamps base) gvn-kinds-gen)))
+    (>= base (i64vec.len (& gvn-refs)))
+    (not (= (gvn-ref gvn-ref-stamps base) gvn-kinds-gen)))
     0
-    (array-ref gvn-refs base)))
+    (gvn-ref gvn-refs base)))
 
 (define (gvn-kinds-ref-add [base : i64] [delta : i64]) : unit
   (when
-    (and (>= base 0) (< base (array-length gvn-refs)))
+    (and (>= base 0) (< base (i64vec.len (& gvn-refs))))
     (let
       [old : i64
-        (if (= (array-ref gvn-ref-stamps base) gvn-kinds-gen)
-          (array-ref gvn-refs base)
+        (if (= (gvn-ref gvn-ref-stamps base) gvn-kinds-gen)
+          (gvn-ref gvn-refs base)
           0)]
       (begin
-        (array-set! gvn-ref-stamps base gvn-kinds-gen)
-        (array-set! gvn-refs base (+ old delta))))))
+        (gvn-set! gvn-ref-stamps base gvn-kinds-gen)
+        (gvn-set! gvn-refs base (+ old delta))))))
 
 ;; opt-load-kinds-dense-ref-add-kind!
 (define (gvn-kinds-ref-add-kind
@@ -645,22 +684,22 @@
   (when
     (and
       (>= var 0)
-      (< var (array-length gvn-kinds))
-      (= (array-ref gvn-kind-stamps var) gvn-kinds-gen))
+      (< var (i64vec.len (& gvn-kinds)))
+      (= (gvn-ref gvn-kind-stamps var) gvn-kinds-gen))
     (let
-      [old : i64 (array-ref gvn-kinds var)]
-      [pos : i64 (array-ref gvn-kind-pos var)]
+      [old : i64 (gvn-ref gvn-kinds var)]
+      [pos : i64 (gvn-ref gvn-kind-pos var)]
       [last-pos : i64 (- gvn-kinds-len 1)]
-      [last-var : i64 (array-ref gvn-active last-pos)]
+      [last-var : i64 (gvn-ref gvn-active last-pos)]
       (begin
         (gvn-kind-decode old)
         (gvn-kinds-ref-add-kind gvn-k-tag gvn-k-base gvn-k-off -1)
         (when
           (not (= pos last-pos))
           (begin
-            (array-set! gvn-active pos last-var)
-            (array-set! gvn-kind-pos last-var pos)))
-        (array-set! gvn-kind-stamps var 0)
+            (gvn-set! gvn-active pos last-var)
+            (gvn-set! gvn-kind-pos last-var pos)))
+        (gvn-set! gvn-kind-stamps var 0)
         (set! gvn-kinds-len last-pos)))))
 
 ;; opt-load-kinds-bind (dense arm): Unknown removes; the env is size-capped.
@@ -678,15 +717,15 @@
       (when
         (and
           (>= var 0)
-          (< var (array-length gvn-kinds))
+          (< var (i64vec.len (& gvn-kinds)))
           (< gvn-kinds-len gvn-kinds-cap)
-          (< gvn-kinds-len (array-length gvn-active)))
+          (< gvn-kinds-len (i64vec.len (& gvn-active))))
         (begin
           (gvn-kinds-ref-add-kind tag base off 1)
-          (array-set! gvn-active gvn-kinds-len var)
-          (array-set! gvn-kind-pos var gvn-kinds-len)
-          (array-set! gvn-kinds var (gvn-kind-encode tag base off width hdr))
-          (array-set! gvn-kind-stamps var gvn-kinds-gen)
+          (gvn-set! gvn-active gvn-kinds-len var)
+          (gvn-set! gvn-kind-pos var gvn-kinds-len)
+          (gvn-set! gvn-kinds var (gvn-kind-encode tag base off width hdr))
+          (gvn-set! gvn-kind-stamps var gvn-kinds-gen)
           (set! gvn-kinds-len (+ gvn-kinds-len 1)))))))
 
 ;; opt-load-loc-field-checked
@@ -729,7 +768,7 @@
     [index : i64 0]
     (while (< index gvn-kinds-len)
       (let
-        [bound : i64 (array-ref gvn-active index)]
+        [bound : i64 (gvn-ref gvn-active index)]
         (begin
           (gvn-kinds-lookup bound)
           (if (or
@@ -745,9 +784,9 @@
     (when (> (gvn-kinds-ref-count var) 0) (gvn-kinds-drop-base var))))
 
 (define (gvn-header-var? [var : i64]) : bool
-  (if (or (< var 0) (>= var (array-length gvn-header)))
+  (if (or (< var 0) (>= var (i64vec.len (& gvn-header))))
     false
-    (= (array-ref gvn-header var) 1)))
+    (= (gvn-ref gvn-header var) 1)))
 
 ;; --- load table -------------------------------------------------------------
 (define (gvn-node-alloc) : i64
@@ -755,7 +794,7 @@
     (let
       [node : i64 gvn-node-free]
       (begin
-        (set! gvn-node-free (array-ref gvn-node-next node))
+        (set! gvn-node-free (gvn-ref gvn-node-next node))
         node))
     (let
       [node : i64 gvn-node-bump]
@@ -768,9 +807,9 @@
     [node : i64 head]
     (while (>= node 0)
       (let
-        [next : i64 (array-ref gvn-node-next node)]
+        [next : i64 (gvn-ref gvn-node-next node)]
         (begin
-          (array-set! gvn-node-next node gvn-node-free)
+          (gvn-set! gvn-node-next node gvn-node-free)
           (set! gvn-node-free node)
           (set! node next))))))
 
@@ -778,15 +817,15 @@
   (let
     [node : i64 (gvn-node-alloc)]
     (begin
-      (array-set! gvn-node-kind node (array-ref gvn-node-kind source))
-      (array-set! gvn-node-a node (array-ref gvn-node-a source))
-      (array-set! gvn-node-b node (array-ref gvn-node-b source))
-      (array-set! gvn-node-ty node (array-ref gvn-node-ty source))
-      (array-set! gvn-node-width node (array-ref gvn-node-width source))
-      (array-set! gvn-node-hdr node (array-ref gvn-node-hdr source))
-      (array-set! gvn-node-val node (array-ref gvn-node-val source))
-      (array-set! gvn-node-epoch node (array-ref gvn-node-epoch source))
-      (array-set! gvn-node-next node -1)
+      (gvn-set! gvn-node-kind node (gvn-ref gvn-node-kind source))
+      (gvn-set! gvn-node-a node (gvn-ref gvn-node-a source))
+      (gvn-set! gvn-node-b node (gvn-ref gvn-node-b source))
+      (gvn-set! gvn-node-ty node (gvn-ref gvn-node-ty source))
+      (gvn-set! gvn-node-width node (gvn-ref gvn-node-width source))
+      (gvn-set! gvn-node-hdr node (gvn-ref gvn-node-hdr source))
+      (gvn-set! gvn-node-val node (gvn-ref gvn-node-val source))
+      (gvn-set! gvn-node-epoch node (gvn-ref gvn-node-epoch source))
+      (gvn-set! gvn-node-next node -1)
       node)))
 
 ;; opt-load-table-len
@@ -798,25 +837,25 @@
       (while (>= node 0)
         (begin
           (set! count (+ count 1))
-          (set! node (array-ref gvn-node-next node))))
+          (set! node (gvn-ref gvn-node-next node))))
       count)))
 
 ;; opt-load-key-eq against the key currently in the gvn-key-* globals.
 (define (gvn-key-matches? [node : i64]) : bool
-  (if (not (= (array-ref gvn-node-kind node) gvn-key-kind))
+  (if (not (= (gvn-ref gvn-node-kind node) gvn-key-kind))
     false
     (cond
       [(= gvn-key-kind 0)
         (and
-          (= (array-ref gvn-node-a node) gvn-key-a)
-          (= (array-ref gvn-node-ty node) gvn-key-ty)
-          (= (array-ref gvn-node-b node) gvn-key-b))]
+          (= (gvn-ref gvn-node-a node) gvn-key-a)
+          (= (gvn-ref gvn-node-ty node) gvn-key-ty)
+          (= (gvn-ref gvn-node-b node) gvn-key-b))]
       [else
         (and
-          (= (array-ref gvn-node-a node) gvn-key-a)
-          (= (array-ref gvn-node-b node) gvn-key-b)
-          (= (array-ref gvn-node-ty node) gvn-key-ty)
-          (= (array-ref gvn-node-hdr node) gvn-key-hdr))])))
+          (= (gvn-ref gvn-node-a node) gvn-key-a)
+          (= (gvn-ref gvn-node-b node) gvn-key-b)
+          (= (gvn-ref gvn-node-ty node) gvn-key-ty)
+          (= (gvn-ref gvn-node-hdr node) gvn-key-hdr))])))
 
 ;; opt-load-table-lookup: the cached value, or -1000000 for a miss.
 (define (gvn-table-lookup) : i64
@@ -826,8 +865,8 @@
     (begin
       (while (and (>= node 0) (= result -1000000))
         (if (gvn-key-matches? node)
-          (set! result (array-ref gvn-node-val node))
-          (set! node (array-ref gvn-node-next node))))
+          (set! result (gvn-ref gvn-node-val node))
+          (set! node (gvn-ref gvn-node-next node))))
       result)))
 
 ;; opt-load-key-uses-var?
@@ -839,9 +878,9 @@
 
 (define (gvn-node-uses-var? [node : i64] [var : i64]) : bool
   (let
-    [kind : i64 (array-ref gvn-node-kind node)]
-    [a : i64 (array-ref gvn-node-a node)]
-    [b : i64 (array-ref gvn-node-b node)]
+    [kind : i64 (gvn-ref gvn-node-kind node)]
+    [a : i64 (gvn-ref gvn-node-a node)]
+    [b : i64 (gvn-ref gvn-node-b node)]
     (cond
       [(= kind 0) (and (>= a 0) (= a var))]
       [(= kind 1) (= a var)]
@@ -850,9 +889,7 @@
 ;; opt-load-entry-mentions-var?
 (define (gvn-node-mentions-var? [node : i64] [var : i64]) : bool
   (or
-    (and
-      (>= (array-ref gvn-node-val node) 0)
-      (= (array-ref gvn-node-val node) var))
+    (and (>= (gvn-ref gvn-node-val node) 0) (= (gvn-ref gvn-node-val node) var))
     (gvn-node-uses-var? node var)))
 
 ;; opt-load-table-remove-key-scan: rebuild without the key in the gvn-key-*
@@ -872,9 +909,9 @@
               (begin
                 (if (< tail 0)
                   (set! head fresh)
-                  (array-set! gvn-node-next tail fresh))
+                  (gvn-set! gvn-node-next tail fresh))
                 (set! tail fresh))))
-          (set! node (array-ref gvn-node-next node))))
+          (set! node (gvn-ref gvn-node-next node))))
       (gvn-node-release gvn-table)
       (set! gvn-table head))))
 
@@ -893,15 +930,15 @@
         (let
           [node : i64 (gvn-node-alloc)]
           (begin
-            (array-set! gvn-node-kind node gvn-key-kind)
-            (array-set! gvn-node-a node gvn-key-a)
-            (array-set! gvn-node-b node gvn-key-b)
-            (array-set! gvn-node-ty node gvn-key-ty)
-            (array-set! gvn-node-width node gvn-key-width)
-            (array-set! gvn-node-hdr node gvn-key-hdr)
-            (array-set! gvn-node-val node value)
-            (array-set! gvn-node-epoch node epoch)
-            (array-set! gvn-node-next node gvn-table)
+            (gvn-set! gvn-node-kind node gvn-key-kind)
+            (gvn-set! gvn-node-a node gvn-key-a)
+            (gvn-set! gvn-node-b node gvn-key-b)
+            (gvn-set! gvn-node-ty node gvn-key-ty)
+            (gvn-set! gvn-node-width node gvn-key-width)
+            (gvn-set! gvn-node-hdr node gvn-key-hdr)
+            (gvn-set! gvn-node-val node value)
+            (gvn-set! gvn-node-epoch node epoch)
+            (gvn-set! gvn-node-next node gvn-table)
             (set! gvn-table node)))))))
 
 ;; opt-load-table-invalidate-var
@@ -913,7 +950,7 @@
       (while (and (>= node 0) (not mentions))
         (if (gvn-node-mentions-var? node var)
           (set! mentions true)
-          (set! node (array-ref gvn-node-next node))))
+          (set! node (gvn-ref gvn-node-next node))))
       (when
         mentions
         (let
@@ -930,9 +967,9 @@
                     (begin
                       (if (< tail 0)
                         (set! head fresh)
-                        (array-set! gvn-node-next tail fresh))
+                        (gvn-set! gvn-node-next tail fresh))
                       (set! tail fresh))))
-                (set! scan (array-ref gvn-node-next scan))))
+                (set! scan (gvn-ref gvn-node-next scan))))
             (gvn-node-release gvn-table)
             (set! gvn-table head)))))))
 
@@ -956,20 +993,20 @@
   [class-width : i64]
   [class-hdr : i64]) : bool
   (let
-    [kind : i64 (array-ref gvn-node-kind node)]
+    [kind : i64 (gvn-ref gvn-node-kind node)]
     (cond
-      [(= class 1) (and (= kind 1) (= (array-ref gvn-node-hdr node) 1))]
+      [(= class 1) (and (= kind 1) (= (gvn-ref gvn-node-hdr node) 1))]
       [(= class 2)
         (cond
-          [(= kind 0) (and (= (array-ref gvn-node-b node) 1) (= class-hdr 1))]
+          [(= kind 0) (and (= (gvn-ref gvn-node-b node) 1) (= class-hdr 1))]
           [(= kind 1)
             (and
-              (= (array-ref gvn-node-a node) class-base)
+              (= (gvn-ref gvn-node-a node) class-base)
               (gvn-ranges-disjoint?
                 class-off
                 class-width
-                (array-ref gvn-node-b node)
-                (array-ref gvn-node-width node)))]
+                (gvn-ref gvn-node-b node)
+                (gvn-ref gvn-node-width node)))]
           [else false])]
       [else false])))
 
@@ -985,18 +1022,18 @@
   [class-width : i64]
   [class-hdr : i64]) : bool
   (let
-    [kind : i64 (array-ref gvn-node-kind node)]
+    [kind : i64 (gvn-ref gvn-node-kind node)]
     [entry-kind : i64 0]
     [entry-id : i64 0]
     (begin
       (if (= kind 0)
-        (gvn-root-of-value (array-ref gvn-node-a node))
-        (gvn-root-of-var (array-ref gvn-node-a node)))
+        (gvn-root-of-value (gvn-ref gvn-node-a node))
+        (gvn-root-of-var (gvn-ref gvn-node-a node)))
       (set! entry-kind gvn-root-kind)
       (set! entry-id gvn-root-id)
       (or
         (gvn-root-disjoint? store-kind store-id entry-kind entry-id)
-        (and (= store-kind 1) (< (array-ref gvn-node-epoch node) store-epoch))
+        (and (= store-kind 1) (< (gvn-ref gvn-node-epoch node) store-epoch))
         (gvn-survives-location?
           node
           class
@@ -1037,10 +1074,10 @@
               (begin
                 (if (< tail 0)
                   (set! head fresh)
-                  (array-set! gvn-node-next tail fresh))
+                  (gvn-set! gvn-node-next tail fresh))
                 (set! tail fresh)))
             (set! gvn-invalidations (+ gvn-invalidations 1)))
-          (set! node (array-ref gvn-node-next node))))
+          (set! node (gvn-ref gvn-node-next node))))
       (gvn-node-release gvn-table)
       (set! gvn-table head))))
 
@@ -1058,10 +1095,10 @@
     (begin
       (while (and (>= node 0) (not found))
         (if (and
-          (= (array-ref gvn-node-val node) value)
-          (= (array-ref gvn-node-ty node) ty))
+          (= (gvn-ref gvn-node-val node) value)
+          (= (gvn-ref gvn-node-ty node) ty))
           (set! found true)
-          (set! node (array-ref gvn-node-next node))))
+          (set! node (gvn-ref gvn-node-next node))))
       found)))
 
 ;; opt-load-table-transfer-copy-fields plus opt-load-copy-entry-within?. The
@@ -1084,30 +1121,30 @@
         (begin
           (when
             (and
-              (= (array-ref gvn-node-kind node) 1)
-              (= (array-ref gvn-node-a node) src-base)
-              (> (array-ref gvn-node-width node) 0)
-              (>= (array-ref gvn-node-b node) src-off)
+              (= (gvn-ref gvn-node-kind node) 1)
+              (= (gvn-ref gvn-node-a node) src-base)
+              (> (gvn-ref gvn-node-width node) 0)
+              (>= (gvn-ref gvn-node-b node) src-off)
               (<=
-                (+ (array-ref gvn-node-b node) (array-ref gvn-node-width node))
+                (+ (gvn-ref gvn-node-b node) (gvn-ref gvn-node-width node))
                 (+ src-off size)))
             (begin
-              (array-set! gvn-copy-base count (array-ref gvn-node-a node))
-              (array-set! gvn-copy-off count (array-ref gvn-node-b node))
-              (array-set! gvn-copy-ty count (array-ref gvn-node-ty node))
-              (array-set! gvn-copy-width count (array-ref gvn-node-width node))
-              (array-set! gvn-copy-val count (array-ref gvn-node-val node))
+              (gvn-set! gvn-copy-base count (gvn-ref gvn-node-a node))
+              (gvn-set! gvn-copy-off count (gvn-ref gvn-node-b node))
+              (gvn-set! gvn-copy-ty count (gvn-ref gvn-node-ty node))
+              (gvn-set! gvn-copy-width count (gvn-ref gvn-node-width node))
+              (gvn-set! gvn-copy-val count (gvn-ref gvn-node-val node))
               (set! count (+ count 1))))
-          (set! node (array-ref gvn-node-next node))))
+          (set! node (gvn-ref gvn-node-next node))))
       (while (< i count)
         (begin
           (set! gvn-key-kind 1)
           (set! gvn-key-a dst-base)
-          (set! gvn-key-b (+ dst-off (- (array-ref gvn-copy-off i) src-off)))
-          (set! gvn-key-ty (array-ref gvn-copy-ty i))
-          (set! gvn-key-width (array-ref gvn-copy-width i))
+          (set! gvn-key-b (+ dst-off (- (gvn-ref gvn-copy-off i) src-off)))
+          (set! gvn-key-ty (gvn-ref gvn-copy-ty i))
+          (set! gvn-key-width (gvn-ref gvn-copy-width i))
           (set! gvn-key-hdr dst-hdr)
-          (gvn-table-bind (array-ref gvn-copy-val i) epoch)
+          (gvn-table-bind (gvn-ref gvn-copy-val i) epoch)
           (set! i (+ i 1)))))))
 
 ;; --- per-instruction dispatch -----------------------------------------------
@@ -1300,7 +1337,7 @@
 (define (gvn-subword-forward [value : i64] [ty : i64] [width : i64]) : i64
   (cond
     [(or (= value -1) (<= width 0)) -1000000]
-    [(and (= value -2) (= (array-ref gvn-ty-int ty) 1)) -2]
+    [(and (= value -2) (= (gvn-ref gvn-ty-int ty) 1)) -2]
     [(and (>= value 0) (gvn-table-has-value? value ty)) value]
     [else -1000000]))
 
@@ -1483,16 +1520,16 @@
       (set! gvn-kinds-gen generation)
       (set! gvn-table-cap (gvn-scaled-cap gvn-table-cap-floor instrs))
       (set! gvn-kinds-cap (gvn-scaled-cap gvn-kinds-cap-floor instrs))
-      (gvn-facts-reset)
+      (gvn-facts-reset (&mut gvn-fact-state))
       (while (< i instrs)
         (begin
           (gvn-dispatch
-            (array-ref gvn-tokens cursor)
-            (array-ref gvn-tokens (+ cursor 1))
-            (array-ref gvn-tokens (+ cursor 2))
-            (array-ref gvn-tokens (+ cursor 3))
-            (array-ref gvn-tokens (+ cursor 4))
-            (array-ref gvn-tokens (+ cursor 5)))
+            (gvn-ref gvn-tokens cursor)
+            (gvn-ref gvn-tokens (+ cursor 1))
+            (gvn-ref gvn-tokens (+ cursor 2))
+            (gvn-ref gvn-tokens (+ cursor 3))
+            (gvn-ref gvn-tokens (+ cursor 4))
+            (gvn-ref gvn-tokens (+ cursor 5)))
           (set! cursor (+ cursor 6))
           (set! i (+ i 1))))
       (set! hash (gvn-mix gvn-hash-basis gvn-hits))
@@ -1502,29 +1539,29 @@
 
 (define (gvn-run-function [offset : i64]) : i64
   (let
-    [vars : i64 (array-ref gvn-tokens offset)]
-    [headers : i64 (array-ref gvn-tokens (+ offset 1))]
-    [blocks : i64 (array-ref gvn-tokens (+ offset 2))]
+    [vars : i64 (gvn-ref gvn-tokens offset)]
+    [headers : i64 (gvn-ref gvn-tokens (+ offset 1))]
+    [blocks : i64 (gvn-ref gvn-tokens (+ offset 2))]
     [cursor : i64 (+ offset 3)]
     [hash : i64 gvn-hash-basis]
     [i : i64 0]
     (begin
       (while (< i vars)
         (begin
-          (array-set! gvn-header i 0)
-          (array-set! gvn-kind-stamps i 0)
-          (array-set! gvn-ref-stamps i 0)
+          (gvn-set! gvn-header i 0)
+          (gvn-set! gvn-kind-stamps i 0)
+          (gvn-set! gvn-ref-stamps i 0)
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i headers)
         (begin
-          (array-set! gvn-header (array-ref gvn-tokens cursor) 1)
+          (gvn-set! gvn-header (gvn-ref gvn-tokens cursor) 1)
           (set! cursor (+ cursor 1))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i blocks)
         (let
-          [instrs : i64 (array-ref gvn-tokens cursor)]
+          [instrs : i64 (gvn-ref gvn-tokens cursor)]
           (begin
             (set!
               hash
@@ -1546,38 +1583,38 @@
     [start : i64 0]
     [acc : i64 gvn-hash-basis]
     (begin
-      (set! gvn-tokens (array.make-array i64 capacity))
-      (set! acc (gvn-mix acc (gvn-scan-ints text gvn-tokens)))
-      (set! types (array-ref gvn-tokens 0))
-      (set! gvn-ty-width (array.make-array i64 (+ types 1)))
-      (set! gvn-ty-int (array.make-array i64 (+ types 1)))
+      (set! gvn-tokens (gvn-zero-vec capacity))
+      (set! acc (gvn-mix acc (gvn-scan-ints text (&mut gvn-tokens))))
+      (set! types (gvn-ref gvn-tokens 0))
+      (set! gvn-ty-width (gvn-zero-vec (+ types 1)))
+      (set! gvn-ty-int (gvn-zero-vec (+ types 1)))
       (set! cursor 1)
       (let
         [t : i64 0]
         (while (< t types)
           (begin
-            (array-set! gvn-ty-width t (array-ref gvn-tokens cursor))
-            (array-set! gvn-ty-int t (array-ref gvn-tokens (+ cursor 1)))
+            (gvn-set! gvn-ty-width t (gvn-ref gvn-tokens cursor))
+            (gvn-set! gvn-ty-int t (gvn-ref gvn-tokens (+ cursor 1)))
             (set! cursor (+ cursor 2))
             (set! t (+ t 1)))))
-      (set! functions (array-ref gvn-tokens cursor))
+      (set! functions (gvn-ref gvn-tokens cursor))
       (set! cursor (+ cursor 1))
-      (set! gvn-offsets (array.make-array i64 (+ functions 1)))
+      (set! gvn-offsets (gvn-zero-vec (+ functions 1)))
       (let
         [f : i64 0]
         (while (< f functions)
           (let
-            [vars : i64 (array-ref gvn-tokens cursor)]
-            [headers : i64 (array-ref gvn-tokens (+ cursor 1))]
-            [blocks : i64 (array-ref gvn-tokens (+ cursor 2))]
+            [vars : i64 (gvn-ref gvn-tokens cursor)]
+            [headers : i64 (gvn-ref gvn-tokens (+ cursor 1))]
+            [blocks : i64 (gvn-ref gvn-tokens (+ cursor 2))]
             [scan : i64 (+ (+ cursor 3) headers)]
             [b : i64 0]
             (begin
-              (array-set! gvn-offsets f cursor)
+              (gvn-set! gvn-offsets f cursor)
               (when (> vars max-vars) (set! max-vars vars))
               (while (< b blocks)
                 (let
-                  [instrs : i64 (array-ref gvn-tokens scan)]
+                  [instrs : i64 (gvn-ref gvn-tokens scan)]
                   [cap : i64 (gvn-scaled-cap gvn-table-cap-floor instrs)]
                   (begin
                     (when (> cap max-cap) (set! max-cap cap))
@@ -1585,41 +1622,41 @@
                     (set! b (+ b 1)))))
               (set! cursor scan)
               (set! f (+ f 1))))))
-      (set! gvn-header (array.make-array i64 (+ max-vars 1)))
-      (set! gvn-kinds (array.make-array i64 (+ max-vars 1)))
-      (set! gvn-kind-stamps (array.make-array i64 (+ max-vars 1)))
-      (set! gvn-kind-pos (array.make-array i64 (+ max-vars 1)))
-      (set! gvn-refs (array.make-array i64 (+ max-vars 1)))
-      (set! gvn-ref-stamps (array.make-array i64 (+ max-vars 1)))
-      (set! gvn-active (array.make-array i64 (+ max-vars 1)))
+      (set! gvn-header (gvn-zero-vec (+ max-vars 1)))
+      (set! gvn-kinds (gvn-zero-vec (+ max-vars 1)))
+      (set! gvn-kind-stamps (gvn-zero-vec (+ max-vars 1)))
+      (set! gvn-kind-pos (gvn-zero-vec (+ max-vars 1)))
+      (set! gvn-refs (gvn-zero-vec (+ max-vars 1)))
+      (set! gvn-ref-stamps (gvn-zero-vec (+ max-vars 1)))
+      (set! gvn-active (gvn-zero-vec (+ max-vars 1)))
       (let
         [fact-cap : i64 32]
         (begin
           (while (< fact-cap (* (+ max-vars 4) 8))
             (set! fact-cap (* fact-cap 2)))
-          (set! gvn-fact-key (array.make-array i64 fact-cap))
-          (set! gvn-fact-val (array.make-array i64 fact-cap))
-          (set! gvn-fact-state (array.make-array i64 fact-cap))
-          (set! gvn-fact-scratch-key (array.make-array i64 fact-cap))
-          (set! gvn-fact-scratch-val (array.make-array i64 fact-cap))
+          (set! gvn-fact-key (gvn-zero-vec fact-cap))
+          (set! gvn-fact-val (gvn-zero-vec fact-cap))
+          (set! gvn-fact-state (gvn-zero-vec fact-cap))
+          (set! gvn-fact-scratch-key (gvn-zero-vec fact-cap))
+          (set! gvn-fact-scratch-val (gvn-zero-vec fact-cap))
           (set! gvn-fact-cap fact-cap)))
       (let
         [pool : i64 (+ (* max-cap 4) 128)]
         (begin
-          (set! gvn-node-kind (array.make-array i64 pool))
-          (set! gvn-node-a (array.make-array i64 pool))
-          (set! gvn-node-b (array.make-array i64 pool))
-          (set! gvn-node-ty (array.make-array i64 pool))
-          (set! gvn-node-width (array.make-array i64 pool))
-          (set! gvn-node-hdr (array.make-array i64 pool))
-          (set! gvn-node-val (array.make-array i64 pool))
-          (set! gvn-node-epoch (array.make-array i64 pool))
-          (set! gvn-node-next (array.make-array i64 pool))))
-      (set! gvn-copy-base (array.make-array i64 (+ max-cap 2)))
-      (set! gvn-copy-off (array.make-array i64 (+ max-cap 2)))
-      (set! gvn-copy-ty (array.make-array i64 (+ max-cap 2)))
-      (set! gvn-copy-width (array.make-array i64 (+ max-cap 2)))
-      (set! gvn-copy-val (array.make-array i64 (+ max-cap 2)))
+          (set! gvn-node-kind (gvn-zero-vec pool))
+          (set! gvn-node-a (gvn-zero-vec pool))
+          (set! gvn-node-b (gvn-zero-vec pool))
+          (set! gvn-node-ty (gvn-zero-vec pool))
+          (set! gvn-node-width (gvn-zero-vec pool))
+          (set! gvn-node-hdr (gvn-zero-vec pool))
+          (set! gvn-node-val (gvn-zero-vec pool))
+          (set! gvn-node-epoch (gvn-zero-vec pool))
+          (set! gvn-node-next (gvn-zero-vec pool))))
+      (set! gvn-copy-base (gvn-zero-vec (+ max-cap 2)))
+      (set! gvn-copy-off (gvn-zero-vec (+ max-cap 2)))
+      (set! gvn-copy-ty (gvn-zero-vec (+ max-cap 2)))
+      (set! gvn-copy-width (gvn-zero-vec (+ max-cap 2)))
+      (set! gvn-copy-val (gvn-zero-vec (+ max-cap 2)))
       (while (< round rounds)
         (let
           [step : i64 0]
@@ -1632,7 +1669,7 @@
                 (when (>= index functions) (set! index (- index functions)))
                 (set!
                   acc
-                  (gvn-mix acc (gvn-run-function (array-ref gvn-offsets index))))
+                  (gvn-mix acc (gvn-run-function (gvn-ref gvn-offsets index))))
                 (set! step (+ step 1))))
             (set! start (+ start 1))
             (when (>= start functions) (set! start 0))

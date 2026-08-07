@@ -65,10 +65,30 @@
 ;# can be constant folded and no round repeats an earlier accumulator. The
 ;# checksum is a wrapping 64-bit FNV-1a fold with no division, so the printed
 ;# decimal matches the C baseline's `%lld` bit for bit.
-(import stdlib.array)
 (import stdlib.byte_buf)
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector i64) as i64vec)
+
+(define (pl-zero-vec [n : i64]) : i64vec.Vec
+  (i64vec.Vec (array.make-array i64 n) n))
+
+(define (pl-vec-ref [items : (& items i64vec.Vec)] [index : i64]) : i64
+  (array-ref (i64vec.slots items) index))
+
+(define (pl-vec-set!
+  [items : (&mut items i64vec.Vec)]
+  [index : i64]
+  [value : i64]) : unit
+  (array-set! (i64vec.slots-mut items) index value))
+
+(defmacro (pl-ref [items : Expr] [index : Expr]) : Expr
+  `(pl-vec-ref (& ,items) ,index))
+
+(defmacro (pl-set! [items : Expr] [index : Expr] [value : Expr]) : Expr
+  `(pl-vec-set! (&mut ,items) ,index ,value))
 
 (define pl-hash-basis : i64
   1469598103934665603)
@@ -166,57 +186,53 @@
   "")
 (define pl-len : i64
   0)
-(define pl-chunk-start : (Array i64)
-  (array.make-array i64 1))
-(define pl-chunk-end : (Array i64)
-  (array.make-array i64 1))
+(define pl-chunk-start : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-chunk-end : i64vec.Vec
+  (pl-zero-vec 1))
 (define pl-chunk-count : i64
   0)
-(define pl-pending : (Array i64)
-  (array.make-array i64 25))
-(define pl-next : (Array i64)
-  (array.make-array i64 25))
 
 ;; Line records (CompilerBackendPeepholeLineVec).
-(define pl-rec-owned : (Array i64)
-  (array.make-array i64 1))
-(define pl-rec-src-start : (Array i64)
-  (array.make-array i64 1))
-(define pl-rec-src-end : (Array i64)
-  (array.make-array i64 1))
-(define pl-rec-dst-start : (Array i64)
-  (array.make-array i64 1))
-(define pl-rec-dst-end : (Array i64)
-  (array.make-array i64 1))
-(define pl-rec-flags : (Array i64)
-  (array.make-array i64 1))
-(define pl-rec-cand : (Array i64)
-  (array.make-array i64 1))
-(define pl-rec-read : (Array i64)
-  (array.make-array i64 1))
-(define pl-rec-width : (Array i64)
-  (array.make-array i64 1))
-(define pl-rec-value : (Array i64)
-  (array.make-array i64 1))
-(define pl-rec-live : (Array i64)
-  (array.make-array i64 1))
+(define pl-rec-owned : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-rec-src-start : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-rec-src-end : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-rec-dst-start : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-rec-dst-end : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-rec-flags : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-rec-cand : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-rec-read : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-rec-width : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-rec-value : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-rec-live : i64vec.Vec
+  (pl-zero-vec 1))
 (define pl-rec-len : i64
   0)
 
 ;; Sweep scratch.
-(define pl-sweep-cand-pos : (Array i64)
-  (array.make-array i64 1))
-(define pl-sweep-cand-off : (Array i64)
-  (array.make-array i64 1))
-(define pl-sweep-read-lo : (Array i64)
-  (array.make-array i64 1))
-(define pl-sweep-read-hi : (Array i64)
-  (array.make-array i64 1))
+(define pl-sweep-cand-pos : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-sweep-cand-off : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-sweep-read-lo : i64vec.Vec
+  (pl-zero-vec 1))
+(define pl-sweep-read-hi : i64vec.Vec
+  (pl-zero-vec 1))
 
 ;; Per-register owner map (CompilerBackendPeepholeOwners), 14 tracked GP
 ;; registers in reg-index order.
-(define pl-owners : (Array i64)
-  (array.make-array i64 14))
+(define pl-owners : i64vec.Vec
+  (pl-zero-vec 14))
 
 ;; Counters folded into the checksum.
 (define pl-kept : i64
@@ -670,7 +686,7 @@
 
 ;; compiler-backend-peephole-parse-line
 (define (pl-parse-line
-  [slot : (Array i64)]
+  [slot : (&mut slot (Array i64 25))]
   [start : i64]
   [end : i64]
   [newline : bool]) : unit
@@ -844,7 +860,7 @@
 ;; operand spans already exist in the corpus, so the descriptor is derived
 ;; directly instead of formatting and re-parsing the text.
 (define (pl-owned-line
-  [slot : (Array i64)]
+  [slot : (&mut slot (Array i64 25))]
   [src-start : i64]
   [src-end : i64]
   [dst-start : i64]
@@ -889,7 +905,9 @@
       (array-set! slot pl-f-last-reg -1))))
 
 ;; compiler-backend-peephole-line-copy
-(define (pl-copy-line [dst : (Array i64)] [src : (Array i64)]) : unit
+(define (pl-copy-line
+  [dst : (&mut dst (Array i64 25))]
+  [src : (&mut src (Array i64 25))]) : unit
   (let
     [i : i64 0]
     (while (< i pl-f-count)
@@ -898,7 +916,7 @@
         (set! i (+ i 1))))))
 
 ;; compiler-backend-peephole-line-self-move-desc?
-(define (pl-self-move? [slot : (Array i64)]) : bool
+(define (pl-self-move? [slot : (&mut slot (Array i64 25))]) : bool
   (and
     (= (array-ref slot pl-f-movq) 1)
     (not (= (bit-and (array-ref slot pl-f-src-flags) 3) 0))
@@ -909,7 +927,9 @@
       (array-ref slot pl-f-dst-end))))
 
 ;; compiler-backend-peephole-redundant-zext-pair-desc?
-(define (pl-redundant-zext? [pending : (Array i64)] [next : (Array i64)]) : bool
+(define (pl-redundant-zext?
+  [pending : (&mut pending (Array i64 25))]
+  [next : (&mut next (Array i64 25))]) : bool
   (if (= (array-ref pending pl-f-zext) 0)
     false
     (let
@@ -936,7 +956,9 @@
                     (= (array-ref next pl-f-last-reg) reg)))))))))))
 
 ;; compiler-backend-peephole-pair-action-desc
-(define (pl-pair-action [pending : (Array i64)] [next : (Array i64)]) : i64
+(define (pl-pair-action
+  [pending : (&mut pending (Array i64 25))]
+  [next : (&mut next (Array i64 25))]) : i64
   (cond
     [(pl-redundant-zext? pending next) 2]
     [(= (array-ref pending pl-f-movq) 0) 0]
@@ -1000,7 +1022,7 @@
     [i : i64 0]
     (while (< i 14)
       (begin
-        (when (= (array-ref pl-owners i) slot) (array-set! pl-owners i 0))
+        (when (= (pl-ref pl-owners i) slot) (pl-set! pl-owners i 0))
         (set! i (+ i 1))))))
 
 ;; compiler-backend-peephole-owners-find-reg-for-slot-index
@@ -1014,7 +1036,7 @@
         (while (and (< found 0) (< i 14))
           (begin
             (when
-              (and (not (= i exclude)) (= (array-ref pl-owners i) slot))
+              (and (not (= i exclude)) (= (pl-ref pl-owners i) slot))
               (set! found i))
             (set! i (+ i 1))))
         found))))
@@ -1027,8 +1049,8 @@
     (while (< i 14)
       (begin
         (if (or (= i 3) (>= i 10))
-          (when (not (> (array-ref pl-owners i) 0)) (array-set! pl-owners i 0))
-          (array-set! pl-owners i 0))
+          (when (not (> (pl-ref pl-owners i) 0)) (pl-set! pl-owners i 0))
+          (pl-set! pl-owners i 0))
         (set! i (+ i 1))))))
 
 (define (pl-owners-empty) : unit
@@ -1036,7 +1058,7 @@
     [i : i64 0]
     (while (< i 14)
       (begin
-        (array-set! pl-owners i 0)
+        (pl-set! pl-owners i 0)
         (set! i (+ i 1))))))
 
 ;; compiler-backend-peephole-movq-owners-transfer-keyed-index
@@ -1050,15 +1072,17 @@
       (begin
         (pl-owners-clear-slot dst-key)
         (when
-          (and (>= src-reg 0) (= (array-ref pl-owners src-reg) 0))
-          (array-set! pl-owners src-reg dst-key)))]
-    [(>= dst-reg 0) (array-set! pl-owners dst-reg src-key)]
+          (and (>= src-reg 0) (= (pl-ref pl-owners src-reg) 0))
+          (pl-set! pl-owners src-reg dst-key)))]
+    [(>= dst-reg 0) (pl-set! pl-owners dst-reg src-key)]
     [else (pl-owners-empty)]))
 
 ;; compiler-backend-peephole-line-clobber-owners-desc
 ;; `_prev-abort` is the compiler's guard-ok-label refinement, which needs the
 ;; backend's carry-safe label set; see the header's dropped list.
-(define (pl-clobber-owners [slot : (Array i64)] [_prev-abort : i64]) : unit
+(define (pl-clobber-owners
+  [slot : (&mut slot (Array i64 25))]
+  [_prev-abort : i64]) : unit
   (cond
     [(= (array-ref slot pl-f-abort) 1) unit]
     [(= (array-ref slot pl-f-label) 1) (pl-owners-empty)]
@@ -1069,12 +1093,12 @@
         [dreg : i64 (array-ref slot pl-f-last-reg)]
         (if (< dreg 0)
           (pl-owners-empty)
-          (array-set! pl-owners dreg 0)))]
+          (pl-set! pl-owners dreg 0)))]
     [else (pl-owners-empty)]))
 
 ;; Sweep metadata for one emitted record, taken from the descriptor and (for a
 ;; corpus line) its raw text: compiler-backend-sweep-line-* in record form.
-(define (pl-record-sweep [slot : (Array i64)] [index : i64]) : unit
+(define (pl-record-sweep [slot : (&mut slot (Array i64 25))] [index : i64]) : unit
   (let
     [start : i64 (array-ref slot pl-f-start)]
     [end : i64 (array-ref slot pl-f-end)]
@@ -1177,11 +1201,11 @@
             (pl-first-rsp-read
               (array-ref slot pl-f-src-start)
               (array-ref slot pl-f-src-end)))))
-      (array-set! pl-rec-flags index flags)
-      (array-set! pl-rec-cand index cand)
-      (array-set! pl-rec-read index read)
-      (array-set! pl-rec-width index width)
-      (array-set! pl-rec-value index value))))
+      (pl-set! pl-rec-flags index flags)
+      (pl-set! pl-rec-cand index cand)
+      (pl-set! pl-rec-read index read)
+      (pl-set! pl-rec-width index width)
+      (pl-set! pl-rec-value index value))))
 
 ;; Does the line end with the bare `%rsp` destination operand?
 (define (pl-tail-is-rsp? [end : i64]) : bool
@@ -1213,7 +1237,7 @@
       found)))
 
 ;; Access width from the mnemonic's size suffix.
-(define (pl-access-width [slot : (Array i64)]) : i64
+(define (pl-access-width [slot : (&mut slot (Array i64 25))]) : i64
   (if (= (array-ref slot pl-f-owned) 1)
     8
     (let
@@ -1276,7 +1300,7 @@
 
 ;; compiler-backend-peephole-emit-line-desc-record: reload elision, the
 ;; cross-register reuse rewrite, and the record push.
-(define (pl-emit-record [slot : (Array i64)] [prev-abort : i64]) : unit
+(define (pl-emit-record [slot : (&mut slot (Array i64 25))] [prev-abort : i64]) : unit
   (if (= (array-ref slot pl-f-movq) 1)
     (let
       [src-reg : i64 (array-ref slot pl-f-src-reg)]
@@ -1285,7 +1309,7 @@
       [dst-key : i64 (array-ref slot pl-f-dst-key)]
       [is-slot : bool (not (= src-key 0))]
       [dst-owns : bool
-        (and is-slot (>= dst-reg 0) (= (array-ref pl-owners dst-reg) src-key))]
+        (and is-slot (>= dst-reg 0) (= (pl-ref pl-owners dst-reg) src-key))]
       [reuse : i64
         (if (and is-slot (not dst-owns) (>= dst-reg 0))
           (pl-owners-find-reg src-key dst-reg)
@@ -1302,23 +1326,23 @@
               (pl-push-record slot)
               ;; The pushed line becomes `movq %rY, DST`, a register source, so
               ;; it no longer reads the frame slot the sweep would have seen.
-              (array-set! pl-rec-read (- pl-rec-len 1) pl-none))]
+              (pl-set! pl-rec-read (- pl-rec-len 1) pl-none))]
           [else (pl-push-record slot)])
         (pl-owners-transfer src-reg dst-reg src-key dst-key)))
     (begin
       (pl-push-record slot)
       (pl-clobber-owners slot prev-abort))))
 
-(define (pl-push-record [slot : (Array i64)]) : unit
+(define (pl-push-record [slot : (&mut slot (Array i64 25))]) : unit
   (let
     [index : i64 pl-rec-len]
     (begin
-      (array-set! pl-rec-owned index (array-ref slot pl-f-owned))
-      (array-set! pl-rec-src-start index (array-ref slot pl-f-src-start))
-      (array-set! pl-rec-src-end index (array-ref slot pl-f-src-end))
-      (array-set! pl-rec-dst-start index (array-ref slot pl-f-dst-start))
-      (array-set! pl-rec-dst-end index (array-ref slot pl-f-dst-end))
-      (array-set! pl-rec-live index 1)
+      (pl-set! pl-rec-owned index (array-ref slot pl-f-owned))
+      (pl-set! pl-rec-src-start index (array-ref slot pl-f-src-start))
+      (pl-set! pl-rec-src-end index (array-ref slot pl-f-src-end))
+      (pl-set! pl-rec-dst-start index (array-ref slot pl-f-dst-start))
+      (pl-set! pl-rec-dst-end index (array-ref slot pl-f-dst-end))
+      (pl-set! pl-rec-live index 1)
       (pl-record-sweep slot index)
       (set! pl-rec-len (+ pl-rec-len 1))
       (set! pl-kept (+ pl-kept 1)))))
@@ -1337,9 +1361,9 @@
     (begin
       (while (and sweepable (< i pl-rec-len))
         (let
-          [flags : i64 (array-ref pl-rec-flags i)]
-          [cand : i64 (array-ref pl-rec-cand i)]
-          [read : i64 (array-ref pl-rec-read i)]
+          [flags : i64 (pl-ref pl-rec-flags i)]
+          [cand : i64 (pl-ref pl-rec-cand i)]
+          [read : i64 (pl-ref pl-rec-read i)]
           (begin
             (if (not (= (bit-and flags pl-sw-label) 0))
               (set! delta 0)
@@ -1357,8 +1381,8 @@
                 (when
                   (and (not (= cand pl-none)) (< cand-count 4096))
                   (begin
-                    (array-set! pl-sweep-cand-pos cand-count i)
-                    (array-set! pl-sweep-cand-off cand-count (- cand delta))
+                    (pl-set! pl-sweep-cand-pos cand-count i)
+                    (pl-set! pl-sweep-cand-off cand-count (- cand delta))
                     (set! cand-count (+ cand-count 1))))
                 (when
                   (and
@@ -1367,11 +1391,11 @@
                     (= (bit-and flags pl-sw-leaq) 0)
                     (< read-count 4096))
                   (begin
-                    (array-set! pl-sweep-read-lo read-count (- read delta))
-                    (array-set!
+                    (pl-set! pl-sweep-read-lo read-count (- read delta))
+                    (pl-set!
                       pl-sweep-read-hi
                       read-count
-                      (+ (- read delta) (array-ref pl-rec-width i)))
+                      (+ (- read delta) (pl-ref pl-rec-width i)))
                     (set! read-count (+ read-count 1))))
                 (when
                   (not (= (bit-and flags pl-sw-push) 0))
@@ -1383,8 +1407,8 @@
                   (not (= (bit-and flags pl-sw-rsp-dst) 0))
                   (if (not (= (bit-and flags pl-sw-tracked) 0))
                     (if (not (= (bit-and flags pl-sw-subq) 0))
-                      (set! delta (+ delta (array-ref pl-rec-value i)))
-                      (set! delta (- delta (array-ref pl-rec-value i))))
+                      (set! delta (+ delta (pl-ref pl-rec-value i)))
+                      (set! delta (- delta (pl-ref pl-rec-value i))))
                     (set! sweepable false)))))
             (set! i (+ i 1)))))
       (when
@@ -1393,8 +1417,8 @@
           [k : i64 0]
           (while (< k cand-count)
             (let
-              [offset : i64 (array-ref pl-sweep-cand-off k)]
-              [position : i64 (array-ref pl-sweep-cand-pos k)]
+              [offset : i64 (pl-ref pl-sweep-cand-off k)]
+              [position : i64 (pl-ref pl-sweep-cand-pos k)]
               [r : i64 0]
               [observed : bool false]
               (begin
@@ -1405,14 +1429,14 @@
                       (begin
                         (when
                           (and
-                            (< (array-ref pl-sweep-read-lo r) (+ offset 8))
-                            (< offset (array-ref pl-sweep-read-hi r)))
+                            (< (pl-ref pl-sweep-read-lo r) (+ offset 8))
+                            (< offset (pl-ref pl-sweep-read-hi r)))
                           (set! observed true))
                         (set! r (+ r 1))))
                     (unless
                       observed
                       (begin
-                        (array-set! pl-rec-live position 0)
+                        (pl-set! pl-rec-live position 0)
                         (set! pl-swept (+ pl-swept 1))
                         (set! pl-kept (- pl-kept 1))))))
                 (set! k (+ k 1))))))))))
@@ -1507,6 +1531,10 @@
 ;; compiler-backend-peephole-asm-once-records-chunks over one chunk.
 (define (pl-run-chunk [start : i64] [stop : i64]) : i64
   (let
+    [pending : (Array i64 25)
+      (array 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)]
+    [next : (Array i64 25)
+      (array 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)]
     [i : i64 start]
     [has-pending : bool false]
     [prev-abort : i64 0]
@@ -1531,14 +1559,14 @@
               (let
                 [action : i64 0]
                 (begin
-                  (pl-parse-line pl-next i end (= newline 1))
-                  (set! action (pl-pair-action pl-pending pl-next))
+                  (pl-parse-line (&mut next) i end (= newline 1))
+                  (set! action (pl-pair-action (&mut pending) (&mut next)))
                   (cond
                     [(= action 1)
                       (begin
                         (set! pl-rule1 (+ pl-rule1 1))
                         (set! pl-dropped (+ pl-dropped 1))
-                        (pl-copy-line pl-pending pl-next))]
+                        (pl-copy-line (&mut pending) (&mut next)))]
                     [(= action 2)
                       (begin
                         (set! pl-rule2 (+ pl-rule2 1))
@@ -1546,37 +1574,47 @@
                     [(= action 3)
                       (begin
                         (set! pl-rule3 (+ pl-rule3 1))
-                        (pl-emit-record pl-pending prev-abort)
-                        (set! prev-abort (array-ref pl-pending pl-f-abort))
-                        (pl-owned-line
-                          pl-pending
-                          (array-ref pl-pending pl-f-src-start)
-                          (array-ref pl-pending pl-f-src-end)
-                          (array-ref pl-next pl-f-dst-start)
-                          (array-ref pl-next pl-f-dst-end)
-                          newline))]
+                        (pl-emit-record (&mut pending) prev-abort)
+                        (set! prev-abort (array-ref pending pl-f-abort))
+                        (let
+                          [src-start : i64 (array-ref pending pl-f-src-start)]
+                          [src-end : i64 (array-ref pending pl-f-src-end)]
+                          [dst-start : i64 (array-ref next pl-f-dst-start)]
+                          [dst-end : i64 (array-ref next pl-f-dst-end)]
+                          (pl-owned-line
+                            (&mut pending)
+                            src-start
+                            src-end
+                            dst-start
+                            dst-end
+                            newline)))]
                     [(= action 4)
                       (begin
                         (set! pl-rule4 (+ pl-rule4 1))
-                        (pl-owned-line
-                          pl-pending
-                          (array-ref pl-next pl-f-src-start)
-                          (array-ref pl-next pl-f-src-end)
-                          (array-ref pl-next pl-f-dst-start)
-                          (array-ref pl-next pl-f-dst-end)
-                          newline))]
+                        (let
+                          [src-start : i64 (array-ref next pl-f-src-start)]
+                          [src-end : i64 (array-ref next pl-f-src-end)]
+                          [dst-start : i64 (array-ref next pl-f-dst-start)]
+                          [dst-end : i64 (array-ref next pl-f-dst-end)]
+                          (pl-owned-line
+                            (&mut pending)
+                            src-start
+                            src-end
+                            dst-start
+                            dst-end
+                            newline)))]
                     [else
                       (begin
-                        (pl-emit-record pl-pending prev-abort)
-                        (set! prev-abort (array-ref pl-pending pl-f-abort))
-                        (pl-copy-line pl-pending pl-next))])))
+                        (pl-emit-record (&mut pending) prev-abort)
+                        (set! prev-abort (array-ref pending pl-f-abort))
+                        (pl-copy-line (&mut pending) (&mut next)))])))
               (begin
                 (set! has-pending true)
-                (pl-parse-line pl-pending i end (= newline 1))))
+                (pl-parse-line (&mut pending) i end (= newline 1))))
             (set! i next-start))))
       (when
-        (and has-pending (not (pl-self-move? pl-pending)))
-        (pl-emit-record pl-pending prev-abort))
+        (and has-pending (not (pl-self-move? (&mut pending))))
+        (pl-emit-record (&mut pending) prev-abort))
       (pl-sweep-region)
       (set! hash (pl-mix hash pl-rec-len))
       (set! hash (pl-mix hash pl-kept))
@@ -1603,8 +1641,8 @@
         (byte_buf.to-string (io.read-file-or (& path) (byte_buf.new))))
       (set! pl-len (string.string-length pl-text))
       (set! acc (pl-mix acc pl-len))
-      (set! pl-chunk-start (array.make-array i64 (+ (/ pl-len 16) 4)))
-      (set! pl-chunk-end (array.make-array i64 (+ (/ pl-len 16) 4)))
+      (set! pl-chunk-start (pl-zero-vec (+ (/ pl-len 16) 4)))
+      (set! pl-chunk-end (pl-zero-vec (+ (/ pl-len 16) 4)))
       (let
         [i : i64 0]
         [chunk-begin : i64 0]
@@ -1621,8 +1659,8 @@
                 (when
                   (and (pl-globl-line? i end) (> i chunk-begin))
                   (begin
-                    (array-set! pl-chunk-start chunks chunk-begin)
-                    (array-set! pl-chunk-end chunks i)
+                    (pl-set! pl-chunk-start chunks chunk-begin)
+                    (pl-set! pl-chunk-end chunks i)
                     (when (> lines max-lines) (set! max-lines lines))
                     (set! chunks (+ chunks 1))
                     (set! chunk-begin i)
@@ -1632,26 +1670,26 @@
           (when
             (> pl-len chunk-begin)
             (begin
-              (array-set! pl-chunk-start chunks chunk-begin)
-              (array-set! pl-chunk-end chunks pl-len)
+              (pl-set! pl-chunk-start chunks chunk-begin)
+              (pl-set! pl-chunk-end chunks pl-len)
               (when (> lines max-lines) (set! max-lines lines))
               (set! chunks (+ chunks 1))))))
       (set! pl-chunk-count chunks)
-      (set! pl-rec-owned (array.make-array i64 (+ max-lines 2)))
-      (set! pl-rec-src-start (array.make-array i64 (+ max-lines 2)))
-      (set! pl-rec-src-end (array.make-array i64 (+ max-lines 2)))
-      (set! pl-rec-dst-start (array.make-array i64 (+ max-lines 2)))
-      (set! pl-rec-dst-end (array.make-array i64 (+ max-lines 2)))
-      (set! pl-rec-flags (array.make-array i64 (+ max-lines 2)))
-      (set! pl-rec-cand (array.make-array i64 (+ max-lines 2)))
-      (set! pl-rec-read (array.make-array i64 (+ max-lines 2)))
-      (set! pl-rec-width (array.make-array i64 (+ max-lines 2)))
-      (set! pl-rec-value (array.make-array i64 (+ max-lines 2)))
-      (set! pl-rec-live (array.make-array i64 (+ max-lines 2)))
-      (set! pl-sweep-cand-pos (array.make-array i64 4097))
-      (set! pl-sweep-cand-off (array.make-array i64 4097))
-      (set! pl-sweep-read-lo (array.make-array i64 4097))
-      (set! pl-sweep-read-hi (array.make-array i64 4097))
+      (set! pl-rec-owned (pl-zero-vec (+ max-lines 2)))
+      (set! pl-rec-src-start (pl-zero-vec (+ max-lines 2)))
+      (set! pl-rec-src-end (pl-zero-vec (+ max-lines 2)))
+      (set! pl-rec-dst-start (pl-zero-vec (+ max-lines 2)))
+      (set! pl-rec-dst-end (pl-zero-vec (+ max-lines 2)))
+      (set! pl-rec-flags (pl-zero-vec (+ max-lines 2)))
+      (set! pl-rec-cand (pl-zero-vec (+ max-lines 2)))
+      (set! pl-rec-read (pl-zero-vec (+ max-lines 2)))
+      (set! pl-rec-width (pl-zero-vec (+ max-lines 2)))
+      (set! pl-rec-value (pl-zero-vec (+ max-lines 2)))
+      (set! pl-rec-live (pl-zero-vec (+ max-lines 2)))
+      (set! pl-sweep-cand-pos (pl-zero-vec 4097))
+      (set! pl-sweep-cand-off (pl-zero-vec 4097))
+      (set! pl-sweep-read-lo (pl-zero-vec 4097))
+      (set! pl-sweep-read-hi (pl-zero-vec 4097))
       (while (< round rounds)
         (let
           [step : i64 0]
@@ -1677,8 +1715,8 @@
                   (pl-mix
                     acc
                     (pl-run-chunk
-                      (array-ref pl-chunk-start index)
-                      (array-ref pl-chunk-end index))))
+                      (pl-ref pl-chunk-start index)
+                      (pl-ref pl-chunk-end index))))
                 (set! step (+ step 1))))
             (set! start (+ start 1))
             (when (>= start chunks) (set! start 0))

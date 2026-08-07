@@ -23,6 +23,8 @@
 (import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector i64 core) as i64vec)
 
 (define rt-modulus : i64
   1000000007)
@@ -42,8 +44,8 @@
   777767)
 
 ;; The 16 words the route table's literal segments are drawn from.
-(define (rt-word-table) : (Array String)
-  (make-array
+(define (rt-word-table) : (Array String 16)
+  (array
     "users"
     "posts"
     "comments"
@@ -64,8 +66,8 @@
 ;; Request path segments, each already carrying its leading `/`. Entries 0-15
 ;; mirror the route vocabulary; entries 16-23 are words no route ever names, so
 ;; they only match wildcard segments.
-(define (rt-token-table) : (Array String)
-  (make-array
+(define (rt-token-table) : (Array String 24)
+  (array
     "/users"
     "/posts"
     "/comments"
@@ -91,8 +93,8 @@
     "/grault"
     "/thud"))
 
-(define (rt-query-table) : (Array String)
-  (make-array "" "?page=2&sort=desc"))
+(define (rt-query-table) : (Array String 2)
+  (array "" "?page=2&sort=desc"))
 
 ;; 64-bit LCG. The state advances over the full word and every drawn value comes
 ;; from the high bits, whose period is much longer than the low bits'.
@@ -102,13 +104,16 @@
 (define (rt-draw [state : i64]) : i64
   (bit-and (shr state 33) 2147483647))
 
+(define (rt-zero-vec [n : i64]) : i64vec.Vec
+  (i64vec.Vec (array.make-array i64 n) n))
+
 (define (rt-build-table
-  [segment-kind : (Array i64)]
-  [segment-word : (Array i64)]
-  [route-start : (Array i64)]
-  [route-length : (Array i64)]
-  [route-mask : (Array i64)]
-  [route-handler : (Array i64)]
+  [segment-kind : (&mut segment-kind (Slice i64))]
+  [segment-word : (&mut segment-word (Slice i64))]
+  [route-start : (&mut route-start (Slice i64))]
+  [route-length : (&mut route-length (Slice i64))]
+  [route-mask : (&mut route-mask (Slice i64))]
+  [route-handler : (&mut route-handler (Slice i64))]
   [routes : i64]) : unit
   (let
     [state : i64 20250727]
@@ -151,9 +156,9 @@
 (define (rt-match-route
   [path : String]
   [path-end : i64]
-  [words : (Array String)]
-  [segment-kind : (Array i64)]
-  [segment-word : (Array i64)]
+  [words : (& words (Array String 16))]
+  [segment-kind : (&mut segment-kind (Slice i64))]
+  [segment-word : (&mut segment-word (Slice i64))]
   [base : i64]
   [length : i64]) : i64
   (let
@@ -213,13 +218,13 @@
 (define (rt-route-request
   [path : String]
   [method : i64]
-  [words : (Array String)]
-  [segment-kind : (Array i64)]
-  [segment-word : (Array i64)]
-  [route-start : (Array i64)]
-  [route-length : (Array i64)]
-  [route-mask : (Array i64)]
-  [route-handler : (Array i64)]
+  [words : (& words (Array String 16))]
+  [segment-kind : (&mut segment-kind (Slice i64))]
+  [segment-word : (&mut segment-word (Slice i64))]
+  [route-start : (&mut route-start (Slice i64))]
+  [route-length : (&mut route-length (Slice i64))]
+  [route-mask : (&mut route-mask (Slice i64))]
+  [route-handler : (&mut route-handler (Slice i64))]
   [routes : i64]) : i64
   (let
     [path-end : i64 (string.string-length path)]
@@ -260,9 +265,9 @@
         (% (+ (* handler 1000003) (* captures 31) method) rt-modulus)))))
 
 (define (rt-build-path
-  [tokens : (Array String)]
-  [queries : (Array String)]
-  [choice : (Array i64)]
+  [tokens : (& tokens (Array String 24))]
+  [queries : (& queries (Array String 2))]
+  [choice : (& choice (Array i64 4))]
   [segments : i64]
   [query : i64]) : String
   (if (= segments 2)
@@ -285,18 +290,16 @@
 
 (define (rt-bench [routes : i64] [requests : i64] [rounds : i64]) : i64
   (let
-    [words : (Array String) (rt-word-table)]
-    [tokens : (Array String) (rt-token-table)]
-    [queries : (Array String) (rt-query-table)]
-    [segment-kind : (Array i64)
-      (array.make-array i64 (* routes rt-max-segments))]
-    [segment-word : (Array i64)
-      (array.make-array i64 (* routes rt-max-segments))]
-    [route-start : (Array i64) (array.make-array i64 routes)]
-    [route-length : (Array i64) (array.make-array i64 routes)]
-    [route-mask : (Array i64) (array.make-array i64 routes)]
-    [route-handler : (Array i64) (array.make-array i64 routes)]
-    [choice : (Array i64) (array.make-array i64 rt-max-segments)]
+    [words : (Array String 16) (rt-word-table)]
+    [tokens : (Array String 24) (rt-token-table)]
+    [queries : (Array String 2) (rt-query-table)]
+    [segment-kind : i64vec.Vec (rt-zero-vec (* routes rt-max-segments))]
+    [segment-word : i64vec.Vec (rt-zero-vec (* routes rt-max-segments))]
+    [route-start : i64vec.Vec (rt-zero-vec routes)]
+    [route-length : i64vec.Vec (rt-zero-vec routes)]
+    [route-mask : i64vec.Vec (rt-zero-vec routes)]
+    [route-handler : i64vec.Vec (rt-zero-vec routes)]
+    [choice : (Array i64 4) (array 0 0 0 0)]
     [state : i64 987654321]
     [acc : i64 0]
     [round : i64 0]
@@ -307,14 +310,26 @@
     [route : i64 0]
     [base : i64 0]
     [k : i64 0]
+    [segment-kind-slots : (&mut segment-kind (Slice i64))
+      (i64vec.view-mut (&mut segment-kind))]
+    [segment-word-slots : (&mut segment-word (Slice i64))
+      (i64vec.view-mut (&mut segment-word))]
+    [route-start-slots : (&mut route-start (Slice i64))
+      (i64vec.view-mut (&mut route-start))]
+    [route-length-slots : (&mut route-length (Slice i64))
+      (i64vec.view-mut (&mut route-length))]
+    [route-mask-slots : (&mut route-mask (Slice i64))
+      (i64vec.view-mut (&mut route-mask))]
+    [route-handler-slots : (&mut route-handler (Slice i64))
+      (i64vec.view-mut (&mut route-handler))]
     (begin
       (rt-build-table
-        segment-kind
-        segment-word
-        route-start
-        route-length
-        route-mask
-        route-handler
+        segment-kind-slots
+        segment-word-slots
+        route-start-slots
+        route-length-slots
+        route-mask-slots
+        route-handler-slots
         routes)
       (while (< round rounds)
         (begin
@@ -326,12 +341,12 @@
                 (begin
                   (set! state (rt-next-state state))
                   (set! route (% (rt-draw state) routes))
-                  (set! base (array-ref route-start route))
-                  (set! segments (array-ref route-length route))
+                  (set! base (array-ref route-start-slots route))
+                  (set! segments (array-ref route-length-slots route))
                   (set! k 0)
                   (while (< k segments)
                     (begin
-                      (if (= (array-ref segment-kind (+ base k)) 1)
+                      (if (= (array-ref segment-kind-slots (+ base k)) 1)
                         (begin
                           (set! state (rt-next-state state))
                           (array-set!
@@ -341,11 +356,13 @@
                         (array-set!
                           choice
                           k
-                          (array-ref segment-word (+ base k))))
+                          (array-ref segment-word-slots (+ base k))))
                       (set! k (+ k 1))))
                   (set! state (rt-next-state state))
                   (set! method (shl 1 (% (rt-draw state) 4)))
-                  (while (= (bit-and (array-ref route-mask route) method) 0)
+                  (while (=
+                    (bit-and (array-ref route-mask-slots route) method)
+                    0)
                     (begin
                       (set! method (shl method 1))
                       (when (> method 8) (set! method 1)))))
@@ -366,7 +383,12 @@
                 (set! query 0))
               (let
                 [path : String
-                  (rt-build-path tokens queries choice segments query)]
+                  (rt-build-path
+                    (& tokens)
+                    (& queries)
+                    (& choice)
+                    segments
+                    query)]
                 (set!
                   acc
                   (%
@@ -375,13 +397,13 @@
                       (rt-route-request
                         path
                         method
-                        words
-                        segment-kind
-                        segment-word
-                        route-start
-                        route-length
-                        route-mask
-                        route-handler
+                        (& words)
+                        segment-kind-slots
+                        segment-word-slots
+                        route-start-slots
+                        route-length-slots
+                        route-mask-slots
+                        route-handler-slots
                         routes))
                     rt-modulus)))
               (set! i (+ i 1))))

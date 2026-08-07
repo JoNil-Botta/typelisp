@@ -55,10 +55,25 @@
 ;# The corpus path and round count are runtime arguments, so nothing can be
 ;# constant folded, and all arithmetic wraps modulo 2^64 in both languages, so
 ;# the printed decimal matches the C baseline's `%lld`.
-(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
+(import liveness_storage as storage)
+
+(defmacro (ln-ref [items : Expr] [index : Expr]) : Expr
+  `(storage.i64-get-mut ,items ,index))
+
+(defmacro (ln-set! [items : Expr] [index : Expr] [value : Expr]) : Expr
+  `(storage.i64-set! ,items ,index ,value))
+
+(defmacro (ln-owner-ref [items : Expr] [index : Expr]) : Expr
+  `(storage.i64-get (& ,items) ,index))
+
+(defmacro (ln-owner-set! [items : Expr] [index : Expr] [value : Expr]) : Expr
+  `(storage.i64-set! (&mut ,items) ,index ,value))
+
+(defmacro (ln-owner-slice [items : Expr]) : Expr
+  `(&mut ,items))
 
 ;; `compiler-live-set-word-shift` / `-word-mask`: the compiler's
 ;; `compiler-live-set-word-bits` is THIRTY-TWO, so an i64 word carries 32 set
@@ -77,10 +92,13 @@
 (define (ln-words-for [vars : i64]) : i64
   (shr (+ vars ln-word-mask) ln-word-shift))
 
-(define (ln-set-bit! [words : (Array i64)] [base : i64] [value : i64]) : unit
+(define (ln-set-bit!
+  [words : (&mut words storage.I64Buffer)]
+  [base : i64]
+  [value : i64]) : unit
   (let
     [slot : i64 (+ base (ln-word-index value))]
-    (array-set! words slot (bit-or (array-ref words slot) (ln-bit-mask value)))))
+    (ln-set! words slot (bit-or (ln-ref words slot) (ln-bit-mask value)))))
 
 ;; ---- corpus parsing ----
 ;; The corpus is a whitespace-separated stream of non-negative decimals and
@@ -88,7 +106,7 @@
 (define (ln-digit? [c : i64]) : bool
   (and (>= c 48) (<= c 57)))
 
-(define (ln-count-tokens [buf : (Array u8)] [n : i64]) : i64
+(define (ln-count-tokens [buf : (&mut buf (Slice u8))] [n : i64]) : i64
   (let
     [i : i64 0]
     [count : i64 0]
@@ -108,7 +126,10 @@
             (set! i (+ i 1)))))
       count)))
 
-(define (ln-fill-tokens [buf : (Array u8)] [n : i64] [tokens : (Array i64)]) : unit
+(define (ln-fill-tokens
+  [buf : (&mut buf (Slice u8))]
+  [n : i64]
+  [tokens : (&mut tokens storage.I64Buffer)]) : unit
   (let
     [i : i64 0]
     [count : i64 0]
@@ -126,7 +147,7 @@
               (when
                 inside
                 (begin
-                  (array-set! tokens count value)
+                  (ln-set! tokens count value)
                   (set! count (+ count 1))
                   (set! value 0)
                   (set! inside false))))
@@ -134,7 +155,7 @@
       (when
         inside
         (begin
-          (array-set! tokens count value)
+          (ln-set! tokens count value)
           (set! count (+ count 1))))
       unit)))
 
@@ -142,39 +163,37 @@
 ;; `compiler-live-successor-live-out-graph-loop` then the phi-out union of
 ;; `compiler-live-recompute-block-graph-ep`, into a scratch word slice.
 (define (ln-live-out-into!
-  [scratch : (Array i64)]
+  [scratch : (&mut scratch storage.I64Buffer)]
   [words : i64]
   [g : i64]
-  [succ-start : (Array i64)]
-  [succ-items : (Array i64)]
-  [live-in : (Array i64)]
+  [succ-start : (&mut succ-start storage.I64Buffer)]
+  [succ-items : (&mut succ-items storage.I64Buffer)]
+  [live-in : (&mut live-in storage.I64Buffer)]
   [word-base : i64]
   [block-base : i64]
-  [phi-out : (Array i64)]
+  [phi-out : (&mut phi-out storage.I64Buffer)]
   [with-phi-out : bool]) : unit
   (let
     [k : i64 0]
-    [stop : i64 (array-ref succ-start (+ g 1))]
-    [slot : i64 (array-ref succ-start g)]
+    [stop : i64 (ln-ref succ-start (+ g 1))]
+    [slot : i64 (ln-ref succ-start g)]
     (begin
       (while (< k words)
         (begin
-          (array-set! scratch k 0)
+          (ln-set! scratch k 0)
           (set! k (+ k 1))))
       (while (< slot stop)
         (let
-          [succ : i64 (array-ref succ-items slot)]
+          [succ : i64 (ln-ref succ-items slot)]
           [succ-base : i64 (+ word-base (* (- succ block-base) words))]
           [i : i64 0]
           (begin
             (while (< i words)
               (begin
-                (array-set!
+                (ln-set!
                   scratch
                   i
-                  (bit-or
-                    (array-ref scratch i)
-                    (array-ref live-in (+ succ-base i))))
+                  (bit-or (ln-ref scratch i) (ln-ref live-in (+ succ-base i))))
                 (set! i (+ i 1))))
             (set! slot (+ slot 1)))))
       (when
@@ -184,12 +203,10 @@
           [i : i64 0]
           (while (< i words)
             (begin
-              (array-set!
+              (ln-set!
                 scratch
                 i
-                (bit-or
-                  (array-ref scratch i)
-                  (array-ref phi-out (+ self-base i))))
+                (bit-or (ln-ref scratch i) (ln-ref phi-out (+ self-base i))))
               (set! i (+ i 1))))))
       unit)))
 
@@ -201,15 +218,15 @@
   [words : i64]
   [word-base : i64]
   [block-base : i64]
-  [succ-start : (Array i64)]
-  [succ-items : (Array i64)]
-  [uses : (Array i64)]
-  [defs : (Array i64)]
-  [phi-out : (Array i64)]
-  [live-in : (Array i64)]
-  [live-out : (Array i64)]
-  [scratch-out : (Array i64)]
-  [scratch-in : (Array i64)]
+  [succ-start : (&mut succ-start storage.I64Buffer)]
+  [succ-items : (&mut succ-items storage.I64Buffer)]
+  [uses : (&mut uses storage.I64Buffer)]
+  [defs : (&mut defs storage.I64Buffer)]
+  [phi-out : (&mut phi-out storage.I64Buffer)]
+  [live-in : (&mut live-in storage.I64Buffer)]
+  [live-out : (&mut live-out storage.I64Buffer)]
+  [scratch-out : (&mut scratch-out storage.I64Buffer)]
+  [scratch-in : (&mut scratch-in storage.I64Buffer)]
   [with-phi-out : bool]) : bool
   (let
     [self-base : i64 (+ word-base (* (- g block-base) words))]
@@ -229,24 +246,22 @@
         with-phi-out)
       (while (< i words)
         (begin
-          (array-set!
+          (ln-set!
             scratch-in
             i
             (bit-or
-              (array-ref uses (+ self-base i))
+              (ln-ref uses (+ self-base i))
               (bit-and
-                (array-ref scratch-out i)
-                (bit-xor (array-ref defs (+ self-base i)) -1))))
+                (ln-ref scratch-out i)
+                (bit-xor (ln-ref defs (+ self-base i)) -1))))
           (set! i (+ i 1))))
       (set! i 0)
       (while (and (< i words) (not changed))
         (begin
           (when
             (or
-              (!= (array-ref scratch-in i) (array-ref live-in (+ self-base i)))
-              (!=
-                (array-ref scratch-out i)
-                (array-ref live-out (+ self-base i))))
+              (!= (ln-ref scratch-in i) (ln-ref live-in (+ self-base i)))
+              (!= (ln-ref scratch-out i) (ln-ref live-out (+ self-base i))))
             (set! changed true))
           (set! i (+ i 1))))
       (when
@@ -255,8 +270,8 @@
           [k : i64 0]
           (while (< k words)
             (begin
-              (array-set! live-in (+ self-base k) (array-ref scratch-in k))
-              (array-set! live-out (+ self-base k) (array-ref scratch-out k))
+              (ln-set! live-in (+ self-base k) (ln-ref scratch-in k))
+              (ln-set! live-out (+ self-base k) (ln-ref scratch-out k))
               (set! k (+ k 1))))))
       changed)))
 
@@ -266,18 +281,18 @@
   [blocks : i64]
   [words : i64]
   [word-base : i64]
-  [succ-start : (Array i64)]
-  [succ-items : (Array i64)]
-  [pred-start : (Array i64)]
-  [pred-items : (Array i64)]
-  [uses : (Array i64)]
-  [defs : (Array i64)]
-  [phi-out : (Array i64)]
-  [live-in : (Array i64)]
-  [live-out : (Array i64)]
-  [pending : (Array i64)]
-  [scratch-out : (Array i64)]
-  [scratch-in : (Array i64)]
+  [succ-start : (&mut succ-start storage.I64Buffer)]
+  [succ-items : (&mut succ-items storage.I64Buffer)]
+  [pred-start : (&mut pred-start storage.I64Buffer)]
+  [pred-items : (&mut pred-items storage.I64Buffer)]
+  [uses : (&mut uses storage.I64Buffer)]
+  [defs : (&mut defs storage.I64Buffer)]
+  [phi-out : (&mut phi-out storage.I64Buffer)]
+  [live-in : (&mut live-in storage.I64Buffer)]
+  [live-out : (&mut live-out storage.I64Buffer)]
+  [pending : (&mut pending storage.I64Buffer)]
+  [scratch-out : (&mut scratch-out storage.I64Buffer)]
+  [scratch-in : (&mut scratch-in storage.I64Buffer)]
   [with-phi-out : bool]) : unit
   (let
     [b : i64 0]
@@ -290,11 +305,11 @@
           [self-base : i64 (+ word-base (* b words))]
           [k : i64 0]
           (begin
-            (array-set! pending (+ block-base b) 1)
+            (ln-set! pending (+ block-base b) 1)
             (while (< k words)
               (begin
-                (array-set! live-in (+ self-base k) 0)
-                (array-set! live-out (+ self-base k) 0)
+                (ln-set! live-in (+ self-base k) 0)
+                (ln-set! live-out (+ self-base k) 0)
                 (set! k (+ k 1))))
             (set! b (+ b 1)))))
       (while (not done)
@@ -307,9 +322,9 @@
             (while (and (>= i 0) (< index 0))
               (begin
                 (when
-                  (= (array-ref pending (+ block-base i)) 1)
+                  (= (ln-ref pending (+ block-base i)) 1)
                   (begin
-                    (array-set! pending (+ block-base i) 0)
+                    (ln-set! pending (+ block-base i) 0)
                     (set! index i)))
                 (set! i (- i 1))))
             (if (< index 0)
@@ -333,11 +348,11 @@
                 ;; `compiler-live-worklist-enqueue-predecessors!`
                 (let
                   [g : i64 (+ block-base index)]
-                  [slot : i64 (array-ref pred-start g)]
-                  [stop : i64 (array-ref pred-start (+ g 1))]
+                  [slot : i64 (ln-ref pred-start g)]
+                  [stop : i64 (ln-ref pred-start (+ g 1))]
                   (while (< slot stop)
                     (begin
-                      (array-set! pending (array-ref pred-items slot) 1)
+                      (ln-set! pending (ln-ref pred-items slot) 1)
                       (set! slot (+ slot 1))))))))))
       unit)))
 
@@ -348,17 +363,20 @@
 ;; rather than to the universe. Same value, and it keeps this row a measurement
 ;; of the fixpoint: with the compiler's per-bit spelling the fold alone is 78%
 ;; of the TypeLisp row.
-(define (ln-set-count [words-array : (Array i64)] [base : i64] [words : i64]) : i64
+(define (ln-set-count
+  [words-array : (&mut words-array storage.I64Buffer)]
+  [base : i64]
+  [words : i64]) : i64
   (let
     [n : i64 words]
     [count : i64 0]
     [i : i64 0]
     (begin
-      (while (and (> n 0) (= (array-ref words-array (+ base (- n 1))) 0))
+      (while (and (> n 0) (= (ln-ref words-array (+ base (- n 1))) 0))
         (set! n (- n 1)))
       (while (< i n)
         (let
-          [bits : i64 (array-ref words-array (+ base i))]
+          [bits : i64 (ln-ref words-array (+ base i))]
           (begin
             (while (!= bits 0)
               (begin
@@ -368,7 +386,7 @@
       count)))
 
 (define (ln-fold-live-in
-  [live-in : (Array i64)]
+  [live-in : (&mut live-in storage.I64Buffer)]
   [word-base : i64]
   [blocks : i64]
   [words : i64]
@@ -389,50 +407,32 @@
           (set! b (+ b 1))))
       acc)))
 
-(define (ln-string-to-array [source : String]) : (Array u8)
-  (let
-    [n : i64 (string-length source)]
-    [out : (Array u8) (array.make-array u8 n)]
-    [src : (Ptr u8)
-      (unsafe
-        (string-data (& source)))]
-    [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (array-set!
-            out
-            i
-            (unsafe
-              (ptr-read (ptr-offset src i))))
-          (set! i (+ i 1))))
-      out)))
-
 (define (ln-bench [path : String] [rounds : i64]) : i64
   (let
     [source : String (byte_buf.to-string (io.read-file path))]
-    [text : (Array u8) (ln-string-to-array source)]
-    [n : i64 (array-length text)]
-    [token-count : i64 (ln-count-tokens text n)]
-    [tokens : (Array i64) (array.make-array i64 (+ token-count 1))]
+    [text (storage.string-to-u8-vec source)]
+    [n : i64 (storage.u8-len (& text))]
     [functions : i64 0]
     [total-blocks : i64 0]
     [total-words : i64 0]
     [total-succ : i64 0]
     [max-words : i64 1]
     [p : i64 0]
+    [text-slots : (&mut text (Slice u8)) (storage.u8-view-mut (&mut text))]
+    [token-count : i64 (ln-count-tokens text-slots n)]
+    [tokens (storage.zero-i64-vec (+ token-count 1))]
     (begin
-      (ln-fill-tokens text n tokens)
+      (ln-fill-tokens text-slots n (&mut tokens))
       ;; Sizing pass over the token stream.
       (set! p 1)
-      (set! functions (array-ref tokens p))
+      (set! functions (ln-owner-ref tokens p))
       (set! p (+ p 1))
       (let
         [f : i64 0]
         (while (< f functions)
           (let
-            [vars : i64 (array-ref tokens p)]
-            [blocks : i64 (array-ref tokens (+ p 1))]
+            [vars : i64 (ln-owner-ref tokens p)]
+            [blocks : i64 (ln-owner-ref tokens (+ p 1))]
             [words : i64 (ln-words-for vars)]
             [b : i64 0]
             (begin
@@ -446,7 +446,7 @@
                   (begin
                     (while (< k 5)
                       (let
-                        [c : i64 (array-ref tokens p)]
+                        [c : i64 (ln-owner-ref tokens p)]
                         (begin
                           (when (= k 0) (set! total-succ (+ total-succ c)))
                           (set! p (+ p 1 c))
@@ -454,24 +454,24 @@
                     (set! b (+ b 1)))))
               (set! f (+ f 1))))))
       (let
-        [fn-block-base : (Array i64) (array.make-array i64 (+ functions 1))]
-        [fn-word-base : (Array i64) (array.make-array i64 (+ functions 1))]
-        [fn-blocks : (Array i64) (array.make-array i64 (+ functions 1))]
-        [fn-words : (Array i64) (array.make-array i64 (+ functions 1))]
-        [succ-start : (Array i64) (array.make-array i64 (+ total-blocks 1))]
-        [succ-items : (Array i64) (array.make-array i64 (+ total-succ 1))]
-        [pred-start : (Array i64) (array.make-array i64 (+ total-blocks 2))]
-        [pred-items : (Array i64) (array.make-array i64 (+ total-succ 1))]
-        [pred-cursor : (Array i64) (array.make-array i64 (+ total-blocks 1))]
-        [uses : (Array i64) (array.make-array i64 (+ total-words 1))]
-        [uses-nophi : (Array i64) (array.make-array i64 (+ total-words 1))]
-        [defs : (Array i64) (array.make-array i64 (+ total-words 1))]
-        [phi-out : (Array i64) (array.make-array i64 (+ total-words 1))]
-        [live-in : (Array i64) (array.make-array i64 (+ total-words 1))]
-        [live-out : (Array i64) (array.make-array i64 (+ total-words 1))]
-        [pending : (Array i64) (array.make-array i64 (+ total-blocks 1))]
-        [scratch-out : (Array i64) (array.make-array i64 (+ max-words 1))]
-        [scratch-in : (Array i64) (array.make-array i64 (+ max-words 1))]
+        [fn-block-base (storage.zero-i64-vec (+ functions 1))]
+        [fn-word-base (storage.zero-i64-vec (+ functions 1))]
+        [fn-blocks (storage.zero-i64-vec (+ functions 1))]
+        [fn-words (storage.zero-i64-vec (+ functions 1))]
+        [succ-start (storage.zero-i64-vec (+ total-blocks 1))]
+        [succ-items (storage.zero-i64-vec (+ total-succ 1))]
+        [pred-start (storage.zero-i64-vec (+ total-blocks 2))]
+        [pred-items (storage.zero-i64-vec (+ total-succ 1))]
+        [pred-cursor (storage.zero-i64-vec (+ total-blocks 1))]
+        [uses (storage.zero-i64-vec (+ total-words 1))]
+        [uses-nophi (storage.zero-i64-vec (+ total-words 1))]
+        [defs (storage.zero-i64-vec (+ total-words 1))]
+        [phi-out (storage.zero-i64-vec (+ total-words 1))]
+        [live-in (storage.zero-i64-vec (+ total-words 1))]
+        [live-out (storage.zero-i64-vec (+ total-words 1))]
+        [pending (storage.zero-i64-vec (+ total-blocks 1))]
+        [scratch-out (storage.zero-i64-vec (+ max-words 1))]
+        [scratch-in (storage.zero-i64-vec (+ max-words 1))]
         [block-base : i64 0]
         [word-base : i64 0]
         [succ-cursor : i64 0]
@@ -484,16 +484,16 @@
             [f : i64 0]
             (while (< f functions)
               (let
-                [vars : i64 (array-ref tokens p)]
-                [blocks : i64 (array-ref tokens (+ p 1))]
+                [vars : i64 (ln-owner-ref tokens p)]
+                [blocks : i64 (ln-owner-ref tokens (+ p 1))]
                 [words : i64 (ln-words-for vars)]
                 [b : i64 0]
                 (begin
                   (set! p (+ p 2))
-                  (array-set! fn-block-base f block-base)
-                  (array-set! fn-word-base f word-base)
-                  (array-set! fn-blocks f blocks)
-                  (array-set! fn-words f words)
+                  (ln-owner-set! fn-block-base f block-base)
+                  (ln-owner-set! fn-word-base f word-base)
+                  (ln-owner-set! fn-blocks f blocks)
+                  (ln-owner-set! fn-words f words)
                   (while (< b blocks)
                     (let
                       [g : i64 (+ block-base b)]
@@ -501,71 +501,80 @@
                       [count : i64 0]
                       [j : i64 0]
                       (begin
-                        (array-set! succ-start g succ-cursor)
-                        (set! count (array-ref tokens p))
+                        (ln-owner-set! succ-start g succ-cursor)
+                        (set! count (ln-owner-ref tokens p))
                         (set! p (+ p 1))
                         (set! j 0)
                         (while (< j count)
                           (begin
-                            (array-set!
+                            (ln-owner-set!
                               succ-items
                               succ-cursor
-                              (+ block-base (array-ref tokens p)))
+                              (+ block-base (ln-owner-ref tokens p)))
                             (set! succ-cursor (+ succ-cursor 1))
                             (set! p (+ p 1))
                             (set! j (+ j 1))))
-                        (set! count (array-ref tokens p))
-                        (set! p (+ p 1))
-                        (set! j 0)
-                        (while (< j count)
-                          (begin
-                            (ln-set-bit! uses self-base (array-ref tokens p))
-                            (set! p (+ p 1))
-                            (set! j (+ j 1))))
-                        (set! count (array-ref tokens p))
+                        (set! count (ln-owner-ref tokens p))
                         (set! p (+ p 1))
                         (set! j 0)
                         (while (< j count)
                           (begin
                             (ln-set-bit!
-                              uses-nophi
+                              (ln-owner-slice uses)
                               self-base
-                              (array-ref tokens p))
+                              (ln-owner-ref tokens p))
                             (set! p (+ p 1))
                             (set! j (+ j 1))))
-                        (set! count (array-ref tokens p))
+                        (set! count (ln-owner-ref tokens p))
                         (set! p (+ p 1))
                         (set! j 0)
                         (while (< j count)
                           (begin
-                            (ln-set-bit! defs self-base (array-ref tokens p))
+                            (ln-set-bit!
+                              (ln-owner-slice uses-nophi)
+                              self-base
+                              (ln-owner-ref tokens p))
                             (set! p (+ p 1))
                             (set! j (+ j 1))))
-                        (set! count (array-ref tokens p))
+                        (set! count (ln-owner-ref tokens p))
                         (set! p (+ p 1))
                         (set! j 0)
                         (while (< j count)
                           (begin
-                            (ln-set-bit! phi-out self-base (array-ref tokens p))
+                            (ln-set-bit!
+                              (ln-owner-slice defs)
+                              self-base
+                              (ln-owner-ref tokens p))
+                            (set! p (+ p 1))
+                            (set! j (+ j 1))))
+                        (set! count (ln-owner-ref tokens p))
+                        (set! p (+ p 1))
+                        (set! j 0)
+                        (while (< j count)
+                          (begin
+                            (ln-set-bit!
+                              (ln-owner-slice phi-out)
+                              self-base
+                              (ln-owner-ref tokens p))
                             (set! p (+ p 1))
                             (set! j (+ j 1))))
                         (set! b (+ b 1)))))
                   (set! block-base (+ block-base blocks))
                   (set! word-base (+ word-base (* blocks words)))
                   (set! f (+ f 1))))))
-          (array-set! succ-start total-blocks succ-cursor)
+          (ln-owner-set! succ-start total-blocks succ-cursor)
           ;; `compiler-live-predecessors-build`: count, then fill.
           (let
             [i : i64 0]
             (begin
               (while (< i succ-cursor)
                 (let
-                  [target : i64 (array-ref succ-items i)]
+                  [target : i64 (ln-owner-ref succ-items i)]
                   (begin
-                    (array-set!
+                    (ln-owner-set!
                       pred-cursor
                       target
-                      (+ (array-ref pred-cursor target) 1))
+                      (+ (ln-owner-ref pred-cursor target) 1))
                     (set! i (+ i 1)))))
               (set! i 0)
               (let
@@ -573,24 +582,24 @@
                 (begin
                   (while (< i total-blocks)
                     (begin
-                      (array-set! pred-start i running)
-                      (set! running (+ running (array-ref pred-cursor i)))
-                      (array-set! pred-cursor i (array-ref pred-start i))
+                      (ln-owner-set! pred-start i running)
+                      (set! running (+ running (ln-owner-ref pred-cursor i)))
+                      (ln-owner-set! pred-cursor i (ln-owner-ref pred-start i))
                       (set! i (+ i 1))))
-                  (array-set! pred-start total-blocks running)))
+                  (ln-owner-set! pred-start total-blocks running)))
               (set! i 0)
               (while (< i total-blocks)
                 (let
-                  [slot : i64 (array-ref succ-start i)]
-                  [stop : i64 (array-ref succ-start (+ i 1))]
+                  [slot : i64 (ln-owner-ref succ-start i)]
+                  [stop : i64 (ln-owner-ref succ-start (+ i 1))]
                   (begin
                     (while (< slot stop)
                       (let
-                        [target : i64 (array-ref succ-items slot)]
-                        [at : i64 (array-ref pred-cursor target)]
+                        [target : i64 (ln-owner-ref succ-items slot)]
+                        [at : i64 (ln-owner-ref pred-cursor target)]
                         (begin
-                          (array-set! pred-items at i)
-                          (array-set! pred-cursor target (+ at 1))
+                          (ln-owner-set! pred-items at i)
+                          (ln-owner-set! pred-cursor target (+ at 1))
                           (set! slot (+ slot 1)))))
                     (set! i (+ i 1)))))))
           (while (< round rounds)
@@ -599,55 +608,65 @@
               (begin
                 (while (< f functions)
                   (let
-                    [base : i64 (array-ref fn-block-base f)]
-                    [blocks : i64 (array-ref fn-blocks f)]
-                    [words : i64 (array-ref fn-words f)]
-                    [wbase : i64 (array-ref fn-word-base f)]
+                    [base : i64 (ln-owner-ref fn-block-base f)]
+                    [blocks : i64 (ln-owner-ref fn-blocks f)]
+                    [words : i64 (ln-owner-ref fn-words f)]
+                    [wbase : i64 (ln-owner-ref fn-word-base f)]
                     (begin
                       ;; `compiler-live-analyze-function`: the ordinary pass.
-                      (ln-fixpoint!
+                      (storage.fixpoint!
                         base
                         blocks
                         words
                         wbase
-                        succ-start
-                        succ-items
-                        pred-start
-                        pred-items
-                        uses
-                        defs
-                        phi-out
-                        live-in
-                        live-out
-                        pending
-                        scratch-out
-                        scratch-in
+                        (ln-owner-slice succ-start)
+                        (ln-owner-slice succ-items)
+                        (ln-owner-slice pred-start)
+                        (ln-owner-slice pred-items)
+                        (ln-owner-slice uses)
+                        (ln-owner-slice defs)
+                        (ln-owner-slice phi-out)
+                        (ln-owner-slice live-in)
+                        (ln-owner-slice live-out)
+                        (ln-owner-slice pending)
+                        (ln-owner-slice scratch-out)
+                        (ln-owner-slice scratch-in)
                         false)
                       (set!
                         acc
-                        (ln-fold-live-in live-in wbase blocks words acc))
+                        (ln-fold-live-in
+                          (ln-owner-slice live-in)
+                          wbase
+                          blocks
+                          words
+                          acc))
                       ;; `compiler-live-analyze-blocks-edge-precise`.
-                      (ln-fixpoint!
+                      (storage.fixpoint!
                         base
                         blocks
                         words
                         wbase
-                        succ-start
-                        succ-items
-                        pred-start
-                        pred-items
-                        uses-nophi
-                        defs
-                        phi-out
-                        live-in
-                        live-out
-                        pending
-                        scratch-out
-                        scratch-in
+                        (ln-owner-slice succ-start)
+                        (ln-owner-slice succ-items)
+                        (ln-owner-slice pred-start)
+                        (ln-owner-slice pred-items)
+                        (ln-owner-slice uses-nophi)
+                        (ln-owner-slice defs)
+                        (ln-owner-slice phi-out)
+                        (ln-owner-slice live-in)
+                        (ln-owner-slice live-out)
+                        (ln-owner-slice pending)
+                        (ln-owner-slice scratch-out)
+                        (ln-owner-slice scratch-in)
                         true)
                       (set!
                         acc
-                        (ln-fold-live-in live-in wbase blocks words acc))
+                        (ln-fold-live-in
+                          (ln-owner-slice live-in)
+                          wbase
+                          blocks
+                          words
+                          acc))
                       (set! f (+ f 1)))))
                 (set! round (+ round 1)))))
           (+ (* acc 1000003) total-blocks))))))

@@ -4644,6 +4644,23 @@
             cbi.compiler-builtin-id-fix-value
             (ast.ast-ty-dyn-array (ast.AstType.I64))))
         "(&mut value (Array i64))")]
+    [structural-lifetime-source : i64 (ci.intern "macro-lifetime")]
+    [structural-lifetime-render-ok : bool
+      (string.eq
+        (tc_core.tc-type-render
+          (ast.ast-ty-ref
+            (+
+              (ci.intern-macro-local-structural-base)
+              structural-lifetime-source)
+            (ast.AstType.I64)))
+        "(& macro-lifetime i64)")]
+    [invalid-lifetime-render-ok : bool
+      (string.eq
+        (tc_core.tc-type-render
+          (ast.ast-ty-ref (ci.intern-capacity) (ast.AstType.I64)))
+        (string.append
+          "(& <id:"
+          (string.append (string.int->string (ci.intern-capacity)) "> i64)")))]
     [nominal-lifetime-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
@@ -4707,6 +4724,8 @@
       bytes-ref-render-ok
       bytes-mut-ref-render-ok
       mut-ref-render-ok
+      structural-lifetime-render-ok
+      invalid-lifetime-render-ok
       str-eq-ok
       str-distinct-ok
       bytes-eq-ok

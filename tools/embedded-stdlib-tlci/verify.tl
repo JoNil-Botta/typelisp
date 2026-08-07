@@ -17,6 +17,15 @@
 (import stdlib.str_cat)
 (import stdlib.string)
 
+;; The raw verifier image is immutable process-global storage. Equality needs
+;; a shallow view of its bytes, not ownership of the global array.
+(defmacro (embedded-verify-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 ;; Compare expansion with the builder's ordinary, directly mappable format-v2
 ;; artifact. This is intentionally a verifier-only second embedding; shipped
 ;; compilers carry only the compressed payload.
@@ -46,7 +55,9 @@
         (> raw-len 0)
         (> compressed-len 0)
         (<= (* compressed-len 100) (* raw-len 40))
-        (tlci_core.tlci-bytes-eq? embedded-verify-raw-image expanded)))))
+        (tlci_core.tlci-bytes-eq?
+          (embedded-verify-global-shared-view embedded-verify-raw-image)
+          expanded)))))
 
 (define (embedded-verify-result-shape-ok?
   [pools : compiler_ast_types.AstNodePoolContext]

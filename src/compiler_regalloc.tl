@@ -37830,6 +37830,99 @@
         (not (= (array-ref remap 0) 1)))]
     [(CompilerRegColoring.None) false]))
 
+(define (compiler-reg-color-avx2-param-ranges-ok?) : bool
+  (let
+    [params : ir.CompilerIrParamList
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param
+          "__tl_spmd_active_mask_avx2"
+          (ast.AstType.Bool)
+          0)
+        (ir.compiler-ir-param-cons
+          (ir.CompilerIrParam.Param
+            "__tl_spmd_varying_arg_avx2_x"
+            (ast.AstType.I64)
+            1)
+          (ir.compiler-ir-param-cons
+            (ir.CompilerIrParam.Param
+              "__tl_spmd_index_base"
+              (ast.AstType.I64)
+              2)
+            ir.CompilerIrParamList.Nil)))]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-insert
+        CompilerRegAssignmentList.Nil
+        1
+        (CompilerRegLocation.Register cabi.compiler-reg-id-r12))]
+    (match (compiler-reg-color-stack-slots
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (CompilerRegPlan.Plan
+        assignments
+        (live.compiler-live-set-empty)
+        (compiler-reg-interval-seq-prepend
+          (CompilerRegInterval 1 0 1)
+          (compiler-reg-interval-seq-empty))
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          1
+          (ast.AstType.I64))
+        (compiler-reg-call-split-empty)
+        (compiler-reg-split-plan-empty))
+      (live.compiler-live-set-empty)
+      params
+      ir.CompilerIrBlockList.Nil
+      3
+      3
+      (live.compiler-live-set-empty))
+      [(CompilerRegColoring.Remap remap slots)
+        (let
+          [active : i64 (array-ref remap 0)]
+          [varying : i64 (array-ref remap 1)]
+          [uniform : i64 (array-ref remap 2)]
+          [rebuilt : CompilerRegAssignmentList
+            (compiler-reg-color-rebuild-assignments remap 3 assignments)]
+          (begin
+            (compiler-regalloc-self-test-require!
+              "AVX2 special parameter range reservation"
+              (and
+                (= uniform 2)
+                (>= active 3)
+                (<= (+ active 1) slots)
+                (or (< uniform (- active 3)) (> uniform active))
+                (not (= varying active))))
+            (compiler-regalloc-self-test-require!
+              "AVX2 special parameter assignment remap"
+              (compiler-reg-location-register?
+                (compiler-reg-assignment-index-lookup
+                  (compiler-reg-assignment-index-build rebuilt 3)
+                  varying)
+                cabi.compiler-reg-id-r12))
+            (compiler-regalloc-self-test-require!
+              "AVX2 emitted parameter id remap"
+              (match (ir.compiler-ir-param-list-force-cons
+                (compiler-reg-remap-params remap params))
+                [(ir.CompilerIrParamList.Cons
+                    (ir.CompilerIrParam.Param _ _ active-param)
+                    rest1)
+                  (match (ir.compiler-ir-param-list-force-cons (box-get rest1))
+                    [(ir.CompilerIrParamList.Cons
+                        (ir.CompilerIrParam.Param _ _ varying-param)
+                        rest2)
+                      (match (ir.compiler-ir-param-list-force-cons
+                        (box-get rest2))
+                        [(ir.CompilerIrParamList.Cons
+                            (ir.CompilerIrParam.Param _ _ uniform-param)
+                            _)
+                          (and
+                            (= active-param active)
+                            (= varying-param varying)
+                            (= uniform-param uniform))]
+                        [_ false])]
+                    [_ false])]
+                [_ false]))
+            true))]
+      [(CompilerRegColoring.None) false])))
+
 (define (compiler-reg-color-spill-hole-demand-ok?) : bool
   (match (compiler-reg-color-stack-slots
     (ast.ast-node-pool-reader-type-segment-bases)

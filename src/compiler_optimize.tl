@@ -11196,39 +11196,6 @@
       unit)
     program))
 
-(define (compiler-optimize-debug-verifier-self-test) : i64
-  (let
-    [name : i64 (ir.compiler-ir-test-symbol "debug-invalid")]
-    [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
-          (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-            ir.CompilerIrInstrList.Nil))
-        ir.CompilerIrBlockList.Nil)]
-    [program : ir.CompilerIrProgram
-      (ir.CompilerIrProgram.Program
-        ir.CompilerIrGlobalList.Nil
-        (ir.compiler-ir-function-cons
-          (ir.CompilerIrFunction.Function
-            name
-            ir.CompilerIrParamList.Nil
-            (ast.AstType.I64)
-            1
-            blocks)
-          ir.CompilerIrFunctionList.Nil)
-        ir.CompilerIrExternList.Nil)]
-    (match (opt-verify-program program)
-      [(ResultCompilerOptimizeVerify.Err message)
-        (if (string.eq
-          message
-          "function @debug-invalid: block entry instruction 0: optimizer verify: use before definition")
-          42
-          1)]
-      [(ResultCompilerOptimizeVerify.Ok) 2])))
-
 ;; --- standalone scalar SSA construction / mem2reg --------------------------
 ;;
 ;; This constructor rewrites repeated scalar virtual-register definitions into
@@ -69532,50 +69499,6 @@
                     instrs)])
               false)]
           [(ir.CompilerIrBlockList.Nil) false]))]))
-
-(define (opt-loop-bce-argc-summary-test-function [has-entry : bool]) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (if has-entry
-      0
-      1)
-    (ir.CompilerIrParamList.Nil)
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
-        (ir.compiler-ir-label "entry")
-        (if has-entry
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.EntryArgc 0)
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.Var 0)
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                (ir.CompilerIrInstrList.Nil))))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (ast.AstType.I64))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-              (ir.CompilerIrInstrList.Nil)))))
-      (ir.CompilerIrBlockList.Nil))))
-
-(define (opt-loop-bce-argc-summary-prescan-self-test?) : bool
-  (and
-    (not
-      (opt-loop-bce-function-returns-argc?
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-loop-bce-argc-summary-test-function false)))
-    (opt-loop-bce-function-returns-argc?
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (opt-loop-bce-argc-summary-test-function true))))
 
 (define (opt-loop-bce-argc-return-map
   [type-segment-bases : i64]

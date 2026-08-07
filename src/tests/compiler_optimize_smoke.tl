@@ -3461,7 +3461,7 @@
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-debug-verifier-self-test"
-      (opt.compiler-optimize-debug-verifier-self-test)
+      (compiler_optimize_tests.compiler-optimize-debug-verifier-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-gep-split-self-test"
@@ -3691,7 +3691,7 @@
 (test
   optimizer-debug-verifier-identity
   (test.assert-i64-eq
-    (opt.compiler-optimize-debug-verifier-self-test)
+    (compiler_optimize_tests.compiler-optimize-debug-verifier-self-test)
     42
     "IR verifier failures include function, block, and instruction identity"))
 

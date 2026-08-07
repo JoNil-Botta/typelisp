@@ -3402,6 +3402,86 @@
 (define (compiler-optimize-self-test-require! [name : String] [ok : bool]) : unit
   (unless ok (io.panic (str_cat.str-cat "optimizer self-test failed: " name))))
 
+(define (compiler-optimize-debug-verifier-self-test) : i64
+  (let
+    [name : i64 (compiler_ir_types.compiler-ir-test-symbol "debug-invalid")]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 0)))
+            compiler_ir_types.CompilerIrInstrList.Nil))
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    [program : compiler_ir_types.CompilerIrProgram
+      (compiler_ir_types.CompilerIrProgram.Program
+        compiler_ir_types.CompilerIrGlobalList.Nil
+        (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.CompilerIrFunction.Function
+            name
+            compiler_ir_types.CompilerIrParamList.Nil
+            (compiler_ast_types.AstType.I64)
+            1
+            blocks)
+          compiler_ir_types.CompilerIrFunctionList.Nil)
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    (match (compiler_optimize.opt-verify-program program)
+      [(compiler_optimize.ResultCompilerOptimizeVerify.Err message)
+        (if (string.eq
+          message
+          "function @debug-invalid: block entry instruction 0: optimizer verify: use before definition")
+          42
+          1)]
+      [(compiler_optimize.ResultCompilerOptimizeVerify.Ok) 2])))
+
+(define (opt-loop-bce-argc-summary-test-function [has-entry : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (if has-entry
+      0
+      1)
+    (compiler_ir_types.CompilerIrParamList.Nil)
+    (compiler_ast_types.AstType.I64)
+    2
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (if has-entry
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.EntryArgc 0)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Mov
+                1
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 1)))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              0
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 0)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-loop-bce-argc-summary-prescan-self-test?) : bool
+  (and
+    (not
+      (compiler_optimize.opt-loop-bce-function-returns-argc?
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-loop-bce-argc-summary-test-function false)))
+    (compiler_optimize.opt-loop-bce-function-returns-argc?
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-loop-bce-argc-summary-test-function true))))
+
 (define (compiler-optimize-self-test) : i64
   (let
     [instrs : compiler_ir_types.CompilerIrInstrList (opt-self-test-instrs)]
@@ -3477,7 +3557,7 @@
             42)
           (compiler-optimize-self-test-require!
             "loop-BCE argc summary prescan"
-            (compiler_optimize.opt-loop-bce-argc-summary-prescan-self-test?))
+            (opt-loop-bce-argc-summary-prescan-self-test?))
           42)))))
 
 (define (opt-typed-fold-u64-shr-instrs) : compiler_ir_types.CompilerIrInstrList

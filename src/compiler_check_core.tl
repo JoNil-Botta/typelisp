@@ -310,37 +310,6 @@
         (ResultCompilerCheckWithPaths.Err
           (cdiag.compiler-diagnostic-list-box-single diag)))]))
 
-(define (compiler-check-file-loaded-with-prelude
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [prelude : compiler_load.ResultCompilerLoadWithPaths]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
-  (match prelude
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok
-        prelude-decls
-        prelude-paths
-        prelude-modules
-        prelude-seen)
-      (compiler-check-loaded-with-prelude-cache
-        path
-        prelude-decls
-        (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
-        (compiler_load.compiler-load-file-with-paths-and-roots-cfg
-          path
-          prelude-seen
-          stdlib-roots
-          cfgs)
-        stdlib-roots
-        (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
-          "typecheck-prefix-check"
-          stdlib-roots
-          cfgs))]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-      (begin
-        (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err
-          (cdiag.compiler-diagnostic-list-box-single diag)))]))
-
 (define (compiler-check-file-with-roots
   [path : String]
   [stdlib-roots : svec.Vec]) : ResultCompilerCheck

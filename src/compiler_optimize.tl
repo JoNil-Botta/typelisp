@@ -32510,40 +32510,6 @@
     (= (opt-int-width from-ty) 64)
     (= (opt-int-width to-ty) 64)))
 
-(define (opt-bounds-dom-copies-add-instr
-  [sources : opt_i64_i64_map.Map]
-  [copies : opt_i64_i64_map.Map (:consume)]
-  [instr : ir.CompilerIrInstr]) : opt_i64_i64_map.Map
-  (match instr
-    [(ir.CompilerIrInstr.Mov dst src _)
-      (match src
-        [(ir.CompilerIrValue.Var s)
-          (if (and
-            (opt-gvn-stable-var? sources dst)
-            (opt-gvn-stable-var? sources s))
-            (let
-              [out : opt_i64_i64_map.Map copies]
-              (begin
-                (opt_i64_i64_map.insert-ref! (&mut out) dst s)
-                out))
-            copies)]
-        [_ copies])]
-    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-      (match src
-        [(ir.CompilerIrValue.Var s)
-          (if (and
-            (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
-            (opt-gvn-stable-var? sources dst)
-            (opt-gvn-stable-var? sources s))
-            (let
-              [out : opt_i64_i64_map.Map copies]
-              (begin
-                (opt_i64_i64_map.insert-ref! (&mut out) dst s)
-                out))
-            copies)]
-        [_ copies])]
-    [_ copies]))
-
 (define (opt-bounds-dom-copies-add-instr!
   [sources : opt_i64_i64_map.Map]
   [copies : (&mut copies opt_i64_i64_map.Map)]

@@ -523,17 +523,6 @@
       (cdiag.compiler-diagnostic-from-ast-span "" span message)]
     [_ (cdiag.compiler-diagnostic-at-start "" message)]))
 
-(define (spec-expr-maybe-span [expr : ast.AstExpr]) : SpecMaybeSourceSpan
-  (match expr
-    [(ast.AstExpr.Spanned _ span) (SpecMaybeSourceSpan.Some span)]
-    [(ast.AstExpr.Unary _ inner)
-      (spec-expr-maybe-span (ast.ast-node-get inner))]
-    [(ast.AstExpr.Ann inner _) (spec-expr-maybe-span (ast.ast-node-get inner))]
-    [(ast.AstExpr.Cast inner _) (spec-expr-maybe-span (ast.ast-node-get inner))]
-    [(ast.AstExpr.Borrow _ _ inner)
-      (spec-expr-maybe-span (ast.ast-node-get inner))]
-    [_ (SpecMaybeSourceSpan.None)]))
-
 (define (spec-expr-maybe-span-with-owner
   [owner : SpecOwnerContext]
   [expr : ast.AstExpr]) : SpecMaybeSourceSpan
@@ -582,46 +571,6 @@
       (spec-decl-maybe-span-with-owner owner (box-get inner-box))]
     [_ (SpecMaybeSourceSpan.None)]))
 
-(define (spec-expr-list-maybe-span-at
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : SpecMaybeSourceSpan
-  (if (>= index (ast.ast-expr-list-len exprs))
-    (SpecMaybeSourceSpan.None)
-    (match (spec-expr-maybe-span
-      (ast.ast-node-get (ast.ast-expr-list-get exprs index 0)))
-      [(SpecMaybeSourceSpan.Some span) (SpecMaybeSourceSpan.Some span)]
-      [(SpecMaybeSourceSpan.None)
-        (spec-expr-list-maybe-span-at exprs (+ index 1))])))
-
-(define (spec-expr-list-maybe-span [exprs : ast.AstExprList]) : SpecMaybeSourceSpan
-  (spec-expr-list-maybe-span-at (& exprs) 0))
-
-(define (spec-decl-maybe-span [decl : ast.AstDecl]) : SpecMaybeSourceSpan
-  (match decl
-    [(ast.AstDecl.Def decl-meta _ _ body)
-      (spec-expr-maybe-span (ast.ast-node-get body))]
-    [(ast.AstDecl.DefFn decl-meta _ _ _ body _)
-      (spec-expr-maybe-span (ast.ast-node-get body))]
-    [(ast.AstDecl.DefMacro decl-meta _ _ _ body)
-      (spec-expr-maybe-span (ast.ast-node-get body))]
-    [(ast.AstDecl.Test _ _ span) (SpecMaybeSourceSpan.Some span)]
-    [(ast.AstDecl.Unsafe inner-box) (spec-decl-maybe-span (box-get inner-box))]
-    [_ (SpecMaybeSourceSpan.None)]))
-
-(define (spec-generated-origin-diagnostic
-  [template : ast.AstDecl]
-  [args : ast.AstExprList]
-  [message : String]) : cdiag.CompilerDiagnostic
-  (match (spec-decl-maybe-span template)
-    [(SpecMaybeSourceSpan.Some span)
-      (cdiag.compiler-diagnostic-from-ast-span "" span message)]
-    [(SpecMaybeSourceSpan.None)
-      (match (spec-expr-list-maybe-span args)
-        [(SpecMaybeSourceSpan.Some span)
-          (cdiag.compiler-diagnostic-from-ast-span "" span message)]
-        [(SpecMaybeSourceSpan.None)
-          (cdiag.compiler-diagnostic-at-start "" message)])]))
-
 (define (spec-generated-origin-diagnostic-with-owner
   [owner : SpecOwnerContext]
   [template : ast.AstDecl]
@@ -636,24 +585,6 @@
           (cdiag.compiler-diagnostic-from-ast-span "" span message)]
         [(SpecMaybeSourceSpan.None)
           (cdiag.compiler-diagnostic-at-start "" message)])]))
-
-(define (spec-generated-context-diagnostic
-  [diag : cdiag.CompilerDiagnostic]
-  [generator : String]
-  [item : String]
-  [key : String]) : cdiag.CompilerDiagnostic
-  (let
-    [with-declaration : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-note
-        diag
-        (string.append
-          "generated declaration: "
-          (string.append item (string.append " from " generator))))]
-    (if (> (string.string-length key) 0)
-      (cdiag.compiler-diagnostic-with-note
-        with-declaration
-        (string.append "generated identity: " key))
-      with-declaration)))
 
 (define (spec-generated-context-diagnostic-with-owner
   [_owner : SpecOwnerContext]
@@ -918,11 +849,6 @@
                 [_ unit])
               (set! cursor rest))]))
       out)))
-
-(define (spec-collect-templates [decls : ast.AstDeclList]) : SpecTemplateList
-  (spec-collect-templates-with-pools
-    (ast.ast-node-pool-context-capture-active)
-    decls))
 
 (define (spec-cache-lookup [cache : spec_id_i64_map.Map] [name-id : i64]) : SpecMaybeId
   (match (spec_id_i64_map.get (& cache) name-id)
@@ -3215,26 +3141,6 @@
     arg-key
     (gen-full-key module generator item arg-key)))
 
-(define (gen-item-mismatch-diag
-  [template : ast.AstDecl]
-  [args : ast.AstExprList]
-  [generator : String]
-  [expected : String]
-  [actual : String]
-  [key : String]) : cdiag.CompilerDiagnostic
-  (spec-generated-context-diagnostic
-    (spec-generated-origin-diagnostic
-      template
-      args
-      (string.append
-        "generated-decl: metadata item "
-        (string.append
-          expected
-          (string.append " does not match payload " actual))))
-    generator
-    expected
-    key))
-
 (define (gen-incompatible-diag [item : String] [key : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-note
     (cdiag.compiler-diagnostic-with-note
@@ -3245,23 +3151,6 @@
           (string.append item " has incompatible payload")))
       (string.append "conflicting generated item: " item))
     (string.append "generated identity: " key)))
-
-(define (gen-incompatible-diag-at-generated
-  [template : ast.AstDecl]
-  [args : ast.AstExprList]
-  [generator : String]
-  [item : String]
-  [key : String]) : cdiag.CompilerDiagnostic
-  (spec-generated-context-diagnostic
-    (spec-generated-origin-diagnostic
-      template
-      args
-      (string.append
-        "generated-decl: duplicate generated key for "
-        (string.append item " has incompatible payload")))
-    generator
-    item
-    key))
 
 (define (gen-register-generated-decl-with-owner
   [owner : SpecOwnerContext]
@@ -4619,11 +4508,6 @@
             origin
             "cannot substitute compile-time TypeVariantList value into runtime expression")))]))
 
-(define (spec-expr-var-name-id [expr : ast.AstExpr]) : SpecMaybeId
-  (match (ast.ast-expr-unspan expr)
-    [(ast.AstExpr.Var name) (SpecMaybeId.Some name)]
-    [_ (SpecMaybeId.None)]))
-
 (define (spec-expr-var-name-id-with-owner
   [owner : SpecOwnerContext]
   [expr : ast.AstExpr]) : SpecMaybeId
@@ -4985,13 +4869,6 @@
 ;; AstDecl names carry generated ids allocated outside the source-name table.
 (define (spec-materialize-generated-name-id [name : String]) : i64
   (spec_ci.intern-generated-name name))
-
-(define (spec-materialize-generated-name-id-with-owner
-  [owner : SpecOwnerContext]
-  [name : String]) : i64
-  (spec_ci.intern-compat-state-generated-name
-    (spec-owner-intern-state owner)
-    name))
 
 (define (spec-ensure-specialization
   [template : SpecTemplate]
@@ -6129,21 +6006,6 @@
       (ResultSpecExpr.Ok
         (spec-owner-expr-push (spec-state-owner state) expr)
         state)]))
-
-(define (spec-ptr-addr-of-place-value-conflict
-  [place : ast.AstExpr]
-  [subs : SpecValueSubst]) : SpecMaybeId
-  (match (ast.ast-expr-unspan place)
-    [(ast.AstExpr.Var name) (spec-value-subst-lookup subs name)]
-    [(ast.AstExpr.StructGet receiver-box _)
-      (let
-        [receiver : ast.AstExpr (ast.ast-node-get receiver-box)]
-        (spec-ptr-addr-of-place-value-conflict receiver subs))]
-    [(ast.AstExpr.ArrayRef array-box _)
-      (let
-        [array : ast.AstExpr (ast.ast-node-get array-box)]
-        (spec-ptr-addr-of-place-value-conflict array subs))]
-    [_ (SpecMaybeId.None)]))
 
 (define (spec-ptr-addr-of-place-value-conflict-with-owner
   [owner : SpecOwnerContext]

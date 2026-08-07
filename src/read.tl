@@ -614,19 +614,6 @@
       d)
     span))
 
-(define (spanned-sexpr-list-append
-  [left : SpannedSexpr]
-  [right : SpannedSexpr]
-  [span : token.SourceSpan]) : SpannedSexpr
-  (spanned-sexpr-list-from-builder
-    (spanned-sexpr-builder-extend
-      (spanned-sexpr-builder-extend (spanned-sexpr-builder-new) left)
-      right)
-    span))
-
-(define (sexpr-empty) : Sexpr
-  (Sexpr.List (sexpr-node-pool-len) 0))
-
 (define (spanned-sexpr-empty [span : token.SourceSpan]) : SpannedSexpr
   (SpannedSexpr.List (sp-node-pool-len) 0 span))
 

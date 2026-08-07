@@ -669,9 +669,6 @@
 (defmacro (compiler-reg-label-seq-count [items : CompilerRegLabelSeq]) : i64
   `(struct-get ,items len))
 
-(defmacro (compiler-reg-label-seq-empty? [items : CompilerRegLabelSeq]) : bool
-  `(= (struct-get ,items len) 0))
-
 (defmacro (compiler-reg-label-seq-ref
   [items : CompilerRegLabelSeq]
   [index : i64]) : i64

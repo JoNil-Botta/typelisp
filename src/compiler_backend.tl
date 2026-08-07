@@ -1012,9 +1012,6 @@
 (define (compiler-backend-state-exact-intern [state : CompilerBackendState]) : ci.InternCompatState
   (compiler-backend-state-intern state))
 
-(define (compiler-backend-state-intern-state [state : CompilerBackendState]) : ci.InternCompatState
-  (compiler-backend-state-intern state))
-
 (define (compiler-backend-state-owner-arena [state : CompilerBackendState]) : i64
   (struct-get (compiler-backend-state-data state) owner-arena))
 
@@ -1129,10 +1126,6 @@
       (compiler-backend-state-immediate-cache-capacity state))
     16))
 
-(define (compiler-backend-state-operand-cache-retained-byte-count
-  [state : CompilerBackendState]) : i64
-  (compiler-backend-state-operand-cache-retained-bytes state))
-
 (define (compiler-backend-state-intern-generation
   [state : CompilerBackendState]) : i64
   (ci.intern-compat-state-generation (compiler-backend-state-intern state)))
@@ -1155,17 +1148,9 @@
   ;; intentionally explicit rather than exposing the backing arrays.
   (* (compiler-backend-state-user-symbol-cache-capacity state) 32))
 
-(define (compiler-backend-state-user-symbol-cache-retained-byte-count
-  [state : CompilerBackendState]) : i64
-  (compiler-backend-state-user-symbol-cache-retained-bytes state))
-
 (define (compiler-backend-state-absolute-switch-ok?
   [state : CompilerBackendState]) : bool
   (struct-get (compiler-backend-state-data state) absolute-switch-ok))
-
-(define (compiler-backend-state-absolute-switch-ok
-  [state : CompilerBackendState]) : bool
-  (compiler-backend-state-absolute-switch-ok? state))
 
 (define (compiler-backend-state-set-absolute-switch-ok!
   [state : CompilerBackendState]
@@ -1179,10 +1164,6 @@
 (define (compiler-backend-state-abort-site-counter
   [state : CompilerBackendState]) : i64
   (struct-get (compiler-backend-state-data state) abort-site-counter))
-
-(define (compiler-backend-state-abort-site-counter-value
-  [state : CompilerBackendState]) : i64
-  (compiler-backend-state-abort-site-counter state))
 
 (define (compiler-backend-state-set-abort-site-counter!
   [state : CompilerBackendState]
@@ -1363,12 +1344,6 @@
             (struct-get after-instrs paths)
             (struct-get after-instrs count)))])
     (CompilerBackendDebugFileIndex.No)))
-
-(define (compiler-backend-debug-file-index-build
-  [spans : compiler_ir_types.CompilerSourceSpans]) : CompilerBackendDebugFileIndex
-  (compiler-backend-debug-file-index-build-with-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    spans))
 
 (define (compiler-backend-debug-file-number
   [index : CompilerBackendSourceSpanIndex]
@@ -32809,11 +32784,6 @@
         (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
     [_ 0]))
 
-(define (compiler-backend-abi-group-type?
-  [type-segment-bases : i64]
-  [ty : compiler_ast_types.AstType]) : bool
-  (>= (compiler-backend-abi-group-mask type-segment-bases ty) 0))
-
 (define (compiler-backend-collect-group-counts-instr
   [type-segment-bases : i64]
   [map : backend_string_i64_map.Map (:consume)]
@@ -39250,47 +39220,6 @@
     [(ResultBackendPhiCopies.Err message)
       (ResultCompilerBackend.Err
         (box (compiler_diagnostic.compiler-diagnostic-at-start "" message)))]))
-
-;; P22-B: emission-order point of block `target-label`'s entry -- twice the IR
-;; instruction count of every block emitted BEFORE it, which is exactly the
-;; value `emit-instr-post-base` holds minus the target block's own length when
-;; that block starts emitting. -1 when the label is not in the list, which the
-;; forward test reads as "unknown" and keeps the bracket. Same list and same
-;; order the emitter walks, so the two coordinates are directly comparable.
-(define (compiler-backend-phi-target-point-scan
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [target-label : i64]
-  [prefix : i64]) : i64
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) -1]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
-          (if (= block-label target-label)
-            (* 2 prefix)
-            (compiler-backend-phi-target-point-scan
-              (box-get rest)
-              target-label
-              (+ prefix (struct-get instrs len))))])]
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-phi-target-point-scan-seq seq 0 target-label prefix)]))
-
-(define (compiler-backend-phi-target-point-scan-seq
-  [blocks : compiler_ir_types.CompilerIrBlockSeq]
-  [index : i64]
-  [target-label : i64]
-  [prefix : i64]) : i64
-  (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
-    -1
-    (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
-      [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
-        (if (= block-label target-label)
-          (* 2 prefix)
-          (compiler-backend-phi-target-point-scan-seq
-            blocks
-            (+ index 1)
-            target-label
-            (+ prefix (struct-get instrs len))))])))
 
 (define (compiler-backend-emit-phi-edge-copies
   [type-segment-bases : i64]
@@ -64073,12 +64002,6 @@
           functions
           externs)])))
 
-(define (compiler-backend-runtime-plan-with-index
-  [program : compiler_ir_types.CompilerIrProgram]) : ResultBackendRuntimePlanWithIndex
-  (compiler-backend-runtime-plan-with-index-with-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    program))
-
 (define (compiler-backend-extern-symbol-referenced?
   [runtime-index : CompilerBackendRuntimeIndex]
   [referenced-functions : BackendSymbolSeq]
@@ -68648,25 +68571,6 @@
     spans
     emit-entry
     crt-entry))
-
-(define (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
-  [pools : compiler_ast_types.AstNodePoolContext]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendObject
-  (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
-    (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    profile-state))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
@@ -73552,42 +73456,6 @@
     emit-entry
     crt-entry))
 
-(define (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt
-  [pools : compiler_ast_types.AstNodePoolContext]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt
-    (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry))
-
-(define (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
-  [pools : compiler_ast_types.AstNodePoolContext]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state
-    (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    profile-state))
-
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -73623,50 +73491,6 @@
     spans
     emit-entry
     crt-entry)
-    [(ResultCompilerBackendBuffer.Ok buf)
-      (ResultCompilerBackend.Ok (text_buf.render buf))]
-    [(ResultCompilerBackendBuffer.Err message)
-      (ResultCompilerBackend.Err message)]))
-
-(define (compiler-backend-emit-program-target-with-mode-with-pools-and-crt
-  [pools : compiler_ast_types.AstNodePoolContext]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackend
-  (match (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt
-    pools
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry)
-    [(ResultCompilerBackendBuffer.Ok buf)
-      (ResultCompilerBackend.Ok (text_buf.render buf))]
-    [(ResultCompilerBackendBuffer.Err message)
-      (ResultCompilerBackend.Err message)]))
-
-(define (compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state
-  [pools : compiler_ast_types.AstNodePoolContext]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackend
-  (match (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
-    pools
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    profile-state)
     [(ResultCompilerBackendBuffer.Ok buf)
       (ResultCompilerBackend.Ok (text_buf.render buf))]
     [(ResultCompilerBackendBuffer.Err message)
@@ -74358,25 +74182,6 @@
     spans
     emit-entry
     crt-entry))
-
-(define (compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state
-  [pools : compiler_ast_types.AstNodePoolContext]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendPic
-  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
-    (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    profile-state))
 
 (define (compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
@@ -75486,9 +75291,6 @@
 (define (compiler-backend-test-get-compiler-backend-gep-fold-scale-table) : (Array
     i64)
   (compiler-backend-global-shared-view compiler-backend-gep-fold-scale-table))
-
-(define (compiler-backend-test-get-compiler-backend-pic-image-base-label) : String
-  (compiler-backend-global-shared-view compiler-backend-pic-image-base-label))
 
 (define (compiler-backend-test-get-compiler-backend-current-phi-targets
   [backend-state : CompilerBackendState]) : BackendSymbolSeq

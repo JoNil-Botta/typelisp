@@ -7064,10 +7064,7 @@
     (* lane 8)
     (+ width-bytes (* (- lane selector-lanes) 8))))
 
-(define (compiler-backend-shuffle-index-lane-asm
-  [function : String]
-  [current-label : i64]
-  [dst : i64]
+(define (compiler-backend-shuffle-index-lane-copy-asm
   [lane : i64]
   [lanes : i64]
   [selector-lanes : i64]
@@ -7075,18 +7072,10 @@
   [index-offset : i64]
   [dword : bool]
   [avx512 : bool]
-  [active-reg : String]
-  [value-reg : String]
-  [abort-label : String]) : String
+  [value-reg : String]) : String
   (if (>= lane lanes)
     ""
     (let
-      [skip-label : String
-        (compiler-backend-shuffle-label
-          function
-          current-label
-          dst
-          (str_cat.str-cat "_skip_" (string.int->string lane)))]
       [selector-slot : String
         (compiler-backend-address-add-byte-offset
           "(%rsp)"
@@ -7125,30 +7114,13 @@
                 (+ index-offset (* lane 8) 4))
               "\n")))]
       (str_cat.str-cat
-        "    cmpq $"
-        (string.int->string lane)
-        ", "
-        active-reg
-        "\n    jbe "
-        skip-label
-        "\n    movq "
+        "    movq "
         selector-slot
         ", "
         value-reg
-        "\n    cmpq "
-        active-reg
-        ", "
-        value-reg
-        "\n    jae "
-        abort-label
         "\n"
         copy-asm
-        skip-label
-        ":\n"
-        (compiler-backend-shuffle-index-lane-asm
-          function
-          current-label
-          dst
+        (compiler-backend-shuffle-index-lane-copy-asm
           (+ lane 1)
           lanes
           selector-lanes
@@ -7156,9 +7128,96 @@
           index-offset
           dword
           avx512
-          active-reg
-          value-reg
-          abort-label)))))
+          value-reg)))))
+
+;; Validate every selector vector at once. Predicated lowering zeroes inactive
+;; destination lanes, so zero is a harmless source selector for those slots.
+;; AVX2 combines a signed upper-bound comparison with the selectors' sign bits;
+;; AVX-512 can compare the i64 selectors as unsigned values directly. Both
+;; paths reduce all low/high selector halves and issue one bounds-abort branch.
+(define (compiler-backend-shuffle-vector-check-asm
+  [avx512 : bool]
+  [selector-count : i64]
+  [width-bytes : i64]
+  [active-reg : String]
+  [value-reg : String]
+  [abort-label : String]) : String
+  (let
+    [active-reg32 : String (compiler-backend-reg-part active-reg 4)]
+    [value-reg32 : String (compiler-backend-reg-part value-reg 4)]
+    [high-slot : String
+      (compiler-backend-address-add-byte-offset "(%rsp)" width-bytes)]
+    (if avx512
+      (str_cat.str-cat
+        "    leaq -1("
+        active-reg
+        "), "
+        value-reg
+        "\n    vpbroadcastq "
+        value-reg
+        ", %zmm0\n    vmovdqu64 (%rsp), %zmm1\n    vpcmpuq $6, %zmm0, %zmm1, %k7\n    kmovw %k7, "
+        value-reg32
+        "\n"
+        (if (> selector-count 1)
+          (str_cat.str-cat
+            "    vmovdqu64 "
+            high-slot
+            ", %zmm1\n    vpcmpuq $6, %zmm0, %zmm1, %k7\n    kmovw %k7, "
+            active-reg32
+            "\n    orl "
+            active-reg32
+            ", "
+            value-reg32
+            "\n")
+          "")
+        "    testl "
+        value-reg32
+        ", "
+        value-reg32
+        "\n    jne "
+        abort-label
+        "\n")
+      (str_cat.str-cat
+        "    leaq -1("
+        active-reg
+        "), "
+        value-reg
+        "\n    vmovq "
+        value-reg
+        ", %xmm0\n    vpbroadcastq %xmm0, %ymm0\n    vmovdqu (%rsp), %ymm1\n    vpmovmskb %ymm1, "
+        value-reg32
+        "\n    vpcmpgtq %ymm0, %ymm1, %ymm1\n    vpmovmskb %ymm1, "
+        active-reg32
+        "\n    orl "
+        active-reg32
+        ", "
+        value-reg32
+        "\n"
+        (if (> selector-count 1)
+          (str_cat.str-cat
+            "    vmovdqu "
+            high-slot
+            ", %ymm1\n    vpmovmskb %ymm1, "
+            active-reg32
+            "\n    orl "
+            active-reg32
+            ", "
+            value-reg32
+            "\n    vpcmpgtq %ymm0, %ymm1, %ymm1\n    vpmovmskb %ymm1, "
+            active-reg32
+            "\n    orl "
+            active-reg32
+            ", "
+            value-reg32
+            "\n")
+          "")
+        "    testl "
+        value-reg32
+        ", "
+        value-reg32
+        "\n    jne "
+        abort-label
+        "\n"))))
 
 (define (compiler-backend-emit-vector-shuffle
   [type-segment-bases : i64]
@@ -7425,11 +7484,15 @@
                                       low-reg
                                       ", (%rsp)\n"
                                       high-asm
+                                      (compiler-backend-shuffle-vector-check-asm
+                                        avx512
+                                        selector-count
+                                        width-bytes
+                                        active-reg
+                                        value-reg
+                                        abort-label)
                                       zero-index-asm
-                                      (compiler-backend-shuffle-index-lane-asm
-                                        function
-                                        current-label
-                                        dst
+                                      (compiler-backend-shuffle-index-lane-copy-asm
                                         0
                                         lanes
                                         selector-lanes
@@ -7437,9 +7500,7 @@
                                         index-offset
                                         dword
                                         avx512
-                                        active-reg
-                                        value-reg
-                                        abort-label)
+                                        value-reg)
                                       "    jmp "
                                       permute-label
                                       "\n"

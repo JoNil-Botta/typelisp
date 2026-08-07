@@ -47977,18 +47977,40 @@
             (box-get rhs)
             emit-mode)
             [(LowerExpr.Expr rhs-state rhs-value _)
-              (lower-emit-vector-map-binop
+              (match (lower-emit-vector-map-binop
                 rhs-state
                 op
                 lhs-value
                 rhs-value
                 lanes
                 (ast.AstType.I64)
-                emit-mode)])])]
+                emit-mode)
+                [(LowerExpr.Expr binop-state binop-value _)
+                  (match emit-mode
+                    [(LowerVectorMapEmitMode.Full)
+                      (LowerExpr.Expr binop-state binop-value (ast.AstType.I64))]
+                    [(LowerVectorMapEmitMode.Predicated _ mask)
+                      ;; The backend validates a selector vector in one step.
+                      ;; Keep inactive destination lanes at zero so their
+                      ;; unevaluated selector expressions cannot contribute a
+                      ;; false out-of-range bit to that reduction.
+                      (match (lower-emit-splat
+                        binop-state
+                        (ir.CompilerIrValue.I64 0)
+                        lanes
+                        (ast.AstType.I64))
+                        [(LowerExpr.Expr zero-state zero-value _)
+                          (lower-emit-select
+                            zero-state
+                            mask
+                            binop-value
+                            zero-value
+                            lanes
+                            (ast.AstType.I64))])])])])])]
     ;; The planner rejects these forms before constructing Shuffle.
     [_ (LowerExpr.Expr state ir.CompilerIrValue.Unit (ast.AstType.I64))]))
 
-(define (lower-emit-vector-shuffle
+(define (lower-emit-dynamic-vector-shuffle
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [index-var : i64]
@@ -48141,6 +48163,50 @@
                             active-lanes
                             lanes
                             elem-ty))])])])])])))
+
+(define (lower-emit-vector-shuffle
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [index-var : i64]
+  [lanes : i64]
+  [elem-ty : ast.AstType]
+  [source-plan : LowerVectorMapValue]
+  [selector-plan : LowerVectorMapValue]
+  [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
+  (match selector-plan
+    ;; Each active destination lane selects itself. Keep the Shuffle marker in
+    ;; the plan so the SIMD planner knows this expression was handled, but emit
+    ;; the source directly for both full and partial gangs.
+    [(LowerVectorMapValue.LaneIndex)
+      (match emit-mode
+        [(LowerVectorMapEmitMode.Full)
+          (lower-emit-vector-map-value
+            ctx
+            state
+            index-var
+            lanes
+            elem-ty
+            source-plan)]
+        [(LowerVectorMapEmitMode.Predicated end-value mask)
+          (lower-emit-predicated-vector-map-value
+            ctx
+            state
+            index-var
+            end-value
+            mask
+            lanes
+            elem-ty
+            source-plan)])]
+    [_
+      (lower-emit-dynamic-vector-shuffle
+        ctx
+        state
+        index-var
+        lanes
+        elem-ty
+        source-plan
+        selector-plan
+        emit-mode)]))
 
 (define (lower-emit-vector-map-value
   [ctx : tc_core.TcContext]
@@ -48887,40 +48953,53 @@
     [(LowerVectorMapValue.LaneCount)
       (LowerExpr.Expr state (ir.CompilerIrValue.I64 lanes) elem-ty)]
     [(LowerVectorMapValue.Shuffle source selector)
-      (match (lower-emit-scalar-vector-map-value
-        ctx
-        state
-        base-index-var
-        current-index-var
-        lane-index
-        active-lanes
-        lanes
-        (ast.AstType.I64)
-        (box-get selector))
-        [(LowerExpr.Expr selector-state selector-value _)
-          (match (lower-state-alloc-var
-            (lower-emit-spmd-broadcast-lane-check
-              selector-state
-              selector-value
-              active-lanes))
-            [(LowerAlloc.Alloc source-index-state source-index-var)
-              (lower-emit-scalar-vector-map-value
-                ctx
-                (lower-state-emit
-                  source-index-state
-                  (ir.CompilerIrInstr.BinOp
+      (match (box-get selector)
+        [(LowerVectorMapValue.LaneIndex)
+          (lower-emit-scalar-vector-map-value
+            ctx
+            state
+            base-index-var
+            current-index-var
+            lane-index
+            active-lanes
+            lanes
+            elem-ty
+            (box-get source))]
+        [_
+          (match (lower-emit-scalar-vector-map-value
+            ctx
+            state
+            base-index-var
+            current-index-var
+            lane-index
+            active-lanes
+            lanes
+            (ast.AstType.I64)
+            (box-get selector))
+            [(LowerExpr.Expr selector-state selector-value _)
+              (match (lower-state-alloc-var
+                (lower-emit-spmd-broadcast-lane-check
+                  selector-state
+                  selector-value
+                  active-lanes))
+                [(LowerAlloc.Alloc source-index-state source-index-var)
+                  (lower-emit-scalar-vector-map-value
+                    ctx
+                    (lower-state-emit
+                      source-index-state
+                      (ir.CompilerIrInstr.BinOp
+                        source-index-var
+                        ir.CompilerIrBinOp.Add
+                        (ir.CompilerIrValue.Var base-index-var)
+                        selector-value
+                        (ast.AstType.I64)))
+                    base-index-var
                     source-index-var
-                    ir.CompilerIrBinOp.Add
-                    (ir.CompilerIrValue.Var base-index-var)
                     selector-value
-                    (ast.AstType.I64)))
-                base-index-var
-                source-index-var
-                selector-value
-                active-lanes
-                lanes
-                elem-ty
-                (box-get source))])])]
+                    active-lanes
+                    lanes
+                    elem-ty
+                    (box-get source))])])])]
     [(LowerVectorMapValue.BinOp op lhs rhs)
       (match (lower-emit-scalar-vector-map-value
         ctx

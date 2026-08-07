@@ -260,6 +260,7 @@ spmd_shuffle_scalar|tests/integration/spmd_shuffle_scalar.tl|42|-|-|spmd_vec_sup
 spmd_shuffle_simd|tests/integration/spmd_shuffle_simd.tl|42|-|-|spmd_vec_support.tl
 spmd_shuffle_types|tests/integration/spmd_shuffle_types.tl|42|-|-|spmd_vec_support.tl
 spmd_shuffle_reduce|tests/integration/spmd_shuffle_reduce.tl|42|-|-|spmd_vec_support.tl
+spmd_shuffle_tail_computed_selector|tests/integration/spmd_shuffle_tail_computed_selector.tl|42|-|-|spmd_vec_support.tl
 spmd_shuffle_lane1_trap|tests/integration/spmd_shuffle_lane1_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
 spmd_shuffle_negative_trap|tests/integration/spmd_shuffle_negative_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
 spmd_shuffle_tail_oob|tests/integration/spmd_shuffle_tail_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n

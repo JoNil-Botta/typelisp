@@ -362,6 +362,41 @@ verify_shuffle_opcodes() {
         echo "[spmd-simd] shuffle AVX2 assembly uses AVX-512 registers" >&2
         echo "tests/integration/spmd_shuffle_simd.tl avx2 (AVX-512 register)" >> "$FAILURES"
     fi
+    if grep -E -- 'vector_shuffle_.*_skip_' "$_asm" > /dev/null; then
+        echo "[spmd-simd] shuffle $_mode assembly retains scalar per-lane selector branches" >&2
+        echo "tests/integration/spmd_shuffle_simd.tl $_mode (scalar selector branch)" >> "$FAILURES"
+    fi
+    if [ "$_mode" = avx2 ]; then
+        for opcode in vpcmpgtq vpmovmskb; do
+            if ! grep -F -- "$opcode" "$_asm" > /dev/null; then
+                echo "[spmd-simd] shuffle avx2 assembly missing vector selector check $opcode" >&2
+                echo "tests/integration/spmd_shuffle_simd.tl avx2 (missing $opcode)" >> "$FAILURES"
+            fi
+        done
+    else
+        for opcode in vpcmpuq kmovw; do
+            if ! grep -F -- "$opcode" "$_asm" > /dev/null; then
+                echo "[spmd-simd] shuffle avx512 assembly missing vector selector check $opcode" >&2
+                echo "tests/integration/spmd_shuffle_simd.tl avx512 (missing $opcode)" >> "$FAILURES"
+            fi
+        done
+    fi
+
+    # The paired shuffle benchmark has only compile-time identity selectors.
+    # They should disappear before backend shuffle emission in every SIMD mode.
+    compile_spmd_mode benchmarks/spmd_shuffle/bench.tl "$_mode"
+    _tag=benchmarks_spmd_shuffle_bench_tl
+    _identity_asm="$WORKDIR/$_tag.$_mode.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] identity shuffle compile failed in $_mode:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "benchmarks/spmd_shuffle/bench.tl $_mode (identity compile)" >> "$FAILURES"
+        return
+    fi
+    if grep -E -- 'vpermd|vpermq|vector_shuffle_' "$_identity_asm" > /dev/null; then
+        echo "[spmd-simd] identity shuffle $_mode assembly retains selector/permutation work" >&2
+        echo "benchmarks/spmd_shuffle/bench.tl $_mode (identity shuffle not eliminated)" >> "$FAILURES"
+    fi
 }
 
 verify_avx2_private_helper_call_shape() {
@@ -1220,6 +1255,14 @@ for pair in "avx2 avx2" "avx512 avx512"; do
         echo "tests/integration/spmd_shuffle_tail_selector.tl $mode (expected 42, got $mode_code)" >> "$FAILURES"
     else
         echo "[spmd-simd] shuffle tail selector $mode -> 42 OK"
+    fi
+    run_spmd_mode tests/integration/spmd_shuffle_tail_computed_selector.tl "$mode"
+    if [ "$mode_code" != 42 ] || [ -s "$mode_err" ]; then
+        echo "[spmd-simd] computed shuffle tail selector $mode failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/integration/spmd_shuffle_tail_computed_selector.tl $mode (expected 42, got $mode_code)" >> "$FAILURES"
+    else
+        echo "[spmd-simd] computed shuffle tail selector $mode -> 42 OK"
     fi
 done
 

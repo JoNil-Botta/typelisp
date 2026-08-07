@@ -79,10 +79,23 @@ repeated invocation. Benchmark metrics remain exact: `current != baseline`
 fails and the baseline must ratchet in the same PR. A clang, libc, or Valgrind
 change that alters instructions executed from `main` onward is still a real,
 reviewable C comparison change; only pre-`main` loader startup is excluded. In
-GitHub Actions, the checker applies a 0.5% self-compile tolerance
-(`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=5000`) against the CI-owned baseline.
-Intentional exact changes should still be reported and ratcheted rather than
-treated as runner noise.
+GitHub Actions, the checker applies a one-part-per-million self-compile
+tolerance (`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=1`, or 0.0001%) against the
+CI-owned baseline. The setting is the smallest nonzero integer ppm accepted by
+the gate. It leaves roughly 240 times the observed identical-tree cross-runner
+spread (232 instructions out of 55,667,745,057, about 0.0042 ppm), while being
+5,000 times tighter than the former 0.5% allowance. Intentional exact changes
+should still be reported and ratcheted rather than treated as runner noise.
+
+`perf/insn-exec-baseline-source.txt` records the main commit whose compiler
+inputs produced the checked self-compile row. PR CI compares that commit with
+the PR base when the row fails: changes already present on main are reported as
+a stale baseline, while a current marker attributes the delta to the PR. The
+post-merge Linux bootstrap remeasures the converged compiler and opens a focused
+ratchet PR when either the count or marker changed. Repository rules require
+that generated update to pass the normal PR checks before it reaches `main`.
+The generated ratchet merge retains the commit it measured, so the marker does
+not create another otherwise identical ratchet after the two-file PR lands.
 
 ## CI wall-clock compile budgets
 

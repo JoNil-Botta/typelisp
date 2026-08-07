@@ -421,6 +421,28 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
+CHECK_PARSER_RECOVERY_SRC="$WORKDIR/check-parser-recovery-diagnostics.tl"
+cat > "$CHECK_PARSER_RECOVERY_SRC" <<'EOF'
+(define)
+(define (later-a) : i64 missing-a)
+(define (later-b) : i64 missing-b)
+(define (main) : i64 0)
+EOF
+# cli-gate-case check-parser-recovery-diagnostics wrapper run_cmd
+run_cmd check-parser-recovery-diagnostics "$COMPILER" check "$CHECK_PARSER_RECOVERY_SRC"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "parse: malformed define"
+assert_contains "$err" "typecheck: unbound name missing-a"
+assert_contains "$err" "typecheck: unbound name missing-b"
+parser_recovery_parse_line=$(grep -nF "parse: malformed define" "$err" | sed -n '1s/:.*//p')
+parser_recovery_first_line=$(grep -nF "typecheck: unbound name missing-a" "$err" | sed -n '1s/:.*//p')
+parser_recovery_second_line=$(grep -nF "typecheck: unbound name missing-b" "$err" | sed -n '1s/:.*//p')
+if [ "$parser_recovery_parse_line" -ge "$parser_recovery_first_line" ] ||
+    [ "$parser_recovery_first_line" -ge "$parser_recovery_second_line" ]; then
+    fail "check-parser-recovery-diagnostics did not preserve source order"
+fi
+
 CHECK_CFG_SRC="$WORKDIR/check-cfg-target.tl"
 cat > "$CHECK_CFG_SRC" <<'EOF'
 (cfg linux
@@ -3024,6 +3046,11 @@ assert_contains "$out" "TypeLisp integration test file:"
 assert_contains "$err" "typelisp test: test executable exited with exit status: 7"
 
 echo "[public-tools] package build"
+if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
+    echo "[public-tools] package artifact freshness"
+    # cli-gate-case package-artifact-freshness delegated TYPELISP_BIN="$COMPILER"
+    TYPELISP_BIN="$COMPILER" sh "$ROOT/scripts/verify-package-artifact-freshness.sh"
+fi
 PKG="$WORKDIR/pkg"
 mkdir -p "$PKG/src" "$PKG/vendor/math/src"
 cat > "$PKG/typelisp.pkg" <<'EOF'
@@ -3073,6 +3100,7 @@ run_cmd package-build "$COMPILER" build --manifest-path "$PKG/typelisp.pkg"
 assert_success
 assert_stderr_empty
 PKG_ASM="$PKG/target/release/public_tool_pkg.s"
+PKG_RUNTIME="$PKG/target/release/public_tool_pkg$HOST_EXE_SUFFIX"
 [ -f "$PKG_ASM" ] || fail "package build did not write deterministic assembly"
 assert_contains "$out" "Built "
 PKG_TLCI="$PKG/target/release/public_tool_pkg.tlci"
@@ -3289,6 +3317,7 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "Would remove:"
 assert_contains "$out" "public_tool_pkg.s"
+assert_contains "$out" "$(basename "$PKG_RUNTIME").runtime-inputs"
 [ -f "$PKG_ASM" ] || fail "package clean dry-run removed assembly"
 # cli-gate-case package-clean wrapper run_cmd
 run_cmd package-clean "$COMPILER" clean --manifest-path "$PKG/typelisp.pkg"
@@ -3296,6 +3325,7 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "Removed:"
 [ ! -e "$PKG_ASM" ] || fail "package clean did not remove $PKG_ASM"
+[ ! -e "$PKG_RUNTIME.runtime-inputs" ] || fail "package clean did not remove $PKG_RUNTIME.runtime-inputs"
 [ ! -d "$PKG_OUT_DIR" ] || fail "package clean did not remove $PKG_OUT_DIR"
 # cli-gate-case package-clean-idempotent wrapper run_cmd
 run_cmd package-clean-idempotent "$COMPILER" clean --manifest-path "$PKG/typelisp.pkg"

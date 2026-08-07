@@ -478,6 +478,30 @@
         (lsp-smoke-count-substring (struct-get result stdout) compiler-source)
         2))))
 
+(define (lsp-parser-recovery-diagnostics-smoke-ok?) : bool
+  (let
+    [path : String "target/lsp_parser_recovery_diagnostics.tl"]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
+    [source : String
+      "(define)\\n(define (later-a) : i64 missing-a)\\n(define (later-b) : i64 missing-b)\\n(define (main) : i64 0)"]
+    [result : lsp_frame_core.LspTranscriptResult
+      (lsp-transcript-check-session uri source 75)]
+    [out : String (struct-get result stdout)]
+    [compiler-source : String "\"source\":\"typelisp\""]
+    [parse-message : String "parse: malformed define"]
+    [first-message : String "typecheck: unbound name missing-a"]
+    [second-message : String "typecheck: unbound name missing-b"]
+    [parse-pos : i64 (lsp-smoke-index-of out parse-message)]
+    [first-pos : i64 (lsp-smoke-index-of out first-message)]
+    [second-pos : i64 (lsp-smoke-index-of out second-message)]
+    (and
+      (= (struct-get result status) 0)
+      (string.eq (struct-get result stderr) "")
+      (= (lsp-smoke-count-substring out compiler-source) 3)
+      (>= parse-pos 0)
+      (> first-pos parse-pos)
+      (> second-pos first-pos))))
+
 (define (lsp-multiple-external-diagnostics-smoke-ok?) : bool
   (let
     [dir : String "target"]
@@ -2083,6 +2107,7 @@
         (unless (lsp-transcript-order-and-id-smoke-ok?) (return 19))
         (unless (lsp-transcript-reset-leakage-smoke-ok?) (return 20))
         (unless (lsp-multiple-diagnostics-smoke-ok?) (return 36))
+        (unless (lsp-parser-recovery-diagnostics-smoke-ok?) (return 43))
         (unless (lsp-multiple-external-diagnostics-smoke-ok?) (return 37))
         (unless (lsp-transcript-arena-escape-smoke-ok?) (return 21))
         42))))

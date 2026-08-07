@@ -1357,7 +1357,9 @@
   (and
     (=
       (token.tag
-        (token.spanned-token-tok (clone (array-ref lex-spanned-token-buffer 0))))
+        (token.spanned-token-tok
+          (unsafe
+            (ptr-read (array-data lex-spanned-token-buffer)))))
       (token.tag-lbracket))
     (= (token.spanned-token-line (array-ref lex-spanned-token-buffer 0)) 7)
     (= (token.spanned-token-col (array-ref lex-spanned-token-buffer 0)) 11)))

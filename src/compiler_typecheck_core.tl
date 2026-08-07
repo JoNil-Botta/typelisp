@@ -42,6 +42,13 @@
     `(unsafe
       (ptr-read (ptr-addr-of ,place)))))
 
+(defmacro (tc-global-array-element-shared-view [items : Expr] [index : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    `(array-ref ,items ,index)
+    `(unsafe
+      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+
 ;; TcTypeEnv cache fields: ids map, values, unsafe flags, raw C fnptr flags,
 ;; default-shadow flags, scan-through, partial, rest head, below head. The flag
 ;; arrays parallel `values`:
@@ -1854,23 +1861,6 @@
           (if (= previous storage)
             head
             previous))))))
-
-;; AstType is inline only for scalar forms. Nominal lifetime arguments, tuples,
-;; and nested element types carry boxed/list storage owned by the arena in which
-;; they were resolved. Layout entries survive that arena, so persist the whole
-;; type graph alongside the layout arrays before storing it.
-(define (tc-agg-layout-cache-persist-type [ty : ast.AstType]) : ast.AstType
-  (let
-    [previous : i64 (arena.tl_arena_current)]
-    [storage : i64 (tc-agg-layout-cache-storage-handle)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
-      (let
-        [out : ast.AstType (clone ty)]
-        (begin
-          (tc-agg-layout-cache-storage-restore! previous storage)
-          out)))))
 
 ;; Builders know the final cardinality from their AST vectors. Allocate one
 ;; right-sized backing array in the retained cache arena, fill it in source
@@ -11386,10 +11376,8 @@
 
 (define (tc-unused-unsafe-block-path [index : i64]) : String
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
-    (array-ref
-      (struct-get
-        (tc-global-shared-view tc-lazy-global-table-state)
-        unused-unsafe-block-paths)
+    (tc-global-array-element-shared-view
+      (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
       index)
     ""))
 
@@ -14038,16 +14026,15 @@
           (begin
             (cfg compile-profile (compiler-tc-env-profile-note-lookup))
             (ResultTcType.Ok
-              (clone
-                (struct-get
-                  (array-ref
+              (struct-get
+                (tc-global-array-element-shared-view
+                  (struct-get
                     (struct-get
-                      (struct-get
-                        (struct-get tc-type-env-scoped-runtime-carrier sidecar)
-                        stack)
-                      slots)
-                    index)
-                  ty))))
+                      (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                      stack)
+                    slots)
+                  index)
+                ty)))
           (begin
             (cfg
               compile-profile
@@ -14244,14 +14231,13 @@
         (if (>= index 0)
           (let
             [slot : TcTypeEnvScopedSlot
-              (clone
-                (array-ref
+              (tc-global-array-element-shared-view
+                (struct-get
                   (struct-get
-                    (struct-get
-                      (struct-get tc-type-env-scoped-runtime-carrier sidecar)
-                      stack)
-                    slots)
-                  index))]
+                    (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                    stack)
+                  slots)
+                index)]
             (begin
               (cfg compile-profile (compiler-tc-env-profile-note-lookup))
               (ResultTcTypeUnsafe.Ok
@@ -47154,14 +47140,12 @@
                 [offset : i64 (tc-align-up cursor field-align)]
                 [next-cursor : i64 (+ offset field-size)]
                 [next-align : i64 (tc-max-i64 max-align field-align)]
-                [persistent-resolved : ast.AstType
-                  (tc-agg-layout-cache-persist-type resolved)]
                 (begin
                   (cfg compile-profile (tc-lp-note 2))
                   (tc-inline-field-layout-list-set!
                     layout
                     index
-                    (TcInlineFieldLayout.Field name persistent-resolved offset))
+                    (TcInlineFieldLayout.Field name resolved offset))
                   (tc-inline-aggregate-field-defs-layout-at
                     ctx
                     fields
@@ -47218,13 +47202,12 @@
             [offset : i64 (tc-align-up cursor field-align)]
             [next-cursor : i64 (+ offset field-size)]
             [next-align : i64 (tc-max-i64 max-align field-align)]
-            [persistent-ty : ast.AstType (tc-agg-layout-cache-persist-type ty)]
             (begin
               (cfg compile-profile (tc-lp-note 4))
               (tc-inline-payload-layout-list-set!
                 layout
                 index
-                (TcInlinePayloadLayout.Payload index persistent-ty offset))
+                (TcInlinePayloadLayout.Payload index ty offset))
               (tc-inline-aggregate-payloads-layout-at
                 ctx
                 types
@@ -47476,10 +47459,9 @@
     [steps : i64 0]
     (begin
       (while (< steps tc-agg-layout-cache-capacity)
-        (match (clone
-          (array-ref
-            (struct-get (& tc-lazy-global-table-state) agg-layout-cache)
-            cursor))
+        (match (tc-global-array-element-shared-view
+          (struct-get (& tc-lazy-global-table-state) agg-layout-cache)
+          cursor)
           [(TcAggLayoutCacheSlot.Empty) (return cursor)]
           [(TcAggLayoutCacheSlot.Full cached-id _)
             (if (= cached-id name-id)
@@ -47552,10 +47534,9 @@
     [(ResultTcInlineAggregateLayout.Ok layout)
       (begin
         (tc-agg-layout-cache-store! slot name-id layout)
-        (match (clone
-          (array-ref
-            (struct-get tc-lazy-global-table-state agg-layout-cache)
-            slot))
+        (match (tc-global-array-element-shared-view
+          (struct-get tc-lazy-global-table-state agg-layout-cache)
+          slot)
           [(TcAggLayoutCacheSlot.Full _ cached)
             (ResultTcInlineAggregateLayout.Ok cached)]
           [(TcAggLayoutCacheSlot.Empty)
@@ -47594,10 +47575,9 @@
                 name-id
                 handle
                 stack))
-            (match (clone
-              (array-ref
-                (struct-get tc-lazy-global-table-state agg-layout-cache)
-                slot))
+            (match (tc-global-array-element-shared-view
+              (struct-get tc-lazy-global-table-state agg-layout-cache)
+              slot)
               [(TcAggLayoutCacheSlot.Full _ layout)
                 (begin
                   (cfg compile-profile (tc-lp-note 12))
@@ -57500,11 +57480,11 @@
   (if (>= steps requested-capacity)
     false
     (let
-      [state : TcLazyGlobalTableState
-        (tc-global-shared-view tc-lazy-global-table-state)]
       [slot : String
-        (array-ref
-          (struct-get state macro-abstract-proof-qualified-keys)
+        (tc-global-array-element-shared-view
+          (struct-get
+            tc-lazy-global-table-state
+            macro-abstract-proof-qualified-keys)
           cursor)]
       (if (= (string.string-length slot) 0)
         false
@@ -77557,10 +77537,9 @@
                       ;; A same-identity catalog is immutable. Syntax-sensitive
                       ;; calls bypass the shortcut and retain the existing
                       ;; incompatible-output diagnostic instead of replacing it.
-                      (match (clone
-                        (array-ref
-                          macro-generated-module-memo-catalog-entries
-                          cursor))
+                      (match (tc-global-array-element-shared-view
+                        macro-generated-module-memo-catalog-entries
+                        cursor)
                         [(MacroGeneratedModuleCatalogEntry.Catalog
                             entry-target
                             entry-catalog
@@ -77614,10 +77593,9 @@
                 (set! done true)
                 (if (= slot key)
                   (begin
-                    (match (clone
-                      (array-ref
-                        macro-generated-module-memo-catalog-entries
-                        cursor))
+                    (match (tc-global-array-element-shared-view
+                      macro-generated-module-memo-catalog-entries
+                      cursor)
                       [(MacroGeneratedModuleCatalogEntry.Catalog
                           _
                           _
@@ -77664,10 +77642,9 @@
                   (begin
                     (set!
                       out
-                      (clone
-                        (array-ref
-                          macro-generated-module-memo-catalog-entries
-                          cursor)))
+                      (tc-global-array-element-shared-view
+                        macro-generated-module-memo-catalog-entries
+                        cursor))
                     (set! done true))
                   (begin
                     (set!
@@ -77756,8 +77733,9 @@
                     (set!
                       out
                       (MacroMaybeSpliceDecls.Some
-                        (clone
-                          (array-ref macro-generated-decls-memo-decls cursor))))
+                        (tc-global-array-element-shared-view
+                          macro-generated-decls-memo-decls
+                          cursor)))
                     (set! done true))
                   (begin
                     (set!
@@ -77872,8 +77850,9 @@
             (set! done true)
             (if (= slot key)
               (begin
-                (match (clone
-                  (array-ref macro-generated-module-memo-catalog-entries cursor))
+                (match (tc-global-array-element-shared-view
+                  macro-generated-module-memo-catalog-entries
+                  cursor)
                   [(MacroGeneratedModuleCatalogEntry.Catalog
                       target-id
                       catalog
@@ -77955,7 +77934,9 @@
                 [owned : ast.AstDeclList
                   (macro-decl-generation-persist-decls
                     pools
-                    (clone (array-ref macro-generated-decls-memo-decls cursor))
+                    (tc-global-array-element-shared-view
+                      macro-generated-decls-memo-decls
+                      cursor)
                     shared-expr-base
                     shared-type-base
                     expr-map
@@ -80176,8 +80157,9 @@
                 (set!
                   out
                   (MacroSurfaceCallDeclCacheLookup.Hit
-                    (clone
-                      (array-ref macro-surface-call-decl-cache-values cursor))))
+                    (tc-global-array-element-shared-view
+                      macro-surface-call-decl-cache-values
+                      cursor)))
                 (set! done true))
               (begin
                 (set!
@@ -83825,10 +83807,9 @@
                   lazy-import-stub-module-ids)
                 0)
               41)
-            (match (clone
-              (array-ref
-                (struct-get tc-lazy-global-table-state agg-layout-cache)
-                0))
+            (match (tc-global-array-element-shared-view
+              (struct-get tc-lazy-global-table-state agg-layout-cache)
+              0)
               [(TcAggLayoutCacheSlot.Empty) true]
               [_ false])
             (string.eq
@@ -84110,8 +84091,9 @@
                 (set!
                   out
                   (MacroFlatImportTargetCacheLookup.Hit
-                    (clone
-                      (array-ref macro-flat-import-target-cache-values cursor))))
+                    (tc-global-array-element-shared-view
+                      macro-flat-import-target-cache-values
+                      cursor)))
                 (set! done true))
               (begin
                 (set!
@@ -94882,7 +94864,9 @@
                         (TcProofReuseGeneratedDeclConcrete)
                         (let
                           [other : ast.AstDecl
-                            (clone (array-ref augmented-decls key))]
+                            (tc-global-array-element-shared-view
+                              augmented-decls
+                              key)]
                           ;; The exact walker performs identity preflight,
                           ;; declaration substitution, dependent-type vetoes,
                           ;; and Rule 4 in one bounded proof. Unsupported

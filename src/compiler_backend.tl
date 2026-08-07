@@ -301,6 +301,15 @@
     `(unsafe
       (ptr-read (ptr-addr-of ,place)))))
 
+(defmacro (compiler-backend-global-array-element-shared-view
+  [items : Expr]
+  [index : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    `(array-ref ,items ,index)
+    `(unsafe
+      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+
 (defmacro (compiler-backend-phi-copy-seq-rev-ref
   [copies : CompilerBackendPhiCopySeq]
   [index : i64]) : CompilerBackendPhiCopy
@@ -19940,10 +19949,9 @@
           (CompilerBackendNoConstHoistHome)
           (if (array-ref compiler-backend-const-hoist-site-frame found)
             (CompilerBackendConstHoistHomeFrame
-              (clone
-                (array-ref
-                  compiler-backend-const-hoist-site-frame-operands
-                  found))
+              (compiler-backend-global-array-element-shared-view
+                compiler-backend-const-hoist-site-frame-operands
+                found)
               (array-ref compiler-backend-const-hoist-site-values found))
             (CompilerBackendConstHoistHomeReg
               (array-ref compiler-backend-const-hoist-site-regs found)
@@ -44647,7 +44655,8 @@
       (cfg
         scratch-vreg
         (compiler-backend-runtime-plan-scratch ctx.plan)
-        (clone compiler-backend-empty-scratch-plan))]
+        (compiler-backend-global-shared-view
+          compiler-backend-empty-scratch-plan))]
     [planned-scratch0 : String
       (cfg
         scratch-vreg

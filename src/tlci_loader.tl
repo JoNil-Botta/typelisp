@@ -15,6 +15,13 @@
 (import tlci_core as tlci)
 (import tlci_pages as pages)
 
+(defmacro (tlci-loader-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (unsafe
   (extern (tlci-loader-call-image-entry-raw
     [entry-addr : i64]
@@ -646,8 +653,8 @@
     (struct-get image-region writable)
     (struct-get image-region executable)
     (+ image-base (+ code-offset entry-code-offset))
-    (clone tlci-loader-no-retained-storage)
-    (clone tlci-loader-no-retained-storage)
+    (tlci-loader-global-shared-view tlci-loader-no-retained-storage)
+    (tlci-loader-global-shared-view tlci-loader-no-retained-storage)
     0
     0
     0

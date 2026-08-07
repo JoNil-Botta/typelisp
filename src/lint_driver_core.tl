@@ -31,6 +31,15 @@
     `(unsafe
       (ptr-read (ptr-addr-of ,place)))))
 
+(defmacro (selfhost-lint-global-array-element-shared-view
+  [items : Expr]
+  [index : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    `(array-ref ,items ,index)
+    `(unsafe
+      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+
 (define (selfhost-lint-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
@@ -886,8 +895,9 @@
   (selfhost-lint-unsafe-surface-cache-empty))
 
 (define (selfhost-lint-unsafe-surface-cache-entry [index : i64]) : SelfhostLintUnsafeSurfaceCacheEntry
-  (clone
-    (array-ref (struct-get selfhost-lint-unsafe-surface-cache slots) index)))
+  (selfhost-lint-global-array-element-shared-view
+    (struct-get selfhost-lint-unsafe-surface-cache slots)
+    index))
 
 ;; The cache arena is the explicit batch's outer arena. Entries copy only path,
 ;; declaration name, and safety bits out of each file scratch; no AST nodes,

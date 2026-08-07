@@ -314,6 +314,13 @@
     `(unsafe
       (ptr-read (ptr-addr-of ,place)))))
 
+(defmacro (lower-global-array-element-shared-view [items : Expr] [index : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    `(array-ref ,items ,index)
+    `(unsafe
+      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+
 ;; The shared global lowering name cache. Set once per sub-phase
 ;; (prune body-index build, then decl lowering) from that phase's whole-program
 ;; name env; per-module overlays fall through here.
@@ -1037,7 +1044,7 @@
   (if lower-checked-dest-pools-committed
     (let
       [source-pools : ast.AstNodePoolContext
-        (clone lower-checked-dest-pools-context)]
+        (lower-global-shared-view lower-checked-dest-pools-context)]
       [source-arena : i64 (ast.ast-node-pool-context-base-arena source-pools)]
       [expr-capacity : i64
         (ast.ast-node-pool-context-expr-capacity source-pools)]
@@ -6642,7 +6649,8 @@
   (match (lower-spmd-inline-arg-subst ctx params args origin)
     [(ResultLowerSpmdInlineSubst.Ok helper-subst)
       (let
-        [previous : LowerIdSet (clone lower-spmd-inline-helper-stack)]
+        [previous : LowerIdSet
+          (lower-global-shared-view lower-spmd-inline-helper-stack)]
         [result : ResultLowerAstExpr
           (ResultLowerAstExpr.Err
             (box
@@ -24449,7 +24457,8 @@
         (if (if (= (array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
           (= (array-ref tc-rtf-id-arr slot) inner-box)
           false)
-          (tc_core.ResultTcType.Ok (clone (array-ref tc-rtf-ty-arr slot)))
+          (tc_core.ResultTcType.Ok
+            (lower-global-array-element-shared-view tc-rtf-ty-arr slot))
           (match (lower-expr-result-type-fast
             ctx
             env
@@ -32613,7 +32622,7 @@
   [args : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : LowerMaybeSpmdCall
-  (match (clone lower-spmd-scalar-call-context)
+  (match (lower-global-shared-view lower-spmd-scalar-call-context)
     [(LowerSpmdScalarCallContext.No) (LowerMaybeSpmdCall.No)]
     [(LowerSpmdScalarCallContext.Some index)
       (match (lower-spmd-inline-helper-lookup
@@ -40862,7 +40871,8 @@
                     -1
                     (let
                       [previous : LowerIdSet
-                        (clone lower-spmd-inline-helper-stack)]
+                        (lower-global-shared-view
+                          lower-spmd-inline-helper-stack)]
                       [result : i64 -1]
                       (begin
                         (set!
@@ -44043,7 +44053,8 @@
             name)
             false
             (let
-              [previous : LowerIdSet (clone lower-spmd-inline-helper-stack)]
+              [previous : LowerIdSet
+                (lower-global-shared-view lower-spmd-inline-helper-stack)]
               [result : bool false]
               (begin
                 (set!
@@ -53925,7 +53936,8 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
-    [previous : LowerIdSet (clone lower-spmd-inline-helper-stack)]
+    [previous : LowerIdSet
+      (lower-global-shared-view lower-spmd-inline-helper-stack)]
     (begin
       (set!
         lower-spmd-inline-helper-stack
@@ -55271,7 +55283,7 @@
   [body : ast.AstExpr]) : ResultLowerExpr
   (let
     [previous : LowerSpmdScalarCallContext
-      (clone lower-spmd-scalar-call-context)]
+      (lower-global-shared-view lower-spmd-scalar-call-context)]
     [result : ResultLowerExpr
       (ResultLowerExpr.Err
         (box (lower-diagnostic "lower: SPMD scalar body lowering failed")))]
@@ -59876,7 +59888,9 @@
       (= (array-ref lower-variant-arm-memo-keys slot) variant-name-id)
       (ast.ast-type-eq-with-pools?
         (tc_core.tc-context-pools ctx)
-        (clone (array-ref lower-variant-arm-memo-scrut-tys slot))
+        (lower-global-array-element-shared-view
+          lower-variant-arm-memo-scrut-tys
+          slot)
         scrut-ty))
       (array-ref
         (lower-global-shared-view lower-variant-arm-memo-outcomes)

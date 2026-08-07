@@ -32,6 +32,15 @@
     `(unsafe
       (ptr-read (ptr-addr-of ,place)))))
 
+(defmacro (compiler-load-global-array-element-shared-view
+  [items : Expr]
+  [index : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    `(array-ref ,items ,index)
+    `(unsafe
+      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+
 ;; Sources, manifests, and include payloads are interpreted as text here.
 ;; Make that conversion explicit at the binary IO boundary.
 (define (compiler-load-read-file-text [path : String]) : String
@@ -628,7 +637,9 @@
 (define (compiler-load-default-session-use!) : unit
   (set!
     compiler-load-active-session-state
-    (clone (array-ref compiler-load-default-session-state 0))))
+    (compiler-load-global-array-element-shared-view
+      compiler-load-default-session-state
+      0)))
 
 (define (compiler-load-session-state-cache-enabled?
   [state : CompilerLoadSessionState]) : bool
@@ -15835,7 +15846,7 @@
 (define (compiler-load-session-explicit-cache-api-isolation-ok?) : bool
   (let
     [previous-state : CompilerLoadSessionState
-      (clone (compiler-load-active-session-state-shared-view))]
+      (compiler-load-global-shared-view compiler-load-active-session-state)]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
     [_select-b : unit (compiler-load-session-state-use! state-b)]
@@ -15913,7 +15924,7 @@
   (let
     [home : arena.Arena (arena.current)]
     [previous-state : CompilerLoadSessionState
-      (clone (compiler-load-active-session-state-shared-view))]
+      (compiler-load-global-shared-view compiler-load-active-session-state)]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
     [_enable-a : unit (compiler-load-session-state-cache-enable! state-a)]

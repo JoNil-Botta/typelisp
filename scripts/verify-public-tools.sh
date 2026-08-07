@@ -421,6 +421,28 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
+CHECK_PARSER_RECOVERY_SRC="$WORKDIR/check-parser-recovery-diagnostics.tl"
+cat > "$CHECK_PARSER_RECOVERY_SRC" <<'EOF'
+(define)
+(define (later-a) : i64 missing-a)
+(define (later-b) : i64 missing-b)
+(define (main) : i64 0)
+EOF
+# cli-gate-case check-parser-recovery-diagnostics wrapper run_cmd
+run_cmd check-parser-recovery-diagnostics "$COMPILER" check "$CHECK_PARSER_RECOVERY_SRC"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "parse: malformed define"
+assert_contains "$err" "typecheck: unbound name missing-a"
+assert_contains "$err" "typecheck: unbound name missing-b"
+parser_recovery_parse_line=$(grep -nF "parse: malformed define" "$err" | sed -n '1s/:.*//p')
+parser_recovery_first_line=$(grep -nF "typecheck: unbound name missing-a" "$err" | sed -n '1s/:.*//p')
+parser_recovery_second_line=$(grep -nF "typecheck: unbound name missing-b" "$err" | sed -n '1s/:.*//p')
+if [ "$parser_recovery_parse_line" -ge "$parser_recovery_first_line" ] ||
+    [ "$parser_recovery_first_line" -ge "$parser_recovery_second_line" ]; then
+    fail "check-parser-recovery-diagnostics did not preserve source order"
+fi
+
 CHECK_CFG_SRC="$WORKDIR/check-cfg-target.tl"
 cat > "$CHECK_CFG_SRC" <<'EOF'
 (cfg linux

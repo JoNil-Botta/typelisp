@@ -1,5 +1,8 @@
 ;; compiler_check_smoke.tl - Runnable smoke for virtual-source check helpers.
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector String) as svec)
+(import compiler_load)
 (import compiler_check_core as check_core)
 (import compiler_diagnostic as cdiag)
 (import compiler_semantic_index as semantic_index)
@@ -342,6 +345,64 @@
                 [_ false])]
             [_ false])))]))
 
+(define (compiler-check-parser-recovery-result-ok?
+  [result : compiler_check_core.ResultCompilerCheck]) : bool
+  (match result
+    [(compiler_check_core.ResultCompilerCheck.Ok _) false]
+    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        (and
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
+          (match diagnostics
+            [(cdiag.CompilerDiagnosticList.Cons first first-rest)
+              (match (box-get first-rest)
+                [(cdiag.CompilerDiagnosticList.Cons second second-rest)
+                  (match (box-get second-rest)
+                    [(cdiag.CompilerDiagnosticList.Cons third third-rest)
+                      (and
+                        (string.eq
+                          (cdiag.compiler-diagnostic-message first)
+                          "parse: malformed define")
+                        (string.eq
+                          (cdiag.compiler-diagnostic-code-or-empty first)
+                          (cdiag.compiler-diagnostic-code-parse))
+                        (= (cdiag.compiler-diagnostic-line first) 1)
+                        (string.eq
+                          (cdiag.compiler-diagnostic-message second)
+                          "typecheck: unbound name missing-a")
+                        (= (cdiag.compiler-diagnostic-line second) 2)
+                        (string.eq
+                          (cdiag.compiler-diagnostic-message third)
+                          "typecheck: unbound name missing-b")
+                        (= (cdiag.compiler-diagnostic-line third) 3)
+                        (match (box-get third-rest)
+                          [(cdiag.CompilerDiagnosticList.Nil) true]
+                          [_ false]))]
+                    [_ false])]
+                [_ false])]
+            [_ false])))]))
+
+(define (compiler-check-parser-recovery-diagnostics-ok?) : bool
+  (let
+    [path : String "tests/parser_recovery_diagnostics.tl"]
+    [source : String
+      "(define)
+(define (later-a) : i64 missing-a)
+(define (later-b) : i64 missing-b)
+(define (main) : i64 0)"]
+    (and
+      (compiler-check-parser-recovery-result-ok?
+        (compiler_check_core.compiler-check-source path source))
+      (compiler-check-parser-recovery-result-ok?
+        (compiler_check_core.compiler-check-package-source-with-roots-and-cfg
+          path
+          source
+          (svec.new)
+          "."
+          (compiler_load.compiler-pkg-deps-empty)
+          (compiler_check_core.compiler-check-language-cfgs))))))
+
 (define (compiler-check-poison-suppresses-derived-diagnostics-ok?) : bool
   (match (compiler_check_core.compiler-check-source
     "tests/poison_diagnostics.tl"
@@ -371,6 +432,7 @@
           (compiler-check-import-help-not-machine-fix-ok?)
           (compiler-check-duplicate-type-location-ok?)
           (compiler-check-independent-diagnostics-ok?)
+          (compiler-check-parser-recovery-diagnostics-ok?)
           (compiler-check-poison-suppresses-derived-diagnostics-ok?)
           (semantic_index.compiler-check-semantic-index-ok?)
           (compiler-check-subform-diagnostic-spans-ok?)

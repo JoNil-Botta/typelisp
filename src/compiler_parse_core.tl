@@ -770,6 +770,14 @@
   (Ok ast.AstProgram)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+;; Recovery is explicit: Parsed may carry a partial program together with one
+;; or more syntax diagnostics, while Fatal means lexing failed before a token
+;; stream existed. Callers must not treat Parsed as successful unless the
+;; diagnostic list is empty.
+(defenum ResultAstProgramRecovery
+  (Parsed ast.AstProgram (Box cdiag.CompilerDiagnosticList))
+  (Fatal (Box cdiag.CompilerDiagnosticList)))
+
 ;; Mutable parser data belongs to one compiler driver. The fixed dispatch
 ;; arrays avoid arena-lifetime coupling in a state that survives individual
 ;; file parses; the cached immutable environment is rebuilt when its owning
@@ -9856,6 +9864,245 @@
       (parse-ast-if-diagnostic-notes canonical)
       canonical)))
 
+(define (parse-ast-recovery-prefix-tag? [tag : i64]) : bool
+  (or
+    (= tag (token.tag-quote))
+    (= tag (token.tag-backtick))
+    (= tag (token.tag-comma))
+    (= tag (token.tag-comma-at))))
+
+;; A declaration-shape error has already consumed one balanced top-level form,
+;; so its cursor is a safe boundary. Reader errors are different: unexpected
+;; and mismatched delimiters leave the failing token under the cursor. Rescan
+;; the failed form from its original token, treating either closing delimiter
+;; as ending one nesting level. This deliberately recovers only when the raw
+;; token depth returns to zero; an unterminated form consumes the rest of the
+;; file. Top-level quote prefixes belong to the following datum and therefore
+;; cannot become false one-token boundaries.
+(define (parse-ast-recover-top-level-cursor!
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]
+  [form-start : i64]) : unit
+  (let
+    [scan : i64 form-start]
+    [depth : i64 0]
+    [done : bool false]
+    (while (not done)
+      (let
+        [tag : i64
+          (token.tag (token.spanned-token-token (array-ref toks scan)))]
+        (cond
+          [(= tag (token.tag-end))
+            (begin
+              (array-set! cur 0 scan)
+              (set! done true))]
+          [(or (= tag (token.tag-lparen)) (= tag (token.tag-lbracket)))
+            (begin
+              (set! depth (+ depth 1))
+              (set! scan (+ scan 1)))]
+          [(or (= tag (token.tag-rparen)) (= tag (token.tag-rbracket)))
+            (begin
+              (set! scan (+ scan 1))
+              (if (> depth 0)
+                (set! depth (- depth 1))
+                unit)
+              (if (= depth 0)
+                (begin
+                  (array-set! cur 0 scan)
+                  (set! done true))
+                unit))]
+          [(and (= depth 0) (parse-ast-recovery-prefix-tag? tag))
+            (set! scan (+ scan 1))]
+          [else
+            (begin
+              (set! scan (+ scan 1))
+              (if (= depth 0)
+                (begin
+                  (array-set! cur 0 scan)
+                  (set! done true))
+                unit))])))))
+
+(define (parse-ast-program-forms-recovery-into-vec
+  [path : String]
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]
+  [out : (&mut out ParseAstDeclVec)]
+  [diagnostics : cdiag.CompilerDiagnosticList]) : cdiag.CompilerDiagnosticList
+  (if (= (reader.peek-spanned-tag toks cur) (token.tag-end))
+    (cdiag.compiler-diagnostic-list-reverse diagnostics)
+    (let
+      [mark : i64 (reader.sp-node-pool-len)]
+      [form-start : i64 (reader.cur-pos cur)]
+      (match (reader.form-spanned-result toks cur)
+        [(reader.ResultSpannedSexpr.Ok spanned-form)
+          (let
+            [records-start : i64 (reader.sp-node-pool-len)]
+            (begin
+              (parse-ast-error-span-clear! dispatch)
+              (match (parse-ast-decl-maybe-with-pools
+                dispatch
+                pools
+                spanned-form)
+                [(ResultAstMaybeDecl.SomeDecl decl)
+                  (begin
+                    (parse-ast-decl-vec-push-with-span
+                      out
+                      decl
+                      (compiler-parse-decl-origin-syntax-span
+                        dispatch
+                        spanned-form))
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-program-forms-recovery-into-vec
+                      path
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out
+                      diagnostics))]
+                [(ResultAstMaybeDecl.Decls decls)
+                  (begin
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-decl-vec-push-list! out decls)
+                    (parse-ast-program-forms-recovery-into-vec
+                      path
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out
+                      diagnostics))]
+                [(ResultAstMaybeDecl.NoDecl)
+                  (begin
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-program-forms-recovery-into-vec
+                      path
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out
+                      diagnostics))]
+                [(ResultAstMaybeDecl.Err message)
+                  (let
+                    [diag : cdiag.CompilerDiagnostic
+                      (parse-ast-canonical-diagnostic
+                        (cdiag.compiler-diagnostic-from-span
+                          path
+                          (parse-ast-error-span-current
+                            dispatch
+                            (reader.spanned-sexpr-span spanned-form))
+                          message))]
+                    (begin
+                      (reader.sp-node-pool-truncate! mark)
+                      (parse-ast-program-forms-recovery-into-vec
+                        path
+                        dispatch
+                        pools
+                        toks
+                        cur
+                        out
+                        (cdiag.compiler-diagnostic-list-prepend
+                          diag
+                          diagnostics))))])))]
+        [(reader.ResultSpannedSexpr.Err err)
+          (let
+            [diag : cdiag.CompilerDiagnostic
+              (parse-ast-canonical-diagnostic
+                (cdiag.compiler-diagnostic-from-source-error path err))]
+            (begin
+              (reader.sp-node-pool-truncate! mark)
+              (parse-ast-recover-top-level-cursor! toks cur form-start)
+              (parse-ast-program-forms-recovery-into-vec
+                path
+                dispatch
+                pools
+                toks
+                cur
+                out
+                (cdiag.compiler-diagnostic-list-prepend diag diagnostics))))]))))
+
+(define (parse-ast-program-recovery-diagnostic-with-cfg-and-pools
+  [path : String]
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : ResultAstProgramRecovery
+  (let
+    [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [base-dispatch : sym_i64_env.SymI64Env
+      (parse-ast-program-dispatch-with-cfg cfgs)]
+    [invocation : (__tl_dyn-array i64) (array.make-array i64 6)]
+    [dispatch : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        base-dispatch
+        compiler-parse-invocation-marker-id
+        (compiler-parse-array-data-addr-i64 invocation))]
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    (begin
+      (reader.sexpr-node-pool-reset!)
+      (array-set! cur 0 0)
+      (array-set!
+        invocation
+        compiler-parse-invocation-control-slot
+        (compiler-parse-env-marker-value
+          base-dispatch
+          compiler-parse-state-marker-id))
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (parse-ast-program-forms-recovery-into-vec
+            path
+            dispatch
+            pools
+            toks
+            cur
+            (&mut out)
+            cdiag.CompilerDiagnosticList.Nil)]
+        (ResultAstProgramRecovery.Parsed
+          (ast.ast-program (parse-ast-decl-vec-to-list (& out)))
+          (box diagnostics))))))
+
+(define (parse-ast-source-recovery-diagnostic-with-cfg-and-pools
+  [path : String]
+  [src : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : ResultAstProgramRecovery
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (match (lexer.spanned-result src)
+      [(lexer.ResultSpannedTokens.Ok toks)
+        (parse-ast-program-recovery-diagnostic-with-cfg-and-pools
+          path
+          toks
+          cfgs
+          pools)]
+      [(lexer.ResultSpannedTokens.Err err)
+        (ResultAstProgramRecovery.Fatal
+          (box
+            (cdiag.compiler-diagnostic-list-single
+              (parse-ast-canonical-diagnostic
+                (cdiag.compiler-diagnostic-from-source-error path err)))))])))
+
+(define (parse-ast-source-recovery-diagnostic-with-cfg
+  [path : String]
+  [src : String]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramRecovery
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [result : ResultAstProgramRecovery
+      (parse-ast-source-recovery-diagnostic-with-cfg-and-pools
+        path
+        src
+        cfgs
+        pools)]
+    (begin
+      (ast.ast-node-pool-context-install! pools)
+      result)))
+
+(define (parse-ast-source-recovery-diagnostic [path : String] [src : String]) : ResultAstProgramRecovery
+  (parse-ast-source-recovery-diagnostic-with-cfg path src (compiler-cfg-empty)))
+
 (define (parse-ast-program-forms-diagnostic-into-vec
   [path : String]
   [dispatch : sym_i64_env.SymI64Env]
@@ -12174,10 +12421,116 @@
       (compiler-parse-malformed-return-source)
       "parse: return expects exactly one expression")))
 
+(define (compiler-parse-recovery-balanced-decl-ok?) : bool
+  (match (parse-ast-source-recovery-diagnostic
+    "tests/recovery-balanced.tl"
+    "(define)
+(define (kept-a) : i64 1)
+(define (kept-b) : i64 2)")
+    [(ResultAstProgramRecovery.Parsed
+        (ast.AstProgram.Program decls-box)
+        diagnostics-box)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
+        (and
+          (= (ast.ast-decl-list-len (& (box-get decls-box))) 2)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
+          (string.eq
+            (cdiag.compiler-diagnostic-message first)
+            "parse: malformed define")
+          (= (cdiag.compiler-diagnostic-line first) 1)))]
+    [(ResultAstProgramRecovery.Fatal _) false]))
+
+(define (compiler-parse-recovery-ordered-errors-ok?) : bool
+  (match (parse-ast-source-recovery-diagnostic
+    "tests/recovery-ordered.tl"
+    "(define)
+(define (kept-a) : i64 1)
+(define)
+(define (kept-b) : i64 2)")
+    [(ResultAstProgramRecovery.Parsed
+        (ast.AstProgram.Program decls-box)
+        diagnostics-box)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        (and
+          (= (ast.ast-decl-list-len (& (box-get decls-box))) 2)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 2)
+          (match diagnostics
+            [(cdiag.CompilerDiagnosticList.Cons first first-rest)
+              (match (box-get first-rest)
+                [(cdiag.CompilerDiagnosticList.Cons second second-rest)
+                  (and
+                    (= (cdiag.compiler-diagnostic-line first) 1)
+                    (string.eq
+                      (cdiag.compiler-diagnostic-message first)
+                      "parse: malformed define")
+                    (= (cdiag.compiler-diagnostic-line second) 3)
+                    (string.eq
+                      (cdiag.compiler-diagnostic-message second)
+                      "parse: malformed define")
+                    (match (box-get second-rest)
+                      [(cdiag.CompilerDiagnosticList.Nil) true]
+                      [_ false]))]
+                [_ false])]
+            [_ false])))]
+    [(ResultAstProgramRecovery.Fatal _) false]))
+
+(define (compiler-parse-recovery-reader-progress-ok?) : bool
+  (and
+    (match (parse-ast-source-recovery-diagnostic
+      "tests/recovery-mismatch.tl"
+      "(define]
+(define (kept) : i64 1)")
+      [(ResultAstProgramRecovery.Parsed
+          (ast.AstProgram.Program decls-box)
+          diagnostics-box)
+        (let
+          [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+          [message : String
+            (cdiag.compiler-diagnostic-message
+              (cdiag.compiler-diagnostic-list-first diagnostics))]
+          [needle : String "reader: mismatched delimiter"]
+          (and
+            (= (ast.ast-decl-list-len (& (box-get decls-box))) 1)
+            (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
+            (string.contains (& message) (& needle))))]
+      [(ResultAstProgramRecovery.Fatal _) false])
+    (match (parse-ast-source-recovery-diagnostic
+      "tests/recovery-stray.tl"
+      ") ] (define (kept) : i64 1)")
+      [(ResultAstProgramRecovery.Parsed
+          (ast.AstProgram.Program decls-box)
+          diagnostics-box)
+        (and
+          (= (ast.ast-decl-list-len (& (box-get decls-box))) 1)
+          (= (cdiag.compiler-diagnostic-list-count (box-get diagnostics-box)) 2))]
+      [(ResultAstProgramRecovery.Fatal _) false])
+    (match (parse-ast-source-recovery-diagnostic
+      "tests/recovery-unterminated.tl"
+      "(define
+(define (not-a-boundary) : i64 1)")
+      [(ResultAstProgramRecovery.Parsed
+          (ast.AstProgram.Program decls-box)
+          diagnostics-box)
+        (and
+          (= (ast.ast-decl-list-len (& (box-get decls-box))) 0)
+          (= (cdiag.compiler-diagnostic-list-count (box-get diagnostics-box)) 1))]
+      [(ResultAstProgramRecovery.Fatal _) false])))
+
+(define (compiler-parse-recovery-tests-ok?) : bool
+  (and
+    (compiler-parse-recovery-balanced-decl-ok?)
+    (compiler-parse-recovery-ordered-errors-ok?)
+    (compiler-parse-recovery-reader-progress-ok?)))
+
 (define (compiler-parse-error-tests-ok?) : bool
   (cond
     [(not (compiler-parse-diagnostic-code-ok?)) false]
     [(not (compiler-parse-nested-diagnostic-spans-ok?)) false]
+    [(not (compiler-parse-recovery-tests-ok?)) false]
     [(not (compiler-parse-special-form-error-tests-ok?)) false]
     [(not (compiler-parse-unsafe-decl-error-tests-ok?)) false]
     [(not (compiler-parse-repr-c-error-tests-ok?)) false]

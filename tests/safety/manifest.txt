@@ -446,3 +446,10 @@ global_move_qualified_reject|check-fail|tests/safety/global_move_qualified_rejec
 global_move_generated_reject|check-fail|tests/safety/global_move_generated_reject.tl|-|cannot move out of global `generated.global-text`
 global_move_task_reject|check-fail|tests/safety/global_move_task_reject.tl|-|cannot move out of global `global-text`
 global_move_spmd_reject|check-fail|tests/safety/global_move_spmd_reject.tl|-|cannot move out of global `global-text`
+global_move_begin_result_reject|check-fail|tests/safety/global_move_begin_result_reject.tl|-|cannot move out of global `global-text`
+global_move_unsafe_result_reject|check-fail|tests/safety/global_move_unsafe_result_reject.tl|-|cannot move out of global `global-text`
+global_move_let_result_reject|check-fail|tests/safety/global_move_let_result_reject.tl|-|cannot move out of global `global-text`
+global_move_match_result_reject|check-fail|tests/safety/global_move_match_result_reject.tl|-|cannot move out of global `global-text`
+global_move_try_result_reject|check-fail|tests/safety/global_move_try_result_reject.tl|-|cannot move out of global `global-result`
+global_move_scoped_result_reject|check-fail|tests/safety/global_move_scoped_result_reject.tl|-|cannot move out of global `global-text`
+global_move_result_shadowing_ok|check-ok|tests/safety/global_move_result_shadowing_ok.tl|-|-

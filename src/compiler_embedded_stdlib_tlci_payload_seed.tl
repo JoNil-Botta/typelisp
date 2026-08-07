@@ -10,5 +10,8 @@
   "")
 
 (define (embedded-stdlib-tlci-source-hash-shared-view) : String
-  (unsafe
-    (ptr-read (ptr-addr-of embedded-stdlib-tlci-source-hash))))
+  (cfg
+    stage0-seed-bootstrap
+    embedded-stdlib-tlci-source-hash
+    (unsafe
+      (ptr-read (ptr-addr-of embedded-stdlib-tlci-source-hash)))))

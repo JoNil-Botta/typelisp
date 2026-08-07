@@ -14,6 +14,13 @@
 (import stdlib.arena)
 (import (hashmap.hashmap String i64) as ir_label_map)
 
+(defmacro (compiler-ir-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (defenum CompilerIrBinOp
   (Add)
   (Sub)
@@ -151,7 +158,9 @@
   (cond
     [(< symbol 0) ""]
     [(compiler-ir-symbol-owned? symbol)
-      (array-ref compiler-ir-symbol-slots (compiler-ir-symbol-slot symbol))]
+      (array-ref
+        (compiler-ir-global-shared-view compiler-ir-symbol-slots)
+        (compiler-ir-symbol-slot symbol))]
     [(>= symbol (compiler-ir-symbol-base)) ""]
     [else (ci.intern-str symbol)]))
 
@@ -260,7 +269,7 @@
 (define (compiler-ir-label-text [label : i64]) : String
   (if (or (< label 0) (>= label compiler-ir-label-count))
     ""
-    (array-ref compiler-ir-label-slots label)))
+    (array-ref (compiler-ir-global-shared-view compiler-ir-label-slots) label)))
 
 (define (compiler-ir-label-none) : i64
   -1)

@@ -71,7 +71,7 @@
 (define (selfhost-lint-language-cfgs) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs-with-names
     selfhost-lint-language-target
-    (clone selfhost-lint-language-cfg-names)))
+    (selfhost-lint-global-shared-view selfhost-lint-language-cfg-names)))
 
 (define (selfhost-lint-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
@@ -1867,7 +1867,7 @@
           (string.substring name member-start (- name-len member-start))]
         [target : i64
           (sym_i64_env.sym-i64-lookup-id-or
-            (clone selfhost-lint-dead-import-aliases)
+            (selfhost-lint-global-shared-view selfhost-lint-dead-import-aliases)
             (ci.intern-source-slice name 0 last-dot)
             -1)]
         [module : String

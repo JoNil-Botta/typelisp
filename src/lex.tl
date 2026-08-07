@@ -44,7 +44,7 @@
 (import stdlib.result)
 (import (result.result i64 String) as result_lex_i64)
 
-(defmacro (lex-global-shared-view [place : Expr]) : Expr
+(defmacro (global-shared-view [place : Expr]) : Expr
   (cfg
     stage0-seed-bootstrap
     place
@@ -1369,7 +1369,7 @@
 (define (spanned-result [src : String]) : ResultSpannedTokens
   (match (into-spanned-tokens-result src)
     [(ResultLexIntoSpanned.Ok _)
-      (ResultSpannedTokens.Ok (lex-global-shared-view lex-spanned-token-buffer))]
+      (ResultSpannedTokens.Ok (global-shared-view lex-spanned-token-buffer))]
     [(ResultLexIntoSpanned.Err err) (ResultSpannedTokens.Err err)]))
 
 (define (percent-symbol-ok?) : bool

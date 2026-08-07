@@ -1002,7 +1002,7 @@
     ;; walk. Materialize it only when the caller is ready to compact, after
     ;; macro-owned scratch generations have already been released.
     (lower-checked-dest-pools-materialize-deferred!)
-    lower-checked-dest-pools-context))
+    (lower-global-shared-view lower-checked-dest-pools-context)))
 
 (define (compiler-lower-checked-frontend-released?) : bool
   lower-checked-frontend-released)
@@ -59231,7 +59231,9 @@
         (tc_core.tc-context-pools ctx)
         (clone (array-ref lower-variant-arm-memo-scrut-tys slot))
         scrut-ty))
-      (array-ref lower-variant-arm-memo-outcomes slot)
+      (array-ref
+        (lower-global-shared-view lower-variant-arm-memo-outcomes)
+        slot)
       (let
         [result : LowerVariantArmResolution
           (lower-variant-arm-resolution-compute
@@ -62480,7 +62482,8 @@
                               cur-type-cache
                               (csym.compiler-symbol-module-key
                                 (if (= (string.string-length cur-module) 0)
-                                  lower-spmd-package-name
+                                  (lower-global-shared-view
+                                    lower-spmd-package-name)
                                   cur-module)
                                 (tc_core.tc-env-key-name-text name))
                               (csym.compiler-symbols-lookup-value-id-or

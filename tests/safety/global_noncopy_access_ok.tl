@@ -9,22 +9,16 @@
 
 (define global-text : String
   "hello")
-
 (define global-fixed-owners : (Array String 2)
   (array "left" "right"))
-
 (define global-items : (__tl_dyn-array i64)
   (array.make-array i64 2))
-
 (define global-box : (Box i64)
   (box 40))
-
 (define global-owner : GlobalOwner
   (GlobalOwner "nested" 2))
-
 (define global-number : i64
   20)
-
 (define global-fixed-copy : (Array i64 2)
   (array 20 22))
 
@@ -45,6 +39,4 @@
       (array-set! global-items 0 42)
       (set! (box-get global-box) (+ copied projected))
       (set! global-text "replaced")
-      (+
-        explicit
-        (+ automatic (+ fixed-copy (array-ref global-items 0)))))))
+      (+ explicit (+ automatic (+ fixed-copy (array-ref global-items 0)))))))

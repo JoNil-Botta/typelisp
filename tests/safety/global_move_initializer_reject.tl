@@ -3,9 +3,10 @@
 
 (define global-source : String
   "owned")
-
 (define global-alias : String
-  global-source)
+  (if true
+    global-source
+    "fallback"))
 
 (define (main) : i64
   (string.string-length global-alias))

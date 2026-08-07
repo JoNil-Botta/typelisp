@@ -6,4 +6,7 @@
   (box-get cell))
 
 (define (main) : i64
-  (take-box global-box))
+  (take-box
+    (if true
+      global-box
+      (box 0))))

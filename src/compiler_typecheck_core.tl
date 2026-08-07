@@ -10424,7 +10424,7 @@
           (let
             [jumps : (__tl_dyn-array i64)
               (if (= levels 0)
-                tc-chain-empty-i64-array
+                (tc-global-shared-view tc-chain-empty-i64-array)
                 (array.make-array i64 levels))]
             [prev : (__tl_dyn-array i64) (array.make-array i64 capacity)]
             [seq : i64
@@ -11383,7 +11383,9 @@
 (define (tc-unused-unsafe-block-path [index : i64]) : String
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
     (array-ref
-      (struct-get tc-lazy-global-table-state unused-unsafe-block-paths)
+      (struct-get
+        (tc-global-shared-view tc-lazy-global-table-state)
+        unused-unsafe-block-paths)
       index)
     ""))
 
@@ -37389,7 +37391,7 @@
 
 (define (tc-clone-able-set [ctx : TcContext]) : clone_support.CloneNameSet
   (if tc-clone-able-cache-ready
-    tc-clone-able-cache
+    (tc-global-shared-view tc-clone-able-cache)
     (tc-clone-able-set-build ctx)))
 
 (define (tc-clone-able-type? [ctx : TcContext] [ty : ast.AstType]) : bool
@@ -57123,29 +57125,21 @@
 (define (key-matches [macro-key : String] [cursor : i64] [steps : i64]) : bool
   (if (>= steps requested-capacity)
     false
-    (if (=
-      (string.string-length
-        (&
-          (array-ref
-            (struct-get
-              tc-lazy-global-table-state
-              macro-abstract-proof-qualified-keys)
-            cursor)))
-      0)
-      false
-      (if (string.eq
-        (&
-          (array-ref
-            (struct-get
-              tc-lazy-global-table-state
-              macro-abstract-proof-qualified-keys)
-            cursor))
-        macro-key)
-        true
-        (key-matches
-          macro-key
-          (bit-and (+ cursor 1) (- requested-capacity 1))
-          (+ steps 1))))))
+    (let
+      [state : TcLazyGlobalTableState
+        (tc-global-shared-view tc-lazy-global-table-state)]
+      [slot : String
+        (array-ref
+          (struct-get state macro-abstract-proof-qualified-keys)
+          cursor)]
+      (if (= (string.string-length slot) 0)
+        false
+        (if (string.eq slot macro-key)
+          true
+          (key-matches
+            macro-key
+            (bit-and (+ cursor 1) (- requested-capacity 1))
+            (+ steps 1)))))))
 
 (define (complete-key [macro-key : String]) : bool
   (if (or (not active?) (= (string.string-length macro-key) 0))
@@ -57409,7 +57403,9 @@
         (>= index 0)
         (< index count)
         (< index expected-count))
-        (array-ref declared-types (+ (* slot expected-count) index))
+        (array-ref
+          (tc-global-shared-view declared-types)
+          (+ (* slot expected-count) index))
         ""))))
 
 (define (kind-for-check [slot : i64] [index : i64]) : String
@@ -57427,7 +57423,9 @@
         (>= index 0)
         (< index count)
         (< index expected-count))
-        (array-ref macro-type-kinds (+ (* slot expected-count) index))
+        (array-ref
+          (tc-global-shared-view macro-type-kinds)
+          (+ (* slot expected-count) index))
         ""))))
 
 (define (scratch-result [slot : i64] [index : i64]) : unit
@@ -62988,14 +62986,14 @@
   [moved : TcMovedSet]
   [init : ast.AstExpr]
   [init-ty : ast.AstType]) : TcMoveResult
-  (match (tc-move-check-global-source
+  (match (tc-move-check-global-result
     ctx
     expr-bases
     env
     locals
     moved
     init
-    (tc-type-move-only? ctx (tc-resolve-type ctx init-ty)))
+    init-ty)
     [(TcMoveResult.Ok moved1)
       (if (tc-type-consuming-by-value-now? ctx init-ty)
         (tc-move-after-consuming-projection
@@ -63358,26 +63356,29 @@
   [moved : TcMovedSet]
   [expr : ast.AstExpr]
   [target-ty : ast.AstType]
-  [value-ty : ast.AstType]) : TcMoveResult
+  [_value-ty : ast.AstType]) : TcMoveResult
   (let
     [move? : bool (tc-call-param-consuming-now? ctx target-ty)]
-    (tc-move-after-moving-value
+    (match (tc-move-check-global-result
       ctx
       expr-bases
       env
       locals
-      loop-carried
       moved
       expr
-      move?
-      (tc-move-global-source-target-move-only?
-        ctx
-        expr-bases
-        env
-        locals
-        expr
-        target-ty
-        value-ty))))
+      target-ty)
+      [(TcMoveResult.Ok moved1)
+        (tc-move-after-moving-value
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved1
+          expr
+          move?
+          false)]
+      [(TcMoveResult.Err message) (TcMoveResult.Err message)])))
 
 (define (tc-move-check-global-result
   [ctx : TcContext]
@@ -63387,21 +63388,15 @@
   [moved : TcMovedSet]
   [expr : ast.AstExpr]
   [target-ty : ast.AstType]) : TcMoveResult
-  (tc-move-check-global-source
+  (tc-move-check-global-result-expr
     ctx
     expr-bases
     env
     locals
+    TcNameIdList.Nil
     moved
     expr
-    (tc-move-global-source-target-move-only?
-      ctx
-      expr-bases
-      env
-      locals
-      expr
-      target-ty
-      target-ty)))
+    target-ty))
 
 (define (tc-move-after-move-only-value
   [ctx : TcContext]
@@ -63414,25 +63409,26 @@
   [target-ty : ast.AstType]) : TcMoveResult
   (let
     [move? : bool (tc-type-move-only? ctx (tc-resolve-type ctx target-ty))]
-    (tc-move-after-moving-value
+    (match (tc-move-check-global-result
       ctx
       expr-bases
       env
       locals
-      loop-carried
       moved
       expr
-      move?
-      (and
-        move?
-        (tc-move-global-source-target-move-only?
+      target-ty)
+      [(TcMoveResult.Ok moved1)
+        (tc-move-after-moving-value
           ctx
           expr-bases
           env
           locals
+          loop-carried
+          moved1
           expr
-          target-ty
-          target-ty)))))
+          move?
+          false)]
+      [(TcMoveResult.Err message) (TcMoveResult.Err message)])))
 
 (define (tc-move-after-match-scrutinee
   [ctx : TcContext]
@@ -64495,6 +64491,26 @@
                 (TcMoveResult.Ok moved))])]
         [_ (TcMoveResult.Ok moved)]))
     (TcMoveResult.Ok moved)))
+
+;; Core length/index inspectors take their receiver as a source-level place and
+;; never transfer its owner handle. Their argument traversal is therefore an
+;; implicit shared borrow; ordinary by-value calls get no such exemption.
+(define (tc-move-global-place-inspector-call?
+  [_ctx : TcContext]
+  [_env : TcTypeEnv]
+  [func : ast.AstExpr]) : bool
+  (let
+    [raw-id : i64 (tc-expr-var-name-id func)]
+    (if (>= raw-id 0)
+      (let
+        [hygiene-global : bool (tc-hygiene-global-name-id? raw-id)]
+        [name-id : i64 (tc-builtin-call-name-id raw-id hygiene-global)]
+        (if (< name-id 0)
+          false
+          (or
+            (cbi.compiler-builtin-typecheck-length-call-id? name-id)
+            (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id))))
+      false)))
 
 (define (tc-move-local-call-capability [locals : TcMovedSet] [name-id : i64]) : i64
   (let
@@ -66087,14 +66103,14 @@
                   env
                   scrut-box)
                   [(ResultTcType.Ok scrut-ty)
-                    (match (tc-move-check-global-source
+                    (match (tc-move-check-global-result
                       ctx
                       expr-bases
                       env
                       locals
                       moveds
                       scrut
-                      (tc-type-move-only? ctx (tc-resolve-type ctx scrut-ty)))
+                      scrut-ty)
                       [(TcMoveResult.Ok moveds1)
                         (tc-move-check-arms
                           ctx
@@ -66897,6 +66913,377 @@
           [(TcMoveResult.Ok _) ResultTcUnit.Ok]
           [(TcMoveResult.Err message) (ResultTcUnit.Err message)])]
       [(TcMoveResult.Err message) (ResultTcUnit.Err message)])))
+
+(define (tc-move-add-resource-shadowed-names-at
+  [shadowed : TcNameIdList]
+  [bindings : (& bindings ast.AstResourceBindingList)]
+  [index : i64]) : TcNameIdList
+  (if (>= index (ast.ast-resource-binding-list-len bindings))
+    shadowed
+    (match (ast.ast-resource-binding-list-get
+      bindings
+      index
+      (ast.ast-resource-binding-fallback))
+      [(ast.AstResourceBinding.Binding name _ _ _)
+        (tc-move-add-resource-shadowed-names-at
+          (tc-name-id-list-add shadowed name)
+          bindings
+          (+ index 1))])))
+
+(define (tc-move-add-resource-shadowed-names
+  [shadowed : TcNameIdList]
+  [bindings : ast.AstResourceBindingList]) : TcNameIdList
+  (tc-move-add-resource-shadowed-names-at shadowed (& bindings) 0))
+
+(define (tc-move-check-global-result-expr-list
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [shadowed : TcNameIdList]
+  [moved : TcMovedSet]
+  [exprs : ast.AstExprList]
+  [result-ty : ast.AstType]) : TcMoveResult
+  (let
+    [count : i64 (ast.ast-expr-list-len (& exprs))]
+    (if (= count 0)
+      (TcMoveResult.Ok moved)
+      (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        (ast.ast-expr-list-get (& exprs) (- count 1) 0)
+        result-ty))))
+
+(define (tc-move-check-global-result-match-arms-at
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [shadowed : TcNameIdList]
+  [moved : TcMovedSet]
+  [arms : (& arms ast.AstMatchArmList)]
+  [index : i64]
+  [result-ty : ast.AstType]) : TcMoveResult
+  (if (>= index (struct-get arms len))
+    (TcMoveResult.Ok moved)
+    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
+      [(ast.AstMatchArm.Arm pattern body-box)
+        (match (tc-move-check-global-result-expr-id
+          ctx
+          expr-bases
+          env
+          locals
+          (tc-pattern-add-bound-name-ids pattern shadowed)
+          moved
+          body-box
+          result-ty)
+          [(TcMoveResult.Ok moved1)
+            (tc-move-check-global-result-match-arms-at
+              ctx
+              expr-bases
+              env
+              locals
+              shadowed
+              moved1
+              arms
+              (+ index 1)
+              result-ty)]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)])])))
+
+(define (tc-move-check-global-result-expr-id
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [shadowed : TcNameIdList]
+  [moved : TcMovedSet]
+  [expr-id : i64]
+  [result-ty : ast.AstType]) : TcMoveResult
+  (tc-move-check-global-result-expr
+    ctx
+    expr-bases
+    env
+    locals
+    shadowed
+    moved
+    (ast.ast-expr-segment-bases-get expr-bases expr-id)
+    result-ty))
+
+;; Ownership-transfer sites see the value-producing leaves of control-flow and
+;; scoped expressions, not merely the outer AST node. Keep lexical binders in a
+;; lightweight shadow spine while descending so a local that shadows a global
+;; is never misclassified as that permanent global place. This deliberately
+;; avoids cloning the full move-state maps at every result branch.
+(define (tc-move-check-global-result-expr
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [shadowed : TcNameIdList]
+  [moved : TcMovedSet]
+  [expr : ast.AstExpr]
+  [result-ty : ast.AstType]) : TcMoveResult
+  (match expr
+    [(ast.AstExpr.Spanned inner-box _)
+      (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        inner-box
+        result-ty)]
+    [(ast.AstExpr.If _ then-box else-box)
+      (match (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        then-box
+        result-ty)
+        [(TcMoveResult.Ok moved1)
+          (tc-move-check-global-result-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            shadowed
+            moved1
+            else-box
+            result-ty)]
+        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+    [(ast.AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(ast.AstLet.Let bindings body-box)
+          (tc-move-check-global-result-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            (tc-let-binding-list-add-bound-name-ids bindings shadowed)
+            moved
+            body-box
+            result-ty)])]
+    [(ast.AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(ast.AstMatch.Match _ arms)
+          (tc-move-check-global-result-match-arms-at
+            ctx
+            expr-bases
+            env
+            locals
+            shadowed
+            moved
+            (& arms)
+            0
+            result-ty)])]
+    [(ast.AstExpr.Begin exprs)
+      (tc-move-check-global-result-expr-list
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        exprs
+        result-ty)]
+    [(ast.AstExpr.Unsafe exprs)
+      (tc-move-check-global-result-expr-list
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        exprs
+        result-ty)]
+    [(ast.AstExpr.WithRegion _ exprs)
+      (tc-move-check-global-result-expr-list
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        exprs
+        result-ty)]
+    [(ast.AstExpr.WithEscape _ exprs)
+      (tc-move-check-global-result-expr-list
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        exprs
+        result-ty)]
+    [(ast.AstExpr.WithScratch exprs)
+      (tc-move-check-global-result-expr-list
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        exprs
+        result-ty)]
+    [(ast.AstExpr.InArena _ exprs)
+      (tc-move-check-global-result-expr-list
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        exprs
+        result-ty)]
+    [(ast.AstExpr.WithResource resource-box)
+      (match (box-get resource-box)
+        [(ast.AstWithResource.WithResource bindings body)
+          (tc-move-check-global-result-expr-list
+            ctx
+            expr-bases
+            env
+            locals
+            (tc-move-add-resource-shadowed-names shadowed bindings)
+            moved
+            body
+            result-ty)])]
+    [(ast.AstExpr.Ann inner-box _)
+      (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        inner-box
+        result-ty)]
+    [(ast.AstExpr.Cast inner-box _)
+      (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        inner-box
+        result-ty)]
+    [(ast.AstExpr.Comptime inner-box)
+      (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        inner-box
+        result-ty)]
+    [(ast.AstExpr.Try inner-box)
+      (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        inner-box
+        result-ty)]
+    [(ast.AstExpr.Return inner-box)
+      (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        inner-box
+        result-ty)]
+    [(ast.AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(ast.AstSpmdReduce.Reduce _ index _ _ _ _ value-box)
+          (tc-move-check-global-result-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            (tc-name-id-list-add shadowed index)
+            moved
+            value-box
+            result-ty)])]
+    [(ast.AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(ast.AstSpmdScan.Scan _ index _ _ _ prefix _ _ value-box body-box)
+          (let
+            [value-shadowed : TcNameIdList (tc-name-id-list-add shadowed index)]
+            (match (tc-move-check-global-result-expr-id
+              ctx
+              expr-bases
+              env
+              locals
+              value-shadowed
+              moved
+              value-box
+              result-ty)
+              [(TcMoveResult.Ok moved1)
+                (tc-move-check-global-result-expr-id
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  (tc-name-id-list-add value-shadowed prefix)
+                  moved1
+                  body-box
+                  result-ty)]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
+    [(ast.AstExpr.SpmdBroadcast value-box _)
+      (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        value-box
+        result-ty)]
+    [(ast.AstExpr.SpmdShuffle value-box _)
+      (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        value-box
+        result-ty)]
+    [_
+      (match (tc-move-root-projection-var-id expr-bases expr)
+        [(TcMaybeNameId.Some root-id)
+          (if (tc-name-id-list-contains shadowed root-id)
+            (TcMoveResult.Ok moved)
+            (tc-move-check-global-source
+              ctx
+              expr-bases
+              env
+              locals
+              moved
+              expr
+              (tc-move-global-source-target-move-only?
+                ctx
+                expr-bases
+                env
+                locals
+                expr
+                result-ty
+                result-ty)))]
+        [(TcMaybeNameId.No) (TcMoveResult.Ok moved)])]))
 
 (define (tc-move-check-result-expr-list
   [ctx : TcContext]
@@ -73876,12 +74263,7 @@
 (define macro-live-symbols-value : csym.CompilerSymbols
   (csym.compiler-symbols-empty))
 (define macro-live-registries-cell : (__tl_dyn-array csym.CompilerRegistries)
-  (let
-    [cell : (__tl_dyn-array csym.CompilerRegistries)
-      (make-array csym.CompilerRegistries 1)]
-    (begin
-      (array-set! cell 0 (csym.compiler-registries-empty))
-      cell)))
+  (make-array (csym.compiler-registries-empty)))
 (define macro-live-symbols-fallback : bool
   false)
 (define macro-live-registries-ready : bool

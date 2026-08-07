@@ -2061,7 +2061,9 @@
 (define (intern-composite-rendered-name [id : i64]) : String
   (if (or (intern-composite-pair-id? id) (intern-composite-triple-id? id))
     (array-ref
-      (struct-get (array-ref intern-structural-table-cell 0) rendered-names)
+      (struct-get
+        (array-ref (intern-global-shared-view intern-structural-table-cell) 0)
+        rendered-names)
       (- (bit-and id (intern-structural-key-index-mask)) 1))
     ""))
 

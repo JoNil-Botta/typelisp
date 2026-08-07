@@ -23,6 +23,13 @@
 (import stdlib.array)
 (import stdlib.string)
 
+(defmacro (embedded-native-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (define (embedded-stdlib-tlci-identity [module : String] [name-id : i64]) : String
   (if (= (string.string-length module) 0)
     (ci.intern-str name-id)
@@ -95,7 +102,9 @@
           (set! index (- index 1))))
       (if (< found 0)
         ""
-        (array-ref embedded-native-data-local-texts found)))))
+        (array-ref
+          (embedded-native-global-shared-view embedded-native-data-local-texts)
+          found)))))
 
 ;; Bind `name` to the generated i64 variable `text`; false when the slot budget
 ;; is exhausted (the caller then keeps the fallback shell).
@@ -5495,7 +5504,7 @@
   ;; for a dispatch with no wildcard default. Mark it so the coverage report
   ;; counts it; a dispatch that does end in a wildcard never reaches here.
   (if (>= index (struct-get arms len))
-    embedded-native-interpreted-arm-code
+    (embedded-native-global-shared-view embedded-native-interpreted-arm-code)
     (match (array-ref (struct-get arms slots) index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
@@ -5536,7 +5545,8 @@
                   (string.int->string index)
                   " 1)\n"
                   (if (string.eq arm-code "")
-                    embedded-native-interpreted-arm-code
+                    (embedded-native-global-shared-view
+                      embedded-native-interpreted-arm-code)
                     arm-code)
                   "\n"
                   rest
@@ -5551,9 +5561,12 @@
             (let
               [arm-code : String (embedded-native-body-code params body-node)]
               (if (string.eq arm-code "")
-                embedded-native-interpreted-arm-code
+                (embedded-native-global-shared-view
+                  embedded-native-interpreted-arm-code)
                 arm-code))]
-          [_ embedded-native-interpreted-arm-code])])))
+          [_
+            (embedded-native-global-shared-view
+              embedded-native-interpreted-arm-code)])])))
 
 ;; One recognized string-dispatch scrutinee: the data probe op and the operand
 ;; index it reads. Refs #5604.

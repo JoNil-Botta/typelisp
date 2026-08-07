@@ -2596,20 +2596,10 @@
 (define ast-node-pool-compat-context-explicit? : bool
   false)
 (define ast-node-pool-compat-context-cell : (__tl_dyn-array AstNodePoolContext)
-  (let
-    [cell : (__tl_dyn-array AstNodePoolContext)
-      (make-array AstNodePoolContext 1)]
-    (begin
-      (array-set! cell 0 (ast-node-pool-context-capture-active-raw))
-      cell)))
+  (make-array (ast-node-pool-context-capture-active-raw)))
 (define ast-node-pool-compat-saved-context-cell : (__tl_dyn-array
     AstNodePoolContext)
-  (let
-    [cell : (__tl_dyn-array AstNodePoolContext)
-      (make-array AstNodePoolContext 1)]
-    (begin
-      (array-set! cell 0 (ast-node-pool-context-capture-active-raw))
-      cell)))
+  (make-array (ast-node-pool-context-capture-active-raw)))
 
 ;; The compatibility pool is an arena-backed shared view. Keep the raw shallow
 ;; copy confined to this internal cell boundary; ordinary non-Copy globals are

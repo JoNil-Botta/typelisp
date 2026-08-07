@@ -1408,7 +1408,7 @@
   (match plan
     [(CompilerBackendRuntimePlan.WithScratch _ scratch) scratch]
     [(CompilerBackendRuntimePlan.Plan _ _ _ _ _ _ _ _)
-      compiler-backend-empty-scratch-plan]))
+      (compiler-backend-global-shared-view compiler-backend-empty-scratch-plan)]))
 
 ;; Backend code-generation target. Linux/System V and Windows x64 are
 ;; both modeled here; target-specific runtime helpers are emitted below.
@@ -3209,11 +3209,17 @@
     (cond
       [(or (< index 0) (>= index 32)) ""]
       [(string.eq width "xmm")
-        (array-ref compiler-backend-xmm-family-xmm index)]
+        (array-ref
+          (compiler-backend-global-shared-view compiler-backend-xmm-family-xmm)
+          index)]
       [(string.eq width "zmm")
-        (array-ref compiler-backend-xmm-family-zmm index)]
+        (array-ref
+          (compiler-backend-global-shared-view compiler-backend-xmm-family-zmm)
+          index)]
       [(string.eq width "ymm")
-        (array-ref compiler-backend-xmm-family-ymm index)]
+        (array-ref
+          (compiler-backend-global-shared-view compiler-backend-xmm-family-ymm)
+          index)]
       [else ""])))
 
 (define (compiler-backend-vector-home-to-ymm [home : i64]) : String
@@ -24436,11 +24442,13 @@
         [point : i64
           (compiler-backend-function-state-emission-point
             (compiler-backend-state-function-state backend-state))]
-        [ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+        [ends : (Array i64)
+          (compiler-backend-global-shared-view
+            compiler-backend-scavenge-ctx-ends)]
         (and
           (>= var 0)
-          (< var (array-length compiler-backend-scavenge-ctx-ends))
-          (>= (array-ref compiler-backend-scavenge-ctx-ends var) (+ point 1))))]
+          (< var (array-length ends))
+          (>= (array-ref ends var) (+ point 1))))]
     [_ false]))
 
 (define (compiler-backend-divmod-src-register? [reg : String]) : bool
@@ -30049,7 +30057,8 @@
             0
             "%xmm2"
             backend-state))
-        compiler-backend-current-c-memory-planned-xmm)]
+        (compiler-backend-global-shared-view
+          compiler-backend-current-c-memory-planned-xmm))]
     (match (compiler-backend-emit-load-value-with-plan
       assignments
       value
@@ -36282,14 +36291,16 @@
             backend-state
             assignments
             all)))]
-    [cands : (Array i64) compiler-backend-scavenge-candidate-pool]
+    [cands : (Array i64)
+      (compiler-backend-global-shared-view
+        compiler-backend-scavenge-candidate-pool)]
     (compiler-backend-phi-temp-pick-reg-iter
       occupied-mask
       exclude-mask
       compiler-backend-scavenge-ctx-plan-reg-mask
-      compiler-backend-scavenge-candidate-pool
+      cands
       0
-      (array-length compiler-backend-scavenge-candidate-pool))))
+      (array-length cands))))
 
 (define (compiler-backend-emit-arg-move-list
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
@@ -37970,7 +37981,8 @@
       1
       "%r10"
       backend-state)
-    compiler-backend-current-phi-planned-stage))
+    (compiler-backend-global-shared-view
+      compiler-backend-current-phi-planned-stage)))
 
 (define (compiler-backend-emit-phi-temp-slot-save-gp
   [operand : String]
@@ -38393,7 +38405,8 @@
   [copies : CompilerBackendPhiCopySeq]
   [all : CompilerBackendPhiCopySeq]) : String
   (if (not (string.eq compiler-backend-current-phi-planned-cycle ""))
-    compiler-backend-current-phi-planned-cycle
+    (compiler-backend-global-shared-view
+      compiler-backend-current-phi-planned-cycle)
     (let
       [point : i64
         (compiler-backend-function-state-emission-point
@@ -38591,7 +38604,8 @@
               exclude-n
               "%r8"
               backend-state)
-            compiler-backend-current-phi-planned-stage))
+            (compiler-backend-global-shared-view
+              compiler-backend-current-phi-planned-stage)))
         dst-home)]
     ;; The scavenged staging register may host a value live through the edge even
     ;; when the point-local occupancy mask reads it free. Back edges hit this
@@ -72821,7 +72835,7 @@
 
 (define (compiler-backend-assembly-stream-output) : text_buf.TextBuf
   (if compiler-backend-assembly-stream-active
-    compiler-backend-assembly-stream-out
+    (compiler-backend-global-shared-view compiler-backend-assembly-stream-out)
     (text_buf.empty)))
 
 (define (compiler-backend-assembly-stream-finish!

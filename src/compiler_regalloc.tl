@@ -23,6 +23,13 @@
 (import compiler_parallel_move as pmove)
 (cfg test (import stdlib.test))
 
+(defmacro (compiler-reg-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 ;; Physical-register IDs and interned block-label IDs are deliberately carried
 ;; by distinct dense wrappers. Both use a contiguous live prefix, but keeping
 ;; separate types prevents an i64 from one identity domain from reaching an API
@@ -1283,29 +1290,37 @@
 (define (compiler-reg-xmm-registers-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
   (match target-abi
-    [(cabi.CompilerRegTargetAbi.Linux) compiler-reg-linux-xmm-registers]
-    [(cabi.CompilerRegTargetAbi.Windows) compiler-reg-windows-xmm-registers]))
+    [(cabi.CompilerRegTargetAbi.Linux)
+      (compiler-reg-global-shared-view compiler-reg-linux-xmm-registers)]
+    [(cabi.CompilerRegTargetAbi.Windows)
+      (compiler-reg-global-shared-view compiler-reg-windows-xmm-registers)]))
 
 (define (compiler-reg-vector-registers-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
   (match target-abi
-    [(cabi.CompilerRegTargetAbi.Linux) compiler-reg-linux-vector-registers]
-    [(cabi.CompilerRegTargetAbi.Windows) compiler-reg-windows-vector-registers]))
+    [(cabi.CompilerRegTargetAbi.Linux)
+      (compiler-reg-global-shared-view compiler-reg-linux-vector-registers)]
+    [(cabi.CompilerRegTargetAbi.Windows)
+      (compiler-reg-global-shared-view compiler-reg-windows-vector-registers)]))
 
 (define (compiler-reg-xmm-callee-registers-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
   (match target-abi
-    [(cabi.CompilerRegTargetAbi.Linux) compiler-reg-linux-xmm-callee-registers]
+    [(cabi.CompilerRegTargetAbi.Linux)
+      (compiler-reg-global-shared-view compiler-reg-linux-xmm-callee-registers)]
     [(cabi.CompilerRegTargetAbi.Windows)
-      compiler-reg-windows-xmm-callee-registers]))
+      (compiler-reg-global-shared-view
+        compiler-reg-windows-xmm-callee-registers)]))
 
 (define (compiler-reg-vector-callee-registers-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
   (match target-abi
     [(cabi.CompilerRegTargetAbi.Linux)
-      compiler-reg-linux-vector-callee-registers]
+      (compiler-reg-global-shared-view
+        compiler-reg-linux-vector-callee-registers)]
     [(cabi.CompilerRegTargetAbi.Windows)
-      compiler-reg-windows-vector-callee-registers]))
+      (compiler-reg-global-shared-view
+        compiler-reg-windows-vector-callee-registers)]))
 
 (define (compiler-reg-xmm-caller-register-count-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : i64

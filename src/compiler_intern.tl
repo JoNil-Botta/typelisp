@@ -458,12 +458,21 @@
       (intern-macro-local-source-name-id id)]
     [else fallback]))
 
-(define (intern-syntax-name-text-or [id : i64] [fallback : String]) : String
-  (let
-    [source-id : i64 (intern-syntax-source-name-id-or id -1)]
-    (if (>= source-id 0)
-      (intern-str source-id)
-      fallback)))
+;; Keep the ordinary intern-id path inline and, importantly, keep `fallback`
+;; lazy. Render callers commonly build a numeric fallback string; passing that
+;; through a function would build it for every ordinary name before this code
+;; could select the fast path. Structural names are rare and pay the decoder
+;; call only when the cheap pool-id range check fails.
+(defmacro (intern-syntax-name-text-or [id : Expr] [fallback : Expr]) : String
+  `(let
+    [syntax-name-id : i64 ,id]
+    (if (intern-renderable-id? syntax-name-id)
+      (intern-str syntax-name-id)
+      (let
+        [source-id : i64 (intern-syntax-source-name-id-or syntax-name-id -1)]
+        (if (>= source-id 0)
+          (intern-str source-id)
+          ,fallback)))))
 
 (defstruct InternId
   (value u32))

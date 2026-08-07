@@ -384,7 +384,6 @@
       (compiler-lower-smoke-write-text
         path
         "(define (no-main-direct-helper) : i64 7)")
-      (compiler_lower.lower-no-main-entry-prune-set! true)
       (compiler_driver_core.compiler-driver-reset-file-state!)
       (match (compiler_driver_core.compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
         path

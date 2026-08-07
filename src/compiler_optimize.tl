@@ -19903,25 +19903,6 @@
                 rest-blocks
                 (or loop-changed rest-changed))])])]))
 
-(define (opt-licm-blocks-with-context-and-direct-call-clean
-  [type-segment-bases : i64]
-  [sources : opt_i64_i64_map.Map]
-  [types : OptSsaVarTypes]
-  [provenance : OptLicmStoreState]
-  [direct-call-clean : opt_i64_i64_map.Map]
-  [late? : bool]
-  [loops : OptNaturalLoopList]
-  [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
-  (opt-licm-apply-loops
-    type-segment-bases
-    sources
-    types
-    provenance
-    direct-call-clean
-    late?
-    loops
-    blocks))
-
 (define (opt-licm-function-with-context-result-and-direct-call-clean
   [type-segment-bases : i64]
   [context : OptCfgContext]
@@ -19956,7 +19937,7 @@
                       params
                       types
                       blocks)]
-                  (match (opt-licm-blocks-with-context-and-direct-call-clean
+                  (match (opt-licm-apply-loops
                     type-segment-bases
                     sources
                     types
@@ -19998,25 +19979,6 @@
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
-(define (opt-licm-function-with-context-result
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (opt-licm-function-with-context-result-and-direct-call-clean
-    type-segment-bases
-    context
-    false
-    (opt_i64_i64_map.with-capacity 1)
-    false
-    func))
-
-(define (opt-licm-function-with-context
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt-licm-function-with-context-result type-segment-bases context func)
-    [(OptFunctionCtxResult.Result next _) next]))
-
 (define (opt-licm-function-with-direct-call-clean
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -20037,10 +19999,14 @@
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-      (opt-licm-function-with-context
+      (match (opt-licm-function-with-context-result-and-direct-call-clean
         type-segment-bases
         (opt-cfg-context-build blocks)
-        func)]))
+        false
+        (opt_i64_i64_map.with-capacity 1)
+        false
+        func)
+        [(OptFunctionCtxResult.Result next _) next])]))
 
 ;; --- invariant nested-loop entry unswitch ------------------------------------
 ;;
@@ -32443,26 +32409,15 @@
       call-memory
       gvn)))
 
-(define (opt-gvn-blocks-with-context
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (opt-gvn-blocks-with-context-and-call-memory
-    type-segment-bases
-    context
-    params
-    (opt_i64_i64_map.with-capacity 1)
-    blocks))
-
 (define (opt-gvn-blocks
   [type-segment-bases : i64]
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (opt-gvn-blocks-with-context
+  (opt-gvn-blocks-with-context-and-call-memory
     type-segment-bases
     (opt-cfg-context-build blocks)
     params
+    (opt_i64_i64_map.with-capacity 1)
     blocks))
 
 ;; --- dominated redundant bounds-check elimination ----------------------------
@@ -39458,8 +39413,8 @@
     blocks))
 
 ;; Whole-function transforms keep a pathological-CFG work cap. Loop transforms
-;; do not use this value: `run-loop?` below is deliberately unconditional and
-;; every loop pass applies its own natural-loop-local admission checks.
+;; do not use this value: every loop pass applies its own natural-loop-local
+;; admission checks.
 (define (opt-heavy-pass-block-limit) : i64
   1026)
 
@@ -60343,39 +60298,28 @@
                       ;; index. Their admission decisions are loop-local, so an
                       ;; unrelated block elsewhere in the enclosing function
                       ;; must not turn the loop pipeline off.
-                      [run-loop? : bool true]
                       [_t-rotation : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [rotation-result : OptBlockCtxResult
-                        (if run-loop?
-                          (opt-loop-rotation-function-result
-                            pools
-                            (ir.CompilerIrFunction.Function
-                              name
-                              params
-                              ret-ty
-                              promoted-frame
-                              sroa-blocks))
-                          (OptBlockCtxResult.Result
-                            sroa-blocks
-                            (opt-cfg-context-empty)
-                            false))]
+                        (opt-loop-rotation-function-result
+                          pools
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            promoted-frame
+                            sroa-blocks))]
                       ;; Literal-edge normalization is speculative: keep it
                       ;; only if the exact mutable SIMD rewrite succeeds.
                       [simd-rotation-result : OptBlockCtxResult
-                        (if run-loop?
-                          (opt-loop-rotation-normalized-function-result
-                            pools
-                            (ir.CompilerIrFunction.Function
-                              name
-                              params
-                              ret-ty
-                              promoted-frame
-                              sroa-blocks))
-                          (OptBlockCtxResult.Result
-                            sroa-blocks
-                            (opt-cfg-context-empty)
-                            false))]
+                        (opt-loop-rotation-normalized-function-result
+                          pools
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            promoted-frame
+                            sroa-blocks))]
                       [simd-rotated : ir.CompilerIrFunction
                         (ir.CompilerIrFunction.Function
                           name
@@ -60396,7 +60340,7 @@
                       ;; position remains as a fallback for functions whose SSA
                       ;; construction is intentionally rejected.
                       [simd-result : OptFunctionCtxResult
-                        (if (and run-loop? simd-rotation-context-valid?)
+                        (if simd-rotation-context-valid?
                           (opt-unroll-simd-function-with-context-result
                             type-segment-bases
                             simd-rotation-context
@@ -60452,15 +60396,11 @@
                       ;; original function, so the optimization path remains safe.
                       [_t-ssa : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [ssa-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-ssa-construct-function-from-context-result
-                            type-segment-bases
-                            rotated
-                            rotation-context
-                            rotation-context-valid?)
-                          (OptFunctionCtxResult.Result
-                            rotated
-                            (opt-cfg-context-empty)))]
+                        (opt-ssa-construct-function-from-context-result
+                          type-segment-bases
+                          rotated
+                          rotation-context
+                          rotation-context-valid?)]
                       [ssa : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60553,10 +60493,8 @@
                           params
                           ret-ty
                           ssa-frame
-                          (if (and
-                            run-loop?
-                            (opt-verify-ok?
-                              (opt-verify-function-with-context ssa ssa-context)))
+                          (if (opt-verify-ok?
+                            (opt-verify-function-with-context ssa ssa-context))
                             (opt-bounds-dom-blocks-with-context
                               type-segment-bases
                               ssa-context
@@ -60575,21 +60513,12 @@
                           unit)]
                       [_t-sccp : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [sccp-result : OptBlockCtxResult
-                        (if run-loop?
-                          (opt-sccp-blocks-with-context-result-raw
-                            type-segment-bases
-                            ssa-context
-                            params
-                            bounds-dom
-                            ssa-frame)
-                          (OptBlockCtxResult.Result
-                            (opt-sccp-blocks-with-frame
-                              type-segment-bases
-                              params
-                              bounds-dom
-                              ssa-frame)
-                            (opt-cfg-context-empty)
-                            false))]
+                        (opt-sccp-blocks-with-context-result-raw
+                          type-segment-bases
+                          ssa-context
+                          params
+                          bounds-dom
+                          ssa-frame)]
                       [sccp : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases
@@ -60726,19 +60655,14 @@
                           unit)]
                       [_t-cfg2 : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [cfg-result : OptBlockCtxResult
-                        (if run-loop?
-                          (opt-cfg-simplify-blocks-with-context-result
-                            (OptBlockCtxResult.Result
-                              thread-branch
-                              sccp-context
-                              (and
-                                sccp-context-valid
-                                (not bool-branch-changed)
-                                (not thread-branch-changed))))
+                        (opt-cfg-simplify-blocks-with-context-result
                           (OptBlockCtxResult.Result
-                            (opt-cfg-simplify-blocks thread-branch)
-                            (opt-cfg-context-empty)
-                            false))]
+                            thread-branch
+                            sccp-context
+                            (and
+                              sccp-context-valid
+                              (not bool-branch-changed)
+                              (not thread-branch-changed))))]
                       [cfg : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases
@@ -60785,11 +60709,9 @@
                       [switch-blocks : ir.CompilerIrBlockList
                         (opt-function-blocks switched)]
                       [switch-context : OptCfgContext
-                        (if run-loop?
-                          (if switch-changed
-                            (opt-cfg-context-build switch-blocks)
-                            cfg-context)
-                          (opt-cfg-context-empty))]
+                        (if switch-changed
+                          (opt-cfg-context-build switch-blocks)
+                          cfg-context)]
                       [_p-switch : unit
                         (cfg
                           compile-profile
@@ -60818,39 +60740,28 @@
                       ;; (falling back to its input on rejection), so a verified
                       ;; input stays verified across the chain.
                       [loop-cluster-verified? : bool
-                        (and
-                          run-loop?
-                          (opt-verify-ok?
-                            (opt-verify-function-with-context
-                              (ir.CompilerIrFunction.Function
-                                name
-                                params
-                                ret-ty
-                                ssa-frame
-                                switch-blocks)
-                              switch-context)))]
-                      [preheaders-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (let
-                            [preheaders-input : ir.CompilerIrFunction
-                              (ir.CompilerIrFunction.Function
-                                name
-                                params
-                                ret-ty
-                                ssa-frame
-                                switch-blocks)]
-                            (opt-loop-preheaders-function-with-context-result
-                              switch-context
-                              loop-cluster-verified?
-                              preheaders-input))
-                          (OptFunctionCtxResult.Result
+                        (opt-verify-ok?
+                          (opt-verify-function-with-context
                             (ir.CompilerIrFunction.Function
                               name
                               params
                               ret-ty
                               ssa-frame
                               switch-blocks)
-                            (opt-cfg-context-empty)))]
+                            switch-context))]
+                      [preheaders-result : OptFunctionCtxResult
+                        (let
+                          [preheaders-input : ir.CompilerIrFunction
+                            (ir.CompilerIrFunction.Function
+                              name
+                              params
+                              ret-ty
+                              ssa-frame
+                              switch-blocks)]
+                          (opt-loop-preheaders-function-with-context-result
+                            switch-context
+                            loop-cluster-verified?
+                            preheaders-input))]
                       [preheaders : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60872,12 +60783,10 @@
                       [_t-rotate-ssa : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [rotate-ssa-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-rotate-ssa-function-with-context-result
-                            preheaders-context
-                            loop-cluster-verified?
-                            preheaders)
-                          preheaders-result)]
+                        (opt-rotate-ssa-function-with-context-result
+                          preheaders-context
+                          loop-cluster-verified?
+                          preheaders)]
                       [rotate-ssa : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60899,13 +60808,11 @@
                       [_t-scratch-reset : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [scratch-reset-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-scratch-reset-function-with-context-result
-                            type-segment-bases
-                            rotate-ssa-context
-                            loop-cluster-verified?
-                            rotate-ssa)
-                          rotate-ssa-result)]
+                        (opt-scratch-reset-function-with-context-result
+                          type-segment-bases
+                          rotate-ssa-context
+                          loop-cluster-verified?
+                          rotate-ssa)]
                       [scratch-reset : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60926,15 +60833,13 @@
                           unit)]
                       [_t-licm : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-licm-function-with-context-result-and-direct-call-clean
-                            type-segment-bases
-                            scratch-reset-context
-                            loop-cluster-verified?
-                            (struct-get summaries direct-call-clean)
-                            false
-                            scratch-reset)
-                          scratch-reset-result)]
+                        (opt-licm-function-with-context-result-and-direct-call-clean
+                          type-segment-bases
+                          scratch-reset-context
+                          loop-cluster-verified?
+                          (struct-get summaries direct-call-clean)
+                          false
+                          scratch-reset)]
                       [licm : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60959,12 +60864,10 @@
                       ;; phi, but the fresh arm clone remains an ordinary bounded
                       ;; rematerialization chain.
                       [pre-induction-sink-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-successor-sink-function-with-context-result
-                            type-segment-bases
-                            licm-context
-                            licm)
-                          licm-result)]
+                        (opt-successor-sink-function-with-context-result
+                          type-segment-bases
+                          licm-context
+                          licm)]
                       [pre-induction-sink : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60977,13 +60880,11 @@
                       [_t-induction : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [induction-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-induction-function-with-context-result
-                            type-segment-bases
-                            pre-induction-sink-context
-                            loop-cluster-verified?
-                            pre-induction-sink)
-                          licm-result)]
+                        (opt-induction-function-with-context-result
+                          type-segment-bases
+                          pre-induction-sink-context
+                          loop-cluster-verified?
+                          pre-induction-sink)]
                       [induction : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61010,12 +60911,10 @@
                       [_t-flag-exit : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [flag-exit-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-flag-exit-function-with-context-result
-                            induction-context
-                            loop-cluster-verified?
-                            induction)
-                          induction-result)]
+                        (opt-flag-exit-function-with-context-result
+                          induction-context
+                          loop-cluster-verified?
+                          induction)]
                       [flag-exit : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61042,13 +60941,11 @@
                       [_t-bce-version : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [bce-version-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-bce-version-function-with-context-result
-                            type-segment-bases
-                            flag-exit-context
-                            loop-cluster-verified?
-                            flag-exit)
-                          flag-exit-result)]
+                        (opt-bce-version-function-with-context-result
+                          type-segment-bases
+                          flag-exit-context
+                          loop-cluster-verified?
+                          flag-exit)]
                       [bce-version : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61078,12 +60975,10 @@
                       [_t-fill-call : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [fill-call-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-fill-call-function-with-context-result
-                            bce-version-context
-                            loop-cluster-verified?
-                            bce-version)
-                          bce-version-result)]
+                        (opt-fill-call-function-with-context-result
+                          bce-version-context
+                          loop-cluster-verified?
+                          bce-version)]
                       [fill-call : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61109,13 +61004,11 @@
                       ;; below keep valid dominance facts.
                       [_t-unroll : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [unroll-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-unroll-function-with-context-result
-                            type-segment-bases
-                            fill-call-context
-                            loop-cluster-verified?
-                            fill-call)
-                          fill-call-result)]
+                        (opt-unroll-function-with-context-result
+                          type-segment-bases
+                          fill-call-context
+                          loop-cluster-verified?
+                          fill-call)]
                       [unrolled : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61146,23 +61039,21 @@
                         (compiler-opt-debug-observe-function
                           type-segment-bases
                           "load_combine"
-                          (if run-loop?
-                            (match unrolled
-                              [(ir.CompilerIrFunction.Function
-                                  _name
-                                  _params
-                                  _ret-ty
+                          (match unrolled
+                            [(ir.CompilerIrFunction.Function
+                                _name
+                                _params
+                                _ret-ty
+                                unrolled-frame
+                                unrolled-blocks)
+                              (ir.CompilerIrFunction.Function
+                                name
+                                params
+                                ret-ty
+                                unrolled-frame
+                                (opt-load-combine-blocks
                                   unrolled-frame
-                                  unrolled-blocks)
-                                (ir.CompilerIrFunction.Function
-                                  name
-                                  params
-                                  ret-ty
-                                  unrolled-frame
-                                  (opt-load-combine-blocks
-                                    unrolled-frame
-                                    unrolled-blocks))])
-                            unrolled))]
+                                  unrolled-blocks))]))]
                       [_p-load-combine : unit
                         (cfg
                           compile-profile
@@ -61179,13 +61070,11 @@
                       ;; form is handed straight to affine-fold/GVN below.
                       [_t-lftr : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [lftr-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-lftr-function-with-context-result
-                            type-segment-bases
-                            unroll-context
-                            loop-cluster-verified?
-                            load-combine)
-                          unroll-result)]
+                        (opt-lftr-function-with-context-result
+                          type-segment-bases
+                          unroll-context
+                          loop-cluster-verified?
+                          load-combine)]
                       [lftr : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61214,15 +61103,13 @@
                       [_t-post-lftr-licm : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [post-lftr-licm-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-licm-function-with-context-result-and-direct-call-clean
-                            type-segment-bases
-                            lftr-context
-                            loop-cluster-verified?
-                            (struct-get summaries direct-call-clean)
-                            true
-                            lftr)
-                          lftr-result)]
+                        (opt-licm-function-with-context-result-and-direct-call-clean
+                          type-segment-bases
+                          lftr-context
+                          loop-cluster-verified?
+                          (struct-get summaries direct-call-clean)
+                          true
+                          lftr)]
                       [post-lftr-licm : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61254,13 +61141,11 @@
                       [_t-gep-offset : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [gep-offset-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-gep-offset-function-with-context-result
-                            type-segment-bases
-                            post-lftr-licm-context
-                            loop-cluster-verified?
-                            post-lftr-licm)
-                          post-lftr-licm-result)]
+                        (opt-gep-offset-function-with-context-result
+                          type-segment-bases
+                          post-lftr-licm-context
+                          loop-cluster-verified?
+                          post-lftr-licm)]
                       [gep-offset : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases

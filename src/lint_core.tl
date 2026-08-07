@@ -1394,15 +1394,6 @@
     (lint-name-case-kebab-suggestion name true)
     span))
 
-(define (lint-type-operand-name-case-finding
-  [name : String]
-  [span : ast.AstSourceSpan]) : LintFinding
-  (lint-name-case-finding
-    name
-    (lint-rule-local-name-case-id)
-    (lint-name-case-kebab-suggestion name true)
-    span))
-
 (define (lint-type-name-case-finding [name : String] [span : ast.AstSourceSpan]) : LintFinding
   (lint-name-case-finding
     name
@@ -9179,9 +9170,7 @@
         state
         (struct-get state frames)
         (lint-findings-add
-          (if type-operand
-            (lint-type-operand-name-case-finding name (struct-get binding span))
-            (lint-local-name-case-finding name (struct-get binding span)))
+          (lint-local-name-case-finding name (struct-get binding span))
           (struct-get state findings)))
       state)))
 

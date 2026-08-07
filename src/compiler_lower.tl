@@ -6235,8 +6235,6 @@
   0)
 (define lower-spmd-scalar-call-context : LowerSpmdScalarCallContext
   (LowerSpmdScalarCallContext.No))
-(define lower-no-main-entry-prune-active : bool
-  false)
 
 (define (lower-reset-file-state!) : unit
   (begin
@@ -6249,8 +6247,7 @@
     (set! lower-spmd-inline-next-temp 0)
     (set! lower-spmd-scalar-call-context (LowerSpmdScalarCallContext.No))
     (lower-reach-scratch-globals-reset!)
-    (lower-module-decl-index-reset!)
-    (set! lower-no-main-entry-prune-active false)))
+    (lower-module-decl-index-reset!)))
 
 (define (lower-reset-intern-owned-state!) : unit
   (tc_core.compiler-typecheck-reset-intern-owned-state!))
@@ -11177,9 +11174,6 @@
 
 (define (lower-comptime-runtime-skip-module? [module : String]) : bool
   (string.eq module "stdlib.comptime"))
-
-(define (lower-no-main-entry-prune-set! [active : bool]) : unit
-  (set! lower-no-main-entry-prune-active active))
 
 (define lower-comptime-error-id-generation : i64
   -1)
@@ -64387,62 +64381,6 @@
             prev-module
             prev-module-id)
           result)))))
-
-;; Serial/test compatibility adapter for expanded-program lowering.  The
-;; explicit production entry above threads compile-owned pool/interner state
-;; through explicit workers with deliberate bridges around legacy phases; this
-;; adapter preserves the historical surface for tests/tools.
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
-  [load-state : load.CompilerLoadSessionState]
-  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
-  [job-state : tc_core.TcJobState]
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [mode : CompilerLowerMode]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
-  (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names-and-intern-state
-    load-state
-    prefix-cache
-    job-state
-    entry-path
-    program
-    paths
-    mode
-    stdlib-roots
-    cache-scope
-    pools
-    source-names
-    (ci.intern-compat-state-capture-active)))
-
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
-  [load-state : load.CompilerLoadSessionState]
-  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
-  [job-state : tc_core.TcJobState]
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [mode : CompilerLowerMode]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
-  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
-    load-state
-    prefix-cache
-    job-state
-    entry-path
-    program
-    paths
-    mode
-    stdlib-roots
-    cache-scope
-    pools
-    source-names
-    (ci.intern-compat-state-capture-active)))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache
   [entry-path : String]

@@ -3570,6 +3570,11 @@ move-only values and as copies for copyable values:
   enum value. Payload bindings then own the active payload values for that
   arm. Matching `(& place)` when the borrowed referent is an enum is the
   non-consuming borrowed form described below.
+- Tuple patterns. Matching an owned tuple with `(tuple p1 ... pn)` consumes a
+  move-only tuple and transfers its slots to bindings from left to right. A
+  copyable tuple is copied at the by-value match boundary. Matching
+  `(& place)` binds shared references to the selected tuple slots instead and
+  leaves the owner initialized subject to the live borrow.
 - Closure capture. Capturing a move-only local by value moves it into the
   closure environment at closure creation time; the local cannot be used after
   the lambda literal. Immutable reference captures are governed by section
@@ -3597,6 +3602,8 @@ without moving it. In v1 these are limited to:
   their explicit-lifetime forms.
 - Borrowed enum matches over `(& place)` / `(& lifetime place)`. The match
   inspects the active enum variant without moving the enum owner.
+- Borrowed tuple matches over `(& place)` / `(& lifetime place)`. Tuple
+  subpattern bindings are shared references carrying the scrutinee lifetime.
 - Calls and typed operations whose parameter or receiver is `(& lifetime T)`
   or `(&mut lifetime T)`. The ordinary call rules in section 3.10 insert an
   immutable auto-borrow or reborrow when the formal parameter is an immutable
@@ -3667,7 +3674,10 @@ box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
 or elements, and may move out move-only fields/elements only where this
 tracked-path policy accepts the path. A consuming `match` is the enum
 exception: it moves the whole scrutinee first, then binds payload values owned
-by the selected arm.
+by the selected arm. Constructor-shaped tuple destructuring likewise consumes
+the whole owned tuple and transfers every bound slot; direct partial move-out
+continues to use `(tuple-ref place literal-index)`. Dotted numeric tuple
+projection syntax is not introduced.
 
 **Diagnostics.** Move checking must produce source-located diagnostics for:
 
@@ -4120,6 +4130,15 @@ explicit constructors.
   mirroring constructor calls. Field subpatterns are field bindings, `_`, and
   nested irrefutable struct patterns; refutable field subpatterns such as
   literals or enum variants are rejected.
+- Tuple scrutinees support the constructor-shaped `(tuple p1 ... pn)` pattern.
+  Its arity must exactly match `(Tuple T1 ... Tn)`. Slot subpatterns are
+  irrefutable bindings, `_`, or nested tuple, struct, and box patterns, and
+  compose in the same recursive positions inside enum payload, struct field,
+  and box patterns. Owned move-only tuples are consumed and their bound slots
+  transfer left to right; copyable tuples are copied. Matching a shared
+  borrowed tuple binds slot references carrying the scrutinee lifetime and
+  does not move the owner. Tuple access outside a pattern remains
+  `(tuple-ref place literal-index)`; numeric dotted syntax is not supported.
 - Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)` use
   the same variant, wildcard, literal payload, and nested variant pattern
   forms, but inspect the enum without moving the owner. Payload bindings are

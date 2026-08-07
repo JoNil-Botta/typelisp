@@ -4530,7 +4530,11 @@
         [(reader.SexprView.Sym name)
           (match (parse-ast-pattern-list dispatch pools args)
             [(ResultAstPatternList.Ok parsed-args)
-              (ResultAstPattern.Ok (ast.ast-pat-variant-id name parsed-args))]
+              (if (=
+                (compiler-parse-dispatch-tag-id dispatch name)
+                (compiler-parse-tag-expr-tuple))
+                (ResultAstPattern.Ok (ast.ast-pat-tuple parsed-args))
+                (ResultAstPattern.Ok (ast.ast-pat-variant-id name parsed-args)))]
             [(ResultAstPatternList.Err message) (ResultAstPattern.Err message)])]
         [_ (ResultAstPattern.Err "parse: expected pattern")])]
     [_ (ResultAstPattern.Err "parse: expected pattern")]))

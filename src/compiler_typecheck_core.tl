@@ -6694,6 +6694,17 @@
               "this argument carries an arena region that the parameter does not accept")]
           [(TcMaybeAstSourceSpan.No) message])])))
 
+;; Ordinary lifetime names stay on the old direct intern lookup. Structural
+;; syntax identities and malformed internal ids take the total display path.
+(defmacro (tc-lifetime-name-render [name : comptime.Expr]) : comptime.Expr
+  `(let
+    [lifetime-name-id : i64 ,name]
+    (if (ci.intern-renderable-id? lifetime-name-id)
+      (ci.intern-str lifetime-name-id)
+      (ci.intern-syntax-name-text-or
+        lifetime-name-id
+        (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">")))))
+
 (define (tc-spanned-escape-error
   [inner : ast.AstExpr]
   [span : ast.AstSourceSpan]
@@ -11660,17 +11671,14 @@
 (define (tc-elided-lifetime-name-prefix) : String
   "\n__typelisp_signature_elided_lifetime_")
 
-(define (tc-lifetime-name-render [name : i64]) : String
-  (ci.intern-syntax-name-text-or
-    name
-    (str_cat.str-cat "<id:" (string.int->string name) ">")))
-
 (define (tc-elaborated-lifetime-hidden? [name : i64]) : bool
   (or
     (= name cbi.compiler-builtin-id-fix-empty)
-    (tc-diag-string-prefix?
-      (ci.intern-syntax-name-text-or name "")
-      (tc-elided-lifetime-name-prefix))))
+    (and
+      (ci.intern-renderable-id? name)
+      (tc-diag-string-prefix?
+        (ci.intern-str name)
+        (tc-elided-lifetime-name-prefix)))))
 
 (define (tc-type-render [ty : ast.AstType]) : String
   (match ty

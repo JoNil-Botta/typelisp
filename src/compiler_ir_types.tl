@@ -3474,9 +3474,11 @@
     ")"))
 
 (define (compiler-ir-lifetime-render [region : i64]) : String
-  (ci.intern-syntax-name-text-or
-    region
-    (str_cat.str-cat "<id:" (string.int->string region) ">")))
+  (if (ci.intern-renderable-id? region)
+    (ci.intern-str region)
+    (ci.intern-syntax-name-text-or
+      region
+      (str_cat.str-cat "<id:" (string.int->string region) ">"))))
 
 (define (compiler-ir-type-render [type-segment-bases : i64] [ty : ast.AstType]) : String
   (match ty

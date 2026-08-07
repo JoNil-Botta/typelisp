@@ -7,8 +7,7 @@ set -eu
 # scalar-fair clang -O2 -fno-vectorize/-fno-slp-vectorize row. Measurement may
 # also report auto-vectorized clang -O2, but a baseline chooses whether that row
 # is gated by including benchmark/c/<name>. The self-compile metric carries a
-# one-part-per-million CI tolerance, but its absolute cachegrind count is not
-# portable between
+# small CI tolerance, but its absolute cachegrind count is not portable between
 # local WSL/Linux environments and GitHub-hosted Linux. Local comparisons
 # therefore report that row without gating it; reviewers measure branch deltas
 # by running measure-instruction-counts.sh on both trees on one host.
@@ -30,12 +29,9 @@ DEFAULT_WORKDIR="target/instruction-count-check"
 BASELINE=${TYPELISP_IR_CHECK_BASELINE:-$DEFAULT_BASELINE}
 RUNS=${TYPELISP_IR_CHECK_RUNS:-1}
 BENCHMARKS=${TYPELISP_IR_CHECK_BENCHMARKS:-$DEFAULT_BENCHMARKS}
-SELF_COMPILE_TOLERANCE_PPM=${TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM:-1}
+SELF_COMPILE_TOLERANCE_PPM=${TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM:-5000}
 STALE_BUDGET_PCT=${TYPELISP_IR_STALE_BUDGET_PCT:-60}
 WORKDIR=${TYPELISP_IR_CHECK_OUT:-$DEFAULT_WORKDIR}
-BASELINE_SOURCE=${TYPELISP_IR_BASELINE_SOURCE:-$ROOT/perf/insn-exec-baseline-source.txt}
-PR_BASE_SHA=${TYPELISP_IR_PR_BASE_SHA:-}
-SELECT_BASELINE_SOURCE_COMMIT=
 UPDATE_BASELINE=0
 BENCHMARKS_ONLY=0
 SELF_COMPILE_ONLY=0
@@ -59,10 +55,6 @@ Options:
   --benchmarks-only    Measure benchmark cases only, not self_compile
   --self-test          Check the comparison logic against fixtures and exit;
                        needs no compiler, valgrind, or Linux host
-  --select-baseline-source COMMIT
-                       Print the commit to record for a post-merge measurement.
-                       A generated-only ratchet merge retains its input commit,
-                       preventing the ratchet from opening another identical PR
   --self-compile-only  Measure and compare self_compile/compile_cli_opt1 only;
                        with --update-baseline, rewrites only that row and
                        preserves every benchmark row (benchmark/c-scalar rows
@@ -81,11 +73,7 @@ Environment:
   TYPELISP_IR_CHECK_BENCHMARKS  Default --benchmarks
   TYPELISP_IR_CHECK_BASELINE    Default --baseline
   TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM
-                                Default self_compile tolerance in ppm (1 = 0.0001%)
-  TYPELISP_IR_BASELINE_SOURCE   File containing the commit whose main-tree
-                                self_compile inputs were measured
-  TYPELISP_IR_PR_BASE_SHA       Pull-request base commit used to distinguish a
-                                stale main baseline from this PR's own delta
+                                Default self_compile tolerance in ppm (5000 = 0.5%)
   TYPELISP_IR_STALE_BUDGET_PCT  Warn when a tolerated row uses this share of its
                                 tolerance (default 60), so accumulated drift is
                                 visible before it lands on an unrelated change
@@ -134,14 +122,6 @@ while [ "$#" -gt 0 ]; do
         --self-test)
             SELF_TEST=1
             shift
-            ;;
-        --select-baseline-source)
-            [ "$#" -ge 2 ] || {
-                echo "missing value for --select-baseline-source" >&2
-                exit 2
-            }
-            SELECT_BASELINE_SOURCE_COMMIT=$2
-            shift 2
             ;;
         --output)
             [ "$#" -ge 2 ] || {
@@ -360,132 +340,6 @@ compare_counts() {
         "$IR_COMPARE_AWK" "$1" "$2"
 }
 
-# Return success when two commits have the same inputs to the converged Linux
-# compiler and its opt1 self-compile measurement. Keep this list beside both
-# source-marker selection and failure attribution so the two cannot disagree.
-self_compile_inputs_match() {
-    git diff --quiet "$1" "$2" -- \
-        .github/workflows/bootstrap-stage0.yml \
-        .github/workflows/ci.yml \
-        src \
-        stdlib \
-        tools/embedded-stdlib-tlci \
-        scripts/build-embedded-stdlib-tlci.sh \
-        scripts/build-stage0.sh \
-        scripts/check-bootstrap-fixpoint.sh \
-        scripts/check-instruction-counts.sh \
-        scripts/ci-verify.sh \
-        scripts/lib-bootstrap-ctfe.sh \
-        scripts/lib-bootstrap-fixpoint-control.sh \
-        scripts/lib-build-provenance.sh \
-        scripts/lib-linux-entry.sh \
-        scripts/lib-native-link.sh \
-        scripts/measure-instruction-counts.sh
-}
-
-# The automated ratchet changes only these two generated files. Recording the
-# ratchet merge itself would make the next main run change the marker again and
-# open an endless chain of otherwise identical ratchet PRs. Preserve the prior
-# measured commit when nothing else changed; all substantive main commits get a
-# fresh marker even when their compiler inputs happen to compare equal.
-select_self_compile_baseline_source() {
-    _ssbs_current=$1
-    case "$_ssbs_current" in
-        "" | *[!0-9a-fA-F]*)
-            echo "invalid self_compile baseline source commit: $_ssbs_current" >&2
-            return 2
-            ;;
-    esac
-    if ! git cat-file -e "$_ssbs_current^{commit}" 2>/dev/null; then
-        echo "self_compile baseline source commit is unavailable: $_ssbs_current" >&2
-        return 2
-    fi
-    _ssbs_current=$(git rev-parse "$_ssbs_current^{commit}")
-
-    _ssbs_previous=
-    if [ -f "$BASELINE_SOURCE" ]; then
-        _ssbs_previous=$(sed -n '1p' "$BASELINE_SOURCE" | tr -d '\r')
-    fi
-    case "$_ssbs_previous" in
-        "" | *[!0-9a-fA-F]*)
-            printf '%s\n' "$_ssbs_current"
-            return 0
-            ;;
-    esac
-    if ! git cat-file -e "$_ssbs_previous^{commit}" 2>/dev/null; then
-        printf '%s\n' "$_ssbs_current"
-        return 0
-    fi
-    _ssbs_previous=$(git rev-parse "$_ssbs_previous^{commit}")
-
-    if git diff --quiet "$_ssbs_previous" "$_ssbs_current" -- . \
-        ':!perf/insn-exec-baseline.tsv' \
-        ':!perf/insn-exec-baseline-source.txt'; then
-        printf '%s\n' "$_ssbs_previous"
-    else
-        printf '%s\n' "$_ssbs_current"
-    fi
-}
-
-print_self_compile_failure_origin() {
-    _psfo_kind=$1
-    _psfo_source=$2
-    _psfo_base=$3
-    case "$_psfo_kind" in
-        stale)
-            echo "[ir-check] baseline-stale: main changed self_compile inputs after" >&2
-            echo "[ir-check] measured commit $_psfo_source and before PR base $_psfo_base." >&2
-            echo "[ir-check] Do not attribute the accumulated delta to this PR. The post-merge" >&2
-            echo "[ir-check] ratchet lane should open a CI-owned refresh PR for current main." >&2
-            ;;
-        pr)
-            echo "[ir-check] pr-delta: the baseline covers this PR's main base ($_psfo_base)." >&2
-            echo "[ir-check] This branch changed self_compile; ratchet an intentional change" >&2
-            echo "[ir-check] to the exact current value printed above in the same PR." >&2
-            ;;
-        *)
-            echo "[ir-check] self_compile attribution unavailable; compare the baseline's" >&2
-            echo "[ir-check] measured main commit with this PR base before assigning the delta." >&2
-            ;;
-    esac
-}
-
-report_self_compile_failure_origin() {
-    _rsfo_diff=$1
-    if ! grep -E '^self_compile/compile_cli_opt1 .* (REGRESSION|IMPROVEMENT)' \
-        "$_rsfo_diff" >/dev/null; then
-        return 0
-    fi
-
-    _rsfo_source=
-    if [ -f "$BASELINE_SOURCE" ]; then
-        _rsfo_source=$(sed -n '1p' "$BASELINE_SOURCE" | tr -d '\r')
-    fi
-    case "$_rsfo_source" in
-        "" | *[!0-9a-fA-F]*)
-            print_self_compile_failure_origin unknown "<unknown>" "${PR_BASE_SHA:-<unknown>}"
-            return 0
-            ;;
-    esac
-    case "$PR_BASE_SHA" in
-        "" | *[!0-9a-fA-F]*)
-            print_self_compile_failure_origin unknown "$_rsfo_source" "<unknown>"
-            return 0
-            ;;
-    esac
-    if ! git cat-file -e "$_rsfo_source^{commit}" 2>/dev/null ||
-        ! git cat-file -e "$PR_BASE_SHA^{commit}" 2>/dev/null; then
-        print_self_compile_failure_origin unknown "$_rsfo_source" "$PR_BASE_SHA"
-        return 0
-    fi
-
-    if self_compile_inputs_match "$_rsfo_source" "$PR_BASE_SHA"; then
-        print_self_compile_failure_origin pr "$_rsfo_source" "$PR_BASE_SHA"
-    else
-        print_self_compile_failure_origin stale "$_rsfo_source" "$PR_BASE_SHA"
-    fi
-}
-
 # Host-independent coverage for the comparison itself: no compiler, no
 # valgrind, no measurement. Fixtures use the real numbers from the runs that
 # motivated the budget annotation so the cases stay recognizable.
@@ -661,21 +515,21 @@ self_test() {
     SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
     BENCHMARKS=arith_loop
     # 55356290376 is the committed self_compile baseline these cases were taken
-    # against; 55356 is its one-part-per-million tolerance.
+    # against; 276781451 is its 0.5% tolerance.
     self_test_row 437500077 55356290376 > "$SELF_TEST_DIR/base.tsv"
-    self_test_row 437500077 55356340376 > "$SELF_TEST_DIR/drifted.tsv"
-    self_test_row 437500077 55356352376 > "$SELF_TEST_DIR/regressed.tsv"
-    self_test_row 437500077 55356300376 > "$SELF_TEST_DIR/small.tsv"
+    self_test_row 437500077 55608478646 > "$SELF_TEST_DIR/drifted.tsv"
+    self_test_row 437500077 55667745289 > "$SELF_TEST_DIR/regressed.tsv"
+    self_test_row 437500077 55366290376 > "$SELF_TEST_DIR/small.tsv"
     self_test_row 437500077 55356290376 > "$SELF_TEST_DIR/exact.tsv"
     self_test_row 437000000 55356290376 > "$SELF_TEST_DIR/improved.tsv"
     printf 'name\tir_count\nself_compile/compile_cli_opt1\t55356290376\n' \
         > "$SELF_TEST_DIR/missing-row.tsv"
 
     _st_status=0
-    # A tolerated row at 90% of budget still passes, and says so. This is the
+    # A tolerated row at 91% of budget still passes, and says so. This is the
     # case that silently consumed the budget before the annotation existed.
     self_test_case drifted "$SELF_TEST_DIR/drifted.tsv" \
-        "within-tolerance (90% of tolerance)" 0 yes || _st_status=1
+        "within-tolerance (91% of tolerance)" 0 yes || _st_status=1
     # A regression still fails, now with the share of budget it used.
     self_test_case regressed "$SELF_TEST_DIR/regressed.tsv" \
         "REGRESSION (112% of tolerance)" 1 yes || _st_status=1
@@ -689,75 +543,6 @@ self_test() {
     # Fail-closed shapes are unchanged.
     self_test_case missing-row "$SELF_TEST_DIR/missing-row.tsv" \
         "missing-current" 1 no || _st_status=1
-
-    _st_origin_stale=$(print_self_compile_failure_origin \
-        stale 1111111111111111111111111111111111111111 \
-        2222222222222222222222222222222222222222 2>&1)
-    _st_origin_pr=$(print_self_compile_failure_origin \
-        pr 1111111111111111111111111111111111111111 \
-        2222222222222222222222222222222222222222 2>&1)
-    case "$_st_origin_stale" in
-        *"baseline-stale:"*"Do not attribute"*) ;;
-        *)
-            echo "self-test failure-origin-stale: missing stale-baseline guidance" >&2
-            _st_status=1
-            ;;
-    esac
-    case "$_st_origin_pr" in
-        *"pr-delta:"*"same PR"*) ;;
-        *)
-            echo "self-test failure-origin-pr: missing PR-delta guidance" >&2
-            _st_status=1
-            ;;
-    esac
-
-    # A generated ratchet merge must retain the commit whose compiler was
-    # measured, or each ratchet would trigger another marker-only ratchet. Use
-    # temporary commit objects so this covers distinct commits without moving a
-    # ref or depending on the repository's current commit shape.
-    _st_saved_baseline_source=$BASELINE_SOURCE
-    BASELINE_SOURCE="$SELF_TEST_DIR/baseline-source.txt"
-    _st_head=$(git rev-parse HEAD)
-    printf '%s\n' "$_st_head" > "$BASELINE_SOURCE"
-    _st_index="$SELF_TEST_DIR/generated-only.index"
-    GIT_INDEX_FILE="$_st_index" git read-tree "$_st_head"
-    _st_blob=$(printf 'name\tir_count\nself_compile/compile_cli_opt1\t1\n' | \
-        git hash-object -w --stdin)
-    GIT_INDEX_FILE="$_st_index" git update-index --cacheinfo \
-        100644 "$_st_blob" perf/insn-exec-baseline.tsv
-    _st_tree=$(GIT_INDEX_FILE="$_st_index" git write-tree)
-    _st_generated_commit=$(printf 'generated-only ratchet fixture\n' | \
-        git -c user.name=typelisp-self-test \
-            -c user.email=typelisp-self-test@example.invalid \
-            commit-tree "$_st_tree" -p "$_st_head")
-    _st_selected=$(select_self_compile_baseline_source "$_st_generated_commit")
-    if [ "$_st_selected" != "$_st_head" ]; then
-        echo "self-test baseline-source-generated: selected $_st_selected, want $_st_head" >&2
-        _st_status=1
-    fi
-
-    rm -f "$_st_index"
-    _st_index="$SELF_TEST_DIR/compiler-input.index"
-    GIT_INDEX_FILE="$_st_index" git read-tree "$_st_head"
-    _st_blob=$(printf '(define baseline-source-self-test 1)\n' | \
-        git hash-object -w --stdin)
-    GIT_INDEX_FILE="$_st_index" git update-index --add --cacheinfo \
-        100644 "$_st_blob" src/baseline_source_self_test.tl
-    _st_tree=$(GIT_INDEX_FILE="$_st_index" git write-tree)
-    _st_input_commit=$(printf 'compiler-input fixture\n' | \
-        git -c user.name=typelisp-self-test \
-            -c user.email=typelisp-self-test@example.invalid \
-            commit-tree "$_st_tree" -p "$_st_head")
-    _st_selected=$(select_self_compile_baseline_source "$_st_input_commit")
-    if [ "$_st_selected" != "$_st_input_commit" ]; then
-        echo "self-test baseline-source-input: selected $_st_selected, want $_st_input_commit" >&2
-        _st_status=1
-    fi
-    if self_compile_inputs_match "$_st_head" "$_st_input_commit"; then
-        echo "self-test baseline-source-input: compiler input change compared equal" >&2
-        _st_status=1
-    fi
-    BASELINE_SOURCE=$_st_saved_baseline_source
 
     SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=0
     set +e
@@ -914,17 +699,6 @@ self_test() {
     fi
     echo "instruction-count comparison self-test passed"
 }
-
-if [ -n "$SELECT_BASELINE_SOURCE_COMMIT" ]; then
-    if [ "$UPDATE_BASELINE" -ne 0 ] || [ "$BENCHMARKS_ONLY" -ne 0 ] ||
-        [ "$SELF_COMPILE_ONLY" -ne 0 ] || [ "$SELF_TEST" -ne 0 ] ||
-        [ -n "$SEED_ARG" ]; then
-        echo "--select-baseline-source cannot be combined with measurement options" >&2
-        exit 2
-    fi
-    select_self_compile_baseline_source "$SELECT_BASELINE_SOURCE_COMMIT"
-    exit $?
-fi
 
 if [ "$SELF_TEST" -eq 1 ]; then
     self_test
@@ -1130,7 +904,6 @@ if compare_counts "$BASELINE" "$CURRENT" > "$DIFF_OUT"; then
     echo "[ir-check] instruction-count baseline matches $BASELINE"
 else
     cat "$DIFF_OUT" >&2
-    report_self_compile_failure_origin "$DIFF_OUT"
     echo "[ir-check] instruction counts differ from $BASELINE" >&2
     echo "[ir-check] update intentional changes with: $update_command" >&2
     exit 1

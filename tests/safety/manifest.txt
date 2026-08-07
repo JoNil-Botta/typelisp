@@ -292,6 +292,12 @@ struct_match_pattern_arity_reject|check-fail|tests/safety/struct_match_pattern_a
 struct_match_pattern_wrong_head_reject|check-fail|tests/safety/struct_match_pattern_wrong_head_reject.tl|-|struct pattern head Size does not match struct Point
 struct_match_pattern_refutable_field_reject|check-fail|tests/safety/struct_match_pattern_refutable_field_reject.tl|-|struct field pattern only supports binding, wildcard, or nested struct patterns
 struct_match_pattern_unreachable_reject|check-fail|tests/safety/struct_match_pattern_unreachable_reject.tl|-|typecheck: unreachable match arm after wildcard `_`
+tuple_match_pattern_arity_reject|check-fail|tests/safety/tuple_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
+tuple_match_pattern_source_reuse_reject|check-fail|tests/safety/tuple_match_pattern_source_reuse_reject.tl|-|use of moved value `pair`
+tuple_element_use_after_move_reject|check-fail|tests/safety/tuple_element_use_after_move_reject.tl|-|use of moved value `pair.0`
+tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_reject.tl|-|use of moved value `pair`
+tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move non-Copy value through shared reference
+tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
 serialize_missing_object_hook_reject|check-fail|tests/safety/serialize_missing_object_hook_reject.tl|-|typecheck: strategy module serialize_missing_object_hook_format does not export hook object-finish

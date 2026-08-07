@@ -50206,6 +50206,97 @@
               (+ index 1))]
           [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))))
 
+(define (tc-tuple-pattern-element-types
+  [ctx : TcContext]
+  [tuple-ty : ast.AstType]) : ResultTcTypeList
+  (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
+    [(ast.AstType.Tuple elem-types-box)
+      (ResultTcTypeList.Ok
+        (tc-project-type-list-from-region-container
+          tuple-ty
+          (box-get elem-types-box)))]
+    [_
+      (ResultTcTypeList.Err "typecheck: tuple pattern requires Tuple scrutinee")]))
+
+(define (tc-bind-tuple-sub-pattern-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [patterns : ast.AstPatternList]
+  [types : ast.AstTypeList]) : ResultTcEnv
+  (tc-bind-tuple-sub-pattern-list-at ctx env (& patterns) (& types) 0))
+
+(define (tc-bind-tuple-sub-pattern-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [patterns : (& patterns ast.AstPatternList)]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast.ast-pattern-list-len patterns))
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultTcEnv.Ok env)
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message
+          (ast.ast-type-list-len types)
+          (ast.ast-pattern-list-len patterns))))
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message
+          (ast.ast-type-list-len types)
+          (ast.ast-pattern-list-len patterns)))
+      (let
+        [pattern : ast.AstPattern
+          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
+        [ty : ast.AstType
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+        (match (tc-bind-tuple-sub-pattern ctx env pattern ty)
+          [(ResultTcEnv.Ok next-env)
+            (tc-bind-tuple-sub-pattern-list-at
+              ctx
+              next-env
+              patterns
+              types
+              (+ index 1))]
+          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))))
+
+(define (tc-bind-tuple-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [tuple-ty : ast.AstType]
+  [patterns : ast.AstPatternList]) : ResultTcEnv
+  (match (tc-tuple-pattern-element-types ctx tuple-ty)
+    [(ResultTcTypeList.Ok elem-types)
+      (tc-bind-tuple-sub-pattern-list ctx env patterns elem-types)]
+    [(ResultTcTypeList.Err message) (ResultTcEnv.Err message)]))
+
+(define (tc-bind-tuple-sub-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [pattern : ast.AstPattern]
+  [elem-ty : ast.AstType]) : ResultTcEnv
+  (match pattern
+    [(ast.AstPattern.Var _ _) (tc-bind-sub-pattern ctx env pattern elem-ty)]
+    [(ast.AstPattern.Binding _) (tc-bind-sub-pattern ctx env pattern elem-ty)]
+    [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+    [(ast.AstPattern.Tuple patterns-box)
+      (tc-bind-tuple-pattern ctx env elem-ty (box-get patterns-box))]
+    [(ast.AstPattern.Variant name _)
+      (match (tc-type-strip-region (tc-resolve-type ctx elem-ty))
+        [(ast.AstType.Struct _) (tc-bind-sub-pattern ctx env pattern elem-ty)]
+        [(ast.AstType.StructArgs _ _)
+          (tc-bind-sub-pattern ctx env pattern elem-ty)]
+        [(ast.AstType.Box _)
+          (if (tc-box-pattern-name? name)
+            (tc-bind-sub-pattern ctx env pattern elem-ty)
+            (ResultTcEnv.Err
+              "typecheck: tuple element pattern requires an irrefutable aggregate pattern"))]
+        [_
+          (ResultTcEnv.Err
+            "typecheck: tuple element pattern requires an irrefutable aggregate pattern")])]
+    [_
+      (ResultTcEnv.Err
+        "typecheck: tuple element pattern requires binding, wildcard, or nested tuple, struct, or box pattern")]))
+
 (defenum ResultTcVariantPayloadTypes
   (Ok ast.AstTypeList)
   (Err String))
@@ -50314,6 +50405,15 @@
   (match pattern
     [(ast.AstPattern.Wildcard) true]
     [(ast.AstPattern.Binding _) true]
+    [(ast.AstPattern.Var _ _) true]
+    [(ast.AstPattern.Tuple patterns-box)
+      (match (tc-type-strip-region (tc-resolve-type ctx inner-ty))
+        [(ast.AstType.Tuple elem-types-box)
+          (tc-pattern-list-irrefutable?
+            ctx
+            (box-get patterns-box)
+            (box-get elem-types-box))]
+        [_ false])]
     [(ast.AstPattern.Variant name args-box)
       (if (tc-box-pattern-name? name)
         (match (tc-type-strip-region (tc-resolve-type ctx inner-ty))
@@ -50323,7 +50423,26 @@
               (box-get args-box)
               (ast.ty-node-get nested-inner))]
           [_ false])
-        false)]
+        (match (tc-type-strip-region (tc-resolve-type ctx inner-ty))
+          [(ast.AstType.Struct struct-name)
+            (tc-struct-pattern-irrefutable?
+              ctx
+              (tc-nominal-name-id-display struct-name)
+              struct-name
+              inner-ty
+              (tc-env-key-name-text name)
+              name
+              (box-get args-box))]
+          [(ast.AstType.StructArgs struct-name _)
+            (tc-struct-pattern-irrefutable?
+              ctx
+              (tc-nominal-name-id-display struct-name)
+              struct-name
+              inner-ty
+              (tc-env-key-name-text name)
+              name
+              (box-get args-box))]
+          [_ false]))]
     [_ false]))
 
 (define (tc-bind-box-pattern
@@ -50523,6 +50642,8 @@
       [(ast.AstPattern.Var name _) (ResultTcEnv.Ok (tc-bind-id env name ty))]
       [(ast.AstPattern.Binding name) (ResultTcEnv.Ok (tc-bind-id env name ty))]
       [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+      [(ast.AstPattern.Tuple patterns-box)
+        (tc-bind-tuple-pattern ctx env ty (box-get patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList (box-get args-box)]
@@ -50582,6 +50703,8 @@
       [(ast.AstPattern.Binding name) (ResultTcEnv.Ok (tc-bind-id env name ty))]
       [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
       [(ast.AstPattern.Literal lit) (tc-bind-literal-pattern env lit ty)]
+      [(ast.AstPattern.Tuple patterns-box)
+        (tc-bind-tuple-pattern ctx env ty (box-get patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList (box-get args-box)]
@@ -50640,6 +50763,163 @@
 
 (define (tc-borrowed-field-ref-type [lifetime : i64] [field-ty : ast.AstType]) : ast.AstType
   (ast.ast-ty-ref lifetime (tc-borrow-referent-type field-ty)))
+
+(define (tc-bind-borrowed-tuple-sub-pattern-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [patterns : ast.AstPatternList]
+  [types : ast.AstTypeList]) : ResultTcEnv
+  (tc-bind-borrowed-tuple-sub-pattern-list-at
+    ctx
+    env
+    lifetime
+    (& patterns)
+    (& types)
+    0))
+
+(define (tc-bind-borrowed-tuple-sub-pattern-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [patterns : (& patterns ast.AstPatternList)]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast.ast-pattern-list-len patterns))
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultTcEnv.Ok env)
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message
+          (ast.ast-type-list-len types)
+          (ast.ast-pattern-list-len patterns))))
+    (if (>= index (ast.ast-type-list-len types))
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message
+          (ast.ast-type-list-len types)
+          (ast.ast-pattern-list-len patterns)))
+      (let
+        [pattern : ast.AstPattern
+          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
+        [ty : ast.AstType
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+        (match (tc-bind-borrowed-tuple-sub-pattern ctx env lifetime pattern ty)
+          [(ResultTcEnv.Ok next-env)
+            (tc-bind-borrowed-tuple-sub-pattern-list-at
+              ctx
+              next-env
+              lifetime
+              patterns
+              types
+              (+ index 1))]
+          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))))
+
+(define (tc-bind-borrowed-tuple-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [tuple-ty : ast.AstType]
+  [patterns : ast.AstPatternList]) : ResultTcEnv
+  (match (tc-tuple-pattern-element-types ctx tuple-ty)
+    [(ResultTcTypeList.Ok elem-types)
+      (tc-bind-borrowed-tuple-sub-pattern-list
+        ctx
+        env
+        lifetime
+        patterns
+        elem-types)]
+    [(ResultTcTypeList.Err message) (ResultTcEnv.Err message)]))
+
+(define (tc-bind-borrowed-struct-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [struct-name : String]
+  [struct-name-id : i64]
+  [scrut-ty : ast.AstType]
+  [pattern-name : String]
+  [pattern-name-id : i64]
+  [args : ast.AstPatternList]) : ResultTcEnv
+  (match (tc-source-struct-name-for-pattern
+    ctx
+    struct-name
+    pattern-name
+    pattern-name-id)
+    [(ResultTcString.Ok lookup-name)
+      (if (string.eq lookup-name struct-name)
+        (match (tc-struct-decl-id ctx struct-name-id)
+          [(ResultTcStructDecl.Ok decl)
+            (match decl
+              [(TcStructDecl _ _ fields)
+                (match (tc-struct-pattern-field-types-for-scrut
+                  ctx
+                  struct-name-id
+                  scrut-ty
+                  fields)
+                  [(ResultTcTypeList.Ok field-types)
+                    (tc-bind-borrowed-tuple-sub-pattern-list
+                      ctx
+                      env
+                      lifetime
+                      args
+                      field-types)]
+                  [(ResultTcTypeList.Err message) (ResultTcEnv.Err message)])])]
+          [(ResultTcStructDecl.Err message) (ResultTcEnv.Err message)])
+        (ResultTcEnv.Err
+          (tc-struct-pattern-head-message pattern-name struct-name)))]
+    [(ResultTcString.Err message) (ResultTcEnv.Err message)]))
+
+(define (tc-bind-borrowed-tuple-sub-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [pattern : ast.AstPattern]
+  [elem-ty : ast.AstType]) : ResultTcEnv
+  (match pattern
+    [(ast.AstPattern.Var name _)
+      (ResultTcEnv.Ok
+        (tc-bind-id env name (tc-borrowed-field-ref-type lifetime elem-ty)))]
+    [(ast.AstPattern.Binding name)
+      (ResultTcEnv.Ok
+        (tc-bind-id env name (tc-borrowed-field-ref-type lifetime elem-ty)))]
+    [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+    [(ast.AstPattern.Tuple patterns-box)
+      (tc-bind-borrowed-tuple-pattern
+        ctx
+        env
+        lifetime
+        elem-ty
+        (box-get patterns-box))]
+    [(ast.AstPattern.Variant name args-box)
+      (match (tc-type-strip-region (tc-resolve-type ctx elem-ty))
+        [(ast.AstType.Struct struct-name)
+          (tc-bind-borrowed-struct-pattern
+            ctx
+            env
+            lifetime
+            (tc-nominal-name-id-display struct-name)
+            struct-name
+            elem-ty
+            (tc-env-key-name-text name)
+            name
+            (box-get args-box))]
+        [(ast.AstType.StructArgs struct-name _)
+          (tc-bind-borrowed-struct-pattern
+            ctx
+            env
+            lifetime
+            (tc-nominal-name-id-display struct-name)
+            struct-name
+            elem-ty
+            (tc-env-key-name-text name)
+            name
+            (box-get args-box))]
+        [_
+          (ResultTcEnv.Err
+            "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern")])]
+    [_
+      (ResultTcEnv.Err
+        "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern")]))
 
 (define (tc-bind-borrowed-sub-pattern-list
   [ctx : TcContext]
@@ -50760,11 +51040,21 @@
   (let
     [ty : ast.AstType (tc-resolve-type ctx field-ty)]
     (match pattern
+      [(ast.AstPattern.Var name _)
+        (ResultTcEnv.Ok
+          (tc-bind-id env name (tc-borrowed-field-ref-type lifetime ty)))]
       [(ast.AstPattern.Binding name)
         (ResultTcEnv.Ok
           (tc-bind-id env name (tc-borrowed-field-ref-type lifetime ty)))]
       [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
       [(ast.AstPattern.Literal lit) (tc-bind-literal-pattern env lit ty)]
+      [(ast.AstPattern.Tuple patterns-box)
+        (tc-bind-borrowed-tuple-pattern
+          ctx
+          env
+          lifetime
+          ty
+          (box-get patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList (box-get args-box)]
@@ -50793,6 +51083,28 @@
                   "typecheck: borrowed box patterns are not supported")
                 (ResultTcEnv.Err
                   "typecheck: nested variant pattern requires enum field"))]
+            [(ast.AstType.Struct struct-name)
+              (tc-bind-borrowed-struct-pattern
+                ctx
+                env
+                lifetime
+                (tc-nominal-name-id-display struct-name)
+                struct-name
+                ty
+                (tc-env-key-name-text name)
+                name
+                args)]
+            [(ast.AstType.StructArgs struct-name _)
+              (tc-bind-borrowed-struct-pattern
+                ctx
+                env
+                lifetime
+                (tc-nominal-name-id-display struct-name)
+                struct-name
+                ty
+                (tc-env-key-name-text name)
+                name
+                args)]
             [_
               (if (tc-box-pattern-name? name)
                 (ResultTcEnv.Err "typecheck: box pattern requires Box field")
@@ -50886,6 +51198,21 @@
               enum-name
               (box-get lifetimes)
               pattern)]
+          [(ast.AstType.Tuple _)
+            (match pattern
+              [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+              [(ast.AstPattern.Binding name)
+                (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
+              [(ast.AstPattern.Tuple patterns-box)
+                (tc-bind-borrowed-tuple-pattern
+                  ctx
+                  env
+                  lifetime
+                  referent-ty
+                  (box-get patterns-box))]
+              [_
+                (ResultTcEnv.Err
+                  "typecheck: borrowed tuple match requires (tuple ...), binding, or wildcard pattern")])]
           [(ast.AstType.Box _)
             (match pattern
               [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
@@ -50987,6 +51314,16 @@
         [_
           (ResultTcEnv.Err
             "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
+    [(ast.AstType.Tuple _)
+      (match pattern
+        [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+        [(ast.AstPattern.Binding name)
+          (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
+        [(ast.AstPattern.Tuple patterns-box)
+          (tc-bind-tuple-pattern ctx env scrut-ty (box-get patterns-box))]
+        [_
+          (ResultTcEnv.Err
+            "typecheck: tuple match requires (tuple ...), binding, or wildcard pattern")])]
     [(ast.AstType.Expr) (tc-bind-expr-match-pattern ctx env pattern)]
     [(ast.AstType.Var name)
       (if (= name cbi.compiler-builtin-id-fix-ExprClause)
@@ -52148,6 +52485,11 @@
     [(ast.AstPattern.Var _ _) true]
     [(ast.AstPattern.Binding _) true]
     [(ast.AstPattern.Literal _) false]
+    [(ast.AstPattern.Tuple patterns-box)
+      (match (tc-tuple-pattern-element-types ctx field-ty)
+        [(ResultTcTypeList.Ok elem-types)
+          (tc-pattern-list-irrefutable? ctx (box-get patterns-box) elem-types)]
+        [(ResultTcTypeList.Err _) false])]
     [(ast.AstPattern.Variant name args-box)
       (let
         [args : ast.AstPatternList (box-get args-box)]
@@ -52468,6 +52810,34 @@
             name
             (box-get args-box))]
         [_ false])]
+    [(ast.AstType.Tuple elem-types-box)
+      (match pattern
+        [(ast.AstPattern.Wildcard) true]
+        [(ast.AstPattern.Binding _) true]
+        [(ast.AstPattern.Tuple patterns-box)
+          (tc-pattern-list-irrefutable?
+            ctx
+            (box-get patterns-box)
+            (box-get elem-types-box))]
+        [_ false])]
+    [(ast.AstType.Ref _ referent-box)
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (ast.ty-node-get referent-box)))
+        [(ast.AstType.Tuple elem-types-box)
+          (match pattern
+            [(ast.AstPattern.Wildcard) true]
+            [(ast.AstPattern.Binding _) true]
+            [(ast.AstPattern.Tuple patterns-box)
+              (tc-pattern-list-irrefutable?
+                ctx
+                (box-get patterns-box)
+                (box-get elem-types-box))]
+            [_ false])]
+        [_
+          (match pattern
+            [(ast.AstPattern.Wildcard) true]
+            [(ast.AstPattern.Binding _) true]
+            [_ false])])]
     [(ast.AstType.Var name)
       (if (= name cbi.compiler-builtin-id-fix-ExprClause)
         (tc-expr-clause-pattern-irrefutable? ctx pattern)
@@ -62357,10 +62727,15 @@
 
 ;; Matching a cleanup-owning enum consumes the whole scrutinee value. Ordinary
 ;; enums stay compatibility-non-consuming for existing AST/IR-style sharing.
+;; Constructor-shaped tuple patterns are by-value destructuring, so every
+;; move-only tuple scrutinee is consumed while structurally Copy tuples remain
+;; available.
 (define (tc-type-consuming-match-scrutinee-now?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
-  (tc-cleanup-owning-enum-type? ctx ty))
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(ast.AstType.Tuple _) (tc-type-move-only? ctx ty)]
+    [_ (tc-cleanup-owning-enum-type? ctx ty)]))
 
 ;; The bare variable named by an init/rhs expression, unwrapping spans and
 ;; annotations, or none if the expression is not a whole-variable reference.
@@ -63253,7 +63628,13 @@
   [moved : TcMovedSet]
   [init : ast.AstExpr]
   [init-ty : ast.AstType]) : TcMoveResult
-  (if (tc-type-consuming-by-value-now? ctx init-ty)
+  (if (or
+    (tc-type-consuming-by-value-now? ctx init-ty)
+    (and
+      (tc-type-move-only? ctx (tc-resolve-type ctx init-ty))
+      (match (tc-move-tuple-element-path expr-bases init)
+        [(TcMaybeMovePath.Some _) true]
+        [(TcMaybeMovePath.No) false])))
     (tc-move-after-consuming-projection
       ctx
       expr-bases
@@ -78026,12 +78407,18 @@
               args
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-    [(ast.AstPattern.Tuple _)
-      (ResultMacroSexpr.Err
-        (box
-          (macro-output-syntax-diag
-            origin
-            "typecheck: module macro output tuple patterns cannot be parsed as source declarations")))]
+    [(ast.AstPattern.Tuple patterns-box)
+      (match (macro-pattern-list-to-spanned-sexpr
+        (box-get patterns-box)
+        span
+        origin)
+        [(ResultMacroSexpr.Ok patterns)
+          (ResultMacroSexpr.Ok
+            (reader.spanned-sexpr-list-prepend
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 124) span)
+              patterns
+              span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstPattern.Var _ _)
       (ResultMacroSexpr.Err
         (box

@@ -4,6 +4,7 @@
 (import read as reader)
 (import stdlib.string)
 (import compiler_diagnostic as diagnostic)
+(import compiler_diagnostic_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 
@@ -405,7 +406,7 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (if (and
-      (= (diagnostic.compiler-diagnostic-self-test) 42)
+      (= (compiler_diagnostic_tests.compiler-diagnostic-self-test) 42)
       (compiler-parse-test-decl-origin-records-ok?)
       (compiler-parse-member-origin-boundary-ok?)
       (compiler-parse-name-id-provenance-ok?)

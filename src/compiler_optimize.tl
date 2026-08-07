@@ -46321,6 +46321,29 @@
 ;; non-negative. Store-bearing bodies are ADMITTED (unlike the unroller):
 ;; under a true guard the clone is instruction-for-instruction the original.
 ;;
+;; The counter may step by ANY positive literal (`i += 8` for a word-strided
+;; loader), not just +1. Every derivation above reasons about the SET of
+;; executed-trip counter values, which for any positive step is a subset of
+;; [seed, bound-1] -- strictly increasing visits that pass the signed
+;; `counter < bound` latch test -- so each guard is step-independent AS LONG
+;; AS the counter cannot wrap past i64 MAX. A wrapped counter would go
+;; negative, satisfy the signed latch test again, and execute trips the range
+;; argument never covered. Step 1 cannot wrap (`last <= bound-1` gives
+;; `last+1 <= bound <= MAX`); a larger step can (`last + step` reaches
+;; `bound-1+step`). The guard therefore gains one more condition whenever a
+;; counter-bearing derivation fired and the step is greater than 1
+;; (opt-bce-version-guard-finish):
+;;
+;;   bound <= i64-MAX - step + 1        (signed)
+;;
+;; With it, `last + step <= bound-1+step <= MAX` is representable, the
+;; counter strictly increases without wrapping, the loop terminates exactly
+;; when the mathematical counter reaches `bound`, and every executed trip's
+;; counter lies in [seed, bound-1] -- precisely what the derivations assume.
+;; A bound that violates it merely deselects the fast path (a literal bound
+;; that can never satisfy it rejects the versioning outright, like a literal
+;; negative seed).
+;;
 ;; A check whose condition cannot be derived no longer rejects the loop: with
 ;; at least one derived check the loop PARTIALLY versions, and each
 ;; underivable check STAYS (remapped) in the fast clone, preserving the slow
@@ -46366,12 +46389,15 @@
         (opt-bce-version-keep-contains? (box-get rest) index))]))
 
 ;; Derivation fold state: the guard accumulator (conditions for REMOVED
-;; checks), the kept-check set, and how many checks derived -- partial
-;; versioning requires at least one derivable check to make cloning pay.
+;; checks), the kept-check set, how many checks derived -- partial
+;; versioning requires at least one derivable check to make cloning pay --
+;; and the scale-1 fan table (opt-bce-version-fan-*), whose extremal
+;; conditions are flushed at guard assembly instead of per check.
 (defstruct OptBceVersionDerive
   (guard OptBceVersionGuardAcc)
   (keep OptBceVersionKeep)
-  (derived i64))
+  (derived i64)
+  (fan OptBceVersionFan))
 
 ;; guard-conds output: the guard instructions + value plus the kept-check set
 ;; the clone must preserve (remapped) instead of dropping.
@@ -47459,6 +47485,266 @@
               (ir.CompilerIrValue.I64 0)
               with-arithmetic))))]))
 
+;; --- scale-1 fan subsumption ---------------------------------------------------
+;;
+;; A strided-access loop (the it-hash-words word loader is the running
+;; example) carries a whole FAN of `B + counter + k` checks against one
+;; length, with consecutive literal offsets k0..k7. Deriving each check's
+;; scale-1 guard independently costs two conditions per check; the and-chain
+;; over ~18 values lowers to ~160 instructions per loop ENTRY, which swamps
+;; the ~27/trip the fast clone saves when the loop averages a few trips per
+;; entry (measured: intern_table +9.3%). But the family's conditions are
+;; monotone in k: with cond A at the SMALLEST offset (`wrap(B + kmin) >= 0`,
+;; the no-underflow side), cond A at the LARGEST offset (`wrap(B + kmax) >=
+;; 0`, the no-wrap side), and cond B at the largest offset
+;; (`bound-1 <= len-1 - wrap(B + kmax)`), EVERY intermediate offset is
+;; covered too. Derivation therefore only RECORDS the (base, length, k)
+;; triple in this table and emits nothing; the flush at guard assembly emits
+;; the extremal conditions -- one var-base-guard for a single-point range,
+;; that guard plus the extra minimum cond A for a real range -- three
+;; conditions for the whole fan regardless of its size.
+;;
+;; Soundness (range argument, mirroring the var-base-guard documentation).
+;; The loop-level conditions give seed >= 0, seed < bound and, for a counter
+;; step > 1, the no-wrap cap, so every executed trip's counter lies in
+;; [0, bound-1]. With kmax - kmin < 2^62 (enforced at upsert; wider ranges
+;; fall back to the plain per-check guard) the mathematical interval
+;; [B + kmin, B + kmax] is narrower than 2^62, so it can straddle at most one
+;; signedness boundary, and each straddle is caught: crossing 0 upward makes
+;; cond A at kmin fail, crossing +2^63 upward makes cond A at kmax fail, and
+;; an interval lying wholly below -2^63 (whose wrap-shifted effs are again
+;; monotone) is the +2^64 translation of the representable case. When all
+;; three conditions hold, every intermediate k and every trip c therefore has
+;; `index = wrap(B + c + k)` confined to [eff_min, eff_max + bound - 1] with
+;; no signedness discontinuity, cond B pins the top below the (unsigned)
+;; length exactly as the one-check guard does, and the removed check would
+;; have passed. A wrapped-false condition merely deselects the fast path,
+;; like every conservatively-false guard here.
+(defenum OptBceVersionFan
+  (Nil)
+  ;; base value, length value, minimum offset so far, maximum offset so far.
+  (Cons ir.CompilerIrValue ir.CompilerIrValue i64 i64 (Box OptBceVersionFan)))
+
+;; Fan keys compare by resolved identity: same var, or same literal.
+(define (opt-bce-version-fan-value-eq?
+  [a : ir.CompilerIrValue]
+  [b : ir.CompilerIrValue]) : bool
+  (match a
+    [(ir.CompilerIrValue.Var av)
+      (match b
+        [(ir.CompilerIrValue.Var bv) (= av bv)]
+        [_ false])]
+    [(ir.CompilerIrValue.I64 ak)
+      (match b
+        [(ir.CompilerIrValue.I64 bk) (= ak bk)]
+        [_ false])]
+    [_ false]))
+
+;; The (base, length) entry's current offset range, if any.
+(defenum OptBceVersionFanRange
+  (No)
+  (Some i64 i64))
+
+(define (opt-bce-version-fan-find
+  [fan : OptBceVersionFan]
+  [base : ir.CompilerIrValue]
+  [length : ir.CompilerIrValue]) : OptBceVersionFanRange
+  (match fan
+    [(OptBceVersionFan.Nil) (OptBceVersionFanRange.No)]
+    [(OptBceVersionFan.Cons fb fl fmin fmax rest)
+      (if (and
+        (opt-bce-version-fan-value-eq? fb base)
+        (opt-bce-version-fan-value-eq? fl length))
+        (OptBceVersionFanRange.Some fmin fmax)
+        (opt-bce-version-fan-find (box-get rest) base length))]))
+
+;; Widen the (base, length) entry's offset range with k, creating it on first
+;; sight. List order is immaterial: the flush walks the whole table.
+(define (opt-bce-version-fan-upsert
+  [fan : OptBceVersionFan]
+  [base : ir.CompilerIrValue]
+  [length : ir.CompilerIrValue]
+  [k : i64]) : OptBceVersionFan
+  (match fan
+    [(OptBceVersionFan.Nil)
+      (OptBceVersionFan.Cons base length k k (box (OptBceVersionFan.Nil)))]
+    [(OptBceVersionFan.Cons fb fl fmin fmax rest)
+      (if (and
+        (opt-bce-version-fan-value-eq? fb base)
+        (opt-bce-version-fan-value-eq? fl length))
+        (OptBceVersionFan.Cons
+          fb
+          fl
+          (if (< k fmin)
+            k
+            fmin)
+          (if (> k fmax)
+            k
+            fmax)
+          rest)
+        (OptBceVersionFan.Cons
+          fb
+          fl
+          fmin
+          fmax
+          (box (opt-bce-version-fan-upsert (box-get rest) base length k))))]))
+
+;; The cap from the header's soundness argument: an offset range this wide
+;; can straddle two signedness boundaries, which the extremal conditions do
+;; not all catch, so such a check keeps the plain per-check guard.
+(define (opt-bce-version-fan-range-ok? [kmin : i64] [kmax : i64]) : bool
+  (< (- kmax kmin) 4611686018427387904))
+
+;; The derivation result everywhere a check may join the fan: the guard
+;; accumulator plus the updated table.
+(defstruct OptBceVersionFanDerive
+  (guard OptBceVersionGuardAcc)
+  (fan OptBceVersionFan))
+
+;; One fan member's derivation: record the triple, keep the accumulator
+;; untouched (the flush emits the extremal conditions), and mark the
+;; counter-bearing guard requirement like any counter-involving derivation.
+(define (opt-bce-version-fan-derive
+  [fan : OptBceVersionFan]
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [length : ir.CompilerIrValue]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionFanDerive
+  (match acc
+    [(OptBceVersionGuardAcc.No)
+      (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]
+    [(OptBceVersionGuardAcc.Some _ _ _)
+      (OptBceVersionFanDerive
+        (opt-bce-version-cond-counter-seen acc)
+        (opt-bce-version-fan-upsert fan base length offset))]))
+
+;; The extra minimum-side cond A for a real range: exactly the eff
+;; computation and `eff >= 0` compare the one-check guard emits, here for
+;; the smallest offset only.
+(define (opt-bce-version-fan-min-cond
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match acc
+    [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+      (let
+        [eff-var : i64
+          (if (= offset 0)
+            (- 0 1)
+            (opt-bce-version-alloc-var cell))]
+        [eff : ir.CompilerIrValue
+          (if (= offset 0)
+            base
+            (ir.CompilerIrValue.Var eff-var))]
+        [eff-instrs : ir.CompilerIrInstrList
+          (if (= offset 0)
+            instrs
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                eff-var
+                (ir.CompilerIrBinOp.Add)
+                base
+                (ir.CompilerIrValue.I64 offset)
+                (ast.AstType.I64))
+              instrs))]
+        (opt-bce-version-cond
+          cell
+          (ir.CompilerIrBinOp.Ge)
+          eff
+          (ir.CompilerIrValue.I64 0)
+          (OptBceVersionGuardAcc.Some eff-instrs values counter-seen)))]))
+
+;; Emit the recorded extremal conditions for one fan entry: the full
+;; var-base-guard at the largest offset, plus the minimum-side cond A when
+;; the range is real.
+(define (opt-bce-version-fan-entry-flush
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [base : ir.CompilerIrValue]
+  [length : ir.CompilerIrValue]
+  [kmin : i64]
+  [kmax : i64]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (if (= kmin kmax)
+    (opt-bce-version-var-base-guard seed bound base kmax length cell acc)
+    (opt-bce-version-var-base-guard
+      seed
+      bound
+      base
+      kmax
+      length
+      cell
+      (opt-bce-version-fan-min-cond base kmin cell acc))))
+
+(define (opt-bce-version-fan-flush
+  [fan : OptBceVersionFan]
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match fan
+    [(OptBceVersionFan.Nil) acc]
+    [(OptBceVersionFan.Cons base length kmin kmax rest)
+      (opt-bce-version-fan-flush
+        (box-get rest)
+        seed
+        bound
+        cell
+        (opt-bce-version-fan-entry-flush
+          seed
+          bound
+          base
+          length
+          kmin
+          kmax
+          cell
+          acc))]))
+
+;; Join the (base, length) fan at offset k when the widened range stays
+;; under the soundness cap; fall back to the plain per-check guard when it
+;; would not.
+(define (opt-bce-version-fan-admit
+  [fan : OptBceVersionFan]
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [length : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionFanDerive
+  (let
+    [widened : OptBceVersionFanRange
+      (match (opt-bce-version-fan-find fan base length)
+        [(OptBceVersionFanRange.No) (OptBceVersionFanRange.Some offset offset)]
+        [(OptBceVersionFanRange.Some fmin fmax)
+          (OptBceVersionFanRange.Some
+            (if (< offset fmin)
+              offset
+              fmin)
+            (if (> offset fmax)
+              offset
+              fmax))])]
+    (match widened
+      [(OptBceVersionFanRange.No)
+        ;; unreachable: widened is always Some above
+        (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]
+      [(OptBceVersionFanRange.Some wmin wmax)
+        (if (opt-bce-version-fan-range-ok? wmin wmax)
+          (opt-bce-version-fan-derive fan base offset length acc)
+          (OptBceVersionFanDerive
+            (opt-bce-version-var-base-guard
+              seed
+              bound
+              base
+              offset
+              length
+              cell
+              acc)
+            fan))])))
+
 ;; One Add side as the strided part, the other as the invariant base. Exactly
 ;; one side may involve the counter: an in-loop base fails the
 ;; invariant-operand check.
@@ -47484,7 +47770,8 @@
   [base-side : ir.CompilerIrValue]
   [length-value : ir.CompilerIrValue]
   [allow-scale1 : bool]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [fan : OptBceVersionFan]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionFanDerive
   (match (opt-bce-version-strided-side
     instrs
     phi-count
@@ -47495,12 +47782,14 @@
     iphi
     affine-side
     16)
-    [(OptBceVarBaseStrided.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVarBaseStrided.No)
+      (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]
     [(OptBceVarBaseStrided.Scaled scale k2)
       (if (and (= scale 1) (not allow-scale1))
-        (OptBceVersionGuardAcc.No)
+        (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)
         (match (opt-bce-version-k-add k0 k2)
-          [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
+          [(OptBceVersionKSum.No)
+            (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]
           [(OptBceVersionKSum.Some offset)
             (match (opt-bce-version-invariant-operand
               instrs
@@ -47508,12 +47797,15 @@
               last
               defs
               base-side)
-              [(ir.CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
+              [(ir.CompilerIrMaybeValue.No)
+                (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]
               [(ir.CompilerIrMaybeValue.Some base)
                 (if (= scale 1)
-                  ;; No mul, no division: the scale-1 specialization the
-                  ;; multi-block pass already uses for this exact shape.
-                  (opt-bce-version-var-base-guard
+                  ;; No mul, no division, and no per-check conditions: the
+                  ;; fan table records the (base, length, offset) triple and
+                  ;; the guard's flush emits the extremal conditions.
+                  (opt-bce-version-fan-admit
+                    fan
                     seed
                     bound
                     base
@@ -47521,18 +47813,21 @@
                     length-value
                     cell
                     acc)
-                  (opt-bce-version-var-base-scaled-guard
-                    seed
-                    bound
-                    base
-                    scale
-                    offset
-                    length-value
-                    cell
-                    acc))])]))]
+                  (OptBceVersionFanDerive
+                    (opt-bce-version-var-base-scaled-guard
+                      seed
+                      bound
+                      base
+                      scale
+                      offset
+                      length-value
+                      cell
+                      acc)
+                    fan))])]))]
     [(OptBceVarBaseStrided.Derived d0 step k2)
       (match (opt-bce-version-k-add k0 k2)
-        [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
+        [(OptBceVersionKSum.No)
+          (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]
         [(OptBceVersionKSum.Some offset)
           (match (opt-bce-version-invariant-operand
             instrs
@@ -47540,18 +47835,21 @@
             last
             defs
             base-side)
-            [(ir.CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
+            [(ir.CompilerIrMaybeValue.No)
+              (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]
             [(ir.CompilerIrMaybeValue.Some base)
-              (opt-bce-version-var-base-derived-guard
-                seed
-                bound
-                base
-                d0
-                step
-                offset
-                length-value
-                cell
-                acc)])])]))
+              (OptBceVersionFanDerive
+                (opt-bce-version-var-base-derived-guard
+                  seed
+                  bound
+                  base
+                  d0
+                  step
+                  offset
+                  length-value
+                  cell
+                  acc)
+                fan)])])]))
 
 ;; The full variable-base retry for a rejected literal-affine index: peel
 ;; literal addends, then split the remaining var+var Add into an invariant
@@ -47570,23 +47868,25 @@
   [index-value : ir.CompilerIrValue]
   [length-value : ir.CompilerIrValue]
   [allow-scale1 : bool]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [fan : OptBceVersionFan]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionFanDerive
   (match (opt-bce-version-strided-peel instrs phi-count last index-value 0 8)
-    [(OptBceVersionStridedCore.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVersionStridedCore.No)
+      (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]
     [(OptBceVersionStridedCore.Some core k0)
       (let
         [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
         [def-index : i64 (opt-unroll-def-index slots 0 last core)]
         (if (< def-index 0)
-          (OptBceVersionGuardAcc.No)
+          (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)
           (match (array-ref slots def-index)
             [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
               (if (not (opt-affine-64bit-type? ty))
-                (OptBceVersionGuardAcc.No)
+                (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)
                 (match op
                   [(ir.CompilerIrBinOp.Add)
                     (let
-                      [attempt : OptBceVersionGuardAcc
+                      [attempt : OptBceVersionFanDerive
                         (opt-bce-version-var-base-side-strided
                           instrs
                           phi-count
@@ -47603,8 +47903,9 @@
                           rhs
                           length-value
                           allow-scale1
+                          fan
                           acc)]
-                      (match attempt
+                      (match (struct-get attempt guard)
                         [(OptBceVersionGuardAcc.No)
                           (opt-bce-version-var-base-side-strided
                             instrs
@@ -47622,10 +47923,11 @@
                             lhs
                             length-value
                             allow-scale1
+                            (struct-get attempt fan)
                             acc)]
                         [_ attempt]))]
-                  [_ (OptBceVersionGuardAcc.No)]))]
-            [_ (OptBceVersionGuardAcc.No)])))]))
+                  [_ (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]))]
+            [_ (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)])))]))
 
 ;; Derive the sufficient invariant condition for one check's index operand.
 (define (opt-bce-version-derive-index
@@ -47642,43 +47944,50 @@
   [index-value : ir.CompilerIrValue]
   [length-value : ir.CompilerIrValue]
   [allow-scale1 : bool]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [fan : OptBceVersionFan]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionFanDerive
   (match index-value
     [(ir.CompilerIrValue.I64 k)
       (if (>= k 0)
-        (opt-bce-version-cond
-          cell
-          (ir.CompilerIrBinOp.Lt)
-          (ir.CompilerIrValue.I64 k)
-          length-value
-          acc)
-        (OptBceVersionGuardAcc.No))]
+        (OptBceVersionFanDerive
+          (opt-bce-version-cond
+            cell
+            (ir.CompilerIrBinOp.Lt)
+            (ir.CompilerIrValue.I64 k)
+            length-value
+            acc)
+          fan)
+        (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan))]
     [(ir.CompilerIrValue.Var raw)
       (let
         [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
         (if (= id iphi)
           ;; counter: [seed, bound) subset of [0, len) iff seed >= 0 (emitted
           ;; once, below) and bound <= len.
-          (opt-bce-version-cond-counter-seen
-            (opt-bce-version-cond
-              cell
-              (ir.CompilerIrBinOp.Le)
-              bound
-              length-value
-              acc))
-          (if (not (opt-used-contains defs id))
-            ;; loop-invariant index: exactly its own range check, hoisted.
-            (opt-bce-version-cond
-              cell
-              (ir.CompilerIrBinOp.Lt)
-              (ir.CompilerIrValue.Var id)
-              length-value
+          (OptBceVersionFanDerive
+            (opt-bce-version-cond-counter-seen
               (opt-bce-version-cond
                 cell
-                (ir.CompilerIrBinOp.Ge)
-                (ir.CompilerIrValue.Var id)
-                (ir.CompilerIrValue.I64 0)
+                (ir.CompilerIrBinOp.Le)
+                bound
+                length-value
                 acc))
+            fan)
+          (if (not (opt-used-contains defs id))
+            ;; loop-invariant index: exactly its own range check, hoisted.
+            (OptBceVersionFanDerive
+              (opt-bce-version-cond
+                cell
+                (ir.CompilerIrBinOp.Lt)
+                (ir.CompilerIrValue.Var id)
+                length-value
+                (opt-bce-version-cond
+                  cell
+                  (ir.CompilerIrBinOp.Ge)
+                  (ir.CompilerIrValue.Var id)
+                  (ir.CompilerIrValue.I64 0)
+                  acc))
+              fan)
             (let
               [slots : (__tl_dyn-array ir.CompilerIrInstr)
                 (struct-get instrs slots)]
@@ -47686,7 +47995,7 @@
               ;; affine expressions live in the body. Search both regions.
               [def-index : i64 (opt-unroll-def-index slots 0 last id)]
               (if (< def-index 0)
-                (OptBceVersionGuardAcc.No)
+                (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)
                 (match (array-ref slots def-index)
                   [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
                     (match op
@@ -47695,14 +48004,21 @@
                           [(OptAffineOperands.Some _ m)
                             (if (>= m 0)
                               ;; masked index: in [0, m] whatever the source.
-                              (opt-bce-version-cond
-                                cell
-                                (ir.CompilerIrBinOp.Lt)
-                                (ir.CompilerIrValue.I64 m)
-                                length-value
-                                acc)
-                              (OptBceVersionGuardAcc.No))]
-                          [(OptAffineOperands.No) (OptBceVersionGuardAcc.No)])]
+                              (OptBceVersionFanDerive
+                                (opt-bce-version-cond
+                                  cell
+                                  (ir.CompilerIrBinOp.Lt)
+                                  (ir.CompilerIrValue.I64 m)
+                                  length-value
+                                  acc)
+                                fan)
+                              (OptBceVersionFanDerive
+                                (OptBceVersionGuardAcc.No)
+                                fan))]
+                          [(OptAffineOperands.No)
+                            (OptBceVersionFanDerive
+                              (OptBceVersionGuardAcc.No)
+                              fan)])]
                       [_
                         (match (opt-bce-version-counter-affine
                           instrs
@@ -47729,16 +48045,19 @@
                               (ir.CompilerIrValue.Var id)
                               length-value
                               allow-scale1
+                              fan
                               acc)]
                           [(OptBceCounterAffine.Some scale offset)
-                            (opt-bce-version-affine-guard
-                              seed
-                              bound
-                              length-value
-                              scale
-                              offset
-                              cell
-                              acc)])])]
+                            (OptBceVersionFanDerive
+                              (opt-bce-version-affine-guard
+                                seed
+                                bound
+                                length-value
+                                scale
+                                offset
+                                cell
+                                acc)
+                              fan)])])]
                   [(ir.CompilerIrInstr.Phi _ inputs pty)
                     (match pty
                       [(ast.AstType.I64)
@@ -47752,19 +48071,24 @@
                           id
                           inputs)
                           [(OptBceDerivedInduction.No)
-                            (OptBceVersionGuardAcc.No)]
+                            (OptBceVersionFanDerive
+                              (OptBceVersionGuardAcc.No)
+                              fan)]
                           [(OptBceDerivedInduction.Some derived-seed step)
-                            (opt-bce-version-derived-guard
-                              seed
-                              bound
-                              derived-seed
-                              step
-                              length-value
-                              cell
-                              acc)])]
-                      [_ (OptBceVersionGuardAcc.No)])]
-                  [_ (OptBceVersionGuardAcc.No)]))))))]
-    [_ (OptBceVersionGuardAcc.No)]))
+                            (OptBceVersionFanDerive
+                              (opt-bce-version-derived-guard
+                                seed
+                                bound
+                                derived-seed
+                                step
+                                length-value
+                                cell
+                                acc)
+                              fan)])]
+                      [_
+                        (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)])]
+                  [_ (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]))))))]
+    [_ (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]))
 
 ;; Fold the per-check derivations over the loop body. A check whose length
 ;; is not invariant or whose index does not derive is KEPT (remapped) in the
@@ -47811,7 +48135,7 @@
             length-value)
             [(ir.CompilerIrMaybeValue.Some length-invariant)
               (let
-                [derived-guard : OptBceVersionGuardAcc
+                [derived : OptBceVersionFanDerive
                   (opt-bce-version-derive-index
                     instrs
                     phi-count
@@ -47826,25 +48150,29 @@
                     index-value
                     length-invariant
                     allow-scale1
+                    (struct-get state fan)
                     (struct-get state guard))]
-                (match derived-guard
+                (match (struct-get derived guard)
                   [(OptBceVersionGuardAcc.No)
                     (OptBceVersionDerive
                       (struct-get state guard)
                       (OptBceVersionKeep.Cons
                         index
                         (box (struct-get state keep)))
-                      (struct-get state derived))]
+                      (struct-get state derived)
+                      (struct-get state fan))]
                   [(OptBceVersionGuardAcc.Some _ _ _)
                     (OptBceVersionDerive
-                      derived-guard
+                      (struct-get derived guard)
                       (struct-get state keep)
-                      (+ (struct-get state derived) 1))]))]
+                      (+ (struct-get state derived) 1)
+                      (struct-get derived fan))]))]
             [(ir.CompilerIrMaybeValue.No)
               (OptBceVersionDerive
                 (struct-get state guard)
                 (OptBceVersionKeep.Cons index (box (struct-get state keep)))
-                (struct-get state derived))])]
+                (struct-get state derived)
+                (struct-get state fan))])]
         [_ state]))))
 
 (define (opt-bce-version-append-reverse-instr-list!
@@ -47959,9 +48287,29 @@
 ;; literal non-negative seed skips the latter; a literal negative seed
 ;; rejects -- the guard could never pass), then the And chain over every
 ;; condition value.
+;;
+;; `step` is the counter's positive literal increment. For a step greater
+;; than 1 the counter's last visited value `bound - 1` does not by itself
+;; keep the final increment representable: `bound - 1 + step` can exceed i64
+;; MAX, and a wrapped (negative) counter would pass the signed latch compare
+;; and run trips the [seed, bound-1] range argument never covered. Emit one
+;; more once-only condition in that case (and only when a counter-bearing
+;; derivation fired, like the seed compares):
+;;
+;;   bound <= MAX - step + 1            (signed Le against a literal)
+;;
+;; It makes `last + step <= bound - 1 + step <= MAX`, so the counter cannot
+;; wrap: it strictly increases to `bound` and the loop terminates, with every
+;; executed trip's counter in [seed, bound-1] -- the exact assumption every
+;; counter-involving derivation (this pass's and the multi-block pass's,
+;; which shares this finisher) makes. Step 1 needs nothing: `last + 1 <=
+;; bound <= MAX` already. A literal bound folds the check at compile time: a
+;; satisfying one emits no instruction, a violating one rejects -- the fast
+;; path could never be selected.
 (define (opt-bce-version-guard-finish
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
+  [step : i64]
   [cell : (__tl_dyn-array i64)]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardResult
   (match acc
@@ -48019,7 +48367,28 @@
                       (OptBceVersionGuardAcc.Some e-instrs e-values true))]
                   [_ (OptBceVersionGuardAcc.No)])])
             entered)]
-        (match seeded
+        [unwrapped : OptBceVersionGuardAcc
+          (if (and counter-seen (> step 1))
+            (match seeded
+              [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+              [(OptBceVersionGuardAcc.Some s-instrs s-values _)
+                (let
+                  ;; Representable for every literal step in [2, MAX].
+                  [cap : i64 (+ (- 9223372036854775807 step) 1)]
+                  (match bound
+                    [(ir.CompilerIrValue.I64 bk)
+                      (if (<= bk cap)
+                        (OptBceVersionGuardAcc.Some s-instrs s-values true)
+                        (OptBceVersionGuardAcc.No))]
+                    [_
+                      (opt-bce-version-cond
+                        cell
+                        (ir.CompilerIrBinOp.Le)
+                        bound
+                        (ir.CompilerIrValue.I64 cap)
+                        (OptBceVersionGuardAcc.Some s-instrs s-values true))]))])
+            seeded)]
+        (match unwrapped
           [(OptBceVersionGuardAcc.No) (OptBceVersionGuardResult.No)]
           [(OptBceVersionGuardAcc.Some all-instrs all-values _)
             (opt-bce-version-build-guard cell all-instrs all-values)]))]))
@@ -48056,7 +48425,8 @@
       (ir.CompilerIrValueList.Nil)
       false)
     (OptBceVersionKeep.Nil)
-    0))
+    0
+    (OptBceVersionFan.Nil)))
 
 ;; Assemble the single-block guard: derive the per-check conditions, then
 ;; finish them (seed compares + And chain).
@@ -48080,6 +48450,7 @@
   [iphi : i64]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
+  [step : i64]
   [cell : (__tl_dyn-array i64)]) : OptBceVersionGuardOut
   (let
     [census-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
@@ -48122,14 +48493,58 @@
       (match (opt-bce-version-guard-finish
         seed
         bound
+        step
         cell
-        (struct-get state guard))
+        ;; The fan's extremal conditions join the accumulator only here, once
+        ;; per loop, instead of twice per fan member.
+        (opt-bce-version-fan-flush
+          (struct-get state fan)
+          seed
+          bound
+          cell
+          (struct-get state guard)))
         [(OptBceVersionGuardResult.No) (OptBceVersionGuardOut.No)]
         [(OptBceVersionGuardResult.Some guard-instrs guard-value)
           (OptBceVersionGuardOut.Some
             guard-instrs
             guard-value
             (struct-get state keep))]))))
+
+;; The counter's positive literal step, re-derived from the back-edge add the
+;; shape scan already verified: `inext = iphi + literal` in this block. 0 on
+;; any mismatch -- impossible after opt-bce-version-shape-step admitted the
+;; loop, and rejected by the caller before any guard is built, so a stale
+;; shape can never sneak a step-1 assumption past the no-wrap condition.
+(define (opt-bce-version-shape-step-value
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [iphi : i64]
+  [inext : i64]) : i64
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
+    (if (< inext-index 0)
+      0
+      (match (ir.compiler-ir-instr-seq-ref instrs inext-index)
+        [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+          (match op
+            [(ir.CompilerIrBinOp.Add)
+              (match lhs
+                [(ir.CompilerIrValue.Var src)
+                  (match rhs
+                    [(ir.CompilerIrValue.I64 step)
+                      (if (and
+                        (> step 0)
+                        (=
+                          (opt-bce-version-resolve instrs phi-count last src 16)
+                          iphi))
+                        step
+                        0)]
+                    [_ 0])]
+                [_ 0])]
+            [_ 0])]
+        [_ 0]))))
 
 ;; --- shape scan ---------------------------------------------------------------
 (define (opt-bce-version-shape-phi
@@ -48222,10 +48637,15 @@
                   (match add-rhs
                     [(ir.CompilerIrValue.I64 step)
                       (if (and
-                        (= step 1)
+                        ;; Any positive literal step: every derivation reasons
+                        ;; about the set of executed-trip counter values (a
+                        ;; subset of [seed, bound-1] for any positive step),
+                        ;; and the guard's no-wrap condition
+                        ;; (opt-bce-version-guard-finish) covers steps > 1.
                         ;; I64 only: the guard reasons in SIGNED 64-bit
                         ;; arithmetic, so narrow (wrapping) and unsigned
                         ;; counters are out of scope.
+                        (> step 0)
                         (match ity
                           [(ast.AstType.I64) true]
                           [_ false]))
@@ -48694,9 +49114,14 @@
             (opt_i64_i64_map.with-capacity 64)
             blocks
             label)]
+        ;; The guard's no-wrap condition needs the exact literal step; the
+        ;; shape scan verified this add but did not record it.
+        [step : i64
+          (opt-bce-version-shape-step-value instrs phi-count last iphi inext)]
         (if (or
           (= exit-label label)
           (= exit-label pred-label)
+          (<= step 0)
           (opt-bce-version-defs-escape?
             (struct-get instrs slots)
             0
@@ -48716,6 +49141,7 @@
               iphi
               seed
               bound
+              step
               cell)
               [(OptBceVersionGuardOut.No)
                 (OptUnrollResult.Result blocks frame false)]
@@ -48873,11 +49299,21 @@
 ;; whose body spans several blocks (an if/else inside a scan -- the quicksort
 ;; partition loop is the running example) pays the same per-iteration cmp+jb
 ;; on every BoundsCheck even though the same up-front reasoning applies: a
-;; counter phi stepping exactly +1 per latch crossing with an invariant
+;; counter phi stepping by a positive literal per latch crossing (+1 scans,
+;; +8 word-strided loaders) with an invariant
 ;; bound, plus a second "bounded" header phi sharing the counter's seed whose
 ;; back-edge value stays within {sphi, sphi+1} through any merge, keeps every
 ;; provable index inside [0, len) for the whole trip range whenever
 ;;   seed >= 0 && seed < bound && bound <= len.
+;; The bounded phi's +1-per-crossing growth never outpaces the counter's own
+;; (positive) step, so `sphi <= scan` holds for any admitted counter step.
+;; Like the single-block pass, every derivation reasons about the SET of
+;; executed-trip counter values -- a subset of [seed, bound-1] for any
+;; positive step -- so the per-check guards are step-independent, and the
+;; shared guard finisher (opt-bce-version-guard-finish) adds the one
+;; no-wrap condition `bound <= i64-MAX - step + 1` when the step is greater
+;; than 1: without it a counter wrapping past i64 MAX would pass the signed
+;; latch compare again and run trips the range argument never covered.
 ;; This pass recognizes such a loop from its natural-loop back edge (header
 ;; dominating latch, a single dedicated preheader whose only successor is the
 ;; header, a clone that fits the growth budget -- <= (opt-bce-mb-instr-max)
@@ -48960,10 +49396,11 @@
   (No)
   (Some i64 i64))
 
-;; iphi, seed, inext, bound.
+;; iphi, seed, inext, bound, step (the counter's positive literal increment;
+;; the guard's no-wrap condition needs it for steps greater than 1).
 (defenum OptBceMbMaybeCounter
   (No)
-  (Some i64 ir.CompilerIrValue i64 ir.CompilerIrValue))
+  (Some i64 ir.CompilerIrValue i64 ir.CompilerIrValue i64))
 
 (defstruct OptBceMbShape
   (header i64)
@@ -48973,7 +49410,9 @@
   (body-blocks ir.CompilerIrBlockList)
   (iphi i64)
   (seed ir.CompilerIrValue)
-  (bound ir.CompilerIrValue))
+  (bound ir.CompilerIrValue)
+  ;; the counter's positive literal step (for the guard's no-wrap condition)
+  (step i64))
 
 (defenum OptBceMbMaybeShape
   (No)
@@ -49255,9 +49694,13 @@
                   (match add-rhs
                     [(ir.CompilerIrValue.I64 step)
                       (if (and
-                        (= step 1)
-                        ;; I64 only: the guard reasons in SIGNED 64-bit
-                        ;; arithmetic, like the single-block pass.
+                        ;; Any positive literal step, like the single-block
+                        ;; pass: the derivations reason about the set of
+                        ;; executed-trip counter values, and the shared
+                        ;; guard finisher adds the no-wrap condition for
+                        ;; steps > 1. I64 only: the guard reasons in SIGNED
+                        ;; 64-bit arithmetic, like the single-block pass.
+                        (> step 0)
                         (match ity
                           [(ast.AstType.I64) true]
                           [_ false]))
@@ -49272,15 +49715,20 @@
                             iphi)
                             [(OptBceMbMaybeSeed.No) (OptBceMbMaybeCounter.No)]
                             [(OptBceMbMaybeSeed.Some seed)
-                              (OptBceMbMaybeCounter.Some iphi seed inext bound)]))
+                              (OptBceMbMaybeCounter.Some
+                                iphi
+                                seed
+                                inext
+                                bound
+                                step)]))
                         (OptBceMbMaybeCounter.No))]
                     [_ (OptBceMbMaybeCounter.No)])]
                 [_ (OptBceMbMaybeCounter.No)])]
             [_ (OptBceMbMaybeCounter.No)])]
         [_ (OptBceMbMaybeCounter.No)])]))
 
-;; The latch compare `c = inext < bound` with `inext = iphi + 1` (i64, step
-;; exactly one) and an invariant bound.
+;; The latch compare `c = inext < bound` with `inext = iphi + step` (i64, any
+;; positive literal step) and an invariant bound.
 (define (opt-bce-mb-counter-step
   [body-blocks : ir.CompilerIrBlockList]
   [defs : opt_i64_i64_map.Map]
@@ -49308,8 +49756,8 @@
             [_ (OptBceMbMaybeCounter.No)])]
         [_ (OptBceMbMaybeCounter.No)])]))
 
-;; The top-tested counter's +1 step: the phi's latch back-edge value resolves
-;; to `iphi + 1` (i64, step exactly one).
+;; The top-tested counter's step: the phi's latch back-edge value resolves to
+;; `iphi + step` (i64, any positive literal step).
 (define (opt-bce-mb-counter-top-step
   [body-blocks : ir.CompilerIrBlockList]
   [iphi : i64]
@@ -49330,12 +49778,12 @@
                     (match add-rhs
                       [(ir.CompilerIrValue.I64 step)
                         (if (and
-                          (= step 1)
+                          (> step 0)
                           (match ity
                             [(ast.AstType.I64) true]
                             [_ false])
                           (= (opt-bce-mb-resolve body-blocks add-src 16) iphi))
-                          (OptBceMbMaybeCounter.Some iphi seed inext bound)
+                          (OptBceMbMaybeCounter.Some iphi seed inext bound step)
                           (OptBceMbMaybeCounter.No))]
                       [_ (OptBceMbMaybeCounter.No)])]
                   [_ (OptBceMbMaybeCounter.No)])]
@@ -49343,7 +49791,7 @@
           [_ (OptBceMbMaybeCounter.No)])])))
 
 ;; The top-tested counter phi: an i64 header phi fed (seed from the
-;; preheader, +1 step from the latch).
+;; preheader, positive literal step from the latch).
 (define (opt-bce-mb-counter-top-phi
   [body-blocks : ir.CompilerIrBlockList]
   [latch : i64]
@@ -49571,7 +50019,7 @@
   [counter : OptBceMbMaybeCounter]) : OptBceMbMaybeShape
   (match counter
     [(OptBceMbMaybeCounter.No) (OptBceMbMaybeShape.No)]
-    [(OptBceMbMaybeCounter.Some iphi seed _ bound)
+    [(OptBceMbMaybeCounter.Some iphi seed _ bound step)
       (match (opt-cfg-find-block blocks header)
         [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
         [(OptMaybeBlock.Some header-block)
@@ -49594,7 +50042,8 @@
                     body-blocks
                     iphi
                     seed
-                    bound))
+                    bound
+                    step))
                 (OptBceMbMaybeShape.No))])])]))
 
 ;; No nested natural loop inside the candidate body: versioning an OUTER
@@ -51488,12 +51937,14 @@
 ;; Derivation fold state: the guard accumulator (conditions for REMOVED
 ;; checks), the kept-check set, how many checks derived -- partial
 ;; versioning requires at least one derivable check to make cloning pay --
-;; and the descriptor-length hoists already emitted into the guard.
+;; the descriptor-length hoists already emitted into the guard, and the
+;; scale-1 fan table (opt-bce-version-fan-*), flushed at guard assembly.
 (defstruct OptBceMbDerive
   (guard OptBceVersionGuardAcc)
   (keep OptBceMbKeep)
   (derived i64)
-  (hoists OptBceMbHoists))
+  (hoists OptBceMbHoists)
+  (fan OptBceVersionFan))
 
 ;; guard-conds output: the guard instructions + value plus the kept-check set
 ;; the clone must preserve (remapped) instead of dropping.
@@ -51546,6 +51997,68 @@
       (OptBceCounterAffineBase.Some scale offset base)]
     [(OptBceCounterAffineBase.No)
       (opt-bce-mb-var-base-side body-blocks defs iphi rhs lhs)]))
+
+;; Multi-block counterpart of opt-bce-version-strided-peel: peel literal
+;; Add/Sub addends off an index expression across the loop's blocks,
+;; returning the remaining core variable and the accumulated literal.
+;; Peeling stops at the first definition that is not a literal addend link
+;; (a var+var Add, a phi, a load, ...); a non-variable expression rejects.
+;; The word-loader fan `((start + i) + k)` is the shape this exists for:
+;; without the peel only the k = 0 fan member's index derives.
+(define (opt-bce-mb-strided-peel
+  [body-blocks : ir.CompilerIrBlockList]
+  [value : ir.CompilerIrValue]
+  [k : i64]
+  [fuel : i64]) : OptBceVersionStridedCore
+  (match value
+    [(ir.CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+        (if (<= fuel 0)
+          (OptBceVersionStridedCore.Some id k)
+          (match (opt-bce-mb-find-def body-blocks id)
+            [(OptBceMbMaybeInstr.No) (OptBceVersionStridedCore.Some id k)]
+            [(OptBceMbMaybeInstr.Some instr)
+              (match instr
+                [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                  (if (not (opt-affine-64bit-type? ty))
+                    (OptBceVersionStridedCore.Some id k)
+                    (match op
+                      [(ir.CompilerIrBinOp.Add)
+                        (match (opt-affine-var-const lhs rhs)
+                          [(OptAffineOperands.Some src c)
+                            (match (opt-bce-version-k-add k c)
+                              [(OptBceVersionKSum.No)
+                                (OptBceVersionStridedCore.No)]
+                              [(OptBceVersionKSum.Some next)
+                                (opt-bce-mb-strided-peel
+                                  body-blocks
+                                  (ir.CompilerIrValue.Var src)
+                                  next
+                                  (- fuel 1))])]
+                          [(OptAffineOperands.No)
+                            (OptBceVersionStridedCore.Some id k)])]
+                      [(ir.CompilerIrBinOp.Sub)
+                        (match lhs
+                          [(ir.CompilerIrValue.Var src)
+                            (match rhs
+                              [(ir.CompilerIrValue.I64 c)
+                                (if (= c (- (- 0 9223372036854775807) 1))
+                                  (OptBceVersionStridedCore.Some id k)
+                                  (match (opt-bce-version-k-add k (- 0 c))
+                                    [(OptBceVersionKSum.No)
+                                      (OptBceVersionStridedCore.No)]
+                                    [(OptBceVersionKSum.Some next)
+                                      (opt-bce-mb-strided-peel
+                                        body-blocks
+                                        (ir.CompilerIrValue.Var src)
+                                        next
+                                        (- fuel 1))]))]
+                              [_ (OptBceVersionStridedCore.Some id k)])]
+                          [_ (OptBceVersionStridedCore.Some id k)])]
+                      [_ (OptBceVersionStridedCore.Some id k)]))]
+                [_ (OptBceVersionStridedCore.Some id k)])])))]
+    [_ (OptBceVersionStridedCore.No)]))
 
 ;; Descriptor-length recognition context: the type-pool segment bases and the
 ;; per-function descriptor-handle set they classify (the load-GVN/LICM header
@@ -51766,17 +52279,20 @@
   [cell : (__tl_dyn-array i64)]
   [index-value : ir.CompilerIrValue]
   [length-value : ir.CompilerIrValue]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [fan : OptBceVersionFan]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionFanDerive
   (match index-value
     [(ir.CompilerIrValue.I64 k)
       (if (>= k 0)
-        (opt-bce-version-cond
-          cell
-          (ir.CompilerIrBinOp.Lt)
-          (ir.CompilerIrValue.I64 k)
-          length-value
-          acc)
-        (OptBceVersionGuardAcc.No))]
+        (OptBceVersionFanDerive
+          (opt-bce-version-cond
+            cell
+            (ir.CompilerIrBinOp.Lt)
+            (ir.CompilerIrValue.I64 k)
+            length-value
+            acc)
+          fan)
+        (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan))]
     [(ir.CompilerIrValue.Var raw)
       (let
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
@@ -51784,29 +52300,34 @@
           [(= id iphi)
             ;; counter: [seed, bound) subset of [0, len) iff seed >= 0
             ;; (emitted once at the end) and bound <= len.
-            (opt-bce-version-cond-counter-seen
-              (opt-bce-version-cond
-                cell
-                (ir.CompilerIrBinOp.Le)
-                bound
-                length-value
-                acc))]
+            (OptBceVersionFanDerive
+              (opt-bce-version-cond-counter-seen
+                (opt-bce-version-cond
+                  cell
+                  (ir.CompilerIrBinOp.Le)
+                  bound
+                  length-value
+                  acc))
+              fan)]
           [(not (opt-used-contains defs id))
             ;; loop-invariant index: exactly its own range check, hoisted.
-            (opt-bce-version-cond
-              cell
-              (ir.CompilerIrBinOp.Lt)
-              (ir.CompilerIrValue.Var id)
-              length-value
+            (OptBceVersionFanDerive
               (opt-bce-version-cond
                 cell
-                (ir.CompilerIrBinOp.Ge)
+                (ir.CompilerIrBinOp.Lt)
                 (ir.CompilerIrValue.Var id)
-                (ir.CompilerIrValue.I64 0)
-                acc))]
+                length-value
+                (opt-bce-version-cond
+                  cell
+                  (ir.CompilerIrBinOp.Ge)
+                  (ir.CompilerIrValue.Var id)
+                  (ir.CompilerIrValue.I64 0)
+                  acc))
+              fan)]
           [else
             (match (opt-bce-mb-find-def body-blocks id)
-              [(OptBceMbMaybeInstr.No) (OptBceVersionGuardAcc.No)]
+              [(OptBceMbMaybeInstr.No)
+                (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]
               [(OptBceMbMaybeInstr.Some instr)
                 (match instr
                   [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
@@ -51816,14 +52337,21 @@
                           [(OptAffineOperands.Some _ m)
                             (if (>= m 0)
                               ;; masked index: in [0, m] whatever the source.
-                              (opt-bce-version-cond
-                                cell
-                                (ir.CompilerIrBinOp.Lt)
-                                (ir.CompilerIrValue.I64 m)
-                                length-value
-                                acc)
-                              (OptBceVersionGuardAcc.No))]
-                          [(OptAffineOperands.No) (OptBceVersionGuardAcc.No)])]
+                              (OptBceVersionFanDerive
+                                (opt-bce-version-cond
+                                  cell
+                                  (ir.CompilerIrBinOp.Lt)
+                                  (ir.CompilerIrValue.I64 m)
+                                  length-value
+                                  acc)
+                                fan)
+                              (OptBceVersionFanDerive
+                                (OptBceVersionGuardAcc.No)
+                                fan))]
+                          [(OptAffineOperands.No)
+                            (OptBceVersionFanDerive
+                              (OptBceVersionGuardAcc.No)
+                              fan)])]
                       [_
                         (match (opt-bce-mb-counter-affine
                           body-blocks
@@ -51831,56 +52359,110 @@
                           (ir.CompilerIrValue.Var id)
                           16)
                           [(OptBceCounterAffine.No)
-                            ;; A var+var Add defeats the literal-coefficient
-                            ;; recovery: retry as `base + counter + offset`
-                            ;; with a loop-invariant variable base.
-                            (if (not (opt-affine-64bit-type? ty))
-                              (OptBceVersionGuardAcc.No)
-                              (match op
-                                [(ir.CompilerIrBinOp.Add)
-                                  (match (opt-bce-mb-var-base-add
-                                    body-blocks
-                                    defs
-                                    iphi
-                                    lhs
-                                    rhs)
-                                    [(OptBceCounterAffineBase.No)
-                                      (OptBceVersionGuardAcc.No)]
-                                    [(OptBceCounterAffineBase.Some
-                                        scale
-                                        offset
-                                        base)
-                                      (if (= scale 1)
-                                        (opt-bce-version-var-base-guard
-                                          seed
-                                          bound
-                                          base
-                                          offset
-                                          length-value
-                                          cell
-                                          acc)
-                                        ;; Strided variable base: the guard
-                                        ;; synthesizes the derived seed and
-                                        ;; reuses the positive-step quotient.
-                                        (opt-bce-version-var-base-scaled-guard
-                                          seed
-                                          bound
-                                          base
-                                          scale
-                                          offset
-                                          length-value
-                                          cell
-                                          acc))])]
-                                [_ (OptBceVersionGuardAcc.No)]))]
+                            ;; A var+var Add (possibly under peeled literal
+                            ;; addends) defeats the literal-coefficient
+                            ;; recovery: retry as `base + strided + k` with a
+                            ;; loop-invariant variable base.
+                            (match (opt-bce-mb-strided-peel
+                              body-blocks
+                              (ir.CompilerIrValue.Var id)
+                              0
+                              8)
+                              [(OptBceVersionStridedCore.No)
+                                (OptBceVersionFanDerive
+                                  (OptBceVersionGuardAcc.No)
+                                  fan)]
+                              [(OptBceVersionStridedCore.Some core k0)
+                                (match (opt-bce-mb-find-def body-blocks core)
+                                  [(OptBceMbMaybeInstr.No)
+                                    (OptBceVersionFanDerive
+                                      (OptBceVersionGuardAcc.No)
+                                      fan)]
+                                  [(OptBceMbMaybeInstr.Some core-instr)
+                                    (match core-instr
+                                      [(ir.CompilerIrInstr.BinOp
+                                          _
+                                          core-op
+                                          core-lhs
+                                          core-rhs
+                                          core-ty)
+                                        (if (not
+                                          (opt-affine-64bit-type? core-ty))
+                                          (OptBceVersionFanDerive
+                                            (OptBceVersionGuardAcc.No)
+                                            fan)
+                                          (match core-op
+                                            [(ir.CompilerIrBinOp.Add)
+                                              (match (opt-bce-mb-var-base-add
+                                                body-blocks
+                                                defs
+                                                iphi
+                                                core-lhs
+                                                core-rhs)
+                                                [(OptBceCounterAffineBase.No)
+                                                  (OptBceVersionFanDerive
+                                                    (OptBceVersionGuardAcc.No)
+                                                    fan)]
+                                                [(OptBceCounterAffineBase.Some
+                                                    scale
+                                                    k2
+                                                    base)
+                                                  (match (opt-bce-version-k-add
+                                                    k0
+                                                    k2)
+                                                    [(OptBceVersionKSum.No)
+                                                      (OptBceVersionFanDerive
+                                                        (OptBceVersionGuardAcc.No)
+                                                        fan)]
+                                                    [(OptBceVersionKSum.Some
+                                                        offset)
+                                                      (if (= scale 1)
+                                                        ;; Fan member: record
+                                                        ;; (base, length, k);
+                                                        ;; the flush emits the
+                                                        ;; extremal conditions.
+                                                        (opt-bce-version-fan-admit
+                                                          fan
+                                                          seed
+                                                          bound
+                                                          base
+                                                          offset
+                                                          length-value
+                                                          cell
+                                                          acc)
+                                                        ;; Strided variable base: the guard
+                                                        ;; synthesizes the derived seed and
+                                                        ;; reuses the positive-step quotient.
+                                                        (OptBceVersionFanDerive
+                                                          (opt-bce-version-var-base-scaled-guard
+                                                            seed
+                                                            bound
+                                                            base
+                                                            scale
+                                                            offset
+                                                            length-value
+                                                            cell
+                                                            acc)
+                                                          fan))])])]
+                                            [_
+                                              (OptBceVersionFanDerive
+                                                (OptBceVersionGuardAcc.No)
+                                                fan)]))]
+                                      [_
+                                        (OptBceVersionFanDerive
+                                          (OptBceVersionGuardAcc.No)
+                                          fan)])])])]
                           [(OptBceCounterAffine.Some scale offset)
-                            (opt-bce-version-affine-guard
-                              seed
-                              bound
-                              length-value
-                              scale
-                              offset
-                              cell
-                              acc)])])]
+                            (OptBceVersionFanDerive
+                              (opt-bce-version-affine-guard
+                                seed
+                                bound
+                                length-value
+                                scale
+                                offset
+                                cell
+                                acc)
+                              fan)])])]
                   [(ir.CompilerIrInstr.Phi _ inputs pty)
                     ;; Bounded header phi (only header phis carry latch-edge
                     ;; inputs): same seed as the counter, back-edge value
@@ -51894,13 +52476,15 @@
                               (= pred-label preheader)
                               (opt-bce-mb-seeds-match? all-blocks seed init)
                               (opt-bce-mb-bounded-value? body-blocks id back 8))
-                              (opt-bce-version-cond-counter-seen
-                                (opt-bce-version-cond
-                                  cell
-                                  (ir.CompilerIrBinOp.Le)
-                                  bound
-                                  length-value
-                                  acc))
+                              (OptBceVersionFanDerive
+                                (opt-bce-version-cond-counter-seen
+                                  (opt-bce-version-cond
+                                    cell
+                                    (ir.CompilerIrBinOp.Le)
+                                    bound
+                                    length-value
+                                    acc))
+                                fan)
                               (match (opt-bce-mb-derived-induction
                                 body-blocks
                                 defs
@@ -51909,20 +52493,28 @@
                                 id
                                 inputs)
                                 [(OptBceDerivedInduction.No)
-                                  (OptBceVersionGuardAcc.No)]
+                                  (OptBceVersionFanDerive
+                                    (OptBceVersionGuardAcc.No)
+                                    fan)]
                                 [(OptBceDerivedInduction.Some derived-seed step)
-                                  (opt-bce-version-derived-guard
-                                    seed
-                                    bound
-                                    derived-seed
-                                    step
-                                    length-value
-                                    cell
-                                    acc)]))]
-                          [(OptUnrollPhiSplit.No) (OptBceVersionGuardAcc.No)])]
-                      [_ (OptBceVersionGuardAcc.No)])]
-                  [_ (OptBceVersionGuardAcc.No)])])]))]
-    [_ (OptBceVersionGuardAcc.No)]))
+                                  (OptBceVersionFanDerive
+                                    (opt-bce-version-derived-guard
+                                      seed
+                                      bound
+                                      derived-seed
+                                      step
+                                      length-value
+                                      cell
+                                      acc)
+                                    fan)]))]
+                          [(OptUnrollPhiSplit.No)
+                            (OptBceVersionFanDerive
+                              (OptBceVersionGuardAcc.No)
+                              fan)])]
+                      [_
+                        (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)])]
+                  [_ (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)])])]))]
+    [_ (OptBceVersionFanDerive (OptBceVersionGuardAcc.No) fan)]))
 
 ;; Derive one check against a proven-invariant length value: on success the
 ;; guard gains the conditions and the derived count ticks; on failure the
@@ -51947,7 +52539,7 @@
   [acc : OptBceVersionGuardAcc]
   [state : OptBceMbDerive]) : OptBceMbDerive
   (let
-    [derived-guard : OptBceVersionGuardAcc
+    [derived : OptBceVersionFanDerive
       (opt-bce-mb-derive-index
         all-blocks
         body-blocks
@@ -51960,8 +52552,9 @@
         cell
         index-value
         length-invariant
+        (struct-get state fan)
         acc)]
-    (match derived-guard
+    (match (struct-get derived guard)
       [(OptBceVersionGuardAcc.No)
         ;; Underivable: the check STAYS (remapped) in the fast clone instead of
         ;; rejecting the whole loop.
@@ -51969,13 +52562,15 @@
           (struct-get state guard)
           (opt-bce-mb-keep-cons label index (struct-get state keep))
           (struct-get state derived)
-          (struct-get state hoists))]
+          (struct-get state hoists)
+          (struct-get state fan))]
       [(OptBceVersionGuardAcc.Some _ _ _)
         (OptBceMbDerive
-          derived-guard
+          (struct-get derived guard)
           (struct-get state keep)
           (+ (struct-get state derived) 1)
-          success-hoists)])))
+          success-hoists
+          (struct-get derived fan))])))
 
 (define (opt-bce-mb-derive-block
   [descriptor : OptBceMbDescriptor]
@@ -52047,7 +52642,8 @@
                     (struct-get state guard)
                     (opt-bce-mb-keep-cons label index (struct-get state keep))
                     (struct-get state derived)
-                    (struct-get state hoists))]
+                    (struct-get state hoists)
+                    (struct-get state fan))]
                 [(OptBceMbMaybeLength.Some
                     hoisted-length
                     hoisted-hoists
@@ -52164,15 +52760,24 @@
             false)
           (OptBceMbKeep.Nil)
           0
-          (OptBceMbHoists.Nil)))]
+          (OptBceMbHoists.Nil)
+          (OptBceVersionFan.Nil)))]
     (if (= (struct-get dr derived) 0)
       ;; No removable check: cloning the loop would only duplicate it.
       (OptBceMbGuardOut.No)
       (match (opt-bce-version-guard-finish
         (struct-get shape seed)
         (struct-get shape bound)
+        (struct-get shape step)
         cell
-        (struct-get dr guard))
+        ;; The fan's extremal conditions join the accumulator only here,
+        ;; once per loop, instead of twice per fan member.
+        (opt-bce-version-fan-flush
+          (struct-get dr fan)
+          (struct-get shape seed)
+          (struct-get shape bound)
+          cell
+          (struct-get dr guard)))
         [(OptBceVersionGuardResult.No) (OptBceMbGuardOut.No)]
         [(OptBceVersionGuardResult.Some guard-instrs guard-value)
           (OptBceMbGuardOut.Some guard-instrs guard-value (struct-get dr keep))]))))
@@ -53676,7 +54281,8 @@
                   clone-blocks
                   (struct-get shape iphi)
                   (struct-get shape seed)
-                  (struct-get shape bound))
+                  (struct-get shape bound)
+                  (struct-get shape step))
                 clone-defs
                 cell
                 frame)))]))))
@@ -54274,7 +54880,7 @@
   [exit-label : i64]) : OptUnrollMbMaybeShape
   (match counter
     [(OptBceMbMaybeCounter.No) (OptUnrollMbMaybeShape.No)]
-    [(OptBceMbMaybeCounter.Some iphi seed inext bound)
+    [(OptBceMbMaybeCounter.Some iphi seed inext bound step)
       (match (opt-cfg-find-block blocks header)
         [(OptMaybeBlock.No) (OptUnrollMbMaybeShape.No)]
         [(OptMaybeBlock.Some block)
@@ -54283,6 +54889,11 @@
               (let
                 [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
                 (if (and
+                  ;; The shared recognizer also admits literal steps > 1 (for
+                  ;; bce_version's guarded versioning); the 2x unroller's own
+                  ;; shape arithmetic stays step-1 only, so those keep their
+                  ;; old refusal here.
+                  (= step 1)
                   (>= phi-count 1)
                   (<= phi-count 2)
                   (opt-bce-mb-header-phis-ok?

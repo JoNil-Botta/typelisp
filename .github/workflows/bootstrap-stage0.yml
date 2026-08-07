@@ -191,6 +191,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          can_create_pr="$(gh api "repos/$GITHUB_REPOSITORY/actions/permissions/workflow" \
+            --jq '.can_approve_pull_request_reviews')"
+          if [ "$can_create_pr" != true ]; then
+            echo "Repository Actions settings do not allow GITHUB_TOKEN to create pull requests." >&2
+            echo "Enable 'Allow GitHub Actions to create and approve pull requests'." >&2
+            exit 1
+          fi
+
           git fetch --no-tags --depth=1 origin main
           latest_main="$(git rev-parse refs/remotes/origin/main)"
           if [ "$latest_main" != "${{ github.sha }}" ]; then
@@ -225,10 +233,6 @@ jobs:
           pr_url="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
             --head "$branch" --json url --jq '.[0].url // empty')"
           if [ -z "$pr_url" ]; then
-            # GITHUB_TOKEN cannot read the repository's Actions-permissions
-            # admin endpoint even when PR creation is enabled. Test the actual
-            # operation; GitHub's failure remains fail-closed and identifies
-            # the disabled create-pull-requests setting when applicable.
             pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" \
               --base main --head "$branch" \
               --title "perf: ratchet self-compile baseline for $short_sha" \

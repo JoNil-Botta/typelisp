@@ -3297,7 +3297,7 @@
 (define (intern-str [id : i64]) : String
   (cfg
     compile-profile
-    (if (or (< id 0) (>= id (array-length intern-pool-slots)))
+    (if (or (< id 0) (>= id (intern-capacity)))
       (begin
         (set!
           intern-profile-invalid-str-count
@@ -3306,7 +3306,7 @@
         "<invalid-intern-id>")
       (begin
         (set! intern-profile-render-count (+ intern-profile-render-count 1))
-        (array-ref intern-pool-slots id)))
+        (intern-pool-string-shared-view id)))
     (intern-pool-string-shared-view id)))
 
 ;; Typed render boundary. Callers with a structural key or a missing i64 cannot

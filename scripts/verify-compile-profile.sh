@@ -1124,6 +1124,10 @@ fi
 # pinned intern pool, plus its tests) crossed the expr typecheck boundary
 # from 29 to 30 segments: the authoritative Windows probe measured 1,902,698
 # used nodes, 1,966,080 capacity, and 62,914,560 physical payload bytes.
+# #6223's deep result-leaf global-move walk and explicit shared-view migration
+# crossed the next expr typecheck boundary, 31 -> 32 segments: the authoritative
+# Windows probe measured 2,036,796 used nodes, 2,097,152 capacity, and
+# 67,108,864 physical payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1160,7 +1164,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 52 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 31 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \

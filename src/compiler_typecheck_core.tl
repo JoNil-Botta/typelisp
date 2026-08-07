@@ -4481,7 +4481,11 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-current-entry [index : i64]) : CompilerTcMacroProfileEntry
-    (array-ref (struct-get compiler-tc-macro-profile-entries slots) index)))
+    (array-ref
+      (struct-get
+        (tc-global-shared-view compiler-tc-macro-profile-entries)
+        slots)
+      index)))
 
 (cfg
   compile-profile

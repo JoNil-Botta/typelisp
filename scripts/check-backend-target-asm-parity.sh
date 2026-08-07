@@ -456,10 +456,18 @@ expected_target_asm_mismatch() {
     # (opt2 cross-fixpoint + 26/26
     # TL-vs-C parity green). The gate flags a stale entry if the output matches
     # again, so remove an entry once a future change re-converges the two targets.
+    #
+    # #6248 edge-precise liveness: allocation now runs on EP intervals, and the
+    # different SysV/Win64 volatile pools pick different homes for the div/mod
+    # magic-multiplier constants (register operand on one target, spill slot on
+    # the other). Both sides execute one `imulq` per iteration, so the
+    # divergence is home-choice only and instruction-count neutral; the loop
+    # structure, unroll guard, and magic-number sequences are identical.
     case "${_etm_opt}:${_etm_name}" in
         2:functions) return 0 ;;
         2:lambda_capture_struct_enum) return 0 ;;
         2:many_args) return 0 ;;
+        2:target_asm_loop_divmod_parity) return 0 ;;
     esac
     return 1
 }

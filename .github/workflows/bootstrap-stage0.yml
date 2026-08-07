@@ -50,6 +50,11 @@ jobs:
           command -v as
           command -v ld
 
+      - name: Install self-compile instruction-count tools
+        run: |
+          sudo apt-get install -y --no-install-recommends valgrind \
+            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind; }
+
       - name: Fetch previously published stage0 (seed)
         run: scripts/fetch-stage0.sh
 
@@ -67,7 +72,34 @@ jobs:
           scripts/verify-stage0-smoke.sh "$PWD/typelisp-stage0-linux"
 
       - name: Fixpoint-verify the new stage0 self-reproduces
+        env:
+          TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE: ${{ github.workspace }}/target/post-merge-self-compile/stage2.path
         run: scripts/check-bootstrap-fixpoint.sh "$PWD/typelisp-stage0-linux"
+
+      - name: Measure the converged main self-compile baseline
+        run: |
+          stage2="$(sed -n '1p' target/post-merge-self-compile/stage2.path)"
+          test -x "$stage2"
+          cp perf/insn-exec-baseline.tsv \
+            target/post-merge-self-compile/insn-exec-baseline.tsv
+          TYPELISP_IR_CHECK_COMPILER="$stage2" \
+            scripts/check-instruction-counts.sh \
+            --update-baseline \
+            --self-compile-only \
+            --baseline target/post-merge-self-compile/insn-exec-baseline.tsv \
+            --output target/post-merge-self-compile/measure
+          scripts/check-instruction-counts.sh \
+            --select-baseline-source "${{ github.sha }}" \
+            > target/post-merge-self-compile/insn-exec-baseline-source.txt
+
+      - name: Upload the measured main self-compile baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-merge-self-compile-baseline
+          path: |
+            target/post-merge-self-compile/insn-exec-baseline.tsv
+            target/post-merge-self-compile/insn-exec-baseline-source.txt
+          if-no-files-found: error
 
       - name: Corpus-check the new stage0
         run: |
@@ -138,6 +170,78 @@ jobs:
           path: typelisp-stage0-windows.exe
           if-no-files-found: error
 
+  ratchet-self-compile:
+    name: Open self-compile baseline ratchet
+    runs-on: ubuntu-latest
+    needs: build-linux
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the measured main baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: post-merge-self-compile-baseline
+          path: target/post-merge-self-compile-artifact
+
+      - name: Open a CI-owned ratchet PR when main moved
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          can_create_pr="$(gh api "repos/$GITHUB_REPOSITORY/actions/permissions/workflow" \
+            --jq '.can_approve_pull_request_reviews')"
+          if [ "$can_create_pr" != true ]; then
+            echo "Repository Actions settings do not allow GITHUB_TOKEN to create pull requests." >&2
+            echo "Enable 'Allow GitHub Actions to create and approve pull requests'." >&2
+            exit 1
+          fi
+
+          git fetch --no-tags --depth=1 origin main
+          latest_main="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$latest_main" != "${{ github.sha }}" ]; then
+            echo "Skipping ratchet for ${{ github.sha }} because origin/main is now $latest_main."
+            exit 0
+          fi
+
+          measured=target/post-merge-self-compile-artifact/insn-exec-baseline.tsv
+          measured_source=target/post-merge-self-compile-artifact/insn-exec-baseline-source.txt
+          test -s "$measured"
+          test -s "$measured_source"
+          if cmp -s "$measured" perf/insn-exec-baseline.tsv \
+            && cmp -s "$measured_source" perf/insn-exec-baseline-source.txt; then
+            echo "The checked self-compile baseline already matches current main."
+            exit 0
+          fi
+
+          cp "$measured" perf/insn-exec-baseline.tsv
+          cp "$measured_source" perf/insn-exec-baseline-source.txt
+          git diff --check
+          short_sha="$(printf '%s' '${{ github.sha }}' | cut -c1-12)"
+          branch="automation/self-compile-baseline-$short_sha"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git switch -c "$branch"
+          git add perf/insn-exec-baseline.tsv perf/insn-exec-baseline-source.txt
+          git commit -m "perf: ratchet self-compile baseline for $short_sha"
+
+          if ! git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null; then
+            git push --set-upstream origin "$branch"
+          fi
+          pr_url="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+            --head "$branch" --json url --jq '.[0].url // empty')"
+          if [ -z "$pr_url" ]; then
+            pr_url="$(gh pr create --repo "$GITHUB_REPOSITORY" \
+              --base main --head "$branch" \
+              --title "perf: ratchet self-compile baseline for $short_sha" \
+              --body "Automated GitHub-hosted Linux measurement of the converged compiler after main commit ${{ github.sha }}. Refs #5638.")"
+          fi
+          echo "Opened $pr_url"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" \
+            -f pr_base_sha="${{ github.sha }}"
+
   publish:
     name: Publish Stage0 Releases
     runs-on: ubuntu-latest
@@ -156,6 +260,7 @@ jobs:
       - name: Download stage0 artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: stage0-*
           path: stage0-artifacts
           merge-multiple: true
 

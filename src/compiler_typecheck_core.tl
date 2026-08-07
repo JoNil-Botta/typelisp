@@ -4,7 +4,7 @@
 (import stdlib.array)
 (import stdlib.comptime)
 (import stdlib.hashmap)
-(import stdlib.hash as hash)
+(import stdlib.hash)
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 (import compiler_symbols as csym)

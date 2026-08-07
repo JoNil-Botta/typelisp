@@ -26143,8 +26143,11 @@
             [_ (- 0 1)])])]))
 
 ;; Does the named block hold a BinOp with the given i64 literal operand?
-;; Guard-shape evidence: the step-k no-wrap condition compares the bound
-;; against `i64-MAX - step + 1` (9223372036854775800 at step 8).
+;; Guard-shape evidence: the step-k no-wrap condition decides
+;; `bound <= i64-MAX - step + 1` as the wrap self-compare
+;; `wrap(bound + step - 1) >= bound` (bit-identical for every signed i64
+;; bound), so the guard carries an Add with literal `step - 1` (7 at step 8)
+;; feeding a `>=` on the bound -- and no 64-bit cap materialization.
 (define (opt-bce-version-test-binop-lit-from?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
@@ -26174,6 +26177,48 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (opt-bce-version-test-binop-lit-from? instrs 0 literal)])]))
+
+;; Does the named block hold a BinOp with the given opcode AND i64 literal
+;; operand? The no-wrap self-compare's Add is pinned separately from the
+;; compares because `step - 1` also shows up inside bound-1 arithmetic.
+(define (opt-bce-version-test-binop-op-lit-from?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [literal : i64]) : bool
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.BinOp _ instr-op lhs rhs _)
+        (if (and
+          (compiler_optimize.opt-binop-eq instr-op op)
+          (or
+            (match lhs
+              [(compiler_ir_types.CompilerIrValue.I64 k) (= k literal)]
+              [_ false])
+            (match rhs
+              [(compiler_ir_types.CompilerIrValue.I64 k) (= k literal)]
+              [_ false])))
+          true
+          (opt-bce-version-test-binop-op-lit-from?
+            instrs
+            (+ index 1)
+            op
+            literal))]
+      [_
+        (opt-bce-version-test-binop-op-lit-from? instrs (+ index 1) op literal)])))
+
+(define (opt-bce-version-test-block-binop-op-lit?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label-want : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [literal : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label-want)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-bce-version-test-binop-op-lit-from? instrs 0 op literal)])]))
 
 ;; Count the BinOps with the given opcode in one block: guard-shape evidence
 ;; for the fan subsumption (a k-member (base, length) fan needs exactly the
@@ -26373,8 +26418,9 @@
       ;; A counter striding by a positive literal other than 1 versions too
       ;; (variant 19 checks the step-8 counter directly): the counter case's
       ;; `bound <= len` reasoning is step-independent once the guard rules
-      ;; out a wrapping final increment, so the guard must carry the no-wrap
-      ;; compare against `i64-MAX - step + 1`.
+      ;; out a wrapping final increment. The no-wrap condition is the
+      ;; bit-identical self-compare `wrap(bound + step - 1) >= bound`: an
+      ;; Add with literal step - 1 feeding a `>=`, no cap materialization.
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function step8-counter)))
@@ -26399,10 +26445,16 @@
             1))
         24]
       [(not
-          (opt-bce-version-test-block-binop-lit?
+          (opt-bce-version-test-block-binop-op-lit?
             step8-counter-out
             (compiler_ir_types.compiler-ir-label "loop__bce_guard")
-            9223372036854775800))
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            7))
+        25]
+      [(opt-bce-version-test-block-binop-lit?
+          step8-counter-out
+          (compiler_ir_types.compiler-ir-label "loop__bce_guard")
+          9223372036854775800)
         25]
       ;; A non-loop-invariant bound still refuses (variant 20): three blocks,
       ;; check intact.
@@ -26942,7 +26994,8 @@
       ;; `bound - 1` reasoning is step-independent once the no-wrap
       ;; condition rules out a wrapping final increment: check-free fast
       ;; clone, both checks kept in the slow loop, no division, and the
-      ;; guard carries the `bound <= i64-MAX - step + 1` compare.
+      ;; guard carries the no-wrap self-compare `wrap(bound + 7) >= bound`
+      ;; (an Add with literal step - 1 feeding a `>=`, no cap).
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function step8-scale1)))
@@ -26974,10 +27027,16 @@
             0))
         39]
       [(not
-          (opt-bce-version-test-block-binop-lit?
+          (opt-bce-version-test-block-binop-op-lit?
             step8-scale1-out
             (compiler_ir_types.compiler-ir-label "loop__bce_guard")
-            9223372036854775800))
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            7))
+        40]
+      [(opt-bce-version-test-block-binop-lit?
+          step8-scale1-out
+          (compiler_ir_types.compiler-ir-label "loop__bce_guard")
+          9223372036854775800)
         40]
       ;; ... while its lone-check twin stays out under the same
       ;; two-eliminable-check economics gate (three blocks, check intact).
@@ -26993,10 +27052,11 @@
         42]
       ;; The three-member step-8 fan (variant 21) versions the same way --
       ;; but its guard carries only the extremal conditions: two `>= 0`
-      ;; (min- and max-side cond A), two `<=` (max-side cond B and the
-      ;; step-k no-wrap cap), and one `<` (the seed < bound entry
-      ;; condition). Before fan subsumption each member paid two conditions
-      ;; of its own.
+      ;; (min- and max-side cond A), one `<=` (max-side cond B), one `<`
+      ;; (the seed < bound entry condition), and the step-k no-wrap
+      ;; self-compare `wrap(bound + 7) >= bound` (a third `>=` plus its
+      ;; Add). Before fan subsumption each member paid two conditions of
+      ;; its own.
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function fan3)))
@@ -27022,7 +27082,7 @@
               fan3-out
               (compiler_ir_types.compiler-ir-label "loop__bce_guard")
               (compiler_ir_types.CompilerIrBinOp.Ge))
-            2))
+            3))
         47]
       [(not
           (=
@@ -27030,7 +27090,7 @@
               fan3-out
               (compiler_ir_types.compiler-ir-label "loop__bce_guard")
               (compiler_ir_types.CompilerIrBinOp.Le))
-            2))
+            1))
         48]
       [(not
           (=
@@ -27041,10 +27101,16 @@
             1))
         49]
       [(not
-          (opt-bce-version-test-block-binop-lit?
+          (opt-bce-version-test-block-binop-op-lit?
             fan3-out
             (compiler_ir_types.compiler-ir-label "loop__bce_guard")
-            9223372036854775800))
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            7))
+        50]
+      [(opt-bce-version-test-block-binop-lit?
+          fan3-out
+          (compiler_ir_types.compiler-ir-label "loop__bce_guard")
+          9223372036854775800)
         50]
       [else 42])))
 
@@ -27774,7 +27840,7 @@
       ;; Variant 3 strides the counter by +2: admitted now that any positive
       ;; literal step versions (the executed-trip counter values are a subset
       ;; of [seed, bound-1] for any positive step), with the guard's no-wrap
-      ;; condition `bound <= i64-MAX - step + 1` covering the larger
+      ;; self-compare `wrap(bound + step - 1) >= bound` covering the larger
       ;; increment. Both checks drop from the fast region.
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -27805,10 +27871,16 @@
             1))
         25]
       [(not
-          (opt-bce-version-test-block-binop-lit?
+          (opt-bce-version-test-block-binop-op-lit?
             step-two-out
             (compiler_ir_types.compiler-ir-label "body__bce_guard")
-            9223372036854775806))
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            1))
+        26]
+      [(opt-bce-version-test-block-binop-lit?
+          step-two-out
+          (compiler_ir_types.compiler-ir-label "body__bce_guard")
+          9223372036854775806)
         26]
       [else 42])))
 
@@ -30699,6 +30771,110 @@
         1
         "histogram slot 5 counted one hit")
       (test.assert-i64-eq (array-ref fill 0) 0 "histogram slot 0 stayed empty"))))
+
+;; --- step-k no-wrap self-compare equivalence -----------------------------------
+;;
+;; The guard finisher's no-wrap condition is emitted as
+;; `wrap(bound + step - 1) >= bound`, the bit-identical form of the
+;; `bound <= i64-MAX - step + 1` compare it replaces: with k = step - 1 in
+;; [1, MAX-1], bound <= MAX - k makes the sum representable and strictly
+;; larger, and bound > MAX - k makes bound positive (>= MAX - k + 1 >= 2)
+;; while the sum wraps into [MIN, MIN + k - 1], below it. Sweep the
+;; wrap-adjacent boundaries (0, +-1, MAX/MIN adjacencies, +-2^62) and a
+;; pseudo-random stream, proving the two forms agree on every input --
+;; the guard's accept/reject decision cannot change.
+(define (opt-bce-nowrap-mismatch [step : i64] [bound : i64]) : i64
+  (let
+    [cap : i64 (+ (- 9223372036854775807 step) 1)]
+    (if (= (>= (+ bound (- step 1)) bound) (<= bound cap))
+      0
+      1)))
+
+(define (opt-bce-nowrap-center-scan
+  [step : i64]
+  [centers : (Array i64)]
+  [ci : i64]
+  [errors : i64]) : i64
+  (if (>= ci (array-length centers))
+    errors
+    (let
+      [center : i64 (array-ref centers ci)]
+      (opt-bce-nowrap-center-scan
+        step
+        centers
+        (+ ci 1)
+        (+
+          (+
+            (+ errors (opt-bce-nowrap-mismatch step (- center 1)))
+            (opt-bce-nowrap-mismatch step center))
+          (opt-bce-nowrap-mismatch step (+ center 1)))))))
+
+(define (opt-bce-nowrap-lcg-scan
+  [step : i64]
+  [state : i64]
+  [left : i64]
+  [errors : i64]) : i64
+  (if (<= left 0)
+    errors
+    (let
+      [next : i64 (+ (* state 6364136223846793005) 1442695040888963407)]
+      (opt-bce-nowrap-lcg-scan
+        step
+        next
+        (- left 1)
+        (+ errors (opt-bce-nowrap-mismatch step next))))))
+
+(define (opt-bce-nowrap-step-scan
+  [steps : (Array i64)]
+  [centers : (Array i64)]
+  [si : i64]
+  [errors : i64]) : i64
+  (if (>= si (array-length steps))
+    errors
+    (let
+      [step : i64 (array-ref steps si)]
+      (opt-bce-nowrap-step-scan
+        steps
+        centers
+        (+ si 1)
+        (opt-bce-nowrap-lcg-scan
+          step
+          (+ 12345 step)
+          2000
+          (opt-bce-nowrap-center-scan step centers 0 errors))))))
+
+(test
+  bce-version-nowrap-selfcompare-boundary
+  (let
+    [max : i64 9223372036854775807]
+    [min : i64 (- (- 0 9223372036854775807) 1)]
+    [centers : (Array i64) (array.make-array i64 15)]
+    [steps : (Array i64) (array.make-array i64 5)]
+    (begin
+      (array-set! centers 0 0)
+      (array-set! centers 1 1)
+      (array-set! centers 2 (- 0 1))
+      (array-set! centers 3 2)
+      (array-set! centers 4 100)
+      (array-set! centers 5 (- 0 100))
+      (array-set! centers 6 min)
+      (array-set! centers 7 (+ min 1))
+      (array-set! centers 8 (+ min 2))
+      (array-set! centers 9 max)
+      (array-set! centers 10 (- max 1))
+      (array-set! centers 11 (- max 6))
+      (array-set! centers 12 (- max 7))
+      (array-set! centers 13 4611686018427387904)
+      (array-set! centers 14 (- 0 4611686018427387904))
+      (array-set! steps 0 2)
+      (array-set! steps 1 3)
+      (array-set! steps 2 8)
+      (array-set! steps 3 127)
+      (array-set! steps 4 1024)
+      (test.assert-i64-eq
+        (opt-bce-nowrap-step-scan steps centers 0 0)
+        0
+        "wrap self-compare agrees with the cap compare on every boundary"))))
 
 (define (opt-unroll-mb-read-only-test-body) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons

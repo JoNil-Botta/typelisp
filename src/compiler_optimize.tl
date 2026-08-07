@@ -3089,6 +3089,29 @@
     (OptBlockListPassResult.Result (opt-dce-block-list-array items blocks) true)
     (OptBlockListPassResult.Result blocks false)))
 
+;; One DCE sweep visits blocks in forward list order, so a cross-block dead
+;; chain whose dead USERS sit in a later block than the def is only peeled one
+;; block per sweep: the users die (their uses uncounted) after the def's block
+;; was already visited. On the final pipeline iteration there is no later round
+;; to finish the cascade (observed: the bce fast clone's dead index add whose
+;; dead check-adds lived three blocks later). Iterate collect + sweep until a
+;; sweep changes nothing; each iteration strictly removes at least one
+;; instruction when it reports a change, so this terminates well under the
+;; fuel. Removing only never-read definitions, every sweep is
+;; decision-neutral -- the fixpoint cannot alter which instructions survive
+;; semantically, only WHEN they are removed.
+(define (opt-dce-block-list-array-fixpoint
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [fuel : i64]) : ir.CompilerIrBlockList
+  (match (opt-dce-block-list-array-pass
+    (opt-collect-blocks-uses-array frame blocks)
+    blocks)
+    [(OptBlockListPassResult.Result next changed?)
+      (if (and changed? (> fuel 1))
+        (opt-dce-block-list-array-fixpoint frame next (- fuel 1))
+        next)]))
+
 (define (opt-dce-block-seq-array-in-place!
   [items : (__tl_dyn-array i64)]
   [seq : ir.CompilerIrBlockSeq]) : unit
@@ -48381,12 +48404,34 @@
                         (OptBceVersionGuardAcc.Some s-instrs s-values true)
                         (OptBceVersionGuardAcc.No))]
                     [_
-                      (opt-bce-version-cond
-                        cell
-                        (ir.CompilerIrBinOp.Le)
-                        bound
-                        (ir.CompilerIrValue.I64 cap)
-                        (OptBceVersionGuardAcc.Some s-instrs s-values true))]))])
+                      ;; `bound <= cap` decided as `wrap(bound + step - 1) >=
+                      ;; bound` instead: identical for EVERY signed i64 bound.
+                      ;; With k = step - 1 in [1, MAX-1]: bound <= MAX - k
+                      ;; makes bound + k representable and strictly larger
+                      ;; (true); bound > MAX - k makes bound positive (bound
+                      ;; >= MAX - k + 1 >= 2) and the sum wraps into
+                      ;; [MIN, MIN + k - 1], below any positive bound (false).
+                      ;; The Add lowers to one `leaq (step-1)(%bound)`; the Le
+                      ;; form materialized MAX - k as a 64-bit immediate
+                      ;; (movabs plus a spill/reload around the scratch).
+                      (let
+                        [bound-plus : i64 (opt-bce-version-alloc-var cell)]
+                        (opt-bce-version-cond
+                          cell
+                          (ir.CompilerIrBinOp.Ge)
+                          (ir.CompilerIrValue.Var bound-plus)
+                          bound
+                          (OptBceVersionGuardAcc.Some
+                            (ir.compiler-ir-instr-cons
+                              (ir.CompilerIrInstr.BinOp
+                                bound-plus
+                                (ir.CompilerIrBinOp.Add)
+                                bound
+                                (ir.CompilerIrValue.I64 (- step 1))
+                                (ast.AstType.I64))
+                              s-instrs)
+                            s-values
+                            true)))]))])
             seeded)]
         (match unwrapped
           [(OptBceVersionGuardAcc.No) (OptBceVersionGuardResult.No)]
@@ -62126,12 +62171,10 @@
                             _t-bool-branch-late)
                           unit)]
                       [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [used : (__tl_dyn-array i64)
-                        (opt-collect-blocks-uses-array
-                          bool-branch-late-frame
-                          bool-branch-late)]
-                      [dce-result : OptBlockListPassResult
-                        (opt-dce-block-list-array-pass used bool-branch-late)]
+                      ;; Iterated to a fixpoint (fuel 8): one sweep's forward
+                      ;; block order cannot cascade a cross-block dead chain
+                      ;; back to an earlier block's def, and on the final
+                      ;; pipeline iteration no later round finishes it.
                       [dced : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases
@@ -62140,8 +62183,10 @@
                           params
                           ret-ty
                           bool-branch-late-frame
-                          (match dce-result
-                            [(OptBlockListPassResult.Result next _) next]))]
+                          (opt-dce-block-list-array-fixpoint
+                            bool-branch-late-frame
+                            bool-branch-late
+                            8))]
                       [_p-dce : unit
                         (cfg
                           compile-profile

@@ -6885,9 +6885,6 @@
     topenv-state-address
     0))
 
-(define (tc-type-env-store-new) : TcTypeEnvStore
-  (tc-type-env-store-new-with-topenv-state-address 0))
-
 (define (tc-type-env-store-handle-new-with-topenv-state-address
   [topenv-state-address : i64]) : i64
   (let
@@ -10818,24 +10815,6 @@
         env
         (tc-module-name-id-by-id module-id cleanup-name)
         (tc-enum-cleanup-function-type enum-ty))]))
-
-(define (tc-bind-struct-cleanup-local
-  [env : TcTypeEnv]
-  [cleanup : ast.AstStructCleanup]
-  [struct-ty : ast.AstType]) : TcTypeEnv
-  (match cleanup
-    [(ast.AstStructCleanup.No) env]
-    [(ast.AstStructCleanup.Fn cleanup-name)
-      (tc-bind-id env cleanup-name (tc-struct-cleanup-function-type struct-ty))]))
-
-(define (tc-bind-enum-cleanup-local
-  [env : TcTypeEnv]
-  [cleanup : ast.AstEnumCleanup]
-  [enum-ty : ast.AstType]) : TcTypeEnv
-  (match cleanup
-    [(ast.AstEnumCleanup.No) env]
-    [(ast.AstEnumCleanup.Fn cleanup-name)
-      (tc-bind-id env cleanup-name (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-bind-struct-cleanup-import-alias
   [ctx : TcContext]
@@ -18905,18 +18884,6 @@
 (define tc-source-qualified-variant-key-cache-capacity : i64
   8192)
 
-(define (tc-source-dotted-alias-key-cache-reset-for-state!
-  [state : TcSourceKeyCacheState]) : unit
-  (array-set! (struct-get state control) 2 0))
-
-(define (tc-source-dotted-full-path-key-cache-reset-for-state!
-  [state : TcSourceKeyCacheState]) : unit
-  (array-set! (struct-get state control) 5 0))
-
-(define (tc-source-qualified-variant-key-cache-reset-for-state!
-  [state : TcSourceKeyCacheState]) : unit
-  (array-set! (struct-get state control) 9 0))
-
 (define (tc-source-dotted-alias-key-cache-ensure-for-state!
   [state : TcSourceKeyCacheState]
   [table-id : i64]
@@ -19226,18 +19193,6 @@
   [module-id : i64]
   [name-id : i64]) : i64
   (tc-source-qualified-variant-key-cache-get-for-state
-    (tc-job-state-source-key-cache (tc-serial-job-state))
-    (ci.intern-active-table-id)
-    (ci.intern-generation)
-    registry-id
-    module-id
-    name-id))
-
-(define (tc-source-qualified-variant-handle-cache-get
-  [registry-id : i64]
-  [module-id : i64]
-  [name-id : i64]) : i64
-  (tc-source-qualified-variant-handle-cache-get-for-state
     (tc-job-state-source-key-cache (tc-serial-job-state))
     (ci.intern-active-table-id)
     (ci.intern-generation)
@@ -19624,18 +19579,6 @@
         (+ tc-lazy-import-summary-backed-count 1))
       unit)
     (tc-job-state-reset-derived-caches! job-state)))
-
-(define (tc-lazy-import-stub-record!
-  [importer-module-id : i64]
-  [alias-id : i64]
-  [target-module-id : i64]
-  [summary-backed : bool]) : unit
-  (tc-lazy-import-stub-record-for-job!
-    (tc-serial-job-state)
-    importer-module-id
-    alias-id
-    target-module-id
-    summary-backed))
 
 (define (tc-lazy-import-stub-target-indexed
   [importer-module-id : i64]
@@ -29890,53 +29833,6 @@
           (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit next-env))]
         [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
 
-(define (tc-bind-enum-variants-local
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [enum-name : String]
-  [scoped-enum-id : i64]
-  [lifetimes : ast.AstLifetimeList]
-  [variants : ast.AstVariantDefList]) : TcTypeEnv
-  (tc-bind-enum-variants-local-at
-    ctx
-    env
-    enum-name
-    scoped-enum-id
-    lifetimes
-    (& variants)
-    0))
-
-(define (tc-bind-enum-variants-local-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [enum-name : String]
-  [scoped-enum-id : i64]
-  [lifetimes : ast.AstLifetimeList]
-  [variants : (& variants ast.AstVariantDefList)]
-  [index : i64]) : TcTypeEnv
-  (if (>= index (struct-get variants len))
-    env
-    (match (ast.ast-variant-def-list-get
-      variants
-      index
-      (ast.ast-variant-def-fallback))
-      [(ast.AstVariantDef.Def name fields _)
-        (let
-          [constructor-ty : ast.AstType
-            (tc-enum-variant-constructor-type-id
-              ctx
-              scoped-enum-id
-              lifetimes
-              fields)]
-          (tc-bind-enum-variants-local-at
-            ctx
-            (tc-bind-id env name constructor-ty)
-            enum-name
-            scoped-enum-id
-            lifetimes
-            variants
-            (+ index 1)))])))
-
 ;; Most module-owned values are uniquely named and can resolve through their
 ;; canonical module-qualified top-env key. Keep bindings whose source spelling
 ;; cannot be recovered from that key (root/dotted names), plus bindings whose
@@ -32580,17 +32476,6 @@
         (str_cat.str-cat " (parameter `" (tc-hygiene-name-text-id name-id) "`)")]
       [(TcMaybeNameId.No) ""])
     " type mismatch"))
-
-(define (tc-call-argument-mismatch-message
-  [ctx : TcContext]
-  [func : ast.AstExpr]
-  [index : i64]
-  [actual : ast.AstType]
-  [expected : ast.AstType]) : String
-  (tc-type-mismatch-message
-    actual
-    expected
-    (tc-call-argument-message-prefix ctx func index)))
 
 (define (tc-call-argument-expected-text-message
   [ctx : TcContext]
@@ -38932,16 +38817,6 @@
         [_ unit])]
     [(ast.AstMaybeType.Some _) unit]))
 
-(define (tc-inlay-hint-maybe-record
-  [maybe-ty : ast.AstMaybeType]
-  [init : ast.AstExpr]
-  [init-ty : ast.AstType]) : unit
-  (tc-inlay-hint-maybe-record-for-state
-    (tc-job-state-inlay-hints (tc-serial-job-state))
-    maybe-ty
-    init
-    init-ty))
-
 ;; Record the inferred type of any spanned expression for tl/getType.
 (define (tc-inlay-hint-maybe-record-expr-for-state
   [state : TcInlayHintState]
@@ -38955,14 +38830,6 @@
         (ast.ast-source-span-start-col span)
         (tc-type-render ty))]
     [_ unit]))
-
-(define (tc-inlay-hint-maybe-record-expr
-  [expr : ast.AstExpr]
-  [ty : ast.AstType]) : unit
-  (tc-inlay-hint-maybe-record-expr-for-state
-    (tc-job-state-inlay-hints (tc-serial-job-state))
-    expr
-    ty))
 
 (define (tc-let-binding-init-type-at
   [ctx : TcContext]
@@ -52869,29 +52736,6 @@
               (ResultTcType.Ok projected)))]
         [_ (ResultTcType.Err "typecheck: box-get requires Box type")])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
-
-(define (tc-box-take-expr-with-expected-or-actual
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [box-expr : ast.AstExpr]
-  [expected : ast.AstType]) : ResultTcType
-  (match (tc-box-get-expr-with-expected-or-actual ctx env box-expr expected)
-    [(ResultTcType.Ok inner-ty) (ResultTcType.Ok inner-ty)]
-    [(ResultTcType.Err message)
-      (if (string.eq message "typecheck: box-get requires Box type")
-        (ResultTcType.Err "typecheck: box-take requires Box type")
-        (ResultTcType.Err message))]))
-
-(define (tc-box-take-expr
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [box-expr : ast.AstExpr]) : ResultTcType
-  (match (tc-box-get-expr ctx env box-expr)
-    [(ResultTcType.Ok inner-ty) (ResultTcType.Ok inner-ty)]
-    [(ResultTcType.Err message)
-      (if (string.eq message "typecheck: box-get requires Box type")
-        (ResultTcType.Err "typecheck: box-take requires Box type")
-        (ResultTcType.Err message))]))
 
 (define (tc-deref-result-type [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcType
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
@@ -77407,12 +77251,6 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
 
-(define (macro-spanned-sexpr-append
-  [left : reader.SpannedSexpr]
-  [right : reader.SpannedSexpr]
-  [span : token.SourceSpan]) : reader.SpannedSexpr
-  (reader.spanned-sexpr-list-append left right span))
-
 (define (macro-literal-to-spanned-sexpr
   [lit : ast.AstLiteral]
   [span : token.SourceSpan]) : reader.SpannedSexpr
@@ -94947,49 +94785,6 @@
     pools
     source-names
     (ci.intern-compat-state-capture-active)))
-
-(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
-  [load-state : cload.CompilerLoadSessionState]
-  [prefix-cache : TcPrefixSnapshotCacheState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerTypecheckChecked
-  (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
-    load-state
-    prefix-cache
-    job-state
-    program
-    paths
-    stdlib-roots
-    cache-scope
-    pools
-    (ci.intern-source-name-session-capture-active-handle)))
-
-(define (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
-  [load-state : cload.CompilerLoadSessionState]
-  [prefix-cache : TcPrefixSnapshotCacheState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerTypecheck
-  (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
-    load-state
-    prefix-cache
-    job-state
-    program
-    paths
-    stdlib-roots
-    cache-scope
-    pools)
-    [(ResultCompilerTypecheckChecked.Ok summary _ _ _)
-      (ResultCompilerTypecheck.Ok summary)]
-    [(ResultCompilerTypecheckChecked.Err diag)
-      (ResultCompilerTypecheck.Err diag)]))
 
 (define (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]

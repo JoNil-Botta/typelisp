@@ -2502,17 +2502,6 @@
         "end"
         (lsp-offset-position-json text end)))))
 
-(define (lsp-diagnostic-from-byte-position
-  [text : String]
-  [line : i64]
-  [col : i64]
-  [message : String]
-  [code : String]) : json.Json
-  (lsp-diagnostic-with-range
-    (lsp-one-codepoint-range-from-byte-position text line col)
-    message
-    code))
-
 (define (lsp-diagnostic-from-byte-position-data
   [text : String]
   [line : i64]

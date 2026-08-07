@@ -823,9 +823,6 @@
       (ResultPackageSourceDigest.Err error)
       (ResultPackageSourceDigest.Ok hash))))
 
-(define (package-source-digest-for [source-set : PackageSourceSet]) : ResultPackageSourceDigest
-  (package-source-set-digest source-set))
-
 (define (package-source-binding-verification-from-admission
   [admission : tlci.TlciPackageSourceBindingAdmission]) : PackageSourceBindingVerification
   (match admission

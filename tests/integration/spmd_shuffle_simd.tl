@@ -118,7 +118,10 @@
         [dst (i32v.slots-mut (&mut out32))]
         (foreach
           ([i : i64 0 n])
-          (array-set! dst i (spmd-shuffle (array-ref src i) (program-index)))))
+          (array-set!
+            dst
+            i
+            (spmd-shuffle (array-ref src i) (+ (program-index) 0)))))
       ; Full-gang rotate followed by the inverse rotate. `program-count` is a
       ; power of two in both native modes, so bit-and implements lane modulo.
       (let

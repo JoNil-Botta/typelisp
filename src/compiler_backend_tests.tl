@@ -17694,12 +17694,10 @@
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
-(define (compiler-backend-shuffle-asm-contains?
+(define (compiler-backend-shuffle-asm-function-body
   [src : String]
   [lower-mode : compiler_lower.CompilerLowerMode]
-  [backend-mode : compiler_backend.CompilerBackendMode]
-  [opcode : String]
-  [extra : String]) : bool
+  [backend-mode : compiler_backend.CompilerBackendMode]) : String
   (match (compiler_lower.lower-compiler-source-with-mode src lower-mode)
     [(compiler_lower.ResultCompilerLower.Ok program spans)
       (match (compiler_backend.compiler-backend-emit-program-target-with-mode
@@ -17709,41 +17707,148 @@
         spans
         true)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
-          (and
-            (compiler_backend.compiler-backend-string-contains? asm opcode)
-            (compiler_backend.compiler-backend-string-contains? asm extra)
-            (compiler_backend.compiler-backend-string-contains?
-              asm
-              "    call tl_oob_abort"))]
-        [(compiler_backend.ResultCompilerBackend.Err _) false])]
-    [(compiler_lower.ResultCompilerLower.Err _) false]))
+          (compiler-backend-asm-function-body asm "_tl_f")]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""])]
+    [(compiler_lower.ResultCompilerLower.Err _) ""]))
+
+(define (compiler-backend-identity-shuffle-eliminated?
+  [src : String]
+  [lower-mode : compiler_lower.CompilerLowerMode]
+  [backend-mode : compiler_backend.CompilerBackendMode]
+  [loop-label : String]) : bool
+  (let
+    [body : String
+      (compiler-backend-shuffle-asm-function-body src lower-mode backend-mode)]
+    (and
+      (compiler_backend.compiler-backend-string-contains? body loop-label)
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          body
+          "vector_shuffle_"))
+      (not (compiler_backend.compiler-backend-string-contains? body "vpermd"))
+      (not (compiler_backend.compiler-backend-string-contains? body "vpermq")))))
+
+(define (compiler-backend-varying-shuffle-vector-check?
+  [src : String]
+  [lower-mode : compiler_lower.CompilerLowerMode]
+  [backend-mode : compiler_backend.CompilerBackendMode]
+  [opcode : String]
+  [compare-op : String]
+  [reduce-op : String]
+  [extra : String]) : bool
+  (let
+    [body : String
+      (compiler-backend-shuffle-asm-function-body src lower-mode backend-mode)]
+    (compiler_backend.backend-and8
+      (compiler_backend.compiler-backend-string-contains? body opcode)
+      (compiler_backend.compiler-backend-string-contains? body compare-op)
+      (compiler_backend.compiler-backend-string-contains? body reduce-op)
+      (compiler_backend.compiler-backend-string-contains? body extra)
+      (compiler_backend.compiler-backend-string-contains?
+        body
+        "    call tl_oob_abort")
+      (compiler_backend.compiler-backend-string-contains?
+        body
+        "vector_shuffle_")
+      (not (compiler_backend.compiler-backend-string-contains? body "_skip_"))
+      (> (string.string-length body) 0))))
+
+(define (compiler-backend-shuffle-vector-check-reduction-ok?) : bool
+  (let
+    [avx2 : String
+      (compiler_backend.compiler-backend-shuffle-vector-check-asm
+        false
+        2
+        32
+        "%r10"
+        "%r11"
+        ".L_abort")]
+    [avx512 : String
+      (compiler_backend.compiler-backend-shuffle-vector-check-asm
+        true
+        2
+        64
+        "%r10"
+        "%r11"
+        ".L_abort")]
+    (and
+      (compiler_backend.backend-and8
+        (= (compiler_backend.compiler-backend-string-count avx2 "vpcmpgtq") 2)
+        (= (compiler_backend.compiler-backend-string-count avx2 "vpmovmskb") 4)
+        (=
+          (compiler_backend.compiler-backend-string-count
+            avx2
+            "    jne .L_abort\n")
+          1)
+        (= (compiler_backend.compiler-backend-string-count avx2 "    testl ") 1)
+        (not
+          (compiler_backend.compiler-backend-string-contains? avx2 "    cmpq "))
+        (=
+          (compiler_backend.compiler-backend-string-count avx512 "vpcmpuq $6")
+          2)
+        (= (compiler_backend.compiler-backend-string-count avx512 "kmovw") 2)
+        (=
+          (compiler_backend.compiler-backend-string-count
+            avx512
+            "    jne .L_abort\n")
+          1))
+      (= (compiler_backend.compiler-backend-string-count avx512 "    testl ") 1))))
 
 (define (compiler-backend-vector-shuffle-ok?) : bool
   (and
-    (compiler-backend-shuffle-asm-contains?
+    (compiler-backend-identity-shuffle-eliminated?
       "(define (f [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
       (compiler_lower.CompilerLowerMode.Avx2)
       (compiler_backend.CompilerBackendMode.Avx2)
-      "    vpermd "
-      "    shll $1, ")
-    (compiler-backend-shuffle-asm-contains?
+      "foreach_avx2_body")
+    (compiler-backend-identity-shuffle-eliminated?
       "(define (f [xs : (Array i32)] [out : (Array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
       (compiler_lower.CompilerLowerMode.Avx2)
       (compiler_backend.CompilerBackendMode.Avx2)
-      "    vpermd "
-      "%rsp), %ymm0, %ymm")
-    (compiler-backend-shuffle-asm-contains?
+      "foreach_avx2_body")
+    (compiler-backend-identity-shuffle-eliminated?
       "(define (f [xs : (Array f64)] [out : (Array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
       (compiler_lower.CompilerLowerMode.Avx512)
       (compiler_backend.CompilerBackendMode.Avx512)
-      "    vpermq "
-      "%zmm")
-    (compiler-backend-shuffle-asm-contains?
+      "foreach_avx2_body")
+    (compiler-backend-identity-shuffle-eliminated?
       "(define (f [xs : (Array f32)] [out : (Array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
       (compiler_lower.CompilerLowerMode.Avx512)
       (compiler_backend.CompilerBackendMode.Avx512)
+      "foreach_avx2_body")
+    (compiler-backend-varying-shuffle-vector-check?
+      "(define (f [xs : (Array i64)] [selectors : (Array i64)] [out : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      (compiler_lower.CompilerLowerMode.Avx2)
+      (compiler_backend.CompilerBackendMode.Avx2)
       "    vpermd "
-      "%zmm")))
+      "    vpcmpgtq "
+      "    vpmovmskb "
+      "    shll $1, ")
+    (compiler-backend-varying-shuffle-vector-check?
+      "(define (f [xs : (Array i32)] [selectors : (Array i64)] [out : (Array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      (compiler_lower.CompilerLowerMode.Avx2)
+      (compiler_backend.CompilerBackendMode.Avx2)
+      "    vpermd "
+      "    vpcmpgtq "
+      "    vpmovmskb "
+      "%rsp), %ymm0, %ymm")
+    (compiler-backend-varying-shuffle-vector-check?
+      "(define (f [xs : (Array f64)] [selectors : (Array i64)] [out : (Array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      (compiler_lower.CompilerLowerMode.Avx512)
+      (compiler_backend.CompilerBackendMode.Avx512)
+      "    vpermq "
+      "    vpcmpuq $6, "
+      "    kmovw "
+      "%zmm")
+    (compiler-backend-varying-shuffle-vector-check?
+      "(define (f [xs : (Array f32)] [selectors : (Array i64)] [out : (Array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      (compiler_lower.CompilerLowerMode.Avx512)
+      (compiler_backend.CompilerBackendMode.Avx512)
+      "    vpermd "
+      "    vpcmpuq $6, "
+      "    kmovw "
+      "%zmm")
+    (compiler-backend-shuffle-vector-check-reduction-ok?)))
 
 (define (compiler-backend-avx2-vector-reduce-ok?) : bool
   (and

@@ -165,6 +165,7 @@
   (key String))
 
 (defstruct TcMacroCallSiteStateData
+  (enabled bool)
   (records (__tl_dyn-array TcMacroCallSite))
   (live (__tl_dyn-array bool))
   (len i64)
@@ -459,6 +460,7 @@
         cell
         0
         (TcMacroCallSiteStateData
+          false
           (array.make-array TcMacroCallSite 0)
           (array.make-array bool 0)
           0
@@ -563,6 +565,18 @@
         (cast (struct-get state address) : u64)
         : (MutPtr TcMacroCallSiteStateData))
       data)))
+
+(define (tc-macro-call-site-state-enabled? [state : TcMacroCallSiteState]) : bool
+  (struct-get (tc-macro-call-site-state-data state) enabled))
+
+(define (tc-macro-call-site-state-set-enabled!
+  [state : TcMacroCallSiteState]
+  [enabled : bool]) : unit
+  (let
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (begin
+      (set! (struct-get data enabled) enabled)
+      (tc-macro-call-site-state-data-set! state data))))
 
 (define (tc-topenv-membership-state-data [state : TcTopEnvMembershipState]) : TcTopEnvMembershipStateData
   (unsafe
@@ -73451,29 +73465,32 @@
   [macro-name-id : i64]
   [definition-module-id : i64]
   [declaration-id : i64]) : unit
-  (match (tc-macro-call-head ctx func)
-    [(TcMaybeMacroCallHead.Some source-name-id span)
-      (let
-        [state : TcMacroCallSiteState
-          (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
-        [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-        [source-head : bool
-          (and
-            (ci.intern-renderable-id? source-name-id)
-            (not (ci.intern-generated-id-active? source-name-id))
-            (> (ast.ast-source-span-start-line span) 0)
-            (> (ast.ast-source-span-start-col span) 0))]
-        (if (if (struct-get data active-editable)
-          source-head
-          true)
-          (tc-macro-call-site-state-record!
-            state
-            macro-name-id
-            definition-module-id
-            declaration-id
-            span)
-          unit))]
-    [(TcMaybeMacroCallHead.No) unit]))
+  (let
+    [state : TcMacroCallSiteState
+      (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (if (not (struct-get data enabled))
+      unit
+      (match (tc-macro-call-head ctx func)
+        [(TcMaybeMacroCallHead.Some source-name-id span)
+          (let
+            [source-head : bool
+              (and
+                (ci.intern-renderable-id? source-name-id)
+                (not (ci.intern-generated-id-active? source-name-id))
+                (> (ast.ast-source-span-start-line span) 0)
+                (> (ast.ast-source-span-start-col span) 0))]
+            (if (if (struct-get data active-editable)
+              source-head
+              true)
+              (tc-macro-call-site-state-record!
+                state
+                macro-name-id
+                definition-module-id
+                declaration-id
+                span)
+              unit))]
+        [(TcMaybeMacroCallHead.No) unit]))))
 
 (defenum ResultMacroExpr
   (Ok i64)
@@ -88248,13 +88265,18 @@
   (let
     [site-state : TcMacroCallSiteState
       (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
+    [record-sites : bool (tc-macro-call-site-state-enabled? site-state)]
     [previous-active : TcMacroCallSiteActiveDecl
-      (tc-macro-call-site-state-active-decl site-state)]
+      (if record-sites
+        (tc-macro-call-site-state-active-decl site-state)
+        (TcMacroCallSiteActiveDecl "" false "" "" ""))]
     [_set-active : unit
-      (tc-macro-call-site-state-set-active-decl!
-        site-state
-        decl-path
-        (ast.ast-decl-generated-meta decl))]
+      (if record-sites
+        (tc-macro-call-site-state-set-active-decl!
+          site-state
+          decl-path
+          (ast.ast-decl-generated-meta decl))
+        unit)]
     [result : ResultMacroDeclExpansion
       (match decl
         [(ast.AstDecl.Import
@@ -88287,7 +88309,11 @@
             [_ (macro-single-decl-expansion decl decl-path)])]
         [_ (macro-single-decl-expansion decl decl-path)])]
     (begin
-      (tc-macro-call-site-state-restore-active-decl! site-state previous-active)
+      (if record-sites
+        (tc-macro-call-site-state-restore-active-decl!
+          site-state
+          previous-active)
+        unit)
       result)))
 
 (define (macro-collapse-existing-module-imports
@@ -89194,13 +89220,18 @@
   (let
     [site-state : TcMacroCallSiteState
       (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
+    [record-sites : bool (tc-macro-call-site-state-enabled? site-state)]
     [previous-active : TcMacroCallSiteActiveDecl
-      (tc-macro-call-site-state-active-decl site-state)]
+      (if record-sites
+        (tc-macro-call-site-state-active-decl site-state)
+        (TcMacroCallSiteActiveDecl "" false "" "" ""))]
     [_set-active : unit
-      (tc-macro-call-site-state-set-active-decl!
-        site-state
-        decl-path
-        (ast.ast-decl-generated-meta decl))]
+      (if record-sites
+        (tc-macro-call-site-state-set-active-decl!
+          site-state
+          decl-path
+          (ast.ast-decl-generated-meta decl))
+        unit)]
     [result : ResultMacroDeclExpansion
       (match decl
         [(ast.AstDecl.Import
@@ -89260,7 +89291,11 @@
                   [(ResultMacroDecl.Err diag)
                     (ResultMacroDeclExpansion.Err diag)]))))])]
     (begin
-      (tc-macro-call-site-state-restore-active-decl! site-state previous-active)
+      (if record-sites
+        (tc-macro-call-site-state-restore-active-decl!
+          site-state
+          previous-active)
+        unit)
       result)))
 
 ;; R3-P1 copy-out. Rebuild the declaration paths in the arena that is current on

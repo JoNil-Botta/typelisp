@@ -3075,36 +3075,43 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
-  (begin
-    (cfg compile-profile (check_core.compiler-check-profile-start))
-    (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
-      (ast.ast-program decls)
-      paths
-      stdlib-roots
-      cache-scope)
-      [(tc.ResultCompilerTypecheckChecked.Ok summary ctx env checked-paths)
-        (begin
-          (cfg
-            compile-profile
-            (check_core.compiler-check-profile-finish "typecheck"))
-          (ResultCompilerCheckWithSemanticIndex.Ok
-            summary
-            (compiler-semantic-index-build-owned
-              ctx
-              env
-              checked-paths
-              path
-              source)))]
-      [(tc.ResultCompilerTypecheckChecked.Err diag)
-        (begin
-          (cfg
-            compile-profile
-            (check_core.compiler-check-profile-finish "typecheck"))
-          (ResultCompilerCheckWithSemanticIndex.Err
-            (box
-              (check_core.compiler-check-diagnostics-with-fallback-path
-                (box-get diag)
-                path))))])))
+  (let
+    [macro-sites : tc.TcMacroCallSiteState
+      (tc.tc-job-state-macro-call-sites (tc.tc-serial-job-state))]
+    (begin
+      (tc.tc-macro-call-site-state-set-enabled! macro-sites true)
+      (cfg compile-profile (check_core.compiler-check-profile-start))
+      (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
+        (ast.ast-program decls)
+        paths
+        stdlib-roots
+        cache-scope)
+        [(tc.ResultCompilerTypecheckChecked.Ok summary ctx env checked-paths)
+          (let
+            [index : CompilerSemanticSourceIndex
+              (compiler-semantic-index-build-owned
+                ctx
+                env
+                checked-paths
+                path
+                source)]
+            (begin
+              (cfg
+                compile-profile
+                (check_core.compiler-check-profile-finish "typecheck"))
+              (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
+              (ResultCompilerCheckWithSemanticIndex.Ok summary index)))]
+        [(tc.ResultCompilerTypecheckChecked.Err diag)
+          (begin
+            (cfg
+              compile-profile
+              (check_core.compiler-check-profile-finish "typecheck"))
+            (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
+            (ResultCompilerCheckWithSemanticIndex.Err
+              (box
+                (check_core.compiler-check-diagnostics-with-fallback-path
+                  (box-get diag)
+                  path))))]))))
 
 (define (compiler-check-loaded-with-prelude-index-cache
   [path : String]
@@ -4313,7 +4320,11 @@
                     ok
                     (=
                       owners-before
-                      (compiler-semantic-source-index-live-owner-count)))))]
+                      (compiler-semantic-source-index-live-owner-count))
+                    (not
+                      (tc.tc-macro-call-site-state-enabled?
+                        (tc.tc-job-state-macro-call-sites
+                          (tc.tc-serial-job-state)))))))]
             [(ResultCompilerCheckWithSemanticIndex.Err _)
               (begin
                 (compiler-semantic-source-index-release! (&mut first))

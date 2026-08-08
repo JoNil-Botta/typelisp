@@ -1094,6 +1094,10 @@ fi
 # The reconciled #5675/#6173 tree retains 52 segments: the authoritative
 # Windows probe measured 3,357,074 used nodes, 3,407,872 capacity, and
 # 109,051,904 physical payload bytes.
+# #6384's loop-carried memory aggregate provenance and regression coverage
+# crossed ast_expr_pool.macro_expand from 52 to 53 segments; the authoritative
+# Windows CI probe measured 3,408,354 used nodes, 3,473,408 capacity, and
+# 111,149,056 physical payload bytes.
 # #5937's persistent typechecker list storage and focused wide/deep tests
 # crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
 # Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload
@@ -1165,7 +1169,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 52 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 53 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \

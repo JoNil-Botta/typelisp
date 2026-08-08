@@ -12593,7 +12593,6 @@
         (* 2 (+ idx 1))))))
 
 (define (compiler-backend-win64-xmm-callee-slot
-  [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [vars : i64]
   [idx : i64]
@@ -12714,7 +12713,6 @@
           (str_cat.str-cat
             "    movdqu "
             (compiler-backend-win64-xmm-callee-slot
-              backend-state
               assignments
               vars
               idx

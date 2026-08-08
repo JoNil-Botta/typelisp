@@ -273,6 +273,7 @@
     [(compiler_ast_types.AstExpr.DynArray _) "dyn-array"]
     [(compiler_ast_types.AstExpr.Array _) "array"]
     [(compiler_ast_types.AstExpr.ArrayTake _ _ _) "array-take"]
+    [(compiler_ast_types.AstExpr.FixedArrayTake _ _) "array-take"]
     [(compiler_ast_types.AstExpr.BoxTake _) "box-take"]
     [(compiler_ast_types.AstExpr.BoxSet _ _) "box-set"]
     [(compiler_ast_types.AstExpr.IntToPtr _ _) "int->ptr"]

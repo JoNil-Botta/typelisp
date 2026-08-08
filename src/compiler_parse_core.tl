@@ -1450,6 +1450,9 @@
 (define (compiler-parse-tag-expr-array-take) : i64
   303)
 
+(define (compiler-parse-tag-expr-fixed-array-take) : i64
+  305)
+
 (define (compiler-parse-tag-expr-match) : i64
   244)
 
@@ -2178,7 +2181,7 @@
         (compiler-parse-dispatch-bind
           out
           "array-take!"
-          (compiler-parse-tag-expr-array-take)))
+          (compiler-parse-tag-expr-fixed-array-take)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -5428,7 +5431,7 @@
         [_ (ResultAstExpr.Err "parse: malformed array-push!")])]
     [_ (ResultAstExpr.Err "parse: malformed array-push!")]))
 
-(define (parse-ast-array-take
+(define (parse-ast-private-array-take
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
@@ -5460,8 +5463,35 @@
                         [(ResultAstExpr.Err message)
                           (ResultAstExpr.Err message)])]
                     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
-                [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
-            [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
+                [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")])]
+            [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")])]
+        [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")])]
+    [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")]))
+
+(define (parse-ast-fixed-array-take
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view rest)
+    [(reader.SpannedSexprView.Cons array index-tail _)
+      (match (reader.spanned-sexpr-view index-tail)
+        [(reader.SpannedSexprView.Cons index end _)
+          (match (reader.spanned-sexpr-view end)
+            [(reader.SpannedSexprView.Nil _)
+              (match (parse-ast-expr-with-pools dispatch pools array)
+                [(ResultAstExpr.Ok parsed-array)
+                  (match (parse-ast-expr-with-pools dispatch pools index)
+                    [(ResultAstExpr.Ok parsed-index)
+                      (ResultAstExpr.Ok
+                        (ast.ast-expr-fixed-array-take-with-pools
+                          pools
+                          parsed-array
+                          parsed-index))]
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_
+              (ResultAstExpr.Err
+                "parse: array-take! expects exactly two operands; compatibility storage must use private __tl_array-take!")])]
         [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
     [_ (ResultAstExpr.Err "parse: malformed array-take!")]))
 
@@ -7012,7 +7042,9 @@
     [(= tag (compiler-parse-tag-expr-array-push))
       (parse-ast-array-push dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-array-take))
-      (parse-ast-array-take dispatch pools rest)]
+      (parse-ast-private-array-take dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-fixed-array-take))
+      (parse-ast-fixed-array-take dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-match))
       (parse-ast-match dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-foreach))
@@ -11528,6 +11560,19 @@
     (compiler-parse-ok?
       "(define (main) : i64 (with-arena r (let [b : (in r (Box i64)) (box 7)] (box-get b))))")))
 
+(define (compiler-parse-array-take-ok?) : bool
+  (and
+    (compiler-parse-ok?
+      "(define (main [items : (Array i64 1)]) : i64 (array-take! items 0))")
+    (compiler-parse-ok?
+      "(define (main [items : (Array i64)] [live : (Array bool)]) : (Tuple bool i64) (__tl_array-take! items live 0))")
+    ;; Keep the neighboring parser tag distinct: a previous collision caused
+    ;; every dereference to dispatch to the two-operand array-take parser.
+    (compiler-parse-ok? "(define (main [item : (Box i64)]) : i64 (deref item))")
+    (compiler-parse-error-ok?
+      "(define (main [items : (Array i64 1)] [live : (Array bool 1)]) : i64 (array-take! items live 0))"
+      "parse: array-take! expects exactly two operands; compatibility storage must use private __tl_array-take!")))
+
 (define (compiler-parse-reference-source) : String
   "(define (use [s : (& n String)] [view : (& n str)] [items : (&mut value (__tl_dyn-array i64))]) : unit unit)")
 
@@ -13557,6 +13602,7 @@
         (reader.symbol-id-preservation-ok?)
         (compiler-parse-source-symbol-ids-preserved-ok?)
         (compiler-parse-box-ok?)
+        (compiler-parse-array-take-ok?)
         (compiler-parse-reference-ok?)
         (compiler-parse-borrow-ok?)
         (compiler-parse-resource-with-shape-ok?)

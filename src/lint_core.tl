@@ -732,6 +732,7 @@
     [(ast.AstExpr.Set _ _) true]
     [(ast.AstExpr.ArraySet _ _ _) true]
     [(ast.AstExpr.ArrayTake _ _ _) true]
+    [(ast.AstExpr.FixedArrayTake _ _) true]
     [(ast.AstExpr.ArrayPush _ _) true]
     [(ast.AstExpr.StructSet _ _ _) true]
     [(ast.AstExpr.Begin exprs) (lint-expr-list-has-side-effect? exprs)]
@@ -776,6 +777,7 @@
     [(ast.AstExpr.Set _ _) true]
     [(ast.AstExpr.ArraySet _ _ _) true]
     [(ast.AstExpr.ArrayTake _ _ _) true]
+    [(ast.AstExpr.FixedArrayTake _ _) true]
     [(ast.AstExpr.ArrayPush _ _) true]
     [(ast.AstExpr.StructSet _ _ _) true]
     [(ast.AstExpr.Begin exprs) (lint-expr-list-last-guard-branch? exprs)]
@@ -2418,6 +2420,10 @@
         (if (lint-expr-uses-import? (ast.ast-node-get live) alias module-name)
           true
           (lint-expr-uses-import? (ast.ast-node-get index) alias module-name)))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (if (lint-expr-uses-import? (ast.ast-node-get array) alias module-name)
+        true
+        (lint-expr-uses-import? (ast.ast-node-get index) alias module-name))]
     [(ast.AstExpr.ArrayPush array value)
       (if (lint-expr-uses-import? (ast.ast-node-get array) alias module-name)
         true
@@ -3737,6 +3743,8 @@
       (lint-unsafe-scan-three-nodes array index value scope)]
     [(ast.AstExpr.ArrayTake array live index)
       (lint-unsafe-scan-three-nodes array live index scope)]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-unsafe-scan-two-nodes array index scope)]
     [(ast.AstExpr.ArrayPush array value)
       (lint-unsafe-scan-two-nodes array value scope)]
     [(ast.AstExpr.StringRef text index)
@@ -4621,6 +4629,11 @@
           (lint-copy-on-update-expr (ast.ast-node-get array) state span)
           span)
         span)]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-copy-on-update-expr
+        (ast.ast-node-get index)
+        (lint-copy-on-update-expr (ast.ast-node-get array) state span)
+        span)]
     [(ast.AstExpr.ArrayPush array value)
       (lint-copy-on-update-expr
         (ast.ast-node-get value)
@@ -5171,6 +5184,14 @@
             (ast.ast-node-get array)
             (lint-no-span)
             acc)))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-prefer-dotted-field-expr
+        (ast.ast-node-get index)
+        (lint-no-span)
+        (lint-prefer-dotted-field-expr
+          (ast.ast-node-get array)
+          (lint-no-span)
+          acc))]
     [(ast.AstExpr.ArrayPush array value)
       (lint-prefer-dotted-field-expr
         (ast.ast-node-get value)
@@ -5672,6 +5693,14 @@
             (ast.ast-node-get array)
             (lint-no-span)
             acc)))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast.ast-node-get index)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast.ast-node-get array)
+          (lint-no-span)
+          acc))]
     [(ast.AstExpr.ArrayPush array value)
       (lint-prefer-dotted-field-quasiquote-expr
         (ast.ast-node-get value)
@@ -6931,6 +6960,19 @@
             (lint-single-element-array-expr
               (ast.ast-node-get live)
               (lint-single-element-array-expr (ast.ast-node-get array) state)))))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (let
+        [name : String
+          (lint-single-element-array-var-name (ast.ast-node-get array))]
+        (if (and
+          (lint-single-element-array-candidate-tracked?
+            (struct-get state candidates)
+            name)
+          (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
+          (lint-single-element-array-note-use state name)
+          (lint-single-element-array-expr
+            (ast.ast-node-get index)
+            (lint-single-element-array-expr (ast.ast-node-get array) state))))]
     [(ast.AstExpr.ArrayPush array value)
       (lint-single-element-array-expr
         (ast.ast-node-get value)
@@ -7433,6 +7475,10 @@
         (lint-unused-assignment-note-reads
           (ast.ast-node-get live)
           (lint-unused-assignment-note-reads (ast.ast-node-get array) state)))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-unused-assignment-note-reads
+        (ast.ast-node-get index)
+        (lint-unused-assignment-note-reads (ast.ast-node-get array) state))]
     [(ast.AstExpr.ArrayPush array value)
       (lint-unused-assignment-note-reads
         (ast.ast-node-get value)
@@ -9803,6 +9849,10 @@
         (lint-unused-variable-quasiquote-expr
           (ast.ast-node-get live)
           (lint-unused-variable-quasiquote-expr (ast.ast-node-get array) state)))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-unused-variable-quasiquote-expr
+        (ast.ast-node-get index)
+        (lint-unused-variable-quasiquote-expr (ast.ast-node-get array) state))]
     [(ast.AstExpr.ArrayPush array value)
       (lint-unused-variable-quasiquote-expr
         (ast.ast-node-get value)
@@ -10340,6 +10390,11 @@
           (ast.ast-node-get live)
           (lint-unused-variable-expr (ast.ast-node-get array) state span)
           span)
+        span)]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-unused-variable-expr
+        (ast.ast-node-get index)
+        (lint-unused-variable-expr (ast.ast-node-get array) state span)
         span)]
     [(ast.AstExpr.ArrayPush array value)
       (lint-unused-variable-expr
@@ -11806,6 +11861,11 @@
           index
           threshold
           (lint-walk-expr live threshold (lint-walk-expr array threshold acc))))]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (let
+        [array : ast.AstExpr (ast.ast-node-get array-box)]
+        [index : ast.AstExpr (ast.ast-node-get index-box)]
+        (lint-walk-expr index threshold (lint-walk-expr array threshold acc)))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr (ast.ast-node-get array-box)]

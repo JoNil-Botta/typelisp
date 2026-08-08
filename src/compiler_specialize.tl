@@ -5242,6 +5242,22 @@
                   [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
               [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (let
+        [array : ast.AstExpr (spec-state-expr-get state array-box)]
+        [index : ast.AstExpr (spec-state-expr-get state index-box)]
+        (match (spec-rewrite-expr array templates state)
+          [(ResultSpecExpr.Ok rewritten-array array-state)
+            (match (spec-rewrite-expr index templates array-state)
+              [(ResultSpecExpr.Ok rewritten-index index-state)
+                (ResultSpecExpr.Ok
+                  (ast.ast-expr-fixed-array-take-with-pools
+                    (spec-state-pools state)
+                    rewritten-array
+                    rewritten-index)
+                  index-state)]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr (spec-state-expr-get state array-box)]
@@ -6061,6 +6077,21 @@
                   [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (let
+        [array : ast.AstExpr (spec-owner-expr-get owner array-box)]
+        [index : ast.AstExpr (spec-owner-expr-get owner index-box)]
+        (match (spec-substitute-values-expr-with-owner owner array subs)
+          [(ResultSpecSubExpr.Ok rewritten-array)
+            (match (spec-substitute-values-expr-with-owner owner index subs)
+              [(ResultSpecSubExpr.Ok rewritten-index)
+                (ResultSpecSubExpr.Ok
+                  (ast.ast-expr-fixed-array-take-with-pools
+                    (spec-owner-pools owner)
+                    rewritten-array
+                    rewritten-index))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.Var name)
       (match (spec-value-subst-lookup subs name)
         [(SpecMaybeId.Some _)
@@ -6275,6 +6306,21 @@
                         rewritten-live
                         rewritten-index))]
                   [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (let
+        [array : ast.AstExpr (spec-owner-expr-get owner array-box)]
+        [index : ast.AstExpr (spec-owner-expr-get owner index-box)]
+        (match (spec-substitute-values-expr-with-owner owner array subs)
+          [(ResultSpecSubExpr.Ok rewritten-array)
+            (match (spec-substitute-values-expr-with-owner owner index subs)
+              [(ResultSpecSubExpr.Ok rewritten-index)
+                (ResultSpecSubExpr.Ok
+                  (ast.ast-expr-fixed-array-take-with-pools
+                    (spec-owner-pools owner)
+                    rewritten-array
+                    rewritten-index))]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.ArrayPush array-box value-box)
@@ -7628,6 +7674,21 @@
                         rewritten-live
                         rewritten-index))]
                   [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (let
+        [array : ast.AstExpr (spec-owner-expr-get owner array-box)]
+        [index : ast.AstExpr (spec-owner-expr-get owner index-box)]
+        (match (spec-substitute-types-expr-with-owner owner array subs)
+          [(ResultSpecSubExpr.Ok rewritten-array)
+            (match (spec-substitute-types-expr-with-owner owner index subs)
+              [(ResultSpecSubExpr.Ok rewritten-index)
+                (ResultSpecSubExpr.Ok
+                  (ast.ast-expr-fixed-array-take-with-pools
+                    (spec-owner-pools owner)
+                    rewritten-array
+                    rewritten-index))]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.ArrayPush array-box value-box)

@@ -752,19 +752,19 @@
 (define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
-;; `array-take!` moves an element only when its companion liveness slot is
-;; still true. The primitive returns a false availability flag for exhausted,
-;; invalid, or already-taken positions instead of forming an out-of-bounds
-;; address; its payload is then intentionally unspecified.
+;; Private `__tl_array-take!` moves an element only when its companion liveness
+;; slot is still true. The primitive returns a false availability flag for
+;; exhausted, invalid, or already-taken positions instead of forming an
+;; out-of-bounds address; its payload is then intentionally unspecified.
 (define (compiler-lower-array-take-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (take-item [items : (Array i64)] [live : (Array bool)] [i : i64]) : (Tuple bool i64)
-  (array-take! items live i))
+  (__tl_array-take! items live i))
 (define (take-handle [items : (Array FileHandle)] [live : (Array bool)] [i : i64]) : (Tuple bool FileHandle)
-  (array-take! items live i))
+  (__tl_array-take! items live i))
 (define (main [items : (Array i64)] [live : (Array bool)] [handles : (Array FileHandle)] [handle-live : (Array bool)] [i : i64]) : i64
   (begin
     (take-item items live i)

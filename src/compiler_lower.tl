@@ -1913,6 +1913,8 @@
       (lower-expr-id-first-span3 target index value)]
     [(ast.AstExpr.ArrayTake target live index)
       (lower-expr-id-first-span3 target live index)]
+    [(ast.AstExpr.FixedArrayTake target index)
+      (lower-expr-id-first-span2 target index)]
     [(ast.AstExpr.ArrayPush target value)
       (lower-expr-id-first-span2 target value)]
     [(ast.AstExpr.StringRef target index)
@@ -7121,6 +7123,29 @@
                   [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
               [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
           [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (let
+        [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
+        [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
+        (match (lower-spmd-inline-expr ctx env type-env array subst shadowed)
+          [(ResultLowerAstExpr.Ok rewritten-array)
+            (match (lower-spmd-inline-expr
+              ctx
+              env
+              type-env
+              index
+              subst
+              shadowed)
+              [(ResultLowerAstExpr.Ok rewritten-index)
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-fixed-array-take-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-array)
+                      (lower-context-expr-push ctx rewritten-index))))]
+              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
+          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
     [(ast.AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
@@ -8597,6 +8622,18 @@
             names
             (lower-reach-expr pools all-functions names state array)
             live)
+          index))]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (let
+        [array : ast.AstExpr
+          (ast.ast-node-pool-context-expr-get pools array-box)]
+        [index : ast.AstExpr
+          (ast.ast-node-pool-context-expr-get pools index-box)]
+        (lower-reach-expr
+          pools
+          all-functions
+          names
+          (lower-reach-expr pools all-functions names state array)
           index))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
@@ -10410,6 +10447,12 @@
           (lower-used-types-add-expr-id pools used module array-box)
           module
           live-box)
+        module
+        index-box)]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (lower-used-types-add-expr-id
+        pools
+        (lower-used-types-add-expr-id pools used module array-box)
         module
         index-box)]
     [(ast.AstExpr.ArrayPush array-box value-box)
@@ -25517,6 +25560,11 @@
         [live : ast.AstExpr (lower-context-expr-get ctx live-box)]
         [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
         (lower-array-take ctx state env type-env arr live index expr-ty))]
+    [(ast.AstExpr.FixedArrayTake arr-box index-box)
+      (let
+        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
+        [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
+        (lower-fixed-array-take ctx state env type-env arr index expr-ty))]
     [(ast.AstExpr.ArrayPush arr-box value-box)
       (let
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
@@ -35881,6 +35929,164 @@
     [(tc_core.ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr array message)))]))
 
+;; Materialize the removed value before its slot is reinitialized. Scalar and
+;; register-group loads are already independent values; an inline memory
+;; aggregate needs a distinct local copy because its lowered value is an
+;; address into the array storage itself.
+(define (lower-fixed-array-take-old
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [elem-ptr : ir.CompilerIrValue]
+  [elem-ty : ast.AstType]) : ResultLowerExpr
+  (if (= (lower-type-size ctx elem-ty) 0)
+    (ResultLowerExpr.Ok (LowerExpr.Expr state ir.CompilerIrValue.Unit elem-ty))
+    (match (lower-array-elem-ref-result ctx state elem-ptr elem-ty)
+      [(ResultLowerExpr.Ok old)
+        (match old
+          [(LowerExpr.Expr old-state old-value _)
+            (if (and
+              (lower-mode-inline-aggregates? (lower-state-mode old-state))
+              (lower-type-inline-storage? ctx elem-ty)
+              (not (lower-type-register-resident? ctx elem-ty)))
+              (lower-copy-inline-aggregate-to-inline
+                ctx
+                old-state
+                old-value
+                elem-ty)
+              (ResultLowerExpr.Ok old))])]
+      [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
+
+(define (lower-fixed-array-take-reinit
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [elem-ptr : ir.CompilerIrValue]
+  [elem-ty : ast.AstType]
+  [origin : ast.AstExpr]
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-fixed-array-take-old ctx state elem-ptr elem-ty)
+    [(ResultLowerExpr.Ok old)
+      (match old
+        [(LowerExpr.Expr old-state old-value _)
+          (match (lower-init-expr
+            ctx
+            old-state
+            env
+            type-env
+            elem-ty
+            origin
+            elem-ty)
+            [(ResultLowerExpr.Ok initialized)
+              (match initialized
+                [(LowerExpr.Expr init-state init-value _)
+                  (ResultLowerExpr.Ok
+                    (LowerExpr.Expr
+                      (lower-array-elem-store-state
+                        ctx
+                        init-state
+                        elem-ptr
+                        init-value
+                        elem-ty)
+                      old-value
+                      result-ty))])]
+            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+
+;; `(array-take! items index)` evaluates the storage place and index once,
+;; checks the fixed bound, moves/copies the old value into an independent
+;; result, then immediately restores the slot with `(init : T)`.
+(define (lower-fixed-array-take
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [array : ast.AstExpr]
+  [index : ast.AstExpr]
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    array)
+    [(tc_core.ResultTcType.Ok array-ty)
+      (match (tc_core.tc-fixed-array-take-receiver ctx array-ty)
+        [(tc_core.ResultTcArrayReceiver.Ok receiver)
+          (match receiver
+            [(tc_core.TcArrayReceiver container-ty elem-ty)
+              (let
+                [elem-ir-ty : ast.AstType
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-resolve-type ctx elem-ty))]
+                (match (lower-expr ctx state env type-env array)
+                  [(ResultLowerExpr.Ok array-lowered)
+                    (match array-lowered
+                      [(LowerExpr.Expr array-state array-value _)
+                        (match (lower-index-result-type-or-check
+                          ctx
+                          env
+                          type-env
+                          (lower-state-type-cache array-state)
+                          index)
+                          [(tc_core.ResultTcType.Ok index-ty)
+                            (match (lower-expr-expected
+                              ctx
+                              array-state
+                              env
+                              type-env
+                              index
+                              index-ty
+                              index)
+                              [(ResultLowerExpr.Ok index-lowered)
+                                (match index-lowered
+                                  [(LowerExpr.Expr
+                                      index-state
+                                      index-value
+                                      index-value-ty)
+                                    (match (tc_core.tc-type-strip-region
+                                      (tc_core.tc-resolve-type ctx container-ty))
+                                      [(ast.AstType.Array _ elem-count)
+                                        (match (lower-fixed-array-element-addr
+                                          ctx
+                                          index-state
+                                          array-value
+                                          index-value
+                                          index-value-ty
+                                          elem-ir-ty
+                                          elem-count)
+                                          [(LowerExpr.Expr
+                                              addr-state
+                                              elem-ptr
+                                              _)
+                                            (lower-fixed-array-take-reinit
+                                              ctx
+                                              (lower-state-record-latest-bounds-check-at-expr
+                                                addr-state
+                                                index)
+                                              env
+                                              type-env
+                                              elem-ptr
+                                              elem-ir-ty
+                                              array
+                                              result-ty)])]
+                                      [_
+                                        (ResultLowerExpr.Err
+                                          (box
+                                            (lower-diagnostic-at-expr
+                                              array
+                                              "lower: array-take! requires fixed array type")))])])]
+                              [(ResultLowerExpr.Err message)
+                                (ResultLowerExpr.Err message)])]
+                          [(tc_core.ResultTcType.Err message)
+                            (ResultLowerExpr.Err
+                              (box (lower-diagnostic-at-expr index message)))])])]
+                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))])]
+        [(tc_core.ResultTcArrayReceiver.Err message)
+          (ResultLowerExpr.Err (box (lower-diagnostic-at-expr array message)))])]
+    [(tc_core.ResultTcType.Err message)
+      (ResultLowerExpr.Err (box (lower-diagnostic-at-expr array message)))]))
+
 (define (lower-array-ref
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -38962,6 +39168,10 @@
       (or
         (lower-spmd-reduce-node-writes-id? ctx name array-box)
         (lower-spmd-reduce-node-writes-id? ctx name live-box)
+        (lower-spmd-reduce-node-writes-id? ctx name index-box))]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name array-box)
         (lower-spmd-reduce-node-writes-id? ctx name index-box))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (or

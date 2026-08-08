@@ -2024,6 +2024,17 @@
         (box-get items)
         search-start
         search-limit)]
+    [(ast.AstPattern.Array items)
+      (compiler-semantic-bind-pattern-list!
+        state
+        scope
+        env
+        fact-env
+        facts-available
+        bound-names
+        (box-get items)
+        search-start
+        search-limit)]
     [(ast.AstPattern.Variant _ items)
       (compiler-semantic-bind-pattern-list!
         state

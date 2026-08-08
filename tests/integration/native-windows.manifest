@@ -323,6 +323,7 @@ tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-
 tuple_match_pattern|tests/integration/tuple_match_pattern.tl|42|-|-|stdlib/string.tl
+fixed_array_match_pattern|tests/integration/fixed_array_match_pattern.tl|42|-|-|stdlib/string.tl
 u16_div_zero_trap|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/u16_div_zero_trap/u16_div_zero_trap.tl:3:5: integer division or remainder error: dividend=1 divisor=0\n
 u64_float_casts|tests/integration/u64_float_casts.tl|0|-|-|-
 u64_high_bit_load_compare|tests/integration/u64_high_bit_load_compare.tl|42|-|-|-

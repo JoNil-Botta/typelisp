@@ -3602,6 +3602,12 @@ move-only values and as copies for copyable values:
   copyable tuple is copied at the by-value match boundary. Matching
   `(& place)` binds shared references to the selected tuple slots instead and
   leaves the owner initialized subject to the live borrow.
+- Fixed-array patterns. Matching an owned fixed array with
+  `(array p1 ... pn)` requires exactly `N` subpatterns for `(Array T N)`.
+  A move-only array is consumed and transfers its elements to bindings from
+  left to right; a copyable array is copied. Matching `(& place)` binds shared
+  references to the selected elements and leaves the owner initialized subject
+  to the live borrow.
 - Closure capture. Capturing a move-only local by value moves it into the
   closure environment at closure creation time; the local cannot be used after
   the lambda literal. Immutable reference captures are governed by section
@@ -3628,9 +3634,9 @@ surface, consume-on-assignment behavior, and rejection of overwriting a live
 cleanup-owning element. Without a Drop system, overwriting another live
 move-only element may leave its old arena-owned storage unreachable until the
 arena is reclaimed; overwriting a cleanup owner must not silently lose its
-cleanup obligation. #6234 owns fixed-array destructuring, #6235 supplied the
-checked `array-take!` operation described above, and #6241 owns general
-caller-supplied replacement.
+cleanup obligation. Fixed-array destructuring is available through
+`(array p1 ... pn)`, #6235 supplied the checked `array-take!` operation
+described above, and #6241 owns general caller-supplied replacement.
 
 **Concrete closure calls.** Lambda literals and their direct local bindings
 retain the checker-only shared, mutable, or consuming capability described in
@@ -3725,12 +3731,15 @@ box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
 may move out move-only fields/slots only where this tracked-path policy accepts
 the path. Fixed-array reads follow the compatibility matrix above: a consuming
 literal-index read moves a tracked path, while a non-consuming move-only read
-still representation-copies the handle. A consuming `match` is the enum
+still representation-copies the handle. A consuming enum `match` is an
 exception: it moves the whole scrutinee first, then binds payload values owned
 by the selected arm. Constructor-shaped tuple destructuring likewise consumes
 the whole owned tuple and transfers every bound slot; direct partial move-out
 continues to use `(tuple-ref place literal-index)`. Dotted numeric tuple
 projection syntax is not introduced.
+Constructor-shaped fixed-array destructuring likewise consumes the whole owned
+array and transfers every bound element from left to right; direct partial
+move-out continues to use `(array-ref place literal-index)`.
 
 **Diagnostics.** Move checking must produce source-located diagnostics for:
 
@@ -4197,6 +4206,14 @@ leaving a moved or uninitialized slot.
   borrowed tuple binds slot references carrying the scrutinee lifetime and
   does not move the owner. Tuple access outside a pattern remains
   `(tuple-ref place literal-index)`; numeric dotted syntax is not supported.
+- Fixed-array scrutinees support the constructor-shaped `(array p1 ... pn)`
+  pattern. Its arity must exactly match `(Array T N)`. Element subpatterns are
+  irrefutable bindings, `_`, or nested array, tuple, struct, and box patterns,
+  and compose recursively inside array, enum payload, struct field, tuple, and
+  box patterns. Owned move-only arrays are consumed and their elements transfer
+  from left to right; copyable arrays are copied. Matching a shared borrowed
+  array binds element references carrying the scrutinee lifetime without
+  moving the owner. The pattern introduces no run-time branch or allocation.
 - Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)` use
   the same variant, wildcard, literal payload, and nested variant pattern
   forms, but inspect the enum without moving the owner. Payload bindings are
@@ -4205,14 +4222,15 @@ leaving a moved or uninitialized slot.
 - Owned `(Box T)` scrutinees and owned enum payloads of type `(Box T)` support
   the explicit `(box inner-pattern)` pattern. The form takes exactly one inner
   pattern, reads the boxed `T`, and checks/binds the inner pattern against
-  `T`. Inner patterns are irrefutable: bindings, `_`, and nested `(box ...)`
-  patterns. Borrowed box patterns and refutable inner patterns are rejected
-  with focused diagnostics. In enum contexts, `(box ...)` resolves as an enum
-  variant pattern when the expected enum has such a variant.
+  `T`. Inner patterns are irrefutable: bindings, `_`, and nested array, tuple,
+  struct, and `(box ...)` patterns. Borrowed box patterns and refutable inner
+  patterns are rejected with focused diagnostics. In enum contexts, `(box
+  ...)` resolves as an enum variant pattern when the expected enum has such a
+  variant.
 - Scalar scrutinees support literal patterns plus `_`.
 - String literal patterns compare string contents, not pointer identity.
-- Bindings in enum and struct patterns introduce variables for payload fields
-  or struct fields.
+- Bindings in aggregate patterns introduce variables for payloads, fields,
+  slots, or elements.
 - A bare identifier at the top level of an enum `match` arm resolves as a
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).

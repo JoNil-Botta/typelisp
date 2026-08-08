@@ -9976,7 +9976,8 @@
                 env)
               (CtfePatternMatch.No))]
           [_ (CtfePatternMatch.No)]))]
-    [(ast.AstPattern.Tuple _) (CtfePatternMatch.No)]))
+    [(ast.AstPattern.Tuple _) (CtfePatternMatch.No)]
+    [(ast.AstPattern.Array _) (CtfePatternMatch.No)]))
 
 (define (ctfe-eval-match-arms
   [value : CompilerCtfeValue]
@@ -11028,6 +11029,10 @@
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (ast.ast-pat-tuple (ctfe-quote-pattern-list patterns env)))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (ast.ast-pat-array (ctfe-quote-pattern-list patterns env)))]
     [(ast.AstPattern.Wildcard) ast.AstPattern.Wildcard]
     [(ast.AstPattern.Binding name)
       (ast.AstPattern.Binding (ctfe-quote-name-id env name))]
@@ -12586,6 +12591,13 @@
         [a-items : ast.AstPatternList (box-get a-items-box)]
         (match b
           [(ast.AstPattern.Tuple b-items-box)
+            (ctfe-pattern-list-eq-in-env env a-items (box-get b-items-box))]
+          [_ false]))]
+    [(ast.AstPattern.Array a-items-box)
+      (let
+        [a-items : ast.AstPatternList (box-get a-items-box)]
+        (match b
+          [(ast.AstPattern.Array b-items-box)
             (ctfe-pattern-list-eq-in-env env a-items (box-get b-items-box))]
           [_ false]))]
     [(ast.AstPattern.Wildcard)

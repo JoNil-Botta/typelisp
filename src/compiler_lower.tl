@@ -7814,6 +7814,8 @@
     [(ast.AstPattern.Var _ _) unit]
     [(ast.AstPattern.Tuple patterns-box)
       (lower-reach-used-types-add-pattern-list-roots! (box-get patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
+      (lower-reach-used-types-add-pattern-list-roots! (box-get patterns-box))]
     [(ast.AstPattern.Wildcard) unit]
     [(ast.AstPattern.Binding _) unit]
     [(ast.AstPattern.Variant name patterns-box)
@@ -10246,6 +10248,12 @@
     [(ast.AstPattern.Var _ maybe-ty)
       (lower-used-types-add-maybe-type pools used module maybe-ty)]
     [(ast.AstPattern.Tuple patterns-box)
+      (lower-used-types-add-pattern-list
+        pools
+        used
+        module
+        (box-get patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
       (lower-used-types-add-pattern-list
         pools
         used
@@ -16793,6 +16801,15 @@
         value
         inner-ty
         (box-get patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
+      (lower-bind-array-pattern
+        ctx
+        state
+        env
+        type-env
+        value
+        inner-ty
+        (box-get patterns-box))]
     [(ast.AstPattern.Variant name args-box)
       (if (lower-box-pattern-name? name)
         (lower-bind-box-pattern
@@ -17195,6 +17212,54 @@
                             tuple-state
                             tuple-env
                             tuple-type-env
+                            base
+                            rest-patterns
+                            rest-types
+                            mode
+                            enum-id
+                            enum-name
+                            variant-name
+                            variant-name-id
+                            next-index
+                            next-cursor
+                            fail-label
+                            scrut-reg-group?)]
+                        [(ResultLowerEnv.Err message)
+                          (ResultLowerEnv.Err message)])])]
+                [(ast.AstPattern.Array patterns-box)
+                  (match (if scrut-reg-group?
+                    (lower-read-register-group-payload
+                      ctx
+                      state
+                      base
+                      (ast.AstType.Enum enum-id)
+                      offset
+                      resolved)
+                    (lower-load-inline-value-at-offset
+                      ctx
+                      state
+                      base
+                      offset
+                      resolved
+                      mode))
+                    [(LowerExpr.Expr field-state field-value _)
+                      (match (lower-bind-array-pattern
+                        ctx
+                        field-state
+                        env
+                        type-env
+                        field-value
+                        resolved
+                        (box-get patterns-box))
+                        [(ResultLowerEnv.Ok
+                            array-state
+                            array-env
+                            array-type-env)
+                          (lower-bind-variant-payloads
+                            ctx
+                            array-state
+                            array-env
+                            array-type-env
                             base
                             rest-patterns
                             rest-types
@@ -17675,6 +17740,38 @@
                           fail-label)]
                       [(ResultLowerEnv.Err message)
                         (ResultLowerEnv.Err message)])])]
+              [(ast.AstPattern.Array patterns-box)
+                (match (lower-gep-byte state base offset)
+                  [(LowerExpr.Expr address-state address _)
+                    (match (lower-bind-borrowed-array-pattern
+                      ctx
+                      address-state
+                      env
+                      type-env
+                      borrow-lifetime
+                      address
+                      resolved
+                      (box-get patterns-box))
+                      [(ResultLowerEnv.Ok array-state array-env array-type-env)
+                        (lower-bind-borrowed-variant-payloads
+                          ctx
+                          array-state
+                          array-env
+                          array-type-env
+                          borrow-lifetime
+                          base
+                          rest-patterns
+                          rest-types
+                          mode
+                          enum-id
+                          enum-name
+                          variant-name
+                          variant-name-id
+                          next-index
+                          next-cursor
+                          fail-label)]
+                      [(ResultLowerEnv.Err message)
+                        (ResultLowerEnv.Err message)])])]
               [(ast.AstPattern.Literal lit)
                 (if (lower-literal-payload-supported? lit)
                   (match (lower-load-at-offset state base offset resolved)
@@ -17931,6 +18028,7 @@
     [(ast.AstPattern.Var _ _) false]
     [(ast.AstPattern.Binding _) false]
     [(ast.AstPattern.Tuple _) false]
+    [(ast.AstPattern.Array _) false]
     [(ast.AstPattern.Literal _) true]
     [(ast.AstPattern.Variant name args-box)
       (let
@@ -24117,6 +24215,10 @@
   (match pattern
     [(ast.AstPattern.Var name _) (sym_i64_env.sym-i64-bind-id env name 0)]
     [(ast.AstPattern.Tuple patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (lower-pattern-list-bind-local-names env patterns))]
+    [(ast.AstPattern.Array patterns-box)
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (lower-pattern-list-bind-local-names env patterns))]
@@ -40989,6 +41091,11 @@
           (box-get patterns-box)
           scrut-lanes
           lane-locals)]
+      [(ast.AstPattern.Array patterns-box)
+        (lower-masked-vector-pattern-list-locals
+          (box-get patterns-box)
+          scrut-lanes
+          lane-locals)]
       [(ast.AstPattern.Binding name)
         (lower-masked-vector-lane-locals-bind-if-varying
           lane-locals
@@ -56902,6 +57009,28 @@
                 field-ty
                 (box-get patterns-box))])]
         [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)])]
+    [(ast.AstPattern.Array patterns-box)
+      (match (lower-struct-get-named
+        ctx
+        state
+        base
+        struct-id
+        struct-name
+        field-name-id
+        field-name
+        field-ty)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr field-state field-value _)
+              (lower-bind-array-pattern
+                ctx
+                field-state
+                env
+                type-env
+                field-value
+                field-ty
+                (box-get patterns-box))])]
+        [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)])]
     [(ast.AstPattern.Variant name args-box)
       (if (lower-struct-pattern-for-type? ctx field-ty name)
         (match (lower-struct-get-named
@@ -57103,6 +57232,15 @@
         value
         elem-ty
         (box-get patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
+      (lower-bind-array-pattern
+        ctx
+        state
+        env
+        type-env
+        value
+        elem-ty
+        (box-get patterns-box))]
     [(ast.AstPattern.Variant name args-box)
       (if (lower-box-pattern-for-type? ctx elem-ty name)
         (lower-bind-box-pattern
@@ -57224,6 +57362,94 @@
                     next-cursor)]
                 [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]))))))
 
+(define (lower-bind-array-pattern
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [base : ir.CompilerIrValue]
+  [array-ty : ast.AstType]
+  [patterns : ast.AstPatternList]) : ResultLowerEnv
+  (match (tc_core.tc-array-pattern-info ctx array-ty)
+    [(tc_core.ResultTcArrayPatternInfo.Ok elem-ty count)
+      (lower-bind-array-pattern-at
+        ctx
+        state
+        env
+        type-env
+        base
+        (& patterns)
+        elem-ty
+        count
+        0)]
+    [(tc_core.ResultTcArrayPatternInfo.Err message)
+      (ResultLowerEnv.Err (box (lower-diagnostic message)))]))
+
+(define (lower-bind-array-pattern-at
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [base : ir.CompilerIrValue]
+  [patterns : (& patterns ast.AstPatternList)]
+  [elem-ty : ast.AstType]
+  [count : i64]
+  [index : i64]) : ResultLowerEnv
+  (if (>= index (ast.ast-pattern-list-len patterns))
+    (if (>= index count)
+      (ResultLowerEnv.Ok state env type-env)
+      (ResultLowerEnv.Err
+        (box (lower-diagnostic "lower: fixed-array pattern arity mismatch"))))
+    (if (>= index count)
+      (ResultLowerEnv.Err
+        (box (lower-diagnostic "lower: fixed-array pattern arity mismatch")))
+      (let
+        [pattern : ast.AstPattern
+          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
+        [resolved : ast.AstType (tc_core.tc-resolve-type ctx elem-ty)]
+        [offset : i64 (* index (lower-type-size ctx resolved))]
+        (if (match pattern
+          [(ast.AstPattern.Wildcard) true]
+          [_ false])
+          (lower-bind-array-pattern-at
+            ctx
+            state
+            env
+            type-env
+            base
+            patterns
+            elem-ty
+            count
+            (+ index 1))
+          (match (lower-load-inline-value-at-offset
+            ctx
+            state
+            base
+            offset
+            elem-ty
+            (lower-state-mode state))
+            [(LowerExpr.Expr elem-state elem-value _)
+              (match (lower-bind-tuple-element-pattern
+                ctx
+                elem-state
+                env
+                type-env
+                elem-value
+                pattern
+                elem-ty)
+                [(ResultLowerEnv.Ok next-state next-env next-type-env)
+                  (lower-bind-array-pattern-at
+                    ctx
+                    next-state
+                    next-env
+                    next-type-env
+                    base
+                    patterns
+                    elem-ty
+                    count
+                    (+ index 1))]
+                [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]))))))
+
 (define (lower-bind-borrowed-tuple-sub-pattern
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -57267,6 +57493,16 @@
                 "lower: internal borrowed tuple element address failed")))])]
     [(ast.AstPattern.Tuple patterns-box)
       (lower-bind-borrowed-tuple-pattern
+        ctx
+        state
+        env
+        type-env
+        borrow-lifetime
+        address
+        elem-ty
+        (box-get patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
+      (lower-bind-borrowed-array-pattern
         ctx
         state
         env
@@ -57403,6 +57639,109 @@
                     types
                     (+ index 1)
                     next-cursor)]
+                [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]))))))
+
+(define (lower-bind-borrowed-array-pattern
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [borrow-lifetime : i64]
+  [base : ir.CompilerIrValue]
+  [array-ty : ast.AstType]
+  [patterns : ast.AstPatternList]) : ResultLowerEnv
+  (match (tc_core.tc-array-pattern-info ctx array-ty)
+    [(tc_core.ResultTcArrayPatternInfo.Ok elem-ty count)
+      (lower-bind-borrowed-array-pattern-at
+        ctx
+        state
+        env
+        type-env
+        borrow-lifetime
+        base
+        (& patterns)
+        elem-ty
+        count
+        0)]
+    [(tc_core.ResultTcArrayPatternInfo.Err message)
+      (ResultLowerEnv.Err (box (lower-diagnostic message)))]))
+
+(define (lower-bind-borrowed-array-pattern-at
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [borrow-lifetime : i64]
+  [base : ir.CompilerIrValue]
+  [patterns : (& patterns ast.AstPatternList)]
+  [elem-ty : ast.AstType]
+  [count : i64]
+  [index : i64]) : ResultLowerEnv
+  (if (>= index (ast.ast-pattern-list-len patterns))
+    (if (>= index count)
+      (ResultLowerEnv.Ok state env type-env)
+      (ResultLowerEnv.Err
+        (box (lower-diagnostic "lower: fixed-array pattern arity mismatch"))))
+    (if (>= index count)
+      (ResultLowerEnv.Err
+        (box (lower-diagnostic "lower: fixed-array pattern arity mismatch")))
+      (let
+        [pattern : ast.AstPattern
+          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))]
+        [resolved : ast.AstType (tc_core.tc-resolve-type ctx elem-ty)]
+        [offset : i64 (* index (lower-type-size ctx resolved))]
+        [binds-name : bool
+          (match pattern
+            [(ast.AstPattern.Binding _) true]
+            [(ast.AstPattern.Var _ _) true]
+            [_ false])]
+        [ref-ty : ast.AstType
+          (tc_core.tc-borrowed-field-ref-type borrow-lifetime elem-ty)]
+        (if (match pattern
+          [(ast.AstPattern.Wildcard) true]
+          [_ false])
+          (lower-bind-borrowed-array-pattern-at
+            ctx
+            state
+            env
+            type-env
+            borrow-lifetime
+            base
+            patterns
+            elem-ty
+            count
+            (+ index 1))
+          (match (if (and binds-name (lower-str-ref-type? ctx ref-ty))
+            (lower-borrowed-payload-ref-expr
+              ctx
+              state
+              base
+              offset
+              elem-ty
+              ref-ty)
+            (lower-gep-byte state base offset))
+            [(LowerExpr.Expr address-state address _)
+              (match (lower-bind-borrowed-tuple-sub-pattern
+                ctx
+                address-state
+                env
+                type-env
+                borrow-lifetime
+                address
+                pattern
+                elem-ty)
+                [(ResultLowerEnv.Ok next-state next-env next-type-env)
+                  (lower-bind-borrowed-array-pattern-at
+                    ctx
+                    next-state
+                    next-env
+                    next-type-env
+                    borrow-lifetime
+                    base
+                    patterns
+                    elem-ty
+                    count
+                    (+ index 1))]
                 [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]))))))
 
 (define (lower-bind-borrowed-struct-pattern
@@ -57586,6 +57925,44 @@
           (ResultLowerEnv.Err
             (box
               (lower-diagnostic "lower: tuple pattern requires Tuple scrutinee")))])]
+    [(ast.AstPattern.Array patterns-box)
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-resolve-type ctx scrut-ty))
+        [(ast.AstType.Array _ _)
+          (lower-bind-array-pattern
+            ctx
+            state
+            env
+            type-env
+            (ir.CompilerIrValue.Var scrut-var)
+            scrut-ty
+            (box-get patterns-box))]
+        [(ast.AstType.Ref borrow-lifetime referent-box)
+          (let
+            [referent-ty : ast.AstType
+              (tc_core.tc-context-type-get ctx referent-box)]
+            (match (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type ctx referent-ty))
+              [(ast.AstType.Array _ _)
+                (lower-bind-borrowed-array-pattern
+                  ctx
+                  state
+                  env
+                  type-env
+                  borrow-lifetime
+                  (ir.CompilerIrValue.Var scrut-var)
+                  referent-ty
+                  (box-get patterns-box))]
+              [_
+                (ResultLowerEnv.Err
+                  (box
+                    (lower-diagnostic
+                      "lower: array pattern requires fixed Array scrutinee")))]))]
+        [_
+          (ResultLowerEnv.Err
+            (box
+              (lower-diagnostic
+                "lower: array pattern requires fixed Array scrutinee")))])]
     [(ast.AstPattern.Variant name args-box)
       (if (lower-box-pattern-for-type? ctx scrut-ty name)
         (lower-bind-box-pattern
@@ -57685,6 +58062,18 @@
                     expr-ty
                     phi-inputs)]
                 [(ast.AstPattern.Tuple _)
+                  (lower-match-catch-all
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arm
+                    merge-label
+                    expr-ty
+                    phi-inputs)]
+                [(ast.AstPattern.Array _)
                   (lower-match-catch-all
                     ctx
                     state

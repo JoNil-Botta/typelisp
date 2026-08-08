@@ -65073,6 +65073,7 @@
 ;; structural re-verify and SSA reconstruction have nothing new to check.
 (define opt-inline-caller-site-count : i64
   0)
+
 ;; Blocks imported into the current caller by the hot-loop-leaf gate alone.
 ;; Kept out of `added-so-far` on purpose: a hot-loop-leaf copy must not spend
 ;; the caller's shared block fuel, because that fuel is what the caller's own

@@ -1100,6 +1100,13 @@ fi
 # with current main's added compiler features returns the combined tree to 52
 # segments: 3,361,826 used nodes, 3,407,872 capacity, and 109,051,904 physical
 # payload bytes.
+# #6384's loop-carried memory aggregate provenance and regression coverage
+# crossed ast_expr_pool.macro_expand from 52 to 53 segments; the authoritative
+# Windows CI probe measured 3,408,354 used nodes, 3,473,408 capacity, and
+# 111,149,056 physical payload bytes.
+# Reconciled with #6371's fixture relocation, the combined tree remains at 52
+# segments: the authoritative Windows probe measured 3,362,558 used nodes,
+# 3,407,872 capacity, and 109,051,904 physical payload bytes.
 # #5937's persistent typechecker list storage and focused wide/deep tests
 # crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
 # Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload

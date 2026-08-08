@@ -193,7 +193,9 @@ compile_pass() {
         fi
         compile_source=$(compile_source_for_case "$name" "$source" "$out_dir")
         echo "[$pass_name] $compile_source -> $out"
-        "$COMPILER" compile "$compile_source" -o "$out"
+        "$COMPILER" compile "$compile_source" -o "$out" \
+            --stdlib-root "$(compiler_input_path "$ROOT/stdlib")" \
+            --stdlib-root "$(compiler_input_path "$ROOT/src")"
     done
 }
 

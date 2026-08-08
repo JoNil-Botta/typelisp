@@ -40,9 +40,6 @@
     `(unsafe
       (ptr-read (ptr-offset (array-data ,items) ,index)))))
 
-(define (selfhost-lint-write-text [path : String] [contents : String]) : unit
-  (io.write-file path (byte_buf.str-as-bytes (& contents))))
-
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present), and
 ;; whether staged migration rules are enabled.

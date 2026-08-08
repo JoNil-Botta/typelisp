@@ -12098,59 +12098,68 @@
         0)]
     [_ 0]))
 
+(define (lower-state-inline-result-alias-tracking-active? [state : LowerState]) : bool
+  (and
+    (>= lower-active-loop-entry-var-limit 0)
+    (= (lower-state-current-function-id state) lower-active-loop-function)))
+
 (define (lower-state-inline-result-alias-origin
   [state : LowerState]
   [value : ir.CompilerIrValue]) : i64
-  (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ facts _ _)
-      (- (lower-inline-result-alias-marker-in-map (& facts) value) 1)]))
+  (if (lower-state-inline-result-alias-tracking-active? state)
+    (match state
+      [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ facts _ _)
+        (- (lower-inline-result-alias-marker-in-map (& facts) value) 1)])
+    -1))
 
 (define (lower-state-inline-result-alias-set
   [state : LowerState (:consume)]
   [var-id : i64]
   [origin-var : i64]) : LowerState
-  (match state
-    [(LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        facts
-        tail-param-start
-        tail-param-end)
-      (let
-        [next-facts : lower_i64_i64_map.Map facts]
-        (begin
-          (lower-inline-result-alias-marker-set-ref!
-            (&mut next-facts)
-            var-id
-            (if (>= origin-var 0)
-              (+ origin-var 1)
-              0))
-          (LowerState.State
-            next-var
-            next-label
-            next-lambda
-            current-label
-            current-instrs
-            blocks
-            functions
-            function
-            spans
-            names
-            type-cache
-            mode
-            next-facts
-            tail-param-start
-            tail-param-end)))]))
+  (if (lower-state-inline-result-alias-tracking-active? state)
+    (match state
+      [(LowerState.State
+          next-var
+          next-label
+          next-lambda
+          current-label
+          current-instrs
+          blocks
+          functions
+          function
+          spans
+          names
+          type-cache
+          mode
+          facts
+          tail-param-start
+          tail-param-end)
+        (let
+          [next-facts : lower_i64_i64_map.Map facts]
+          (begin
+            (lower-inline-result-alias-marker-set-ref!
+              (&mut next-facts)
+              var-id
+              (if (>= origin-var 0)
+                (+ origin-var 1)
+                0))
+            (LowerState.State
+              next-var
+              next-label
+              next-lambda
+              current-label
+              current-instrs
+              blocks
+              functions
+              function
+              spans
+              names
+              type-cache
+              mode
+              next-facts
+              tail-param-start
+              tail-param-end)))])
+    state))
 
 (define (lower-state-inline-result-alias-mark-value
   [state : LowerState (:consume)]
@@ -12165,7 +12174,9 @@
   [state : LowerState (:consume)]
   [value : ir.CompilerIrValue]
   [result-ty : ast.AstType]) : LowerState
-  (if (lower-inline-aggregate-abi-copy-needed? ctx state result-ty)
+  (if (and
+    (lower-state-inline-result-alias-tracking-active? state)
+    (lower-inline-aggregate-abi-copy-needed? ctx state result-ty))
     (lower-state-inline-result-alias-mark-value state value)
     state))
 
@@ -13158,12 +13169,17 @@
       (match (lower-state-alloc-var storage-state)
         [(LowerAlloc.Alloc addr-alloc addr-var)
           (LowerExpr.Expr
-            (lower-state-inline-result-alias-set
-              (lower-state-emit
-                addr-alloc
-                (ir.CompilerIrInstr.AddrOf addr-var storage-var))
-              addr-var
-              addr-var)
+            (let
+              [next-state : LowerState
+                (lower-state-emit
+                  addr-alloc
+                  (ir.CompilerIrInstr.AddrOf addr-var storage-var))]
+              (if (>= lower-active-loop-entry-var-limit 0)
+                (lower-state-inline-result-alias-set
+                  next-state
+                  addr-var
+                  addr-var)
+                next-state))
             (ir.CompilerIrValue.Var addr-var)
             ty)])]))
 
@@ -25852,22 +25868,30 @@
                                           (lower-state-clear-tail-param-range
                                             assign-value-state)
                                           assign-value-state)]
-                                      [assign-origin : i64
-                                        (lower-state-inline-result-alias-origin
-                                          assign-state
-                                          assign-ir)]
                                       (ResultLowerExpr.Ok
                                         (LowerExpr.Expr
-                                          (lower-state-inline-result-alias-set
-                                            (lower-state-emit-at-expr
-                                              assign-state
-                                              (ir.CompilerIrInstr.Mov
-                                                id
-                                                assign-ir
-                                                target-ir-ty)
-                                              origin)
-                                            id
-                                            assign-origin)
+                                          (let
+                                            [next-state : LowerState
+                                              (lower-state-emit-at-expr
+                                                assign-state
+                                                (ir.CompilerIrInstr.Mov
+                                                  id
+                                                  assign-ir
+                                                  target-ir-ty)
+                                                origin)]
+                                            (if (>=
+                                              lower-active-loop-entry-var-limit
+                                              0)
+                                              (let
+                                                [assign-origin : i64
+                                                  (lower-state-inline-result-alias-origin
+                                                    next-state
+                                                    assign-ir)]
+                                                (lower-state-inline-result-alias-set
+                                                  next-state
+                                                  id
+                                                  assign-origin))
+                                              next-state))
                                           ir.CompilerIrValue.Unit
                                           expr-ty)))])]
                               [(ResultLowerExpr.Err message)
@@ -30955,19 +30979,24 @@
                               name)]
                           (ResultLowerExpr.Ok
                             (LowerExpr.Expr
-                              (lower-state-inline-result-alias-mark-value
-                                (lower-state-emit-at-expr
-                                  allocated
-                                  (ir.CompilerIrInstr.Call
-                                    call-var
-                                    callee
-                                    (ir.compiler-ir-call-args-from-list
-                                      (lower-value-list-prepend-one
-                                        sret-pointer
-                                        physical-values))
-                                    (ast.AstType.U64))
-                                  origin)
-                                slot-ptr)
+                              (let
+                                [call-state : LowerState
+                                  (lower-state-emit-at-expr
+                                    allocated
+                                    (ir.CompilerIrInstr.Call
+                                      call-var
+                                      callee
+                                      (ir.compiler-ir-call-args-from-list
+                                        (lower-value-list-prepend-one
+                                          sret-pointer
+                                          physical-values))
+                                      (ast.AstType.U64))
+                                    origin)]
+                                (if (>= lower-active-loop-entry-var-limit 0)
+                                  (lower-state-inline-result-alias-mark-value
+                                    call-state
+                                    slot-ptr)
+                                  call-state))
                               slot-ptr
                               result-ty)))])])])]
           [(LowerCAbiAggregate.No)
@@ -31003,11 +31032,13 @@
                                     ctx
                                     result-ty))
                                 origin)]
-                            (lower-state-inline-result-alias-mark-call-result
-                              ctx
-                              call-state
-                              (ir.CompilerIrValue.Var call-var)
-                              result-ty))
+                            (if (>= lower-active-loop-entry-var-limit 0)
+                              (lower-state-inline-result-alias-mark-call-result
+                                ctx
+                                call-state
+                                (ir.CompilerIrValue.Var call-var)
+                                result-ty)
+                              call-state))
                           (ir.CompilerIrValue.Var call-var)
                           result-ty)))])]
               [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)])]
@@ -31073,19 +31104,24 @@
                       [(LowerAlloc.Alloc allocated call-var)
                         (ResultLowerExpr.Ok
                           (LowerExpr.Expr
-                            (lower-state-inline-result-alias-mark-value
-                              (lower-state-emit-at-expr
-                                allocated
-                                (ir.CompilerIrInstr.CallIndirect
-                                  call-var
-                                  func-value
-                                  (ir.compiler-ir-call-args-from-list
-                                    (lower-value-list-prepend-one
-                                      sret-pointer
-                                      physical-values))
-                                  (ast.AstType.U64))
-                                origin)
-                              slot-ptr)
+                            (let
+                              [call-state : LowerState
+                                (lower-state-emit-at-expr
+                                  allocated
+                                  (ir.CompilerIrInstr.CallIndirect
+                                    call-var
+                                    func-value
+                                    (ir.compiler-ir-call-args-from-list
+                                      (lower-value-list-prepend-one
+                                        sret-pointer
+                                        physical-values))
+                                    (ast.AstType.U64))
+                                  origin)]
+                              (if (>= lower-active-loop-entry-var-limit 0)
+                                (lower-state-inline-result-alias-mark-value
+                                  call-state
+                                  slot-ptr)
+                                call-state))
                             slot-ptr
                             result-ty))])])])]
           [(LowerCAbiAggregate.No)
@@ -31154,11 +31190,13 @@
                 (let
                   [call-state : LowerState
                     (lower-state-emit-at-expr allocated instr origin)]
-                  (lower-state-inline-result-alias-mark-call-result
-                    ctx
-                    call-state
-                    (ir.CompilerIrValue.Var var-id)
-                    result-ty))
+                  (if (>= lower-active-loop-entry-var-limit 0)
+                    (lower-state-inline-result-alias-mark-call-result
+                      ctx
+                      call-state
+                      (ir.CompilerIrValue.Var var-id)
+                      result-ty)
+                    call-state))
                 (ir.CompilerIrValue.Var var-id)
                 result-ty)))])]
     [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
@@ -31515,11 +31553,13 @@
                 (let
                   [call-state : LowerState
                     (lower-state-emit-at-expr allocated instr origin)]
-                  (lower-state-inline-result-alias-mark-call-result
-                    ctx
-                    call-state
-                    (ir.CompilerIrValue.Var var-id)
-                    result-ty))
+                  (if (>= lower-active-loop-entry-var-limit 0)
+                    (lower-state-inline-result-alias-mark-call-result
+                      ctx
+                      call-state
+                      (ir.CompilerIrValue.Var var-id)
+                      result-ty)
+                    call-state))
                 (ir.CompilerIrValue.Var var-id)
                 result-ty)))])]
     [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
@@ -38520,10 +38560,6 @@
                       (lower-let-binding-type ctx maybe-ty init-ty)]
                     [binding-ir-ty : ast.AstType
                       (lower-one-word-register-storage-type ctx binding-ty)]
-                    [init-alias-origin : i64
-                      (lower-state-inline-result-alias-origin
-                        init-state
-                        init-value)]
                     (match (lower-state-alloc-var init-state)
                       [(LowerAlloc.Alloc allocated var-id)
                         (let
@@ -38536,15 +38572,25 @@
                               init)]
                           (lower-let-bindings-at
                             ctx
-                            (lower-state-inline-result-alias-set
-                              (lower-state-emit
-                                allocated
-                                (ir.CompilerIrInstr.Mov
-                                  var-id
-                                  init-value
-                                  binding-ir-ty))
-                              var-id
-                              init-alias-origin)
+                            (let
+                              [next-state : LowerState
+                                (lower-state-emit
+                                  allocated
+                                  (ir.CompilerIrInstr.Mov
+                                    var-id
+                                    init-value
+                                    binding-ir-ty))]
+                              (if (>= lower-active-loop-entry-var-limit 0)
+                                (let
+                                  [init-alias-origin : i64
+                                    (lower-state-inline-result-alias-origin
+                                      next-state
+                                      init-value)]
+                                  (lower-state-inline-result-alias-set
+                                    next-state
+                                    var-id
+                                    init-alias-origin))
+                                next-state))
                             (sym_i64_env.sym-i64-bind-id env name-id var-id)
                             next-type-env
                             bindings

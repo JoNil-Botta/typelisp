@@ -66771,7 +66771,7 @@
 (define (opt-inline-caller-loop-free?) : bool
   (begin
     (opt-inline-caller-facts-ensure!)
-    (= (opt-label-count opt-inline-caller-loop-labels) 0)))
+    (= (opt-label-count (opt-inline-caller-loop-labels-shared-view)) 0)))
 
 (define (opt-inline-hot-loop-leaf-ok?
   [index : OptFunctionIndex]

@@ -38543,6 +38543,7 @@
 (cfg
   scratch-vreg
   (define (compiler-backend-phi-planned-avoiding-value-home
+    [backend-state : CompilerBackendState]
     [assignments : compiler_regalloc.CompilerRegAssignmentList]
     [value : compiler_ir_types.CompilerIrValue]
     [planned : String]) : String
@@ -40151,6 +40152,7 @@
       (cfg
         scratch-vreg
         (compiler-backend-phi-planned-avoiding-value-home
+          (struct-get program-index backend-state)
           assignments
           moved-src
           planned-cycle)
@@ -40162,6 +40164,7 @@
       (cfg
         scratch-vreg
         (compiler-backend-phi-planned-avoiding-value-home
+          (struct-get program-index backend-state)
           assignments
           moved-src
           planned-stage)

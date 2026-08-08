@@ -2907,8 +2907,10 @@ assert_contains "$err" "TypeLisp tests: 0 passed; 0 failed; 0 total"
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 echo "[public-tools] package test discovery"
 TEST_PKG="$WORKDIR/package-test-pkg"
+TEST_PKG_SECOND_ROOT="$WORKDIR/package-test-second-root"
 mkdir -p "$TEST_PKG/src" "$TEST_PKG/tests/format_golden" "$TEST_PKG/tests/nested" \
-    "$TEST_PKG/tests/target/ignored" "$TEST_PKG/tests/vendor/child/src"
+    "$TEST_PKG/tests/target/ignored" "$TEST_PKG/tests/vendor/child/src" \
+    "$TEST_PKG_SECOND_ROOT"
 cat > "$TEST_PKG/typelisp.pkg" <<'EOF'
 (package
   (name "package_test_pkg")
@@ -2925,11 +2927,20 @@ cat > "$TEST_PKG/src/lib.tl" <<'EOF'
 EOF
 cat > "$TEST_PKG/tests/basic.tl" <<'EOF'
 (import stdlib.test)
+(import package_test_root_helper)
 
 (define (main) : i64
   (begin
-    (test.assert-i64-eq (+ 20 22) 42 "package tests dir basic")
+    (test.assert-i64-eq
+      package_test_root_helper.answer
+      42
+      "package tests dir second root")
     0))
+EOF
+cat > "$TEST_PKG_SECOND_ROOT/package_test_root_helper.tl" <<'EOF'
+(module package_test_root_helper)
+
+(define answer : i64 42)
 EOF
 cat > "$TEST_PKG/tests/nested/more.tl" <<'EOF'
 (import stdlib.test)
@@ -2954,14 +2965,14 @@ cat > "$TEST_PKG/tests/vendor/child/src/fail.tl" <<'EOF'
 (define (main) : i64 9)
 EOF
 # cli-gate-case package-test-check wrapper run_cmd_cwd
-run_cmd_cwd package-test-check "$TEST_PKG/src" "$COMPILER" test --check --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+run_cmd_cwd package-test-check "$TEST_PKG/src" "$COMPILER" test --check --target "$HOST_TARGET" --manifest-path "$TEST_PKG/typelisp.pkg" --stdlib-root "$ROOT/stdlib" --stdlib-root "$TEST_PKG_SECOND_ROOT"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "TypeLisp test file:"
 assert_contains "$out" "TypeLisp integration test file:"
 assert_contains "$out" "TypeLisp package test typecheck passed: 3 test(s) in 3 file(s)"
 # cli-gate-case package-test-run wrapper run_cmd_cwd
-run_cmd_cwd package-test-run "$TEST_PKG/src" "$COMPILER" test --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+run_cmd_cwd package-test-run "$TEST_PKG/src" "$COMPILER" test --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib" --stdlib-root "$TEST_PKG_SECOND_ROOT"
 assert_success
 assert_contains "$out" "TypeLisp integration test file:"
 assert_contains "$out" "TypeLisp package tests passed: 3 test(s) in 3 file(s)"

@@ -2420,10 +2420,16 @@
             (ResultPkgResolve.Ok primary)
             (if (io.file-exists? fallback)
               (ResultPkgResolve.Ok fallback)
-              (ResultPkgResolve.Err
-                (string.append
-                  "compiler-load: dotted import missing module segment after package alias: "
-                  module-name))))
+              (match (compiler-load-resolve-root-module-path
+                module-path
+                stdlib-roots)
+                [(CompilerLoadSomePath root-path)
+                  (ResultPkgResolve.Ok root-path)]
+                [(CompilerLoadNoPath)
+                  (ResultPkgResolve.Err
+                    (string.append
+                      "compiler-load: dotted import missing module segment after package alias: "
+                      module-name))])))
           (match (compiler-load-pkg-dep-lookup deps first)
             [(CompilerLoadNoPath)
               (cond
@@ -2432,19 +2438,28 @@
                     (io.file-exists? primary))
                   (ResultPkgResolve.Ok primary)]
                 [(io.file-exists? fallback) (ResultPkgResolve.Ok fallback)]
-                [(=
-                    (compiler-pkg-dep-list-count (compiler-pkg-deps-list deps))
-                    0)
-                  ;; A dotted alias with no declared dependencies and no local
-                  ;; module is an unknown package alias; with a deps graph the
-                  ;; name may be a vendored local source module.
-                  (ResultPkgResolve.Err
-                    (string.append
-                      "compiler-load: unknown package alias '"
-                      (string.append
-                        first
-                        (string.append "': pkg:" module-path))))]
-                [else (ResultPkgResolve.Ok fallback)])]
+                [else
+                  (match (compiler-load-resolve-root-module-path
+                    module-path
+                    stdlib-roots)
+                    [(CompilerLoadSomePath root-path)
+                      (ResultPkgResolve.Ok root-path)]
+                    [(CompilerLoadNoPath)
+                      (if (=
+                        (compiler-pkg-dep-list-count
+                          (compiler-pkg-deps-list deps))
+                        0)
+                        ;; A dotted alias with no declared dependencies and no
+                        ;; local or root module is an unknown package alias;
+                        ;; with a deps graph the name may be a vendored local
+                        ;; source module.
+                        (ResultPkgResolve.Err
+                          (string.append
+                            "compiler-load: unknown package alias '"
+                            (string.append
+                              first
+                              (string.append "': pkg:" module-path))))
+                        (ResultPkgResolve.Ok fallback))])])]
             [(CompilerLoadSomePath dep-path)
               (if (compiler-load-github-dependency-path? dep-path)
                 (ResultPkgResolve.Err
@@ -13031,6 +13046,66 @@
           (string.eq path (compiler-load-normalize-path dep))]
         [(ResultPkgResolve.Err _) false]))))
 
+(define (compiler-load-package-second-root-source-ok?) : bool
+  (let
+    [base : String "target/cl_pkg_second_root"]
+    [first-root : String (compiler-load-join-root-path base "first")]
+    [second-root : String (compiler-load-join-root-path base "second")]
+    [tests-root : String (compiler-load-join-root-path base "tests")]
+    [entry : String (compiler-load-join-root-path tests-root "entry.tl")]
+    [dep : String (compiler-load-join-root-path second-root "root_helper.tl")]
+    [first-order : String
+      (compiler-load-join-root-path first-root "root_order.tl")]
+    [second-order : String
+      (compiler-load-join-root-path second-root "root_order.tl")]
+    [roots : svec.Vec (svec.new)]
+    (begin
+      (compiler-load-test-mkdir base)
+      (compiler-load-test-mkdir first-root)
+      (compiler-load-test-mkdir second-root)
+      (compiler-load-test-mkdir tests-root)
+      (compiler-load-write-file-text
+        dep
+        "(module root_helper)
+(define answer : i64 42)")
+      (compiler-load-write-file-text
+        entry
+        "(import root_helper)
+(define (main) : i64 root_helper.answer)")
+      (compiler-load-write-file-text
+        first-order
+        "(module root_order)
+(define answer : i64 1)")
+      (compiler-load-write-file-text
+        second-order
+        "(module root_order)
+(define answer : i64 2)")
+      (svec.push (&mut roots) first-root)
+      (svec.push (&mut roots) second-root)
+      (let
+        [order-ok : bool
+          (match (compiler-load-resolve-package-import-spec
+            entry
+            (ast.AstImportKind.Module)
+            "root_order"
+            ast.AstMaybeModuleName.No
+            roots
+            base
+            (compiler-pkg-deps-empty))
+            [(ResultPkgResolve.Ok path)
+              (string.eq path (compiler-load-normalize-path first-order))]
+            [(ResultPkgResolve.Err _) false])]
+        (and
+          order-ok
+          (match (compiler-load-package-file-with-paths-and-roots
+            entry
+            (sym_i64_env.sym-i64-empty)
+            roots
+            base
+            (compiler-pkg-deps-empty))
+            [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+            [(ResultCompilerLoadWithPaths.Err _) false]))))))
+
 (define (compiler-load-package-moduleless-pkg-import-id-ok?) : bool
   (let
     [base : String "target/cl_pkg_moduleless_id"]
@@ -16805,6 +16880,10 @@
       (compiler-load-package-dotted-sibling-source-ok?)
       (return
         (io.panic "compiler-load: package dotted sibling source smoke mismatch")))
+    (unless
+      (compiler-load-package-second-root-source-ok?)
+      (return
+        (io.panic "compiler-load: package second root source smoke mismatch")))
     (unless
       (compiler-load-package-moduleless-pkg-import-id-ok?)
       (return

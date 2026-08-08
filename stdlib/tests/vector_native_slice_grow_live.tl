@@ -6,9 +6,9 @@
   (let
     [items : vec.Vec (vec.new)]
     (begin
-      (vec.push (&mut items) 10)
+      (vec.push-ref! (&mut items) 10)
       (let
         [view : (& items (Slice i64)) (vec.view (& items))]
         (begin
-          (vec.push (&mut items) 20)
+          (vec.push-ref! (&mut items) 20)
           (array-ref view 0))))))

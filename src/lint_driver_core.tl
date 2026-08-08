@@ -2038,6 +2038,8 @@
       (selfhost-lint-dead-maybe-type-refs maybe-ty refs)]
     [(ast.AstPattern.Tuple items)
       (selfhost-lint-dead-pattern-list-refs (box-get items) refs)]
+    [(ast.AstPattern.Array items)
+      (selfhost-lint-dead-pattern-list-refs (box-get items) refs)]
     [(ast.AstPattern.Wildcard) refs]
     [(ast.AstPattern.Binding _) refs]
     [(ast.AstPattern.Variant name items)

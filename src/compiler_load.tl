@@ -5256,6 +5256,13 @@
         alias
         summary
         locals)]
+    [(ast.AstPattern.Array patterns)
+      (compiler-load-session-state-lazy-pattern-list-demand
+        state
+        (box-get patterns)
+        alias
+        summary
+        locals)]
     [(ast.AstPattern.Variant name patterns)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-name-demand
@@ -5332,6 +5339,11 @@
           name)
         (sym_i64_env.sym-i64-bind-id locals name 1))]
     [(ast.AstPattern.Tuple patterns)
+      (compiler-load-session-state-lazy-pattern-list-locals
+        state
+        (box-get patterns)
+        locals)]
+    [(ast.AstPattern.Array patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (box-get patterns)

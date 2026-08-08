@@ -782,6 +782,10 @@
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (spec-template-env-shadow-pattern-list templates patterns))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (spec-template-env-shadow-pattern-list templates patterns))]
     [(ast.AstPattern.Wildcard) templates]
     [(ast.AstPattern.Binding name)
       (spec-template-env-shadow-name templates name)]
@@ -3964,6 +3968,10 @@
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (spec-value-subst-remove-pattern-list subs patterns))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (spec-value-subst-remove-pattern-list subs patterns))]
     [(ast.AstPattern.Wildcard) subs]
     [(ast.AstPattern.Binding name) (spec-value-subst-remove-name subs name)]
     [(ast.AstPattern.Variant _ patterns-box)
@@ -4060,6 +4068,10 @@
   (match pattern
     [(ast.AstPattern.Var name _) (spec-type-subst-remove-name subs name)]
     [(ast.AstPattern.Tuple patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (spec-type-subst-remove-pattern-list subs patterns))]
+    [(ast.AstPattern.Array patterns-box)
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (spec-type-subst-remove-pattern-list subs patterns))]

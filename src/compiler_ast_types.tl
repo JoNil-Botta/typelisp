@@ -574,7 +574,8 @@
   (Wildcard)
   (Binding i64)
   (Variant i64 (Box AstPatternList))
-  (Literal AstLiteral))
+  (Literal AstLiteral)
+  (Array (Box AstPatternList)))
 
 (defstruct AstPatternList
   (slots (__tl_dyn-array AstPattern))
@@ -4825,6 +4826,9 @@
 (define (ast-pat-tuple [items : AstPatternList]) : AstPattern
   (AstPattern.Tuple (box items)))
 
+(define (ast-pat-array [items : AstPatternList]) : AstPattern
+  (AstPattern.Array (box items)))
+
 (define (ast-pat-variant-id [name : i64] [items : AstPatternList]) : AstPattern
   (AstPattern.Variant name (box items)))
 
@@ -7755,6 +7759,9 @@
       (AstPattern.Var name (ast-compaction-remap-maybe-type remap maybe-ty))]
     [(AstPattern.Tuple items)
       (AstPattern.Tuple
+        (box (ast-compaction-remap-pattern-list remap (box-get items))))]
+    [(AstPattern.Array items)
+      (AstPattern.Array
         (box (ast-compaction-remap-pattern-list remap (box-get items))))]
     [(AstPattern.Wildcard) AstPattern.Wildcard]
     [(AstPattern.Binding name) (AstPattern.Binding name)]

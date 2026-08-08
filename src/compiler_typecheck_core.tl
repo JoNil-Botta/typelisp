@@ -22742,6 +22742,10 @@
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (tc-source-pattern-list-policy-ok ctx patterns))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (tc-source-pattern-list-policy-ok ctx patterns))]
     [(ast.AstPattern.Variant _ patterns-box)
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
@@ -43747,6 +43751,10 @@
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (tc-pattern-list-add-bound-names patterns bound))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (tc-pattern-list-add-bound-names patterns bound))]
     [(ast.AstPattern.Wildcard) bound]
     [(ast.AstPattern.Binding name)
       (tc-string-list-add bound (tc-env-key-name-text name))]
@@ -43780,6 +43788,8 @@
   (match pattern
     [(ast.AstPattern.Var name _) (tc-name-id-list-add bound name)]
     [(ast.AstPattern.Tuple patterns-box)
+      (tc-pattern-list-add-bound-name-ids (box-get patterns-box) bound)]
+    [(ast.AstPattern.Array patterns-box)
       (tc-pattern-list-add-bound-name-ids (box-get patterns-box) bound)]
     [(ast.AstPattern.Wildcard) bound]
     [(ast.AstPattern.Binding name) (tc-name-id-list-add bound name)]
@@ -44814,6 +44824,10 @@
     [(ast.AstPattern.Var name _)
       (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))]
     [(ast.AstPattern.Tuple patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (tc-pattern-list-add-bound-source-ids patterns bound))]
+    [(ast.AstPattern.Array patterns-box)
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (tc-pattern-list-add-bound-source-ids patterns bound))]
@@ -50665,6 +50679,62 @@
     [_
       (ResultTcTypeList.Err "typecheck: tuple pattern requires Tuple scrutinee")]))
 
+(defenum ResultTcArrayPatternInfo
+  (Ok ast.AstType i64)
+  (Err String))
+
+(define (tc-array-pattern-info [ctx : TcContext] [array-ty : ast.AstType]) : ResultTcArrayPatternInfo
+  (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+    [(ast.AstType.Array elem-id count)
+      (ResultTcArrayPatternInfo.Ok
+        (tc-project-from-region-container
+          array-ty
+          (tc-context-type-get ctx elem-id))
+        count)]
+    [_
+      (ResultTcArrayPatternInfo.Err
+        "typecheck: array pattern requires fixed Array scrutinee")]))
+
+(define (tc-bind-array-sub-pattern-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [patterns : (& patterns ast.AstPatternList)]
+  [elem-ty : ast.AstType]
+  [count : i64]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast.ast-pattern-list-len patterns))
+    (if (>= index count)
+      (ResultTcEnv.Ok env)
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns))))
+    (if (>= index count)
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns)))
+      (match (tc-bind-tuple-sub-pattern
+        ctx
+        env
+        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
+        elem-ty)
+        [(ResultTcEnv.Ok next-env)
+          (tc-bind-array-sub-pattern-list-at
+            ctx
+            next-env
+            patterns
+            elem-ty
+            count
+            (+ index 1))]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))))
+
+(define (tc-bind-array-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [array-ty : ast.AstType]
+  [patterns : ast.AstPatternList]) : ResultTcEnv
+  (match (tc-array-pattern-info ctx array-ty)
+    [(ResultTcArrayPatternInfo.Ok elem-ty count)
+      (tc-bind-array-sub-pattern-list-at ctx env (& patterns) elem-ty count 0)]
+    [(ResultTcArrayPatternInfo.Err message) (ResultTcEnv.Err message)]))
+
 (define (tc-bind-tuple-sub-pattern-list
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -50727,6 +50797,8 @@
     [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
     [(ast.AstPattern.Tuple patterns-box)
       (tc-bind-tuple-pattern ctx env elem-ty (box-get patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
+      (tc-bind-array-pattern ctx env elem-ty (box-get patterns-box))]
     [(ast.AstPattern.Variant name _)
       (match (tc-type-strip-region (tc-resolve-type ctx elem-ty))
         [(ast.AstType.Struct _) (tc-bind-sub-pattern ctx env pattern elem-ty)]
@@ -50861,6 +50933,8 @@
             (box-get patterns-box)
             (box-get elem-types-box))]
         [_ false])]
+    [(ast.AstPattern.Array patterns-box)
+      (tc-array-pattern-irrefutable? ctx (box-get patterns-box) inner-ty)]
     [(ast.AstPattern.Variant name args-box)
       (if (tc-box-pattern-name? name)
         (match (tc-type-strip-region (tc-resolve-type ctx inner-ty))
@@ -51091,6 +51165,8 @@
       [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
       [(ast.AstPattern.Tuple patterns-box)
         (tc-bind-tuple-pattern ctx env ty (box-get patterns-box))]
+      [(ast.AstPattern.Array patterns-box)
+        (tc-bind-array-pattern ctx env ty (box-get patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList (box-get args-box)]
@@ -51152,6 +51228,8 @@
       [(ast.AstPattern.Literal lit) (tc-bind-literal-pattern env lit ty)]
       [(ast.AstPattern.Tuple patterns-box)
         (tc-bind-tuple-pattern ctx env ty (box-get patterns-box))]
+      [(ast.AstPattern.Array patterns-box)
+        (tc-bind-array-pattern ctx env ty (box-get patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList (box-get args-box)]
@@ -51210,6 +51288,57 @@
 
 (define (tc-borrowed-field-ref-type [lifetime : i64] [field-ty : ast.AstType]) : ast.AstType
   (ast.ast-ty-ref lifetime (tc-borrow-referent-type field-ty)))
+
+(define (tc-bind-borrowed-array-sub-pattern-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [patterns : (& patterns ast.AstPatternList)]
+  [elem-ty : ast.AstType]
+  [count : i64]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast.ast-pattern-list-len patterns))
+    (if (>= index count)
+      (ResultTcEnv.Ok env)
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns))))
+    (if (>= index count)
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns)))
+      (match (tc-bind-borrowed-tuple-sub-pattern
+        ctx
+        env
+        lifetime
+        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
+        elem-ty)
+        [(ResultTcEnv.Ok next-env)
+          (tc-bind-borrowed-array-sub-pattern-list-at
+            ctx
+            next-env
+            lifetime
+            patterns
+            elem-ty
+            count
+            (+ index 1))]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))))
+
+(define (tc-bind-borrowed-array-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [array-ty : ast.AstType]
+  [patterns : ast.AstPatternList]) : ResultTcEnv
+  (match (tc-array-pattern-info ctx array-ty)
+    [(ResultTcArrayPatternInfo.Ok elem-ty count)
+      (tc-bind-borrowed-array-sub-pattern-list-at
+        ctx
+        env
+        lifetime
+        (& patterns)
+        elem-ty
+        count
+        0)]
+    [(ResultTcArrayPatternInfo.Err message) (ResultTcEnv.Err message)]))
 
 (define (tc-bind-borrowed-tuple-sub-pattern-list
   [ctx : TcContext]
@@ -51332,6 +51461,13 @@
     [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
     [(ast.AstPattern.Tuple patterns-box)
       (tc-bind-borrowed-tuple-pattern
+        ctx
+        env
+        lifetime
+        elem-ty
+        (box-get patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
+      (tc-bind-borrowed-array-pattern
         ctx
         env
         lifetime
@@ -51502,6 +51638,13 @@
           lifetime
           ty
           (box-get patterns-box))]
+      [(ast.AstPattern.Array patterns-box)
+        (tc-bind-borrowed-array-pattern
+          ctx
+          env
+          lifetime
+          ty
+          (box-get patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList (box-get args-box)]
@@ -51660,6 +51803,21 @@
               [_
                 (ResultTcEnv.Err
                   "typecheck: borrowed tuple match requires (tuple ...), binding, or wildcard pattern")])]
+          [(ast.AstType.Array _ _)
+            (match pattern
+              [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+              [(ast.AstPattern.Binding name)
+                (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
+              [(ast.AstPattern.Array patterns-box)
+                (tc-bind-borrowed-array-pattern
+                  ctx
+                  env
+                  lifetime
+                  referent-ty
+                  (box-get patterns-box))]
+              [_
+                (ResultTcEnv.Err
+                  "typecheck: borrowed fixed-array match requires (array ...), binding, or wildcard pattern")])]
           [(ast.AstType.Box _)
             (match pattern
               [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
@@ -51771,6 +51929,16 @@
         [_
           (ResultTcEnv.Err
             "typecheck: tuple match requires (tuple ...), binding, or wildcard pattern")])]
+    [(ast.AstType.Array _ _)
+      (match pattern
+        [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+        [(ast.AstPattern.Binding name)
+          (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
+        [(ast.AstPattern.Array patterns-box)
+          (tc-bind-array-pattern ctx env scrut-ty (box-get patterns-box))]
+        [_
+          (ResultTcEnv.Err
+            "typecheck: fixed-array match requires (array ...), binding, or wildcard pattern")])]
     [(ast.AstType.Expr) (tc-bind-expr-match-pattern ctx env pattern)]
     [(ast.AstType.Var name)
       (if (= name cbi.compiler-builtin-id-fix-ExprClause)
@@ -52923,6 +53091,37 @@
       [(ResultTcStructDecl.Err _) false])
     false))
 
+(define (tc-array-pattern-list-irrefutable-at?
+  [ctx : TcContext]
+  [patterns : (& patterns ast.AstPatternList)]
+  [elem-ty : ast.AstType]
+  [count : i64]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-pattern-list-len patterns))
+    (>= index count)
+    (if (>= index count)
+      false
+      (and
+        (tc-sub-pattern-irrefutable?
+          ctx
+          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
+          elem-ty)
+        (tc-array-pattern-list-irrefutable-at?
+          ctx
+          patterns
+          elem-ty
+          count
+          (+ index 1))))))
+
+(define (tc-array-pattern-irrefutable?
+  [ctx : TcContext]
+  [patterns : ast.AstPatternList]
+  [array-ty : ast.AstType]) : bool
+  (match (tc-array-pattern-info ctx array-ty)
+    [(ResultTcArrayPatternInfo.Ok elem-ty count)
+      (tc-array-pattern-list-irrefutable-at? ctx (& patterns) elem-ty count 0)]
+    [(ResultTcArrayPatternInfo.Err _) false]))
+
 (define (tc-sub-pattern-irrefutable?
   [ctx : TcContext]
   [pattern : ast.AstPattern]
@@ -52937,6 +53136,8 @@
         [(ResultTcTypeList.Ok elem-types)
           (tc-pattern-list-irrefutable? ctx (box-get patterns-box) elem-types)]
         [(ResultTcTypeList.Err _) false])]
+    [(ast.AstPattern.Array patterns-box)
+      (tc-array-pattern-irrefutable? ctx (box-get patterns-box) field-ty)]
     [(ast.AstPattern.Variant name args-box)
       (let
         [args : ast.AstPatternList (box-get args-box)]
@@ -53267,6 +53468,13 @@
             (box-get patterns-box)
             (box-get elem-types-box))]
         [_ false])]
+    [(ast.AstType.Array _ _)
+      (match pattern
+        [(ast.AstPattern.Wildcard) true]
+        [(ast.AstPattern.Binding _) true]
+        [(ast.AstPattern.Array patterns-box)
+          (tc-array-pattern-irrefutable? ctx (box-get patterns-box) scrut-ty)]
+        [_ false])]
     [(ast.AstType.Ref _ referent-box)
       (match (tc-type-strip-region
         (tc-resolve-type ctx (ast.ty-node-get referent-box)))
@@ -53279,6 +53487,16 @@
                 ctx
                 (box-get patterns-box)
                 (box-get elem-types-box))]
+            [_ false])]
+        [(ast.AstType.Array _ _)
+          (match pattern
+            [(ast.AstPattern.Wildcard) true]
+            [(ast.AstPattern.Binding _) true]
+            [(ast.AstPattern.Array patterns-box)
+              (tc-array-pattern-irrefutable?
+                ctx
+                (box-get patterns-box)
+                (ast.ty-node-get referent-box))]
             [_ false])]
         [_
           (match pattern
@@ -60960,6 +61178,11 @@
           ctx
           (& (box-get items))
           0)]
+      [(ast.AstPattern.Array items)
+        (tc-generated-pattern-list-dependent-construct-at?
+          ctx
+          (& (box-get items))
+          0)]
       [(ast.AstPattern.Variant _ items)
         (tc-generated-pattern-list-dependent-construct-at?
           ctx
@@ -63533,14 +63756,15 @@
 
 ;; Matching a cleanup-owning enum consumes the whole scrutinee value. Ordinary
 ;; enums stay compatibility-non-consuming for existing AST/IR-style sharing.
-;; Constructor-shaped tuple patterns are by-value destructuring, so every
-;; move-only tuple scrutinee is consumed while structurally Copy tuples remain
-;; available.
+;; Constructor-shaped tuple and fixed-array patterns are by-value
+;; destructuring, so every move-only aggregate scrutinee is consumed while
+;; structurally Copy aggregates remain available.
 (define (tc-type-consuming-match-scrutinee-now?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(ast.AstType.Tuple _) (tc-type-move-only? ctx ty)]
+    [(ast.AstType.Array _ _) (tc-type-move-only? ctx ty)]
     [_ (tc-cleanup-owning-enum-type? ctx ty)]))
 
 ;; The bare variable named by an init/rhs expression, unwrapping spans and
@@ -80537,6 +80761,18 @@
               patterns
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(ast.AstPattern.Array patterns-box)
+      (match (macro-pattern-list-to-spanned-sexpr
+        (box-get patterns-box)
+        span
+        origin)
+        [(ResultMacroSexpr.Ok patterns)
+          (ResultMacroSexpr.Ok
+            (reader.spanned-sexpr-list-prepend
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 125) span)
+              patterns
+              span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstPattern.Var _ _)
       (ResultMacroSexpr.Err
         (box
@@ -84017,6 +84253,12 @@
         (match (macro-hygiene-pattern-list patterns env macro-name depth)
           [(MacroHygienePatternList.PatternList npatterns next-env)
             (MacroHygienePattern.Pattern (ast.ast-pat-tuple npatterns) next-env)]))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (match (macro-hygiene-pattern-list patterns env macro-name depth)
+          [(MacroHygienePatternList.PatternList npatterns next-env)
+            (MacroHygienePattern.Pattern (ast.ast-pat-array npatterns) next-env)]))]
     [(ast.AstPattern.Wildcard)
       (MacroHygienePattern.Pattern ast.AstPattern.Wildcard env)]
     [(ast.AstPattern.Binding name)

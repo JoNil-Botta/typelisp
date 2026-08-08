@@ -2218,6 +2218,8 @@
       (lint-maybe-type-uses-import? maybe-ty alias module-name)]
     [(ast.AstPattern.Tuple items)
       (lint-pattern-list-uses-import? (box-get items) alias module-name)]
+    [(ast.AstPattern.Array items)
+      (lint-pattern-list-uses-import? (box-get items) alias module-name)]
     [(ast.AstPattern.Wildcard) false]
     [(ast.AstPattern.Binding _) false]
     [(ast.AstPattern.Variant name items)
@@ -3602,6 +3604,8 @@
   (match pattern
     [(ast.AstPattern.Var name _) (lint-unsafe-scope-add-id scope name)]
     [(ast.AstPattern.Tuple items)
+      (lint-unsafe-pattern-list-add-bindings (box-get items) scope 0)]
+    [(ast.AstPattern.Array items)
       (lint-unsafe-pattern-list-add-bindings (box-get items) scope 0)]
     [(ast.AstPattern.Wildcard) scope]
     [(ast.AstPattern.Binding name) (lint-unsafe-scope-add-id scope name)]
@@ -8491,6 +8495,8 @@
         true)]
     [(ast.AstPattern.Tuple items)
       (lint-name-case-pattern-list (box-get items) source cursor limit findings)]
+    [(ast.AstPattern.Array items)
+      (lint-name-case-pattern-list (box-get items) source cursor limit findings)]
     [(ast.AstPattern.Variant name items)
       (let
         [variant : LintNameCasePatternScan
@@ -9751,6 +9757,8 @@
           false
           false))]
     [(ast.AstPattern.Tuple items)
+      (lint-unused-variable-pattern-list-bindings (box-get items) state)]
+    [(ast.AstPattern.Array items)
       (lint-unused-variable-pattern-list-bindings (box-get items) state)]
     [(ast.AstPattern.Wildcard) state]
     [(ast.AstPattern.Binding name)

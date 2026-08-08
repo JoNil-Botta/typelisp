@@ -19434,11 +19434,14 @@
 (define (tc-stdlib-string-helper-visible-or-wrapper-id?
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [source-id : i64]
   [source-match : bool]
   [lookup-id : i64]
   [base-id : i64]
   [base : String]) : bool
-  (if source-match
+  (if (and
+    source-match
+    (cbi.compiler-builtin-typecheck-stdlib-string-bare-helper-id? source-id))
     (or
       (tc-context-is-stdlib-string? ctx)
       (tc-context-imports-stdlib-string? ctx)
@@ -37190,6 +37193,7 @@
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
+      source-id
       (cbi.compiler-builtin-typecheck-public-string-length-id? source-id)
       lookup-id
       cbi.compiler-builtin-id-string-length
@@ -37210,6 +37214,7 @@
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
+      source-id
       (and
         (cbi.compiler-builtin-typecheck-public-string-ref-id? source-id)
         (not (cbi.compiler-builtin-typecheck-public-char-at-id? source-id)))
@@ -37219,6 +37224,7 @@
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
+      source-id
       (cbi.compiler-builtin-typecheck-public-char-at-id? source-id)
       lookup-id
       cbi.compiler-builtin-id-char-at
@@ -37236,6 +37242,7 @@
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
+      source-id
       (= source-id cbi.compiler-builtin-id-eq)
       lookup-id
       cbi.compiler-builtin-id-eq
@@ -37243,6 +37250,7 @@
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
+      source-id
       (and
         (cbi.compiler-builtin-typecheck-public-string-eq-id? source-id)
         (not
@@ -37254,6 +37262,7 @@
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
+      source-id
       (cbi.compiler-builtin-typecheck-public-string-eq-question-id? source-id)
       lookup-id
       cbi.compiler-builtin-id-string-eq-question
@@ -37268,6 +37277,7 @@
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
+      source-id
       (= source-id cbi.compiler-builtin-id-string-append)
       lookup-id
       cbi.compiler-builtin-id-string-append
@@ -37275,6 +37285,7 @@
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
+      source-id
       (= source-id cbi.compiler-builtin-id-string-concat)
       lookup-id
       cbi.compiler-builtin-id-string-concat

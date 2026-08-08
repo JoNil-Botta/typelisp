@@ -2252,6 +2252,29 @@ EOF
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
 
+    cat > "$WORKDIR/lint_stdlib_string_bare.tl" <<'EOF'
+(import stdlib.string)
+(define (main) : i64 (string-length "abc"))
+EOF
+    # cli-gate-case lint-stdlib-string-bare-check wrapper run_cmd
+    run_cmd lint-stdlib-string-bare-check "$COMPILER" lint "$WORKDIR/lint_stdlib_string_bare.tl" --check --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "lint: 0 finding(s)"
+    assert_not_contains "$out" "unused import"
+
+    cat > "$WORKDIR/lint_stdlib_string_bare-shadow.tl" <<'EOF'
+(import stdlib.string)
+(define (string-length) : i64 42)
+(define (main) : i64 (string-length))
+EOF
+    # cli-gate-case lint-stdlib-string-bare-shadow-check wrapper run_cmd
+    run_cmd lint-stdlib-string-bare-shadow-check "$COMPILER" lint "$WORKDIR/lint_stdlib_string_bare_shadow.tl" --check --stdlib-root "$ROOT/stdlib"
+    assert_failure
+    assert_stderr_empty
+    assert_contains "$out" "unused import: module alias string from stdlib.string is never referenced"
+    assert_contains "$out" "lint: 1 finding(s)"
+
     # cli-gate-case lint-cfg-windows-target wrapper run_cmd
     run_cmd lint-cfg-windows-target "$COMPILER" lint "$CHECK_CFG_SRC" --target windows-x86_64 --cfg tooling-feature --check
     assert_success

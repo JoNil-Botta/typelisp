@@ -2263,7 +2263,7 @@ EOF
     assert_contains "$out" "lint: 0 finding(s)"
     assert_not_contains "$out" "unused import"
 
-    cat > "$WORKDIR/lint_stdlib_string_bare-shadow.tl" <<'EOF'
+    cat > "$WORKDIR/lint_stdlib_string_bare_shadow.tl" <<'EOF'
 (import stdlib.string)
 (define (string-length) : i64 42)
 (define (main) : i64 (string-length))

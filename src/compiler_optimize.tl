@@ -64403,6 +64403,17 @@
 ;; structural re-verify and SSA reconstruction have nothing new to check.
 (define opt-inline-caller-site-count : i64
   0)
+
+;; Blocks imported into the current caller by the hot-loop-leaf gate alone.
+;; Kept out of `added-so-far` on purpose: a hot-loop-leaf copy must not spend
+;; the caller's shared block fuel, because that fuel is what the caller's own
+;; banked absorptions draw on -- spending it evicted pl-globl-line?'s
+;; single-reference absorption out of pl-run-chunk when pl-line-end's copy
+;; landed first, +8.4% on peephole_lines. The gate has its own fuel below, and
+;; opt-inline-function adds this back when it decides whether SSA
+;; reconstruction has anything new to rebuild.
+(define opt-inline-caller-hot-loop-blocks : i64
+  0)
 (define opt-inline-pred-renames : (__tl_dyn-array OptInlinePredRenameList)
   (make-array (OptInlinePredRenameList.Nil)))
 
@@ -65774,6 +65785,7 @@
     (set! opt-inline-caller-facts-ready? false)
     (array-set! opt-inline-caller-loop-labels 0 (OptLabelSet.Nil))
     (set! opt-inline-caller-has-bounds? false)
+    (set! opt-inline-caller-hot-loop-blocks 0)
     (set! opt-inline-current-block-label (ir.compiler-ir-label-none))))
 
 (define (opt-inline-caller-facts-ensure!) : unit
@@ -65989,6 +66001,146 @@
     (opt-inline-bounds-loop-site-in-loop?)
     (opt-inline-bounds-loop-cascade-safe?)
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
+
+;; --- hot loop leaves: admission past the duplication ceiling -------------
+;;
+;; The census above stops answering at two references: one is absorbed, two are
+;; duplicated, and past opt-inline-dup-max-refcount a loop-bearing callee kept
+;; its call at every site. The measured occupant of that class is gvn_table's
+;; hashmap probe, `gvn-facts-slot`: 114 instructions in 29 blocks as the inline
+;; stage sees it, call-free, one linear-probe loop, referenced from seven sites
+;; in six callers. C inlines the whole chain into one blob; this compiler kept
+;; the boundary at all seven, and the row prices the callee at 248.6M dynamic
+;; instructions, 18.4% of the benchmark, before any cross-boundary hoisting the
+;; barrier blocks.
+;;
+;; Admission asks, in cost order:
+;;
+;;   1. the census places the callee past the duplication ceiling -- three or
+;;      more references. Absorption and duplication keep their own bands;
+;;      widening THIS class to single- and two-reference callees was measured
+;;      and loses exactly the way the legacy bands document: absorbing the
+;;      53-88 instruction loop leaves into their loop callers (it-slice-eq?
+;;      and it-hash-words into it-intern-slice, the peephole scanner leaves,
+;;      qs-checksum into main) regressed intern_table +22%, peephole_lines
+;;      +14%, opt_quicksort +6%, and cfg_domloops +2% through caller
+;;      allocation churn, so the reference clause stays;
+;;   2. the body is not address-taken;
+;;   3. the caller does not balloon: the copy spends the gate's OWN per-caller
+;;      block fuel (opt-inline-hot-loop-leaf-block-fuel), and the heavy gate
+;;      is asked about total caller growth. The shared block fuel is
+;;      deliberately NOT spent: it is what the caller's banked single-reference
+;;      absorptions draw on, and spending it evicted pl-globl-line?'s
+;;      absorption out of pl-run-chunk when pl-line-end's copy landed first,
+;;      +8.4% on peephole_lines -- an import must never evict a banked inline;
+;;   4. the body is call-free. A clone is bounded by the callee's own size only
+;;      while nothing inside it can bring another body along, and the
+;;      multiblock clone path miscompiles call-carrying clones (#6307). This
+;;      clause is what separates the admitted leaf from #6307's failing
+;;      shapes: ln-live-out-into!, ln-fill-tokens, ln-count-tokens, and
+;;      byte-buf-copy-slots-range-into all carry calls;
+;;   5. the retired boundary is repaid AND the import does not tax a caller
+;;      loop's allocation. Measured, those are not the same thing: an in-loop
+;;      site repays per iteration, but a body this size brings its own working
+;;      set into the caller's loop -- pl-line-end (55 instructions, 20 blocks)
+;;      copied into pl-run-chunk's per-line loop (a 34-block caller) nested the
+;;      line scan inside it and churned the loop's allocation, +8.4% on
+;;      peephole_lines. So the site rule has three tiers: inside the legacy
+;;      32/6 band (whose bodies add no second working set, the same shapes the
+;;      duplicating gate copies at two references) an in-loop site admits;
+;;      above it, an in-loop site admits only into a caller small enough that
+;;      the imported loop effectively replaces the caller's body -- the
+;;      measured pair is gvn-facts-grow, 13 blocks, whose reinsert loop takes
+;;      the probe and wins ~35M, against pl-run-chunk, 34, above; and anywhere
+;;      else only a caller with no loop of its own admits, where the imported
+;;      loop becomes the caller's only one. gvn-facts-slot's five
+;;      straight-line sites are the measured win for the loop-free tier;
+;;   6. the cascade clause, unchanged: an import must not hand a bounds-free
+;;      single-reference caller its first bounds check;
+;;   7. the body is genuinely cyclic: acyclic callees belong to the gates
+;;      above, and the forward-edge scan is the same one they run.
+;;
+;; The big tier's band is set from the measured leaf and the next shapes above
+;; it. 120 and 32 take `gvn-facts-slot` (114 instructions in 29 blocks); the
+;; shapes just refused are `gvn-scan-ints` (148 in 46, a switch-per-byte
+;; scanner whose body is a different working set from its caller's), stdlib
+;; `int->string-negative-digit-count` (92 in 37, over on blocks alone), and
+;; `ln-live-out-into!` (138, the #6307 size class). A callee copied into some
+;; of its sites keeps its own body and stays reachable from the rest: the
+;; census is built before the pass and only read during it, so no absorption
+;; bookkeeping is needed and none is claimed.
+(define (opt-inline-hot-loop-leaf-max-body) : i64
+  120)
+
+(define (opt-inline-hot-loop-leaf-max-blocks) : i64
+  32)
+
+;; Largest caller that may take a big-tier import at an in-loop site. Set from
+;; the measured pair: gvn-facts-grow (13 blocks, the whole caller is the loops
+;; the import joins) wins, pl-run-chunk (34 blocks, the import joins a working
+;; set an order larger) loses. 16 sits above the winner and below the loser.
+(define (opt-inline-hot-loop-leaf-max-caller-blocks) : i64
+  16)
+
+;; The per-caller import budget, spent from the gate's own accumulator
+;; (opt-inline-caller-hot-loop-blocks), not from the shared block fuel: see
+;; that variable's comment for the pl-run-chunk eviction it exists to prevent.
+;; 32 blocks is one copy of the largest admitted shape; a caller holding two
+;; sites of the same leaf takes the first and keeps the second's call. 64 was
+;; measured for root-of-var's second probe copy and loses +0.17% on gvn_table:
+;; the second copy's allocation churn exceeds a cold site's boundary saving.
+(define (opt-inline-hot-loop-leaf-block-fuel) : i64
+  32)
+
+;; The caller has no natural loop of its own. Read off the same lazy caller
+;; facts the site clause forces, so a candidate only pays for them once.
+(define (opt-inline-caller-loop-free?) : bool
+  (begin
+    (opt-inline-caller-facts-ensure!)
+    (= (opt-label-count (opt-inline-caller-loop-labels-shared-view)) 0)))
+
+(define (opt-inline-hot-loop-leaf-ok?
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [callee-name : i64]
+  [refs : i64]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (and
+    (> refs (opt-inline-dup-max-refcount))
+    (not (opt-inline-census-address-taken? index census callee-name))
+    ;; The heavy gate is asked about TOTAL caller growth, shared and
+    ;; gate-specific alike; the block fuel is the gate's own accumulator.
+    (not
+      (opt-inline-cost-crosses-heavy-gate?
+        caller-blocks
+        (+ added-so-far opt-inline-caller-hot-loop-blocks)
+        added-blocks))
+    (<=
+      (+ opt-inline-caller-hot-loop-blocks added-blocks)
+      (opt-inline-hot-loop-leaf-block-fuel))
+    (opt-inline-blocks-call-free? blocks)
+    ;; The three site tiers of clause 5, cheapest first: the legacy-band
+    ;; integer test runs before either lazy caller fact is forced.
+    (or
+      (and
+        (opt-inline-bounds-loop-small? blocks callee-instrs)
+        (opt-inline-bounds-loop-site-in-loop?))
+      (and
+        (<= callee-instrs (opt-inline-hot-loop-leaf-max-body))
+        (<=
+          (ir.compiler-ir-block-list-count blocks)
+          (opt-inline-hot-loop-leaf-max-blocks))
+        (or
+          (opt-inline-caller-loop-free?)
+          (and
+            (<= caller-blocks (opt-inline-hot-loop-leaf-max-caller-blocks))
+            (opt-inline-bounds-loop-site-in-loop?)))))
+    (opt-inline-bounds-loop-cascade-safe?)
+    (not (opt-inline-tiny-predicate-acyclic-reclaiming? blocks))))
 
 (define (opt-inline-bounds-leaf-cost-inline?
   [callee-instrs : i64]
@@ -66455,10 +66607,27 @@
                 ;; measured vm-run leaf selected by the shared gate (#5325).
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
+                [refs : i64
+                  (opt-inline-census-refcount index census callee-name)]
                 ;; A shared acyclic accessor is admitted on its own terms.
                 [shared-accessor? : bool
                   (opt-inline-shared-accessor-ok?
-                    (opt-inline-census-refcount index census callee-name)
+                    refs
+                    callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
+                ;; A call-free cyclic leaf past the duplication ceiling is
+                ;; admitted on its own terms too: it keeps its own body
+                ;; wherever this gate does not take it, so no absorb credit is
+                ;; claimed.
+                [hot-loop-leaf? : bool
+                  (opt-inline-hot-loop-leaf-ok?
+                    index
+                    census
+                    callee-name
+                    refs
                     callee-instrs
                     cblocks
                     added-blocks
@@ -66471,37 +66640,46 @@
                       absorbable-here?
                       const-args
                       np)
-                    shared-accessor?)]
+                    shared-accessor?
+                    hot-loop-leaf?)]
                 [bounds-loop-ok? : bool
-                  (opt-inline-multiblock-bounds-loop-ok?
-                    has-bounds?
-                    absorbable-here?
-                    callee-instrs
-                    callee-name
-                    cblocks)]
+                  (or
+                    (opt-inline-multiblock-bounds-loop-ok?
+                      has-bounds?
+                      absorbable-here?
+                      callee-instrs
+                      callee-name
+                      cblocks)
+                    hot-loop-leaf?)]
+                [legacy-cost-ok? : bool
+                  (or
+                    (opt-inline-cost-inline?
+                      callee-instrs
+                      added-blocks
+                      const-args
+                      (and
+                        absorbable-here?
+                        (not opt-inline-current-phi-predecessor?))
+                      caller-blocks
+                      added-so-far)
+                    (and
+                      tiny-predicate?
+                      (opt-inline-tiny-predicate-cost-inline?
+                        callee-instrs
+                        added-blocks
+                        const-args
+                        caller-blocks
+                        added-so-far))
+                    shared-accessor?)]
                 [inline? : bool
                   (and
                     bounds-ok?
                     bounds-loop-ok?
-                    (or
-                      (opt-inline-cost-inline?
-                        callee-instrs
-                        added-blocks
-                        const-args
-                        (and
-                          absorbable-here?
-                          (not opt-inline-current-phi-predecessor?))
-                        caller-blocks
-                        added-so-far)
-                      (and
-                        tiny-predicate?
-                        (opt-inline-tiny-predicate-cost-inline?
-                          callee-instrs
-                          added-blocks
-                          const-args
-                          caller-blocks
-                          added-so-far))
-                      shared-accessor?))]
+                    (or legacy-cost-ok? hot-loop-leaf?))]
+                ;; True only when the hot-loop-leaf gate is what admits this
+                ;; site: its blocks spend the gate's own fuel, not the shared
+                ;; accumulator the caller's banked absorptions draw on.
+                [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-from
                     instrs
@@ -66543,7 +66721,20 @@
                             (if stage-args?
                               cvars
                               (opt-inline-frame-growth cvars np)))]
-                        [added2 : i64 (+ prefix-added added-blocks)]
+                        [_hot-loop-bump : unit
+                          (if hot-import?
+                            (set!
+                              opt-inline-caller-hot-loop-blocks
+                              (+ opt-inline-caller-hot-loop-blocks added-blocks))
+                            unit)]
+                        ;; A hot-loop import's blocks stay out of the shared
+                        ;; accumulator; the gate charged its own fuel above.
+                        [added2 : i64
+                          (+
+                            prefix-added
+                            (if hot-import?
+                              0
+                              added-blocks))]
                         [stage-instrs : ir.CompilerIrInstrList
                           (if stage-args?
                             (opt-inline-stage-param-instrs
@@ -67097,10 +67288,24 @@
                 ;; Keep the span-aware path on the same exact vm-run decision.
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
+                [refs : i64
+                  (opt-inline-census-refcount index census callee-name)]
                 ;; A shared acyclic accessor is admitted on its own terms.
                 [shared-accessor? : bool
                   (opt-inline-shared-accessor-ok?
-                    (opt-inline-census-refcount index census callee-name)
+                    refs
+                    callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
+                ;; Same hot-loop-leaf decision as the non-span path.
+                [hot-loop-leaf? : bool
+                  (opt-inline-hot-loop-leaf-ok?
+                    index
+                    census
+                    callee-name
+                    refs
                     callee-instrs
                     cblocks
                     added-blocks
@@ -67113,37 +67318,44 @@
                       absorbable-here?
                       const-args
                       np)
-                    shared-accessor?)]
+                    shared-accessor?
+                    hot-loop-leaf?)]
                 [bounds-loop-ok? : bool
-                  (opt-inline-multiblock-bounds-loop-ok?
-                    has-bounds?
-                    absorbable-here?
-                    callee-instrs
-                    callee-name
-                    cblocks)]
+                  (or
+                    (opt-inline-multiblock-bounds-loop-ok?
+                      has-bounds?
+                      absorbable-here?
+                      callee-instrs
+                      callee-name
+                      cblocks)
+                    hot-loop-leaf?)]
+                [legacy-cost-ok? : bool
+                  (or
+                    (opt-inline-cost-inline?
+                      callee-instrs
+                      added-blocks
+                      const-args
+                      (and
+                        absorbable-here?
+                        (not opt-inline-current-phi-predecessor?))
+                      caller-blocks
+                      added-so-far)
+                    (and
+                      tiny-predicate?
+                      (opt-inline-tiny-predicate-cost-inline?
+                        callee-instrs
+                        added-blocks
+                        const-args
+                        caller-blocks
+                        added-so-far))
+                    shared-accessor?)]
                 [inline? : bool
                   (and
                     bounds-ok?
                     bounds-loop-ok?
-                    (or
-                      (opt-inline-cost-inline?
-                        callee-instrs
-                        added-blocks
-                        const-args
-                        (and
-                          absorbable-here?
-                          (not opt-inline-current-phi-predecessor?))
-                        caller-blocks
-                        added-so-far)
-                      (and
-                        tiny-predicate?
-                        (opt-inline-tiny-predicate-cost-inline?
-                          callee-instrs
-                          added-blocks
-                          const-args
-                          caller-blocks
-                          added-so-far))
-                      shared-accessor?))]
+                    (or legacy-cost-ok? hot-loop-leaf?))]
+                ;; Same hot-import accounting as the non-span path.
+                [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-with-spans-from
                     instrs
@@ -67188,7 +67400,19 @@
                             (if stage-args?
                               cvars
                               (opt-inline-frame-growth cvars np)))]
-                        [added2 : i64 (+ prefix-added added-blocks)]
+                        [_hot-loop-bump : unit
+                          (if hot-import?
+                            (set!
+                              opt-inline-caller-hot-loop-blocks
+                              (+ opt-inline-caller-hot-loop-blocks added-blocks))
+                            unit)]
+                        ;; Same hot-import accounting as the non-span path.
+                        [added2 : i64
+                          (+
+                            prefix-added
+                            (if hot-import?
+                              0
+                              added-blocks))]
                         [stage-instrs : ir.CompilerIrInstrList
                           (if stage-args?
                             (opt-inline-stage-param-instrs
@@ -67777,7 +68001,7 @@
                     ret
                     new-vars
                     repaired-blocks)
-                  (> added 0))))]))]))
+                  (> (+ added opt-inline-caller-hot-loop-blocks) 0))))]))]))
 
 (define (opt-inline-function-with-spans
   [type-segment-bases : i64]
@@ -67834,7 +68058,7 @@
                 (if (opt-inline-structure-ok-reclaiming? repaired-blocks)
                   (OptInlineSpanProgram.Program
                     (ir.compiler-ir-function-cons
-                      (if (> added 0)
+                      (if (> (+ added opt-inline-caller-hot-loop-blocks) 0)
                         (opt-ssa-construct-function type-segment-bases next)
                         next)
                       ir.CompilerIrFunctionList.Nil)

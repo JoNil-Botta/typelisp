@@ -28318,6 +28318,9 @@
   (SplatValueXmm)
   (SimdAddressBase)
   (SimdAddressIndex)
+  (TailMaskCount)
+  (TailMaskIndex)
+  (TailMaskBits)
   (VectorPrefixCarry)
   (VectorPrefixBits)
   (VectorPrefixValue)
@@ -29073,6 +29076,15 @@
             (compiler-reg-scratch-value-integer-immediate? index))
             1
             2))]
+      ;; The dynamic AVX-512 tail-mask expansion holds a fixed %rcx shift
+      ;; count, an index copy, and the constructed mask bits simultaneously.
+      ;; A fully immediate mask uses the separate constant fast path.
+      [(ir.CompilerIrInstr.TailMask _ index length _)
+        (if (and
+          (compiler-reg-scratch-value-integer-immediate? index)
+          (compiler-reg-scratch-value-integer-immediate? length))
+          0
+          3)]
       ;; Numeric and AVX2-bool prefixes need a carry/materialization slot, a
       ;; destination staging slot, and two simultaneous XMM work registers.
       ;; AVX-512 bool prefixes operate in the mask/GP banks and need only their
@@ -29554,6 +29566,12 @@
             (compiler-reg-id-seq-append
               (compiler-reg-scratch-value-registers assignments index-base)
               (compiler-reg-scratch-value-registers assignments index)))))]
+    [(ir.CompilerIrInstr.TailMask dst index length _)
+      (compiler-reg-id-seq-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-id-seq-append
+          (compiler-reg-scratch-value-registers assignments index)
+          (compiler-reg-scratch-value-registers assignments length)))]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
         [dst (struct-get (box-get payload-box) dst)]
@@ -30440,6 +30458,23 @@
           (CompilerRegScratchRole.SimdAddressBase)
           (CompilerRegScratchRole.SimdAddressIndex))
         (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(ir.CompilerIrInstr.TailMask _ _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (cond
+          [(= ordinal 0) (CompilerRegScratchRole.TailMaskCount)]
+          [(= ordinal 1) (CompilerRegScratchRole.TailMaskIndex)]
+          [else (CompilerRegScratchRole.TailMaskBits)])
+        (if (= ordinal 0)
+          (compiler-reg-scratch-fixed-constraint
+            assignments
+            instr
+            cabi.compiler-reg-id-rcx)
+          (compiler-reg-scratch-memory-constraint assignments instr))
         point
         (+ point 1)
         var)]
@@ -31957,6 +31992,12 @@
     [(CompilerRegScratchRole.FloatReturnResultGp) true]
     [_ false]))
 
+(define (compiler-reg-scratch-tail-mask-count-role?
+  [role : CompilerRegScratchRole]) : bool
+  (match role
+    [(CompilerRegScratchRole.TailMaskCount) true]
+    [_ false]))
+
 (define (compiler-reg-scratch-assign-items!
   [target-abi : cabi.CompilerRegTargetAbi]
   [items : (__tl_dyn-array CompilerRegScratchAssignment)]
@@ -31978,22 +32019,42 @@
         (struct-get requirement constraint)]
       [reg
         : i64
-        ;; A return result is the final consumer of its operand homes. Its
-        ;; fixed ABI register may therefore overlap an input; a simultaneously
-        ;; live RHS preservation requirement is assigned afterward and sees
-        ;; this synthetic fixed home, so it must choose a distinct register.
-        (if (compiler-reg-scratch-return-fixed-role?
+        ;; The tail-mask index is copied to ordinal 1 before the end value is
+        ;; loaded into %rcx. Permit the fixed count to overlap that instruction
+        ;; input, but make an unrelated live-through resident fail so emission
+        ;; takes the sound legacy save/restore fallback. Sibling requirements
+        ;; are assigned afterward and see a successful synthetic home.
+        (if (compiler-reg-scratch-tail-mask-count-role?
           (struct-get requirement role))
-          (struct-get constraint fixed)
-          (compiler-reg-scratch-pick-register
-            assignments
-            occupancy
-            interval-index
-            ref-counts
-            (struct-get requirement var)
-            vars
-            (compiler-reg-scratch-constraint-pool target-abi constraint)
-            (struct-get constraint excluded)))]
+          (if (compiler-reg-id-seq-contains?
+            (struct-get constraint excluded)
+            (struct-get constraint fixed))
+            (struct-get constraint fixed)
+            (compiler-reg-scratch-pick-register
+              assignments
+              occupancy
+              interval-index
+              ref-counts
+              (struct-get requirement var)
+              vars
+              (compiler-reg-scratch-constraint-pool target-abi constraint)
+              (struct-get constraint excluded)))
+          ;; A return result is the final consumer of its operand homes. Its
+          ;; fixed ABI register may therefore overlap an input; a simultaneously
+          ;; live RHS preservation requirement is assigned afterward and sees
+          ;; this synthetic fixed home, so it must choose a distinct register.
+          (if (compiler-reg-scratch-return-fixed-role?
+            (struct-get requirement role))
+            (struct-get constraint fixed)
+            (compiler-reg-scratch-pick-register
+              assignments
+              occupancy
+              interval-index
+              ref-counts
+              (struct-get requirement var)
+              vars
+              (compiler-reg-scratch-constraint-pool target-abi constraint)
+              (struct-get constraint excluded))))]
       (begin
         (if (= reg cabi.compiler-reg-id-invalid)
           unit

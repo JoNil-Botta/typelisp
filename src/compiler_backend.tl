@@ -9120,15 +9120,20 @@
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
+  [planned-count : String]
+  [planned-index : String]
+  [planned-mask : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
     [count-reg : String
-      (compiler-backend-scavenge-rcx-reg-here
-        (array.make-array String 0)
-        0
-        backend-state)]
+      (if (string.eq planned-count "")
+        (compiler-backend-scavenge-rcx-reg-here
+          (array.make-array String 0)
+          0
+          backend-state)
+        planned-count)]
     [index-home : String
       (compiler-backend-simd-index-home backend-state assignments index)]
     [index-exclude : (__tl_dyn-array String)
@@ -9138,15 +9143,26 @@
         index
         end-value)]
     [index-reg : String
-      (if (and
-        (not (string.eq index-home ""))
-        (not (string.eq index-home count-reg)))
-        index-home
-        (compiler-backend-scavenge-reg-here index-exclude 7 "%r8" backend-state))]
+      (if (string.eq planned-index "")
+        (if (and
+          (not (string.eq index-home ""))
+          (not (string.eq index-home count-reg)))
+          index-home
+          (compiler-backend-scavenge-reg-here
+            index-exclude
+            7
+            "%r8"
+            backend-state))
+        planned-index)]
     [mask-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-append index-exclude 7 index-reg)]
     [mask-reg : String
-      (compiler-backend-scavenge-reg-here mask-exclude 8 "%r9" backend-state)]
+      (compiler-backend-planned-or-scavenge-reg-here
+        planned-mask
+        mask-exclude
+        8
+        "%r9"
+        backend-state)]
     [mask-gpr : String (compiler-backend-avx512-mask-gpr-part mask-reg lanes)]
     (match (if (string.eq index-reg index-home)
       (ResultCompilerBackend.Ok "")
@@ -9291,6 +9307,9 @@
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
+  [planned-count : String]
+  [planned-index : String]
+  [planned-mask : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
@@ -9335,6 +9354,9 @@
                   index
                   end-value
                   lanes
+                  planned-count
+                  planned-index
+                  planned-mask
                   instr-diag
                   backend-state)
                   [(ResultCompilerBackend.Ok asm)
@@ -9359,6 +9381,9 @@
               index
               end-value
               lanes
+              planned-count
+              planned-index
+              planned-mask
               instr-diag
               backend-state)
               [(ResultCompilerBackend.Ok asm)
@@ -11866,6 +11891,9 @@
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
+  [planned-count : String]
+  [planned-index : String]
+  [planned-mask : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?
@@ -11890,6 +11918,9 @@
       index
       end-value
       lanes
+      planned-count
+      planned-index
+      planned-mask
       instr-diag
       backend-state)))
 
@@ -45194,6 +45225,9 @@
           index
           len
           lanes
+          planned-scratch0
+          planned-scratch1
+          planned-scratch2
           instr-diag
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.EntryArgc dst)

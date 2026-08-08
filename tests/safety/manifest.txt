@@ -16,6 +16,9 @@ shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|shift count out o
 # Array/string/generated collection bounds trap rather than reading invalid memory.
 array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 array_set_bounds_trap|run-trap|tests/safety/array_set_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+fixed_array_take_bounds_trap|run-trap|tests/safety/fixed_array_take_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+fixed_array_take_negative_bounds_trap|run-trap|tests/safety/fixed_array_take_negative_bounds_trap.tl|134|array index out of bounds: index=-1 length=1
+fixed_array_take_huge_bounds_trap|run-trap|tests/safety/fixed_array_take_huge_bounds_trap.tl|134|array index out of bounds
 string_bounds_trap|run-trap|tests/safety/string_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 make_array_negative_trap|run-trap|tests/safety/make_array_negative_trap.tl|134|tl: array index out of bounds
 byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|134|tl: array index out of bounds
@@ -459,3 +462,14 @@ global_move_match_result_reject|check-fail|tests/safety/global_move_match_result
 global_move_try_result_reject|check-fail|tests/safety/global_move_try_result_reject.tl|-|cannot move out of global `global-result`
 global_move_scoped_result_reject|check-fail|tests/safety/global_move_scoped_result_reject.tl|-|cannot move out of global `global-text`
 global_move_result_shadowing_ok|check-ok|tests/safety/global_move_result_shadowing_ok.tl|-|-
+
+# Public fixed-array take requires mutable storage, an init-eligible element,
+# the two-operand spelling, and ordinary move-source ownership rules.
+fixed_array_take_shared_ref_reject|check-fail|tests/safety/fixed_array_take_shared_ref_reject.tl|-|requires owned fixed-array storage or mutable reference
+fixed_array_take_temporary_reject|check-fail|tests/safety/fixed_array_take_temporary_reject.tl|-|receiver must be a fixed-array storage place
+fixed_array_take_dynamic_reject|check-fail|tests/safety/fixed_array_take_dynamic_reject.tl|-|requires fixed array type
+fixed_array_take_cleanup_reject|check-fail|tests/safety/fixed_array_take_cleanup_reject.tl|-|element cannot be reinitialized
+fixed_array_take_active_cleanup_owner_reject|check-fail|tests/safety/fixed_array_take_active_cleanup_owner_reject.tl|-|cannot take from an active cleanup owner
+fixed_array_take_borrow_live_reject|check-fail|tests/safety/fixed_array_take_borrow_live_reject.tl|-|cannot assign to borrowed place `items`
+fixed_array_take_legacy_arity_reject|check-fail|tests/safety/fixed_array_take_legacy_arity_reject.tl|-|expects exactly two operands
+fixed_array_take_global_noncopy_reject|check-fail|tests/safety/fixed_array_take_global_noncopy_reject.tl|-|cannot move out of global `global-items`

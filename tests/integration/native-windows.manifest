@@ -13,6 +13,7 @@ dynamic_array_literal|tests/integration/dynamic_array_literal.tl|42|-|-|-
 dyn_array_reference_elements|tests/integration/dyn_array_reference_elements.tl|42|-|-|stdlib/string.tl
 array_qualified_macros|tests/integration/array_qualified_macros.tl|42|-|-|-
 array_stride_24byte|tests/integration/array_stride_24byte.tl|42|-|-|-
+fixed_array_take|tests/integration/fixed_array_take.tl|42|-|-|stdlib/string.tl
 slice_whole_array|tests/integration/slice_whole_array.tl|42|-|-|-
 slice_views|tests/integration/slice_views.tl|42|-|-|stdlib/array.tl
 slice_generated_decl|tests/integration/slice_generated_decl.tl|42|-|-|-

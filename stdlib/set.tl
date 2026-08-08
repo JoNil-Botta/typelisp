@@ -59,7 +59,7 @@
             (Absent i64)
             (Full))
           (defstruct Set
-            (slots (Array Slot))
+            (slots (__tl_dyn-array Slot))
             (len i64)
             (deleted i64))
           (defenum Entry
@@ -128,7 +128,7 @@
               first-tombstone
               empty-index))
           (define (probe-borrowed-from
-            [slots : (& slots (Array Slot))]
+            [slots : (& slots (__tl_dyn-array Slot))]
             [capacity : i64]
             [key : (& key str)]
             [hash : i64]
@@ -164,7 +164,7 @@
                       (+ seen 1)
                       first-tombstone))])))
           (define (probe-borrowed
-            [slots : (& slots (Array Slot))]
+            [slots : (& slots (__tl_dyn-array Slot))]
             [capacity : i64]
             [key : (& key str)]
             [hash : i64]) : Probe
@@ -201,7 +201,7 @@
                 (if (< old-capacity 1)
                   1
                   (* old-capacity 2))]
-              [fresh : (Array Slot) (make-array Slot new-capacity)]
+              [fresh : (__tl_dyn-array Slot) (make-array Slot new-capacity)]
               [scan : i64 0]
               (begin
                 (while (< scan old-capacity)
@@ -342,7 +342,7 @@
             (Absent i64)
             (Full))
           (defstruct Set
-            (slots (Array Slot))
+            (slots (__tl_dyn-array Slot))
             (len i64)
             (deleted i64))
           (defenum Entry
@@ -377,7 +377,7 @@
               first-tombstone
               empty-index))
           (define (probe-from
-            [slots : (& slots (Array Slot))]
+            [slots : (& slots (__tl_dyn-array Slot))]
             [capacity : i64]
             [key : i64]
             [hash : i64]
@@ -413,7 +413,7 @@
                       (+ seen 1)
                       first-tombstone))])))
           (define (probe
-            [slots : (& slots (Array Slot))]
+            [slots : (& slots (__tl_dyn-array Slot))]
             [capacity : i64]
             [key : i64]
             [hash : i64]) : Probe
@@ -450,7 +450,7 @@
                 (if (< old-capacity 1)
                   1
                   (* old-capacity 2))]
-              [fresh : (Array Slot) (make-array Slot new-capacity)]
+              [fresh : (__tl_dyn-array Slot) (make-array Slot new-capacity)]
               [scan : i64 0]
               (begin
                 (while (< scan old-capacity)

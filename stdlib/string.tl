@@ -279,8 +279,8 @@
 (define (concat [left : (& left str)] [right : (& right str)]) : String
   (append left right))
 
-;: Return a fresh active-arena String by concatenating all owned strings in order.
-(define (concat-all [parts : (Array String)]) : String
+;: Return a fresh active-arena String by concatenating a borrowed Slice in order.
+(define (concat-all [parts : (& parts (Slice String))]) : String
   (let
     [count : i64 (array-length parts)]
     [len-index : i64 0]
@@ -312,15 +312,6 @@
                 (set! copy-index (+ copy-index 1)))))
           (unsafe
             (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
-
-;: Store `value` in `parts` and return `parts` for macro-generated pack chains.
-(define (concat-all-pack-part
-  [parts : (Array String)]
-  [index : i64]
-  [value : String]) : (Array String)
-  (begin
-    (array-set! parts index value)
-    parts))
 
 ;: Return a fresh active-arena String by concatenating three borrowed strings.
 (define (concat3-borrowed [a : (& a str)] [b : (& b str)] [c : (& c str)]) : String
@@ -878,7 +869,7 @@
   test
   (define (string-test-with-nul) : String
     (let
-      [bytes : (Array u8) (array.make-array u8 3)]
+      [bytes : (__tl_dyn-array u8) (array.make-array u8 3)]
       [dst : (MutPtr u8)
         (unsafe
           (array-data bytes))]
@@ -928,21 +919,16 @@
 (cfg
   test
   (define (string-test-concat-all-empty) : String
-    (concat-all (array.make-array String 0))))
+    (let
+      [parts : (Array String 0) (array)]
+      (concat-all (& parts)))))
 
 (cfg
   test
   (define (string-test-concat-all-many) : String
     (let
-      [parts : (Array String) (array.make-array String 6)]
-      (begin
-        (array-set! parts 0 "ab")
-        (array-set! parts 1 "")
-        (array-set! parts 2 "cd")
-        (array-set! parts 3 "ef")
-        (array-set! parts 4 "")
-        (array-set! parts 5 "gh")
-        (concat-all parts)))))
+      [parts : (Array String 6) (array "ab" "" "cd" "ef" "" "gh")]
+      (concat-all (& parts)))))
 
 (cfg
   test

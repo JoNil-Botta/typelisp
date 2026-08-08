@@ -1,7 +1,7 @@
 ;# Generated deque family (collections v1).
 ;#
 ;# `(deque T)` emits a growable, owned double-ended queue module for element
-;# type `T`, backed by a circular `(Array T)`. Queue-style callers use
+;# type `T`, backed by private circular dynamic storage. Queue-style callers use
 ;# `push-back!` with `pop-front!`; double-ended callers may also use
 ;# `push-front!` and `pop-back!`.
 ;#
@@ -54,15 +54,17 @@
       (module ,module-name)
       (import stdlib.array)
       (defstruct ,deque-name
-        (slots (Array ,T))
+        (slots (__tl_dyn-array ,T))
         (head i64)
         (len i64))
       (defenum ,pop-name
         (Empty)
         (Ok ,T))
-      (define (slots [q : (& q ,deque-name)]) : (& q (Array ,T))
+      (define (slots [q : (& q ,deque-name)]) : (& q (__tl_dyn-array ,T))
         (& (struct-get q slots)))
-      (define (slots-mut [q : (&mut q ,deque-name)]) : (&mut q (Array ,T))
+      (define (slots-mut [q : (&mut q ,deque-name)]) : (&mut
+          q
+          (__tl_dyn-array ,T))
         (&mut (struct-get q slots)))
       (define (head [q : (& q ,deque-name)]) : i64
         (struct-get q head))
@@ -104,8 +106,8 @@
       (define (peek-back [q : (& q ,deque-name)] [fallback : ,T]) : ,T
         (get q (- (len q) 1) fallback))
       (define (copy-live!
-        [dst : (&mut dst (Array ,T))]
-        [src : (& src (Array ,T))]
+        [dst : (&mut dst (__tl_dyn-array ,T))]
+        [src : (& src (__tl_dyn-array ,T))]
         [head : i64]
         [capacity : i64]
         [count : i64]
@@ -126,7 +128,7 @@
             (if (< old-cap 1)
               1
               (* old-cap 2))]
-          [bigger : (Array ,T) (make-array ,T new-cap)]
+          [bigger : (__tl_dyn-array ,T) (make-array ,T new-cap)]
           (begin
             (copy-live!
               (&mut bigger)

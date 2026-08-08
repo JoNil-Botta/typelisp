@@ -8,31 +8,54 @@
 (import stdlib.array)
 (import stdlib.string)
 
+;: Compiler-private owner for the one backing allocation used by long calls.
+(defstruct StrCatPack
+  (parts (__tl_dyn-array String)))
+
+;: Allocate the one backing buffer used to pack a long concatenation.
+(define (str-cat-pack-new [count : i64]) : StrCatPack
+  (StrCatPack (stdlib.array.make-array String count)))
+
+;: Store one String in a compiler-private pack and return the pack.
+(define (str-cat-pack-part [pack : StrCatPack] [index : i64] [value : String]) : StrCatPack
+  (begin
+    (array-set! (struct-get pack parts) index value)
+    pack))
+
 ;: Internal pack step used by `str-cat` expansion for six or more operands.
 ;:
 ;: `carrier` wraps all operands in a marker call so each step reads the next
 ;: operand by index (`expr-list-nth`) instead of copying a shrinking tail;
-;: `parts` threads the filled dynamic array and `idx` is the next literal slot.
-;: When every slot is filled it returns `parts`.
+;: `pack` threads the filled domain wrapper and `idx` is the next literal slot.
+;: When every slot is filled it returns `pack`.
 (defmacro (str-cat-pack
   [carrier : comptime.Expr]
-  [parts : (Array String)]
-  [idx : comptime.Expr]) : (Array String)
+  [pack : StrCatPack]
+  [idx : comptime.Expr]) : comptime.Expr
   (match idx
     [(comptime.Expr.Int i)
       (match carrier
         [(comptime.Expr.Call _ elems)
           (if (>= i (comptime.expr-list-length elems))
-            parts
+            pack
             `(str-cat-pack
               ,carrier
-              (stdlib.string.concat-all-pack-part
-                ,parts
+              (stdlib.str_cat_runtime.str-cat-pack-part
+                ,pack
                 ,(comptime.expr-int i)
                 ,(comptime.expr-list-nth elems i))
               ,(comptime.expr-int (+ i 1))))]
-        [_ parts])]
-    [_ parts]))
+        [_ pack])]
+    [_ pack]))
+
+;: Bridge a completed domain pack into the public borrowed-Slice concat API.
+;:
+;: Keeping the Slice-view setup outside each macro expansion avoids multiplying
+;: it across every long `str-cat` call site.
+(define (str-cat-concat-packed [pack : StrCatPack]) : String
+  (let
+    [parts : (__tl_dyn-array String) (struct-get pack parts)]
+    (stdlib.string.concat-all (slice-view (& parts) 0 (array-length parts)))))
 
 ;: Concatenate any number of `String` operands into a fresh active-arena String.
 ;:
@@ -69,12 +92,10 @@
         ,(comptime.expr-list-nth args 3)
         ,(comptime.expr-list-nth args 4))]
     [n
-      `(stdlib.string.concat-all
+      `(stdlib.str_cat_runtime.str-cat-concat-packed
         (str-cat-pack
           (__str-cat-args ,@args)
-          (stdlib.array.make-array
-            ,(comptime.expr-var "String")
-            ,(comptime.expr-int n))
+          (stdlib.str_cat_runtime.str-cat-pack-new ,(comptime.expr-int n))
           0))]))
 
 ;: Concatenate operands while accepting fixed-arity scoped-region variables.
@@ -257,10 +278,8 @@
             `(stdlib.string.concat5-borrowed ,arg0 ,arg1 ,arg2 ,arg3 ,arg4)
             `(stdlib.string.concat5 ,arg0 ,arg1 ,arg2 ,arg3 ,arg4))))]
     [n
-      `(stdlib.string.concat-all
+      `(stdlib.str_cat_runtime.str-cat-concat-packed
         (str-cat-pack
           (__str-cat-args ,@args)
-          (stdlib.array.make-array
-            ,(comptime.expr-var "String")
-            ,(comptime.expr-int n))
+          (stdlib.str_cat_runtime.str-cat-pack-new ,(comptime.expr-int n))
           0))]))

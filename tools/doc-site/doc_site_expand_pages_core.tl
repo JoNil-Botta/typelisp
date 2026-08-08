@@ -481,7 +481,7 @@
       "defstruct"
       "Deque"
       (str_cat.str-cat
-        "(defstruct Deque\n  (slots (Array "
+        "(defstruct Deque\n  (slots (__tl_dyn-array "
         type-name
         "))\n  (head i64)\n  (len i64))")
       "")
@@ -494,7 +494,7 @@
       "define-function"
       "slots"
       (str_cat.str-cat
-        "(define (slots [q : (& q Deque)]) : (& q (Array "
+        "(define (slots [q : (& q Deque)]) : (& q (__tl_dyn-array "
         type-name
         ")) ...)")
       "")
@@ -502,7 +502,7 @@
       "define-function"
       "slots-mut"
       (str_cat.str-cat
-        "(define (slots-mut [q : (&mut q Deque)]) : (&mut q (Array "
+        "(define (slots-mut [q : (&mut q Deque)]) : (&mut q (__tl_dyn-array "
         type-name
         ")) ...)")
       "")
@@ -595,9 +595,9 @@
       "define-function"
       "copy-live!"
       (str_cat.str-cat
-        "(define (copy-live! [dst : (&mut dst (Array "
+        "(define (copy-live! [dst : (&mut dst (__tl_dyn-array "
         type-name
-        "))] [src : (& src (Array "
+        "))] [src : (& src (__tl_dyn-array "
         type-name
         "))] [head : i64] [capacity : i64] [count : i64] [index : i64]) : unit ...)")
       "")

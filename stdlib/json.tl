@@ -38,7 +38,7 @@
 
 ;: Immutable contiguous JSON array elements in source order.
 (defstruct JsonSeq
-  (slots (Array Json))
+  (slots (__tl_dyn-array Json))
   (len i64))
 
 ;: One JSON object member stored in a member sequence or builder vector.
@@ -48,7 +48,7 @@
 
 ;: Immutable contiguous JSON object members in source order.
 (defstruct JsonMemberSeq
-  (slots (Array JsonMember))
+  (slots (__tl_dyn-array JsonMember))
   (len i64))
 
 (import (vector.vector Json core) as jvec)
@@ -62,7 +62,7 @@
 (define (list-cons [head : Json] [items : JsonSeq]) : JsonSeq
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array Json) (make-array Json (+ n 1))]
+    [slots : (__tl_dyn-array Json) (make-array Json (+ n 1))]
     [i : i64 0]
     (begin
       (array-set! slots 0 head)
@@ -80,7 +80,7 @@
 (define (member-cons [key : String] [value : Json] [items : JsonMemberSeq]) : JsonMemberSeq
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array JsonMember) (make-array JsonMember (+ n 1))]
+    [slots : (__tl_dyn-array JsonMember) (make-array JsonMember (+ n 1))]
     [i : i64 0]
     (begin
       (array-set! slots 0 (JsonMember key value))
@@ -94,7 +94,7 @@
 (define (vec-to-list [items : jvec.Vec]) : JsonSeq
   (let
     [n : i64 (jvec.len (& items))]
-    [slots : (Array Json) (make-array Json n)]
+    [slots : (__tl_dyn-array Json) (make-array Json n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -107,7 +107,7 @@
 (define (member-vec-to-list [items : jmvec.Vec]) : JsonMemberSeq
   (let
     [n : i64 (jmvec.len (& items))]
-    [slots : (Array JsonMember) (make-array JsonMember n)]
+    [slots : (__tl_dyn-array JsonMember) (make-array JsonMember n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -288,7 +288,7 @@
 (define (list-reverse [items : JsonSeq]) : JsonSeq
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array Json) (make-array Json n)]
+    [slots : (__tl_dyn-array Json) (make-array Json n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -304,7 +304,7 @@
 (define (member-list-reverse [items : JsonMemberSeq]) : JsonMemberSeq
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array JsonMember) (make-array JsonMember n)]
+    [slots : (__tl_dyn-array JsonMember) (make-array JsonMember n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -334,7 +334,7 @@
       (if (< n 1)
         0
         (- n 1))]
-    [slots : (Array Json) (make-array Json count)]
+    [slots : (__tl_dyn-array Json) (make-array Json count)]
     [i : i64 0]
     (begin
       (while (< i count)
@@ -348,7 +348,7 @@
   (let
     [ln : i64 (struct-get left len)]
     [rn : i64 (struct-get right len)]
-    [slots : (Array Json) (make-array Json (+ ln rn))]
+    [slots : (__tl_dyn-array Json) (make-array Json (+ ln rn))]
     [i : i64 0]
     (begin
       (while (< i ln)

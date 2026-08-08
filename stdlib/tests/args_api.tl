@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.args)
 (import stdlib.io)
 (import stdlib.string)
@@ -35,32 +34,63 @@
   [message : String]) : unit
   (args-api-assert-true (string.eq actual expected) message))
 
-(define (args-api-array0) : (Array String)
-  (array.make-array String 0))
+(define (args-api-vec0) : svec.Vec
+  (svec.new))
 
-(define (args-api-array1 [a : String]) : (Array String)
-  (make-array a))
+(define (args-api-vec1 [a : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) a)
+      items)))
 
-(define (args-api-array3 [a : String] [b : String] [c : String]) : (Array
-    String)
-  (make-array a b c))
+(define (args-api-vec3 [a : String] [b : String] [c : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) a)
+      (svec.push (&mut items) b)
+      (svec.push (&mut items) c)
+      items)))
 
-(define (args-api-array5
+(define (args-api-vec5
   [a : String]
   [b : String]
   [c : String]
   [d : String]
-  [e : String]) : (Array String)
-  (make-array a b c d e))
+  [e : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) a)
+      (svec.push (&mut items) b)
+      (svec.push (&mut items) c)
+      (svec.push (&mut items) d)
+      (svec.push (&mut items) e)
+      items)))
 
-(define (args-api-array6
+(define (args-api-vec6
   [a : String]
   [b : String]
   [c : String]
   [d : String]
   [e : String]
-  [f : String]) : (Array String)
-  (make-array a b c d e f))
+  [f : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) a)
+      (svec.push (&mut items) b)
+      (svec.push (&mut items) c)
+      (svec.push (&mut items) d)
+      (svec.push (&mut items) e)
+      (svec.push (&mut items) f)
+      items)))
+
+(define (args-api-parse-vec
+  [specs : args.ArgsOptionSpecList]
+  [argv : svec.Vec (:consume)]) : args.ResultArgsParsed
+  (args.parse-vec specs (& argv)))
 
 (define (args-api-expect-ok [result : args.ResultArgsParsed] [message : String]) : args.ArgsParsed
   (match result
@@ -106,7 +136,7 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.parse-array (args-api-specs-shared-view) (args-api-array0))
+        (args-api-parse-vec (args-api-specs-shared-view) (args-api-vec0))
         "empty argv should parse")]
     (begin
       (args-api-assert-vec-empty
@@ -122,9 +152,9 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.parse-array
+        (args-api-parse-vec
           (args-api-specs-shared-view)
-          (args-api-array3 "src.tl" "out.s" "-"))
+          (args-api-vec3 "src.tl" "out.s" "-"))
         "positional-only argv should parse")]
     (args-api-assert-vec3
       (args.parsed-positionals (& parsed))
@@ -138,9 +168,9 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.parse-array
+        (args-api-parse-vec
           (args-api-specs-shared-view)
-          (args-api-array5 "input.tl" "--verbose" "-o" "out.s" "rest"))
+          (args-api-vec5 "input.tl" "--verbose" "-o" "out.s" "rest"))
         "flags around positionals should parse")]
     (begin
       (args-api-assert-true
@@ -165,9 +195,9 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.parse-array
+        (args-api-parse-vec
           (args-api-specs-shared-view)
-          (args-api-array3 "--" "--verbose" "-o"))
+          (args-api-vec3 "--" "--verbose" "-o"))
         "end-of-options should parse")]
     (begin
       (args-api-assert-i64-eq
@@ -185,9 +215,9 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args.parse-array
+        (args-api-parse-vec
           (args-api-specs-shared-view)
-          (args-api-array1 "--output"))
+          (args-api-vec1 "--output"))
         "missing value should fail")]
     (begin
       (args-api-assert-true
@@ -203,9 +233,9 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args.parse-array
+        (args-api-parse-vec
           (args-api-specs-shared-view)
-          (args-api-array1 "--missing"))
+          (args-api-vec1 "--missing"))
         "unknown option should fail")]
     (begin
       (args-api-assert-true
@@ -221,9 +251,9 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args.parse-array
+        (args-api-parse-vec
           (args-api-specs-shared-view)
-          (args-api-array6 "-I" "inc1" "--include" "inc2" "-v" "-v"))
+          (args-api-vec6 "-I" "inc1" "--include" "inc2" "-v" "-v"))
         "repeated options should parse")]
     (begin
       (args-api-assert-i64-eq
@@ -244,9 +274,9 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args.parse-array
+        (args-api-parse-vec
           (args-api-specs-shared-view)
-          (args-api-array1 "--output=file"))
+          (args-api-vec1 "--output=file"))
         "equals spelling should be rejected in v1")]
     (begin
       (args-api-assert-true

@@ -53,7 +53,7 @@
 
 ;: Immutable sequence of option specs in a contiguous backing array.
 (defstruct ArgsOptionSpecList
-  (slots (Array ArgsOptionSpec))
+  (slots (__tl_dyn-array ArgsOptionSpec))
   (len i64))
 
 ;: One parsed option occurrence in input order. Boolean flags set `has-value`
@@ -66,7 +66,7 @@
 ;: Immutable sequence of parsed option occurrences in a contiguous backing
 ;: array. `len` is the live prefix; the array may hold builder slack.
 (defstruct ArgsOptionList
-  (slots (Array ArgsOption))
+  (slots (__tl_dyn-array ArgsOption))
   (len i64))
 
 ;: Parsed argv result: ordered option occurrences and ordered positionals.
@@ -114,7 +114,8 @@
 (define (option-spec-cons [spec : ArgsOptionSpec] [rest : ArgsOptionSpecList]) : ArgsOptionSpecList
   (let
     [len : i64 (struct-get rest len)]
-    [slots : (Array ArgsOptionSpec) (array.make-array ArgsOptionSpec (+ len 1))]
+    [slots : (__tl_dyn-array ArgsOptionSpec)
+      (array.make-array ArgsOptionSpec (+ len 1))]
     [index : i64 0]
     (begin
       (array-set! slots 0 spec)
@@ -171,8 +172,8 @@
 
 ;: Copy `count` occurrences from `src` into `dst` starting at `offset`.
 (define (option-list-copy!
-  [dst : (&mut dst (Array ArgsOption))]
-  [src : (& src (Array ArgsOption))]
+  [dst : (&mut dst (__tl_dyn-array ArgsOption))]
+  [src : (& src (__tl_dyn-array ArgsOption))]
   [offset : i64]
   [count : i64]) : unit
   (let
@@ -191,7 +192,8 @@
 (define (option-list-cons [option : ArgsOption] [rest : ArgsOptionList]) : ArgsOptionList
   (let
     [len : i64 (struct-get rest len)]
-    [slots : (Array ArgsOption) (array.make-array ArgsOption (+ len 1))]
+    [slots : (__tl_dyn-array ArgsOption)
+      (array.make-array ArgsOption (+ len 1))]
     (begin
       (array-set! slots 0 option)
       (option-list-copy! (&mut slots) (& (struct-get rest slots)) 1 len)
@@ -202,13 +204,13 @@
 (define (option-list-push [items : ArgsOptionList] [option : ArgsOption]) : ArgsOptionList
   (let
     [len : i64 (struct-get items len)]
-    [slots : (Array ArgsOption) (struct-get items slots)]
+    [slots : (__tl_dyn-array ArgsOption) (struct-get items slots)]
     [capacity : i64 (array-length slots)]
     (begin
       (if (< len capacity)
         unit
         (let
-          [bigger : (Array ArgsOption)
+          [bigger : (__tl_dyn-array ArgsOption)
             (array.make-array
               ArgsOption
               (if (< capacity 1)
@@ -509,109 +511,11 @@
       limit
       non-negative)))
 
-;: Parse the array range `[index, end)` with `state`.
-(define (parse-array-loop-fields
+;: Parse the Slice range `[start, end)`. Negative bounds clamp to zero and end
+;: clamps to the Slice length.
+(define (parse-slice-range
   [specs : ArgsOptionSpecList]
-  [argv : (Array String)]
-  [index : i64]
-  [end : i64]
-  [options : ArgsOptionList]
-  [positionals : svec.Vec (:consume)]
-  [stop-options : bool]) : ResultArgsParsed
-  (if (>= index end)
-    (OkArgsParsed (parse-finish-fields options positionals))
-    (let
-      [current : String (array-ref argv index)]
-      [has-next : bool (< (+ index 1) end)]
-      [next-value : String
-        (if has-next
-          (array-ref argv (+ index 1))
-          "")]
-      (cond
-        [stop-options
-          (begin
-            (svec.push (&mut positionals) current)
-            (parse-array-loop-fields
-              specs
-              argv
-              (+ index 1)
-              end
-              options
-              positionals
-              stop-options))]
-        [(stdlib.args.end-of-options-token? current)
-          (parse-array-loop-fields
-            specs
-            argv
-            (+ index 1)
-            end
-            options
-            positionals
-            true)]
-        [(stdlib.args.option-looking-token? current)
-          (match (stdlib.args.find-spec-token specs current)
-            [(ArgsNoOptionSpec) (ErrArgsParsed (ArgsUnknownOption current))]
-            [(ArgsSomeOptionSpec spec)
-              (if (stdlib.args.option-arity-value?
-                (stdlib.args.option-spec-arity spec))
-                (if has-next
-                  (parse-array-loop-fields
-                    specs
-                    argv
-                    (+ index 2)
-                    end
-                    (stdlib.args.option-list-push
-                      options
-                      (ArgsOption
-                        (stdlib.args.option-spec-name spec)
-                        next-value
-                        true))
-                    positionals
-                    stop-options)
-                  (ErrArgsParsed (ArgsMissingValue current)))
-                (parse-array-loop-fields
-                  specs
-                  argv
-                  (+ index 1)
-                  end
-                  (stdlib.args.option-list-push
-                    options
-                    (ArgsOption (stdlib.args.option-spec-name spec) "" false))
-                  positionals
-                  stop-options))])]
-        [else
-          (begin
-            (svec.push (&mut positionals) current)
-            (parse-array-loop-fields
-              specs
-              argv
-              (+ index 1)
-              end
-              options
-              positionals
-              stop-options))]))))
-
-;: Bridge an `ArgsParseState` into the field-based array parser loop.
-(define (parse-array-loop
-  [specs : ArgsOptionSpecList]
-  [argv : (Array String)]
-  [index : i64]
-  [end : i64]
-  [state : ArgsParseState]) : ResultArgsParsed
-  (parse-array-loop-fields
-    specs
-    argv
-    index
-    end
-    (struct-get state options)
-    (struct-get state positionals)
-    (struct-get state stop-options)))
-
-;: Parse the array range `[start, end)`. Negative bounds clamp to zero and end
-;: clamps to the array length.
-(define (parse-array-range
-  [specs : ArgsOptionSpecList]
-  [argv : (Array String)]
+  [argv : (& argv (Slice String))]
   [start : i64]
   [end : i64]) : ResultArgsParsed
   (let
@@ -626,11 +530,11 @@
     (begin
       (while (and (< i last) (not failed))
         (let
-          [current : String (array-ref argv i)]
+          [current : String (clone (array-ref argv i))]
           [has-next : bool (< (+ i 1) last)]
           [next-value : String
             (if has-next
-              (array-ref argv (+ i 1))
+              (clone (array-ref argv (+ i 1)))
               "")]
           (cond
             [stop-options
@@ -682,9 +586,15 @@
         (stdlib.args.ErrArgsParsed error)
         (stdlib.args.OkArgsParsed (parse-finish-fields options positionals))))))
 
-;: Parse the full argv array.
-(define (parse-array [specs : ArgsOptionSpecList] [argv : (Array String)]) : ResultArgsParsed
-  (parse-array-range specs argv 0 (array-length argv)))
+;: Parse a borrowed argv Slice.
+(define (parse-slice
+  [specs : ArgsOptionSpecList]
+  [argv : (& argv (Slice String))]) : ResultArgsParsed
+  (parse-slice-range specs argv 0 (array-length argv)))
+
+;: Parse the live elements of a borrowed argv vector.
+(define (parse-vec [specs : ArgsOptionSpecList] [argv : (& argv svec.Vec)]) : ResultArgsParsed
+  (parse-slice specs (svec.view argv)))
 
 ;: Parse process argv range `[index, end)` with `state`.
 (define (parse-argv-loop-fields
@@ -881,36 +791,69 @@
         (flag-option "verbose" "verbose" "v")
         (option-spec-empty)))))
 
-;: Build a zero-length argv array for inline tests.
-(define (test-array0) : (Array String)
-  (array.make-array String 0))
+;: Build a zero-length argv vector for inline tests.
+(define (test-vec0) : svec.Vec
+  (svec.new))
 
-;: Build a one-item argv array for inline tests.
-(define (test-array1 [a : String]) : (Array String)
-  (make-array a))
+;: Build a one-item argv vector for inline tests.
+(define (test-vec1 [a : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) a)
+      items)))
 
-;: Build a three-item argv array for inline tests.
-(define (test-array3 [a : String] [b : String] [c : String]) : (Array String)
-  (make-array a b c))
+;: Build a three-item argv vector for inline tests.
+(define (test-vec3 [a : String] [b : String] [c : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) a)
+      (svec.push (&mut items) b)
+      (svec.push (&mut items) c)
+      items)))
 
-;: Build a five-item argv array for inline tests.
-(define (test-array5
+;: Build a five-item argv vector for inline tests.
+(define (test-vec5
   [a : String]
   [b : String]
   [c : String]
   [d : String]
-  [e : String]) : (Array String)
-  (make-array a b c d e))
+  [e : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) a)
+      (svec.push (&mut items) b)
+      (svec.push (&mut items) c)
+      (svec.push (&mut items) d)
+      (svec.push (&mut items) e)
+      items)))
 
-;: Build a six-item argv array for inline tests.
-(define (test-array6
+;: Build a six-item argv vector for inline tests.
+(define (test-vec6
   [a : String]
   [b : String]
   [c : String]
   [d : String]
   [e : String]
-  [f : String]) : (Array String)
-  (make-array a b c d e f))
+  [f : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) a)
+      (svec.push (&mut items) b)
+      (svec.push (&mut items) c)
+      (svec.push (&mut items) d)
+      (svec.push (&mut items) e)
+      (svec.push (&mut items) f)
+      items)))
+
+;: Parse a consumed test fixture through the public borrowed-Vec API.
+(define (test-parse-vec
+  [specs : ArgsOptionSpecList]
+  [argv : svec.Vec (:consume)]) : ResultArgsParsed
+  (parse-vec specs (& argv)))
 
 ;: Unwrap a successful argv parse result for inline tests.
 (define (test-expect-ok [result : ResultArgsParsed] [message : String]) : ArgsParsed
@@ -974,7 +917,7 @@
   (let
     [parsed : ArgsParsed
       (test-expect-ok
-        (parse-array (test-specs) (test-array0))
+        (test-parse-vec (test-specs) (test-vec0))
         "empty argv should parse")]
     (begin
       (test-assert-string-vec-empty
@@ -988,12 +931,12 @@
 ;: Exercise positional-only argv parsing.
 (define (test-positionals-only) : unit
   (let
-    [argv : (Array String) (test-array3 "src.tl" "out.s" "-")]
+    [argv : svec.Vec (test-vec3 "src.tl" "out.s" "-")]
     [parsed : ArgsParsed
       (test-expect-ok
         (begin
-          (test-assert-i64-eq (array-length argv) 3 "test-array3 length")
-          (parse-array (test-specs) argv))
+          (test-assert-i64-eq (svec.len (& argv)) 3 "test-vec3 length")
+          (parse-vec (test-specs) (& argv)))
         "positional-only argv should parse")]
     (test-assert-string-vec3
       (begin
@@ -1012,9 +955,9 @@
   (let
     [parsed : ArgsParsed
       (test-expect-ok
-        (parse-array
+        (test-parse-vec
           (test-specs)
-          (test-array5 "input.tl" "--verbose" "-o" "out.s" "rest"))
+          (test-vec5 "input.tl" "--verbose" "-o" "out.s" "rest"))
         "flags around positionals should parse")]
     (begin
       (test-assert-true
@@ -1039,7 +982,7 @@
   (let
     [parsed : ArgsParsed
       (test-expect-ok
-        (parse-array (test-specs) (test-array3 "--" "--verbose" "-o"))
+        (test-parse-vec (test-specs) (test-vec3 "--" "--verbose" "-o"))
         "end-of-options should parse")]
     (begin
       (test-assert-i64-eq
@@ -1057,7 +1000,7 @@
   (let
     [error : ArgsError
       (test-expect-error
-        (parse-array (test-specs) (test-array1 "--output"))
+        (test-parse-vec (test-specs) (test-vec1 "--output"))
         "missing value should fail")]
     (begin
       (test-assert-true (error-missing-value? error) "missing value error kind")
@@ -1071,7 +1014,7 @@
   (let
     [error : ArgsError
       (test-expect-error
-        (parse-array (test-specs) (test-array1 "--missing"))
+        (test-parse-vec (test-specs) (test-vec1 "--missing"))
         "unknown option should fail")]
     (begin
       (test-assert-true
@@ -1087,9 +1030,9 @@
   (let
     [parsed : ArgsParsed
       (test-expect-ok
-        (parse-array
+        (test-parse-vec
           (test-specs)
-          (test-array6 "-I" "inc1" "--include" "inc2" "-v" "-v"))
+          (test-vec6 "-I" "inc1" "--include" "inc2" "-v" "-v"))
         "repeated options should parse")]
     (begin
       (test-assert-i64-eq
@@ -1110,7 +1053,7 @@
   (let
     [error : ArgsError
       (test-expect-error
-        (parse-array (test-specs) (test-array1 "--output=file"))
+        (test-parse-vec (test-specs) (test-vec1 "--output=file"))
         "equals spelling should be rejected in v1")]
     (begin
       (test-assert-true

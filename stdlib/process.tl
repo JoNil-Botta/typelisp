@@ -25,7 +25,7 @@
 ;: extend one copy into a right-sized array instead of mutating storage another
 ;: value still observes.
 (defstruct ProcessStringList
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 ;: Optional string value used for cwd and stdin configuration.
@@ -38,8 +38,8 @@
 ;: are persistent: builders allocate fresh backing arrays before extending a
 ;: retained parent.
 (defstruct ProcessEnvList
-  (names (Array String))
-  (values (Array String))
+  (names (__tl_dyn-array String))
+  (values (__tl_dyn-array String))
   (len i64))
 
 ;: Vector-backed process environment overrides. `names` and `values` are
@@ -126,7 +126,7 @@
     (if (< n 0)
       (ProcessStringStep false "" (args-empty))
       (let
-        [slots : (Array String) (array.make-array String n)]
+        [slots : (__tl_dyn-array String) (array.make-array String n)]
         [i : i64 0]
         (begin
           (while (< i n)
@@ -165,8 +165,8 @@
 ;: Copy a live environment range into parallel destination buffers, preserving
 ;: entry order.
 (define (env-copy-into
-  [dst-names : (&mut dst-names (Array String))]
-  [dst-values : (&mut dst-values (Array String))]
+  [dst-names : (&mut dst-names (__tl_dyn-array String))]
+  [dst-values : (&mut dst-values (__tl_dyn-array String))]
   [env : ProcessEnvList]
   [offset : i64]
   [start : i64]) : unit
@@ -189,8 +189,8 @@
       (ProcessEnvStep false "" "" (env-empty))
       (let
         [tail-n : i64 (- n 1)]
-        [tail-names : (Array String) (array.make-array String tail-n)]
-        [tail-values : (Array String) (array.make-array String tail-n)]
+        [tail-names : (__tl_dyn-array String) (array.make-array String tail-n)]
+        [tail-values : (__tl_dyn-array String) (array.make-array String tail-n)]
         [i : i64 1]
         (begin
           (while (< i n)
@@ -250,7 +250,7 @@
 
 ;: Copy the `len` live entries of `args` into `dst` starting at `offset`.
 (define (args-copy-into
-  [dst : (&mut dst (Array String))]
+  [dst : (&mut dst (__tl_dyn-array String))]
   [args : ProcessStringList]
   [offset : i64]) : unit
   (let
@@ -265,7 +265,7 @@
 (define (args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
   (let
     [n : i64 (struct-get rest len)]
-    [slots : (Array String) (array.make-array String (+ n 1))]
+    [slots : (__tl_dyn-array String) (array.make-array String (+ n 1))]
     (begin
       (array-set! slots 0 value)
       (args-copy-into (&mut slots) rest 1)
@@ -274,7 +274,7 @@
 ;: Return a one-element argument list backed by an owned string.
 (define (args-single [value : String]) : ProcessStringList
   (let
-    [slots : (Array String) (array.make-array String 1)]
+    [slots : (__tl_dyn-array String) (array.make-array String 1)]
     (begin
       (array-set! slots 0 value)
       (ProcessStringList slots 1))))
@@ -284,7 +284,7 @@
   (let
     [ln : i64 (struct-get left len)]
     [rn : i64 (struct-get right len)]
-    [slots : (Array String) (array.make-array String (+ ln rn))]
+    [slots : (__tl_dyn-array String) (array.make-array String (+ ln rn))]
     (begin
       (args-copy-into (&mut slots) left 0)
       (args-copy-into (&mut slots) right ln)
@@ -295,7 +295,7 @@
 (define (args-from-string-vec [args : (& args svec.Vec)]) : ProcessStringList
   (let
     [n : i64 (svec.len args)]
-    [slots : (Array String) (array.make-array String n)]
+    [slots : (__tl_dyn-array String) (array.make-array String n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -317,8 +317,8 @@
 (define (env-cons [name : String] [value : String] [rest : ProcessEnvList]) : ProcessEnvList
   (let
     [n : i64 (struct-get rest len)]
-    [names : (Array String) (array.make-array String (+ n 1))]
-    [values : (Array String) (array.make-array String (+ n 1))]
+    [names : (__tl_dyn-array String) (array.make-array String (+ n 1))]
+    [values : (__tl_dyn-array String) (array.make-array String (+ n 1))]
     (begin
       (array-set! names 0 name)
       (array-set! values 0 value)
@@ -381,8 +381,8 @@
 ;: Fill dense public env storage from a vector-backed override set.
 (define (env-vec-to-list-fill
   [env : (& env ProcessEnvVec)]
-  [names : (&mut names (Array String))]
-  [values : (&mut values (Array String))]) : unit
+  [names : (&mut names (__tl_dyn-array String))]
+  [values : (&mut values (__tl_dyn-array String))]) : unit
   (let
     [n : i64 (env-vec-count env)]
     [i : i64 0]
@@ -397,8 +397,8 @@
 (define (env-vec-to-list [env : (& env ProcessEnvVec)]) : ProcessEnvList
   (let
     [n : i64 (env-vec-count env)]
-    [names : (Array String) (array.make-array String n)]
-    [values : (Array String) (array.make-array String n)]
+    [names : (__tl_dyn-array String) (array.make-array String n)]
+    [values : (__tl_dyn-array String) (array.make-array String n)]
     (begin
       (env-vec-to-list-fill env (&mut names) (&mut values))
       (ProcessEnvList names values n))))

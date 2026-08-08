@@ -1,7 +1,7 @@
 ;# Deterministic pseudo-random helpers for TypeLisp tools.
 ;#
 ;# This module provides a small seeded, deterministic, non-cryptographic
-;# generator plus array/vector/list weighted index selection for selfhost
+;# generator plus Slice/vector/list weighted index selection for selfhost
 ;# tooling. Deterministic draws do not read host entropy; callers choose the
 ;# seed, commonly from a literal in tests or from argv in local tools that want
 ;# variation. The optional `system-seed` wrapper reads a platform seed
@@ -18,7 +18,7 @@
 ;# ```
 ;#
 ;# `RandomState`, draw results, and compatibility weight-list cons nodes are
-;# ordinary aggregates allocated in the active arena when constructed. Array and
+;# ordinary aggregates allocated in the active arena when constructed. Slice and
 ;# `(vector i64)` weighted-index helpers scan caller-owned storage directly. The
 ;# generator is MINSTD/Park-Miller with Schrage constants, so it avoids signed
 ;# `i64` overflow and remains portable across current TypeLisp targets.
@@ -103,7 +103,7 @@
 
 ;: Linear sequence of non-negative weights in a contiguous backing array.
 (defstruct RandomWeightList
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (len i64))
 
 ;: Recoverable weighted-index result.
@@ -180,8 +180,8 @@
 (define (weight-list-cons [weight : i64] [rest : RandomWeightList]) : RandomWeightList
   (let
     [len : i64 (struct-get rest len)]
-    [slots : (Array i64) (array.make-array i64 (+ len 1))]
-    [source : (Array i64) (struct-get rest slots)]
+    [slots : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
+    [source : (__tl_dyn-array i64) (struct-get rest slots)]
     [index : i64 0]
     (begin
       (array-set! slots 0 weight)
@@ -195,10 +195,10 @@
 (define (weight-list-empty? [weights : RandomWeightList]) : bool
   (= (struct-get weights len) 0))
 
-;: Accumulate and validate non-negative array weights in the prefix
+;: Accumulate and validate non-negative Slice weights in the prefix
 ;: `[0, count)`.
-(define (weight-array-total-from
-  [weights : (& weights (Array i64))]
+(define (weight-slice-total-from
+  [weights : (& weights (Slice i64))]
   [count : i64]
   [index : i64]
   [acc : i64]) : RandomWeightTotalResult
@@ -208,22 +208,22 @@
       [weight : i64 (array-ref weights index)]
       (if (< weight 0)
         (ErrRandomWeightTotal "random: weight must not be negative")
-        (weight-array-total-from weights count (+ index 1) (+ acc weight))))))
+        (weight-slice-total-from weights count (+ index 1) (+ acc weight))))))
 
-;: Return the total weight for an array prefix, rejecting empty prefixes and
+;: Return the total weight for a Slice prefix, rejecting empty prefixes and
 ;: negative weights.
-(define (weight-array-total-prefix
-  [weights : (& weights (Array i64))]
+(define (weight-slice-total-prefix
+  [weights : (& weights (Slice i64))]
   [count : i64]
   [empty-message : String]) : RandomWeightTotalResult
   (if (<= count 0)
     (ErrRandomWeightTotal empty-message)
-    (weight-array-total-from weights count 0 0)))
+    (weight-slice-total-from weights count 0 0)))
 
-;: Pick the first array-prefix index whose cumulative positive weight contains
+;: Pick the first Slice-prefix index whose cumulative positive weight contains
 ;: `target`.
-(define (weight-array-scan-from
-  [weights : (& weights (Array i64))]
+(define (weight-slice-scan-from
+  [weights : (& weights (Slice i64))]
   [count : i64]
   [target : i64]
   [index : i64]) : i64
@@ -232,20 +232,20 @@
     (let
       [weight : i64 (array-ref weights index)]
       (if (<= weight 0)
-        (weight-array-scan-from weights count target (+ index 1))
+        (weight-slice-scan-from weights count target (+ index 1))
         (if (< target weight)
           index
-          (weight-array-scan-from weights count (- target weight) (+ index 1)))))))
+          (weight-slice-scan-from weights count (- target weight) (+ index 1)))))))
 
 ;: Choose an index from the first `count` entries of `weights`, skipping zero
 ;: weights. `empty-message` lets compatibility wrappers keep their historical
-;: diagnostics while sharing the array-backed implementation.
-(define (weighted-index-array-prefix
+;: diagnostics while sharing the contiguous-storage implementation.
+(define (weighted-index-slice-prefix
   [state : RandomState]
-  [weights : (& weights (Array i64))]
+  [weights : (& weights (Slice i64))]
   [count : i64]
   [empty-message : String]) : RandomWeightedIndexResult
-  (match (weight-array-total-prefix weights count empty-message)
+  (match (weight-slice-total-prefix weights count empty-message)
     [(ErrRandomWeightTotal message) (ErrRandomWeightedIndex message)]
     [(OkRandomWeightTotal total)
       (if (<= total 0)
@@ -254,35 +254,39 @@
           [(OkRandomBounded next-state target)
             (OkRandomWeightedIndex
               next-state
-              (weight-array-scan-from weights count target 0))]
+              (weight-slice-scan-from weights count target 0))]
           [(ErrRandomBounded message) (ErrRandomWeightedIndex message)]))]))
 
 ;: Choose an index from `weights`, skipping zero weights.
 ;:
-;: The result index is zero-based in array order. Empty arrays, negative
-;: weights, and arrays whose total weight is zero return structured errors.
-(define (weighted-index-array [state : RandomState] [weights : (Array i64)]) : RandomWeightedIndexResult
-  (weighted-index-array-prefix
+;: The result index is zero-based in Slice order. Empty Slices, negative
+;: weights, and Slices whose total weight is zero return structured errors.
+(define (weighted-index-slice
+  [state : RandomState]
+  [weights : (& weights (Slice i64))]) : RandomWeightedIndexResult
+  (weighted-index-slice-prefix
     state
-    (& weights)
+    weights
     (array-length weights)
-    "random: weight array must not be empty"))
+    "random: weight slice must not be empty"))
 
 ;: Choose an index from the live prefix of `weights`, skipping zero weights.
 ;:
 ;: The result index is zero-based in vector order. Empty vectors, negative
 ;: weights, and vectors whose total weight is zero return structured errors.
-(define (weighted-index-vec [state : RandomState] [weights : i64v.Vec]) : RandomWeightedIndexResult
-  (weighted-index-array-prefix
+(define (weighted-index-vec
+  [state : RandomState]
+  [weights : (& weights i64v.Vec)]) : RandomWeightedIndexResult
+  (weighted-index-slice-prefix
     state
-    (i64v.slots (& weights))
-    (i64v.len (& weights))
+    (i64v.view weights)
+    (i64v.len weights)
     "random: weight vector must not be empty"))
 
 ;: Return the total weight, rejecting empty lists and negative weights.
 (define (weight-list-total [weights : RandomWeightList]) : RandomWeightTotalResult
-  (weight-array-total-prefix
-    (& (struct-get weights slots))
+  (weight-slice-total-prefix
+    (slice-view (& (struct-get weights slots)) 0 (struct-get weights len))
     (struct-get weights len)
     "random: weight list must not be empty"))
 
@@ -291,9 +295,9 @@
 ;: The result index is zero-based in list order. Empty lists, negative weights,
 ;: and lists whose total weight is zero return structured errors.
 (define (weighted-index [state : RandomState] [weights : RandomWeightList]) : RandomWeightedIndexResult
-  (weighted-index-array-prefix
+  (weighted-index-slice-prefix
     state
-    (& (struct-get weights slots))
+    (slice-view (& (struct-get weights slots)) 0 (struct-get weights len))
     (struct-get weights len)
     "random: weight list must not be empty"))
 
@@ -307,7 +311,7 @@
   (not windows)
   (define (linux-system-seed) : ResultSystemSeed
     (let
-      [seed : (Array i64) (array.make-array i64 1)]
+      [seed : (__tl_dyn-array i64) (array.make-array i64 1)]
       [read-count : i64
         (linux-syscall-getrandom
           (unsafe
@@ -341,8 +345,8 @@
   windows
   (define (windows-system-seed) : ResultSystemSeed
     (let
-      [counter : (Array i64) (array.make-array i64 1)]
-      [file-time : (Array i64) (array.make-array i64 1)]
+      [counter : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [file-time : (__tl_dyn-array i64) (array.make-array i64 1)]
       [_counter-ok : i32
         (windows-query-performance-counter
           (unsafe
@@ -500,18 +504,6 @@
       10
       (weight-list-cons 0 (weight-list-cons 5 (weight-list-empty))))))
 
-;: Weighted-array fixture with zeros around positive buckets.
-(define (test-weighted-array-fixture) : (Array i64)
-  (make-array 0 10 0 5))
-
-;: Weighted-array fixture whose total is zero.
-(define (test-weighted-zero-array) : (Array i64)
-  (array.make-array i64 2))
-
-;: Weighted-array fixture with a negative weight.
-(define (test-weighted-negative-array) : (Array i64)
-  (make-array 1 -1))
-
 ;: Weighted-vector fixture with zeros around positive buckets.
 (define (test-weighted-vector-fixture) : i64v.Vec
   (let
@@ -540,6 +532,18 @@
       (i64v.push (&mut weights) 1)
       (i64v.push (&mut weights) -1)
       weights)))
+
+;: Exercise the public borrowed-vector API with an owned test fixture.
+(define (test-weighted-index-vec
+  [state : RandomState]
+  [weights : i64v.Vec (:consume)]) : RandomWeightedIndexResult
+  (weighted-index-vec state (& weights)))
+
+;: Exercise the public borrowed-Slice API with an owned vector test fixture.
+(define (test-weighted-index-slice
+  [state : RandomState]
+  [weights : i64v.Vec (:consume)]) : RandomWeightedIndexResult
+  (weighted-index-slice state (i64v.view (& weights))))
 
 (test
   random-api
@@ -574,22 +578,22 @@
         (weight-list-cons 1 (weight-list-cons -1 (weight-list-empty))))
       "random: weight must not be negative")
     (test-assert-weighted-error
-      (weighted-index-array (seed 1) (array.make-array i64 0))
-      "random: weight array must not be empty")
+      (test-weighted-index-slice (seed 1) (i64v.new))
+      "random: weight slice must not be empty")
     (test-assert-weighted-error
-      (weighted-index-array (seed 1) (test-weighted-zero-array))
+      (test-weighted-index-slice (seed 1) (test-weighted-zero-vector))
       "random: weight total must be positive")
     (test-assert-weighted-error
-      (weighted-index-array (seed 1) (test-weighted-negative-array))
+      (test-weighted-index-slice (seed 1) (test-weighted-negative-vector))
       "random: weight must not be negative")
     (test-assert-weighted-error
-      (weighted-index-vec (seed 1) (i64v.new))
+      (test-weighted-index-vec (seed 1) (i64v.new))
       "random: weight vector must not be empty")
     (test-assert-weighted-error
-      (weighted-index-vec (seed 1) (test-weighted-zero-vector))
+      (test-weighted-index-vec (seed 1) (test-weighted-zero-vector))
       "random: weight total must be positive")
     (test-assert-weighted-error
-      (weighted-index-vec (seed 1) (test-weighted-negative-vector))
+      (test-weighted-index-vec (seed 1) (test-weighted-negative-vector))
       "random: weight must not be negative")
     (test-assert-weighted-ok
       (weighted-index (seed 1) (test-weighted-fixture))
@@ -597,12 +601,12 @@
       1
       "weighted index skips leading zero and picks first positive bucket")
     (test-assert-weighted-ok
-      (weighted-index-array (seed 1) (test-weighted-array-fixture))
+      (test-weighted-index-slice (seed 1) (test-weighted-vector-fixture))
       16807
       1
-      "array weighted index matches list first positive bucket")
+      "Slice weighted index matches list first positive bucket")
     (test-assert-weighted-ok
-      (weighted-index-vec (seed 1) (test-weighted-vector-fixture))
+      (test-weighted-index-vec (seed 1) (test-weighted-vector-fixture))
       16807
       1
       "vector weighted index matches list first positive bucket")
@@ -612,12 +616,12 @@
       3
       "weighted index reaches later positive bucket")
     (test-assert-weighted-ok
-      (weighted-index-array (seed 2) (test-weighted-array-fixture))
+      (test-weighted-index-slice (seed 2) (test-weighted-vector-fixture))
       33614
       3
-      "array weighted index reaches later positive bucket")
+      "Slice weighted index reaches later positive bucket")
     (test-assert-weighted-ok
-      (weighted-index-vec (seed 2) (test-weighted-vector-fixture))
+      (test-weighted-index-vec (seed 2) (test-weighted-vector-fixture))
       33614
       3
       "vector weighted index reaches later positive bucket")

@@ -25,6 +25,22 @@
 (import token)
 (import tlci_core as tlci)
 
+(defmacro (compiler-load-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
+(defmacro (compiler-load-global-array-element-shared-view
+  [items : Expr]
+  [index : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    `(array-ref ,items ,index)
+    `(unsafe
+      (ptr-read (ptr-offset (array-data ,items) ,index)))))
+
 ;; Sources, manifests, and include payloads are interpreted as text here.
 ;; Make that conversion explicit at the binary IO boundary.
 (define (compiler-load-read-file-text [path : String]) : String
@@ -597,13 +613,23 @@
 ;; Serial/test compatibility selector. Production call sites are migrated to
 ;; explicit state APIs incrementally; do not add new compile-job dependencies.
 (define compiler-load-active-session-state : CompilerLoadSessionState
-  (array-ref compiler-load-default-session-state 0))
+  (compiler-load-session-state-new))
+
+;; Serial compatibility adapters intentionally share this process-lifetime
+;; state. Stage0 keeps its historical shallow read while the current compiler
+;; requires the equivalent operation to be visibly unsafe.
+(define (compiler-load-active-session-state-shared-view) : CompilerLoadSessionState
+  (cfg
+    stage0-seed-bootstrap
+    compiler-load-active-session-state
+    (unsafe
+      (ptr-read (ptr-addr-of compiler-load-active-session-state)))))
 
 ;; Serial/test compatibility accessor. Production jobs pass their owned state
 ;; directly; adapters that cannot yet own a job context use this accessor so
 ;; stateful compiler modules do not depend on the selector variable itself.
 (define (compiler-load-serial-test-session-state) : CompilerLoadSessionState
-  compiler-load-active-session-state)
+  (compiler-load-active-session-state-shared-view))
 
 ;; Global compatibility entry points must not retain a state-owned session
 ;; after its driver arena is retired. Stateful driver paths install their own
@@ -611,7 +637,9 @@
 (define (compiler-load-default-session-use!) : unit
   (set!
     compiler-load-active-session-state
-    (array-ref compiler-load-default-session-state 0)))
+    (compiler-load-global-array-element-shared-view
+      compiler-load-default-session-state
+      0)))
 
 (define (compiler-load-session-state-cache-enabled?
   [state : CompilerLoadSessionState]) : bool
@@ -664,7 +692,7 @@
 
 (define (compiler-load-program-cache-clear!) : unit
   (compiler-load-session-state-program-cache-clear!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-program-cache-ensure!
   [state : CompilerLoadSessionState]) : unit
@@ -681,7 +709,7 @@
 
 (define (compiler-load-program-cache-note-hit!) : unit
   (compiler-load-session-state-program-cache-note-hit!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-program-cache-note-miss!
   [state : CompilerLoadSessionState]) : unit
@@ -692,7 +720,7 @@
 
 (define (compiler-load-program-cache-note-miss!) : unit
   (compiler-load-session-state-program-cache-note-miss!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-program-cache-note-store!
   [state : CompilerLoadSessionState]) : unit
@@ -707,7 +735,7 @@
 
 (define (compiler-load-program-cache-hit-count-value) : i64
   (compiler-load-session-state-program-cache-hit-count-value
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-program-cache-miss-count-value
   [state : CompilerLoadSessionState]) : i64
@@ -719,7 +747,7 @@
 
 (define (compiler-load-program-cache-store-count-value) : i64
   (compiler-load-session-state-program-cache-store-count-value
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-cfg-key-equal?
   [left : sym_i64_env.SymI64Env]
@@ -801,7 +829,7 @@
 
 (define (compiler-load-program-cache-lookup [key : CompilerLoadProgramCacheKey]) : CompilerLoadProgramCacheLookup
   (compiler-load-session-state-program-cache-lookup
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     key))
 
 (define (compiler-load-session-state-program-cache-store-at
@@ -847,7 +875,7 @@
   [key : CompilerLoadProgramCacheKey]
   [program : ast.AstProgram]) : bool
   (compiler-load-session-state-program-cache-store
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     key
     program))
 
@@ -877,7 +905,7 @@
 (define (compiler-load-program-cache-can-store
   [key : CompilerLoadProgramCacheKey]) : bool
   (compiler-load-session-state-program-cache-can-store
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     key))
 
 (define (compiler-load-session-state-program-admission-fill!
@@ -930,7 +958,7 @@
 (define (compiler-load-program-admission-contains?
   [key : CompilerLoadProgramCacheKey]) : bool
   (compiler-load-session-state-program-admission-contains?
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     key))
 
 (define (compiler-load-session-state-program-admission-record-at
@@ -979,7 +1007,7 @@
 (define (compiler-load-program-admission-record-persistent
   [key : CompilerLoadProgramCacheKey]) : bool
   (compiler-load-session-state-program-admission-record-persistent
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     key))
 
 ;; Refresh the session's intern floor when the bound table grew past it. A
@@ -1033,7 +1061,7 @@
 
 (define (compiler-load-session-note-persistent!) : unit
   (compiler-load-session-state-note-persistent!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-note-persistent-interns!
   [state : CompilerLoadSessionState]) : unit
@@ -1071,7 +1099,7 @@
 
 (define (compiler-load-session-ast-floor-value) : i64
   (compiler-load-session-state-ast-floor-value
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-ty-floor-value
   [state : CompilerLoadSessionState]) : i64
@@ -1079,7 +1107,7 @@
 
 (define (compiler-load-session-ty-floor-value) : i64
   (compiler-load-session-state-ty-floor-value
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-intern-floor-value
   [state : CompilerLoadSessionState]) : i64
@@ -1087,7 +1115,7 @@
 
 (define (compiler-load-session-intern-floor-value) : i64
   (compiler-load-session-state-intern-floor-value
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-floors-set!
   [state : CompilerLoadSessionState]
@@ -1104,7 +1132,7 @@
   [ty-floor : i64]
   [intern-floor : i64]) : unit
   (compiler-load-session-state-floors-set!
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     ast-floor
     ty-floor
     intern-floor))
@@ -1158,7 +1186,7 @@
 
 (define (compiler-load-session-program-cache-enabled?) : bool
   (compiler-load-session-state-program-cache-enabled?
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-cache-disable-for-test!) : unit
   (begin
@@ -1240,6 +1268,13 @@
 (define compiler-load-embedded-module-ids : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))
 
+(define (compiler-load-embedded-module-ids-shared-view) : sym_i64_env.SymI64Env
+  (cfg
+    stage0-seed-bootstrap
+    compiler-load-embedded-module-ids
+    (unsafe
+      (ptr-read (ptr-addr-of compiler-load-embedded-module-ids)))))
+
 (define (compiler-load-embedded-module-ids-reset!) : unit
   (set! compiler-load-embedded-module-ids (sym_i64_env.sym-i64-empty)))
 
@@ -1252,10 +1287,21 @@
       (arena.Arena (compiler-load-provenance-arena))
       (set!
         compiler-load-embedded-module-ids
-        (sym_i64_env.sym-i64-bind-id compiler-load-embedded-module-ids id 1)))))
+        (sym_i64_env.sym-i64-bind-id
+          (compiler-load-embedded-module-ids-shared-view)
+          id
+          1)))))
 
 (define compiler-load-embedded-equivalence-cache : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))
+
+(define (compiler-load-embedded-equivalence-cache-shared-view) : sym_i64_env.SymI64Env
+  (cfg
+    stage0-seed-bootstrap
+    compiler-load-embedded-equivalence-cache
+    (unsafe
+      (ptr-read (ptr-addr-of compiler-load-embedded-equivalence-cache)))))
+
 (define compiler-load-embedded-provenance-noted : bool
   false)
 
@@ -1289,7 +1335,7 @@
   (let
     [key : i64 (ci.intern suffix)]
     (if (sym_i64_env.sym-i64-contains-id
-      compiler-load-embedded-equivalence-cache
+      (compiler-load-embedded-equivalence-cache-shared-view)
       key)
       unit
       (let
@@ -1314,7 +1360,7 @@
             (set!
               compiler-load-embedded-equivalence-cache
               (sym_i64_env.sym-i64-bind-id
-                compiler-load-embedded-equivalence-cache
+                (compiler-load-embedded-equivalence-cache-shared-view)
                 key
                 outcome)))
           (if (= outcome 1)
@@ -1326,12 +1372,12 @@
 
 (define (compiler-load-embedded-stdlib-module-id? [module : String]) : bool
   (sym_i64_env.sym-i64-contains-id
-    compiler-load-embedded-module-ids
+    (compiler-load-embedded-module-ids-shared-view)
     (ci.intern module)))
 
 (define (compiler-load-session-note-embedded-stdlib-source!) : unit
   (compiler-load-session-state-note-embedded-stdlib-source!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-reset-pools!) : unit
   (begin
@@ -1426,7 +1472,7 @@
 
 (define (compiler-load-runtime-prelude-cache-clear!) : unit
   (compiler-load-session-state-runtime-prelude-cache-clear!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-runtime-prelude-cache-ensure!
   [state : CompilerLoadSessionState]) : unit
@@ -1617,7 +1663,7 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : CompilerLoadPreludeCacheKey
   (compiler-load-session-state-runtime-prelude-cache-key
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     stdlib-roots
     cfgs))
 
@@ -1692,7 +1738,7 @@
   [path-id : i64]
   [cfgs : sym_i64_env.SymI64Env]) : CompilerLoadProgramCacheKey
   (compiler-load-session-state-program-cache-key-id
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     kind
     path-id
     cfgs))
@@ -1794,7 +1840,7 @@
 
 (define (compiler-load-session-lazy-import-mode-enabled?) : bool
   (compiler-load-session-state-lazy-import-mode-enabled?
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-lazy-import-mode-set-enabled!
   [state : CompilerLoadSessionState]
@@ -1803,7 +1849,7 @@
 
 (define (compiler-load-session-lazy-import-mode-set-enabled! [enabled : bool]) : unit
   (compiler-load-session-state-lazy-import-mode-set-enabled!
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     enabled))
 
 (define (compiler-load-session-state-lazy-imports-enabled?
@@ -1822,7 +1868,8 @@
       (string.eq normalized (compiler-load-normalize-path "stdlib/runtime.tl"))
       (string.eq
         normalized
-        (compiler-load-normalize-path compiler-load-core-macro-prelude-path)))))
+        (compiler-load-normalize-path
+          (string.copy (& compiler-load-core-macro-prelude-path)))))))
 
 (define (compiler-load-stdlib-import? [path : String]) : bool
   (or
@@ -2040,7 +2087,7 @@
 
 (define (compiler-load-dotted-path-cache-reset!) : unit
   (compiler-load-session-state-dotted-path-cache-reset!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-dotted-path-cache-ensure!
   [state : CompilerLoadSessionState]) : unit
@@ -2067,7 +2114,7 @@
 
 (define (compiler-load-dotted-path-cache-lookup [module-id : i64]) : CompilerLoadMaybeString
   (compiler-load-session-state-dotted-path-cache-lookup
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     module-id))
 
 (define (compiler-load-session-state-dotted-path-cache-store!
@@ -2128,7 +2175,7 @@
   [module-id : i64]
   [module-name : String]) : String
   (compiler-load-session-state-dotted-module-path-id
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     module-id
     module-name))
 
@@ -3090,6 +3137,12 @@
 (define compiler-load-runtime-prelude-path : String
   "stdlib/runtime.tl")
 
+(define (compiler-load-core-macro-prelude-path-shared-view) : String
+  (compiler-load-global-shared-view compiler-load-core-macro-prelude-path))
+
+(define (compiler-load-runtime-prelude-path-shared-view) : String
+  (compiler-load-global-shared-view compiler-load-runtime-prelude-path))
+
 ;; Prelude source selection is physical, but its loader path is deliberately
 ;; canonical. That keeps module identity, import restoration, diagnostics, and
 ;; deduplication independent of the absolute/relative spelling of a stdlib root.
@@ -3228,7 +3281,7 @@
         (compiler-load-decl-path-list-append
           paths
           (ast.ast-decl-path-list-prepend-builder-with-owner-id
-            compiler-load-core-macro-prelude-path
+            (string.copy (& compiler-load-core-macro-prelude-path))
             (ast.ast-decl-path-list-owner-id
               (& paths)
               0
@@ -3249,7 +3302,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
     (compiler-load-stdlib-prelude-file-with-roots-cfg
-      compiler-load-core-macro-prelude-path
+      (string.copy (& compiler-load-core-macro-prelude-path))
       seen
       stdlib-roots
       cfgs)))
@@ -3263,7 +3316,7 @@
   (compiler-load-append-root-module-marker
     (compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
       load-state
-      compiler-load-core-macro-prelude-path
+      (string.copy (& compiler-load-core-macro-prelude-path))
       seen
       stdlib-roots
       cfgs
@@ -3738,7 +3791,7 @@
 
 (define (compiler-load-surface-summaries-reset!) : unit
   (compiler-load-session-state-surface-summaries-reset!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-surface-summary-load-enter!
   [state : CompilerLoadSessionState]) : unit
@@ -3752,7 +3805,7 @@
 
 (define (compiler-load-surface-summary-load-enter!) : unit
   (compiler-load-session-state-surface-summary-load-enter!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-surface-summary-load-exit!
   [state : CompilerLoadSessionState]) : unit
@@ -3763,7 +3816,7 @@
 
 (define (compiler-load-surface-summary-load-exit!) : unit
   (compiler-load-session-state-surface-summary-load-exit!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-surface-summaries
   [state : CompilerLoadSessionState]) : CompilerLoadSurfaceSummaryList
@@ -3771,7 +3824,7 @@
 
 (define (compiler-load-surface-summaries) : CompilerLoadSurfaceSummaryList
   (compiler-load-session-state-surface-summaries
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-lazy-import-skip-count
   [state : CompilerLoadSessionState]) : i64
@@ -3779,7 +3832,7 @@
 
 (define (compiler-load-lazy-import-skip-count) : i64
   (compiler-load-session-state-lazy-import-skip-count
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-lazy-import-record-skip!
   [state : CompilerLoadSessionState]) : unit
@@ -3790,7 +3843,7 @@
 
 (define (compiler-load-lazy-import-record-skip!) : unit
   (compiler-load-session-state-lazy-import-record-skip!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-surface-summary-source-active?
   [summaries : CompilerLoadSurfaceSummaryList]
@@ -3852,7 +3905,7 @@
 (define (compiler-load-record-surface-summary!
   [summary : CompilerLoadSurfaceSummary]) : unit
   (compiler-load-session-state-record-surface-summary!
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     summary))
 
 (define (compiler-load-surface-summary-find-source-in
@@ -3901,7 +3954,7 @@
 
 (define (compiler-load-surface-summary-find-module [module-id : i64]) : CompilerLoadMaybeSurfaceSummary
   (compiler-load-session-state-surface-summary-find-module
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     module-id))
 
 (define (compiler-load-session-state-surface-summary-seen-expected-module?
@@ -3933,7 +3986,7 @@
   [expected-module : ast.AstMaybeModuleName]
   [seen : sym_i64_env.SymI64Env]) : bool
   (compiler-load-session-state-surface-summary-seen-expected-module?
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     source-path-id
     expected-module
     seen))
@@ -4069,7 +4122,7 @@
 
 (define (compiler-load-surface-summary-remove-source! [source-path-id : i64]) : unit
   (compiler-load-session-state-surface-summary-remove-source!
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     source-path-id))
 
 (define (compiler-load-surface-summary-load-with-pools
@@ -4196,7 +4249,7 @@
   ;; Typecheck/package compatibility path; driver-owned loading calls the
   ;; state-taking traversal functions above.
   (compiler-load-surface-summary-refresh-with-state-and-pools
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     path
     source-path-id
     stdlib-roots
@@ -4429,7 +4482,7 @@
 
 (define (compiler-load-lazy-qualified-observer-reset!) : unit
   (compiler-load-session-state-lazy-qualified-observer-reset!
-    compiler-load-active-session-state))
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-lazy-qualified-observer-begin-pair!
   [state : CompilerLoadSessionState]
@@ -6555,7 +6608,7 @@
   [alias : i64]
   [pools : ast.AstNodePoolContext]) : CompilerLoadStructuralMemberDemand
   (compiler-load-session-state-structural-member-demand-with-pools
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     decls
     alias
     pools))
@@ -6623,7 +6676,7 @@
   [rest : ast.AstDeclList]
   [pools : ast.AstNodePoolContext]) : CompilerLoadLazyAliasDemand
   (compiler-load-session-state-lazy-import-preload-demand
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     candidate
     alias
     rest
@@ -6651,7 +6704,7 @@
   [kind : ast.AstImportKind]
   [alias : ast.AstMaybeImportAlias]) : bool
   (compiler-load-session-state-lazy-import-preload-candidate?
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     importer-path
     kind
     alias))
@@ -6684,7 +6737,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : unit
   (compiler-load-lazy-import-preload-summary-with-state-and-pools
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     resolved
     resolved-id
     stdlib-roots
@@ -6794,7 +6847,7 @@
   [preload-demand : CompilerLoadLazyAliasDemand]
   [stdlib-roots : svec.Vec]) : bool
   (compiler-load-lazy-import-skip-with-state?
-    compiler-load-active-session-state
+    (compiler-load-active-session-state-shared-view)
     importer-path
     kind
     resolved
@@ -7492,7 +7545,7 @@
     [(ast.AstMaybeImportAlias.Some _)
       (compiler-load-decl-list-prepend
         (ast.AstDecl.Import
-          ast.ast-decl-meta-runtime
+          (ast.ast-decl-meta-runtime-shared-view)
           (ast.AstImportSpec.Spec
             kind
             import-path
@@ -8141,7 +8194,7 @@
     [result : ResultCompilerLoadWithPaths
       (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
         (CompilerLoadTraversalContext
-          compiler-load-active-session-state
+          (compiler-load-active-session-state-shared-view)
           importer-path-id
           importer-decl-owner-id)
         decls
@@ -8365,7 +8418,7 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
       (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
-        compiler-load-active-session-state
+        (compiler-load-active-session-state-shared-view)
         path
         program
         seen
@@ -9269,7 +9322,7 @@
       expected-module
       seen)
       (compiler-load-seen-expected-module-with-paths
-        compiler-load-active-session-state
+        (compiler-load-active-session-state-shared-view)
         path
         source-path-id
         expected-module
@@ -9527,7 +9580,7 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
       (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
-        compiler-load-active-session-state
+        (compiler-load-active-session-state-shared-view)
         path
         (compiler-load-source-path-id path)
         seen
@@ -9885,7 +9938,7 @@
   (compiler-load-join-root-path
     (compiler-load-join-root-path
       (compiler-load-join-root-path manifest-dir "target")
-      compiler-load-package-artifact-profile)
+      (string.copy (& compiler-load-package-artifact-profile)))
     (str_cat.str-cat package-name ".tlci")))
 
 (define (compiler-load-package-spmd-interface
@@ -10036,7 +10089,7 @@
       (compiler-load-package-decl-logical-name "" logical-path module name-str)]
     [link-name : String (compiler-load-package-user-symbol logical)]
     (ast.AstDecl.Extern
-      ast.ast-decl-meta-runtime
+      (ast.ast-decl-meta-runtime-shared-view)
       name
       (ast.AstExternKind.Function)
       (box
@@ -10672,7 +10725,7 @@
                               (let
                                 [after-import-expected : ast.AstMaybeModuleName
                                   (compiler-load-after-import-expected-module
-                                    compiler-load-active-session-state
+                                    (compiler-load-active-session-state-shared-view)
                                     resolved-id
                                     kind
                                     expected-module
@@ -10680,7 +10733,7 @@
                                     imported-decls)]
                                 [after-import-alias : ast.AstMaybeImportAlias
                                   (compiler-load-after-import-alias
-                                    compiler-load-active-session-state
+                                    (compiler-load-active-session-state-shared-view)
                                     resolved-id
                                     kind
                                     expected-module
@@ -11367,7 +11420,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
     (compiler-load-package-stdlib-prelude-file-with-roots-cfg
-      compiler-load-core-macro-prelude-path
+      (string.copy (& compiler-load-core-macro-prelude-path))
       seen
       stdlib-roots
       manifest-dir
@@ -11383,7 +11436,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if emit-entry
     (match (compiler-load-package-stdlib-prelude-file-with-roots-cfg
-      compiler-load-runtime-prelude-path
+      (string.copy (& compiler-load-runtime-prelude-path))
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       manifest-dir
@@ -11503,7 +11556,7 @@
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Cons
         (ast.AstDecl.Def
-          ast.ast-decl-meta-runtime
+          _
           got
           (ast.AstMaybeType.Some (ast.AstType.String))
           value-box)
@@ -11524,12 +11577,7 @@
   [want : String]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Cons
-        (ast.AstDecl.DefMacro
-          ast.ast-decl-meta-runtime
-          got
-          params
-          (ast.AstType.String)
-          body-box)
+        (ast.AstDecl.DefMacro _ got params (ast.AstType.String) body-box)
         _)
       (match (ast.ast-node-get body-box)
         [(ast.AstExpr.Call callee-box args)
@@ -11672,7 +11720,7 @@
                     (match (ast.ast-decl-list-step rest3)
                       [(ast.AstDeclListStep.Cons
                           (ast.AstDecl.Import
-                            ast.ast-decl-meta-runtime
+                            _
                             (ast.AstImportSpec.Spec
                               _
                               _
@@ -11684,13 +11732,7 @@
                           [rest4 : ast.AstDeclList rest4]
                           (match (ast.ast-decl-list-step rest4)
                             [(ast.AstDeclListStep.Cons
-                                (ast.AstDecl.DefFn
-                                  ast.ast-decl-meta-runtime
-                                  main-name
-                                  _
-                                  _
-                                  _
-                                  _)
+                                (ast.AstDecl.DefFn _ main-name _ _ _ _)
                                 done-box)
                               (let
                                 [done : ast.AstDeclList done-box]
@@ -12244,11 +12286,7 @@
                         [rest3 : ast.AstDeclList rest3]
                         (match (ast.ast-decl-list-step rest3)
                           [(ast.AstDeclListStep.Cons
-                              (ast.AstDecl.Def
-                                ast.ast-decl-meta-runtime
-                                root-name
-                                _
-                                _)
+                              (ast.AstDecl.Def _ root-name _ _)
                               done-box)
                             (let
                               [done : ast.AstDeclList done-box]
@@ -13441,7 +13479,7 @@
         "(define core-prelude-root-marker : i64 1)")
       (and
         (match (compiler-load-stdlib-prelude-file-with-roots-cfg
-          compiler-load-runtime-prelude-path
+          (string.copy (& compiler-load-runtime-prelude-path))
           (sym_i64_env.sym-i64-empty)
           roots
           (parser.compiler-cfg-empty))
@@ -13454,7 +13492,7 @@
                 1)
               (string.eq
                 (compiler-load-test-path-at paths 0)
-                compiler-load-runtime-prelude-path)
+                (compiler-load-runtime-prelude-path-shared-view))
               (string.eq
                 (ast.ast-decl-module-list-get (& modules) 0 "")
                 "stdlib.runtime"))]
@@ -13472,7 +13510,7 @@
                 1)
               (string.eq
                 (compiler-load-test-path-at paths 0)
-                compiler-load-core-macro-prelude-path)
+                (compiler-load-core-macro-prelude-path-shared-view))
               (string.eq
                 (ast.ast-decl-module-list-get (& modules) 0 "")
                 "stdlib.core_macros")
@@ -13484,7 +13522,7 @@
                 ""))]
           [(ResultCompilerLoadWithPaths.Err _) false])
         (match (compiler-load-package-stdlib-prelude-file-with-roots-cfg
-          compiler-load-runtime-prelude-path
+          (string.copy (& compiler-load-runtime-prelude-path))
           (sym_i64_env.sym-i64-empty)
           roots
           ""
@@ -13499,7 +13537,7 @@
                 1)
               (string.eq
                 (compiler-load-test-path-at paths 0)
-                compiler-load-runtime-prelude-path)
+                (compiler-load-runtime-prelude-path-shared-view))
               (string.eq
                 (ast.ast-decl-module-list-get (& modules) 0 "")
                 "stdlib.runtime"))]
@@ -15808,7 +15846,7 @@
 (define (compiler-load-session-explicit-cache-api-isolation-ok?) : bool
   (let
     [previous-state : CompilerLoadSessionState
-      compiler-load-active-session-state]
+      (compiler-load-global-shared-view compiler-load-active-session-state)]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
     [_select-b : unit (compiler-load-session-state-use! state-b)]
@@ -15886,7 +15924,7 @@
   (let
     [home : arena.Arena (arena.current)]
     [previous-state : CompilerLoadSessionState
-      compiler-load-active-session-state]
+      (compiler-load-global-shared-view compiler-load-active-session-state)]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
     [_enable-a : unit (compiler-load-session-state-cache-enable! state-a)]

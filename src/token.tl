@@ -283,16 +283,16 @@
 (define (spanned-token-tok [s : SpannedToken]) : Token
   (struct-get s tok))
 
-(define (spanned-token-line [s : SpannedToken]) : i64
+(define (spanned-token-line [s : (& s SpannedToken)]) : i64
   (cast (struct-get s line) : i64))
 
-(define (spanned-token-col [s : SpannedToken]) : i64
+(define (spanned-token-col [s : (& s SpannedToken)]) : i64
   (cast (struct-get s col) : i64))
 
 (define (spanned-token-token [s : SpannedToken]) : Token
   (spanned-token-tok s))
 
-(define (spanned-token-span [s : SpannedToken]) : SourceSpan
+(define (spanned-token-span [s : (& s SpannedToken)]) : SourceSpan
   (SourceSpan
     (spanned-token-line s)
     (spanned-token-col s)

@@ -14,6 +14,13 @@
 (import doc_site_stdlib_manifest as stdlib_manifest)
 (import (vector.vector String) as doc_site_name_vec)
 
+(defmacro (doc-site-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (defenum DocSiteModule
   (Module String String))
 
@@ -391,8 +398,8 @@
 (define (doc-site-repo-source-url [target : String]) : String
   (str_cat.str-cat
     (if (doc-site-href-file-like? target)
-      doc-site-repo-blob-root
-      doc-site-repo-tree-root)
+      (doc-site-global-shared-view doc-site-repo-blob-root)
+      (doc-site-global-shared-view doc-site-repo-tree-root))
     target
     ""))
 

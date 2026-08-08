@@ -40,6 +40,13 @@
 (import stdlib.str_cat)
 (import stdlib.string)
 
+(defmacro (stress-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (define stress-cookie : i64
   0x5528)
 
@@ -153,7 +160,7 @@
   [loaded : (& loaded tlci_loader.TlciLoadedImage)]) : bool
   (match (tlci_loader.tlci-loader-dispatch-macro
     loaded
-    stress-shell-identity
+    (stress-global-shared-view stress-shell-identity)
     stress-cookie
     (array.make-array i64 0)
     0)
@@ -193,7 +200,7 @@
               (array-ref canaries 1)))
           (match (tlci_loader.tlci-loader-dispatch-macro
             loaded
-            stress-shell-identity
+            (stress-global-shared-view stress-shell-identity)
             stress-cookie
             (array.make-array i64 0)
             0)
@@ -279,7 +286,8 @@
         false)]
     [(not
         (match (array-ref
-          compiler_embedded_stdlib_tlci.compiler-comptime-host-operands
+          (stress-global-shared-view
+            compiler_embedded_stdlib_tlci.compiler-comptime-host-operands)
           0)
           [(compiler_ctfe.CompilerCtfeValue.Expr node _)
             (= node expected-operand-node)]
@@ -366,7 +374,7 @@
             (compiler_ctfe.ctfe-reflect-info-list-empty))
           (match (tlci_loader.tlci-loader-dispatch-macro
             loaded
-            stress-native-identity
+            (stress-global-shared-view stress-native-identity)
             stress-cookie
             (array.make-array i64 0)
             0)
@@ -460,7 +468,7 @@
               (compiler_ctfe.ctfe-reflect-info-list-empty))
             (match (tlci_loader.tlci-loader-dispatch-macro
               loaded
-              stress-native-identity
+              (stress-global-shared-view stress-native-identity)
               stress-cookie
               (array.make-array i64 0)
               0)
@@ -589,8 +597,8 @@
                       (string.int->string tier)
                       " identity="
                       (if (= tier 1)
-                        stress-shell-identity
-                        stress-native-identity)
+                        (stress-global-shared-view stress-shell-identity)
+                        (stress-global-shared-view stress-native-identity))
                       " iterations="
                       (string.int->string iterations)
                       " outcome="

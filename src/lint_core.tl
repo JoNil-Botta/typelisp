@@ -18,6 +18,13 @@
 (import token)
 (import lex as lexer)
 
+(defmacro (global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 ;: A single lint finding: stable rule id, human-readable message, rule-specific
 ;: depth metadata, and the source span of the flagged node (the `lint-no-span`
 ;: sentinel when the node carried no location, e.g. a synthesized expression).
@@ -3026,50 +3033,63 @@
   [requires-unsafe : bool]) : unit
   (let
     [n : i64 (struct-get lint-unused-unsafe-exact-names len)]
-    [slots : (__tl_dyn-array LintUnusedUnsafeExactName)
-      (struct-get lint-unused-unsafe-exact-names slots)]
-    (begin
-      (if (< n (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array LintUnusedUnsafeExactName)
-            (make-array
-              LintUnusedUnsafeExactName
-              (lint-grown-capacity (array-length slots)))]
-          [index : i64 0]
-          (begin
-            (while (< index n)
-              (begin
-                (array-set! bigger index (array-ref slots index))
-                (set! index (+ index 1))))
-            (set! slots bigger))))
-      (array-set! slots n (LintUnusedUnsafeExactName name requires-unsafe))
-      (set!
-        lint-unused-unsafe-exact-names
-        (LintUnusedUnsafeExactNames slots (+ n 1))))))
+    (if (< n (array-length (struct-get lint-unused-unsafe-exact-names slots)))
+      (begin
+        (array-set!
+          (struct-get lint-unused-unsafe-exact-names slots)
+          n
+          (LintUnusedUnsafeExactName name requires-unsafe))
+        (set! (struct-get lint-unused-unsafe-exact-names len) (+ n 1)))
+      (let
+        [bigger : (__tl_dyn-array LintUnusedUnsafeExactName)
+          (make-array
+            LintUnusedUnsafeExactName
+            (lint-grown-capacity
+              (array-length (struct-get lint-unused-unsafe-exact-names slots))))]
+        [index : i64 0]
+        (begin
+          (while (< index n)
+            (begin
+              (array-set!
+                bigger
+                index
+                (array-ref
+                  (struct-get lint-unused-unsafe-exact-names slots)
+                  index))
+              (set! index (+ index 1))))
+          (array-set! bigger n (LintUnusedUnsafeExactName name requires-unsafe))
+          (set!
+            lint-unused-unsafe-exact-names
+            (LintUnusedUnsafeExactNames bigger (+ n 1))))))))
 
 (define (lint-unused-unsafe-classifier-add-unknown-root! [name : String]) : unit
   (let
     [n : i64 (struct-get lint-unused-unsafe-unknown-roots len)]
-    [slots : (__tl_dyn-array String)
-      (struct-get lint-unused-unsafe-unknown-roots slots)]
-    (begin
-      (if (< n (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array String)
-            (make-array String (lint-grown-capacity (array-length slots)))]
-          [index : i64 0]
-          (begin
-            (while (< index n)
-              (begin
-                (array-set! bigger index (array-ref slots index))
-                (set! index (+ index 1))))
-            (set! slots bigger))))
-      (array-set! slots n name)
-      (set!
-        lint-unused-unsafe-unknown-roots
-        (LintUnusedUnsafeUnknownRoots slots (+ n 1))))))
+    (if (< n (array-length (struct-get lint-unused-unsafe-unknown-roots slots)))
+      (begin
+        (array-set! (struct-get lint-unused-unsafe-unknown-roots slots) n name)
+        (set! (struct-get lint-unused-unsafe-unknown-roots len) (+ n 1)))
+      (let
+        [bigger : (__tl_dyn-array String)
+          (make-array
+            String
+            (lint-grown-capacity
+              (array-length (struct-get lint-unused-unsafe-unknown-roots slots))))]
+        [index : i64 0]
+        (begin
+          (while (< index n)
+            (begin
+              (array-set!
+                bigger
+                index
+                (array-ref
+                  (struct-get lint-unused-unsafe-unknown-roots slots)
+                  index))
+              (set! index (+ index 1))))
+          (array-set! bigger n name)
+          (set!
+            lint-unused-unsafe-unknown-roots
+            (LintUnusedUnsafeUnknownRoots bigger (+ n 1))))))))
 
 (define (lint-unused-unsafe-classifier-unknown-count) : i64
   lint-unused-unsafe-classified-unknown-count)
@@ -3086,27 +3106,34 @@
   (if lint-unused-unsafe-classifier-enabled
     (let
       [n : i64 (struct-get lint-unused-unsafe-block-stack len)]
-      [slots : (__tl_dyn-array LintUnusedUnsafeBlock)
-        (struct-get lint-unused-unsafe-block-stack slots)]
-      (begin
-        (if (< n (array-length slots))
-          unit
-          (let
-            [bigger : (__tl_dyn-array LintUnusedUnsafeBlock)
-              (make-array
-                LintUnusedUnsafeBlock
-                (lint-grown-capacity (array-length slots)))]
-            [index : i64 0]
-            (begin
-              (while (< index n)
-                (begin
-                  (array-set! bigger index (array-ref slots index))
-                  (set! index (+ index 1))))
-              (set! slots bigger))))
-        (array-set! slots n (LintUnusedUnsafeBlock span required false))
-        (set!
-          lint-unused-unsafe-block-stack
-          (LintUnusedUnsafeBlockStack slots (+ n 1)))))
+      (if (< n (array-length (struct-get lint-unused-unsafe-block-stack slots)))
+        (begin
+          (array-set!
+            (struct-get lint-unused-unsafe-block-stack slots)
+            n
+            (LintUnusedUnsafeBlock span required false))
+          (set! (struct-get lint-unused-unsafe-block-stack len) (+ n 1)))
+        (let
+          [bigger : (__tl_dyn-array LintUnusedUnsafeBlock)
+            (make-array
+              LintUnusedUnsafeBlock
+              (lint-grown-capacity
+                (array-length (struct-get lint-unused-unsafe-block-stack slots))))]
+          [index : i64 0]
+          (begin
+            (while (< index n)
+              (begin
+                (array-set!
+                  bigger
+                  index
+                  (array-ref
+                    (struct-get lint-unused-unsafe-block-stack slots)
+                    index))
+                (set! index (+ index 1))))
+            (array-set! bigger n (LintUnusedUnsafeBlock span required false))
+            (set!
+              lint-unused-unsafe-block-stack
+              (LintUnusedUnsafeBlockStack bigger (+ n 1)))))))
     unit))
 
 (define (lint-unused-unsafe-block-top-index) : i64
@@ -3118,16 +3145,15 @@
       [top : i64 (lint-unused-unsafe-block-top-index)]
       (if (< top 0)
         unit
-        (let
-          [slots : (__tl_dyn-array LintUnusedUnsafeBlock)
-            (struct-get lint-unused-unsafe-block-stack slots)]
-          (array-set!
-            slots
-            top
-            (LintUnusedUnsafeBlock
-              (struct-get (array-ref slots top) span)
-              true
-              false)))))
+        (array-set!
+          (struct-get lint-unused-unsafe-block-stack slots)
+          top
+          (LintUnusedUnsafeBlock
+            (struct-get
+              (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+              span)
+            true
+            false))))
     unit))
 
 (define (lint-unused-unsafe-block-mark-unknown!) : unit
@@ -3136,18 +3162,21 @@
       [top : i64 (lint-unused-unsafe-block-top-index)]
       (if (< top 0)
         unit
-        (let
-          [slots : (__tl_dyn-array LintUnusedUnsafeBlock)
-            (struct-get lint-unused-unsafe-block-stack slots)]
-          (if (struct-get (array-ref slots top) required)
-            unit
-            (array-set!
-              slots
-              top
-              (LintUnusedUnsafeBlock
-                (struct-get (array-ref slots top) span)
-                false
-                true))))))
+        (if (struct-get
+          (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+          required)
+          unit
+          (array-set!
+            (struct-get lint-unused-unsafe-block-stack slots)
+            top
+            (LintUnusedUnsafeBlock
+              (struct-get
+                (array-ref
+                  (struct-get lint-unused-unsafe-block-stack slots)
+                  top)
+                span)
+              false
+              true)))))
     unit))
 
 (define (lint-unused-unsafe-block-pop-findings [findings : LintFindings]) : LintFindings
@@ -3157,34 +3186,36 @@
       [top : i64 (lint-unused-unsafe-block-top-index)]
       (if (< top 0)
         findings
-        (let
-          [block : LintUnusedUnsafeBlock
-            (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)]
-          (begin
-            (set!
-              lint-unused-unsafe-block-stack
-              (LintUnusedUnsafeBlockStack
-                (struct-get lint-unused-unsafe-block-stack slots)
-                top))
-            (if (struct-get block required)
+        (begin
+          (set! (struct-get lint-unused-unsafe-block-stack len) top)
+          (if (struct-get
+            (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+            required)
+            (begin
+              (set!
+                lint-unused-unsafe-classified-required-count
+                (+ lint-unused-unsafe-classified-required-count 1))
+              findings)
+            (if (struct-get
+              (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+              unknown)
               (begin
                 (set!
-                  lint-unused-unsafe-classified-required-count
-                  (+ lint-unused-unsafe-classified-required-count 1))
+                  lint-unused-unsafe-classified-unknown-count
+                  (+ lint-unused-unsafe-classified-unknown-count 1))
                 findings)
-              (if (struct-get block unknown)
-                (begin
-                  (set!
-                    lint-unused-unsafe-classified-unknown-count
-                    (+ lint-unused-unsafe-classified-unknown-count 1))
-                  findings)
-                (begin
-                  (set!
-                    lint-unused-unsafe-classified-unused-count
-                    (+ lint-unused-unsafe-classified-unused-count 1))
-                  (lint-findings-add
-                    (lint-unused-unsafe-finding (struct-get block span))
-                    findings))))))))))
+              (begin
+                (set!
+                  lint-unused-unsafe-classified-unused-count
+                  (+ lint-unused-unsafe-classified-unused-count 1))
+                (lint-findings-add
+                  (lint-unused-unsafe-finding
+                    (struct-get
+                      (array-ref
+                        (struct-get lint-unused-unsafe-block-stack slots)
+                        top)
+                      span))
+                  findings)))))))))
 
 (define (lint-underscore-prefixed? [name : String]) : bool
   (let
@@ -8013,7 +8044,9 @@
       (lint-unused-unsafe-frame-list-contains? (struct-get state frames) root)
       (and
         qualified
-        (lint-unused-unsafe-unknown-root? root lint-unused-unsafe-unknown-roots)))
+        (lint-unused-unsafe-unknown-root?
+          root
+          (global-shared-view lint-unused-unsafe-unknown-roots))))
       (LintUnusedUnsafeExactLookup.Unknown)
       (lint-unused-unsafe-exact-name-lookup-from name facts false false 0))))
 
@@ -8023,7 +8056,7 @@
   (match (lint-unused-unsafe-exact-name-lookup
     state
     name
-    lint-unused-unsafe-exact-names)
+    (global-shared-view lint-unused-unsafe-exact-names))
     [(LintUnusedUnsafeExactLookup.Unknown)
       (let
         [root : String (lint-unused-unsafe-name-root name)]

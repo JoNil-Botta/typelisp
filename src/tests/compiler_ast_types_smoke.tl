@@ -929,7 +929,7 @@
             (ast.ast-decl-def-id bin-name-id ast.AstMaybeType.No binary-expr)
             (ast.ast-decl-cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                (ast.ast-decl-meta-runtime-shared-view)
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Module)
                   "pkg.module"
@@ -951,7 +951,7 @@
                   (ast.AstType.I64))
                 (ast.ast-decl-cons
                   (ast.AstDecl.Import
-                    ast.ast-decl-meta-runtime
+                    (ast.ast-decl-meta-runtime-shared-view)
                     (ast.AstImportSpec.Spec
                       (ast.AstImportKind.Macro
                         macro-call
@@ -962,7 +962,7 @@
                       (box (ast.ast-source-span 2 1 2 1))))
                   (ast.ast-decl-cons
                     (ast.AstDecl.Import
-                      ast.ast-decl-meta-runtime
+                      (ast.ast-decl-meta-runtime-shared-view)
                       (ast.AstImportSpec.Spec
                         (ast.AstImportKind.MacroDecls
                           macro-call
@@ -975,7 +975,7 @@
                       (ast.ast-decl-def-dispatch-id dispatch-name-id variants)
                       (ast.ast-decl-cons
                         (ast.AstDecl.DefStructLifetimes
-                          ast.ast-decl-meta-runtime
+                          (ast.ast-decl-meta-runtime-shared-view)
                           0
                           lifetimes
                           (ast.AstStructRepr.Default)

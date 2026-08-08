@@ -2,7 +2,7 @@
 
 (define (mixed-global-annotation-bridge-items) : (__tl_dyn-array
     provider.MixedGlobalAnnotationItem)
-  provider.mixed-global-annotation-items)
+  (provider.mixed-global-annotation-items-shared-view))
 
 (define (mixed-global-annotation-bridge) : i64
   (+

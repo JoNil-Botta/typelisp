@@ -1339,7 +1339,7 @@
           (lint_svec.new)
           (lint_driver_core.selfhost-lint-language-cfgs))]
       [direct-error : String
-        lint_driver_core.selfhost-lint-typed-unused-unsafe-error]
+        (lint_driver_core.selfhost-lint-typed-unused-unsafe-error-shared-view)]
       [_direct-parse-error-findings : lint_core.LintFindings
         (lint_driver_core.selfhost-lint-typed-unused-unsafe-findings
           "target/lint_unsafe_surface/direct_parse_error.tl"
@@ -1347,7 +1347,7 @@
           (lint_svec.new)
           (lint_driver_core.selfhost-lint-language-cfgs))]
       [direct-parse-error : String
-        lint_driver_core.selfhost-lint-typed-unused-unsafe-error]
+        (lint_driver_core.selfhost-lint-typed-unused-unsafe-error-shared-view)]
       [file-error-status : i64
         (lint_driver_core.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/type_error.tl"

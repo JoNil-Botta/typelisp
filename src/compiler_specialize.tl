@@ -3222,7 +3222,7 @@
     (gen-key-exprs-with-owner owner args env (ctfe.ctfe-fuel-limit))))
 
 (define (gen-decl-runtime-template [decl : ast.AstDecl]) : ast.AstDecl
-  (ast.ast-decl-with-meta ast.ast-decl-meta-runtime decl))
+  (ast.ast-decl-with-meta (ast.ast-decl-meta-runtime-shared-view) decl))
 
 (define (gen-rewrite-generated-decl-with-owner
   [owner : SpecOwnerContext]

@@ -14,6 +14,13 @@
 (import stdlib.arena)
 (import (hashmap.hashmap String i64) as ir_label_map)
 
+(defmacro (compiler-ir-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (defenum CompilerIrBinOp
   (Add)
   (Sub)
@@ -151,7 +158,9 @@
   (cond
     [(< symbol 0) ""]
     [(compiler-ir-symbol-owned? symbol)
-      (array-ref compiler-ir-symbol-slots (compiler-ir-symbol-slot symbol))]
+      (array-ref
+        (compiler-ir-global-shared-view compiler-ir-symbol-slots)
+        (compiler-ir-symbol-slot symbol))]
     [(>= symbol (compiler-ir-symbol-base)) ""]
     [else (ci.intern-str symbol)]))
 
@@ -185,14 +194,13 @@
 
 (define (compiler-ir-label-grow!) : unit
   (let
-    [old-slots : (Array String) compiler-ir-label-slots]
-    [old-len : i64 (array-length old-slots)]
+    [old-len : i64 (array-length compiler-ir-label-slots)]
     [next : (Array String) (array.make-array String (* old-len 2))]
     [index : i64 0]
     (begin
       (while (< index old-len)
         (begin
-          (array-set! next index (array-ref old-slots index))
+          (array-set! next index (array-ref compiler-ir-label-slots index))
           (set! index (+ index 1))))
       (set! compiler-ir-label-slots next))))
 
@@ -248,7 +256,7 @@
                 (array-set! compiler-ir-label-slots id owned)
                 (ir_label_map.insert-ref!
                   (&mut compiler-ir-label-ids)
-                  (array-ref compiler-ir-label-slots id)
+                  (string.copy (& (array-ref compiler-ir-label-slots id)))
                   id)))
             (set! compiler-ir-label-count (+ id 1))
             id)))]))
@@ -261,7 +269,7 @@
 (define (compiler-ir-label-text [label : i64]) : String
   (if (or (< label 0) (>= label compiler-ir-label-count))
     ""
-    (array-ref compiler-ir-label-slots label)))
+    (array-ref (compiler-ir-global-shared-view compiler-ir-label-slots) label)))
 
 (define (compiler-ir-label-none) : i64
   -1)
@@ -318,14 +326,13 @@
 
 (define (compiler-ir-symbol-grow!) : unit
   (let
-    [old-slots : (Array String) compiler-ir-symbol-slots]
-    [old-len : i64 (array-length old-slots)]
+    [old-len : i64 (array-length compiler-ir-symbol-slots)]
     [next : (Array String) (array.make-array String (* old-len 2))]
     [index : i64 0]
     (begin
       (while (< index old-len)
         (begin
-          (array-set! next index (array-ref old-slots index))
+          (array-set! next index (array-ref compiler-ir-symbol-slots index))
           (set! index (+ index 1))))
       (set! compiler-ir-symbol-slots next))))
 
@@ -402,7 +409,7 @@
           (array-set! compiler-ir-symbol-slots index owned)
           (ir_label_map.insert-ref!
             (&mut compiler-ir-symbol-ids)
-            (array-ref compiler-ir-symbol-slots index)
+            (string.copy (& (array-ref compiler-ir-symbol-slots index)))
             id)))
       (set! compiler-ir-symbol-count (+ index 1))
       (unsafe

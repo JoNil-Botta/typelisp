@@ -81,10 +81,10 @@
     (set! compiler-opt-debug-verify-error "")))
 
 (define (compiler-opt-debug-dump-result) : String
-  (text_buf.render compiler-opt-debug-dump-buf))
+  (text_buf.render (clone compiler-opt-debug-dump-buf)))
 
 (define (compiler-opt-debug-verification-error) : String
-  compiler-opt-debug-verify-error)
+  (string.copy (& compiler-opt-debug-verify-error)))
 
 (define (compiler-opt-debug-pass-selected? [pass : String]) : bool
   (and
@@ -121,9 +121,9 @@
                 (set!
                   compiler-opt-debug-dump-buf
                   (text_buf.append
-                    (if (text_buf.empty? compiler-opt-debug-dump-buf)
-                      compiler-opt-debug-dump-buf
-                      (text_buf.append compiler-opt-debug-dump-buf "\n"))
+                    (if (text_buf.empty? (clone compiler-opt-debug-dump-buf))
+                      (clone compiler-opt-debug-dump-buf)
+                      (text_buf.append (clone compiler-opt-debug-dump-buf) "\n"))
                     (str_cat.str-cat
                       "after "
                       pass
@@ -2682,8 +2682,16 @@
 ;; Passed as `mirror` by callers that have no second use-count array to keep in
 ;; step. Zero length is the "no mirror" signal, so the rewrite paths below skip
 ;; the mirrored bookkeeping with one length test and no allocation.
-(define opt-dce-no-mirror : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+(define opt-dce-no-mirror : (__tl_dyn-array (__tl_dyn-array i64))
+  (make-array (array.make-array i64 0)))
+
+;; The zero-length mirror sentinel is immutable in practice: every update is
+;; guarded by its length. Preserve the allocation-free shared sentinel behind
+;; one explicit internal boundary.
+(define (opt-dce-no-mirror-shared-view) : (__tl_dyn-array i64)
+  (unsafe
+    (ptr-read
+      (ptr-cast (array-data opt-dce-no-mirror) : (Ptr (__tl_dyn-array i64))))))
 
 ;; Apply to `mirror` the same use-count edit a rewrite just applied to the
 ;; array the walk is reading. See `opt-dce-block-list-array-pass`: the dry run
@@ -2903,7 +2911,7 @@
             [instr : ir.CompilerIrInstr (array-ref slots index)]
             (if (opt-instr-dead-array?
               items
-              opt-dce-no-mirror
+              (opt-dce-no-mirror-shared-view)
               slots
               count
               index
@@ -2943,7 +2951,7 @@
             [instr : ir.CompilerIrInstr (array-ref slots index)]
             (if (opt-instr-dead-array?
               items
-              opt-dce-no-mirror
+              (opt-dce-no-mirror-shared-view)
               slots
               count
               index
@@ -3133,7 +3141,7 @@
             [instr : ir.CompilerIrInstr (array-ref src-slots index)]
             (if (opt-instr-dead-array?
               items
-              opt-dce-no-mirror
+              (opt-dce-no-mirror-shared-view)
               src-slots
               count
               index
@@ -64395,8 +64403,16 @@
 ;; structural re-verify and SSA reconstruction have nothing new to check.
 (define opt-inline-caller-site-count : i64
   0)
-(define opt-inline-pred-renames : OptInlinePredRenameList
-  (OptInlinePredRenameList.Nil))
+(define opt-inline-pred-renames : (__tl_dyn-array OptInlinePredRenameList)
+  (make-array (OptInlinePredRenameList.Nil)))
+
+(define (opt-inline-pred-renames-shared-view) : OptInlinePredRenameList
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data opt-inline-pred-renames)
+        : (Ptr OptInlinePredRenameList)))))
+
 (define opt-inline-current-phi-predecessor? : bool
   false)
 
@@ -65693,14 +65709,28 @@
 ;; absorbable loop-bearing candidate has already passed the free tests above.
 ;; Computing them for every function instead is +0.36% of the opt2 self-compile
 ;; spent on facts that almost no caller reads.
-(define opt-inline-caller-facts-blocks : ir.CompilerIrBlockList
-  (ir.CompilerIrBlockList.Nil))
+(define opt-inline-caller-facts-blocks : (__tl_dyn-array ir.CompilerIrBlockList)
+  (make-array (ir.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-caller-facts-blocks-shared-view) : ir.CompilerIrBlockList
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data opt-inline-caller-facts-blocks)
+        : (Ptr ir.CompilerIrBlockList)))))
+
 (define opt-inline-caller-single-site? : bool
   false)
 (define opt-inline-caller-facts-ready? : bool
   false)
-(define opt-inline-caller-loop-labels : OptLabelSet
-  (OptLabelSet.Nil))
+(define opt-inline-caller-loop-labels : (__tl_dyn-array OptLabelSet)
+  (make-array (OptLabelSet.Nil)))
+
+(define (opt-inline-caller-loop-labels-shared-view) : OptLabelSet
+  (unsafe
+    (ptr-read
+      (ptr-cast (array-data opt-inline-caller-loop-labels) : (Ptr OptLabelSet)))))
+
 (define opt-inline-caller-has-bounds? : bool
   false)
 (define opt-inline-current-block-label : i64
@@ -65737,12 +65767,12 @@
   [name : i64]
   [blocks : ir.CompilerIrBlockList]) : unit
   (begin
-    (set! opt-inline-caller-facts-blocks blocks)
+    (array-set! opt-inline-caller-facts-blocks 0 blocks)
     (set!
       opt-inline-caller-single-site?
       (opt-inline-census-single-site? index census name))
     (set! opt-inline-caller-facts-ready? false)
-    (set! opt-inline-caller-loop-labels (OptLabelSet.Nil))
+    (array-set! opt-inline-caller-loop-labels 0 (OptLabelSet.Nil))
     (set! opt-inline-caller-has-bounds? false)
     (set! opt-inline-current-block-label (ir.compiler-ir-label-none))))
 
@@ -65750,21 +65780,23 @@
   (if opt-inline-caller-facts-ready?
     unit
     (begin
-      (set!
+      (array-set!
         opt-inline-caller-loop-labels
+        0
         (opt-inline-loop-labels-add
-          (opt-cfg-natural-loops opt-inline-caller-facts-blocks)
+          (opt-cfg-natural-loops (opt-inline-caller-facts-blocks-shared-view))
           (OptLabelSet.Nil)))
       (set!
         opt-inline-caller-has-bounds?
-        (opt-inline-blocks-have-bounds-check? opt-inline-caller-facts-blocks))
+        (opt-inline-blocks-have-bounds-check?
+          (opt-inline-caller-facts-blocks-shared-view)))
       (set! opt-inline-caller-facts-ready? true))))
 
 (define (opt-inline-bounds-loop-site-in-loop?) : bool
   (begin
     (opt-inline-caller-facts-ensure!)
     (opt-label-contains
-      opt-inline-caller-loop-labels
+      (opt-inline-caller-loop-labels-shared-view)
       opt-inline-current-block-label)))
 
 ;; The one measured way a hot-site, small, absorbable import still loses.
@@ -66579,12 +66611,13 @@
                                       suffix)]
                                   [_record-pred-rename : unit
                                     (if opt-inline-current-phi-predecessor?
-                                      (set!
+                                      (array-set!
                                         opt-inline-pred-renames
+                                        0
                                         (opt-inline-pred-renames-cons
                                           block-label
                                           cont-label
-                                          opt-inline-pred-renames))
+                                          (opt-inline-pred-renames-shared-view)))
                                       unit)]
                                   (OptInlineMaybeBlockRewrite.SomeBlockRewrite
                                     (ir.compiler-ir-block-cons
@@ -67242,12 +67275,13 @@
                                       suffix)]
                                   [_record-pred-rename : unit
                                     (if opt-inline-current-phi-predecessor?
-                                      (set!
+                                      (array-set!
                                         opt-inline-pred-renames
+                                        0
                                         (opt-inline-pred-renames-cons
                                           block-label
                                           cont-label
-                                          opt-inline-pred-renames))
+                                          (opt-inline-pred-renames-shared-view)))
                                       unit)]
                                   (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
                                     (ir.compiler-ir-block-cons
@@ -67714,7 +67748,7 @@
           (begin
             (set! opt-inline-caller-site-count 0)
             (opt-inline-caller-facts-install! index census name blocks)
-            (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
+            (array-set! opt-inline-pred-renames 0 (OptInlinePredRenameList.Nil)))]
         (match (opt-inline-blocks
           blocks
           phi-predecessors
@@ -67733,7 +67767,7 @@
                 [repaired-blocks : ir.CompilerIrBlockList
                   (opt-inline-repair-phi-predecessors
                     new-blocks
-                    opt-inline-pred-renames)]
+                    (opt-inline-pred-renames-shared-view))]
                 (opt-inline-repair-or-keep
                   type-segment-bases
                   func
@@ -67764,7 +67798,7 @@
           (begin
             (set! opt-inline-caller-site-count 0)
             (opt-inline-caller-facts-install! index census name blocks)
-            (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
+            (array-set! opt-inline-pred-renames 0 (OptInlinePredRenameList.Nil)))]
         (match (opt-inline-blocks-with-spans
           blocks
           phi-predecessors
@@ -67789,7 +67823,7 @@
                 [repaired-blocks : ir.CompilerIrBlockList
                   (opt-inline-repair-phi-predecessors
                     new-blocks
-                    opt-inline-pred-renames)]
+                    (opt-inline-pred-renames-shared-view))]
                 [next : ir.CompilerIrFunction
                   (ir.CompilerIrFunction.Function
                     name
@@ -73855,7 +73889,10 @@
             [_rebind-inline-globals : unit
               (begin
                 (opt-inline-multiblock-ok-memo-reset!)
-                (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
+                (array-set!
+                  opt-inline-pred-renames
+                  0
+                  (OptInlinePredRenameList.Nil)))]
             (match inlined
               [(OptInlineSpanProgram.Program
                   reachable-functions

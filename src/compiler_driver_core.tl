@@ -174,11 +174,21 @@
 ;; globals before an explicitly owned pool arena is destroyed. Production jobs
 ;; do not read or write through this context; their next load receives its
 ;; `AstNodePoolContext` directly.
-(define compiler-driver-detached-compat-pools : compiler_ast_types.AstNodePoolContext
+(define compiler-driver-detached-compat-pools : (__tl_dyn-array
+    compiler_ast_types.AstNodePoolContext)
   ;; This sentinel is never read or written. Snapshot the process-global
   ;; compatibility fallback instead of allocating a duplicate 64K expression
   ;; segment into the process-lifetime default arena.
-  (compiler_ast_types.ast-node-pool-context-capture-active))
+  (make-array (compiler_ast_types.ast-node-pool-context-capture-active)))
+
+;; The detached compatibility context shares process-lifetime arena pools. A
+;; shallow view is safe only at this internal compatibility boundary.
+(define (compiler-driver-detached-compat-pools-shared-view) : compiler_ast_types.AstNodePoolContext
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data compiler-driver-detached-compat-pools)
+        : (Ptr compiler_ast_types.AstNodePoolContext)))))
 
 (define (compiler-driver-state-detach-active-pools-if-owned!
   [pools : compiler_ast_types.AstNodePoolContext]) : unit
@@ -186,7 +196,7 @@
     (compiler_ast_types.ast-node-pool-owner-arena-handle)
     (compiler_ast_types.ast-node-pool-context-owner-arena pools))
     (compiler_ast_types.ast-node-pool-context-install!
-      compiler-driver-detached-compat-pools)
+      (compiler-driver-detached-compat-pools-shared-view))
     unit))
 
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
@@ -809,7 +819,7 @@
 (define (compiler-driver-runtime-prelude-cache-lookup
   [key : compiler_load.CompilerLoadPreludeCacheKey]) : compiler_load.CompilerLoadPreludeCacheLookup
   (compiler-driver-runtime-prelude-cache-lookup-with-state
-    compiler_load.compiler-load-active-session-state
+    (compiler_load.compiler-load-active-session-state-shared-view)
     key))
 
 (define (compiler-driver-runtime-prelude-cache-store-with-state
@@ -834,7 +844,7 @@
   [modules : compiler_ast_types.AstDeclModuleList]
   [seen : sym_i64_env.SymI64Env]) : unit
   (compiler-driver-runtime-prelude-cache-store-with-state
-    compiler_load.compiler-load-active-session-state
+    (compiler_load.compiler-load-active-session-state-shared-view)
     key
     decls
     paths
@@ -2707,7 +2717,7 @@
     [pools : compiler_ast_types.AstNodePoolContext]) : CompilerDriverPreludeSurface
     (match (tlci.tlci-producer-identity-admit
       outer-build
-      build_identity.compiler-build-git-hash)
+      (build_identity.compiler-build-git-hash-shared-view))
       [(tlci.TlciProducerIdentityAdmission.ExactMatch)
         (match (compiler_surface_hydrate.compiler-surface-key rodata)
           [(compiler_surface_hydrate.ResultCompilerSurfaceKey.Missing)
@@ -2798,7 +2808,7 @@
   (begin
     (compiler-driver-note-prelude-source-pipeline!)
     (match (compiler_load.compiler-load-stdlib-prelude-file-with-roots-cfg
-      compiler_load.compiler-load-runtime-prelude-path
+      (compiler_load.compiler-load-runtime-prelude-path-shared-view)
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       cfgs)
@@ -2974,7 +2984,7 @@
     (compiler-driver-note-prelude-source-pipeline!)
     (match (compiler_load.compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
       load-state
-      compiler_load.compiler-load-runtime-prelude-path
+      (compiler_load.compiler-load-runtime-prelude-path-shared-view)
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       cfgs
@@ -3128,9 +3138,9 @@
             ;; routing must not depend on an unrelated later import happening
             ;; to resolve core_macros.tl from the embedded payload.
             (compiler_load.compiler-load-note-embedded-module!
-              compiler_load.compiler-load-core-macro-prelude-path)
+              (compiler_load.compiler-load-core-macro-prelude-path-shared-view))
             (compiler_load.compiler-load-note-embedded-module!
-              compiler_load.compiler-load-runtime-prelude-path)
+              (compiler_load.compiler-load-runtime-prelude-path-shared-view))
             (compiler_load.compiler-load-session-state-note-embedded-stdlib-source!
               load-state)
             (cfg
@@ -3280,7 +3290,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : compiler_ast_types.AstNodePoolContext]) : compiler_load.ResultCompilerLoadWithPaths
   (compiler-driver-load-source-with-runtime-with-state-and-pools
-    compiler_load.compiler-load-active-session-state
+    (compiler_load.compiler-load-active-session-state-shared-view)
     input-path
     source
     stdlib-roots

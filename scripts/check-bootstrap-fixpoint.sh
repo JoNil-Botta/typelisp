@@ -87,6 +87,12 @@ bootstrap_extra_cfg_args() {
     fi
 }
 
+bootstrap_seed_global_view_cfg_args() {
+    if [ "$SEED_REQUIRES_LEGACY_GLOBAL_VIEWS" -eq 1 ]; then
+        printf '%s\n' --cfg stage0-seed-bootstrap
+    fi
+}
+
 
 assert_contains() {
     file=$1
@@ -547,6 +553,39 @@ if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
     echo "[bootstrap] short-variant bridge ready; building stage1 from current sources"
 fi
 
+# `stage0-seed-bootstrap` expands explicit shared-view macros to their legacy
+# direct-read form because published seeds reject ptr-addr-of on globals. A
+# second bootstrap (for example the scratch-vreg gate) starts from the freshly
+# converged compiler, whose global-move checker must see the real unsafe view
+# instead. Probe the actual seed after any compatibility bridge so only a seed
+# that needs the legacy spelling receives the cfg.
+SEED_GLOBAL_VIEW_PROBE="$WORKDIR/seed-global-view-probe.tl"
+SEED_GLOBAL_VIEW_PROBE_STDOUT="$WORKDIR/seed-global-view-probe.stdout"
+SEED_GLOBAL_VIEW_PROBE_STDERR="$WORKDIR/seed-global-view-probe.stderr"
+cat > "$SEED_GLOBAL_VIEW_PROBE" <<'EOF'
+(define seed-global-view-probe : String "")
+(define (main) : i64
+  (unsafe
+    (begin
+      (ptr-read (ptr-addr-of seed-global-view-probe))
+      0)))
+EOF
+SEED_REQUIRES_LEGACY_GLOBAL_VIEWS=0
+if "$COMPILER" check "$SEED_GLOBAL_VIEW_PROBE" \
+    > "$SEED_GLOBAL_VIEW_PROBE_STDOUT" \
+    2> "$SEED_GLOBAL_VIEW_PROBE_STDERR"; then
+    echo "[bootstrap] seed supports explicit global shared views"
+elif grep -qF 'ptr-addr-of requires a local or parameter name' \
+    "$SEED_GLOBAL_VIEW_PROBE_STDERR"; then
+    SEED_REQUIRES_LEGACY_GLOBAL_VIEWS=1
+    echo "[bootstrap] seed requires legacy global shared views"
+else
+    echo "[bootstrap] global shared-view capability probe failed unexpectedly" >&2
+    sed 's/^/  /' "$SEED_GLOBAL_VIEW_PROBE_STDOUT" >&2 || true
+    sed 's/^/  /' "$SEED_GLOBAL_VIEW_PROBE_STDERR" >&2 || true
+    exit 1
+fi
+
 # opt2 bootstrap. First test the common stage2.s == stage3.s fixpoint. A backend
 # codegen fix can take another self-host round to propagate from an unconverged
 # seed, so build stage4 only as a fallback and then require stage3.s == stage4.s.
@@ -556,10 +595,10 @@ if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
     mkdir -p "$SEED_BOOTSTRAP_CWD"
     (
         cd "$SEED_BOOTSTRAP_CWD"
-        run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$ROOT/$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg stage0-seed-bootstrap --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2
+        run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$ROOT/$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) $(bootstrap_seed_global_view_cfg_args) --cfg compiler-build-identity --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2
     )
 else
-    run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg stage0-seed-bootstrap --stdlib-root stdlib --stdlib-root src --opt-level 2
+    run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) $(bootstrap_seed_global_view_cfg_args) --cfg compiler-build-identity --stdlib-root stdlib --stdlib-root src --opt-level 2
 fi
 
 bootstrap_seed_runtime_small_arena_compat "$STAGE1_ASM"

@@ -52,13 +52,13 @@
 (define (cli-arg [index : i64]) : String
   (io.arg index))
 
-(define (cli-err [text : String]) : unit
+(define (cli-err [text : (& text str)]) : unit
   (io.print-error text))
 
-(define (cli-eq? [left : String] [right : String]) : bool
+(define (cli-eq? [left : (& left str)] [right : (& right str)]) : bool
   (string.eq left right))
 
-(define (cli-cat [left : String] [right : String]) : String
+(define (cli-cat [left : (& left str)] [right : (& right str)]) : String
   (string.append left right))
 
 ;; Keeps the shipped stage0 help surface stable while individual commands route
@@ -369,13 +369,14 @@ Options:
       (cli-cat
         "typelisp "
         (cli-cat
-          build_identity.compiler-build-git-hash
+          (build_identity.compiler-build-git-hash-shared-view)
           (cli-cat " built " (cli-cat cli-build-date "\n")))))
     0))
 
 (define (cli-print-producer-identity) : i64
   (begin
-    (io.print-string (cli-cat build_identity.compiler-build-git-hash "\n"))
+    (io.print-string
+      (cli-cat (build_identity.compiler-build-git-hash-shared-view) "\n"))
     0))
 
 (define (cli-dispatch [command : String] [count : i64]) : i64
@@ -393,7 +394,7 @@ Options:
         (build_cli_core.build-run-from
           2
           count
-          build_identity.compiler-build-git-hash))]
+          (build_identity.compiler-build-git-hash-shared-view)))]
     [(cli-eq? command "clean")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-clean-help-text) 0)
@@ -404,7 +405,7 @@ Options:
         (run_cli_core.run-run-from
           2
           count
-          build_identity.compiler-build-git-hash))]
+          (build_identity.compiler-build-git-hash-shared-view)))]
     [(cli-eq? command "check")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-check-help-text) 0)

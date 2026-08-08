@@ -747,7 +747,7 @@
             (package-source-binding-hash-u64
               1
               (string.string-length package-source-binding-domain))
-            package-source-binding-domain)
+            (string.copy (& package-source-binding-domain)))
           package-source-binding-schema-version)
         count)]
     [index : i64 0]
@@ -994,7 +994,7 @@
   (test
     package-source-binding-transcript-and-admission
     (let
-      [root : String package-source-binding-test-root]
+      [root : String (string.copy (& package-source-binding-test-root))]
       [a : String (package-source-root-join root "a.tl")]
       [b : String (package-source-root-join root "b.tl")]
       [c : String (package-source-root-join root "c.tl")]
@@ -1010,7 +1010,7 @@
             (package-source-binding-test-source-set root false)]
           [alternate : PackageSourceSet
             (package-source-binding-test-source-set
-              package-source-binding-test-alternate-root
+              (string.copy (& package-source-binding-test-alternate-root))
               false)]
           [baseline : i64 0]
           [binding : (__tl_dyn-array u8) (tlci.tlci-empty-bytes)]
@@ -1116,7 +1116,7 @@
   (test
     package-source-binding-order-framing-and-rename
     (let
-      [root : String package-source-binding-test-root]
+      [root : String (string.copy (& package-source-binding-test-root))]
       [a : String (package-source-root-join root "a.tl")]
       [b : String (package-source-root-join root "b.tl")]
       [renamed : String (package-source-root-join root "renamed.tl")]
@@ -1216,7 +1216,9 @@
     package-source-binding-discovery-exclusions-and-removal
     (let
       [root : String
-        (str_cat.str-cat package-source-binding-test-root "/discover")]
+        (str_cat.str-cat
+          (string.copy (& package-source-binding-test-root))
+          "/discover")]
       [manifest-path : String (package-source-root-join root "typelisp.pkg")]
       [a : String (package-source-root-join root "a.tl")]
       [b : String (package-source-root-join root "b.tl")]
@@ -1231,7 +1233,7 @@
       [setup : bool
         (and
           (package-source-binding-test-ensure-root
-            package-source-binding-test-root)
+            (string.copy (& package-source-binding-test-root)))
           (match (fs.try-mkdir-if-missing (& root))
             [(io.OkIoUnit) true]
             [(io.ErrIoUnit _) false])
@@ -1243,13 +1245,13 @@
             [(io.ErrIoUnit _) false])
           (package-source-binding-test-write
             manifest-path
-            package-source-binding-test-manifest-text)
+            (string.copy (& package-source-binding-test-manifest-text)))
           (package-source-binding-test-write a "(a)\n")
           (package-source-binding-test-write b "(b)\n")
           (package-source-binding-test-write target-source "(target)\n")
           (package-source-binding-test-write
             nested-manifest
-            package-source-binding-test-manifest-text)
+            (string.copy (& package-source-binding-test-manifest-text)))
           (package-source-binding-test-write nested-source "(nested)\n"))]
       (if (not setup)
         (io.panic "package-source: unable to create discovery fixture")

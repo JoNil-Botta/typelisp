@@ -828,6 +828,24 @@
       (CtfeMaybeSyntaxPools.Some pools)]
     [_ (CtfeMaybeSyntaxPools.None)]))
 
+;; Native transformer callbacks build syntax in an explicitly selected host
+;; pool, but most callback results use the plain syntax variants. Attach that
+;; ownership at the host boundary so the typechecker installs the right pool
+;; before hygiene and rewalk. Preserve an already captured value's owner.
+(define (ctfe-capture-syntax-value-with-pools
+  [value : CompilerCtfeValue]
+  [pools : ast.AstNodePoolContext]) : CompilerCtfeValue
+  (match value
+    [(CompilerCtfeValue.Expr node ty)
+      (CompilerCtfeValue.CapturedExpr node ty pools)]
+    [(CompilerCtfeValue.ExprList items)
+      (CompilerCtfeValue.CapturedExprList items pools)]
+    [(CompilerCtfeValue.ExprClause clause)
+      (CompilerCtfeValue.CapturedExprClause clause pools)]
+    [(CompilerCtfeValue.ExprClauseList clauses)
+      (CompilerCtfeValue.CapturedExprClauseList clauses pools)]
+    [_ value]))
+
 ;; CTFE-owned type layout metadata. The typechecker/lowerer build this from
 ;; their `TcContext` without making CTFE import typecheck.
 ;;
@@ -1364,12 +1382,17 @@
 (define (ctfe-env-syntax-pools [env : CtfeEnv]) : CtfeMaybeSyntaxPools
   (struct-get env syntax-pools))
 
-(define (ctfe-env-syntax-pools-for-value
-  [env : CtfeEnv]
+(define (ctfe-syntax-pools-for-value
+  [current : CtfeMaybeSyntaxPools]
   [value : CompilerCtfeValue]) : CtfeMaybeSyntaxPools
   (match (ctfe-value-syntax-pools value)
     [(CtfeMaybeSyntaxPools.Some pools) (CtfeMaybeSyntaxPools.Some pools)]
-    [(CtfeMaybeSyntaxPools.None) (ctfe-env-syntax-pools env)]))
+    [(CtfeMaybeSyntaxPools.None) current]))
+
+(define (ctfe-env-syntax-pools-for-value
+  [env : CtfeEnv]
+  [value : CompilerCtfeValue]) : CtfeMaybeSyntaxPools
+  (ctfe-syntax-pools-for-value (ctfe-env-syntax-pools env) value))
 
 (define (ctfe-env-syntax-pool-context [env : CtfeEnv]) : ast.AstNodePoolContext
   (match (ctfe-env-syntax-pools env)

@@ -790,7 +790,7 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (make-array i64 282))
+  (make-array i64 284))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -802,7 +802,7 @@
   (let
     [metadata : (__tl_dyn-array i64) (make-array i64 4)]
     [ids : (__tl_dyn-array i64) (make-array i64 317)]
-    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 282)]
+    [ctfe-ids : (__tl_dyn-array i64) (make-array i64 284)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)
@@ -814,7 +814,7 @@
           (array-set! ids i -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 282)
+      (while (< i 284)
         (begin
           (array-set! ctfe-ids i -1)
           (set! i (+ i 1))))
@@ -888,7 +888,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 282)
+    (while (< i 284)
       (begin
         (array-set! (struct-get state ctfe-ids) i (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -896,7 +896,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 282)
+    (while (< i 284)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
         (set! i (+ i 1))))))
@@ -2069,10 +2069,12 @@
     (compiler-builtin-load-ctfe-id! insert-missing 277 "expr-not")
     (compiler-builtin-load-ctfe-id! insert-missing 278 "expr-while")
     (compiler-builtin-load-ctfe-id! insert-missing 279 "syntax-name-fresh")
-    ;; CTFE type syntax appends after all shipped IDs so generated names with
-    ;; the same display text cannot acquire the private source-head identity.
+    ;; New CTFE names append after all shipped IDs so generated names with the
+    ;; same display text cannot acquire the private source-head identity.
     (compiler-builtin-load-ctfe-id! insert-missing 280 "__tl_dyn-array")
-    (compiler-builtin-load-ctfe-id! insert-missing 281 "slice")))
+    (compiler-builtin-load-ctfe-id! insert-missing 281 "slice")
+    (compiler-builtin-load-ctfe-id! insert-missing 282 "expr-borrow")
+    (compiler-builtin-load-ctfe-id! insert-missing 283 "expr-array-ref")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -3268,6 +3270,12 @@
         (compiler-builtin-ctfe-ref 280)
         (ci.intern-source-slice "__tl_dyn-array" 0 14))
       (= (compiler-builtin-ctfe-ref 281) (ci.intern-source-slice "slice" 0 5))
+      (=
+        (compiler-builtin-ctfe-ref 282)
+        (ci.intern-source-slice "expr-borrow" 0 11))
+      (=
+        (compiler-builtin-ctfe-ref 283)
+        (ci.intern-source-slice "expr-array-ref" 0 14))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
@@ -3319,6 +3327,8 @@
           (compiler-builtin-ctfe-set! 279 -1)
           (compiler-builtin-ctfe-set! 280 -1)
           (compiler-builtin-ctfe-set! 281 -1)
+          (compiler-builtin-ctfe-set! 282 -1)
+          (compiler-builtin-ctfe-set! 283 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)

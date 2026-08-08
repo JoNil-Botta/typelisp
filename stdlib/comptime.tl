@@ -180,10 +180,20 @@
 (define (expr-struct-set [target : Expr] [field : String] [value : Expr]) : Expr
   (expr-struct-set target field value))
 
+;: Build an explicit inferred-lifetime shared borrow expression during macro CTFE.
+;: The expanded program validates that `place` is a borrowable place.
+(define (expr-borrow [place : Expr]) : Expr
+  (expr-borrow place))
+
 ;: Build an explicit inferred-lifetime mutable borrow expression during macro CTFE.
 ;: The expanded program validates that `place` is a mutable borrowable place.
 (define (expr-mut-borrow [place : Expr]) : Expr
   (expr-mut-borrow place))
+
+;: Build an array-reference expression during macro CTFE.
+;: The expanded program validates the target and index types and bounds checks.
+(define (expr-array-ref [target : Expr] [index : Expr]) : Expr
+  (expr-array-ref target index))
 
 ;: Build an ordered empty expression argument list during macro CTFE.
 (define (expr-list-empty) : ExprList
@@ -339,6 +349,35 @@
 
 ;: Build a single-binding inferred-type `let` scope during macro CTFE.
 (define (expr-let-scope [_name : String] [_init : Expr] [body : Expr]) : Expr
+  body)
+
+;; Internal scalar-for planner builders. These remain ordinary bootstrap
+;; stubs; macro CTFE replaces them with opaque compiler nodes.
+;: Build the ownership state scope for scalar iteration over an owned source.
+(define (expr-for-owned-state
+  [_source-name : Expr]
+  [_index-name : Expr]
+  [_source : Expr]
+  [body : Expr]) : Expr
+  body)
+
+;: Build one inferred-binding step for scalar iteration over an owned source.
+(define (expr-for-owned-step
+  [_source-name : Expr]
+  [_index-name : Expr]
+  [_binding-name : Expr]
+  [_done-name : Expr]
+  [body : Expr]) : Expr
+  body)
+
+;: Build one typed-binding step for scalar iteration over an owned source.
+(define (expr-for-owned-step-typed
+  [_source-name : Expr]
+  [_index-name : Expr]
+  [_binding-name : Expr]
+  [_expected-type : Expr]
+  [_done-name : Expr]
+  [body : Expr]) : Expr
   body)
 
 ;: Build assignment to a variable named by a compile-time string.

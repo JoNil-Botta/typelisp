@@ -601,6 +601,8 @@
   "expr-resource-scope")
 (define tlci-host-callback-name-expr-let-scope : String
   "expr-let-scope")
+(define tlci-host-callback-name-expr-for-owned : String
+  "expr-for-owned")
 (define tlci-host-callback-name-expr-set-var : String
   "expr-set-var")
 (define tlci-host-callback-name-expr-begin-unit : String
@@ -768,6 +770,8 @@
   "operand-type-key-eq")
 (define tlci-host-callback-name-expr-cast : String
   "expr-cast")
+(define tlci-host-callback-name-expr-ann : String
+  "expr-ann")
 (define tlci-host-callback-name-expr-init : String
   "expr-init")
 

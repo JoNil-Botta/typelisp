@@ -31318,6 +31318,8 @@
   (match expr
     [(ast.AstExpr.Let _) true]
     [(ast.AstExpr.While _ _) true]
+    [(ast.AstExpr.ForOwnedState _) true]
+    [(ast.AstExpr.ForOwnedStep _) true]
     [(ast.AstExpr.Foreach _) true]
     [(ast.AstExpr.SpmdReduce _) true]
     [(ast.AstExpr.SpmdScan _) true]
@@ -31709,7 +31711,11 @@
   (if (and (tc-ordered-comparison-type? left) (tc-type-eq left right))
     (ResultTcType.Ok (ast.AstType.Bool))
     (ResultTcType.Err
-      "typecheck: comparison expects matching ordered scalar operands")))
+      (str_cat.str-cat
+        "typecheck: comparison expects matching ordered scalar operands, got "
+        (tc-type-render left)
+        " and "
+        (tc-type-render right)))))
 
 (define (tc-unop-type [op : ast.AstUnOp] [ty : ast.AstType]) : ResultTcType
   (match op
@@ -42057,6 +42063,171 @@
         (ast.ty-node-get elem-ty))]
     [_ (tc-spmd-expr ctx expr-bases env spmd-env value)]))
 
+(define (tc-spmd-array-length-call? [func : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan func)
+    [(ast.AstExpr.Var raw-name)
+      (let
+        [hygiene-global : bool (tc-hygiene-global-name-id? raw-name)]
+        [name-id : i64 (tc-builtin-call-name-id raw-name hygiene-global)]
+        (cbi.compiler-builtin-typecheck-array-length-id? name-id))]
+    [_ false]))
+
+(define (tc-spmd-array-length-call
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : ast.AstType]
+  [args : ast.AstExprList]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-expr-list ctx expr-bases env spmd-env args)
+    [(ResultTcSpmdExprListInfo.Ok info)
+      (match info
+        [(TcSpmdExprListInfo class next-env)
+          (tc-spmd-finish expr-ty class next-env)])]
+    [(ResultTcSpmdExprListInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
+
+(define (tc-spmd-for-owned-state
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [source-name : i64]
+  [index-name : i64]
+  [source : i64]
+  [body : i64]
+  [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
+  (let
+    [source-expr : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases source)]
+    [body-expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body)]
+    [source-name-id : i64 (tc-for-owned-name-id expr-bases source-name)]
+    [index-name-id : i64 (tc-for-owned-name-id expr-bases index-name)]
+    (match (tc-spmd-expr ctx expr-bases env spmd-env source-expr)
+      [(ResultTcSpmdExprInfo.Ok source-info)
+        (match source-info
+          [(TcSpmdExprInfo source-ty source-class source-env)
+            (let
+              [mark : TcSpmdEnvMark (tc-spmd-env-mark source-env)]
+              [body-env : TcTypeEnv
+                (tc-bind-id
+                  (tc-bind-id env source-name-id source-ty)
+                  index-name-id
+                  (ast.AstType.I64))]
+              [body-spmd-env : TcSpmdEnv
+                (tc-spmd-env-bind-id
+                  (tc-spmd-env-bind-id
+                    source-env
+                    source-name-id
+                    source-ty
+                    source-class
+                    TcSpmdScope.Local)
+                  index-name-id
+                  (ast.AstType.I64)
+                  TcSpmdClass.Uniform
+                  TcSpmdScope.Local)]
+              (match (tc-spmd-expr
+                ctx
+                expr-bases
+                body-env
+                body-spmd-env
+                body-expr)
+                [(ResultTcSpmdExprInfo.Ok body-info)
+                  (match body-info
+                    [(TcSpmdExprInfo _ body-class final-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        body-class
+                        (tc-spmd-env-restore final-env mark))])]
+                [(ResultTcSpmdExprInfo.Err message)
+                  (ResultTcSpmdExprInfo.Err message)]))])]
+      [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)])))
+
+(define (tc-spmd-for-owned-step-body
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [binding-name : i64]
+  [body : i64]
+  [elem-ty : ast.AstType]
+  [item-class : TcSpmdClass]
+  [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
+  (let
+    [binding-name-id : i64 (tc-for-owned-name-id expr-bases binding-name)]
+    [mark : TcSpmdEnvMark (tc-spmd-env-mark spmd-env)]
+    [body-env : TcTypeEnv (tc-bind-id env binding-name-id elem-ty)]
+    [body-spmd-env : TcSpmdEnv
+      (tc-spmd-env-bind-id
+        spmd-env
+        binding-name-id
+        elem-ty
+        item-class
+        TcSpmdScope.Local)]
+    [body-expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body)]
+    (match (tc-spmd-expr ctx expr-bases body-env body-spmd-env body-expr)
+      [(ResultTcSpmdExprInfo.Ok body-info)
+        (match body-info
+          [(TcSpmdExprInfo _ body-class final-env)
+            (tc-spmd-finish
+              expr-ty
+              body-class
+              (tc-spmd-env-restore final-env mark))])]
+      [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)])))
+
+(define (tc-spmd-for-owned-step
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [source-name : i64]
+  [index-name : i64]
+  [binding-name : i64]
+  [done-name : i64]
+  [body : i64]
+  [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
+  (let
+    [source-expr : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases source-name)]
+    [index-expr : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases index-name)]
+    [done-expr : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases done-name)]
+    (match (tc-spmd-expr ctx expr-bases env spmd-env source-expr)
+      [(ResultTcSpmdExprInfo.Ok source-info)
+        (match source-info
+          [(TcSpmdExprInfo source-ty source-class source-env)
+            (match (tc-spmd-expr ctx expr-bases env source-env index-expr)
+              [(ResultTcSpmdExprInfo.Ok index-info)
+                (match index-info
+                  [(TcSpmdExprInfo _ index-class index-env)
+                    (match (tc-spmd-expr ctx expr-bases env index-env done-expr)
+                      [(ResultTcSpmdExprInfo.Ok done-info)
+                        (match done-info
+                          [(TcSpmdExprInfo _ done-class done-env)
+                            (match (tc-type-strip-region
+                              (tc-resolve-type ctx source-ty))
+                              [(ast.AstType.Array elem-id _)
+                                (tc-spmd-for-owned-step-body
+                                  ctx
+                                  expr-bases
+                                  env
+                                  done-env
+                                  binding-name
+                                  body
+                                  (tc-context-type-get ctx elem-id)
+                                  (tc-spmd-merge-class
+                                    source-class
+                                    (tc-spmd-merge-class index-class done-class))
+                                  expr-ty)]
+                              [_
+                                (ResultTcSpmdExprInfo.Err
+                                  "typecheck: scalar for owned step requires fixed-array state")])])]
+                      [(ResultTcSpmdExprInfo.Err message)
+                        (ResultTcSpmdExprInfo.Err message)])])]
+              [(ResultTcSpmdExprInfo.Err message)
+                (ResultTcSpmdExprInfo.Err message)])])]
+      [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)])))
+
 (define (tc-spmd-expr-typed
   [ctx : TcContext]
   [expr-bases : i64]
@@ -42070,6 +42241,29 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-spmd-expr-typed ctx expr-bases env spmd-env inner expr-ty))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (tc-spmd-for-owned-state
+        ctx
+        expr-bases
+        env
+        spmd-env
+        (ast.ast-for-owned-state-source-name (& payload))
+        (ast.ast-for-owned-state-index-name (& payload))
+        (ast.ast-for-owned-state-source (& payload))
+        (ast.ast-for-owned-state-body (& payload))
+        expr-ty)]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (tc-spmd-for-owned-step
+        ctx
+        expr-bases
+        env
+        spmd-env
+        (ast.ast-for-owned-step-source-name (& payload))
+        (ast.ast-for-owned-step-index-name (& payload))
+        (ast.ast-for-owned-step-binding-name (& payload))
+        (ast.ast-for-owned-step-done-name (& payload))
+        (ast.ast-for-owned-step-body (& payload))
+        expr-ty)]
     [(ast.AstExpr.Literal _)
       (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(ast.AstExpr.SpmdProgramIndex)
@@ -42155,7 +42349,9 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args))]
+        (if (tc-spmd-array-length-call? func)
+          (tc-spmd-array-length-call ctx expr-bases env spmd-env expr-ty args)
+          (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args)))]
     [(ast.AstExpr.BracketClause items)
       (match (tc-spmd-expr-list ctx expr-bases env spmd-env items)
         [(ResultTcSpmdExprListInfo.Ok info)
@@ -43381,6 +43577,29 @@
               bound
               (+ index 1))))])))
 
+(define (tc-for-owned-name-id [expr-bases : i64] [expr-id : i64]) : i64
+  (tc-expr-var-name-id (ast.ast-expr-segment-bases-get expr-bases expr-id)))
+
+(define (tc-for-owned-add-bound-name
+  [expr-bases : i64]
+  [expr-id : i64]
+  [bound : TcStringList]) : TcStringList
+  (let
+    [name-id : i64 (tc-for-owned-name-id expr-bases expr-id)]
+    (if (>= name-id 0)
+      (tc-string-list-add bound (tc-env-key-name-text name-id))
+      bound)))
+
+(define (tc-for-owned-add-bound-source-id
+  [expr-bases : i64]
+  [expr-id : i64]
+  [bound : TcNameIdList]) : TcNameIdList
+  (let
+    [name-id : i64 (tc-for-owned-name-id expr-bases expr-id)]
+    (if (>= name-id 0)
+      (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name-id))
+      bound)))
+
 (define (tc-expr-uses-free-name?
   [expr-bases : i64]
   [expr : ast.AstExpr]
@@ -43548,6 +43767,64 @@
         (or
           (tc-expr-uses-free-name? expr-bases cond name bound)
           (tc-expr-uses-free-name? expr-bases body name bound)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        (or
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-source (& payload)))
+            name
+            bound)
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-body (& payload)))
+            name
+            (tc-for-owned-add-bound-name
+              expr-bases
+              index-name
+              (tc-for-owned-add-bound-name expr-bases source-name bound)))))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        (or
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases source-name)
+            name
+            bound)
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases index-name)
+            name
+            bound)
+          (if (>= expected-type 0)
+            (tc-expr-uses-free-name?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases expected-type)
+              name
+              bound)
+            false)
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases done-name)
+            name
+            bound)
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body)
+            name
+            (tc-for-owned-add-bound-name expr-bases binding-name bound))))]
     [(ast.AstExpr.Begin exprs)
       (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
     [(ast.AstExpr.Unsafe exprs)
@@ -44471,6 +44748,71 @@
         (or
           (tc-expr-uses-free-source-id? expr-bases cond target-1 target-2 bound)
           (tc-expr-uses-free-source-id? expr-bases body target-1 target-2 bound)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-source (& payload)))
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-body (& payload)))
+            target-1
+            target-2
+            (tc-for-owned-add-bound-source-id
+              expr-bases
+              index-name
+              (tc-for-owned-add-bound-source-id expr-bases source-name bound)))))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases source-name)
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases index-name)
+            target-1
+            target-2
+            bound)
+          (if (>= expected-type 0)
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases expected-type)
+              target-1
+              target-2
+              bound)
+            false)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases done-name)
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body)
+            target-1
+            target-2
+            (tc-for-owned-add-bound-source-id expr-bases binding-name bound))))]
     [(ast.AstExpr.Begin exprs)
       (tc-expr-list-uses-free-source-id?
         expr-bases
@@ -45303,6 +45645,64 @@
         (or
           (tc-expr-sets-free-name? expr-bases cond name bound)
           (tc-expr-sets-free-name? expr-bases body name bound)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        (or
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-source (& payload)))
+            name
+            bound)
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-body (& payload)))
+            name
+            (tc-for-owned-add-bound-name
+              expr-bases
+              index-name
+              (tc-for-owned-add-bound-name expr-bases source-name bound)))))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        (or
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases source-name)
+            name
+            bound)
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases index-name)
+            name
+            bound)
+          (if (>= expected-type 0)
+            (tc-expr-sets-free-name?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases expected-type)
+              name
+              bound)
+            false)
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases done-name)
+            name
+            bound)
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body)
+            name
+            (tc-for-owned-add-bound-name expr-bases binding-name bound))))]
     [(ast.AstExpr.Begin exprs)
       (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
     [(ast.AstExpr.Unsafe exprs)
@@ -49422,7 +49822,10 @@
               (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
         [_
           (ResultTcBorrowPlace.Err
-            "typecheck: array-ref borrow requires array place")])]))
+            (string.append
+              "typecheck: array-ref borrow requires array place, got "
+              (tc-type-render
+                (tc-type-strip-region (tc-resolve-type ctx array-ty)))))])]))
 
 (define (tc-borrow-place-box-get [ctx : TcContext] [place : TcBorrowPlace]) : ResultTcBorrowPlace
   (match place
@@ -54734,6 +55137,174 @@
           [(ResultTcType.Err message) (ResultTcType.Err message)])]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
+(define (tc-for-owned-name-id-result
+  [ctx : TcContext]
+  [expr-id : i64]
+  [role : String]) : ResultTcExprId
+  (let
+    [name-id : i64
+      (match (ast.ast-expr-unspan-with-pools
+        (tc-context-pools ctx)
+        (tc-context-expr-get ctx expr-id))
+        [(ast.AstExpr.Var name) name]
+        [_ -1])]
+    (if (>= name-id 0)
+      (ResultTcExprId.Ok name-id)
+      (ResultTcExprId.Err
+        (string.append
+          "typecheck: internal scalar for planner expected a variable for "
+          (string.append
+            role
+            (string.append
+              ", got "
+              (ctfe_support.ctfe-describe-expr
+                (ast.ast-expr-unspan-with-pools
+                  (tc-context-pools ctx)
+                  (tc-context-expr-get ctx expr-id))))))))))
+
+(define (tc-for-owned-expected-type [ctx : TcContext] [expected-id : i64]) : ResultTcType
+  (let
+    [expected : ast.AstExpr (tc-context-expr-get ctx expected-id)]
+    (match (ctfe_support.ctfe-expr-to-type
+      expected
+      expected
+      (tc-ctfe-env ctx)
+      (ctfe_support.ctfe-fuel-limit))
+      [(ctfe_support.ResultCtfeQuoteType.Ok ty _)
+        (ResultTcType.Ok (tc-resolve-type ctx ty))]
+      [(ctfe_support.ResultCtfeQuoteType.Err diag)
+        (ResultTcType.Err (cdiag.compiler-diagnostic-message (box-get diag)))])))
+
+(define (tc-for-owned-body-unit
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [body-id : i64]) : ResultTcType
+  (match (tc-expr-id ctx env body-id)
+    [(ResultTcType.Ok body-ty)
+      (match (tc-expect
+        body-ty
+        (ast.AstType.Unit)
+        "typecheck: scalar for body must produce unit")
+        [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Unit))]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+
+(define (tc-for-owned-state-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-name-id : i64]
+  [index-name-id : i64]
+  [source-id : i64]
+  [body-id : i64]) : ResultTcType
+  (match (tc-for-owned-name-id-result ctx source-name-id "source state")
+    [(ResultTcExprId.Ok source-name)
+      (match (tc-for-owned-name-id-result ctx index-name-id "source index")
+        [(ResultTcExprId.Ok index-name)
+          (match (tc-expr-id ctx env source-id)
+            [(ResultTcType.Ok source-ty)
+              (match (tc-type-strip-region (tc-resolve-type ctx source-ty))
+                [(ast.AstType.Array _ _)
+                  (tc-for-owned-body-unit
+                    ctx
+                    (tc-bind-id
+                      (tc-bind-id env source-name source-ty)
+                      index-name
+                      (ast.AstType.I64))
+                    body-id)]
+                [_
+                  (ResultTcType.Err
+                    "typecheck: scalar for owned planner requires a fixed-array source")])]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])]
+        [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
+    [(ResultTcExprId.Err message) (ResultTcType.Err message)]))
+
+(define (tc-for-owned-step-after-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [binding-name : i64]
+  [expected-id : i64]
+  [elem-ty : ast.AstType]
+  [body-id : i64]) : ResultTcType
+  (match (if (>= expected-id 0)
+    (tc-for-owned-expected-type ctx expected-id)
+    (ResultTcType.Ok elem-ty))
+    [(ResultTcType.Ok expected-ty)
+      (match (tc-expect
+        elem-ty
+        expected-ty
+        "typecheck: scalar for item annotation mismatch")
+        [(ResultTcUnit.Ok)
+          (tc-for-owned-body-unit
+            ctx
+            (tc-bind-id env binding-name elem-ty)
+            body-id)]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+
+(define (tc-for-owned-step-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-id : i64]
+  [index-id : i64]
+  [binding-id : i64]
+  [expected-id : i64]
+  [done-id : i64]
+  [body-id : i64]) : ResultTcType
+  (match (tc-for-owned-name-id-result ctx source-id "source state")
+    [(ResultTcExprId.Ok _)
+      (match (tc-for-owned-name-id-result ctx index-id "source index")
+        [(ResultTcExprId.Ok _)
+          (match (tc-for-owned-name-id-result ctx binding-id "item binding")
+            [(ResultTcExprId.Ok binding-name)
+              (match (tc-for-owned-name-id-result ctx done-id "done flag")
+                [(ResultTcExprId.Ok _)
+                  (match (tc-expr-id ctx env source-id)
+                    [(ResultTcType.Ok source-ty)
+                      (match (tc-type-strip-region
+                        (tc-resolve-type ctx source-ty))
+                        [(ast.AstType.Array elem-id _)
+                          (match (tc-expr-with-expected-or-actual-id
+                            ctx
+                            env
+                            index-id
+                            (ast.AstType.I64))
+                            [(ResultTcType.Ok index-ty)
+                              (if (tc-integer-type? index-ty)
+                                (match (tc-expr-with-expected-or-actual-id
+                                  ctx
+                                  env
+                                  done-id
+                                  (ast.AstType.Bool))
+                                  [(ResultTcType.Ok done-ty)
+                                    (match (tc-expect
+                                      done-ty
+                                      (ast.AstType.Bool)
+                                      "typecheck: scalar for done state must be bool")
+                                      [(ResultTcUnit.Ok)
+                                        (tc-for-owned-step-after-types
+                                          ctx
+                                          env
+                                          binding-name
+                                          expected-id
+                                          (tc-context-type-get ctx elem-id)
+                                          body-id)]
+                                      [(ResultTcUnit.Err message)
+                                        (ResultTcType.Err message)])]
+                                  [(ResultTcType.Err message)
+                                    (ResultTcType.Err message)])
+                                (ResultTcType.Err
+                                  "typecheck: scalar for owned-array index must be integer"))]
+                            [(ResultTcType.Err message)
+                              (ResultTcType.Err message)])]
+                        [_
+                          (ResultTcType.Err
+                            "typecheck: scalar for owned step requires its matching fixed-array state")])]
+                    [(ResultTcType.Err message) (ResultTcType.Err message)])]
+                [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
+            [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
+        [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
+    [(ResultTcExprId.Err message) (ResultTcType.Err message)]))
+
 (define (tc-expr-inner [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
   (match expr
     [(ast.AstExpr.Spanned inner-box span)
@@ -55538,6 +56109,24 @@
         [index : ast.AstExpr (ast.ast-node-get index-box)]
         (tc-xgetbv-expr ctx env index))]
     [(ast.AstExpr.Syscall args) (tc-syscall-expr ctx env args)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (tc-for-owned-state-expr
+        ctx
+        env
+        (ast.ast-for-owned-state-source-name (& payload))
+        (ast.ast-for-owned-state-index-name (& payload))
+        (ast.ast-for-owned-state-source (& payload))
+        (ast.ast-for-owned-state-body (& payload)))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (tc-for-owned-step-expr
+        ctx
+        env
+        (ast.ast-for-owned-step-source-name (& payload))
+        (ast.ast-for-owned-step-index-name (& payload))
+        (ast.ast-for-owned-step-binding-name (& payload))
+        (ast.ast-for-owned-step-expected-type (& payload))
+        (ast.ast-for-owned-step-done-name (& payload))
+        (ast.ast-for-owned-step-body (& payload)))]
     [_ (ResultTcType.Err "typecheck: unsupported expression")]))
 
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
@@ -56309,6 +56898,13 @@
               (+ index 1))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
+(define (tc-for-owned-purity-add-bound [expr-id : i64] [bound : TcStringList]) : TcStringList
+  (let
+    [name-id : i64 (tc-expr-var-name-id (ast.ast-node-get expr-id))]
+    (if (>= name-id 0)
+      (tc-string-list-add bound (tc-env-key-name-text name-id))
+      bound)))
+
 (define (tc-comptime-purity-expr-mode
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -56519,6 +57115,52 @@
         template?
         cond
         body)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (match (tc-comptime-purity-node-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        (ast.ast-for-owned-state-source (& payload)))
+        [(ResultTcUnit.Ok)
+          (tc-comptime-purity-node-mode
+            ctx
+            env
+            (tc-for-owned-purity-add-bound
+              (ast.ast-for-owned-state-index-name (& payload))
+              (tc-for-owned-purity-add-bound
+                (ast.ast-for-owned-state-source-name (& payload))
+                bound))
+            chain
+            seen
+            template?
+            (ast.ast-for-owned-state-body (& payload)))]
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (match (tc-comptime-purity-node3-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        (ast.ast-for-owned-step-source-name (& payload))
+        (ast.ast-for-owned-step-index-name (& payload))
+        (ast.ast-for-owned-step-done-name (& payload)))
+        [(ResultTcUnit.Ok)
+          (tc-comptime-purity-node-mode
+            ctx
+            env
+            (tc-for-owned-purity-add-bound
+              (ast.ast-for-owned-step-binding-name (& payload))
+              bound)
+            chain
+            seen
+            template?
+            (ast.ast-for-owned-step-body (& payload)))]
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstExpr.Begin exprs)
       (tc-comptime-purity-expr-list-mode
         ctx
@@ -60145,6 +60787,31 @@
           (tc-generated-expr-dependent-construct?
             ctx
             (tc-context-expr-get ctx body-id)))]
+      [(ast.AstExpr.ForOwnedState payload)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get
+              ctx
+              (ast.ast-for-owned-state-source (& payload))))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx (ast.ast-for-owned-state-body (& payload)))))]
+      [(ast.AstExpr.ForOwnedStep payload)
+        (let
+          [expected-type : i64
+            (ast.ast-for-owned-step-expected-type (& payload))]
+          (or
+            (if (>= expected-type 0)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx expected-type))
+              false)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get
+                ctx
+                (ast.ast-for-owned-step-body (& payload))))))]
       [(ast.AstExpr.Begin items)
         (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
       [(ast.AstExpr.Unsafe items)
@@ -65890,6 +66557,142 @@
         loop-carried
         moved
         inner-box)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name-id : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name-id : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        [source-id : i64 (ast.ast-for-owned-state-source (& payload))]
+        [body-id : i64 (ast.ast-for-owned-state-body (& payload))]
+        [source-name : i64 (tc-for-owned-name-id expr-bases source-name-id)]
+        [index-name : i64 (tc-for-owned-name-id expr-bases index-name-id)]
+        (if (or (< source-name 0) (< index-name 0))
+          (TcMoveResult.Err
+            "typecheck: invalid internal scalar for owned-array state")
+          (match (tc-move-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            source-id)
+            [(TcMoveResult.Ok moved1)
+              (match (tc-body-type-fact-expr-id
+                "move.for_owned_source"
+                ctx
+                env
+                source-id)
+                [(ResultTcType.Ok source-ty)
+                  (match (tc-move-after-bind-known-type-id
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    loop-carried
+                    moved1
+                    source-id
+                    source-ty)
+                    [(TcMoveResult.Ok moved2)
+                      (match (tc-move-check-expr-id
+                        ctx
+                        expr-bases
+                        (tc-bind-id
+                          (tc-bind-id env source-name source-ty)
+                          index-name
+                          (ast.AstType.I64))
+                        (tc-moved-add
+                          (tc-moved-add locals source-name)
+                          index-name)
+                        (tc-moved-remove-root-state
+                          (tc-moved-remove-root-state loop-carried source-name)
+                          index-name)
+                        (tc-moved-remove-root-state
+                          (tc-moved-remove-root-state moved2 source-name)
+                          index-name)
+                        body-id)
+                        [(TcMoveResult.Ok moved3)
+                          (TcMoveResult.Ok
+                            (tc-moved-remove-root-state
+                              (tc-moved-remove-root-state moved3 source-name)
+                              index-name))]
+                        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                [(ResultTcType.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-id : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-id : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-id : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [done-id : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body-id : i64 (ast.ast-for-owned-step-body (& payload))]
+        [binding-name : i64 (tc-for-owned-name-id expr-bases binding-id)]
+        (if (< binding-name 0)
+          (TcMoveResult.Err
+            "typecheck: invalid internal scalar for item binding")
+          (match (tc-move-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            source-id)
+            [(TcMoveResult.Ok moved1)
+              (match (tc-move-check-expr-id
+                ctx
+                expr-bases
+                env
+                locals
+                loop-carried
+                moved1
+                index-id)
+                [(TcMoveResult.Ok moved2)
+                  (match (tc-move-check-expr-id
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    loop-carried
+                    moved2
+                    done-id)
+                    [(TcMoveResult.Ok moved3)
+                      (match (tc-body-type-fact-expr-id
+                        "move.for_owned_step_source"
+                        ctx
+                        env
+                        source-id)
+                        [(ResultTcType.Ok source-ty)
+                          (match (tc-type-strip-region
+                            (tc-resolve-type ctx source-ty))
+                            [(ast.AstType.Array elem-id _)
+                              (match (tc-move-check-expr-id
+                                ctx
+                                expr-bases
+                                (tc-bind-id
+                                  env
+                                  binding-name
+                                  (tc-context-type-get ctx elem-id))
+                                (tc-moved-add locals binding-name)
+                                (tc-moved-remove-root-state
+                                  loop-carried
+                                  binding-name)
+                                (tc-moved-remove-root-state moved3 binding-name)
+                                body-id)
+                                [(TcMoveResult.Ok moved4)
+                                  (TcMoveResult.Ok
+                                    (tc-moved-remove-root-state
+                                      moved4
+                                      binding-name))]
+                                [(TcMoveResult.Err message)
+                                  (TcMoveResult.Err message)])]
+                            [_
+                              (TcMoveResult.Err
+                                "typecheck: scalar for owned step requires fixed-array state")])]
+                        [(ResultTcType.Err message) (TcMoveResult.Err message)])]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
     [(ast.AstExpr.Literal _) (TcMoveResult.Ok moved)]
     [(ast.AstExpr.Var name)
       (let
@@ -72541,6 +73344,147 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (tc-borrow-check-expr-id ctx expr-bases env locals borrowed inner-box)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name-id : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name-id : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        [source-id : i64 (ast.ast-for-owned-state-source (& payload))]
+        [body-id : i64 (ast.ast-for-owned-state-body (& payload))]
+        [source-name : i64 (tc-for-owned-name-id expr-bases source-name-id)]
+        [index-name : i64 (tc-for-owned-name-id expr-bases index-name-id)]
+        (if (or (< source-name 0) (< index-name 0))
+          (TcBorrowCheckResult.Err
+            "typecheck: invalid internal scalar for owned-array state")
+          (match (tc-borrow-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            source-id)
+            [(TcBorrowCheckResult.Ok borrowed1)
+              (match (tc-body-type-fact-expr-id
+                "borrow.for_owned_source"
+                ctx
+                env
+                source-id)
+                [(ResultTcType.Ok source-ty)
+                  (match (tc-borrow-check-after-bind-known-type-id
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    borrowed1
+                    source-name
+                    source-id
+                    source-ty)
+                    [(TcBorrowCheckResult.Ok borrowed2)
+                      (match (tc-borrow-check-expr-with-protected-id
+                        ctx
+                        expr-bases
+                        (tc-bind-id
+                          (tc-bind-id env source-name source-ty)
+                          index-name
+                          (ast.AstType.I64))
+                        (tc-moved-add
+                          (tc-moved-add locals source-name)
+                          index-name)
+                        (tc-borrow-check-remove-root-state
+                          (tc-borrow-check-remove-root-state
+                            borrowed2
+                            source-name)
+                          index-name)
+                        borrowed
+                        body-id)
+                        [(TcBorrowCheckResult.Ok borrowed3)
+                          (TcBorrowCheckResult.Ok
+                            (tc-borrow-check-remove-root-state
+                              (tc-borrow-check-remove-root-state
+                                borrowed3
+                                source-name)
+                              index-name))]
+                        [(TcBorrowCheckResult.Err message)
+                          (TcBorrowCheckResult.Err message)])]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)])]
+                [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-id : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-id : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-id : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [done-id : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body-id : i64 (ast.ast-for-owned-step-body (& payload))]
+        [binding-name : i64 (tc-for-owned-name-id expr-bases binding-id)]
+        (if (< binding-name 0)
+          (TcBorrowCheckResult.Err
+            "typecheck: invalid internal scalar for item binding")
+          (match (tc-borrow-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            source-id)
+            [(TcBorrowCheckResult.Ok borrowed1)
+              (match (tc-borrow-check-expr-id
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed1
+                index-id)
+                [(TcBorrowCheckResult.Ok borrowed2)
+                  (match (tc-borrow-check-expr-id
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    borrowed2
+                    done-id)
+                    [(TcBorrowCheckResult.Ok borrowed3)
+                      (match (tc-body-type-fact-expr-id
+                        "borrow.for_owned_step_source"
+                        ctx
+                        env
+                        source-id)
+                        [(ResultTcType.Ok source-ty)
+                          (match (tc-type-strip-region
+                            (tc-resolve-type ctx source-ty))
+                            [(ast.AstType.Array elem-id _)
+                              (match (tc-borrow-check-expr-with-protected-id
+                                ctx
+                                expr-bases
+                                (tc-bind-id
+                                  env
+                                  binding-name
+                                  (tc-context-type-get ctx elem-id))
+                                (tc-moved-add locals binding-name)
+                                (tc-borrow-check-remove-root-state
+                                  borrowed3
+                                  binding-name)
+                                borrowed
+                                body-id)
+                                [(TcBorrowCheckResult.Ok borrowed4)
+                                  (TcBorrowCheckResult.Ok
+                                    (tc-borrow-check-remove-root-state
+                                      borrowed4
+                                      binding-name))]
+                                [(TcBorrowCheckResult.Err message)
+                                  (TcBorrowCheckResult.Err message)])]
+                            [_
+                              (TcBorrowCheckResult.Err
+                                "typecheck: scalar for owned step requires fixed-array state")])]
+                        [(ResultTcType.Err message)
+                          (TcBorrowCheckResult.Err message)])]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)])]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])))]
     [(ast.AstExpr.Literal _) (TcBorrowCheckResult.Ok borrowed)]
     [(ast.AstExpr.Var name)
       (if (tc-dotted-local-field-name-id? env name)
@@ -81995,6 +82939,54 @@
       (begin
         (macro-hygiene-produced-note-id! expr-bases cond-box shared-path?)
         (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (begin
+        (macro-hygiene-produced-note-id!
+          expr-bases
+          (ast.ast-for-owned-state-source-name (& payload))
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          expr-bases
+          (ast.ast-for-owned-state-index-name (& payload))
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          expr-bases
+          (ast.ast-for-owned-state-source (& payload))
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          expr-bases
+          (ast.ast-for-owned-state-body (& payload))
+          shared-path?))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (begin
+          (macro-hygiene-produced-note-id!
+            expr-bases
+            (ast.ast-for-owned-step-source-name (& payload))
+            shared-path?)
+          (macro-hygiene-produced-note-id!
+            expr-bases
+            (ast.ast-for-owned-step-index-name (& payload))
+            shared-path?)
+          (macro-hygiene-produced-note-id!
+            expr-bases
+            (ast.ast-for-owned-step-binding-name (& payload))
+            shared-path?)
+          (when
+            (>= expected-type 0)
+            (macro-hygiene-produced-note-id!
+              expr-bases
+              expected-type
+              shared-path?))
+          (macro-hygiene-produced-note-id!
+            expr-bases
+            (ast.ast-for-owned-step-done-name (& payload))
+            shared-path?)
+          (macro-hygiene-produced-note-id!
+            expr-bases
+            (ast.ast-for-owned-step-body (& payload))
+            shared-path?)))]
     [(ast.AstExpr.Begin exprs)
       (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
     [(ast.AstExpr.Unsafe exprs)
@@ -82991,6 +83983,84 @@
         (ast.ast-expr-while
           (macro-hygiene-expr expr-bases cond env macro-name depth)
           (macro-hygiene-expr expr-bases body env macro-name depth)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        [source : i64 (ast.ast-for-owned-state-source (& payload))]
+        [body : i64 (ast.ast-for-owned-state-body (& payload))]
+        [source-name-id : i64 (tc-for-owned-name-id expr-bases source-name)]
+        [index-name-id : i64 (tc-for-owned-name-id expr-bases index-name)]
+        (if (or (< source-name-id 0) (< index-name-id 0))
+          (ast.ast-expr-for-owned-state
+            (macro-hygiene-expr expr-bases source-name env macro-name depth)
+            (macro-hygiene-expr expr-bases index-name env macro-name depth)
+            (macro-hygiene-expr expr-bases source env macro-name depth)
+            (macro-hygiene-expr expr-bases body env macro-name depth))
+          (match (macro-hygiene-bind-name-id
+            env
+            macro-name
+            depth
+            source-name-id)
+            [(MacroHygieneName.Name nsource-name source-env)
+              (match (macro-hygiene-bind-name-id
+                source-env
+                macro-name
+                depth
+                index-name-id)
+                [(MacroHygieneName.Name nindex-name body-env)
+                  (ast.ast-expr-for-owned-state
+                    (ast.ast-node-push (ast.AstExpr.Var nsource-name))
+                    (ast.ast-node-push (ast.AstExpr.Var nindex-name))
+                    (macro-hygiene-expr expr-bases source env macro-name depth)
+                    (macro-hygiene-expr
+                      expr-bases
+                      body
+                      body-env
+                      macro-name
+                      depth))])])))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        [binding-name-id : i64 (tc-for-owned-name-id expr-bases binding-name)]
+        (if (< binding-name-id 0)
+          (ast.ast-expr-for-owned-step
+            (macro-hygiene-expr expr-bases source-name env macro-name depth)
+            (macro-hygiene-expr expr-bases index-name env macro-name depth)
+            (macro-hygiene-expr expr-bases binding-name env macro-name depth)
+            (if (>= expected-type 0)
+              (macro-hygiene-expr expr-bases expected-type env macro-name depth)
+              -1)
+            (macro-hygiene-expr expr-bases done-name env macro-name depth)
+            (macro-hygiene-expr expr-bases body env macro-name depth))
+          (let
+            ;; This binder is reconstructed from the user clause's name. Map
+            ;; its generated template identity back to that source identity so
+            ;; captured body references (including a nested `for` source) and
+            ;; generated cleanup references resolve to the same local.
+            [nbinding-name : i64
+              (tc-hygiene-template-source-id-or binding-name-id binding-name-id)]
+            [body-env : MacroHygieneEnv
+              (macro-hygiene-env-bind-raw env binding-name-id nbinding-name)]
+            (ast.ast-expr-for-owned-step
+              (macro-hygiene-expr expr-bases source-name env macro-name depth)
+              (macro-hygiene-expr expr-bases index-name env macro-name depth)
+              (ast.ast-node-push (ast.AstExpr.Var nbinding-name))
+              (if (>= expected-type 0)
+                (macro-hygiene-expr
+                  expr-bases
+                  expected-type
+                  env
+                  macro-name
+                  depth)
+                -1)
+              (macro-hygiene-expr expr-bases done-name env macro-name depth)
+              (macro-hygiene-expr expr-bases body body-env macro-name depth)))))]
     [(ast.AstExpr.Begin exprs)
       (ast.ast-node-push
         (ast.AstExpr.Begin
@@ -86455,6 +87525,27 @@
       (ctfe_support.ctfe-untyped-expr-type))
     resolved-expected))
 
+(define (macro-captured-binding-init-produced-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : ast.AstExpr]) : ast.AstType
+  (match (tc-expr ctx env arg)
+    [(ResultTcType.Ok actual)
+      (begin
+        ;; Binding-clause initializers can append structural referent types
+        ;; after the context snapshot used to begin macro expansion. Refresh
+        ;; before pushing the wrapper so those type IDs cannot alias.
+        (tc-context-capture-active-pools! ctx)
+        (let
+          [captured : ast.AstType
+            (ctfe_support.ctfe-captured-expr-type-with-pools
+              (tc-context-pools ctx)
+              (tc-resolve-type ctx actual))]
+          (begin
+            (tc-context-install-pools! ctx)
+            captured)))]
+    [(ResultTcType.Err _) (ctfe_support.ctfe-untyped-expr-type)]))
+
 (define (macro-captured-binding-clause
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -86467,11 +87558,9 @@
       (struct-get clause has-type)
       (struct-get clause ty)
       (struct-get clause init)
-      (macro-captured-expr-produced-type
+      (macro-captured-binding-init-produced-type
         ctx
         env
-        (ast.AstType.Expr)
-        true
         (ast.ast-node-get (struct-get clause init)))
       (struct-get clause span))))
 
@@ -86564,6 +87653,22 @@
           (ctfe_support.CtfeMaybeSyntaxPools.Some active-pools)])]
     [(ctfe_support.CtfeMaybeSyntaxPools.None) current]))
 
+;; Binding-clause-list values carry child expression IDs but no pool-bearing
+;; value variant. The scalar `for` shape needs the caller pool after checking
+;; its prefix, while unrelated definition-owned suffixes must retain the
+;; definition pool. Other captured values select their owner normally.
+(define (macro-captured-param-syntax-pools-after-check
+  [current : ctfe_support.CtfeMaybeSyntaxPools]
+  [value : ctfe_support.CompilerCtfeValue]
+  [rebase-binding-clauses? : bool]) : ctfe_support.CtfeMaybeSyntaxPools
+  (match value
+    [(ctfe_support.CompilerCtfeValue.ExprBindingClauseList _)
+      (if rebase-binding-clauses?
+        (ctfe_support.CtfeMaybeSyntaxPools.Some
+          (ast.ast-node-pool-context-capture-active))
+        current)]
+    [_ (ctfe_support.ctfe-syntax-pools-for-value current value)]))
+
 (define (macro-capture-variadic-param
   [ctx : TcContext]
   [type-env : TcTypeEnv]
@@ -86648,7 +87753,19 @@
     (ctfe_support.ctfe-env-syntax-pools env)
     capture-expr-types)
     [(ResultMacroCapturedValue.Ok value)
-      (ResultMacroEnv.Ok (ctfe_support.ctfe-env-extend-id env name value))]
+      (let
+        ;; Binding-clause values carry child expression IDs but no pool-bearing
+        ;; value variant. Rebase after operand typing so CTFE builders cannot
+        ;; allocate over a newly appended borrow/place child and form a cycle.
+        [captured-env : ctfe_support.CtfeEnv
+          (match value
+            [(ctfe_support.CompilerCtfeValue.ExprBindingClauseList _)
+              (ctfe_support.ctfe-env-rebase-syntax-pools
+                env
+                (ast.ast-node-pool-context-capture-active))]
+            [_ env])]
+        (ResultMacroEnv.Ok
+          (ctfe_support.ctfe-env-extend-id captured-env name value)))]
     [(ResultMacroCapturedValue.Err diag) (ResultMacroEnv.Err diag)]))
 
 ;; A direct caller string literal is the one `Expr` shape that public macro
@@ -86893,27 +88010,45 @@
                   args
                   arg-index)
                   [(ResultMacroBindingClauseList.Ok clauses)
-                    (macro-bind-params-at
-                      ctx
-                      decls
-                      fallback-module
-                      fallback-module-id
-                      type-env
-                      macro-name
-                      params
-                      args
-                      (+ param-index 1)
-                      (+ arg-index (struct-get (& clauses) len))
-                      (ctfe_support.ctfe-env-extend-id
-                        env
-                        pname
+                    (let
+                      ;; Capture this definition-owned flag before typing a
+                      ;; caller clause can install a newer active syntax pool.
+                      [rebase-captured-env? : bool
+                        (match (ast.ast-macro-param-list-get
+                          params
+                          (+ param-index 1)
+                          (ast.ast-macro-param-fallback))
+                          [(ast.AstMacroParam.Param _ _ next-variadic _)
+                            next-variadic])]
+                      [value : ctfe_support.CompilerCtfeValue
                         (macro-captured-binding-clause-list-value
                           ctx
                           type-env
                           capture-expr-types
-                          clauses))
-                      capture-expr-types
-                      call-expr)]
+                          clauses)]
+                      [captured-env : ctfe_support.CtfeEnv
+                        (if rebase-captured-env?
+                          (ctfe_support.ctfe-env-rebase-syntax-pools
+                            env
+                            (ast.ast-node-pool-context-capture-active))
+                          env)]
+                      (macro-bind-params-at
+                        ctx
+                        decls
+                        fallback-module
+                        fallback-module-id
+                        type-env
+                        macro-name
+                        params
+                        args
+                        (+ param-index 1)
+                        (+ arg-index (struct-get (& clauses) len))
+                        (ctfe_support.ctfe-env-extend-id
+                          captured-env
+                          pname
+                          value)
+                        capture-expr-types
+                        call-expr))]
                   [(ResultMacroBindingClauseList.Err diag)
                     (ResultMacroEnv.Err diag)])
                 (ResultMacroEnv.Err
@@ -87060,9 +88195,10 @@
                       (+ param-index 1)
                       (struct-get args len)
                       env
-                      (ctfe_support.ctfe-syntax-pools-for-value
+                      (macro-captured-param-syntax-pools-after-check
                         syntax-pools
-                        value)
+                        value
+                        true)
                       operands
                       capture-expr-types
                       call-expr))]
@@ -87078,6 +88214,15 @@
                   arg-index)
                   [(ResultMacroBindingClauseList.Ok clauses)
                     (let
+                      ;; Capture this definition-owned flag before typing a
+                      ;; caller clause can install a newer active syntax pool.
+                      [rebase-captured-pools? : bool
+                        (match (ast.ast-macro-param-list-get
+                          params
+                          (+ param-index 1)
+                          (ast.ast-macro-param-fallback))
+                          [(ast.AstMacroParam.Param _ _ next-variadic _)
+                            next-variadic])]
                       [value : ctfe_support.CompilerCtfeValue
                         (macro-captured-binding-clause-list-value
                           ctx
@@ -87098,9 +88243,10 @@
                           (+ param-index 1)
                           (+ arg-index (struct-get (& clauses) len))
                           env
-                          (ctfe_support.ctfe-syntax-pools-for-value
+                          (macro-captured-param-syntax-pools-after-check
                             syntax-pools
-                            value)
+                            value
+                            rebase-captured-pools?)
                           operands
                           capture-expr-types
                           call-expr)))]
@@ -87148,9 +88294,10 @@
                         (+ param-index 1)
                         (+ arg-index 1)
                         env
-                        (ctfe_support.ctfe-syntax-pools-for-value
+                        (macro-captured-param-syntax-pools-after-check
                           syntax-pools
-                          value)
+                          value
+                          false)
                         operands
                         capture-expr-types
                         call-expr))]
@@ -87503,6 +88650,17 @@
     [_call-expr : ast.AstExpr]) : MacroNativeStdlibTlciResult
     MacroNativeStdlibTlciResult.No))
 
+(define (macro-result-provenance-reset-with-captured-body!
+  [captured-body? : bool]) : unit
+  (begin
+    (ctfe_support.ctfe-result-macro-provenance-reset!)
+    ;; A transformer can splice a captured operand without reconstructing its
+    ;; call nodes. Preserve that input provenance so a nested macro is rewalked
+    ;; in the lexical environment introduced by the generated syntax.
+    (if captured-body?
+      (ctfe_support.ctfe-result-may-contain-macro-note!)
+      unit)))
+
 (defenum MacroDirectStdlibTlciResult
   (No)
   (BoundFallback)
@@ -87623,7 +88781,13 @@
                     syntax-pools)
                   (begin
                     (ctfe_support.ctfe-result-hygiene-free-reset!)
-                    (ctfe_support.ctfe-result-macro-provenance-reset!)
+                    (macro-result-provenance-reset-with-captured-body!
+                      (macro-binding-prefix-transformer?
+                        ctx
+                        fallback-module
+                        fallback-module-id
+                        macro-name-id
+                        params))
                     (macro-hygiene-produced-eval-start-with-pools! syntax-pools)
                     (cfg
                       compile-profile
@@ -87694,7 +88858,9 @@
                               params
                               operands
                               count
-                              base-env)))]
+                              (ctfe_support.ctfe-env-rebase-syntax-pools
+                                base-env
+                                syntax-pools))))]
                       [(MacroNativeStdlibTlciResult.No)
                         (begin
                           (macro-note-stdlib-tlci-resolved-fallback!)
@@ -87756,12 +88922,13 @@
   ;; lint-allow: unused-variable -- used by compile-profile builds.
   [macro-name : String]
   [body : ast.AstExpr]
+  [captured-body? : bool]
   ;; lint-allow: unused-variable -- used by compile-profile builds.
   [expanded-args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]) : ResultMacroValueEnv
   (begin
     (ctfe_support.ctfe-result-hygiene-free-reset!)
-    (ctfe_support.ctfe-result-macro-provenance-reset!)
+    (macro-result-provenance-reset-with-captured-body! captured-body?)
     (macro-hygiene-produced-eval-start! env)
     (cfg compile-profile (compiler-tc-macro-profile-start))
     (match (ctfe_support.ctfe-eval-node
@@ -87855,7 +89022,13 @@
         ;; native dispatch as well as before an interpreted fallback so an
         ;; earlier expansion cannot leak either marker into this result.
         (ctfe_support.ctfe-result-hygiene-free-reset!)
-        (ctfe_support.ctfe-result-macro-provenance-reset!)
+        (macro-result-provenance-reset-with-captured-body!
+          (macro-binding-prefix-transformer?
+            ctx
+            fallback-module
+            fallback-module-id
+            macro-name-id
+            params))
         (macro-hygiene-produced-eval-start! env)
         (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
         (cfg compile-profile (compiler-tc-macro-profile-start))
@@ -87900,6 +89073,12 @@
                 macro-name-id
                 macro-name
                 body
+                (macro-binding-prefix-transformer?
+                  ctx
+                  fallback-module
+                  fallback-module-id
+                  macro-name-id
+                  params)
                 expanded-args
                 env))]
           [(MacroNativeStdlibTlciResult.Shell)
@@ -87911,6 +89090,12 @@
                 macro-name-id
                 macro-name
                 body
+                (macro-binding-prefix-transformer?
+                  ctx
+                  fallback-module
+                  fallback-module-id
+                  macro-name-id
+                  params)
                 expanded-args
                 env))]))]
     [(ResultMacroEnv.Err diag) (ResultMacroValueEnv.Err diag)]))
@@ -87953,6 +89138,12 @@
           macro-name-id
           macro-name
           body
+          (macro-binding-prefix-transformer?
+            ctx
+            fallback-module
+            fallback-module-id
+            macro-name-id
+            params)
           expanded-args
           env)
           [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
@@ -87976,6 +89167,12 @@
               macro-name-id
               macro-name
               body
+              (macro-binding-prefix-transformer?
+                ctx
+                fallback-module
+                fallback-module-id
+                macro-name-id
+                params)
               expanded-args
               env)
               [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
@@ -87998,6 +89195,158 @@
           [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
           [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)])])))
 
+(define (macro-binding-prefix-form? [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan expr)
+    [(ast.AstExpr.BracketClause _) true]
+    [_ false]))
+
+(define (macro-expand-binding-prefix-items
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [items : ast.AstExprList]) : ResultMacroExpr
+  (let
+    [len : i64 (struct-get (& items) len)]
+    (if (<= len 1)
+      (ResultMacroExpr.Ok (ast.ast-expr-bracket-clause items))
+      (match (macro-expand-node
+        ctx
+        type-env
+        decls
+        depth
+        (ast.ast-expr-list-get (& items) (- len 1) 0))
+        [(ResultMacroExpr.Ok ninit)
+          (let
+            [out : ast.AstExprList (ast.ast-expr-list-with-capacity len)]
+            [index : i64 0]
+            (begin
+              (while (< index (- len 1))
+                (begin
+                  (ast.ast-expr-list-push
+                    (&mut out)
+                    (ast.ast-expr-list-get (& items) index 0))
+                  (set! index (+ index 1))))
+              (ast.ast-expr-list-push (&mut out) ninit)
+              (ResultMacroExpr.Ok (ast.ast-expr-bracket-clause out))))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))))
+
+(define (macro-expand-binding-prefix-form
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [expr : ast.AstExpr]) : ResultMacroExpr
+  (match expr
+    [(ast.AstExpr.Spanned inner span)
+      (match (macro-expand-binding-prefix-form
+        ctx
+        type-env
+        decls
+        depth
+        (ast.ast-node-get inner))
+        [(ResultMacroExpr.Ok ninner)
+          (ResultMacroExpr.Ok (ast.ast-expr-spanned ninner span))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.BracketClause items)
+      (macro-expand-binding-prefix-items ctx type-env decls depth items)]
+    [_
+      (ResultMacroExpr.Err
+        (box
+          (ctfe_support.ctfe-diagnostic-at-expr
+            expr
+            "typecheck: expected binding clause")))]))
+
+(define (macro-expand-binding-prefix-args-into
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [args : (& args ast.AstExprList)]
+  [index : i64]
+  [out : (&mut out ast.AstExprList)]) : ResultMacroCheck
+  (if (>= index (struct-get args len))
+    ResultMacroCheck.Ok
+    (let
+      [head-id : i64 (ast.ast-expr-list-get args index 0)]
+      [head : ast.AstExpr (ast.ast-node-get head-id)]
+      (if (macro-binding-prefix-form? head)
+        (match (macro-expand-binding-prefix-form ctx type-env decls depth head)
+          [(ResultMacroExpr.Ok nhead)
+            (begin
+              (ast.ast-expr-list-push out nhead)
+              (macro-expand-binding-prefix-args-into
+                ctx
+                type-env
+                decls
+                depth
+                args
+                (+ index 1)
+                out))]
+          [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])
+        (begin
+          ;; The remaining Expr operands are captured syntax. They must be
+          ;; expanded after the binding transformer introduces their lexical
+          ;; scope, not as arguments to the transformer itself.
+          (ast.ast-expr-list-append-from out args index)
+          ResultMacroCheck.Ok)))))
+
+(define (macro-expand-binding-prefix-args
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [args : ast.AstExprList]) : ResultMacroExprList
+  (let
+    [out : ast.AstExprList
+      (ast.ast-expr-list-with-capacity (struct-get (& args) len))]
+    (match (macro-expand-binding-prefix-args-into
+      ctx
+      type-env
+      decls
+      depth
+      (& args)
+      0
+      (&mut out))
+      [(ResultMacroCheck.Ok) (ResultMacroExprList.Ok out)]
+      [(ResultMacroCheck.Err diag) (ResultMacroExprList.Err diag)])))
+
+(define (macro-binding-prefix-transformer?
+  [ctx : TcContext]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [macro-name-id : i64]
+  [params : ast.AstMacroParamList]) : bool
+  (if (or
+    (not (string.eq (ci.intern-str macro-name-id) "for"))
+    (not (= (ast.ast-macro-param-list-len (& params)) 2)))
+    false
+    (match (ast.ast-macro-param-list-get
+      (& params)
+      0
+      (ast.ast-macro-param-fallback))
+      [(ast.AstMacroParam.Param _ binding-ty binding-variadic _)
+        (match (ast.ast-macro-param-list-get
+          (& params)
+          1
+          (ast.ast-macro-param-fallback))
+          [(ast.AstMacroParam.Param _ body-ty body-variadic _)
+            (and
+              binding-variadic
+              body-variadic
+              (macro-param-expr-binding-clause?
+                ctx
+                fallback-module
+                fallback-module-id
+                binding-ty)
+              (tc-type-eq
+                (macro-resolve-signature-type-id
+                  ctx
+                  fallback-module
+                  fallback-module-id
+                  body-ty)
+                (ast.AstType.Expr)))])])))
+
 (define (macro-eval-transformer
   [ctx : TcContext]
   [type-env : TcTypeEnv]
@@ -88012,11 +89361,19 @@
   [args : ast.AstExprList]
   [depth : i64]
   [call-expr : ast.AstExpr]) : ResultMacroValue
-  ;; Expand the operands first so a macro call passed as an argument (e.g. a
-  ;; nested `str_cat.str-cat`) is reduced to a plain expression before it is typechecked
-  ;; and bound; otherwise the operand typecheck sees the inner macro name as an
-  ;; unbound value.
-  (match (macro-expand-exprs ctx type-env decls depth args)
+  ;; Expand ordinary operands first so a macro call passed as an argument (e.g.
+  ;; a nested `str_cat.str-cat`) is reduced before it is typechecked. A
+  ;; binding-prefix transformer is different: only its clause initializers are
+  ;; in the caller's current scope; captured Expr bodies are expanded after the
+  ;; transformer introduces their binders.
+  (match (if (macro-binding-prefix-transformer?
+    ctx
+    fallback-module
+    fallback-module-id
+    macro-name-id
+    params)
+    (macro-expand-binding-prefix-args ctx type-env decls depth args)
+    (macro-expand-exprs ctx type-env decls depth args))
     [(ResultMacroExprList.Ok expanded-args)
       (macro-eval-transformer-expanded
         ctx
@@ -89370,6 +90727,92 @@
               (ResultMacroExpr.Ok (ast.ast-expr-while ncond nbody))]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        [source : i64 (ast.ast-for-owned-state-source (& payload))]
+        [body : i64 (ast.ast-for-owned-state-body (& payload))]
+        (match (macro-expand-node ctx env decls depth source)
+          [(ResultMacroExpr.Ok nsource)
+            (match (tc-expr-id ctx env nsource)
+              [(ResultTcType.Ok source-ty)
+                (let
+                  [source-name-id : i64
+                    (tc-for-owned-name-id
+                      (tc-context-expr-bases ctx)
+                      source-name)]
+                  [index-name-id : i64
+                    (tc-for-owned-name-id
+                      (tc-context-expr-bases ctx)
+                      index-name)]
+                  [body-env : TcTypeEnv
+                    (if (or (< source-name-id 0) (< index-name-id 0))
+                      env
+                      (tc-bind-id
+                        (tc-bind-id env source-name-id source-ty)
+                        index-name-id
+                        (ast.AstType.I64)))]
+                  (match (macro-expand-node ctx body-env decls depth body)
+                    [(ResultMacroExpr.Ok nbody)
+                      (ResultMacroExpr.Ok
+                        (ast.ast-expr-for-owned-state
+                          source-name
+                          index-name
+                          nsource
+                          nbody))]
+                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+              [(ResultTcType.Err message)
+                (ResultMacroExpr.Err
+                  (box (tc-expr-diag (ast.ast-node-get nsource) message)))])]
+          [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        [binding-name-id : i64
+          (tc-for-owned-name-id (tc-context-expr-bases ctx) binding-name)]
+        (match (tc-expr-id ctx env source-name)
+          [(ResultTcType.Ok source-ty)
+            (match (tc-type-strip-region (tc-resolve-type ctx source-ty))
+              [(ast.AstType.Array elem-id _)
+                (let
+                  [body-env : TcTypeEnv
+                    (if (< binding-name-id 0)
+                      env
+                      (tc-bind-id
+                        env
+                        binding-name-id
+                        (tc-context-type-get ctx elem-id)))]
+                  (match (if (>= expected-type 0)
+                    (macro-expand-node ctx env decls depth expected-type)
+                    (ResultMacroExpr.Ok -1))
+                    [(ResultMacroExpr.Ok nexpected)
+                      (match (macro-expand-node ctx body-env decls depth body)
+                        [(ResultMacroExpr.Ok nbody)
+                          (ResultMacroExpr.Ok
+                            (ast.ast-expr-for-owned-step
+                              source-name
+                              index-name
+                              binding-name
+                              nexpected
+                              done-name
+                              nbody))]
+                        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+              [_
+                (ResultMacroExpr.Err
+                  (box
+                    (tc-expr-diag
+                      (ast.ast-node-get source-name)
+                      "typecheck: scalar for owned step requires fixed-array state")))])]
+          [(ResultTcType.Err message)
+            (ResultMacroExpr.Err
+              (box (tc-expr-diag (ast.ast-node-get source-name) message)))]))]
     [(ast.AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
@@ -92059,6 +93502,33 @@
           (ast.ast-expr-segment-bases-get expr-bases body-box)]
         (or
           (macro-expr-might-fire? expr-bases cond)
+          (macro-expr-might-fire? expr-bases body)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source : ast.AstExpr
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-for-owned-state-source (& payload)))]
+        [body : ast.AstExpr
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-for-owned-state-body (& payload)))]
+        (or
+          (macro-expr-might-fire? expr-bases source)
+          (macro-expr-might-fire? expr-bases body)))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [body : ast.AstExpr
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-for-owned-step-body (& payload)))]
+        (or
+          (if (>= expected-type 0)
+            (macro-expr-might-fire?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases expected-type))
+            false)
           (macro-expr-might-fire? expr-bases body)))]
     [(ast.AstExpr.Begin exprs) (macro-expr-list-might-fire? expr-bases exprs)]
     [(ast.AstExpr.Unsafe exprs) (macro-expr-list-might-fire? expr-bases exprs)]

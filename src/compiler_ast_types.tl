@@ -774,7 +774,19 @@
   ;; directly to a `syscall` instruction: the number plus up to six arguments.
   ;; Returns the raw kernel result in an i64 (negative is `-errno`); callers
   ;; translate errno.
-  (Syscall AstExprList))
+  (Syscall AstExprList)
+  ;; Private scalar-`for` planners stay append-only so self-hosted enum tag
+  ;; ordinals for every established surface expression remain stable.
+  ;; Every name operand is an expression so quasiquote can substitute a fresh
+  ;; hygienic variable before the checker validates the final shape. Step's
+  ;; optional item annotation is a type-syntax expression id; -1 means inferred.
+  ;; Keep these payloads in the already-established AstExprList family. Four or
+  ;; six inline i64 fields would exceed the pool's pinned 32-byte AstExpr stride,
+  ;; while adding compiler-private nominal payload types to the public AST's
+  ;; clone graph makes surface pruning retain unrelated helper families during
+  ;; self-hosting.
+  (ForOwnedState AstExprList)
+  (ForOwnedStep AstExprList))
 
 ;; Tuple-place writes reuse `StructSet` internally so the public place syntax
 ;; can land without changing the serialized AstExpr ABI. Interned struct field
@@ -5439,6 +5451,99 @@
 (define (ast-expr-while [cond : i64] [body : i64]) : i64
   (ast-node-push (AstExpr.While cond body)))
 
+(define (ast-for-owned-state-payload
+  [source-name : i64]
+  [index-name : i64]
+  [source : i64]
+  [body : i64]) : AstExprList
+  (let
+    [fields : AstExprList (ast-expr-list-with-capacity 4)]
+    (begin
+      (ast-expr-list-push (&mut fields) source-name)
+      (ast-expr-list-push (&mut fields) index-name)
+      (ast-expr-list-push (&mut fields) source)
+      (ast-expr-list-push (&mut fields) body)
+      fields)))
+
+(define (ast-for-owned-step-payload
+  [source-name : i64]
+  [index-name : i64]
+  [binding-name : i64]
+  [expected-type : i64]
+  [done-name : i64]
+  [body : i64]) : AstExprList
+  (let
+    [fields : AstExprList (ast-expr-list-with-capacity 6)]
+    (begin
+      (ast-expr-list-push (&mut fields) source-name)
+      (ast-expr-list-push (&mut fields) index-name)
+      (ast-expr-list-push (&mut fields) binding-name)
+      (ast-expr-list-push (&mut fields) expected-type)
+      (ast-expr-list-push (&mut fields) done-name)
+      (ast-expr-list-push (&mut fields) body)
+      fields)))
+
+(define (ast-for-owned-payload-get
+  [payload : (& payload AstExprList)]
+  [index : i64]) : i64
+  (ast-expr-list-get payload index -1))
+
+(define (ast-for-owned-state-source-name [payload : (& payload AstExprList)]) : i64
+  (ast-for-owned-payload-get payload 0))
+
+(define (ast-for-owned-state-index-name [payload : (& payload AstExprList)]) : i64
+  (ast-for-owned-payload-get payload 1))
+
+(define (ast-for-owned-state-source [payload : (& payload AstExprList)]) : i64
+  (ast-for-owned-payload-get payload 2))
+
+(define (ast-for-owned-state-body [payload : (& payload AstExprList)]) : i64
+  (ast-for-owned-payload-get payload 3))
+
+(define (ast-for-owned-step-source-name [payload : (& payload AstExprList)]) : i64
+  (ast-for-owned-payload-get payload 0))
+
+(define (ast-for-owned-step-index-name [payload : (& payload AstExprList)]) : i64
+  (ast-for-owned-payload-get payload 1))
+
+(define (ast-for-owned-step-binding-name [payload : (& payload AstExprList)]) : i64
+  (ast-for-owned-payload-get payload 2))
+
+(define (ast-for-owned-step-expected-type [payload : (& payload AstExprList)]) : i64
+  (ast-for-owned-payload-get payload 3))
+
+(define (ast-for-owned-step-done-name [payload : (& payload AstExprList)]) : i64
+  (ast-for-owned-payload-get payload 4))
+
+(define (ast-for-owned-step-body [payload : (& payload AstExprList)]) : i64
+  (ast-for-owned-payload-get payload 5))
+
+(define (ast-expr-for-owned-state
+  [source-name : i64]
+  [index-name : i64]
+  [source : i64]
+  [body : i64]) : i64
+  (ast-node-push
+    (AstExpr.ForOwnedState
+      (ast-for-owned-state-payload source-name index-name source body))))
+
+(define (ast-expr-for-owned-step
+  [source-name : i64]
+  [index-name : i64]
+  [binding-name : i64]
+  [expected-type : i64]
+  [done-name : i64]
+  [body : i64]) : i64
+  (ast-node-push
+    (AstExpr.ForOwnedStep
+      (ast-for-owned-step-payload
+        source-name
+        index-name
+        binding-name
+        expected-type
+        done-name
+        body))))
+
 (define (ast-expr-set-id [name : i64] [value : i64]) : i64
   (ast-node-push (AstExpr.Set name value)))
 
@@ -5783,6 +5888,36 @@
   [cond : i64]
   [body : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.While cond body)))
+
+(define (ast-expr-for-owned-state-with-pools
+  [pools : AstNodePoolContext]
+  [source-name : i64]
+  [index-name : i64]
+  [source : i64]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.ForOwnedState
+      (ast-for-owned-state-payload source-name index-name source body))))
+
+(define (ast-expr-for-owned-step-with-pools
+  [pools : AstNodePoolContext]
+  [source-name : i64]
+  [index-name : i64]
+  [binding-name : i64]
+  [expected-type : i64]
+  [done-name : i64]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.ForOwnedStep
+      (ast-for-owned-step-payload
+        source-name
+        index-name
+        binding-name
+        expected-type
+        done-name
+        body))))
 
 (define (ast-expr-set-id-with-pools
   [pools : AstNodePoolContext]
@@ -7083,7 +7218,7 @@
 ;; a visited set (1 = already persisted), which is what stops a shared subgraph
 ;; from being walked, or re-entered, twice.
 ;;
-;; LOAD-BEARING: both `ast-compaction-remap-expr` (79 arms for 79 `AstExpr`
+;; LOAD-BEARING: both `ast-compaction-remap-expr` (82 arms for 82 `AstExpr`
 ;; variants) and `ast-compaction-remap-decl` (18 for 18) are EXHAUSTIVE matches
 ;; with NO catch-all arm, and persist mode inherits that property because it
 ;; reuses those two walks rather than duplicating them. A new variant added to
@@ -7887,6 +8022,44 @@
       (AstExpr.While
         (ast-compaction-remap-expr-id remap cond)
         (ast-compaction-remap-expr-id remap body))]
+    [(AstExpr.ForOwnedState payload)
+      (AstExpr.ForOwnedState
+        (ast-for-owned-state-payload
+          (ast-compaction-remap-expr-id
+            remap
+            (ast-for-owned-state-source-name (& payload)))
+          (ast-compaction-remap-expr-id
+            remap
+            (ast-for-owned-state-index-name (& payload)))
+          (ast-compaction-remap-expr-id
+            remap
+            (ast-for-owned-state-source (& payload)))
+          (ast-compaction-remap-expr-id
+            remap
+            (ast-for-owned-state-body (& payload)))))]
+    [(AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast-for-owned-step-expected-type (& payload))]
+        (AstExpr.ForOwnedStep
+          (ast-for-owned-step-payload
+            (ast-compaction-remap-expr-id
+              remap
+              (ast-for-owned-step-source-name (& payload)))
+            (ast-compaction-remap-expr-id
+              remap
+              (ast-for-owned-step-index-name (& payload)))
+            (ast-compaction-remap-expr-id
+              remap
+              (ast-for-owned-step-binding-name (& payload)))
+            (if (< expected-type 0)
+              expected-type
+              (ast-compaction-remap-expr-id remap expected-type))
+            (ast-compaction-remap-expr-id
+              remap
+              (ast-for-owned-step-done-name (& payload)))
+            (ast-compaction-remap-expr-id
+              remap
+              (ast-for-owned-step-body (& payload))))))]
     [(AstExpr.Begin exprs)
       (AstExpr.Begin (ast-compaction-remap-expr-list remap exprs))]
     [(AstExpr.Unsafe exprs)
@@ -8503,6 +8676,8 @@
     [(AstExpr.ArrayPush _ _) 41]
     [(AstExpr.StringRef _ _) 16]
     [(AstExpr.While _ _) 17]
+    [(AstExpr.ForOwnedState _) 77]
+    [(AstExpr.ForOwnedStep _) 78]
     [(AstExpr.Begin _) 18]
     [(AstExpr.Unsafe _) 32]
     [(AstExpr.Set _ _) 19]

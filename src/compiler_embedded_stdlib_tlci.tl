@@ -2370,6 +2370,63 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+;; expr-ann: pop the type value then the operand expression and preserve the
+;; annotation node produced by `(ann e : T)`.
+(define (compiler-comptime-host-callback-expr-ann
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 2)
+            tlci.tlci-host-callback-status-bad-request
+            (let
+              [type-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 1))]
+              [value-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 2))]
+              [value-node : i64 (compiler-comptime-host-value-node value-value)]
+              (if (< value-node 0)
+                tlci.tlci-host-callback-status-bad-request
+                (match type-value
+                  [(ctfe_support.CompilerCtfeValue.Type ty)
+                    (begin
+                      (set!
+                        compiler-comptime-host-stack-len
+                        (- compiler-comptime-host-stack-len 2))
+                      (compiler-comptime-host-push!
+                        (ctfe_support.CompilerCtfeValue.Expr
+                          (ast.ast-expr-ann-with-pools
+                            (array-ref
+                              (compiler-comptime-host-global-shared-view
+                                compiler-comptime-host-pools)
+                              0)
+                            value-node
+                            ty)
+                          (ast.AstType.Expr))))]
+                  [_ tlci.tlci-host-callback-status-bad-request]))))]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 ;; expr-init: pop a type value and push the typed `(init : T)` node produced by
 ;; the parser. Contextual `(init)` remains outside the native template subset.
 (define (compiler-comptime-host-callback-expr-init
@@ -6922,6 +6979,126 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+(define (compiler-comptime-host-stack-expr-node [index : i64]) : i64
+  (if (or (< index 0) (>= index compiler-comptime-host-stack-len))
+    -1
+    (compiler-comptime-host-value-node
+      (array-ref
+        (compiler-comptime-host-global-shared-view compiler-comptime-host-stack)
+        index))))
+
+(define (compiler-comptime-host-build-expr-for-owned! [mode : i64]) : i64
+  (let
+    [count : i64
+      (match mode
+        [0 4]
+        [1 5]
+        [2 6]
+        [_ -1])]
+    [base : i64 (- compiler-comptime-host-stack-len count)]
+    (if (or (< count 0) (< base 0))
+      tlci.tlci-host-callback-status-bad-request
+      (let
+        [node0 : i64 (compiler-comptime-host-stack-expr-node base)]
+        [node1 : i64 (compiler-comptime-host-stack-expr-node (+ base 1))]
+        [node2 : i64 (compiler-comptime-host-stack-expr-node (+ base 2))]
+        [node3 : i64 (compiler-comptime-host-stack-expr-node (+ base 3))]
+        [node4 : i64
+          (if (>= count 5)
+            (compiler-comptime-host-stack-expr-node (+ base 4))
+            -1)]
+        [node5 : i64
+          (if (= count 6)
+            (compiler-comptime-host-stack-expr-node (+ base 5))
+            -1)]
+        [valid? : bool
+          (match mode
+            [0 (and (>= node0 0) (>= node1 0) (>= node2 0) (>= node3 0))]
+            [1
+              (and
+                (>= node0 0)
+                (>= node1 0)
+                (>= node2 0)
+                (>= node3 0)
+                (>= node4 0))]
+            [2
+              (and
+                (>= node0 0)
+                (>= node1 0)
+                (>= node2 0)
+                (>= node3 0)
+                (>= node4 0)
+                (>= node5 0))]
+            [_ false])]
+        (if (not valid?)
+          tlci.tlci-host-callback-status-bad-request
+          (let
+            [built : i64
+              (match mode
+                [0
+                  (ast.ast-expr-for-owned-state-with-pools
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)
+                    node0
+                    node1
+                    node2
+                    node3)]
+                [1
+                  (ast.ast-expr-for-owned-step-with-pools
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)
+                    node0
+                    node1
+                    node2
+                    -1
+                    node3
+                    node4)]
+                [2
+                  (ast.ast-expr-for-owned-step-with-pools
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)
+                    node0
+                    node1
+                    node2
+                    node3
+                    node4
+                    node5)]
+                [_ -1])]
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len count))
+              (compiler-comptime-host-push!
+                (ctfe_support.CompilerCtfeValue.Expr built (ast.AstType.Expr))))))))))
+
+(define (compiler-comptime-host-callback-expr-for-owned
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64 (compiler-comptime-host-build-expr-for-owned! arg-a)]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 (define (compiler-comptime-host-callback-expr-not
   [session : i64]
   [_arg-a : i64]
@@ -7649,6 +7826,11 @@
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-ann)
+        compiler-comptime-host-callback-expr-ann)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-init)
         compiler-comptime-host-callback-expr-init)
       (compiler-comptime-host-registry-add!
@@ -8231,6 +8413,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-let-scope)
         compiler-comptime-host-callback-expr-let-scope)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-for-owned)
+        compiler-comptime-host-callback-expr-for-owned)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

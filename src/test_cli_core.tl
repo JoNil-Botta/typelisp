@@ -1643,6 +1643,32 @@
         [cond : ast.AstExpr (ast.ast-node-get cond-box)]
         [body : ast.AstExpr (ast.ast-node-get body-box)]
         (tltest-reach-mark-expr body (tltest-reach-mark-expr cond names)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (tltest-reach-mark-expr
+        (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
+        (tltest-reach-mark-expr
+          (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
+          names))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-box : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-box : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-box : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body-box : i64 (ast.ast-for-owned-step-body (& payload))]
+        (tltest-reach-mark-expr
+          (ast.ast-node-get body-box)
+          (tltest-reach-mark-expr
+            (ast.ast-node-get done-box)
+            (if (>= expected-type 0)
+              (tltest-reach-mark-expr
+                (ast.ast-node-get expected-type)
+                (tltest-reach-mark-expr
+                  (ast.ast-node-get index-box)
+                  (tltest-reach-mark-expr (ast.ast-node-get source-box) names)))
+              (tltest-reach-mark-expr
+                (ast.ast-node-get index-box)
+                (tltest-reach-mark-expr (ast.ast-node-get source-box) names))))))]
     [(ast.AstExpr.Begin exprs) (tltest-reach-mark-expr-list exprs names)]
     [(ast.AstExpr.Unsafe exprs) (tltest-reach-mark-expr-list exprs names)]
     [(ast.AstExpr.Set name value-box)

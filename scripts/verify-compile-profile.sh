@@ -1128,6 +1128,10 @@ fi
 # typecheck boundary, but its shallow-view cleanup plus #6362's dead-definition
 # removal brought the authoritative Windows probe back to 31 segments: 2,018,603
 # used nodes, 2,031,616 capacity, and 65,011,712 physical payload bytes.
+# #6236's scalar fixed-array/native-slice `for` support, reconciled with #6369,
+# crossed that boundary from 31 to 32 segments: the authoritative Windows probe
+# measured 2,034,470 used nodes, 2,097,152 capacity, and 67,108,864 physical
+# payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1164,7 +1168,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 52 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 31 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \

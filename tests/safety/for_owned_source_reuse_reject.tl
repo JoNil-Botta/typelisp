@@ -1,9 +1,11 @@
-(import stdlib.vector)
-(import (vector.vector i64) as vec)
+(import stdlib.string)
 
 (define (main) : i64
   (let
-    [values : vec.Vec (vec.new)]
+    [items : (Array String 2) (array "a" "bc")]
+    [total : i64 0]
     (begin
-      (for [item : i64 values] unit)
-      (vec.len (& values)))))
+      (for
+        [item : String items]
+        (set! total (+ total (string.string-length item))))
+      (+ total (string.string-length (array-ref items 0))))))

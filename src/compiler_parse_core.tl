@@ -1453,6 +1453,15 @@
 (define (compiler-parse-tag-expr-fixed-array-take) : i64
   305)
 
+(define (compiler-parse-tag-expr-for-owned-state) : i64
+  306)
+
+(define (compiler-parse-tag-expr-for-owned-step) : i64
+  307)
+
+(define (compiler-parse-tag-expr-for-owned-step-typed) : i64
+  308)
+
 (define (compiler-parse-tag-expr-match) : i64
   244)
 
@@ -2188,6 +2197,24 @@
           out
           "__tl_array-take!"
           (compiler-parse-tag-expr-array-take)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "__tl_for-owned-state"
+          (compiler-parse-tag-expr-for-owned-state)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "__tl_for-owned-step"
+          (compiler-parse-tag-expr-for-owned-step)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "__tl_for-owned-step-typed"
+          (compiler-parse-tag-expr-for-owned-step-typed)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -5495,6 +5522,64 @@
         [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
     [_ (ResultAstExpr.Err "parse: malformed array-take!")]))
 
+(define (parse-ast-for-owned-state
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-expr-list dispatch pools rest)
+    [(ResultAstExprList.Ok args)
+      (if (= (struct-get (& args) len) 4)
+        (ResultAstExpr.Ok
+          (ast.ast-expr-for-owned-state-with-pools
+            pools
+            (ast.ast-expr-list-get (& args) 0 0)
+            (ast.ast-expr-list-get (& args) 1 0)
+            (ast.ast-expr-list-get (& args) 2 0)
+            (ast.ast-expr-list-get (& args) 3 0)))
+        (ResultAstExpr.Err
+          "parse: __tl_for-owned-state expects exactly four operands"))]
+    [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
+
+(define (parse-ast-for-owned-step
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [typed : bool]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-expr-list dispatch pools rest)
+    [(ResultAstExprList.Ok args)
+      (let
+        [expected-count : i64
+          (if typed
+            6
+            5)]
+        (if (= (struct-get (& args) len) expected-count)
+          (ResultAstExpr.Ok
+            (ast.ast-expr-for-owned-step-with-pools
+              pools
+              (ast.ast-expr-list-get (& args) 0 0)
+              (ast.ast-expr-list-get (& args) 1 0)
+              (ast.ast-expr-list-get (& args) 2 0)
+              (if typed
+                (ast.ast-expr-list-get (& args) 3 0)
+                -1)
+              (ast.ast-expr-list-get
+                (& args)
+                (if typed
+                  4
+                  3)
+                0)
+              (ast.ast-expr-list-get
+                (& args)
+                (if typed
+                  5
+                  4)
+                0)))
+          (ResultAstExpr.Err
+            (if typed
+              "parse: __tl_for-owned-step-typed expects exactly six operands"
+              "parse: __tl_for-owned-step expects exactly five operands"))))]
+    [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
+
 (define (parse-ast-borrow
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -7045,6 +7130,12 @@
       (parse-ast-private-array-take dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-fixed-array-take))
       (parse-ast-fixed-array-take dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-for-owned-state))
+      (parse-ast-for-owned-state dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-for-owned-step))
+      (parse-ast-for-owned-step dispatch pools false rest)]
+    [(= tag (compiler-parse-tag-expr-for-owned-step-typed))
+      (parse-ast-for-owned-step dispatch pools true rest)]
     [(= tag (compiler-parse-tag-expr-match))
       (parse-ast-match dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-foreach))

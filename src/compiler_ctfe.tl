@@ -582,6 +582,10 @@
         (ctfe-builtin-ref 277)
         (ctfe-builtin-ref 278))
       (= name-id (ctfe-builtin-ref 279))
+      (ctfe-builtin-id-any2?
+        name-id
+        (ctfe-builtin-ref 282)
+        (ctfe-builtin-ref 283))
       (ctfe-builtin-source-helper-id? name-id)
       (ctfe-builtin-expr-clause-list-inspector-id? name-id)
       (ctfe-builtin-expr-binding-clause-list-inspector-id? name-id))))
@@ -1408,6 +1412,27 @@
           (struct-get metadata reflections)
           (struct-get metadata source-names))))))
 
+;; Binding-clause syntax values predate the pool-bearing CapturedExpr variants.
+;; For the stdlib binding-prefix transformer, their child IDs come from a newer
+;; snapshot of the definition/caller pool. Keep that pool both as the evaluator's
+;; read view and as syntax-construction provenance so the produced root carries
+;; it back through macro expansion. Callers must not pass an unrelated pool.
+(define (ctfe-env-rebase-syntax-pools
+  [env : CtfeEnv]
+  [pools : ast.AstNodePoolContext]) : CtfeEnv
+  (let
+    [metadata : CtfeEnvMetadata (box-get (struct-get env metadata))]
+    (CtfeEnv
+      (struct-get env arena-store)
+      (struct-get env head)
+      (CtfeMaybeSyntaxPools.Some pools)
+      (box
+        (CtfeEnvMetadata
+          pools
+          (struct-get metadata layouts)
+          (struct-get metadata reflections)
+          (struct-get metadata source-names))))))
+
 (define (ctfe-ast-get [env : CtfeEnv] [id : i64]) : ast.AstExpr
   (ast.ast-node-pool-context-expr-get (ctfe-env-pools env) id))
 
@@ -2147,6 +2172,8 @@
     [(ast.AstExpr.ArrayPush _ _) "array-push!"]
     [(ast.AstExpr.StringRef _ _) "string-ref"]
     [(ast.AstExpr.While _ _) "while"]
+    [(ast.AstExpr.ForOwnedState _) "scalar for owned-array state"]
+    [(ast.AstExpr.ForOwnedStep _) "scalar for owned-array step"]
     [(ast.AstExpr.Begin _) "begin"]
     [(ast.AstExpr.Unsafe _) "unsafe"]
     [(ast.AstExpr.Set _ _) "set!"]
@@ -6236,9 +6263,11 @@
           expr
           "expr-struct-set expects exactly three args")))))
 
-;; `(expr-mut-borrow place)` builds an explicit inferred-lifetime `(&mut place)`
-;; syntax node. The generated program owns the ordinary place and borrow checks.
-(define (ctfe-eval-expr-mut-borrow-call
+;; `expr-borrow` and `expr-mut-borrow` build explicit inferred-lifetime borrow
+;; syntax nodes. The generated program owns the ordinary place and borrow checks.
+(define (ctfe-eval-expr-borrow-call
+  [mutable : bool]
+  [builder-name : String]
   [args : ast.AstExprList]
   [expr : ast.AstExpr]
   [env : CtfeEnv]
@@ -6256,18 +6285,68 @@
                   env
                   (ast.ast-expr-borrow-with-pools
                     (ctfe-env-syntax-pool-context env)
-                    true
+                    mutable
                     ast.AstBorrowLifetime.Inferred
                     place-node)
                   (ctfe-untyped-expr-type))
                 place-fuel)
               (ResultCtfe.Err
                 (box
-                  (ctfe-diagnostic-at-expr expr "expr-mut-borrow expects Expr")))))]
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    (string.append builder-name " expects Expr"))))))]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box
-        (ctfe-diagnostic-at-expr expr "expr-mut-borrow expects exactly one arg")))))
+        (ctfe-diagnostic-at-expr
+          expr
+          (string.append builder-name " expects exactly one arg"))))))
+
+;; `(expr-array-ref target index)` builds an ordinary checked array-reference
+;; syntax node without attaching the macro implementation's source location.
+(define (ctfe-eval-expr-array-ref-call
+  [args : ast.AstExprList]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [target-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
+      [index-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
+      (match (compiler-ctfe-eval target-arg env fuel)
+        [(ResultCtfe.Ok target-value target-fuel)
+          (let
+            [target-node : i64 (ctfe-syntax-expr-value-node target-value)]
+            (if (>= target-node 0)
+              (match (compiler-ctfe-eval index-arg env target-fuel)
+                [(ResultCtfe.Ok index-value index-fuel)
+                  (let
+                    [index-node : i64 (ctfe-syntax-expr-value-node index-value)]
+                    (if (>= index-node 0)
+                      (ResultCtfe.Ok
+                        (ctfe-syntax-expr-value
+                          env
+                          (ast.ast-expr-array-ref-with-pools
+                            (ctfe-env-pools env)
+                            target-node
+                            index-node)
+                          (ctfe-untyped-expr-type))
+                        index-fuel)
+                      (ResultCtfe.Err
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "expr-array-ref index expects Expr")))))]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "expr-array-ref target expects Expr")))))]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr expr "expr-array-ref expects exactly two args")))))
 
 ;; Build the ordered, persistent syntax-list values used by expression calls.
 (define (ctfe-eval-expr-list-empty-call
@@ -7940,6 +8019,104 @@
           expr
           "expr-resource-scope expects exactly five args")))))
 
+(define (ctfe-eval-syntax-expr-args
+  [args : ast.AstExprList]
+  [index : i64]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [builder-name : String]) : ResultCtfeQuoteExprList
+  (if (>= index (ctfe-expr-arg-count args))
+    (ResultCtfeQuoteExprList.Ok (ast.ast-expr-list-new) fuel)
+    (match (compiler-ctfe-eval (ctfe-expr-arg args index env) env fuel)
+      [(ResultCtfe.Ok value value-fuel)
+        (let
+          [node : i64 (ctfe-syntax-expr-value-node value)]
+          (if (< node 0)
+            (ResultCtfeQuoteExprList.Err
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  (string.append builder-name " expects Expr arguments"))))
+            (match (ctfe-eval-syntax-expr-args
+              args
+              (+ index 1)
+              expr
+              env
+              value-fuel
+              builder-name)
+              [(ResultCtfeQuoteExprList.Ok rest next-fuel)
+                (ResultCtfeQuoteExprList.Ok
+                  (ast.ast-expr-cons node rest)
+                  next-fuel)]
+              [(ResultCtfeQuoteExprList.Err diag)
+                (ResultCtfeQuoteExprList.Err diag)])))]
+      [(ResultCtfe.Err diag) (ResultCtfeQuoteExprList.Err diag)])))
+
+(define (ctfe-eval-expr-for-owned-call
+  [mode : i64]
+  [builder-name : String]
+  [args : ast.AstExprList]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (let
+    [expected-count : i64
+      (if (= mode 0)
+        4
+        (if (= mode 1)
+          5
+          6))]
+    (if (= (ctfe-expr-arg-count args) expected-count)
+      (match (ctfe-eval-syntax-expr-args args 0 expr env fuel builder-name)
+        [(ResultCtfeQuoteExprList.Ok nodes next-fuel)
+          (let
+            [pools : ast.AstNodePoolContext
+              (match (ctfe-env-syntax-pools env)
+                [(CtfeMaybeSyntaxPools.Some found) found]
+                [(CtfeMaybeSyntaxPools.None) (ctfe-env-pools env)])]
+            [built : i64
+              (if (= mode 0)
+                (ast.ast-expr-for-owned-state-with-pools
+                  pools
+                  (ast.ast-expr-list-get (& nodes) 0 0)
+                  (ast.ast-expr-list-get (& nodes) 1 0)
+                  (ast.ast-expr-list-get (& nodes) 2 0)
+                  (ast.ast-expr-list-get (& nodes) 3 0))
+                (ast.ast-expr-for-owned-step-with-pools
+                  pools
+                  (ast.ast-expr-list-get (& nodes) 0 0)
+                  (ast.ast-expr-list-get (& nodes) 1 0)
+                  (ast.ast-expr-list-get (& nodes) 2 0)
+                  (if (= mode 2)
+                    (ast.ast-expr-list-get (& nodes) 3 0)
+                    -1)
+                  (ast.ast-expr-list-get
+                    (& nodes)
+                    (if (= mode 2)
+                      4
+                      3)
+                    0)
+                  (ast.ast-expr-list-get
+                    (& nodes)
+                    (if (= mode 2)
+                      5
+                      4)
+                    0)))]
+            (ResultCtfe.Ok
+              (ctfe-syntax-expr-value env built (ctfe-untyped-expr-type))
+              next-fuel))]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfe.Err diag)])
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            (string.append
+              builder-name
+              (string.append
+                " expects exactly "
+                (string.append (string.int->string expected-count) " args")))))))))
+
 (define (ctfe-eval-expr-let-scope-call
   [args : ast.AstExprList]
   [expr : ast.AstExpr]
@@ -8673,7 +8850,17 @@
           [(= call-id (ctfe-builtin-ref 33))
             (ctfe-eval-expr-struct-set-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 94))
-            (ctfe-eval-expr-mut-borrow-call args expr env fuel)]
+            (ctfe-eval-expr-borrow-call
+              true
+              "expr-mut-borrow"
+              args
+              expr
+              env
+              fuel)]
+          [(= call-id (ctfe-builtin-ref 282))
+            (ctfe-eval-expr-borrow-call false "expr-borrow" args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 283))
+            (ctfe-eval-expr-array-ref-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 95))
             (ctfe-eval-expr-call-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 96))
@@ -8782,6 +8969,36 @@
               [string-helper-candidate : bool
                 (ctfe-string-helper-candidate-name-id? lookup-name lookup-id)]
               (cond
+                [(or
+                    (string.eq call-name "expr-for-owned-state")
+                    (string.eq lookup-name "expr-for-owned-state"))
+                  (ctfe-eval-expr-for-owned-call
+                    0
+                    "expr-for-owned-state"
+                    args
+                    expr
+                    env
+                    fuel)]
+                [(or
+                    (string.eq call-name "expr-for-owned-step")
+                    (string.eq lookup-name "expr-for-owned-step"))
+                  (ctfe-eval-expr-for-owned-call
+                    1
+                    "expr-for-owned-step"
+                    args
+                    expr
+                    env
+                    fuel)]
+                [(or
+                    (string.eq call-name "expr-for-owned-step-typed")
+                    (string.eq lookup-name "expr-for-owned-step-typed"))
+                  (ctfe-eval-expr-for-owned-call
+                    2
+                    "expr-for-owned-step-typed"
+                    args
+                    expr
+                    env
+                    fuel)]
                 [(ctfe-builtin-size-align-id? lookup-id)
                   (ctfe-eval-size-align-query lookup-name args expr env fuel)]
                 [(ctfe-builtin-offset-of-id? lookup-id)
@@ -10973,6 +11190,40 @@
         [_ false])]
     [_ false]))
 
+(define (ctfe-for-owned-state-exprs
+  [source-name : i64]
+  [index-name : i64]
+  [source : i64]
+  [body : i64]) : ast.AstExprList
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity 4)]
+    (begin
+      (ast.ast-expr-list-push (&mut out) source-name)
+      (ast.ast-expr-list-push (&mut out) index-name)
+      (ast.ast-expr-list-push (&mut out) source)
+      (ast.ast-expr-list-push (&mut out) body)
+      out)))
+
+(define (ctfe-for-owned-step-exprs
+  [source-name : i64]
+  [index-name : i64]
+  [binding-name : i64]
+  [expected-type : i64]
+  [done-name : i64]
+  [body : i64]) : ast.AstExprList
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity 6)]
+    (begin
+      (ast.ast-expr-list-push (&mut out) source-name)
+      (ast.ast-expr-list-push (&mut out) index-name)
+      (ast.ast-expr-list-push (&mut out) binding-name)
+      (if (>= expected-type 0)
+        (ast.ast-expr-list-push (&mut out) expected-type)
+        unit)
+      (ast.ast-expr-list-push (&mut out) done-name)
+      (ast.ast-expr-list-push (&mut out) body)
+      out)))
+
 (define (ctfe-quote-expr
   [expr : ast.AstExpr]
   [env : CtfeEnv]
@@ -11178,6 +11429,66 @@
                   body-fuel)]
               [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (match (ctfe-quote-expr-list
+        (ctfe-for-owned-state-exprs
+          (ast.ast-for-owned-state-source-name (& payload))
+          (ast.ast-for-owned-state-index-name (& payload))
+          (ast.ast-for-owned-state-source (& payload))
+          (ast.ast-for-owned-state-body (& payload)))
+        env
+        fuel
+        quasiquote)
+        [(ResultCtfeQuoteExprList.Ok quoted next-fuel)
+          (ResultCtfeQuoteExpr.Ok
+            (ast.ast-expr-for-owned-state-with-pools
+              (ctfe-env-pools env)
+              (ast.ast-expr-list-get (& quoted) 0 0)
+              (ast.ast-expr-list-get (& quoted) 1 0)
+              (ast.ast-expr-list-get (& quoted) 2 0)
+              (ast.ast-expr-list-get (& quoted) 3 0))
+            (ast.AstType.Expr)
+            next-fuel)]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (match (ctfe-quote-expr-list
+          (ctfe-for-owned-step-exprs
+            (ast.ast-for-owned-step-source-name (& payload))
+            (ast.ast-for-owned-step-index-name (& payload))
+            (ast.ast-for-owned-step-binding-name (& payload))
+            expected-type
+            (ast.ast-for-owned-step-done-name (& payload))
+            (ast.ast-for-owned-step-body (& payload)))
+          env
+          fuel
+          quasiquote)
+          [(ResultCtfeQuoteExprList.Ok quoted next-fuel)
+            (let
+              [typed? : bool (>= expected-type 0)]
+              [done-index : i64
+                (if typed?
+                  4
+                  3)]
+              [body-index : i64
+                (if typed?
+                  5
+                  4)]
+              (ResultCtfeQuoteExpr.Ok
+                (ast.ast-expr-for-owned-step-with-pools
+                  (ctfe-env-pools env)
+                  (ast.ast-expr-list-get (& quoted) 0 0)
+                  (ast.ast-expr-list-get (& quoted) 1 0)
+                  (ast.ast-expr-list-get (& quoted) 2 0)
+                  (if typed?
+                    (ast.ast-expr-list-get (& quoted) 3 0)
+                    -1)
+                  (ast.ast-expr-list-get (& quoted) done-index 0)
+                  (ast.ast-expr-list-get (& quoted) body-index 0))
+                (ast.AstType.Expr)
+                next-fuel))]
+          [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(ast.AstExpr.Set name rhs-box)
       (let
         [rhs : ast.AstExpr (ctfe-ast-get env rhs-box)]

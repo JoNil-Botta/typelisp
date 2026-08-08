@@ -8668,6 +8668,40 @@
           names
           (lower-reach-expr pools all-functions names state cond)
           body))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (lower-reach-expr
+        pools
+        all-functions
+        names
+        (lower-reach-expr
+          pools
+          all-functions
+          names
+          state
+          (ast.ast-node-pool-context-expr-get
+            pools
+            (ast.ast-for-owned-state-source (& payload))))
+        (ast.ast-node-pool-context-expr-get
+          pools
+          (ast.ast-for-owned-state-body (& payload))))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (lower-reach-expr
+          pools
+          all-functions
+          names
+          (if (>= expected-type 0)
+            (lower-reach-expr
+              pools
+              all-functions
+              names
+              state
+              (ast.ast-node-pool-context-expr-get pools expected-type))
+            state)
+          (ast.ast-node-pool-context-expr-get
+            pools
+            (ast.ast-for-owned-step-body (& payload)))))]
     [(ast.AstExpr.Begin exprs)
       (lower-reach-expr-list pools all-functions names state exprs)]
     [(ast.AstExpr.Unsafe exprs)
@@ -10473,6 +10507,26 @@
         (lower-used-types-add-expr-id pools used module cond-box)
         module
         body-box)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (lower-used-types-add-expr-id
+        pools
+        (lower-used-types-add-expr-id
+          pools
+          used
+          module
+          (ast.ast-for-owned-state-source (& payload)))
+        module
+        (ast.ast-for-owned-state-body (& payload)))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (lower-used-types-add-expr-id
+          pools
+          (if (>= expected-type 0)
+            (lower-used-types-add-expr-id pools used module expected-type)
+            used)
+          module
+          (ast.ast-for-owned-step-body (& payload))))]
     [(ast.AstExpr.Begin exprs)
       (lower-used-types-add-expr-list pools used module exprs)]
     [(ast.AstExpr.Unsafe exprs)
@@ -15974,7 +16028,11 @@
               (box
                 (lower-diagnostic-at-expr
                   origin
-                  "lower: array-ref borrow requires array place")))]))]
+                  (string.append
+                    "lower: array-ref borrow requires array place, got "
+                    (tc_core.tc-type-render
+                      (tc_core.tc-type-strip-region
+                        (tc_core.tc-resolve-type ctx container-ty)))))))]))]
     [(tc_core.ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr arr message)))]))
 
@@ -24793,6 +24851,184 @@
     [(tc_core.ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr expr message)))]))
 
+(define (lower-for-owned-name-id [ctx : tc_core.TcContext] [expr-id : i64]) : i64
+  (match (ast.ast-expr-unspan-with-pools
+    (tc_core.tc-context-pools ctx)
+    (lower-context-expr-get ctx expr-id))
+    [(ast.AstExpr.Var name) name]
+    [_ -1]))
+
+(define (lower-for-owned-state
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [source-name-id : i64]
+  [index-name-id : i64]
+  [source-id : i64]
+  [body-id : i64]) : ResultLowerExpr
+  (let
+    [source-name : i64 (lower-for-owned-name-id ctx source-name-id)]
+    [index-name : i64 (lower-for-owned-name-id ctx index-name-id)]
+    [source : ast.AstExpr (lower-context-expr-get ctx source-id)]
+    [body : ast.AstExpr (lower-context-expr-get ctx body-id)]
+    (if (or (< source-name 0) (< index-name 0))
+      (ResultLowerExpr.Err
+        (box
+          (lower-diagnostic-at-expr
+            source
+            "lower: invalid scalar for owned-array state names")))
+      (match (lower-expr ctx state env type-env source)
+        [(ResultLowerExpr.Ok lowered-source)
+          (match lowered-source
+            [(LowerExpr.Expr source-state source-value source-ty)
+              (match (lower-state-alloc-var source-state)
+                [(LowerAlloc.Alloc source-allocated source-var)
+                  (match (lower-state-alloc-var
+                    (lower-state-emit
+                      source-allocated
+                      (ir.CompilerIrInstr.Mov
+                        source-var
+                        source-value
+                        (lower-one-word-register-storage-type ctx source-ty))))
+                    [(LowerAlloc.Alloc index-allocated index-var)
+                      (let
+                        [bound-env : sym_i64_env.SymI64Env
+                          (sym_i64_env.sym-i64-bind-id
+                            (sym_i64_env.sym-i64-bind-id
+                              env
+                              source-name
+                              source-var)
+                            index-name
+                            index-var)]
+                        [bound-type-env : tc_core.TcTypeEnv
+                          (tc_core.tc-bind-id
+                            (tc_core.tc-bind-id type-env source-name source-ty)
+                            index-name
+                            (ast.AstType.I64))]
+                        (match (lower-expr
+                          ctx
+                          (lower-state-emit
+                            index-allocated
+                            (ir.CompilerIrInstr.Mov
+                              index-var
+                              (ir.CompilerIrValue.I64 0)
+                              (ast.AstType.I64)))
+                          bound-env
+                          bound-type-env
+                          body)
+                          [(ResultLowerExpr.Ok lowered-body)
+                            (match lowered-body
+                              [(LowerExpr.Expr body-state _ body-ty)
+                                (ResultLowerExpr.Ok
+                                  (LowerExpr.Expr
+                                    body-state
+                                    ir.CompilerIrValue.Unit
+                                    (if (tc_core.tc-never-type? body-ty)
+                                      body-ty
+                                      (ast.AstType.Unit))))])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)]))])])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))))
+
+(define (lower-for-owned-step-generated
+  [ctx : tc_core.TcContext]
+  [source-id : i64]
+  [index-id : i64]
+  [binding-id : i64]
+  [done-id : i64]
+  [body-id : i64]
+  [length : i64]) : i64
+  (let
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    [index-name : i64 (lower-for-owned-name-id ctx index-id)]
+    [binding-name : i64 (lower-for-owned-name-id ctx binding-id)]
+    [done-name : i64 (lower-for-owned-name-id ctx done-id)]
+    [one-id : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [length-id : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int length)))]
+    [true-id : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+    [item-id : i64 (ast.ast-expr-array-ref-with-pools pools source-id index-id)]
+    [next-index-id : i64
+      (ast.ast-expr-binary-with-pools pools (ast.AstBinOp.Add) index-id one-id)]
+    [set-index-id : i64
+      (ast.ast-expr-set-id-with-pools pools index-name next-index-id)]
+    [item-body-items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
+    [item-bindings : ast.AstLetBindingList
+      (ast.ast-let-binding-list-with-capacity 1)]
+    (begin
+      (ast.ast-expr-list-push (&mut item-body-items) set-index-id)
+      (ast.ast-expr-list-push (&mut item-body-items) body-id)
+      (ast.ast-let-binding-list-push
+        (&mut item-bindings)
+        (ast.ast-let-binding-id binding-name (ast.AstMaybeType.No) item-id))
+      (ast.ast-expr-if-with-pools
+        pools
+        (ast.ast-expr-binary-with-pools
+          pools
+          (ast.AstBinOp.Lt)
+          index-id
+          length-id)
+        (ast.ast-expr-let-with-pools
+          pools
+          item-bindings
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Begin item-body-items)))
+        (ast.ast-expr-set-id-with-pools pools done-name true-id)))))
+
+(define (lower-for-owned-step
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [source-id : i64]
+  [index-id : i64]
+  [binding-id : i64]
+  [done-id : i64]
+  [body-id : i64]) : ResultLowerExpr
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    (lower-context-expr-get ctx source-id))
+    [(tc_core.ResultTcType.Ok source-ty)
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-resolve-type ctx source-ty))
+        [(ast.AstType.Array _ length)
+          (let
+            [generated-id : i64
+              (lower-for-owned-step-generated
+                ctx
+                source-id
+                index-id
+                binding-id
+                done-id
+                body-id
+                length)]
+            (lower-expr
+              ctx
+              state
+              env
+              type-env
+              (lower-context-expr-get ctx generated-id)))]
+        [_
+          (ResultLowerExpr.Err
+            (box
+              (lower-diagnostic
+                "lower: scalar for owned step requires fixed-array state")))])]
+    [(tc_core.ResultTcType.Err message)
+      (ResultLowerExpr.Err (box (lower-diagnostic message)))]))
+
 (define (lower-expr-typechecked
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -25415,6 +25651,27 @@
         [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
         [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
         (lower-while ctx state env type-env cond body))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (lower-for-owned-state
+        ctx
+        state
+        env
+        type-env
+        (ast.ast-for-owned-state-source-name (& payload))
+        (ast.ast-for-owned-state-index-name (& payload))
+        (ast.ast-for-owned-state-source (& payload))
+        (ast.ast-for-owned-state-body (& payload)))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (lower-for-owned-step
+        ctx
+        state
+        env
+        type-env
+        (ast.ast-for-owned-step-source-name (& payload))
+        (ast.ast-for-owned-step-index-name (& payload))
+        (ast.ast-for-owned-step-binding-name (& payload))
+        (ast.ast-for-owned-step-done-name (& payload))
+        (ast.ast-for-owned-step-body (& payload)))]
     [(ast.AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)

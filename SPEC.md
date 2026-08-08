@@ -1710,15 +1710,34 @@ unvisited consuming items. In a zipped loop, every cleanup-owning item acquired
 before a later iterator reports `Done` is cleaned exactly once, in reverse
 acquisition order. The same item scopes unwind on `break`, `continue`, and
 `return`; moving an item in the body transfers that responsibility and suppresses
-its loop cleanup. This scalar construct is unrelated to SPMD `foreach` (section
-5.15).
+its loop cleanup.
+
+Fixed arrays and borrowed native `Slice` values use built-in scalar planning
+instead of nominal protocol lookup:
+
+- An owned `(Array T N)` evaluates into hidden loop state and yields each `T`
+  by value. A non-`Copy` source is consumed once; moving an item transfers that
+  element to the body. A structurally `Copy` source remains reusable.
+- A shared reference to `(Array T N)` or `(Slice T)` yields `(& source T)`.
+- A mutable reference to `(Array T N)` or `(Slice T)` yields a lending
+  `(&mut source T)` whose item cannot escape or remain live across the next
+  step.
+
+Native sources preserve the same single-evaluation, annotation, empty-loop,
+zip-shortest, nested-loop, `break`, and `return` rules. Fixed-array length is a
+reflected constant; Slice length is read from the borrowed view. The same
+scalar behavior is valid inside the scalar reference lowering of SPMD
+`foreach`; this does not turn scalar `for` into an SPMD gang loop.
 
 The scalar expansion is the ordinary checked-in `defmacro` in
-`stdlib/core_macros.tl`. It uses only the public `stdlib.comptime` syntax and
-reflection operations described in section 3.7.1. Compiler passes have no
-native `for` planner, name predicate, declaration-identity dispatch, or hidden
-AST-construction hook. Bare and explicitly qualified imports therefore execute
-the same transformer body, as does a renamed copy.
+`stdlib/core_macros.tl`. Nominal sources use only the public `stdlib.comptime`
+syntax and reflection operations described in section 3.7.1. Native fixed
+arrays use private compiler-owned state/step construction hooks so ownership
+transfer is represented directly rather than encoded as a public nominal
+protocol. Borrowed arrays and Slice values expand to ordinary checked element
+borrows. There is no user-visible native `for` syntax node or protocol name.
+Bare and explicitly qualified imports execute the same transformer body, as
+does a renamed copy.
 
 **Lifetime name selection.** For `(& place)`, the checker chooses the reference
 lifetime from the owner:

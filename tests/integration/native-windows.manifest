@@ -130,6 +130,7 @@ win64_rbp_eighth_csr|tests/integration/win64_rbp_eighth_csr.tl|42|-|-|stdlib/io.
 atomic_thread_spawn|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 selfloop_redef_writeback|tests/integration/selfloop_redef_writeback.tl|42|-|-|-
 loopcarried_phi_home|tests/integration/loopcarried_phi_home.tl|42|-|-|-
+loop_carried_memory_aggregate_move|tests/integration/loop_carried_memory_aggregate_move.tl|42|-|-|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
 calc|tests/integration/calc.tl|14|-|-|token.tl

@@ -2281,45 +2281,36 @@
     (array.make-array i64 0)))
 
 ;; Aggregate layouts outlive transient typecheck/lowering scratch regions.
-;; Keep their dense metadata arrays in a cache-owned arena and retain its newest
-;; segment after every allocation. A fixed node-pool arena handle becomes stale
-;; as soon as that segment fills, causing every later array to reserve a sibling
-;; segment that no owner can advance to.
-(define tc-agg-layout-cache-storage-arena : i64
-  0)
+;; Keep their dense metadata arrays in a cache-owned arena. Arena handles name
+;; stable roots, so one typed handle remains valid as physical segments grow.
+(define tc-agg-layout-cache-storage-arena : arena.Arena
+  (arena.Arena 0))
 
 (define (tc-agg-layout-cache-storage-arena-handle-value) : i64
-  tc-agg-layout-cache-storage-arena)
+  (arena.raw-handle tc-agg-layout-cache-storage-arena))
 
-(define (tc-agg-layout-cache-storage-handle) : i64
-  (begin
-    (if (= tc-agg-layout-cache-storage-arena 0)
+(define (tc-agg-layout-cache-storage-handle) : arena.Arena
+  (let
+    [storage : arena.Arena tc-agg-layout-cache-storage-arena]
+    (if (= (arena.raw-handle storage) 0)
       ;; Selfhost retains less than 1 MiB here. A small root leaves ample
       ;; headroom and still grows through the ordinary arena overflow path.
-      (set! tc-agg-layout-cache-storage-arena (arena.tl_arena_make_small))
-      unit)
-    tc-agg-layout-cache-storage-arena))
+      (let
+        [fresh : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+        (begin
+          (set! tc-agg-layout-cache-storage-arena fresh)
+          fresh))
+      storage)))
 
 (define (tc-agg-layout-cache-storage-reset!) : unit
   (let
-    [storage : i64 tc-agg-layout-cache-storage-arena]
+    [storage : arena.Arena tc-agg-layout-cache-storage-arena]
     (begin
-      (set! tc-agg-layout-cache-storage-arena 0)
-      (if (= storage 0)
+      (set! tc-agg-layout-cache-storage-arena (arena.Arena 0))
+      (if (= (arena.raw-handle storage) 0)
         unit
         (unsafe
-          (arena.tl_arena_destroy storage))))))
-
-(define (tc-agg-layout-cache-storage-restore! [previous : i64] [storage : i64]) : unit
-  (let
-    [head : i64 (arena.tl_arena_current)]
-    (begin
-      (set! tc-agg-layout-cache-storage-arena head)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous storage)
-            head
-            previous))))))
+          (arena.destroy storage))))))
 
 ;; Builders know the final cardinality from their AST vectors. Allocate one
 ;; right-sized backing array in the retained cache arena, fill it in source
@@ -2342,18 +2333,9 @@
   (array-set! (struct-get items slots) index value))
 
 (define (tc-inline-field-layout-list-with-count [count : i64]) : TcInlineFieldLayoutList
-  (let
-    [previous : i64 (arena.tl_arena_current)]
-    [storage : i64 (tc-agg-layout-cache-storage-handle)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
-      (let
-        [out : TcInlineFieldLayoutList
-          (TcInlineFieldLayoutList (array.make-array TcInlineFieldLayout count))]
-        (begin
-          (tc-agg-layout-cache-storage-restore! previous storage)
-          out)))))
+  (in-arena
+    (tc-agg-layout-cache-storage-handle)
+    (TcInlineFieldLayoutList (array.make-array TcInlineFieldLayout count))))
 
 (define (tc-inline-field-layout-list-count [items : TcInlineFieldLayoutList]) : i64
   (array-length (struct-get items slots)))
@@ -2370,19 +2352,9 @@
   (array-set! (struct-get items slots) index value))
 
 (define (tc-inline-payload-layout-list-with-count [count : i64]) : TcInlinePayloadLayoutList
-  (let
-    [previous : i64 (arena.tl_arena_current)]
-    [storage : i64 (tc-agg-layout-cache-storage-handle)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
-      (let
-        [out : TcInlinePayloadLayoutList
-          (TcInlinePayloadLayoutList
-            (array.make-array TcInlinePayloadLayout count))]
-        (begin
-          (tc-agg-layout-cache-storage-restore! previous storage)
-          out)))))
+  (in-arena
+    (tc-agg-layout-cache-storage-handle)
+    (TcInlinePayloadLayoutList (array.make-array TcInlinePayloadLayout count))))
 
 (define (tc-inline-payload-layout-list-count
   [items : TcInlinePayloadLayoutList]) : i64
@@ -2400,19 +2372,9 @@
   (array-set! (struct-get items slots) index value))
 
 (define (tc-inline-variant-layout-list-with-count [count : i64]) : TcInlineVariantLayoutList
-  (let
-    [previous : i64 (arena.tl_arena_current)]
-    [storage : i64 (tc-agg-layout-cache-storage-handle)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
-      (let
-        [out : TcInlineVariantLayoutList
-          (TcInlineVariantLayoutList
-            (array.make-array TcInlineVariantLayout count))]
-        (begin
-          (tc-agg-layout-cache-storage-restore! previous storage)
-          out)))))
+  (in-arena
+    (tc-agg-layout-cache-storage-handle)
+    (TcInlineVariantLayoutList (array.make-array TcInlineVariantLayout count))))
 
 (define (tc-inline-variant-layout-list-count
   [items : TcInlineVariantLayoutList]) : i64

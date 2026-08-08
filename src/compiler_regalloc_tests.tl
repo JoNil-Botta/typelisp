@@ -6420,6 +6420,9 @@
       "compiler-reg-scalar-interval-guardrail-ok?"
       (reg.compiler-reg-scalar-interval-guardrail-ok?))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-scalar-edge-precise-allocation-intervals-ok?"
+      (reg.compiler-reg-scalar-edge-precise-allocation-intervals-ok?))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-loop-backedge-ok?"
       (reg.compiler-reg-scalar-loop-backedge-ok?))
     (compiler-regalloc-self-test-require!

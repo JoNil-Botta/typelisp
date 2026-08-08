@@ -7872,6 +7872,7 @@
       clean
       clean
       (opt_i64_i64_map.with-capacity 8)
+      (opt_i64_i64_map.with-capacity 8)
       argc
       (opt_i64_i64_map.with-capacity 8)
       (compiler_optimize.opt-global-cell-summary-empty))))

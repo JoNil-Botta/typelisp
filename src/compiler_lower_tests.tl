@@ -2683,7 +2683,7 @@
   [values : compiler_ir_types.CompilerIrValueList]) : bool
   (if (= (compiler_ir_types.compiler-ir-value-list-count values) 2)
     (let
-      [slots : (Array compiler_ir_types.CompilerIrValue)
+      [slots : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
         (array.make-array compiler_ir_types.CompilerIrValue 2)]
       (begin
         (compiler_ir_types.compiler-ir-value-list-fill-array values slots 0)
@@ -2796,7 +2796,7 @@
       (lower-test-call-args-array-function-count values name 0)]))
 
 (define (lower-test-call-args-array-function-count
-  [values : (Array compiler_ir_types.CompilerIrValue)]
+  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]
   [name : String]
   [index : i64]) : i64
   (if (>= index (array-length values))
@@ -2942,7 +2942,7 @@
 (define (lower-test-instr-seq-spmd-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -2972,7 +2972,7 @@
 (define (lower-test-block-seq-spmd-call-count
   [blocks : compiler_ir_types.CompilerIrBlockSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrBlock)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
       (struct-get blocks slots)]
     [count : i64 (struct-get blocks len)]
     [index : i64 0]
@@ -3004,7 +3004,7 @@
   [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrFunction)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrFunction)
       (struct-get funcs slots)]
     [count : i64 (struct-get funcs len)]
     [index : i64 0]
@@ -3262,7 +3262,7 @@
 (define (lower-test-instr-seq-phi-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3279,7 +3279,7 @@
 (define (lower-test-instr-seq-load-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3296,7 +3296,7 @@
 (define (lower-test-instr-seq-branch-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3313,7 +3313,7 @@
 (define (lower-test-instr-seq-total-enum-branch-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3332,7 +3332,7 @@
 (define (lower-test-instr-seq-bounds-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3349,7 +3349,7 @@
 (define (lower-test-instr-seq-return-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3366,7 +3366,7 @@
 (define (lower-test-instr-seq-pack-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3384,7 +3384,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [pools : compiler_ast_types.AstNodePoolContext]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3404,7 +3404,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [name : String]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3423,7 +3423,7 @@
   [first : String]
   [second : String]) : bool
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3448,7 +3448,7 @@
 (define (lower-test-instr-seq-cpuid-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3465,7 +3465,7 @@
 (define (lower-test-instr-seq-xgetbv-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3482,7 +3482,7 @@
 (define (lower-test-instr-seq-indirect-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3501,7 +3501,7 @@
 (define (lower-test-instr-seq-indirect-tail-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3521,7 +3521,7 @@
 (define (lower-test-instr-seq-indirect-c-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3540,7 +3540,7 @@
 (define (lower-test-instr-seq-indirect-unit-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3560,7 +3560,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [function-name : String]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3582,7 +3582,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [function-name : String]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3605,7 +3605,7 @@
   [call-name : String]
   [function-name : String]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3628,7 +3628,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [name : String]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3647,7 +3647,7 @@
 (define (lower-test-instr-seq-store-ptr-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3664,7 +3664,7 @@
 (define (lower-test-instr-seq-copy-bytes-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3681,7 +3681,7 @@
 (define (lower-test-instr-seq-alloc-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3698,7 +3698,7 @@
 (define (lower-test-instr-seq-addr-of-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3715,7 +3715,7 @@
 (define (lower-test-instr-seq-vector-load-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3732,7 +3732,7 @@
 (define (lower-test-instr-seq-vector-binop-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3752,7 +3752,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : compiler_ir_types.CompilerIrBinOp]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3773,7 +3773,7 @@
 (define (lower-test-instr-seq-vector-reduce-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3792,7 +3792,7 @@
 (define (lower-test-instr-seq-vector-store-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3811,7 +3811,7 @@
 (define (lower-test-instr-seq-predicated-load-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3830,7 +3830,7 @@
 (define (lower-test-instr-seq-predicated-store-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3849,7 +3849,7 @@
 (define (lower-test-instr-seq-select-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3866,7 +3866,7 @@
 (define (lower-test-instr-seq-tail-mask-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3885,7 +3885,7 @@
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3907,7 +3907,7 @@
 (define (lower-test-instr-seq-u64-mov-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3925,7 +3925,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [op : compiler_ir_types.CompilerIrBinOp]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3943,7 +3943,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [op : compiler_ir_types.CompilerIrBinOp]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3962,7 +3962,7 @@
 (define (lower-test-instr-seq-cast-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3979,7 +3979,7 @@
 (define (lower-test-instr-seq-bitcast-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -3997,7 +3997,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [name : String]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -6912,7 +6912,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : i64]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -6932,7 +6932,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : u64]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -6951,7 +6951,7 @@
 (define (lower-test-instr-seq-binop-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -6969,7 +6969,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : i64]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]

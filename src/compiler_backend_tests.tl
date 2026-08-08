@@ -175,8 +175,8 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [liveness : compiler_liveness.CompilerFunctionLiveness]
   [point : i64]
-  [starts : (Array i64)]
-  [ends : (Array i64)]) : i64
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]) : i64
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) point]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
@@ -187,7 +187,7 @@
               (compiler_regalloc.compiler-reg-live-intervals-find-afters
                 liveness
                 label)]
-            [after-items : (Array compiler_liveness.CompilerLiveI64Set)
+            [after-items : (__tl_dyn-array compiler_liveness.CompilerLiveI64Set)
               (struct-get live-afters items)]
             [count : i64 (struct-get instrs len)]
             (begin
@@ -243,8 +243,8 @@
             emit-blocks)]
         [liveness : compiler_liveness.CompilerFunctionLiveness
           (compiler_liveness.compiler-live-analyze-function func)]
-        [starts : (Array i64) (make-array i64 slot-vars)]
-        [ends : (Array i64) (make-array i64 slot-vars)]
+        [starts : (__tl_dyn-array i64) (make-array i64 slot-vars)]
+        [ends : (__tl_dyn-array i64) (make-array i64 slot-vars)]
         (match (compiler_backend.compiler-backend-scavenge-assignment-index-build
           assignments
           slot-vars)
@@ -279,14 +279,14 @@
                 slot-vars))])))))
 
 (define (compiler-backend-scavenge-occupied-mask-for-instr
-  [starts : (Array i64)]
-  [ends : (Array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
   [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
   [vars : i64]
   [point : i64]) : i64
   (let
-    [present : (Array i64) (struct-get assignment-index present)]
-    [items : (Array compiler_regalloc.CompilerRegLocation)
+    [present : (__tl_dyn-array i64) (struct-get assignment-index present)]
+    [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
       (struct-get assignment-index items)]
     [limit : i64 (array-length present)]
     [v : i64 0]
@@ -311,12 +311,12 @@
       mask)))
 
 (define (compiler-backend-scavenge-pick
-  [starts : (Array i64)]
-  [ends : (Array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
   [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
   [vars : i64]
   [point : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]) : String
   (compiler_backend.compiler-backend-scavenge-pick-with-mask
@@ -348,7 +348,7 @@
   [ty : compiler_ast_types.AstType]
   [bits : u64]) : bool
   (let
-    [slots : (Array compiler_backend.BackendFloatEntry)
+    [slots : (__tl_dyn-array compiler_backend.BackendFloatEntry)
       (struct-get items slots)]
     [count : i64 (struct-get items len)]
     [index : i64 0]
@@ -3439,15 +3439,15 @@
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
       (struct-get program-index backend-state)]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -3671,15 +3671,15 @@
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
       (struct-get program-index backend-state)]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -3826,15 +3826,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -5775,7 +5775,7 @@
       (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       (compiler-backend-callee-save-assignments3)]
-    [push-regs : (Array String)
+    [push-regs : (__tl_dyn-array String)
       (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
@@ -5914,7 +5914,7 @@
       (compiler_backend.compiler-backend-set-current-fn-win64! backend-state)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       (compiler-backend-win64-callee-save-rbp-assignments)]
-    [push-regs : (Array String)
+    [push-regs : (__tl_dyn-array String)
       (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (compiler_backend.compiler-backend-fill-push-csr-regs!
@@ -8393,7 +8393,7 @@
 
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
-    [counts : (Array i64) (array.make-array i64 12)]
+    [counts : (__tl_dyn-array i64) (array.make-array i64 12)]
     (begin
       (compiler_backend.compiler-backend-count-instr-uses
         counts
@@ -8483,7 +8483,7 @@
 
 (define (compiler-backend-ir-walker-program-collections-ok?) : bool
   (let
-    [call-array : (Array compiler_ir_types.CompilerIrValue)
+    [call-array : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
       (array.make-array compiler_ir_types.CompilerIrValue 2)]
     (begin
       (array-set!
@@ -10182,7 +10182,7 @@
           (compiler_ir_types.compiler-ir-label "entry")
           instrs)
         compiler_ir_types.CompilerIrBlockList.Nil)]
-    [use-counts : (Array i64)
+    [use-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-use-counts vars blocks)]
     (compiler-backend-test-emit-instrs-text
       (compiler_backend.CompilerBackendEmissionContext
@@ -10313,7 +10313,7 @@
   (let
     [count : i64 compiler-backend-long-block-instr-count]
     [total : i64 (+ count 1)]
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (array.make-array compiler_ir_types.CompilerIrInstr total)]
     [index : i64 0]
     (begin
@@ -10347,7 +10347,7 @@
           (compiler_ir_types.compiler-ir-label "entry")
           seq)
         compiler_ir_types.CompilerIrBlockList.Nil)]
-    [use-counts : (Array i64)
+    [use-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-use-counts
         compiler-backend-long-block-instr-count
         blocks)]
@@ -10553,7 +10553,8 @@
     [_slot : unit
       (compiler_backend.compiler-backend-test-set-compiler-backend-emergency-slot-offset!
         -512)]
-    [regs : (Array i64) (compiler_backend.compiler-backend-scavenge-candidates)]
+    [regs : (__tl_dyn-array i64)
+      (compiler_backend.compiler-backend-scavenge-candidates)]
     [count : i64 (array-length regs)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       (compiler-backend-test-reg-assignment-list-from regs 0)]
@@ -10594,7 +10595,8 @@
     [_slot : unit
       (compiler_backend.compiler-backend-test-set-compiler-backend-emergency-slot-offset!
         -512)]
-    [regs : (Array i64) (compiler_backend.compiler-backend-scavenge-candidates)]
+    [regs : (__tl_dyn-array i64)
+      (compiler_backend.compiler-backend-scavenge-candidates)]
     [count : i64 (array-length regs)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       (compiler-backend-test-reg-assignment-list-from regs 0)]
@@ -11832,7 +11834,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [vars : i64]) : compiler_backend.ResultCompilerBackend
   (let
-    [use-counts : (Array i64)
+    [use-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-use-counts vars blocks)]
     [test-id : i64 (ci.intern "test")]
     [program-index : compiler_backend.CompilerBackendProgramIndex
@@ -12192,7 +12194,7 @@
   (let
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler-backend-mov-phi-copy-blocks)]
-    [use-counts : (Array i64)
+    [use-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-use-counts 3 blocks)]
     [test-id : i64 (ci.intern "test")]
     [program-index : compiler_backend.CompilerBackendProgramIndex
@@ -19779,15 +19781,15 @@
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
       (struct-get program-index backend-state)]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -19803,16 +19805,16 @@
     [prev-addr-forward-enabled : bool
       (compiler_backend.compiler-backend-test-get-compiler-backend-addr-of-forwarding-enabled
         backend-state)]
-    [prev-addr-forward-src : (Array i64)
+    [prev-addr-forward-src : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-addr-of-forwarding-src
         backend-state)]
     [prev-fuse-ready : bool
       (compiler_backend.compiler-backend-test-get-compiler-backend-fuse-need-ready
         backend-state)]
-    [prev-fuse-use-counts : (Array i64)
+    [prev-fuse-use-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-fuse-use-counts
         backend-state)]
-    [prev-fuse-free-counts : (Array i64)
+    [prev-fuse-free-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-fuse-free-counts
         backend-state)]
     [prev-loop-active : bool
@@ -19825,8 +19827,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-identity-tail-forwarder-active
         backend-state)]
     [vars : i64 8]
-    [starts : (Array i64) (make-array i64 vars)]
-    [ends : (Array i64) (make-array i64 vars)]
+    [starts : (__tl_dyn-array i64) (make-array i64 vars)]
+    [ends : (__tl_dyn-array i64) (make-array i64 vars)]
     [test-id : i64 (ci.intern "test")]
     [_ctx : unit
       (begin
@@ -20031,15 +20033,15 @@
       (compiler_backend.compiler-backend-set-current-fn-abi!
         backend-state
         (compiler_backend.compiler-backend-target-abi target))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -20069,16 +20071,16 @@
     [prev-addr-forward-enabled : bool
       (compiler_backend.compiler-backend-test-get-compiler-backend-addr-of-forwarding-enabled
         backend-state)]
-    [prev-addr-forward-src : (Array i64)
+    [prev-addr-forward-src : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-addr-of-forwarding-src
         backend-state)]
     [prev-fuse-ready : bool
       (compiler_backend.compiler-backend-test-get-compiler-backend-fuse-need-ready
         backend-state)]
-    [prev-fuse-use-counts : (Array i64)
+    [prev-fuse-use-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-fuse-use-counts
         backend-state)]
-    [prev-fuse-free-counts : (Array i64)
+    [prev-fuse-free-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-fuse-free-counts
         backend-state)]
     [prev-loop-active : bool
@@ -20114,7 +20116,7 @@
           (compiler_ir_types.compiler-ir-label "entry")
           instrs)
         compiler_ir_types.CompilerIrBlockList.Nil)]
-    [use-counts : (Array i64)
+    [use-counts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-use-counts vars blocks)]
     [test-id : i64 (ci.intern "test")]
     [_addr-forward : unit
@@ -22763,15 +22765,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -23126,15 +23128,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -23273,15 +23275,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -23392,15 +23394,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -27767,15 +27769,15 @@
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
       (struct-get program-index backend-state)]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -27785,8 +27787,8 @@
     [prev-current-count : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-current-count
         backend-state)]
-    [starts : (Array i64) (make-array i64 2)]
-    [ends : (Array i64) (make-array i64 2)]
+    [starts : (__tl_dyn-array i64) (make-array i64 2)]
+    [ends : (__tl_dyn-array i64) (make-array i64 2)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       (compiler_regalloc.compiler-reg-assignment-cons
         (compiler_regalloc.CompilerRegAssignment
@@ -29070,15 +29072,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -29090,11 +29092,11 @@
         backend-state)]
     [prev-gep-ready : bool
       (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready)]
-    [prev-gep-disp : (Array i64)
+    [prev-gep-disp : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-disp-table)]
-    [prev-gep-kind : (Array i64)
+    [prev-gep-kind : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-kind-table)]
-    [prev-gep-scale : (Array i64)
+    [prev-gep-scale : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-scale-table)]
     [prev-gep-cursor : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-cursor)]
@@ -29341,15 +29343,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -29361,11 +29363,11 @@
         backend-state)]
     [prev-gep-ready : bool
       (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready)]
-    [prev-gep-disp : (Array i64)
+    [prev-gep-disp : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-disp-table)]
-    [prev-gep-kind : (Array i64)
+    [prev-gep-kind : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-kind-table)]
-    [prev-gep-scale : (Array i64)
+    [prev-gep-scale : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-scale-table)]
     [prev-gep-cursor : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-cursor)]
@@ -31842,15 +31844,15 @@
       (compiler_backend.compiler-backend-set-current-fn-abi!
         backend-state
         (compiler_backend.compiler-backend-target-abi target))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -32763,15 +32765,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -32900,9 +32902,10 @@
 (define compiler-backend-inline-fast-alloc-emergency-live-count : i64
   13)
 
-(define (compiler-backend-inline-fast-alloc-emergency-regs) : (Array i64)
+(define (compiler-backend-inline-fast-alloc-emergency-regs) : (__tl_dyn-array
+    i64)
   (let
-    [regs : (Array i64)
+    [regs : (__tl_dyn-array i64)
       (make-array i64 compiler-backend-inline-fast-alloc-emergency-live-count)]
     (begin
       (array-set! regs 0 compiler_abi.compiler-reg-id-r9)
@@ -32921,7 +32924,7 @@
       regs)))
 
 (define (compiler-backend-inline-fast-alloc-emergency-assignments-from
-  [regs : (Array i64)]
+  [regs : (__tl_dyn-array i64)]
   [index : i64]) : compiler_regalloc.CompilerRegAssignmentList
   (if (>= index (array-length regs))
     compiler_regalloc.CompilerRegAssignmentList.Nil
@@ -32969,15 +32972,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -34413,19 +34416,20 @@
     (compiler-backend-profile-runtime-target-ok?
       (compiler_backend.CompilerBackendTarget.Windows))))
 
-(define (compiler-backend-scavenge-exclude-before-r10) : (Array String)
+(define (compiler-backend-scavenge-exclude-before-r10) : (__tl_dyn-array String)
   (make-array "%rax" "%r8" "%r9" "%rcx" "%rdx"))
 
-(define (compiler-backend-scavenge-exclude-before-r11) : (Array String)
+(define (compiler-backend-scavenge-exclude-before-r11) : (__tl_dyn-array String)
   (make-array "%rax" "%r8" "%r9" "%rcx" "%rdx" "%r10"))
 
-(define (compiler-backend-scavenge-emergency-exclude-fallback) : (Array String)
+(define (compiler-backend-scavenge-emergency-exclude-fallback) : (__tl_dyn-array
+    String)
   (make-array "%r9" "%rcx" "%rdx" "%r10" "%r11" "%r8" "%rsi" "%rdi" "%rax"))
 
 (define (compiler-backend-scavenge-pooled-r10-r11-ok?) : bool
   (let
-    [starts : (Array i64) (make-array i64 1)]
-    [ends : (Array i64) (make-array i64 1)]
+    [starts : (__tl_dyn-array i64) (make-array i64 1)]
+    [ends : (__tl_dyn-array i64) (make-array i64 1)]
     (and
       (string.eq
         (compiler-backend-scavenge-pick
@@ -34456,8 +34460,8 @@
 
 (define (compiler-backend-binop-exclude-keeps-pooled-r10-r11-ok?) : bool
   (let
-    [starts : (Array i64) (make-array i64 5)]
-    [ends : (Array i64) (make-array i64 5)]
+    [starts : (__tl_dyn-array i64) (make-array i64 5)]
+    [ends : (__tl_dyn-array i64) (make-array i64 5)]
     [r10-free : compiler_regalloc.CompilerRegAssignmentList
       (compiler_regalloc.compiler-reg-assignment-cons
         (compiler_regalloc.CompilerRegAssignment
@@ -34544,8 +34548,8 @@
 
 (define (compiler-backend-scavenge-exclude-with-keeps-pooled-r10-r11-ok?) : bool
   (let
-    [starts : (Array i64) (make-array i64 5)]
-    [ends : (Array i64) (make-array i64 5)]
+    [starts : (__tl_dyn-array i64) (make-array i64 5)]
+    [ends : (__tl_dyn-array i64) (make-array i64 5)]
     [r10-free : compiler_regalloc.CompilerRegAssignmentList
       (compiler_regalloc.compiler-reg-assignment-cons
         (compiler_regalloc.CompilerRegAssignment
@@ -34635,8 +34639,8 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [starts : (Array i64) (make-array i64 7)]
-    [ends : (Array i64) (make-array i64 7)]
+    [starts : (__tl_dyn-array i64) (make-array i64 7)]
+    [ends : (__tl_dyn-array i64) (make-array i64 7)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       (compiler_regalloc.compiler-reg-assignment-cons
         (compiler_regalloc.CompilerRegAssignment
@@ -34720,8 +34724,8 @@
 
 (define (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?) : bool
   (let
-    [starts : (Array i64) (make-array i64 1)]
-    [ends : (Array i64) (make-array i64 1)]
+    [starts : (__tl_dyn-array i64) (make-array i64 1)]
+    [ends : (__tl_dyn-array i64) (make-array i64 1)]
     (and
       (string.eq
         (compiler-backend-scavenge-pick
@@ -34751,7 +34755,7 @@
         "%r9"))))
 
 (define (compiler-backend-test-reg-assignment-list-from
-  [regs : (Array i64)]
+  [regs : (__tl_dyn-array i64)]
   [index : i64]) : compiler_regalloc.CompilerRegAssignmentList
   (if (>= index (array-length regs))
     compiler_regalloc.CompilerRegAssignmentList.Nil
@@ -34762,8 +34766,8 @@
       (compiler-backend-test-reg-assignment-list-from regs (+ index 1)))))
 
 (define (compiler-backend-test-fill-live-range!
-  [starts : (Array i64)]
-  [ends : (Array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
   [count : i64]
   [start : i64]
   [end : i64]) : unit
@@ -34909,9 +34913,9 @@
 
 (define (compiler-backend-scavenge-widened-pool-picks-rsi-ok?) : bool
   (let
-    [regs : (Array i64) (make-array i64 13)]
-    [starts : (Array i64) (make-array i64 13)]
-    [ends : (Array i64) (make-array i64 13)]
+    [regs : (__tl_dyn-array i64) (make-array i64 13)]
+    [starts : (__tl_dyn-array i64) (make-array i64 13)]
+    [ends : (__tl_dyn-array i64) (make-array i64 13)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       compiler_regalloc.CompilerRegAssignmentList.Nil]
     [picked : String ""]
@@ -37006,12 +37010,12 @@
   (cfg
     scratch-vreg
     (let
-      [previous-occupied : (Array i64)
+      [previous-occupied : (__tl_dyn-array i64)
         (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
-      [previous-scratch : (Array i64)
+      [previous-scratch : (__tl_dyn-array i64)
         (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-scratch-masks)]
-      [occupied : (Array i64) (array.make-array i64 2)]
-      [scratch : (Array i64) (array.make-array i64 2)]
+      [occupied : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [scratch : (__tl_dyn-array i64) (array.make-array i64 2)]
       [r8 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r8")]
       [r10 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r10")]
       [ok : bool false]
@@ -37103,7 +37107,7 @@
     true))
 
 (define (compiler-backend-scratch-items-registers-differ-from?
-  [items : (Array compiler_regalloc.CompilerRegScratchAssignment)]
+  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
   [index : i64]
   [reg : i64]) : bool
   (if (>= index (array-length items))
@@ -37116,7 +37120,7 @@
         reg))))
 
 (define (compiler-backend-scratch-items-registers-unique-from?
-  [items : (Array compiler_regalloc.CompilerRegScratchAssignment)]
+  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
   [index : i64]) : bool
   (if (>= index (array-length items))
     true
@@ -37133,8 +37137,9 @@
           (+ index 1))))))
 
 (define (compiler-backend-scratch-fused-items-shape-from?
-  [items : (Array compiler_regalloc.CompilerRegScratchAssignment)]
-  [dense-items : (Array compiler_regalloc.CompilerRegScratchAssignment)]
+  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
+  [dense-items
+    : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
   [index : i64]) : bool
   (if (>= index (array-length items))
     (= (array-length items) (array-length dense-items))
@@ -37192,9 +37197,10 @@
                 _
                 dense-plan)
               (let
-                [items : (Array compiler_regalloc.CompilerRegScratchAssignment)
+                [items : (__tl_dyn-array
+                  compiler_regalloc.CompilerRegScratchAssignment)
                   (struct-get plan items)]
-                [dense-items : (Array
+                [dense-items : (__tl_dyn-array
                   compiler_regalloc.CompilerRegScratchAssignment)
                   (struct-get dense-plan items)]
                 (and
@@ -37431,7 +37437,7 @@
             plan
             0
             value-ordinal)]
-        [items : (Array compiler_regalloc.CompilerRegScratchAssignment)
+        [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
           (struct-get plan items)]
         [value-item : compiler_regalloc.CompilerRegScratchAssignment
           (array-ref items value-ordinal)]
@@ -38735,18 +38741,18 @@
   (cfg
     scratch-vreg
     (let
-      [items : (Array compiler_regalloc.CompilerRegScratchAssignment)
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
         (array.make-array compiler_regalloc.CompilerRegScratchAssignment 2)]
-      [starts : (Array i64) (array.make-array i64 2)]
-      [ends : (Array i64) (array.make-array i64 2)]
-      [segments : (Array compiler_regalloc.CompilerRegIntervalSeq)
+      [starts : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [ends : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)
         (array.make-array compiler_regalloc.CompilerRegIntervalSeq 2)]
-      [present : (Array i64) (array.make-array i64 2)]
-      [types : (Array compiler_ast_types.AstType)
+      [present : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [types : (__tl_dyn-array compiler_ast_types.AstType)
         (array.make-array compiler_ast_types.AstType 2)]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler_regalloc.compiler-reg-assignment-table-make 2)]
-      [registers : (Array i64)
+      [registers : (__tl_dyn-array i64)
         (compiler_regalloc.compiler-reg-scratch-register-array
           (compiler_abi.CompilerRegTargetAbi.Linux))]
       [occupancy : compiler_regalloc.CompilerRegGreedyOccupancy
@@ -38755,7 +38761,7 @@
           (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
           registers
           (array-length registers))]
-      [ref-counts : (Array i64) (array.make-array i64 2)]
+      [ref-counts : (__tl_dyn-array i64) (array.make-array i64 2)]
       [fixed-rcx : compiler_regalloc.CompilerRegScratchConstraint
         (compiler_regalloc.CompilerRegScratchConstraint
           (compiler_regalloc.CompilerRegScratchClass.Gp)
@@ -38846,18 +38852,18 @@
   (cfg
     scratch-vreg
     (let
-      [items : (Array compiler_regalloc.CompilerRegScratchAssignment)
+      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
         (array.make-array compiler_regalloc.CompilerRegScratchAssignment 5)]
-      [starts : (Array i64) (array.make-array i64 5)]
-      [ends : (Array i64) (array.make-array i64 5)]
-      [segments : (Array compiler_regalloc.CompilerRegIntervalSeq)
+      [starts : (__tl_dyn-array i64) (array.make-array i64 5)]
+      [ends : (__tl_dyn-array i64) (array.make-array i64 5)]
+      [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)
         (array.make-array compiler_regalloc.CompilerRegIntervalSeq 5)]
-      [present : (Array i64) (array.make-array i64 5)]
-      [types : (Array compiler_ast_types.AstType)
+      [present : (__tl_dyn-array i64) (array.make-array i64 5)]
+      [types : (__tl_dyn-array compiler_ast_types.AstType)
         (array.make-array compiler_ast_types.AstType 5)]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler_regalloc.compiler-reg-assignment-table-make 5)]
-      [registers : (Array i64)
+      [registers : (__tl_dyn-array i64)
         (compiler_regalloc.compiler-reg-scratch-register-array
           (compiler_abi.CompilerRegTargetAbi.Linux))]
       [occupancy : compiler_regalloc.CompilerRegGreedyOccupancy
@@ -38866,7 +38872,7 @@
           (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
           registers
           (array-length registers))]
-      [ref-counts : (Array i64) (array.make-array i64 5)]
+      [ref-counts : (__tl_dyn-array i64) (array.make-array i64 5)]
       [gp-fixed-rcx : compiler_regalloc.CompilerRegScratchConstraint
         (compiler_regalloc.CompilerRegScratchConstraint
           (compiler_regalloc.CompilerRegScratchClass.Gp)
@@ -39018,8 +39024,8 @@
 
 (define (compiler-backend-scavenge-emergency-respects-exclude-ok?) : bool
   (let
-    [starts : (Array i64) (make-array i64 1)]
-    [ends : (Array i64) (make-array i64 1)]
+    [starts : (__tl_dyn-array i64) (make-array i64 1)]
+    [ends : (__tl_dyn-array i64) (make-array i64 1)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       (compiler_regalloc.compiler-reg-assignment-cons
         (compiler_regalloc.CompilerRegAssignment
@@ -39027,7 +39033,7 @@
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
         compiler_regalloc.CompilerRegAssignmentList.Nil)]
-    [exclude : (Array String)
+    [exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-emergency-exclude-fallback)]
     (begin
       (array-set! starts 0 0)
@@ -39078,9 +39084,9 @@
           ok)))))
 
 (define (compiler-backend-scavenge-occupancy-cache-point-ok?
-  [masks : (Array i64)]
-  [starts : (Array i64)]
-  [ends : (Array i64)]
+  [masks : (__tl_dyn-array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
   [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
   [vars : i64]
   [point : i64]) : bool
@@ -39221,10 +39227,10 @@
 ;; must be M, N, L even though L occurs first.
 (define (compiler-backend-const-hoist-award-weight-ok?) : bool
   (let
-    [values : (Array i64) (make-array i64 6)]
-    [wide : (Array bool) (make-array bool 6)]
-    [order : (Array i64) (make-array i64 6)]
-    [tally : (Array i64) (make-array i64 6)]
+    [values : (__tl_dyn-array i64) (make-array i64 6)]
+    [wide : (__tl_dyn-array bool) (make-array bool 6)]
+    [order : (__tl_dyn-array i64) (make-array i64 6)]
+    [tally : (__tl_dyn-array i64) (make-array i64 6)]
     [_fill : unit
       (begin
         ;; index 0: wide literal L, one site
@@ -39268,10 +39274,10 @@
 ;; each, so the result must be exactly their first-occurrence order 0, 1, 2.
 (define (compiler-backend-const-hoist-award-tie-ok?) : bool
   (let
-    [values : (Array i64) (make-array i64 6)]
-    [wide : (Array bool) (make-array bool 6)]
-    [order : (Array i64) (make-array i64 6)]
-    [tally : (Array i64) (make-array i64 6)]
+    [values : (__tl_dyn-array i64) (make-array i64 6)]
+    [wide : (__tl_dyn-array bool) (make-array bool 6)]
+    [order : (__tl_dyn-array i64) (make-array i64 6)]
+    [tally : (__tl_dyn-array i64) (make-array i64 6)]
     [_fill : unit
       (begin
         (array-set! values 0 5)
@@ -39386,10 +39392,10 @@
 ;; corruption in string.int->string.
 (define (compiler-backend-const-hoist-respects-scratch-plan-ok?) : bool
   (let
-    [items : (Array compiler_regalloc.CompilerRegScratchAssignment)
+    [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
       (make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
-    [first : (Array i64) (make-array i64 1)]
-    [slots : (Array i64) (make-array i64 1)]
+    [first : (__tl_dyn-array i64) (make-array i64 1)]
+    [slots : (__tl_dyn-array i64) (make-array i64 1)]
     [_item : unit
       (array-set!
         items
@@ -39452,7 +39458,7 @@
 ;; per-function preparation has established an empty table.
 (define (compiler-backend-shrinkwrap-admission-state-ok?) : bool
   (let
-    [stale-regs : (Array i64) (make-array i64 1)]
+    [stale-regs : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (compiler_backend.compiler-backend-test-set-compiler-backend-const-hoist-site-count!
         1)
@@ -39570,8 +39576,8 @@
 
 (define (compiler-backend-scavenge-occupancy-cache-ok?) : bool
   (let
-    [starts : (Array i64) (make-array i64 5)]
-    [ends : (Array i64) (make-array i64 5)]
+    [starts : (__tl_dyn-array i64) (make-array i64 5)]
+    [ends : (__tl_dyn-array i64) (make-array i64 5)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       (compiler_regalloc.compiler-reg-assignment-cons
         (compiler_regalloc.CompilerRegAssignment
@@ -39613,7 +39619,7 @@
       (array-set! starts 4 2)
       (array-set! ends 4 6)
       (let
-        [masks : (Array i64)
+        [masks : (__tl_dyn-array i64)
           (compiler_backend.compiler-backend-scavenge-occupancy-build
             starts
             ends
@@ -39752,15 +39758,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -39821,8 +39827,8 @@
 (define (compiler-backend-divmod-live-dividend-ctx! [carried? : bool]) : unit
   (let
     [vars : i64 3]
-    [starts : (Array i64) (make-array i64 vars)]
-    [ends : (Array i64) (make-array i64 vars)]
+    [starts : (__tl_dyn-array i64) (make-array i64 vars)]
+    [ends : (__tl_dyn-array i64) (make-array i64 vars)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       (compiler_regalloc.compiler-reg-assignment-cons
         (compiler_regalloc.CompilerRegAssignment
@@ -39864,15 +39870,15 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [prev-starts : (Array i64)
+    [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
-    [prev-ends : (Array i64)
+    [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
     [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
-    [prev-occupied-masks : (Array i64)
+    [prev-occupied-masks : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks)]
     [prev-vars : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
@@ -40078,7 +40084,8 @@
       (match result
         [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
           (let
-            [items : (Array compiler_regalloc.CompilerRegScratchAssignment)
+            [items : (__tl_dyn-array
+              compiler_regalloc.CompilerRegScratchAssignment)
               (struct-get plan items)]
             [rax : String
               (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 0)]
@@ -40780,14 +40787,14 @@
       (compiler_backend.compiler-backend-state-function-state state-a)]
     [function-b : compiler_backend.CompilerBackendFunctionState
       (compiler_backend.compiler-backend-state-function-state state-b)]
-    [forward-a : (Array i64) (make-array i64 5)]
-    [forward-b : (Array i64) (make-array i64 5)]
-    [uses-a : (Array i64) (make-array i64 5)]
-    [uses-b : (Array i64) (make-array i64 5)]
-    [free-a : (Array i64) (make-array i64 5)]
-    [free-b : (Array i64) (make-array i64 5)]
-    [labels-a : (Array i64) (make-array i64 1)]
-    [labels-b : (Array i64) (make-array i64 1)]
+    [forward-a : (__tl_dyn-array i64) (make-array i64 5)]
+    [forward-b : (__tl_dyn-array i64) (make-array i64 5)]
+    [uses-a : (__tl_dyn-array i64) (make-array i64 5)]
+    [uses-b : (__tl_dyn-array i64) (make-array i64 5)]
+    [free-a : (__tl_dyn-array i64) (make-array i64 5)]
+    [free-b : (__tl_dyn-array i64) (make-array i64 5)]
+    [labels-a : (__tl_dyn-array i64) (make-array i64 1)]
+    [labels-b : (__tl_dyn-array i64) (make-array i64 1)]
     [b-instrs : compiler_ir_types.CompilerIrInstrList
       (compiler-backend-inline-fast-alloc-reused-vreg-instrs)]
     [_configure : unit

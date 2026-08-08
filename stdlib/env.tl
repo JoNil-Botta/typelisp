@@ -567,7 +567,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (svec.push out (array-ref items.slots i))
+        (svec.push-ref! out (array-ref items.slots i))
         (set! i (+ i 1))))))
 
 ;: Copy `items` into a fresh generated string vector, preserving list order.
@@ -607,13 +607,15 @@
           (while (< i n)
             (if (string.char-eq (string-ref value i) sep)
               (begin
-                (svec.push
+                (svec.push-ref!
                   (&mut items)
                   (string.substring value start (- i start)))
                 (set! start (+ i 1))
                 (set! i (+ i 1)))
               (set! i (+ i 1))))
-          (svec.push (&mut items) (string.substring value start (- n start)))
+          (svec.push-ref!
+            (&mut items)
+            (string.substring value start (- n start)))
           items)))))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.

@@ -11,7 +11,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (i64v.push v (+ (* i scale) bias))
+        (i64v.push-ref! v (+ (* i scale) bias))
         (set! i (+ i 1))))))
 
 (define (fill-vector-foreach

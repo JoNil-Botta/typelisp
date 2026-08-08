@@ -7,5 +7,5 @@
     [iter : vec.IntoIter (vec.into-iterator values)]
     (begin
       (vec.into-next (&mut iter))
-      (vec.push (&mut values) 1)
+      (vec.push! values 1)
       0)))

@@ -102,7 +102,7 @@
             module
             name)]
         (begin
-          (producer_test_svec.push names identity)
+          (producer_test_svec.push-ref! names identity)
           (compiler_tlci_native_producer.tlci-native-macro-captures-push!
             captures
             (compiler_tlci_native_producer.TlciNativeMacroCapture

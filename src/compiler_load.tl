@@ -2346,7 +2346,7 @@
   (let
     [next-roots : svec.Vec roots]
     (begin
-      (svec.push (&mut next-roots) root)
+      (svec.push-ref! (&mut next-roots) root)
       next-roots)))
 
 (define (compiler-load-string-vec-one [root : String]) : svec.Vec

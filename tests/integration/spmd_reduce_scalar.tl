@@ -347,8 +347,8 @@
     (begin
       (fill-bool (&mut all-values) 67 true)
       (fill-bool (&mut any-values) 67 false)
-      (boolv.set (&mut all-values) 40 false)
-      (boolv.set (&mut any-values) 40 true)
+      (boolv.set-ref! (&mut all-values) 40 false)
+      (boolv.set-ref! (&mut any-values) 40 true)
       (cond
         [(not (reduce-all-bool (& all-values) 0)) 50]
         [(reduce-any-bool (& any-values) 0) 51]

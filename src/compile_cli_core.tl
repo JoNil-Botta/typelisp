@@ -354,7 +354,7 @@
         (let
           [next-roots : cli_svec.Vec stdlib-roots]
           (begin
-            (cli_svec.push (&mut next-roots) value)
+            (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
         cfgs
         emit-ir
@@ -722,7 +722,7 @@
         (let
           [next-roots : cli_svec.Vec stdlib-roots]
           (begin
-            (cli_svec.push (&mut next-roots) value)
+            (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
         cfgs
         has-opt-level
@@ -1061,7 +1061,7 @@
             (let
               [next-roots : cli_svec.Vec stdlib-roots]
               (begin
-                (cli_svec.push (&mut next-roots) value)
+                (cli_svec.push-ref! (&mut next-roots) value)
                 next-roots)))]
         [(cli_option.CliCommonOption.NotCommon)
           (begin
@@ -1674,8 +1674,8 @@
                         output-start
                         (- line-end output-start))]
                     (begin
-                      (cli_svec.push entries input-path)
-                      (cli_svec.push entries output-path)
+                      (cli_svec.push-ref! entries input-path)
+                      (cli_svec.push-ref! entries output-path)
                       (compile-cli-batch-parse-entries-into!
                         text
                         next-start
@@ -1792,10 +1792,10 @@
                                     assembly-start
                                     (- assembly-end assembly-start))]
                                 (begin
-                                  (cli_svec.push entries input-path)
-                                  (cli_svec.push entries object-path)
-                                  (cli_svec.push entries assembly-path)
-                                  (cli_svec.push entries mode)
+                                  (cli_svec.push-ref! entries input-path)
+                                  (cli_svec.push-ref! entries object-path)
+                                  (cli_svec.push-ref! entries assembly-path)
+                                  (cli_svec.push-ref! entries mode)
                                   (compile-cli-windows-batch-parse-entries-into!
                                     text
                                     next-start
@@ -2082,10 +2082,10 @@
           (match entry-result
             [(ResultCompileCliWindowsBatchEntry.Ok kind path category)
               (begin
-                (cli_svec.push results input-path)
-                (cli_svec.push results kind)
-                (cli_svec.push results path)
-                (cli_svec.push results category)
+                (cli_svec.push-ref! results input-path)
+                (cli_svec.push-ref! results kind)
+                (cli_svec.push-ref! results path)
+                (cli_svec.push-ref! results category)
                 0)]
             [(ResultCompileCliWindowsBatchEntry.Err entry-status) entry-status]))]
       (begin

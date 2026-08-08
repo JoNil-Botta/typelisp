@@ -6367,7 +6367,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) first)
+          (vec.push-ref! (&mut items) first)
           (if (= (vec.len (& items)) 1)
             (begin
               (vec.get (& items) 0 fallback)

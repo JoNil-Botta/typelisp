@@ -13,7 +13,7 @@
     (begin
       (push (&mut v) 10)
       (push (&mut v) 32)
-      (svec.push (&mut words) "x")
+      (svec.push-ref! (&mut words) "x")
       (test.assert-i64-eq
         (+ (len (& v)) (svec.len (& words)))
         3

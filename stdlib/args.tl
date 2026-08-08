@@ -393,7 +393,7 @@
   (let
     [positionals : svec.Vec state.positionals]
     (begin
-      (svec.push (&mut positionals) value)
+      (svec.push-ref! (&mut positionals) value)
       (ArgsParseState state.options positionals state.stop-options))))
 
 ;: Add a parsed option occurrence to a parse state.
@@ -525,7 +525,7 @@
           (cond
             [stop-options
               (begin
-                (svec.push (&mut positionals) current)
+                (svec.push-ref! (&mut positionals) current)
                 (set! i (+ i 1)))]
             [(stdlib.args.end-of-options-token? current)
               (begin
@@ -566,7 +566,7 @@
                       (set! i (+ i 1))))])]
             [else
               (begin
-                (svec.push (&mut positionals) current)
+                (svec.push-ref! (&mut positionals) current)
                 (set! i (+ i 1)))])))
       (if failed
         (stdlib.args.ErrArgsParsed error)
@@ -602,7 +602,7 @@
       (cond
         [stop-options
           (begin
-            (svec.push (&mut positionals) current)
+            (svec.push-ref! (&mut positionals) current)
             (parse-argv-loop-fields
               specs
               (+ index 1)
@@ -649,7 +649,7 @@
                   stop-options))])]
         [else
           (begin
-            (svec.push (&mut positionals) current)
+            (svec.push-ref! (&mut positionals) current)
             (parse-argv-loop-fields
               specs
               (+ index 1)
@@ -699,7 +699,7 @@
           (cond
             [stop-options
               (begin
-                (svec.push (&mut positionals) current)
+                (svec.push-ref! (&mut positionals) current)
                 (set! i (+ i 1)))]
             [(stdlib.args.end-of-options-token? current)
               (begin
@@ -740,7 +740,7 @@
                       (set! i (+ i 1))))])]
             [else
               (begin
-                (svec.push (&mut positionals) current)
+                (svec.push-ref! (&mut positionals) current)
                 (set! i (+ i 1)))])))
       (if failed
         (stdlib.args.ErrArgsParsed error)
@@ -786,7 +786,7 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
+      (svec.push-ref! (&mut items) a)
       items)))
 
 ;: Build a three-item argv vector for inline tests.
@@ -794,9 +794,9 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
-      (svec.push (&mut items) c)
+      (svec.push-ref! (&mut items) a)
+      (svec.push-ref! (&mut items) b)
+      (svec.push-ref! (&mut items) c)
       items)))
 
 ;: Build a five-item argv vector for inline tests.
@@ -809,11 +809,11 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
-      (svec.push (&mut items) c)
-      (svec.push (&mut items) d)
-      (svec.push (&mut items) e)
+      (svec.push-ref! (&mut items) a)
+      (svec.push-ref! (&mut items) b)
+      (svec.push-ref! (&mut items) c)
+      (svec.push-ref! (&mut items) d)
+      (svec.push-ref! (&mut items) e)
       items)))
 
 ;: Build a six-item argv vector for inline tests.
@@ -827,12 +827,12 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
-      (svec.push (&mut items) c)
-      (svec.push (&mut items) d)
-      (svec.push (&mut items) e)
-      (svec.push (&mut items) f)
+      (svec.push-ref! (&mut items) a)
+      (svec.push-ref! (&mut items) b)
+      (svec.push-ref! (&mut items) c)
+      (svec.push-ref! (&mut items) d)
+      (svec.push-ref! (&mut items) e)
+      (svec.push-ref! (&mut items) f)
       items)))
 
 ;: Parse a consumed test fixture through the public borrowed-Vec API.

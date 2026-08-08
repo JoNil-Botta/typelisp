@@ -2404,29 +2404,29 @@
     [accesses : opt_aggregate_access_vec.Vec
       (opt_aggregate_access_vec.with-capacity 1)]
     (begin
-      (opt_aggregate_access_vec.push
+      (opt_aggregate_access_vec.push-ref!
         (&mut accesses)
         (compiler_optimize.OptAggregateAccess.Store
           0
           (compiler_ast_types.AstType.I64)))
-      (opt_aggregate_access_vec.push
+      (opt_aggregate_access_vec.push-ref!
         (&mut accesses)
         (compiler_optimize.OptAggregateAccess.Load
           11
           0
           (compiler_ast_types.AstType.I64)))
-      (opt_aggregate_access_vec.push
+      (opt_aggregate_access_vec.push-ref!
         (&mut accesses)
         (compiler_optimize.OptAggregateAccess.Store
           8
           (compiler_ast_types.AstType.Bool)))
-      (opt_aggregate_access_vec.push
+      (opt_aggregate_access_vec.push-ref!
         (&mut accesses)
         (compiler_optimize.OptAggregateAccess.Load
           12
           8
           (compiler_ast_types.AstType.Bool)))
-      (opt_aggregate_access_vec.push
+      (opt_aggregate_access_vec.push-ref!
         (&mut accesses)
         (compiler_optimize.OptAggregateAccess.Store
           16
@@ -2524,14 +2524,14 @@
     (begin
       (while (< index 5)
         (begin
-          (opt_aggregate_pointer_vec.push
+          (opt_aggregate_pointer_vec.push-ref!
             (&mut ptrs)
             (compiler_optimize.OptAggregatePointer.Pointer
               (if (or (= index 0) (= index 4))
                 10
                 (+ 10 index))
               (* index 8)))
-          (opt_aggregate_candidate_vec.push
+          (opt_aggregate_candidate_vec.push-ref!
             (&mut candidates)
             (compiler_optimize.OptAggregateAllocCandidate.Candidate
               index
@@ -2539,7 +2539,7 @@
               (+ index 1)
               (opt_aggregate_pointer_vec.new)
               (opt_aggregate_access_vec.new)))
-          (opt_aggregate_promote_slot_vec.push
+          (opt_aggregate_promote_slot_vec.push-ref!
             (&mut promote-slots)
             (compiler_optimize.OptAggregatePromoteSlot.Slot index (+ 100 index)))
           (set! index (+ index 1))))

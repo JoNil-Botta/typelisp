@@ -44,7 +44,7 @@
   [items : (&mut items FsStringVector)]
   [value : String])
   (:export-symbol "_tl_fs_stdlib_fs_fs_string_vector_push_bang") : unit
-  (svec.push (&mut items.items) value))
+  (svec.push-ref! (&mut items.items) value))
 
 ;: Result type for directory-listing APIs.
 (defenum ResultIoStringVector
@@ -1061,20 +1061,20 @@
   (cond
     [(string.eq segment "") unit]
     [(string.eq segment ".") unit]
-    [(not (string.eq segment "..")) (svec.push (&mut segments) segment)]
+    [(not (string.eq segment "..")) (svec.push-ref! (&mut segments) segment)]
     [(<= (svec.len (& segments)) 0)
       (if rooted
         unit
-        (svec.push (&mut segments) segment))]
+        (svec.push-ref! (&mut segments) segment))]
     [else
       (let
         [top : String (svec.last (& segments) "")]
         (if (string.eq top "..")
           (begin
-            (svec.push (&mut segments) segment)
+            (svec.push-ref! (&mut segments) segment)
             unit)
           (begin
-            (match (svec.pop (&mut segments))
+            (match (svec.pop-ref! (&mut segments))
               [(svec.Pop.Ok _) unit]
               [svec.Pop.Empty unit])
             unit)))]))
@@ -1482,7 +1482,7 @@
         (if (string.char-eq (string-ref entries i) '\n')
           (begin
             (if (> i start)
-              (svec.push
+              (svec.push-ref!
                 (&mut items)
                 (string.substring entries start (- i start)))
               unit)
@@ -1490,7 +1490,9 @@
             (set! i (+ i 1)))
           (set! i (+ i 1))))
       (if (< start n)
-        (svec.push (&mut items) (string.substring entries start (- n start)))
+        (svec.push-ref!
+          (&mut items)
+          (string.substring entries start (- n start)))
         unit)
       (FsStringVector items))))
 

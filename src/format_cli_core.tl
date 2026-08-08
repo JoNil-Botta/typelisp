@@ -223,7 +223,7 @@
                 (str_cat.str-cat "fmt: unknown flag " current))]
             [else
               (begin
-                (fmt_svec.push (&mut paths) current)
+                (fmt_svec.push-ref! (&mut paths) current)
                 (fmt-parse-args
                   (+ idx 1)
                   count
@@ -265,12 +265,12 @@
         [nl : i64 (string.index-of-byte source start (cast 10 : u8))]
         (if (< nl 0)
           (begin
-            (fmt_svec.push
+            (fmt_svec.push-ref!
               (&mut lines)
               (string.substring source start (- len start)))
             lines)
           (begin
-            (fmt_svec.push
+            (fmt_svec.push-ref!
               (&mut lines)
               (string.substring source start (- nl start)))
             (fmt-split-lines-into source (+ nl 1) lines)))))))

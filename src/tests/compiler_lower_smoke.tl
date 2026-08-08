@@ -264,7 +264,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) root)
+          (svec.push-ref! (&mut items) root)
           items))]
     (begin
       (load.compiler-load-test-mkdir root)
@@ -305,7 +305,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (svec.push-ref! (&mut items) "stdlib")
           items))]
     (begin
       (compiler_driver_core.compiler-driver-reset-file-state!)
@@ -399,7 +399,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) first)
+          (vec.push-ref! (&mut items) first)
           (if (= (vec.len (& items)) 1)
             (begin
               (vec.get (& items) 0 fallback)
@@ -420,7 +420,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (svec.push-ref! (&mut items) "stdlib")
           items))]
     (begin
       (compiler-lower-smoke-write-text
@@ -445,7 +445,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (svec.push-ref! (&mut items) "stdlib")
           items))]
     (begin
       (compiler-lower-smoke-write-text
@@ -487,7 +487,7 @@
   (let
     [v : pvec.Vec (pvec.new)]
     (begin
-      (pvec.push (&mut v) (C43Point 1 2))
+      (pvec.push-ref! (&mut v) (C43Point 1 2))
       (pvec.len (& v)))))")
 
 (define (compiler-lower-smoke-c43-vector-push-map-source) : String
@@ -500,7 +500,7 @@
   (let
     [v : pvec.Vec (pvec.new)]
     (begin
-      (pvec.push (&mut v) (C43Point 1 2))
+      (pvec.push-ref! (&mut v) (C43Point 1 2))
       (let
         [w : pvec.Vec (pvec.map (& v) c43-bump)]
         (pvec.len (& w))))))")
@@ -517,7 +517,7 @@
   (let
     [v : pvec.Vec (pvec.new)]
     (begin
-      (pvec.push (&mut v) (C43Point 1 2))
+      (pvec.push-ref! (&mut v) (C43Point 1 2))
       (pvec.len (& v)))))
 (define (c43-dead [s : String]) : i64 (+ s 1))")
 

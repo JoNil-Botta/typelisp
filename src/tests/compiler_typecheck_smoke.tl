@@ -1569,7 +1569,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) value)
+          (vec.push-ref! (&mut items) value)
           (let [item : T (vec.get (& items) 0 (T 0))] item.value))))))
 (import (vector-user) as user)
 (define (main) : i64
@@ -1593,7 +1593,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) value)
+          (vec.push-ref! (&mut items) value)
           (let
             [item : provider.T (vec.get (& items) 0 (provider.T 0))]
             item.value))))))
@@ -1613,7 +1613,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) value)
+          (vec.push-ref! (&mut items) value)
           (vec.len (& items)))))))
 (import (vector-user Pair) as user)
 (define (main) : i64
@@ -1632,7 +1632,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) value)
+          (vec.push-ref! (&mut items) value)
           (vec.len (& items)))))))
 (import (vector-user Pair) as user)
 (define (main) : i64
@@ -1802,7 +1802,7 @@
         (let
           [items : vec.Vec (vec.new)]
           (begin
-            (vec.push (&mut items) value)
+            (vec.push-ref! (&mut items) value)
             (let [item : T (vec.get (& items) 0 (T 0))] item.value)))))))
 (import (make vector) as gen)
 (define (main) : i64
@@ -2229,7 +2229,7 @@
   (let
     [roots : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut roots) root)
+      (svec.push-ref! (&mut roots) root)
       roots)))
 
 (define (compiler-typecheck-smoke-prefix-cache-state-isolation-ok?) : bool
@@ -3267,7 +3267,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) stdlib-root)
+          (svec.push-ref! (&mut items) stdlib-root)
           items))]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
     (begin
@@ -5753,8 +5753,8 @@
   (let
     [roots : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut roots) "stdlib")
-      (svec.push (&mut roots) "src")
+      (svec.push-ref! (&mut roots) "stdlib")
+      (svec.push-ref! (&mut roots) "src")
       roots)))
 
 ;; The public source-load adapter always prepends the core-macro prelude.  The

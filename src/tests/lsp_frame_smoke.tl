@@ -1828,11 +1828,11 @@
           (begin
             (io.print-error "workspace index smoke: cannot create cycle link\n")
             (set! ok false)))
-        (lsp_svec.push (&mut roots) root-a-uri)
-        (lsp_svec.push (&mut roots) root-a-uri)
-        (lsp_svec.push (&mut roots) root-a-src-uri)
-        (lsp_svec.push (&mut roots) root-b-uri)
-        (lsp_svec.push (&mut roots) "https://example.invalid/workspace"))]
+        (lsp_svec.push-ref! (&mut roots) root-a-uri)
+        (lsp_svec.push-ref! (&mut roots) root-a-uri)
+        (lsp_svec.push-ref! (&mut roots) root-a-src-uri)
+        (lsp_svec.push-ref! (&mut roots) root-b-uri)
+        (lsp_svec.push-ref! (&mut roots) "https://example.invalid/workspace"))]
     [single-state : lsp_vector_families.LspServerState
       (lsp-smoke-state-with-overlay
         (lsp_frame_core.lsp-server-state-new)
@@ -2048,7 +2048,7 @@
         [added : lsp_svec.Vec (lsp_svec.new)]
         [removed : lsp_svec.Vec (lsp_svec.new)]
         (begin
-          (lsp_svec.push (&mut removed) root-a-uri)
+          (lsp_svec.push-ref! (&mut removed) root-a-uri)
           (set! state (lsp-smoke-state-workspace-event state added removed))))
       (if (and
         (= (lsp-smoke-state-root-count (& state)) 2)
@@ -2068,7 +2068,7 @@
         [added : lsp_svec.Vec (lsp_svec.new)]
         [removed : lsp_svec.Vec (lsp_svec.new)]
         (begin
-          (lsp_svec.push (&mut removed) root-b-uri)
+          (lsp_svec.push-ref! (&mut removed) root-b-uri)
           (set! state (lsp-smoke-state-workspace-event state added removed))))
       (if (and
         (= (lsp-smoke-state-root-count (& state)) 1)
@@ -2083,7 +2083,7 @@
         [added : lsp_svec.Vec (lsp_svec.new)]
         [removed : lsp_svec.Vec (lsp_svec.new)]
         (begin
-          (lsp_svec.push (&mut added) root-b-uri)
+          (lsp_svec.push-ref! (&mut added) root-b-uri)
           (set! state (lsp-smoke-state-workspace-event state added removed))))
       (if (and
         (= (lsp-smoke-state-root-count (& state)) 2)

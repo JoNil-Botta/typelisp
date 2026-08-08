@@ -20,7 +20,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) value)
+          (vec.push-ref! (&mut items) value)
           (__tl-project-field-name (vec.get (& items) 0 (T 0)) "value"))))))
 
 (import (vector-user) as user)

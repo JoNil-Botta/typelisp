@@ -493,14 +493,14 @@
     [pfx : String (program-files-x86)]
     [items : svec.Vec (svec.with-capacity 8)]
     (begin
-      (svec.push (&mut items) (vs-toolset-parent pf "2022" "Enterprise"))
-      (svec.push (&mut items) (vs-toolset-parent pf "2022" "Professional"))
-      (svec.push (&mut items) (vs-toolset-parent pf "2022" "Community"))
-      (svec.push (&mut items) (vs-toolset-parent pfx "2022" "BuildTools"))
-      (svec.push (&mut items) (vs-toolset-parent pf "2019" "Enterprise"))
-      (svec.push (&mut items) (vs-toolset-parent pf "2019" "Professional"))
-      (svec.push (&mut items) (vs-toolset-parent pf "2019" "Community"))
-      (svec.push (&mut items) (vs-toolset-parent pfx "2019" "BuildTools"))
+      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2022" "Enterprise"))
+      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2022" "Professional"))
+      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2022" "Community"))
+      (svec.push-ref! (&mut items) (vs-toolset-parent pfx "2022" "BuildTools"))
+      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2019" "Enterprise"))
+      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2019" "Professional"))
+      (svec.push-ref! (&mut items) (vs-toolset-parent pf "2019" "Community"))
+      (svec.push-ref! (&mut items) (vs-toolset-parent pfx "2019" "BuildTools"))
       items)))
 
 ;: Return the bin directory for host x64 -> target x64 tools.
@@ -628,9 +628,9 @@
     (begin
       (if (string.eq env-root "")
         unit
-        (svec.push (&mut items) env-root))
-      (svec.push (&mut items) (path-join3 pfx "Windows Kits" "10"))
-      (svec.push (&mut items) (path-join3 pf "Windows Kits" "10"))
+        (svec.push-ref! (&mut items) env-root))
+      (svec.push-ref! (&mut items) (path-join3 pfx "Windows Kits" "10"))
+      (svec.push-ref! (&mut items) (path-join3 pf "Windows Kits" "10"))
       items)))
 
 ;: Return the root for one Windows SDK version.

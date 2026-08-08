@@ -256,7 +256,7 @@
             (ResultSelfhostLintConfig.Err
               "selfhost-lint: --cfg requires a value")
             (begin
-              (lint_svec.push
+              (lint_svec.push-ref!
                 (&mut selfhost-lint-language-cfg-names)
                 (io.arg (+ idx 1)))
               (selfhost-lint-parse-options
@@ -311,7 +311,7 @@
               (let
                 [next-roots : lint_svec.Vec stdlib-roots]
                 (begin
-                  (lint_svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (lint_svec.push-ref! (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
               enforcing
               deprecated-string-concat
@@ -347,7 +347,7 @@
             (let
               [next-paths : lint_svec.Vec input-paths]
               (begin
-                (lint_svec.push (&mut next-paths) current)
+                (lint_svec.push-ref! (&mut next-paths) current)
                 next-paths))
             manifest-path
             has-manifest
@@ -1688,7 +1688,7 @@
     (let
       [next-roots : lint_svec.Vec roots]
       (begin
-        (lint_svec.push (&mut next-roots) name)
+        (lint_svec.push-ref! (&mut next-roots) name)
         next-roots))))
 
 (define (selfhost-lint-dead-root-add!
@@ -1696,7 +1696,7 @@
   [name : String]) : unit
   (if (lint_svec.contains? (& roots) name)
     unit
-    (lint_svec.push roots name)))
+    (lint_svec.push-ref! roots name)))
 
 (define (selfhost-lint-dead-scan-add-decl
   [scan : SelfhostLintDeadScan]
@@ -1843,7 +1843,7 @@
     (let
       [next-refs : lint_svec.Vec refs]
       (begin
-        (lint_svec.push (&mut next-refs) name)
+        (lint_svec.push-ref! (&mut next-refs) name)
         next-refs))))
 
 (define (selfhost-lint-dead-last-dot-from
@@ -3089,7 +3089,7 @@
       [owned : String (clone value)]
       [next : lint_svec.Vec items]
       (begin
-        (lint_svec.push (&mut next) owned)
+        (lint_svec.push-ref! (&mut next) owned)
         (selfhost-lint-dead-clone-string-vec-from source (+ index 1) next)))))
 
 (define (selfhost-lint-dead-clone-string-vec [source : lint_svec.Vec]) : lint_svec.Vec
@@ -3431,7 +3431,7 @@
       (let
         [roots : lint_svec.Vec stdlib-roots]
         (begin
-          (lint_svec.push (&mut roots) source-root)
+          (lint_svec.push-ref! (&mut roots) source-root)
           roots)))))
 
 (define (selfhost-lint-package-source-list-contains-from

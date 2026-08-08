@@ -4976,17 +4976,17 @@
   (cond
     [(string.eq segment "") unit]
     [(string.eq segment ".") unit]
-    [(not (string.eq segment "..")) (svec.push segments segment)]
+    [(not (string.eq segment "..")) (svec.push-ref! segments segment)]
     [(<= (svec.len (& segments)) 0)
       (if rooted
         unit
-        (svec.push segments segment))]
+        (svec.push-ref! segments segment))]
     [else
       (let
         [top : String (svec.last (& segments) "")]
         (if (string.eq top "..")
-          (svec.push segments segment)
-          (match (svec.pop segments)
+          (svec.push-ref! segments segment)
+          (match (svec.pop-ref! segments)
             [(svec.Pop.Ok _) unit]
             [svec.Pop.Empty unit])))]))
 
@@ -24224,7 +24224,7 @@
   (match maybe-writeback
     [(LowerMaybeArgWriteback.No) unit]
     [(LowerMaybeArgWriteback.Some writeback)
-      (lower_arg_writeback_vec.push writebacks writeback)]))
+      (lower_arg_writeback_vec.push-ref! writebacks writeback)]))
 
 (define (lower-call-args-as
   [ctx : tc_core.TcContext]

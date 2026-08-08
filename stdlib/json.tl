@@ -1370,7 +1370,7 @@
         (match (stdlib.json.parse-value text i)
           [(OkJsonParseValue value next)
             (begin
-              (jvec.push (&mut items) value)
+              (jvec.push-ref! (&mut items) value)
               (set! i (stdlib.json.skip-ws text next))
               (if (stdlib.json.char-code-eq-at text i 93)
                 (begin
@@ -1416,7 +1416,7 @@
                 (match (stdlib.json.parse-value text (+ colon-pos 1))
                   [(OkJsonParseValue value next)
                     (begin
-                      (jmvec.push (&mut members) (JsonMember key value))
+                      (jmvec.push-ref! (&mut members) (JsonMember key value))
                       (set! i (stdlib.json.skip-ws text next))
                       (if (stdlib.json.char-code-eq-at text i 125)
                         (begin
@@ -1990,8 +1990,8 @@
         (let
           [items : jvec.Vec (jvec.new)]
           (begin
-            (jvec.push (&mut items) (JsonNumber "1"))
-            (jvec.push (&mut items) (JsonNumber "2"))
+            (jvec.push-ref! (&mut items) (JsonNumber "1"))
+            (jvec.push-ref! (&mut items) (JsonNumber "2"))
             (stdlib.json.vec-to-list items))))
       "1,2"
       "stdlib.json.vec-to-list")
@@ -2043,8 +2043,8 @@
         (let
           [members : jmvec.Vec (jmvec.new)]
           (begin
-            (jmvec.push (&mut members) (JsonMember "dup" (JsonNumber "1")))
-            (jmvec.push (&mut members) (JsonMember "dup" (JsonNumber "2")))
+            (jmvec.push-ref! (&mut members) (JsonMember "dup" (JsonNumber "1")))
+            (jmvec.push-ref! (&mut members) (JsonMember "dup" (JsonNumber "2")))
             (stdlib.json.member-vec-to-list members)))
         "dup")
       "1"

@@ -471,7 +471,7 @@
         (let
           [next-roots : cli_svec.Vec stdlib-roots]
           (begin
-            (cli_svec.push (&mut next-roots) value)
+            (cli_svec.push-ref! (&mut next-roots) value)
             next-roots)))]
     [(cli_option.CliCommonOptionKind.Target)
       (if (host_plan.host-plan-target-valid? value)
@@ -889,7 +889,7 @@
         (let
           [next-roots : cli_svec.Vec stdlib-roots]
           (begin
-            (cli_svec.push (&mut next-roots) value)
+            (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
         resolved-deps)]
     [(cli_option.CliCommonOptionKind.Target)
@@ -3849,7 +3849,7 @@
       (if present
         false
         (begin
-          (cli_svec.push out name)
+          (cli_svec.push-ref! out name)
           true)))))
 
 (defstruct BuildPackageTlciMacroCollector
@@ -7736,7 +7736,7 @@
         (let
           [next-roots : cli_svec.Vec stdlib-roots]
           (begin
-            (cli_svec.push (&mut next-roots) value)
+            (cli_svec.push-ref! (&mut next-roots) value)
             next-roots))
         opt-level
         link-inputs)]

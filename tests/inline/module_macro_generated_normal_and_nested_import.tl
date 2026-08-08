@@ -9,8 +9,8 @@
   (let
     [items : i64v.Vec (i64v.with-capacity 2)]
     (begin
-      (i64v.push (&mut items) 11)
-      (i64v.push (&mut items) 31)
+      (i64v.push-ref! (&mut items) 11)
+      (i64v.push-ref! (&mut items) 31)
       (let
         [view : (& items (Slice i64)) (i64v.view (& items))]
         (begin

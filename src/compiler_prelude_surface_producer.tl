@@ -54,7 +54,7 @@
           (begin
             (if (prelude-surface-path-present? (& items) path)
               unit
-              (surface_svec.push (&mut items) path))
+              (surface_svec.push-ref! (&mut items) path))
             (set! index (+ index 1)))))
       (let
         [out (__tl_make-array String (surface_svec.len (& items)))]
@@ -409,7 +409,7 @@
     [load-state : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
     (begin
-      (surface_svec.push (&mut roots) root)
+      (surface_svec.push-ref! (&mut roots) root)
       (match (prelude-surface-load-cold
         load-state
         roots

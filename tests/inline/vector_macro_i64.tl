@@ -20,7 +20,7 @@
     (begin
       (while (< i n)
         (begin
-          (ivec.push (&mut v) (* i 3))
+          (ivec.push! v (* i 3))
           (set! i (+ i 1))))
       v)))
 
@@ -65,7 +65,7 @@
         (ivec.get (& v) -1 -1)
         -1
         "i64 vector macro negative fallback")
-      (ivec.set (&mut v) 2 99)
+      (ivec.set! v 2 99)
       (test.assert-i64-eq
         (ivec.get (& v) 2 -1)
         99
@@ -77,12 +77,12 @@
   (let
     [v : ivec.Vec (ivec.with-capacity 5)]
     (begin
-      (ivec.push (&mut v) 4)
-      (ivec.push (&mut v) 5)
-      (ivec.push (&mut v) 6)
-      (ivec.push (&mut v) 4)
-      (ivec.push (&mut v) 5)
-      (ivec.reverse! (&mut v))
+      (ivec.push! v 4)
+      (ivec.push! v 5)
+      (ivec.push! v 6)
+      (ivec.push! v 4)
+      (ivec.push! v 5)
+      (ivec.reverse! v)
       (let
         [mapped : ivec.Vec (ivec.map (& v) vector-macro-i64-triple)]
         (begin
@@ -107,7 +107,7 @@
           (test.assert-true
             (ivec.contains? (& mapped) 18)
             "contains? finds scalar")
-          (match (ivec.pop (&mut v))
+          (match (ivec.pop! v)
             [(ivec.Pop.Ok value)
               (begin
                 (test.assert-i64-eq value 4 "pop returns last value")
@@ -121,9 +121,9 @@
     [words : svec.Vec (svec.new)]
     [expected : String "bee"]
     (begin
-      (svec.push (&mut words) "alpha")
-      (svec.push (&mut words) "beta")
-      (svec.set (&mut words) 1 "bee")
+      (svec.push! words "alpha")
+      (svec.push! words "beta")
+      (svec.set! words 1 "bee")
       (test.assert-i64-eq (svec.len (& words)) 2 "aliased string vector length")
       (let
         [view : (& words (Slice String)) (svec.view (& words))]
@@ -134,7 +134,7 @@
       (test.assert-true
         (svec.contains? (& words) "bee")
         "aliased string contains")
-      (match (svec.pop (&mut words))
+      (match (svec.pop! words)
         [(svec.Pop.Ok value)
           (begin
             (test.assert-string-eq
@@ -153,9 +153,9 @@
   (let
     [items : ivec.Vec (ivec.with-capacity 8)]
     (begin
-      (ivec.push (&mut items) 5)
-      (ivec.push (&mut items) 6)
-      (ivec.push (&mut items) 7)
+      (ivec.push! items 5)
+      (ivec.push! items 6)
+      (ivec.push! items 7)
       (let
         [full : (& items (Slice i64)) (ivec.view (& items))]
         [middle : (& items (Slice i64)) (slice-view full 1 2)]

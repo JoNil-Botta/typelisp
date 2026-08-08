@@ -23,6 +23,6 @@
           (begin
             (while (< i n)
               (begin
-                (vec.push (&mut out) ,zero)
+                (vec.push-ref! (&mut out) ,zero)
                 (set! i (+ i 1))))
             out))))))

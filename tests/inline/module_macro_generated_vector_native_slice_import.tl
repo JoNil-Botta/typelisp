@@ -17,7 +17,7 @@
         (let
           [items : vec.Vec (vec.new)]
           (begin
-            (vec.push (&mut items) first)
+            (vec.push-ref! (&mut items) first)
             (let
               [view : (& items (Slice ,T)) (vec.view (& items))]
               (if (= (array-length view) 1)

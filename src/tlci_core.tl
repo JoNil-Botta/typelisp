@@ -82,13 +82,13 @@
   [items : TlciSpmdSpecializations (:consume)]
   [item : TlciSpmdSpecialization]) : TlciSpmdSpecializations
   (begin
-    (tlci_specialization_vec.push (&mut items.items) item)
+    (tlci_specialization_vec.push-ref! (&mut items.items) item)
     items))
 
 (define (tlci-spmd-specializations-push!
   [items : (&mut items TlciSpmdSpecializations)]
   [item : TlciSpmdSpecialization]) : unit
-  (tlci_specialization_vec.push (&mut items.items) item))
+  (tlci_specialization_vec.push-ref! (&mut items.items) item))
 
 (define (tlci-make-spmd-callable
   [name : String]
@@ -112,13 +112,13 @@
   [items : TlciSpmdCallables (:consume)]
   [item : TlciSpmdCallable]) : TlciSpmdCallables
   (begin
-    (tlci_callable_vec.push (&mut items.items) item)
+    (tlci_callable_vec.push-ref! (&mut items.items) item)
     items))
 
 (define (tlci-spmd-callables-push!
   [items : (&mut items TlciSpmdCallables)]
   [item : TlciSpmdCallable]) : unit
-  (tlci_callable_vec.push (&mut items.items) item))
+  (tlci_callable_vec.push-ref! (&mut items.items) item))
 
 (defstruct TlciMetadata
   (version String)

@@ -174,7 +174,7 @@
                         value
                         (+ (* value 10) (- (cfg-byte-at text n i) 48)))
                       (set! i (+ i 1))))
-                  (i64vec.set
+                  (i64vec.set-ref!
                     out
                     count
                     (if negative

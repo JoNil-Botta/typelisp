@@ -1701,7 +1701,8 @@
         [fat-label : String
           (compiler_backend.compiler-backend-string-fat-label "hi")]
         [base-label : String
-          compiler_backend.compiler-backend-pic-image-base-label]
+          (string.copy
+            (& compiler_backend.compiler-backend-pic-image-base-label))]
         (and
           (compiler_backend.backend-and8
             (compiler_backend.compiler-backend-string-contains?
@@ -1820,12 +1821,13 @@
     [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
     [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
     [relocs : cobj.CompilerObjectRelocationList (struct-get image relocations)]
-    [manifest : String object_windows.compiler-backend-object-utf8-manifest]
+    [manifest : String
+      (string.copy (& object_windows.compiler-backend-object-utf8-manifest))]
     [manifest-size : i64 (string.string-length manifest)]
     [manifest-label : String
-      object_windows.compiler-backend-object-manifest-label]
+      (string.copy (& object_windows.compiler-backend-object-manifest-label))]
     [rsrc-data-label : String
-      object_windows.compiler-backend-object-rsrc-data-label]
+      (string.copy (& object_windows.compiler-backend-object-rsrc-data-label))]
     [manifest-offset : i64
       (coff.compiler-object-coff-section-label-offset
         image
@@ -5282,7 +5284,7 @@
   (let
     [ok : bool
       (match (compiler-backend-emit-source-opt2-for-target
-        compiler-backend-shifted-loop-bound-source
+        (string.copy (& compiler-backend-shifted-loop-bound-source))
         (compiler_backend.CompilerBackendTarget.Windows))
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (let
@@ -5411,7 +5413,7 @@
   (let
     [ok : bool
       (match (compiler-backend-emit-source-opt2-for-target
-        compiler-backend-fusion-pin-pressure-source
+        (string.copy (& compiler-backend-fusion-pin-pressure-source))
         (compiler_backend.CompilerBackendTarget.Linux))
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (let
@@ -39551,7 +39553,7 @@
 
 (define (compiler-backend-shrinkwrap-large-guard-win64-ok?) : bool
   (match (compiler-backend-emit-source-opt2-for-target
-    compiler-backend-shrinkwrap-large-guard-source
+    (string.copy (& compiler-backend-shrinkwrap-large-guard-source))
     (compiler_backend.CompilerBackendTarget.Windows))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (let

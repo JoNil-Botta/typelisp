@@ -3,6 +3,13 @@
 (import compiler_backend_object_target as object_target)
 (import compiler_object as cobj)
 
+(defmacro (compiler-backend-object-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (define (compiler-backend-object-chkstk-bytes) : String
   (object_target.compiler-backend-object-bytes-from-hex
     "51504889c1488d4424104881f9001000007212482d00100000c600004881e900100000ebe54829c8c600005859c3"))
@@ -62,6 +69,11 @@
 
 (define compiler-backend-object-manifest-label : String
   ".L_tl_manifest")
+
+(define (compiler-backend-object-manifest-label-shared-view) : String
+  (compiler-backend-object-global-shared-view
+    compiler-backend-object-manifest-label))
+
 (define compiler-backend-object-rsrc-data-label : String
   ".L_tl_rsrc_data")
 (define compiler-backend-object-utf8-manifest : String
@@ -85,12 +97,14 @@
       (cobj.compiler-object-data-record-builder-push
         records2
         (cobj.CompilerObjectDataRecord.Label
-          compiler-backend-object-rsrc-data-label))]
+          (compiler-backend-object-global-shared-view
+            compiler-backend-object-rsrc-data-label)))]
     [records4 : cobj.CompilerObjectDataRecordBuilder
       (cobj.compiler-object-data-record-builder-push
         records3
         (cobj.CompilerObjectDataRecord.SymbolRva32
-          compiler-backend-object-manifest-label))]
+          (compiler-backend-object-global-shared-view
+            compiler-backend-object-manifest-label)))]
     [records5 : cobj.CompilerObjectDataRecordBuilder
       (cobj.compiler-object-data-record-builder-push
         records4
@@ -106,12 +120,14 @@
       (cobj.compiler-object-data-record-builder-push
         records6
         (cobj.CompilerObjectDataRecord.Label
-          compiler-backend-object-manifest-label))]
+          (compiler-backend-object-global-shared-view
+            compiler-backend-object-manifest-label)))]
     [records8 : cobj.CompilerObjectDataRecordBuilder
       (cobj.compiler-object-data-record-builder-push
         records7
         (cobj.CompilerObjectDataRecord.Bytes
-          compiler-backend-object-utf8-manifest))]
+          (compiler-backend-object-global-shared-view
+            compiler-backend-object-utf8-manifest)))]
     [records9 : cobj.CompilerObjectDataRecordBuilder
       (cobj.compiler-object-data-record-builder-push
         records8
@@ -455,7 +471,8 @@
       (cobj.compiler-object-symbol-builder-push
         (struct-get parts symbols)
         (cobj.CompilerObjectSymbol.Symbol
-          compiler-backend-object-manifest-label
+          (compiler-backend-object-global-shared-view
+            compiler-backend-object-manifest-label)
           (cobj.CompilerObjectSymbolBinding.Local)
           (cobj.CompilerObjectSymbolKind.Data)
           (cobj.CompilerObjectMaybeSection.Some
@@ -471,9 +488,11 @@
         (struct-get parts relocations)
         (cobj.CompilerObjectRelocation.Relocation
           (cobj.CompilerObjectSectionKind.Rsrc)
-          compiler-backend-object-rsrc-data-label
+          (compiler-backend-object-global-shared-view
+            compiler-backend-object-rsrc-data-label)
           (cobj.CompilerObjectRelocationKind.Addr32Nb)
-          compiler-backend-object-manifest-label))
+          (compiler-backend-object-global-shared-view
+            compiler-backend-object-manifest-label)))
       (struct-get parts relocations))))
 
 (define (compiler-backend-object-target-windows-image

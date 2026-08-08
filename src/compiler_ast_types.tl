@@ -15,6 +15,13 @@
 ;; imports, so this adds no cycle.
 (import stdlib.arena)
 
+(defmacro (ast-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (cfg
   compiler-arena-debug
   (extern (tl_arena_debug_protect_never_reset [handle : i64]) : unit (:symbol "tl_arena_debug_protect_never_reset")))
@@ -655,10 +662,13 @@
   (MakeArray i64 i64)
   (ArrayRef i64 i64)
   (ArraySet i64 i64 i64)
-  ;; Checked move-out from a compatibility dynamic array. The second operand is
-  ;; a parallel bool liveness bitmap; the result is `(Tuple bool T)` whose
-  ;; payload is meaningful only when its leading flag is true.
+  ;; Private checked move-out from compatibility dynamic-array storage. The
+  ;; second operand is a parallel bool liveness bitmap; the result is `(Tuple
+  ;; bool T)` whose payload is meaningful only when its leading flag is true.
   (ArrayTake i64 i64 i64)
+  ;; Public checked mem::take-style operation for fixed-array places. The old
+  ;; element is returned and the selected slot is immediately reinitialized.
+  (FixedArrayTake i64 i64)
   (ArrayPush i64 i64)
   (StringRef i64 i64)
   (While i64 i64)
@@ -888,7 +898,9 @@
       (array-set!
         bases
         0
-        (ast-expr-node-pool-biased-segment-base ast-node-pool-first-segment 0))
+        (ast-expr-node-pool-biased-segment-base
+          (ast-global-shared-view ast-node-pool-first-segment)
+          0))
       (cast
         (unsafe
           (ptr->int (ptr-cast (array-data bases) : (Ptr u8))))
@@ -1021,7 +1033,9 @@
 ;: Append `node` to the selected AST pool and return its AstNodeId.
 (define (ast-node-push [node : AstExpr]) : i64
   (if ast-node-pool-compat-context-explicit?
-    (ast-node-pool-context-expr-push ast-node-pool-compat-context node)
+    (ast-node-pool-context-expr-push
+      (ast-node-pool-compat-context-shared-view)
+      node)
     (ast-node-push-active node)))
 
 ;: Read the node at `id` from the installed AST pool.
@@ -1048,7 +1062,10 @@
 ;; rewritten in place).
 (define (ast-node-set! [id : i64] [node : AstExpr]) : unit
   (if ast-node-pool-compat-context-explicit?
-    (ast-node-pool-context-expr-set! ast-node-pool-compat-context id node)
+    (ast-node-pool-context-expr-set!
+      (ast-node-pool-compat-context-shared-view)
+      id
+      node)
     (let
       [biased-base : i64
         (unsafe
@@ -1290,7 +1307,7 @@
 
 (define (ast-node-pool-state-capture) : AstExprNodePoolState
   (AstExprNodePoolState
-    ast-node-pool-segment-bases
+    (ast-global-shared-view ast-node-pool-segment-bases)
     ast-node-pool-count
     node-pool-base-arena
     ast-node-pool-storage-arena
@@ -1324,7 +1341,9 @@
       (array-set!
         bases
         0
-        (ast-type-node-pool-biased-segment-base ty-node-pool-first-segment 0))
+        (ast-type-node-pool-biased-segment-base
+          (ast-global-shared-view ty-node-pool-first-segment)
+          0))
       (cast
         (unsafe
           (ptr->int (ptr-cast (array-data bases) : (Ptr u8))))
@@ -1883,13 +1902,12 @@
 ;; than the capacity global so a grown table can never be half-cleared.
 (define (ty-node-dedup-clear!) : unit
   (let
-    [slots : (__tl_dyn-array i64) ty-node-dedup-slots]
-    [capacity : i64 (array-length slots)]
+    [capacity : i64 (array-length ty-node-dedup-slots)]
     [i : i64 0]
     (begin
       (while (< i capacity)
         (begin
-          (array-set! slots i 0)
+          (array-set! ty-node-dedup-slots i 0)
           (set! i (+ i 1))))
       (set! ty-node-dedup-count 0))))
 
@@ -2226,8 +2244,7 @@
 ;; purely by count against capacity, so it fires at the same push on every run.
 (define (ty-node-dedup-grow!) : unit
   (let
-    [old-slots : (__tl_dyn-array i64) ty-node-dedup-slots]
-    [old-capacity : i64 (array-length old-slots)]
+    [old-capacity : i64 (array-length ty-node-dedup-slots)]
     [new-capacity : i64 (* old-capacity 2)]
     [prev-arena : i64 (arena.tl_arena_current)]
     [base-arena : i64 node-pool-base-arena]
@@ -2252,7 +2269,7 @@
         (ast-node-pool-active-context-capture-expr!))
       (while (< i old-capacity)
         (let
-          [slot : i64 (array-ref old-slots i)]
+          [slot : i64 (array-ref ty-node-dedup-slots i)]
           (begin
             (if (= slot 0)
               unit
@@ -2317,7 +2334,9 @@
 ;: Append `node` to the selected type pool.
 (define (ty-node-push [node : AstType]) : i64
   (if ast-node-pool-compat-context-explicit?
-    (ast-node-pool-context-type-push ast-node-pool-compat-context node)
+    (ast-node-pool-context-type-push
+      (ast-node-pool-compat-context-shared-view)
+      node)
     (ty-node-push-active node)))
 
 ;: Read the type node at `id` from the installed type pool.
@@ -2368,11 +2387,11 @@
 
 (define (ty-node-pool-state-capture) : AstTypeNodePoolState
   (AstTypeNodePoolState
-    ty-node-pool-segment-bases
+    (ast-global-shared-view ty-node-pool-segment-bases)
     ty-node-pool-count
     node-pool-base-arena
     ty-node-pool-exhausted
-    ty-node-dedup-slots
+    (ast-global-shared-view ty-node-dedup-slots)
     ty-node-dedup-count
     ty-node-pool-storage-arena
     ty-node-pool-segment-count))
@@ -2579,21 +2598,45 @@
 
 (define ast-node-pool-compat-context-explicit? : bool
   false)
-(define ast-node-pool-compat-context : AstNodePoolContext
-  (ast-node-pool-context-capture-active-raw))
-(define ast-node-pool-compat-saved-context : AstNodePoolContext
-  (ast-node-pool-context-capture-active-raw))
+(define ast-node-pool-compat-context-cell : (__tl_dyn-array AstNodePoolContext)
+  (make-array (ast-node-pool-context-capture-active-raw)))
+(define ast-node-pool-compat-saved-context-cell : (__tl_dyn-array
+    AstNodePoolContext)
+  (make-array (ast-node-pool-context-capture-active-raw)))
+
+;; The compatibility pool is an arena-backed shared view. Keep the raw shallow
+;; copy confined to this internal cell boundary; ordinary non-Copy globals are
+;; still borrow-only.
+(define (ast-node-pool-compat-context-shared-view) : AstNodePoolContext
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data ast-node-pool-compat-context-cell)
+        : (Ptr AstNodePoolContext)))))
+
+(define (ast-node-pool-compat-saved-context-shared-view) : AstNodePoolContext
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data ast-node-pool-compat-saved-context-cell)
+        : (Ptr AstNodePoolContext)))))
 
 (define (ast-node-pool-context-capture-active) : AstNodePoolContext
   (if ast-node-pool-compat-context-explicit?
     (ast-node-pool-context-new-with-pool-owner
-      (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
-      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0)
+      (array-ref
+        (struct-get (ast-node-pool-compat-context-shared-view) expr-pool)
+        0)
+      (array-ref
+        (struct-get (ast-node-pool-compat-context-shared-view) type-pool)
+        0)
       ;; Describes the compat pool, so the compat pool's base arena owns it.
       (struct-get
-        (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
+        (array-ref
+          (struct-get (ast-node-pool-compat-context-shared-view) expr-pool)
+          0)
         base-arena)
-      (struct-get ast-node-pool-compat-context owner-arena))
+      (struct-get (ast-node-pool-compat-context-shared-view) owner-arena))
     (ast-node-pool-context-capture-active-raw)))
 
 (define ast-node-pool-active-context-installed? : bool
@@ -2632,36 +2675,49 @@
 
 (define (ast-node-pool-compat-context-use! [pools : AstNodePoolContext]) : unit
   (begin
-    (set!
-      ast-node-pool-compat-saved-context
+    (array-set!
+      ast-node-pool-compat-saved-context-cell
+      0
       (ast-node-pool-context-capture-active-raw))
-    (set! ast-node-pool-compat-context pools)
+    (array-set! ast-node-pool-compat-context-cell 0 pools)
     (set! ast-node-pool-compat-context-explicit? true)
     (ast-node-pools-state-install!
-      (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
-      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0)
-      (struct-get ast-node-pool-compat-context owner-arena))))
+      (array-ref
+        (struct-get (ast-node-pool-compat-context-shared-view) expr-pool)
+        0)
+      (array-ref
+        (struct-get (ast-node-pool-compat-context-shared-view) type-pool)
+        0)
+      (struct-get (ast-node-pool-compat-context-shared-view) owner-arena))))
 
 (define (ast-node-pool-compat-context-clear!) : unit
   (begin
     (ast-node-pools-state-install!
-      (array-ref (struct-get ast-node-pool-compat-saved-context expr-pool) 0)
-      (array-ref (struct-get ast-node-pool-compat-saved-context type-pool) 0)
-      (struct-get ast-node-pool-compat-saved-context owner-arena))
+      (array-ref
+        (struct-get (ast-node-pool-compat-saved-context-shared-view) expr-pool)
+        0)
+      (array-ref
+        (struct-get (ast-node-pool-compat-saved-context-shared-view) type-pool)
+        0)
+      (struct-get (ast-node-pool-compat-saved-context-shared-view) owner-arena))
     (set! ast-node-pool-compat-context-explicit? false)))
 
 (define (ast-node-pool-compat-context-active?) : bool
   ast-node-pool-compat-context-explicit?)
 
 (define (ast-node-pool-compat-context-current) : AstNodePoolContext
-  ast-node-pool-compat-context)
+  (ast-node-pool-compat-context-shared-view))
 
 (define (ast-node-pool-compat-context-sync-installed!) : unit
   (if ast-node-pool-compat-context-explicit?
     (ast-node-pools-state-install!
-      (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
-      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0)
-      (struct-get ast-node-pool-compat-context owner-arena))
+      (array-ref
+        (struct-get (ast-node-pool-compat-context-shared-view) expr-pool)
+        0)
+      (array-ref
+        (struct-get (ast-node-pool-compat-context-shared-view) type-pool)
+        0)
+      (struct-get (ast-node-pool-compat-context-shared-view) owner-arena))
     unit))
 
 (define (ast-node-pool-context-snapshot [pools : AstNodePoolContext]) : AstNodePoolContext
@@ -2693,7 +2749,7 @@
 ;: to the live pool and then hand the result back to the walk needs these cells.
 ;: Only meaningful while `ast-node-pool-has-active-context?` holds.
 (define (ast-node-pool-context-active-live) : AstNodePoolContext
-  ast-node-pool-active-context)
+  (ast-global-shared-view ast-node-pool-active-context))
 
 ;; The newest segment of the active node-pool chain. The pool arena's live
 ;; chain is only reachable from this head (overflow segments link newest->root
@@ -3088,14 +3144,15 @@
 ;; parameter. Explicit compile-job entry points never call this helper.
 (define (ast-node-pool-reader-type-segment-bases) : i64
   (if ast-node-pool-reader-explicit?
-    (ast-node-pool-context-type-segment-bases ast-node-pool-reader-context)
+    (ast-node-pool-context-type-segment-bases
+      (ast-global-shared-view ast-node-pool-reader-context))
     ty-node-pool-segment-bases))
 
 ;; Legacy/test bridge for APIs that now require a pools value. Capturing the
 ;; compatibility globals is intentionally outside every compile-job path.
 (define (ast-node-pool-reader-context-current) : AstNodePoolContext
   (if ast-node-pool-reader-explicit?
-    ast-node-pool-reader-context
+    (ast-global-shared-view ast-node-pool-reader-context)
     (ast-node-pool-context-capture-active)))
 
 ;; Legacy/test adapter for callers that still run against the installed reader
@@ -3103,17 +3160,22 @@
 ;; twin above (or hoist its segment-bases pointer for hot recursive walks).
 (define (ast-node-pool-reader-type-get [id : i64]) : AstType
   (if ast-node-pool-reader-explicit?
-    (ast-node-pool-context-type-get ast-node-pool-reader-context id)
+    (ast-node-pool-context-type-get
+      (ast-global-shared-view ast-node-pool-reader-context)
+      id)
     (ty-node-get id)))
 
 (define (ast-node-pool-reader-type-push [node : AstType]) : i64
   (if ast-node-pool-reader-explicit?
-    (ast-node-pool-context-type-push ast-node-pool-reader-context node)
+    (ast-node-pool-context-type-push
+      (ast-global-shared-view ast-node-pool-reader-context)
+      node)
     (ty-node-push node)))
 
 (define (ast-node-pool-reader-type-exhausted?) : bool
   (if ast-node-pool-reader-explicit?
-    (ast-node-pool-context-type-exhausted? ast-node-pool-reader-context)
+    (ast-node-pool-context-type-exhausted?
+      (ast-global-shared-view ast-node-pool-reader-context))
     (ty-node-pool-exhausted?)))
 
 (defstruct AstExprList
@@ -3192,6 +3254,9 @@
 
 (define ast-decl-meta-runtime : AstDeclMeta
   (AstDeclMeta (box AstDeclMetaValue.Runtime)))
+
+(define (ast-decl-meta-runtime-shared-view) : AstDeclMeta
+  (ast-global-shared-view ast-decl-meta-runtime))
 
 ;; `AstExternMetadata` is larger than the other `AstDecl.Extern` fields
 ;; combined. Keeping it inline made Extern the layout ceiling for every
@@ -3283,7 +3348,7 @@
 
 (define (ast-type-list-with-capacity [capacity : i64]) : AstTypeList
   (if (<= capacity 0)
-    (AstTypeList ast-empty-i64-slots 0)
+    (AstTypeList (ast-global-shared-view ast-empty-i64-slots) 0)
     (AstTypeList (array.make-array i64 capacity) 0)))
 
 (define (ast-type-list-new) : AstTypeList
@@ -3515,7 +3580,7 @@
 
 (define (ast-lifetime-list-with-capacity [capacity : i64]) : AstLifetimeList
   (if (<= capacity 0)
-    (AstLifetimeList ast-empty-i64-slots 0)
+    (AstLifetimeList (ast-global-shared-view ast-empty-i64-slots) 0)
     (AstLifetimeList (array.make-array i64 capacity) 0)))
 
 (define (ast-lifetime-list-new) : AstLifetimeList
@@ -4435,7 +4500,9 @@
 
 (define (ast-variant-payload-cleanup-list-with-capacity [capacity : i64]) : AstVariantPayloadCleanupList
   (if (<= capacity 0)
-    (AstVariantPayloadCleanupList ast-empty-variant-payload-cleanup-slots 0)
+    (AstVariantPayloadCleanupList
+      (ast-global-shared-view ast-empty-variant-payload-cleanup-slots)
+      0)
     (AstVariantPayloadCleanupList
       (array.make-array AstVariantPayloadCleanup capacity)
       0)))
@@ -4544,7 +4611,7 @@
     (ast-variant-payload-cleanup-list-new)))
 
 (define (ast-variant-def-fallback) : AstVariantDef
-  ast-variant-def-fallback-value)
+  (ast-global-shared-view ast-variant-def-fallback-value))
 
 (define (ast-variant-def-list-with-capacity [capacity : i64]) : AstVariantDefList
   (let
@@ -5360,6 +5427,9 @@
 (define (ast-expr-array-take [target : i64] [live : i64] [index : i64]) : i64
   (ast-node-push (AstExpr.ArrayTake target live index)))
 
+(define (ast-expr-fixed-array-take [target : i64] [index : i64]) : i64
+  (ast-node-push (AstExpr.FixedArrayTake target index)))
+
 (define (ast-expr-array-push [target : i64] [value : i64]) : i64
   (ast-node-push (AstExpr.ArrayPush target value)))
 
@@ -5524,17 +5594,8 @@
 (define (ast-expr-comptime [inner : i64]) : i64
   (ast-node-push (AstExpr.Comptime inner)))
 
-(define (ast-expr-quote [inner : i64]) : i64
-  (ast-node-push (AstExpr.Quote inner)))
-
 (define (ast-expr-quasiquote [inner : i64]) : i64
   (ast-node-push (AstExpr.Quasiquote inner)))
-
-(define (ast-expr-unquote [inner : i64]) : i64
-  (ast-node-push (AstExpr.Unquote inner)))
-
-(define (ast-expr-unquote-splicing [inner : i64]) : i64
-  (ast-node-push (AstExpr.UnquoteSplicing inner)))
 
 (define (ast-expr-try [inner : i64]) : i64
   (ast-node-push (AstExpr.Try inner)))
@@ -5566,17 +5627,11 @@
 (define (ast-expr-ptr-cast [ptr : i64] [ty : AstType]) : i64
   (ast-node-push (AstExpr.PtrCast ptr (ty-node-push ty))))
 
-(define (ast-expr-ptr-cast-id [ptr : i64] [ty-id : i64]) : i64
-  (ast-node-push (AstExpr.PtrCast ptr ty-id)))
-
 (define (ast-expr-ptr-to-int [ptr : i64]) : i64
   (ast-node-push (AstExpr.PtrToInt ptr)))
 
 (define (ast-expr-int-to-ptr [value : i64] [ty : AstType]) : i64
   (ast-node-push (AstExpr.IntToPtr value (ty-node-push ty))))
-
-(define (ast-expr-int-to-ptr-id [value : i64] [ty-id : i64]) : i64
-  (ast-node-push (AstExpr.IntToPtr value ty-id)))
 
 (define (ast-expr-string-data [value : i64]) : i64
   (ast-node-push (AstExpr.StringData value)))
@@ -5704,6 +5759,12 @@
   [live : i64]
   [index : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.ArrayTake target live index)))
+
+(define (ast-expr-fixed-array-take-with-pools
+  [pools : AstNodePoolContext]
+  [target : i64]
+  [index : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExpr.FixedArrayTake target index)))
 
 (define (ast-expr-array-push-with-pools
   [pools : AstNodePoolContext]
@@ -6337,7 +6398,11 @@
   (AstDecl.ModuleBody name (box body)))
 
 (define (ast-decl-def-id [name : i64] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
-  (AstDecl.Def ast-decl-meta-runtime name maybe-ty value))
+  (AstDecl.Def
+    (ast-global-shared-view ast-decl-meta-runtime)
+    name
+    maybe-ty
+    value))
 
 (define (ast-decl-def-fn-id
   [name : i64]
@@ -6345,7 +6410,7 @@
   [ret : AstType]
   [body : i64]) : AstDecl
   (AstDecl.DefFn
-    ast-decl-meta-runtime
+    (ast-global-shared-view ast-decl-meta-runtime)
     name
     params
     ret
@@ -6359,7 +6424,7 @@
   [body : i64]
   [metadata : AstFnMetadata]) : AstDecl
   (AstDecl.DefFn
-    ast-decl-meta-runtime
+    (ast-global-shared-view ast-decl-meta-runtime)
     name
     params
     ret
@@ -6371,20 +6436,34 @@
   [params : AstMacroParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDecl.DefMacro ast-decl-meta-runtime name params ret body))
+  (AstDecl.DefMacro
+    (ast-global-shared-view ast-decl-meta-runtime)
+    name
+    params
+    ret
+    body))
 
 (define (ast-decl-extern-id
   [name : i64]
   [kind : AstExternKind]
   [metadata : AstExternMetadata]
   [ty : AstType]) : AstDecl
-  (AstDecl.Extern ast-decl-meta-runtime name kind (box metadata) ty))
+  (AstDecl.Extern
+    (ast-global-shared-view ast-decl-meta-runtime)
+    name
+    kind
+    (box metadata)
+    ty))
 
 (define (ast-decl-def-enum-id
   [name : i64]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : AstDecl
-  (AstDecl.DefEnum ast-decl-meta-runtime name cleanup variants))
+  (AstDecl.DefEnum
+    (ast-global-shared-view ast-decl-meta-runtime)
+    name
+    cleanup
+    variants))
 
 (define (ast-decl-def-enum-lifetimes-id
   [name : i64]
@@ -6392,7 +6471,7 @@
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : AstDecl
   (AstDecl.DefEnumLifetimes
-    ast-decl-meta-runtime
+    (ast-global-shared-view ast-decl-meta-runtime)
     name
     lifetimes
     cleanup
@@ -6403,7 +6482,12 @@
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : AstDecl
-  (AstDecl.DefStruct ast-decl-meta-runtime name repr cleanup fields))
+  (AstDecl.DefStruct
+    (ast-global-shared-view ast-decl-meta-runtime)
+    name
+    repr
+    cleanup
+    fields))
 
 (define (ast-decl-def-struct-lifetimes-id
   [name : i64]
@@ -6412,7 +6496,7 @@
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : AstDecl
   (AstDecl.DefStructLifetimes
-    ast-decl-meta-runtime
+    (ast-global-shared-view ast-decl-meta-runtime)
     name
     lifetimes
     repr
@@ -6422,7 +6506,10 @@
 (define (ast-decl-def-dispatch-id
   [name : i64]
   [variants : AstDispatchVariantList]) : AstDecl
-  (AstDecl.DefDispatch ast-decl-meta-runtime name variants))
+  (AstDecl.DefDispatch
+    (ast-global-shared-view ast-decl-meta-runtime)
+    name
+    variants))
 
 (define (ast-decl-test-id [name : i64] [body : i64] [span : AstSourceSpan]) : AstDecl
   (AstDecl.Test name body span))
@@ -6443,7 +6530,7 @@
     [(AstDecl.DefDispatch decl-meta _ _) decl-meta]
     [(AstDecl.Import decl-meta _) decl-meta]
     [(AstDecl.Unsafe inner-box) (ast-decl-meta (box-get inner-box))]
-    [_ ast-decl-meta-runtime]))
+    [_ (ast-global-shared-view ast-decl-meta-runtime)]))
 
 (define (ast-decl-generated-meta [decl : AstDecl]) : AstGeneratedDeclMeta
   (match (box-get (struct-get (ast-decl-meta decl) value))
@@ -7784,6 +7871,10 @@
         (ast-compaction-remap-expr-id remap target)
         (ast-compaction-remap-expr-id remap live)
         (ast-compaction-remap-expr-id remap index))]
+    [(AstExpr.FixedArrayTake target index)
+      (AstExpr.FixedArrayTake
+        (ast-compaction-remap-expr-id remap target)
+        (ast-compaction-remap-expr-id remap index))]
     [(AstExpr.ArrayPush target value)
       (AstExpr.ArrayPush
         (ast-compaction-remap-expr-id remap target)
@@ -8071,7 +8162,7 @@
   [remap : AstProgramCompactionRemap]
   [meta : AstDeclMeta]) : AstDeclMeta
   (match (box-get (struct-get meta value))
-    [(AstDeclMetaValue.Runtime) ast-decl-meta-runtime]
+    [(AstDeclMetaValue.Runtime) (ast-global-shared-view ast-decl-meta-runtime)]
     [(AstDeclMetaValue.Comptime generated)
       (AstDeclMeta
         (box
@@ -8408,6 +8499,7 @@
     [(AstExpr.ArrayRef _ _) 14]
     [(AstExpr.ArraySet _ _ _) 15]
     [(AstExpr.ArrayTake _ _ _) 75]
+    [(AstExpr.FixedArrayTake _ _) 76]
     [(AstExpr.ArrayPush _ _) 41]
     [(AstExpr.StringRef _ _) 16]
     [(AstExpr.While _ _) 17]

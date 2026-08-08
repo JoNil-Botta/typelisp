@@ -1679,11 +1679,12 @@ mutable source.
 mutable iterator state. Construction moves the source exactly once. Each
 `IntoNext.Item` owns its `T` payload; `Done` is explicit and remains stable on
 repeated calls. Generated vectors keep an internal live-slot map and extract each
-item through checked `array-take!`, never through `array-ref`, `clone`, or a
-hidden copy. For cleanup-owning element types, backing storage contains only
-constructed elements: capacity never creates spare owners. `IntoNext` is itself
-cleanup-owning, so an abandoned `Item` cleans its payload, while abandoning the
-`IntoIter` drains exactly the still-live, unvisited slots and `Done` is a no-op.
+item through checked private `__tl_array-take!`, never through `array-ref`,
+`clone`, or a hidden copy. For cleanup-owning element types, backing storage
+contains only constructed elements: capacity never creates spare owners.
+`IntoNext` is itself cleanup-owning, so an abandoned `Item` cleans its payload,
+while abandoning the `IntoIter` drains exactly the still-live, unvisited slots
+and `Done` is a no-op.
 
 **Scalar `for`.** The implicit-prelude macro has the let-like form
 `(for [item source] body...)`; an optional item annotation is written
@@ -3512,6 +3513,24 @@ therefore preserves the resolved underlying class. The classifier's recursive
 result describes source-level ownership, not whether the backend transports a
 value in registers or through a pointer-sized handle.
 
+**Global places.** An ordinary `define` may initialize a non-Copy value. The
+global remains the permanent owner of that value in a static-lifetime place;
+it is not a shared handle and safe code cannot move ownership out of it. A
+Copy global, or a Copy projection from any global, may be read by value
+normally. Every by-value use of a non-Copy global or non-Copy projection is
+rejected, including a `let` initializer, ordinary or consuming call argument,
+constructor operand, match scrutinee, function/lambda result, and a use inside
+a task-thread or SPMD body. The rule is based on the resolved declaration, so
+qualified, aliased, and macro-generated global names behave identically.
+
+Safe inspection uses an explicit shared or mutable borrow; a reference-typed
+call context may insert the same typed auto-borrow used for local places.
+Mutation operates on the global place directly or through a checked `&mut`
+borrow and retains the ordinary exclusivity and task-thread sharing rules. A
+by-value read therefore never manufactures an untracked owning alias of
+mutable global storage. `extern` and raw static storage remain governed by
+their unsafe C boundary rather than this safe ordinary-global rule.
+
 **Move sites.** The checker treats these by-value positions as moves for
 move-only values and as copies for copyable values:
 
@@ -3535,7 +3554,12 @@ move-only values and as copies for copyable values:
 - `set!` right-hand sides. Assigning a move-only value into a definitely moved
   or definitely uninitialized local moves the value into that slot. Assigning
   over an initialized move-only slot is rejected in v1: there is no implicit
-  drop, destructor, or replacement cleanup. Move-only globals are rejected.
+  drop, destructor, or replacement cleanup. Whole-place assignment to an
+  ordinary non-cleanup-owning global instead replaces that permanent place's
+  stored value; it does not move the previous value out or run cleanup.
+  Cleanup-owning global replacement remains rejected without explicit cleanup
+  transfer. In every case, the right-hand side is checked independently and
+  cannot move a non-Copy value out of another global.
 - Tuple, fixed-array, struct, and enum constructors. Constructor arguments are
   consumed by value unless their expression is copyable or explicitly borrowed
   by a reference form.
@@ -3543,6 +3567,14 @@ move-only values and as copies for copyable values:
   the store, but v1 rejects arrays of move-only elements and stores of
   move-only elements; unique mutable element access and element replacement
   cleanup are reserved.
+- `array-take!` fixed-array elements. `(array-take! items index)` transfers the
+  old element value to its result and immediately writes `(init : T)` back to
+  the same slot, so the source place remains fully initialized and is not
+  recorded as moved. For a copyable `T` the result is an ordinary copy before
+  the same reset. The receiver must be an owned fixed-array storage place or a
+  mutable reference to one, `T` must be `init`-eligible, and active or explicit
+  cleanup ownership is rejected. The ordinary non-Copy global-source rule also
+  applies: resetting a global slot does not permit moving its old owner out.
 - `match` scrutinees. Matching a move-only enum by value consumes the whole
   enum value. Payload bindings then own the active payload values for that
   arm. Matching `(& place)` when the borrowed referent is an enum is the
@@ -3666,6 +3698,8 @@ projection syntax is not introduced.
   aggregate path.
 - Storing, capturing, or returning a move-only value where the destination
   would outlive the owner scope.
+- Moving a non-Copy value or projection out of an ordinary global, naming the
+  global and pointing at the attempted by-value read.
 
 Move-while-borrowed and assignment-while-borrowed diagnostics are produced by
 the borrow checker (section 3.10), not by move checking. `str` borrowing and
@@ -4080,6 +4114,11 @@ analysis.
 Cleanup-owning aggregates are not initialized by `init`: constructing one
 would also commit to cleanup execution and failure behavior, so they require
 explicit constructors.
+
+The fixed-array `(array-take! items index)` operation uses these same
+eligibility and construction rules for its immediate replacement value. It
+rejects an element type for which `(init : T)` is unavailable rather than
+leaving a moved or uninitialized slot.
 
 ```lisp test=ignore name=init-expression-examples reason="illustrates source surface"
 (defstruct Point (x i64) (y i64))
@@ -5691,6 +5730,10 @@ input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
 
 - A whole local or parameter storage slot, including scalar and aggregate
   locals/parameters.
+- An ordinary global storage slot. This does not constitute a safe by-value
+  read: dereferencing the resulting raw pointer to copy a non-Copy handle is an
+  explicit unsafe ownership/aliasing operation whose validity is entirely the
+  caller's responsibility.
 - A struct field path rooted in an addressable local or parameter, written as
   `(struct-get place field)` or equivalent local dotted-field sugar.
 - A fixed-array element path rooted in addressable storage, written as
@@ -5699,8 +5742,9 @@ input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
   sugar is not addressable in v1. The element index is checked with the same
   bounds policy as fixed-array element access before the pointer is returned.
 
-The operation's result type is `(MutPtr T)` for the selected owned storage of
-type `T`. V1 does not define reference-rooted address-of. A later design may
+The operation's result type is `(MutPtr T)` for the selected owned local,
+parameter, or ordinary global storage of type `T`. V1 does not define
+reference-rooted address-of. A later design may
 allow reference roots, in which case immutable roots should produce `(Ptr T)`
 and mutable roots `(MutPtr T)`.
 
@@ -5822,6 +5866,7 @@ borrowed Slice reference forms described in section 3.2:
 | `array-length` | `(Array T N) → i64` / `(Array T) → i64` / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` | Alias for array `length`, including borrowed Slice length |
 | `array-ref` | `(Array T N) i64 → T` / `(& r (Slice T)) i64 → T` / `(&mut r (Slice T)) i64 → T` | Bounds-checked read through an owned array, an immutable or mutable array reference, or a borrowed Slice receiver |
 | `array-set!` | `(Array T N) i64 T → unit` / `(&mut r (Slice T)) i64 T → unit` | Bounds-checked write through an owned array, mutable array reference, or mutable Slice receiver; shared Slice writes are rejected |
+| `array-take!` | `(Array T N) i64 → T` / `(&mut r (Array T N)) i64 → T` | Bounds-check, return the old fixed-array element, and immediately replace its slot with `(init : T)`; requires an owned storage place or mutable reference and an `init`-eligible, non-cleanup-owning `T` |
 | `slice-view` | `source i64 i64 → (& r (Slice T))` | Checked, allocation-free view over a fixed array, compatibility dynamic array, suitable reference, or borrowed Slice; source and indices evaluate once left-to-right |
 | `slice-mut-view` | `source i64 i64 → (&mut r (Slice T))` | Checked, allocation-free exclusive view over a mutable fixed/dynamic array, suitable mutable reference, or mutable Slice; no shared-to-mutable strengthening |
 
@@ -5844,7 +5889,7 @@ Owned `String` arguments place an auto-borrow at typed call sites. Per the
 section 3.11 contract, non-consuming text inputs take `(& lifetime str)`
 while allocating operations return owned `String`.
 
-**Bounds checks and traps.** `array-ref`, `array-set!`, the imported
+**Bounds checks and traps.** `array-ref`, `array-set!`, `array-take!`, the imported
 `string-ref`, and `substring` / `string-slice` / `substring-view` perform
 runtime bounds checks. An out-of-bounds access calls the `tl_oob_abort`
 runtime trap, which writes to stderr and exits with code 134. Slice views also
@@ -5901,6 +5946,11 @@ contracts:
   internal compatibility code that must pass raw storage pointers. It operates
   on array owner storage and does not accept a borrowed Slice receiver or
   extract a Slice's pointer/length pair.
+- `__tl_array-take!` is the private three-operand compatibility primitive used
+  by generated vector internals: `(__tl_array-take! items live index)` returns
+  `(Tuple bool T)` and updates the separate dynamic-array liveness bitmap. The
+  public `array-take!` spelling accepts exactly two operands and never exposes
+  that storage protocol.
 
 ### 6.2 Runtime functions (emitted by the backend)
 

@@ -23,6 +23,13 @@
 (import compiler_parallel_move as pmove)
 (cfg test (import stdlib.test))
 
+(defmacro (compiler-reg-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 ;; Physical-register IDs and interned block-label IDs are deliberately carried
 ;; by distinct dense wrappers. Both use a contiguous live prefix, but keeping
 ;; separate types prevents an i64 from one identity domain from reaching an API
@@ -662,9 +669,6 @@
 (defmacro (compiler-reg-label-seq-count [items : CompilerRegLabelSeq]) : i64
   `(struct-get ,items len))
 
-(defmacro (compiler-reg-label-seq-empty? [items : CompilerRegLabelSeq]) : bool
-  `(= (struct-get ,items len) 0))
-
 (defmacro (compiler-reg-label-seq-ref
   [items : CompilerRegLabelSeq]
   [index : i64]) : i64
@@ -1283,29 +1287,37 @@
 (define (compiler-reg-xmm-registers-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
   (match target-abi
-    [(cabi.CompilerRegTargetAbi.Linux) compiler-reg-linux-xmm-registers]
-    [(cabi.CompilerRegTargetAbi.Windows) compiler-reg-windows-xmm-registers]))
+    [(cabi.CompilerRegTargetAbi.Linux)
+      (compiler-reg-global-shared-view compiler-reg-linux-xmm-registers)]
+    [(cabi.CompilerRegTargetAbi.Windows)
+      (compiler-reg-global-shared-view compiler-reg-windows-xmm-registers)]))
 
 (define (compiler-reg-vector-registers-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
   (match target-abi
-    [(cabi.CompilerRegTargetAbi.Linux) compiler-reg-linux-vector-registers]
-    [(cabi.CompilerRegTargetAbi.Windows) compiler-reg-windows-vector-registers]))
+    [(cabi.CompilerRegTargetAbi.Linux)
+      (compiler-reg-global-shared-view compiler-reg-linux-vector-registers)]
+    [(cabi.CompilerRegTargetAbi.Windows)
+      (compiler-reg-global-shared-view compiler-reg-windows-vector-registers)]))
 
 (define (compiler-reg-xmm-callee-registers-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
   (match target-abi
-    [(cabi.CompilerRegTargetAbi.Linux) compiler-reg-linux-xmm-callee-registers]
+    [(cabi.CompilerRegTargetAbi.Linux)
+      (compiler-reg-global-shared-view compiler-reg-linux-xmm-callee-registers)]
     [(cabi.CompilerRegTargetAbi.Windows)
-      compiler-reg-windows-xmm-callee-registers]))
+      (compiler-reg-global-shared-view
+        compiler-reg-windows-xmm-callee-registers)]))
 
 (define (compiler-reg-vector-callee-registers-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
   (match target-abi
     [(cabi.CompilerRegTargetAbi.Linux)
-      compiler-reg-linux-vector-callee-registers]
+      (compiler-reg-global-shared-view
+        compiler-reg-linux-vector-callee-registers)]
     [(cabi.CompilerRegTargetAbi.Windows)
-      compiler-reg-windows-vector-callee-registers]))
+      (compiler-reg-global-shared-view
+        compiler-reg-windows-vector-callee-registers)]))
 
 (define (compiler-reg-xmm-caller-register-count-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : i64
@@ -2508,16 +2520,14 @@
       (CompilerRegAssignmentIndex present items))))
 
 (define (compiler-reg-assignment-index-lookup
-  [index : CompilerRegAssignmentIndex]
+  [index : (& index CompilerRegAssignmentIndex)]
   [var : i64]) : CompilerRegMaybeLocation
-  (let
-    [present : (__tl_dyn-array i64) (struct-get index present)]
-    [items : (__tl_dyn-array CompilerRegLocation) (struct-get index items)]
-    (if (or (< var 0) (>= var (array-length present)))
+  (if (or (< var 0) (>= var (array-length (struct-get index present))))
+    CompilerRegMaybeLocation.No
+    (if (= (array-ref (struct-get index present) var) 0)
       CompilerRegMaybeLocation.No
-      (if (= (array-ref present var) 0)
-        CompilerRegMaybeLocation.No
-        (CompilerRegMaybeLocation.Some (array-ref items var))))))
+      (CompilerRegMaybeLocation.Some
+        (clone (array-ref (struct-get index items) var))))))
 
 (define (compiler-reg-assignment-table-make [vars : i64]) : CompilerRegAssignmentTable
   (let
@@ -6840,7 +6850,7 @@
     [_ cabi.compiler-reg-id-invalid]))
 
 (define (compiler-reg-assignment-index-var-uses-register?
-  [assignment-index : CompilerRegAssignmentIndex]
+  [assignment-index : (& assignment-index CompilerRegAssignmentIndex)]
   [var : i64]
   [reg : i64]) : bool
   (match (compiler-reg-assignment-index-lookup assignment-index var)
@@ -6849,7 +6859,7 @@
     [(CompilerRegMaybeLocation.No) false]))
 
 (define (compiler-reg-assignment-index-primary-register-home
-  [assignment-index : CompilerRegAssignmentIndex]
+  [assignment-index : (& assignment-index CompilerRegAssignmentIndex)]
   [var : i64]) : i64
   (match (compiler-reg-assignment-index-lookup assignment-index var)
     [(CompilerRegMaybeLocation.Some location)
@@ -6881,8 +6891,8 @@
         (compiler-reg-assignments-register-use-count (box-get rest) reg))]))
 
 (define (compiler-reg-var-live-at-point?
-  [starts : (__tl_dyn-array i64)]
-  [ends : (__tl_dyn-array i64)]
+  [starts : (& starts (__tl_dyn-array i64))]
+  [ends : (& ends (__tl_dyn-array i64))]
   [var : i64]
   [point : i64]) : bool
   (and
@@ -6894,8 +6904,8 @@
     (<= point (array-ref ends var))))
 
 (define (compiler-reg-var-live-over-range?
-  [starts : (__tl_dyn-array i64)]
-  [ends : (__tl_dyn-array i64)]
+  [starts : (& starts (__tl_dyn-array i64))]
+  [ends : (& ends (__tl_dyn-array i64))]
   [var : i64]
   [lo : i64]
   [hi : i64]) : bool
@@ -6933,9 +6943,9 @@
       free)))
 
 (define (compiler-reg-assignment-index-register-free-over-range?
-  [starts : (__tl_dyn-array i64)]
-  [ends : (__tl_dyn-array i64)]
-  [assignment-index : CompilerRegAssignmentIndex]
+  [starts : (& starts (__tl_dyn-array i64))]
+  [ends : (& ends (__tl_dyn-array i64))]
+  [assignment-index : (& assignment-index CompilerRegAssignmentIndex)]
   [vars : i64]
   [lo : i64]
   [hi : i64]
@@ -37884,6 +37894,8 @@
           [uniform : i64 (array-ref remap 2)]
           [rebuilt : CompilerRegAssignmentList
             (compiler-reg-color-rebuild-assignments remap 3 assignments)]
+          [rebuilt-index : CompilerRegAssignmentIndex
+            (compiler-reg-assignment-index-build rebuilt 3)]
           (begin
             (compiler-regalloc-self-test-require!
               "AVX2 special parameter range reservation"
@@ -37896,9 +37908,7 @@
             (compiler-regalloc-self-test-require!
               "AVX2 special parameter assignment remap"
               (compiler-reg-location-register?
-                (compiler-reg-assignment-index-lookup
-                  (compiler-reg-assignment-index-build rebuilt 3)
-                  varying)
+                (compiler-reg-assignment-index-lookup rebuilt-index varying)
                 cabi.compiler-reg-id-r12))
             (compiler-regalloc-self-test-require!
               "AVX2 emitted parameter id remap"

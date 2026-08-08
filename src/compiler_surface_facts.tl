@@ -116,26 +116,35 @@
 
 (define surface-typecheck-facts-installed : bool
   false)
-(define surface-typecheck-facts-installed-value : SurfaceTypecheckFacts
-  (surface-typecheck-facts-empty))
+(define surface-typecheck-facts-installed-value : (__tl_dyn-array
+    SurfaceTypecheckFacts)
+  (make-array (surface-typecheck-facts-empty)))
+
+(define (surface-typecheck-facts-installed-shared-view) : SurfaceTypecheckFacts
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data surface-typecheck-facts-installed-value)
+        : (Ptr SurfaceTypecheckFacts)))))
 
 (define (surface-typecheck-facts-install! [facts : SurfaceTypecheckFacts]) : unit
   (begin
-    (set! surface-typecheck-facts-installed-value facts)
+    (array-set! surface-typecheck-facts-installed-value 0 facts)
     (set! surface-typecheck-facts-installed true)))
 
 (define (surface-typecheck-facts-clear!) : unit
   (begin
     (set! surface-typecheck-facts-installed false)
-    (set!
+    (array-set!
       surface-typecheck-facts-installed-value
+      0
       (surface-typecheck-facts-empty))))
 
 (define (surface-typecheck-facts-active?) : bool
   surface-typecheck-facts-installed)
 
 (define (surface-typecheck-facts-current) : SurfaceTypecheckFacts
-  surface-typecheck-facts-installed-value)
+  (surface-typecheck-facts-installed-shared-view))
 
 (cfg
   compiler-surface-producer
@@ -153,6 +162,16 @@
   compiler-surface-producer
   (define surface-typecheck-facts-recording-observations : SurfaceCloneObservationSeq
     (surface-clone-observation-seq-empty)))
+
+(cfg
+  compiler-surface-producer
+  (define (surface-typecheck-facts-recording-observations-shared-view) : SurfaceCloneObservationSeq
+    (cfg
+      stage0-seed-bootstrap
+      surface-typecheck-facts-recording-observations
+      (unsafe
+        (ptr-read (ptr-addr-of surface-typecheck-facts-recording-observations))))))
+
 (cfg
   compiler-surface-producer
   (define surface-typecheck-facts-recording-next-call : i64
@@ -231,13 +250,17 @@
     [summary-externs : i64]) : SurfaceTypecheckFacts
     (let
       [count : i64
-        (struct-get surface-typecheck-facts-recording-observations len)]
+        (struct-get
+          (surface-typecheck-facts-recording-observations-shared-view)
+          len)]
       [decl-keys : (__tl_dyn-array i64) (make-array i64 count)]
       [root-keys : (__tl_dyn-array i64) (make-array i64 count)]
       [call-indices : (__tl_dyn-array i64) (make-array i64 count)]
       [index : i64 0]
       [slots : (__tl_dyn-array SurfaceCloneObservation)
-        (struct-get surface-typecheck-facts-recording-observations slots)]
+        (struct-get
+          (surface-typecheck-facts-recording-observations-shared-view)
+          slots)]
       (begin
         (while (< index count)
           (let

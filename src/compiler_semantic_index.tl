@@ -206,7 +206,7 @@
       (while (< index (struct-get bindings len))
         (let
           [taken : (Tuple bool CompilerSemanticBinding)
-            (array-take! old-items old-live index)]
+            (__tl_array-take! old-items old-live index)]
           (begin
             (if (tuple-ref taken 0)
               (begin
@@ -267,7 +267,7 @@
       (while (< index (struct-get records len))
         (let
           [taken : (Tuple bool CompilerSemanticRecord)
-            (array-take! old-items old-live index)]
+            (__tl_array-take! old-items old-live index)]
           (begin
             (if (tuple-ref taken 0)
               (begin
@@ -1528,6 +1528,10 @@
         (compiler-semantic-walk-quasiquote-node! state scope env target)
         (compiler-semantic-walk-quasiquote-node! state scope env live)
         (compiler-semantic-walk-quasiquote-node! state scope env index))]
+    [(ast.AstExpr.FixedArrayTake target index)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env target)
+        (compiler-semantic-walk-quasiquote-node! state scope env index))]
     [(ast.AstExpr.ArrayPush target value)
       (begin
         (compiler-semantic-walk-quasiquote-node! state scope env target)
@@ -2413,6 +2417,10 @@
       (begin
         (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-walk-node! state scope env live)
+        (compiler-semantic-walk-node! state scope env index))]
+    [(ast.AstExpr.FixedArrayTake target index)
+      (begin
+        (compiler-semantic-walk-node! state scope env target)
         (compiler-semantic-walk-node! state scope env index))]
     [(ast.AstExpr.ArrayPush target value)
       (begin

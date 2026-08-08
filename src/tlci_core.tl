@@ -12,6 +12,13 @@
 (import lex as lexer)
 (import read as reader)
 
+(defmacro (tlci-host-callback-name-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (define (tlci-symbol-text [name-id : i64]) : String
   (reader.symbol-text-for-id name-id))
 
@@ -343,7 +350,7 @@
   "v2")
 
 (define (tlci-metadata-version-v2-current) : String
-  tlci-metadata-version-v2)
+  (string.copy (& tlci-metadata-version-v2)))
 
 (define tlci-host-arch-x86-64 : i64
   1)
@@ -353,6 +360,10 @@
   2)
 (define tlci-image-entry-symbol : String
   "tlci_image_entry")
+
+(define (tlci-image-entry-symbol-shared-view) : String
+  (tlci-host-callback-name-shared-view tlci-image-entry-symbol))
+
 (define tlci-image-entry-param-count : i64
   2)
 (define tlci-image-entry-success : i64
@@ -1112,6 +1123,9 @@
 (define tlci-macro-table-symbol : String
   "tlci_macro_table")
 
+(define (tlci-macro-table-symbol-shared-view) : String
+  (tlci-host-callback-name-shared-view tlci-macro-table-symbol))
+
 (defstruct TlciNativePackageInput
   (rodata (__tl_dyn-array u8))
   (code (__tl_dyn-array u8))
@@ -1186,7 +1200,10 @@
     [out : (__tl_dyn-array u8) (make-array u8 tlci-section-entry-record-size)]
     (begin
       (tlci-set-u64! out 0 0)
-      (tlci-set-u64! out 8 (tlci-string-length tlci-macro-table-symbol))
+      (tlci-set-u64!
+        out
+        8
+        (tlci-string-length (string.copy (& tlci-macro-table-symbol))))
       (tlci-set-u64! out 16 (tlci-native-package-count-word input))
       out)))
 
@@ -1194,7 +1211,7 @@
   (let
     [out : (__tl_dyn-array u8) (make-array u8 tlci-section-symbol-record-size)]
     (begin
-      (tlci-put-string! out 0 tlci-macro-table-symbol)
+      (tlci-put-string! out 0 (string.copy (& tlci-macro-table-symbol)))
       out)))
 
 (define (tlci-native-package-fixups [input : TlciNativePackageInput]) : (__tl_dyn-array
@@ -2516,7 +2533,7 @@
         [else
           (ResultTlciMetadata.Ok
             (TlciMetadata
-              tlci-metadata-version
+              (string.copy (& tlci-metadata-version))
               name
               version
               (tlci-spmd-callables-empty)))])]

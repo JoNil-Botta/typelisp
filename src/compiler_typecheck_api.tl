@@ -226,7 +226,7 @@
   [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
     load-state
-    tc_core.tc-prefix-snapshot-serial-test-cache-state
+    (tc_core.tc-prefix-snapshot-serial-test-cache-state-shared-view)
     (tc_core.tc-serial-job-state)
     program
     paths
@@ -526,7 +526,7 @@
   [pools : ast.AstNodePoolContext]) : tc_core.ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools
     load-state
-    tc_core.tc-prefix-snapshot-serial-test-cache-state
+    (tc_core.tc-prefix-snapshot-serial-test-cache-state-shared-view)
     (tc_core.tc-serial-job-state)
     program
     paths

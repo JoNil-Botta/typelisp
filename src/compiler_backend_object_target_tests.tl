@@ -79,13 +79,13 @@
         (cobj.compiler-object-section-contains-label?
           windows-sections
           (cobj.CompilerObjectSectionKind.Rsrc)
-          object_windows.compiler-backend-object-manifest-label)
+          (object_windows.compiler-backend-object-manifest-label-shared-view))
         "Windows leaf emits the UTF-8 manifest resource")
       (test.assert-true
         (cobj.compiler-object-relocation-list-contains?
           (struct-get windows-image relocations)
           (cobj.CompilerObjectRelocationKind.Addr32Nb)
-          object_windows.compiler-backend-object-manifest-label)
+          (object_windows.compiler-backend-object-manifest-label-shared-view))
         "Windows leaf relocates the manifest resource"))))
 
 (test
@@ -124,7 +124,7 @@
         (not
           (cobj.compiler-object-symbol-list-contains?
             (struct-get windows-image symbols)
-            object_windows.compiler-backend-object-manifest-label
+            (object_windows.compiler-backend-object-manifest-label-shared-view)
             (cobj.CompilerObjectSymbolBinding.Local)
             (cobj.CompilerObjectSymbolKind.Data)))
         "Windows CRT mode omits the executable manifest symbol"))))

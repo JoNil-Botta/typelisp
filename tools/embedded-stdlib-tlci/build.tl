@@ -19,6 +19,13 @@
 (define embedded-stdlib-tlci-source-hash : i64
   7)
 
+(define (embedded-stdlib-tlci-build-error-shared-view) : String
+  (cfg
+    stage0-seed-bootstrap
+    embedded-stdlib-tlci-build-error
+    (unsafe
+      (ptr-read (ptr-addr-of embedded-stdlib-tlci-build-error)))))
+
 (define (embedded-stdlib-tlci-hash-text! [text : String]) : unit
   (let
     [index : i64 0]
@@ -172,7 +179,9 @@
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
   (when
     (and
-      (= (string.string-length embedded-stdlib-tlci-build-error) 0)
+      (=
+        (string.string-length (embedded-stdlib-tlci-build-error-shared-view))
+        0)
       (< start (string.string-length manifest)))
     (let
       [end : i64 (embedded-stdlib-tlci-line-end manifest start)]
@@ -297,12 +306,15 @@
               0
               (&mut names)
               (&mut captures))
-            (if (> (string.string-length embedded-stdlib-tlci-build-error) 0)
+            (if (>
+              (string.string-length
+                (embedded-stdlib-tlci-build-error-shared-view))
+              0)
               (begin
                 (io.print-error
                   (str_cat.str-cat
                     "embedded stdlib tlci: "
-                    embedded-stdlib-tlci-build-error
+                    (embedded-stdlib-tlci-build-error-shared-view)
                     "\n"))
                 1)
               (let

@@ -959,8 +959,15 @@
 
 ;; Compatibility state for direct parser helpers and parser-only tests. Driver
 ;; paths always attach their own state with compiler-parse-state-cfgs.
-(define compiler-parse-default-state : CompilerParseState
-  (compiler-parse-state-new))
+(define compiler-parse-default-state : (__tl_dyn-array CompilerParseState)
+  (make-array (compiler-parse-state-new)))
+
+(define (compiler-parse-default-state-shared-view) : CompilerParseState
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data compiler-parse-default-state)
+        : (Ptr CompilerParseState)))))
 
 (define (sexpr-colon? [s : reader.Sexpr]) : bool
   (match (reader.sexpr-view s)
@@ -1442,6 +1449,9 @@
 
 (define (compiler-parse-tag-expr-array-take) : i64
   303)
+
+(define (compiler-parse-tag-expr-fixed-array-take) : i64
+  305)
 
 (define (compiler-parse-tag-expr-match) : i64
   244)
@@ -2171,7 +2181,7 @@
         (compiler-parse-dispatch-bind
           out
           "array-take!"
-          (compiler-parse-tag-expr-array-take)))
+          (compiler-parse-tag-expr-fixed-array-take)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -2665,7 +2675,9 @@
       (if (=
         (compiler-parse-env-marker-value cfgs compiler-parse-state-marker-id)
         0)
-        (compiler-parse-state-cfgs compiler-parse-default-state cfgs)
+        (compiler-parse-state-cfgs
+          (compiler-parse-default-state-shared-view)
+          cfgs)
         cfgs)]
     [control : i64
       (compiler-parse-env-marker-value
@@ -5419,7 +5431,7 @@
         [_ (ResultAstExpr.Err "parse: malformed array-push!")])]
     [_ (ResultAstExpr.Err "parse: malformed array-push!")]))
 
-(define (parse-ast-array-take
+(define (parse-ast-private-array-take
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
@@ -5451,8 +5463,35 @@
                         [(ResultAstExpr.Err message)
                           (ResultAstExpr.Err message)])]
                     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
-                [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
-            [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
+                [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")])]
+            [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")])]
+        [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")])]
+    [_ (ResultAstExpr.Err "parse: malformed __tl_array-take!")]))
+
+(define (parse-ast-fixed-array-take
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view rest)
+    [(reader.SpannedSexprView.Cons array index-tail _)
+      (match (reader.spanned-sexpr-view index-tail)
+        [(reader.SpannedSexprView.Cons index end _)
+          (match (reader.spanned-sexpr-view end)
+            [(reader.SpannedSexprView.Nil _)
+              (match (parse-ast-expr-with-pools dispatch pools array)
+                [(ResultAstExpr.Ok parsed-array)
+                  (match (parse-ast-expr-with-pools dispatch pools index)
+                    [(ResultAstExpr.Ok parsed-index)
+                      (ResultAstExpr.Ok
+                        (ast.ast-expr-fixed-array-take-with-pools
+                          pools
+                          parsed-array
+                          parsed-index))]
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_
+              (ResultAstExpr.Err
+                "parse: array-take! expects exactly two operands; compatibility storage must use private __tl_array-take!")])]
         [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
     [_ (ResultAstExpr.Err "parse: malformed array-take!")]))
 
@@ -7003,7 +7042,9 @@
     [(= tag (compiler-parse-tag-expr-array-push))
       (parse-ast-array-push dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-array-take))
-      (parse-ast-array-take dispatch pools rest)]
+      (parse-ast-private-array-take dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-fixed-array-take))
+      (parse-ast-fixed-array-take dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-match))
       (parse-ast-match dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-foreach))
@@ -8914,7 +8955,7 @@
   [span : ast.AstSourceSpan]) : ResultAstDecl
   (ResultAstDecl.Ok
     (ast.AstDecl.Import
-      ast.ast-decl-meta-runtime
+      (ast.ast-decl-meta-runtime-shared-view)
       (ast.AstImportSpec.Spec kind path module-name alias (box span)))))
 
 (define (parse-ast-import-alias
@@ -10308,7 +10349,7 @@
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Cons
         (ast.AstDecl.Import
-          ast.ast-decl-meta-runtime
+          _
           (ast.AstImportSpec.Spec
             (ast.AstImportKind.Module)
             path
@@ -10386,11 +10427,7 @@
                 [(ast.AstDeclListStep.Nil)
                   (match (ast.ast-decl-list-step body)
                     [(ast.AstDeclListStep.Cons
-                        (ast.AstDecl.Def
-                          ast.ast-decl-meta-runtime
-                          value-name
-                          _
-                          _)
+                        (ast.AstDecl.Def _ value-name _ _)
                         body-rest)
                       (let
                         [body-rest : ast.AstDeclList body-rest]
@@ -10419,7 +10456,7 @@
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                _
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Module)
                   path
@@ -10447,7 +10484,7 @@
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                _
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Module)
                   module-path
@@ -10475,7 +10512,7 @@
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                _
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Module)
                   module-path
@@ -10508,7 +10545,7 @@
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                _
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.MacroDecls call-expr _)
                   path
@@ -10535,7 +10572,7 @@
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
-                ast.ast-decl-meta-runtime
+                _
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Macro call-expr _)
                   path
@@ -10988,13 +11025,7 @@
         [decls : ast.AstDeclList (box-get decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn
-                ast.ast-decl-meta-runtime
-                name
-                _
-                (ast.AstType.F64)
-                body-box
-                _)
+              (ast.AstDecl.DefFn _ name _ (ast.AstType.F64) body-box _)
               _)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -11129,13 +11160,7 @@
         [decls : ast.AstDeclList (box-get decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn
-                ast.ast-decl-meta-runtime
-                name
-                _
-                (ast.AstType.I64)
-                body-box
-                _)
+              (ast.AstDecl.DefFn _ name _ (ast.AstType.I64) body-box _)
               _)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -11534,6 +11559,19 @@
     (compiler-parse-ok? "(define (main [b : (Box i64)]) : i64 (box-get b))")
     (compiler-parse-ok?
       "(define (main) : i64 (with-arena r (let [b : (in r (Box i64)) (box 7)] (box-get b))))")))
+
+(define (compiler-parse-array-take-ok?) : bool
+  (and
+    (compiler-parse-ok?
+      "(define (main [items : (Array i64 1)]) : i64 (array-take! items 0))")
+    (compiler-parse-ok?
+      "(define (main [items : (Array i64)] [live : (Array bool)]) : (Tuple bool i64) (__tl_array-take! items live 0))")
+    ;; Keep the neighboring parser tag distinct: a previous collision caused
+    ;; every dereference to dispatch to the two-operand array-take parser.
+    (compiler-parse-ok? "(define (main [item : (Box i64)]) : i64 (deref item))")
+    (compiler-parse-error-ok?
+      "(define (main [items : (Array i64 1)] [live : (Array bool 1)]) : i64 (array-take! items live 0))"
+      "parse: array-take! expects exactly two operands; compatibility storage must use private __tl_array-take!")))
 
 (define (compiler-parse-reference-source) : String
   "(define (use [s : (& n String)] [view : (& n str)] [items : (&mut value (__tl_dyn-array i64))]) : unit unit)")
@@ -11990,12 +12028,7 @@
         [decls : ast.AstDeclList (box-get decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefStruct
-                ast.ast-decl-meta-runtime
-                name
-                repr
-                cleanup
-                fields)
+              (ast.AstDecl.DefStruct _ name repr cleanup fields)
               rest)
             (let
               [rest : ast.AstDeclList rest]
@@ -13117,12 +13150,7 @@
         [decls : ast.AstDeclList (box-get decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefMacro
-                ast.ast-decl-meta-runtime
-                name
-                params
-                (ast.AstType.Bool)
-                _)
+              (ast.AstDecl.DefMacro _ name params (ast.AstType.Bool) _)
               rest)
             (let
               [rest : ast.AstDeclList rest]
@@ -13574,6 +13602,7 @@
         (reader.symbol-id-preservation-ok?)
         (compiler-parse-source-symbol-ids-preserved-ok?)
         (compiler-parse-box-ok?)
+        (compiler-parse-array-take-ok?)
         (compiler-parse-reference-ok?)
         (compiler-parse-borrow-ok?)
         (compiler-parse-resource-with-shape-ok?)

@@ -20,7 +20,7 @@
 (define base-rounds : i64
   25000000)
 
-(define (scan-once [text : String] [n : i64] [acc : i64]) : i64
+(define (scan-once [text : (& text str)] [n : i64] [acc : i64]) : i64
   (let
     [i : i64 0]
     (begin
@@ -32,13 +32,13 @@
 
 (define (main) : i64
   (let
-    [n : i64 (string.string-length scan-text)]
+    [n : i64 (string.string-length (& scan-text))]
     [rounds : i64 (+ base-rounds (io.arg-count))]
     [acc : i64 1]
     [r : i64 0]
     (begin
       (while (< r rounds)
         (begin
-          (set! acc (scan-once scan-text n acc))
+          (set! acc (scan-once (& scan-text) n acc))
           (set! r (+ r 1))))
       (bit-and acc 255))))

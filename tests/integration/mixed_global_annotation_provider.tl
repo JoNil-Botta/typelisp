@@ -13,11 +13,13 @@
     MixedGlobalAnnotationItem)
   (array.make-array MixedGlobalAnnotationItem 1))
 
+(define (mixed-global-annotation-items-shared-view) : (__tl_dyn-array
+    MixedGlobalAnnotationItem)
+  (unsafe
+    (ptr-read (ptr-addr-of mixed-global-annotation-items))))
+
 (define (mixed-global-annotation-items-len) : i64
-  (let
-    [items : (__tl_dyn-array MixedGlobalAnnotationItem)
-      mixed-global-annotation-items]
-    (array-length items)))
+  (array-length mixed-global-annotation-items))
 
 (define (mixed-global-annotation-node [value : i64]) : MixedGlobalAnnotationNode
   (MixedGlobalAnnotationNode value))

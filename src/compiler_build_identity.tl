@@ -8,6 +8,13 @@
 ;; `compiler-build-identity` cfg.
 (import stdlib.string)
 
+(defmacro (compiler-build-identity-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (cfg
   (any stage0-build-version compiler-build-identity)
   (include-str compiler-build-git-hash-raw "../target/build-stage0/git-hash.txt"))
@@ -28,8 +35,11 @@
 
 (define compiler-build-git-hash : String
   (string.substring
-    compiler-build-git-hash-raw
+    (compiler-build-identity-global-shared-view compiler-build-git-hash-raw)
     0
     (compiler-build-identity-trim-length
-      compiler-build-git-hash-raw
+      (compiler-build-identity-global-shared-view compiler-build-git-hash-raw)
       (string.string-length compiler-build-git-hash-raw))))
+
+(define (compiler-build-git-hash-shared-view) : String
+  (compiler-build-identity-global-shared-view compiler-build-git-hash))

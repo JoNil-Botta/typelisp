@@ -16,17 +16,18 @@
 ;#
 ;# ```typelisp
 ;# (import stdlib.args)
-;# (define specs : args.ArgsOptionSpecList
-;#   (args.option-spec-cons
-;#     (args.value-option "output" "output" "o")
-;#     (args.option-spec-cons
-;#       (args.flag-option "verbose" "verbose" "v")
-;#       (args.option-spec-empty))))
 ;# (define (main) : i64
-;#   (match (args.parse-argv specs 1)
-;#     [(args.OkArgsParsed parsed)
-;#       (if (args.option-present? parsed "verbose") 1 0)]
-;#     [(args.ErrArgsParsed _) 2]))
+;#   (let
+;#     [specs : args.ArgsOptionSpecList
+;#       (args.option-spec-cons
+;#         (args.value-option "output" "output" "o")
+;#         (args.option-spec-cons
+;#           (args.flag-option "verbose" "verbose" "v")
+;#           (args.option-spec-empty)))]
+;#     (match (args.parse-argv specs 1)
+;#       [(args.OkArgsParsed parsed)
+;#         (if (args.option-present? parsed "verbose") 1 0)]
+;#       [(args.ErrArgsParsed _) 2])))
 ;# ```
 (import stdlib.array)
 (import stdlib.io)

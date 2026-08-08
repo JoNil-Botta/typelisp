@@ -1240,7 +1240,7 @@
                 state)
               (opt.compiler-opt-debug-configure!
                 compile-cli-trace-passes-requested
-                compile-cli-dump-ir-pass
+                (string.copy (& compile-cli-dump-ir-pass))
                 compile-cli-verify-ir-requested)
               (let
                 [emit-cfgs : sym_i64_env.SymI64Env
@@ -1271,7 +1271,7 @@
                             opt-level
                             backend-mode
                             emit-cfgs
-                            compile-cli-dump-ir-pass)
+                            (string.copy (& compile-cli-dump-ir-pass)))
                           (compiler_driver_core.compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
                             state
                             input-path
@@ -1455,7 +1455,7 @@
           (compiler_driver_core.compiler-driver-state-reset-file-state! state)
           (opt.compiler-opt-debug-configure!
             compile-cli-trace-passes-requested
-            compile-cli-dump-ir-pass
+            (string.copy (& compile-cli-dump-ir-pass))
             compile-cli-verify-ir-requested)
           (let
             [emit-cfgs : sym_i64_env.SymI64Env

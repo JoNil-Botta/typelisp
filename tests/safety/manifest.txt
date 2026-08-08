@@ -16,6 +16,9 @@ shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|shift count out o
 # Array/string/generated collection bounds trap rather than reading invalid memory.
 array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 array_set_bounds_trap|run-trap|tests/safety/array_set_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+fixed_array_take_bounds_trap|run-trap|tests/safety/fixed_array_take_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+fixed_array_take_negative_bounds_trap|run-trap|tests/safety/fixed_array_take_negative_bounds_trap.tl|134|array index out of bounds: index=-1 length=1
+fixed_array_take_huge_bounds_trap|run-trap|tests/safety/fixed_array_take_huge_bounds_trap.tl|134|array index out of bounds
 string_bounds_trap|run-trap|tests/safety/string_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 make_array_negative_trap|run-trap|tests/safety/make_array_negative_trap.tl|134|tl: array index out of bounds
 byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|134|tl: array index out of bounds
@@ -436,3 +439,37 @@ lifetime_shortening_mut_ref_referent_invariant_reject|check-fail|tests/safety/li
 lifetime_shortening_mut_ptr_invariant_reject|check-fail|tests/safety/lifetime_shortening_mut_ptr_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because mutable raw pointer referent type is invariant
 lifetime_shortening_function_variance_reject|check-fail|tests/safety/lifetime_shortening_function_variance_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because function parameter/result variance failed
 lifetime_shortening_nominal_invariant_reject|check-fail|tests/safety/lifetime_shortening_nominal_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because lifetime parameter 1 of `InvariantView` is invariant
+
+# Ordinary globals retain permanent ownership of non-Copy values. Safe code may
+# borrow/mutate/replace their places, but never manufacture an owned alias.
+global_noncopy_access_ok|check-ok|tests/safety/global_noncopy_access_ok.tl|-|-
+global_move_let_reject|check-fail|tests/safety/global_move_let_reject.tl|-|cannot move out of global `global-text`
+global_move_initializer_reject|check-fail|tests/safety/global_move_initializer_reject.tl|-|cannot move out of global `global-source`
+global_move_argument_reject|check-fail|tests/safety/global_move_argument_reject.tl|-|cannot move out of global `global-box`
+global_move_dynarray_alias_reject|check-fail|tests/safety/global_move_dynarray_alias_reject.tl|-|cannot move out of global `global-items`
+global_move_return_reject|check-fail|tests/safety/global_move_return_reject.tl|-|cannot move out of global `global-values`
+global_move_lambda_reject|check-fail|tests/safety/global_move_lambda_reject.tl|-|cannot move out of global `global-owner`
+global_move_projection_reject|check-fail|tests/safety/global_move_projection_reject.tl|-|cannot move out of global `global-owner`
+global_move_match_reject|check-fail|tests/safety/global_move_match_reject.tl|-|cannot move out of global `global-choice`
+global_move_qualified_reject|check-fail|tests/safety/global_move_qualified_reject.tl|tests/safety/global_move_qualified_helper.tl|cannot move out of global `helper.global-text`
+global_move_generated_reject|check-fail|tests/safety/global_move_generated_reject.tl|-|cannot move out of global `generated.global-text`
+global_move_task_reject|check-fail|tests/safety/global_move_task_reject.tl|-|cannot move out of global `global-text`
+global_move_spmd_reject|check-fail|tests/safety/global_move_spmd_reject.tl|-|cannot move out of global `global-text`
+global_move_begin_result_reject|check-fail|tests/safety/global_move_begin_result_reject.tl|-|cannot move out of global `global-text`
+global_move_unsafe_result_reject|check-fail|tests/safety/global_move_unsafe_result_reject.tl|-|cannot move out of global `global-text`
+global_move_let_result_reject|check-fail|tests/safety/global_move_let_result_reject.tl|-|cannot move out of global `global-text`
+global_move_match_result_reject|check-fail|tests/safety/global_move_match_result_reject.tl|-|cannot move out of global `global-text`
+global_move_try_result_reject|check-fail|tests/safety/global_move_try_result_reject.tl|-|cannot move out of global `global-result`
+global_move_scoped_result_reject|check-fail|tests/safety/global_move_scoped_result_reject.tl|-|cannot move out of global `global-text`
+global_move_result_shadowing_ok|check-ok|tests/safety/global_move_result_shadowing_ok.tl|-|-
+
+# Public fixed-array take requires mutable storage, an init-eligible element,
+# the two-operand spelling, and ordinary move-source ownership rules.
+fixed_array_take_shared_ref_reject|check-fail|tests/safety/fixed_array_take_shared_ref_reject.tl|-|requires owned fixed-array storage or mutable reference
+fixed_array_take_temporary_reject|check-fail|tests/safety/fixed_array_take_temporary_reject.tl|-|receiver must be a fixed-array storage place
+fixed_array_take_dynamic_reject|check-fail|tests/safety/fixed_array_take_dynamic_reject.tl|-|requires fixed array type
+fixed_array_take_cleanup_reject|check-fail|tests/safety/fixed_array_take_cleanup_reject.tl|-|element cannot be reinitialized
+fixed_array_take_active_cleanup_owner_reject|check-fail|tests/safety/fixed_array_take_active_cleanup_owner_reject.tl|-|cannot take from an active cleanup owner
+fixed_array_take_borrow_live_reject|check-fail|tests/safety/fixed_array_take_borrow_live_reject.tl|-|cannot assign to borrowed place `items`
+fixed_array_take_legacy_arity_reject|check-fail|tests/safety/fixed_array_take_legacy_arity_reject.tl|-|expects exactly two operands
+fixed_array_take_global_noncopy_reject|check-fail|tests/safety/fixed_array_take_global_noncopy_reject.tl|-|cannot move out of global `global-items`

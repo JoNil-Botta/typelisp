@@ -18,6 +18,13 @@
 (import token)
 (import lex as lexer)
 
+(defmacro (global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 ;: A single lint finding: stable rule id, human-readable message, rule-specific
 ;: depth metadata, and the source span of the flagged node (the `lint-no-span`
 ;: sentinel when the node carried no location, e.g. a synthesized expression).
@@ -725,6 +732,7 @@
     [(ast.AstExpr.Set _ _) true]
     [(ast.AstExpr.ArraySet _ _ _) true]
     [(ast.AstExpr.ArrayTake _ _ _) true]
+    [(ast.AstExpr.FixedArrayTake _ _) true]
     [(ast.AstExpr.ArrayPush _ _) true]
     [(ast.AstExpr.StructSet _ _ _) true]
     [(ast.AstExpr.Begin exprs) (lint-expr-list-has-side-effect? exprs)]
@@ -769,6 +777,7 @@
     [(ast.AstExpr.Set _ _) true]
     [(ast.AstExpr.ArraySet _ _ _) true]
     [(ast.AstExpr.ArrayTake _ _ _) true]
+    [(ast.AstExpr.FixedArrayTake _ _) true]
     [(ast.AstExpr.ArrayPush _ _) true]
     [(ast.AstExpr.StructSet _ _ _) true]
     [(ast.AstExpr.Begin exprs) (lint-expr-list-last-guard-branch? exprs)]
@@ -2411,6 +2420,10 @@
         (if (lint-expr-uses-import? (ast.ast-node-get live) alias module-name)
           true
           (lint-expr-uses-import? (ast.ast-node-get index) alias module-name)))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (if (lint-expr-uses-import? (ast.ast-node-get array) alias module-name)
+        true
+        (lint-expr-uses-import? (ast.ast-node-get index) alias module-name))]
     [(ast.AstExpr.ArrayPush array value)
       (if (lint-expr-uses-import? (ast.ast-node-get array) alias module-name)
         true
@@ -3026,50 +3039,63 @@
   [requires-unsafe : bool]) : unit
   (let
     [n : i64 (struct-get lint-unused-unsafe-exact-names len)]
-    [slots : (__tl_dyn-array LintUnusedUnsafeExactName)
-      (struct-get lint-unused-unsafe-exact-names slots)]
-    (begin
-      (if (< n (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array LintUnusedUnsafeExactName)
-            (make-array
-              LintUnusedUnsafeExactName
-              (lint-grown-capacity (array-length slots)))]
-          [index : i64 0]
-          (begin
-            (while (< index n)
-              (begin
-                (array-set! bigger index (array-ref slots index))
-                (set! index (+ index 1))))
-            (set! slots bigger))))
-      (array-set! slots n (LintUnusedUnsafeExactName name requires-unsafe))
-      (set!
-        lint-unused-unsafe-exact-names
-        (LintUnusedUnsafeExactNames slots (+ n 1))))))
+    (if (< n (array-length (struct-get lint-unused-unsafe-exact-names slots)))
+      (begin
+        (array-set!
+          (struct-get lint-unused-unsafe-exact-names slots)
+          n
+          (LintUnusedUnsafeExactName name requires-unsafe))
+        (set! (struct-get lint-unused-unsafe-exact-names len) (+ n 1)))
+      (let
+        [bigger : (__tl_dyn-array LintUnusedUnsafeExactName)
+          (make-array
+            LintUnusedUnsafeExactName
+            (lint-grown-capacity
+              (array-length (struct-get lint-unused-unsafe-exact-names slots))))]
+        [index : i64 0]
+        (begin
+          (while (< index n)
+            (begin
+              (array-set!
+                bigger
+                index
+                (array-ref
+                  (struct-get lint-unused-unsafe-exact-names slots)
+                  index))
+              (set! index (+ index 1))))
+          (array-set! bigger n (LintUnusedUnsafeExactName name requires-unsafe))
+          (set!
+            lint-unused-unsafe-exact-names
+            (LintUnusedUnsafeExactNames bigger (+ n 1))))))))
 
 (define (lint-unused-unsafe-classifier-add-unknown-root! [name : String]) : unit
   (let
     [n : i64 (struct-get lint-unused-unsafe-unknown-roots len)]
-    [slots : (__tl_dyn-array String)
-      (struct-get lint-unused-unsafe-unknown-roots slots)]
-    (begin
-      (if (< n (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array String)
-            (make-array String (lint-grown-capacity (array-length slots)))]
-          [index : i64 0]
-          (begin
-            (while (< index n)
-              (begin
-                (array-set! bigger index (array-ref slots index))
-                (set! index (+ index 1))))
-            (set! slots bigger))))
-      (array-set! slots n name)
-      (set!
-        lint-unused-unsafe-unknown-roots
-        (LintUnusedUnsafeUnknownRoots slots (+ n 1))))))
+    (if (< n (array-length (struct-get lint-unused-unsafe-unknown-roots slots)))
+      (begin
+        (array-set! (struct-get lint-unused-unsafe-unknown-roots slots) n name)
+        (set! (struct-get lint-unused-unsafe-unknown-roots len) (+ n 1)))
+      (let
+        [bigger : (__tl_dyn-array String)
+          (make-array
+            String
+            (lint-grown-capacity
+              (array-length (struct-get lint-unused-unsafe-unknown-roots slots))))]
+        [index : i64 0]
+        (begin
+          (while (< index n)
+            (begin
+              (array-set!
+                bigger
+                index
+                (array-ref
+                  (struct-get lint-unused-unsafe-unknown-roots slots)
+                  index))
+              (set! index (+ index 1))))
+          (array-set! bigger n name)
+          (set!
+            lint-unused-unsafe-unknown-roots
+            (LintUnusedUnsafeUnknownRoots bigger (+ n 1))))))))
 
 (define (lint-unused-unsafe-classifier-unknown-count) : i64
   lint-unused-unsafe-classified-unknown-count)
@@ -3086,27 +3112,34 @@
   (if lint-unused-unsafe-classifier-enabled
     (let
       [n : i64 (struct-get lint-unused-unsafe-block-stack len)]
-      [slots : (__tl_dyn-array LintUnusedUnsafeBlock)
-        (struct-get lint-unused-unsafe-block-stack slots)]
-      (begin
-        (if (< n (array-length slots))
-          unit
-          (let
-            [bigger : (__tl_dyn-array LintUnusedUnsafeBlock)
-              (make-array
-                LintUnusedUnsafeBlock
-                (lint-grown-capacity (array-length slots)))]
-            [index : i64 0]
-            (begin
-              (while (< index n)
-                (begin
-                  (array-set! bigger index (array-ref slots index))
-                  (set! index (+ index 1))))
-              (set! slots bigger))))
-        (array-set! slots n (LintUnusedUnsafeBlock span required false))
-        (set!
-          lint-unused-unsafe-block-stack
-          (LintUnusedUnsafeBlockStack slots (+ n 1)))))
+      (if (< n (array-length (struct-get lint-unused-unsafe-block-stack slots)))
+        (begin
+          (array-set!
+            (struct-get lint-unused-unsafe-block-stack slots)
+            n
+            (LintUnusedUnsafeBlock span required false))
+          (set! (struct-get lint-unused-unsafe-block-stack len) (+ n 1)))
+        (let
+          [bigger : (__tl_dyn-array LintUnusedUnsafeBlock)
+            (make-array
+              LintUnusedUnsafeBlock
+              (lint-grown-capacity
+                (array-length (struct-get lint-unused-unsafe-block-stack slots))))]
+          [index : i64 0]
+          (begin
+            (while (< index n)
+              (begin
+                (array-set!
+                  bigger
+                  index
+                  (array-ref
+                    (struct-get lint-unused-unsafe-block-stack slots)
+                    index))
+                (set! index (+ index 1))))
+            (array-set! bigger n (LintUnusedUnsafeBlock span required false))
+            (set!
+              lint-unused-unsafe-block-stack
+              (LintUnusedUnsafeBlockStack bigger (+ n 1)))))))
     unit))
 
 (define (lint-unused-unsafe-block-top-index) : i64
@@ -3118,16 +3151,15 @@
       [top : i64 (lint-unused-unsafe-block-top-index)]
       (if (< top 0)
         unit
-        (let
-          [slots : (__tl_dyn-array LintUnusedUnsafeBlock)
-            (struct-get lint-unused-unsafe-block-stack slots)]
-          (array-set!
-            slots
-            top
-            (LintUnusedUnsafeBlock
-              (struct-get (array-ref slots top) span)
-              true
-              false)))))
+        (array-set!
+          (struct-get lint-unused-unsafe-block-stack slots)
+          top
+          (LintUnusedUnsafeBlock
+            (struct-get
+              (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+              span)
+            true
+            false))))
     unit))
 
 (define (lint-unused-unsafe-block-mark-unknown!) : unit
@@ -3136,18 +3168,21 @@
       [top : i64 (lint-unused-unsafe-block-top-index)]
       (if (< top 0)
         unit
-        (let
-          [slots : (__tl_dyn-array LintUnusedUnsafeBlock)
-            (struct-get lint-unused-unsafe-block-stack slots)]
-          (if (struct-get (array-ref slots top) required)
-            unit
-            (array-set!
-              slots
-              top
-              (LintUnusedUnsafeBlock
-                (struct-get (array-ref slots top) span)
-                false
-                true))))))
+        (if (struct-get
+          (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+          required)
+          unit
+          (array-set!
+            (struct-get lint-unused-unsafe-block-stack slots)
+            top
+            (LintUnusedUnsafeBlock
+              (struct-get
+                (array-ref
+                  (struct-get lint-unused-unsafe-block-stack slots)
+                  top)
+                span)
+              false
+              true)))))
     unit))
 
 (define (lint-unused-unsafe-block-pop-findings [findings : LintFindings]) : LintFindings
@@ -3157,34 +3192,36 @@
       [top : i64 (lint-unused-unsafe-block-top-index)]
       (if (< top 0)
         findings
-        (let
-          [block : LintUnusedUnsafeBlock
-            (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)]
-          (begin
-            (set!
-              lint-unused-unsafe-block-stack
-              (LintUnusedUnsafeBlockStack
-                (struct-get lint-unused-unsafe-block-stack slots)
-                top))
-            (if (struct-get block required)
+        (begin
+          (set! (struct-get lint-unused-unsafe-block-stack len) top)
+          (if (struct-get
+            (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+            required)
+            (begin
+              (set!
+                lint-unused-unsafe-classified-required-count
+                (+ lint-unused-unsafe-classified-required-count 1))
+              findings)
+            (if (struct-get
+              (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+              unknown)
               (begin
                 (set!
-                  lint-unused-unsafe-classified-required-count
-                  (+ lint-unused-unsafe-classified-required-count 1))
+                  lint-unused-unsafe-classified-unknown-count
+                  (+ lint-unused-unsafe-classified-unknown-count 1))
                 findings)
-              (if (struct-get block unknown)
-                (begin
-                  (set!
-                    lint-unused-unsafe-classified-unknown-count
-                    (+ lint-unused-unsafe-classified-unknown-count 1))
-                  findings)
-                (begin
-                  (set!
-                    lint-unused-unsafe-classified-unused-count
-                    (+ lint-unused-unsafe-classified-unused-count 1))
-                  (lint-findings-add
-                    (lint-unused-unsafe-finding (struct-get block span))
-                    findings))))))))))
+              (begin
+                (set!
+                  lint-unused-unsafe-classified-unused-count
+                  (+ lint-unused-unsafe-classified-unused-count 1))
+                (lint-findings-add
+                  (lint-unused-unsafe-finding
+                    (struct-get
+                      (array-ref
+                        (struct-get lint-unused-unsafe-block-stack slots)
+                        top)
+                      span))
+                  findings)))))))))
 
 (define (lint-underscore-prefixed? [name : String]) : bool
   (let
@@ -3706,6 +3743,8 @@
       (lint-unsafe-scan-three-nodes array index value scope)]
     [(ast.AstExpr.ArrayTake array live index)
       (lint-unsafe-scan-three-nodes array live index scope)]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-unsafe-scan-two-nodes array index scope)]
     [(ast.AstExpr.ArrayPush array value)
       (lint-unsafe-scan-two-nodes array value scope)]
     [(ast.AstExpr.StringRef text index)
@@ -4590,6 +4629,11 @@
           (lint-copy-on-update-expr (ast.ast-node-get array) state span)
           span)
         span)]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-copy-on-update-expr
+        (ast.ast-node-get index)
+        (lint-copy-on-update-expr (ast.ast-node-get array) state span)
+        span)]
     [(ast.AstExpr.ArrayPush array value)
       (lint-copy-on-update-expr
         (ast.ast-node-get value)
@@ -5140,6 +5184,14 @@
             (ast.ast-node-get array)
             (lint-no-span)
             acc)))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-prefer-dotted-field-expr
+        (ast.ast-node-get index)
+        (lint-no-span)
+        (lint-prefer-dotted-field-expr
+          (ast.ast-node-get array)
+          (lint-no-span)
+          acc))]
     [(ast.AstExpr.ArrayPush array value)
       (lint-prefer-dotted-field-expr
         (ast.ast-node-get value)
@@ -5641,6 +5693,14 @@
             (ast.ast-node-get array)
             (lint-no-span)
             acc)))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast.ast-node-get index)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast.ast-node-get array)
+          (lint-no-span)
+          acc))]
     [(ast.AstExpr.ArrayPush array value)
       (lint-prefer-dotted-field-quasiquote-expr
         (ast.ast-node-get value)
@@ -6900,6 +6960,19 @@
             (lint-single-element-array-expr
               (ast.ast-node-get live)
               (lint-single-element-array-expr (ast.ast-node-get array) state)))))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (let
+        [name : String
+          (lint-single-element-array-var-name (ast.ast-node-get array))]
+        (if (and
+          (lint-single-element-array-candidate-tracked?
+            (struct-get state candidates)
+            name)
+          (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
+          (lint-single-element-array-note-use state name)
+          (lint-single-element-array-expr
+            (ast.ast-node-get index)
+            (lint-single-element-array-expr (ast.ast-node-get array) state))))]
     [(ast.AstExpr.ArrayPush array value)
       (lint-single-element-array-expr
         (ast.ast-node-get value)
@@ -7402,6 +7475,10 @@
         (lint-unused-assignment-note-reads
           (ast.ast-node-get live)
           (lint-unused-assignment-note-reads (ast.ast-node-get array) state)))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-unused-assignment-note-reads
+        (ast.ast-node-get index)
+        (lint-unused-assignment-note-reads (ast.ast-node-get array) state))]
     [(ast.AstExpr.ArrayPush array value)
       (lint-unused-assignment-note-reads
         (ast.ast-node-get value)
@@ -8013,7 +8090,9 @@
       (lint-unused-unsafe-frame-list-contains? (struct-get state frames) root)
       (and
         qualified
-        (lint-unused-unsafe-unknown-root? root lint-unused-unsafe-unknown-roots)))
+        (lint-unused-unsafe-unknown-root?
+          root
+          (global-shared-view lint-unused-unsafe-unknown-roots))))
       (LintUnusedUnsafeExactLookup.Unknown)
       (lint-unused-unsafe-exact-name-lookup-from name facts false false 0))))
 
@@ -8023,7 +8102,7 @@
   (match (lint-unused-unsafe-exact-name-lookup
     state
     name
-    lint-unused-unsafe-exact-names)
+    (global-shared-view lint-unused-unsafe-exact-names))
     [(LintUnusedUnsafeExactLookup.Unknown)
       (let
         [root : String (lint-unused-unsafe-name-root name)]
@@ -9770,6 +9849,10 @@
         (lint-unused-variable-quasiquote-expr
           (ast.ast-node-get live)
           (lint-unused-variable-quasiquote-expr (ast.ast-node-get array) state)))]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-unused-variable-quasiquote-expr
+        (ast.ast-node-get index)
+        (lint-unused-variable-quasiquote-expr (ast.ast-node-get array) state))]
     [(ast.AstExpr.ArrayPush array value)
       (lint-unused-variable-quasiquote-expr
         (ast.ast-node-get value)
@@ -10307,6 +10390,11 @@
           (ast.ast-node-get live)
           (lint-unused-variable-expr (ast.ast-node-get array) state span)
           span)
+        span)]
+    [(ast.AstExpr.FixedArrayTake array index)
+      (lint-unused-variable-expr
+        (ast.ast-node-get index)
+        (lint-unused-variable-expr (ast.ast-node-get array) state span)
         span)]
     [(ast.AstExpr.ArrayPush array value)
       (lint-unused-variable-expr
@@ -11773,6 +11861,11 @@
           index
           threshold
           (lint-walk-expr live threshold (lint-walk-expr array threshold acc))))]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (let
+        [array : ast.AstExpr (ast.ast-node-get array-box)]
+        [index : ast.AstExpr (ast.ast-node-get index-box)]
+        (lint-walk-expr index threshold (lint-walk-expr array threshold acc)))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr (ast.ast-node-get array-box)]

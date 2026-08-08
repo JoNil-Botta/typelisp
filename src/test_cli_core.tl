@@ -1275,7 +1275,7 @@
     (ast.ast-decl-module-id (tltest-empty-name-id))
     (ast.ast-decl-cons
       (ast.AstDecl.Import
-        ast.ast-decl-meta-runtime
+        (ast.ast-decl-meta-runtime-shared-view)
         (ast.AstImportSpec.Spec
           (ast.AstImportKind.Module)
           "stdlib.runtime"
@@ -1623,6 +1623,11 @@
         (tltest-reach-mark-expr
           index
           (tltest-reach-mark-expr live (tltest-reach-mark-expr array names))))]
+    [(ast.AstExpr.FixedArrayTake array-box index-box)
+      (let
+        [array : ast.AstExpr (ast.ast-node-get array-box)]
+        [index : ast.AstExpr (ast.ast-node-get index-box)]
+        (tltest-reach-mark-expr index (tltest-reach-mark-expr array names)))]
     [(ast.AstExpr.ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr (ast.ast-node-get array-box)]
@@ -2615,7 +2620,7 @@
         (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))]
     [source-import : ast.AstDecl
       (ast.AstDecl.Import
-        ast.ast-decl-meta-runtime
+        (ast.ast-decl-meta-runtime-shared-view)
         (ast.AstImportSpec.Spec
           (ast.AstImportKind.Module)
           dep-path
@@ -3022,7 +3027,7 @@
     [test-id : i64 (ci.intern-generated-name "uses-qualified-macro-alias")]
     [import-decl : ast.AstDecl
       (ast.AstDecl.Import
-        ast.ast-decl-meta-runtime
+        (ast.ast-decl-meta-runtime-shared-view)
         (ast.AstImportSpec.Spec
           (ast.AstImportKind.Module)
           "stdlib.core_macros"

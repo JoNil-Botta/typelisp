@@ -80,13 +80,23 @@
   `(unsafe
     (ptr-write! (ptr-offset (int->ptr ,address : (MutPtr i64)) ,index) ,value)))
 
-(define (intern-private-string-length [text : String]) : i64
+;; A few compatibility snapshots intentionally share the live process-global
+;; intern storage. Require an explicit raw-pointer read for those shallow views;
+;; ordinary non-Copy global reads remain rejected.
+(defmacro (intern-global-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
+(define (intern-private-string-length [text : (& text str)]) : i64
   (__tl_string_length text))
 
-(define (intern-private-string-ref [text : String] [index : i64]) : char
+(define (intern-private-string-ref [text : (& text str)] [index : i64]) : char
   (__tl_string_ref text index))
 
-(define (intern-private-string-eq [left : String] [right : String]) : bool
+(define (intern-private-string-eq [left : (& left str)] [right : (& right str)]) : bool
   (let
     [left-len : i64 (__tl_string_length left)]
     [right-len : i64 (__tl_string_length right)]
@@ -94,8 +104,8 @@
       false
       (unsafe
         (let
-          [lp : (Ptr u8) (string-data (& left))]
-          [rp : (Ptr u8) (string-data (& right))]
+          [lp : (Ptr u8) (string-data left)]
+          [rp : (Ptr u8) (string-data right)]
           (if (= (ptr->int lp) (ptr->int rp))
             true
             (let
@@ -216,7 +226,7 @@
       (let
         [raw : i64
           (intern-structural-table-intern
-            intern-structural-table-cell
+            (intern-global-shared-view intern-structural-table-cell)
             intern-persistent-arena
             (intern-structural-kind-pair)
             left-id
@@ -303,7 +313,7 @@
       (let
         [raw : i64
           (intern-structural-table-intern
-            intern-structural-table-cell
+            (intern-global-shared-view intern-structural-table-cell)
             intern-persistent-arena
             (intern-structural-kind-triple)
             left-id
@@ -1179,26 +1189,26 @@
         intern-persistent-arena-floor-mark)
       (InternCompatState
         table-id
-        intern-pool-slots
-        intern-pool-qualified-slots
-        intern-pool-last-slash-slots
-        intern-pool-first-dot-slots
-        intern-pool-leading-dot-id-slots
-        intern-pool-dotted-prefix-id-slots
-        intern-pool-module-id-slots
-        intern-pool-base-id-slots
-        intern-pool-macro-prefix-class-slots
+        (intern-global-shared-view intern-pool-slots)
+        (intern-global-shared-view intern-pool-qualified-slots)
+        (intern-global-shared-view intern-pool-last-slash-slots)
+        (intern-global-shared-view intern-pool-first-dot-slots)
+        (intern-global-shared-view intern-pool-leading-dot-id-slots)
+        (intern-global-shared-view intern-pool-dotted-prefix-id-slots)
+        (intern-global-shared-view intern-pool-module-id-slots)
+        (intern-global-shared-view intern-pool-base-id-slots)
+        (intern-global-shared-view intern-pool-macro-prefix-class-slots)
         pool-count
         generated-next-id
-        intern-map-id-slots
-        intern-map-hash-slots
-        intern-generated-map-id-slots
-        intern-generated-map-hash-slots
+        (intern-global-shared-view intern-map-id-slots)
+        (intern-global-shared-view intern-map-hash-slots)
+        (intern-global-shared-view intern-generated-map-id-slots)
+        (intern-global-shared-view intern-generated-map-hash-slots)
         map-ready
         reset-generation
         persistent-arena
         persistent-arena-floor-mark
-        intern-structural-table-cell))))
+        (intern-global-shared-view intern-structural-table-cell)))))
 
 (define (intern-compat-state-pool-len [state : InternCompatState]) : i64
   (array-ref (struct-get state pool-count) 0))
@@ -1678,7 +1688,8 @@
       (set!
         intern-structural-table-cell
         (struct-get state structural-table-cell))
-      (intern-active-structural-sync! intern-structural-table-cell))))
+      (intern-active-structural-sync!
+        (intern-global-shared-view intern-structural-table-cell)))))
 
 (define (intern-compat-state-capture-from-globals! [state : InternCompatState]) : unit
   (begin
@@ -1710,9 +1721,10 @@
           (tl_arena_set new-arena))
         unit)
       (intern-structural-table-reinitialize-in-arena!
-        intern-structural-table-cell
+        (intern-global-shared-view intern-structural-table-cell)
         new-arena)
-      (intern-active-structural-sync! intern-structural-table-cell)
+      (intern-active-structural-sync!
+        (intern-global-shared-view intern-structural-table-cell))
       (unsafe
         (tl_arena_destroy old-arena))
       (intern-persistent-arena-floor-refresh!))))
@@ -1741,9 +1753,10 @@
         (tl_arena_set intern-persistent-arena)
         (tl_region_reset intern-persistent-arena-floor-mark))
       (intern-structural-table-reinitialize-in-arena!
-        intern-structural-table-cell
+        (intern-global-shared-view intern-structural-table-cell)
         intern-persistent-arena)
-      (intern-active-structural-sync! intern-structural-table-cell)
+      (intern-active-structural-sync!
+        (intern-global-shared-view intern-structural-table-cell))
       (unsafe
         (tl_arena_set prev-arena)))))
 
@@ -1979,10 +1992,10 @@
           (set! h (* (bit-xor h tail) -7046029254386353131))
           (bit-xor h (cast (shr (cast h : u64) 29) : i64)))))))
 
-(define (intern-hash [s : String]) : i64
+(define (intern-hash [s : (& s str)]) : i64
   (intern-hash-words
     (unsafe
-      (string-data (& s)))
+      (string-data s))
     0
     (__tl_string_length s)))
 
@@ -2048,7 +2061,9 @@
 (define (intern-composite-rendered-name [id : i64]) : String
   (if (or (intern-composite-pair-id? id) (intern-composite-triple-id? id))
     (array-ref
-      (struct-get (array-ref intern-structural-table-cell 0) rendered-names)
+      (struct-get
+        (array-ref (intern-global-shared-view intern-structural-table-cell) 0)
+        rendered-names)
       (- (bit-and id (intern-structural-key-index-mask)) 1))
     ""))
 
@@ -2369,7 +2384,7 @@
           (set! i (+ i 1))))
       slash)))
 
-(define (intern-private-first-dot [name : String]) : i64
+(define (intern-private-first-dot [name : (& name str)]) : i64
   (let
     [i : i64 0]
     [n : i64 (intern-private-string-length name)]
@@ -2499,14 +2514,16 @@
         (let
           [id : i64
             (intern-generated-name-store name qualified module-id base-id)]
-          [stored : String (array-ref intern-pool-slots id)]
           (begin
             (if dotted
               (begin
                 (array-set!
                   intern-pool-first-dot-slots
                   id
-                  (cast (intern-private-first-dot stored) : i32))
+                  (cast
+                    (intern-private-first-dot
+                      (& (array-ref intern-pool-slots id)))
+                    : i32))
                 (array-set!
                   intern-pool-leading-dot-id-slots
                   id
@@ -2737,18 +2754,18 @@
     (InternLookupMissing)))
 
 (define (intern-string-slice-eq?
-  [name : String]
-  [text : String]
+  [name : (& name str)]
+  [text : (& text str)]
   [start : i64]
   [len : i64]) : bool
   (if (= (__tl_string_length name) len)
     (let
       [name-ptr : (Ptr u8)
         (unsafe
-          (string-data (& name)))]
+          (string-data name))]
       [text-ptr : (Ptr u8)
         (unsafe
-          (string-data (& text)))]
+          (string-data text))]
       [i : i64 0]
       [ok : bool true]
       (begin
@@ -2851,9 +2868,8 @@
 (define (intern-reset-name-cache!) : unit
   (set! intern-name-cache-ready false))
 
-(define (intern-name-cache-record [name : String] [id : i64]) : unit
+(define (intern-name-cache-record [id : i64]) : unit
   (begin
-    (set! intern-name-cache-name name)
     (set! intern-name-cache-id id)
     (set! intern-name-cache-ready true)))
 
@@ -2878,8 +2894,7 @@
 
 (define (intern-map-insert-existing! [id : i64]) : unit
   (let
-    [name : String (array-ref intern-pool-slots id)]
-    [hash : i64 (intern-hash name)]
+    [hash : i64 (intern-hash (& (array-ref intern-pool-slots id)))]
     [capacity : i64 (array-length intern-map-id-slots)]
     (intern-map-insert-existing-from
       id
@@ -2903,8 +2918,10 @@
     (set! intern-generated-next-id (- (intern-capacity) 1))
     (intern-fill-empty 0 (array-length intern-map-id-slots))
     (intern-generated-map-clear! 0)
-    (intern-structural-session-reset! intern-structural-table-cell)
-    (intern-active-structural-sync! intern-structural-table-cell)
+    (intern-structural-session-reset!
+      (intern-global-shared-view intern-structural-table-cell))
+    (intern-active-structural-sync!
+      (intern-global-shared-view intern-structural-table-cell))
     (set! intern-reset-generation (intern-generation-allocate!))
     (set! intern-map-ready true)))
 
@@ -2914,8 +2931,10 @@
     (set! intern-generated-next-id (- (intern-capacity) 1))
     (intern-fill-empty 0 (array-length intern-map-id-slots))
     (intern-generated-map-clear! 0)
-    (intern-structural-session-reset! intern-structural-table-cell)
-    (intern-active-structural-sync! intern-structural-table-cell)
+    (intern-structural-session-reset!
+      (intern-global-shared-view intern-structural-table-cell))
+    (intern-active-structural-sync!
+      (intern-global-shared-view intern-structural-table-cell))
     (intern-map-rebuild-prefix 0 mark)
     (intern-reset-name-cache!)
     (set! intern-reset-generation (intern-generation-allocate!))
@@ -2931,7 +2950,9 @@
     (when
       (and
         intern-name-cache-ready
-        (intern-private-string-eq-places intern-name-cache-name name))
+        (intern-private-string-eq
+          (& (array-ref intern-pool-slots intern-name-cache-id))
+          (& name)))
       (return intern-name-cache-id))
     (cfg compile-profile (intern-profile-note-intern))
     (let
@@ -2955,18 +2976,19 @@
                   (array-set! intern-pool-slots id persistent-name)
                   (intern-record-qualified-metadata id persistent-name)
                   (intern-map-insert-existing-from id hash cursor 0 capacity)
-                  (intern-name-cache-record persistent-name id)
+                  (intern-name-cache-record id)
                   (set! out id)
                   (set! done true)))
               (let
                 [source-id : i64 (intern-id-slot-decode stored-id)]
-                [slot-key : String (array-ref intern-pool-slots source-id)]
                 [slot-hash : i64 (array-ref intern-map-hash-slots cursor)]
                 (if (and
                   (= slot-hash hash)
-                  (intern-private-string-eq-places slot-key name))
+                  (intern-private-string-eq
+                    (& (array-ref intern-pool-slots source-id))
+                    (& name)))
                   (begin
-                    (intern-name-cache-record slot-key source-id)
+                    (intern-name-cache-record source-id)
                     (set! out source-id)
                     (set! done true))
                   (begin
@@ -3011,11 +3033,14 @@
                   (set! done true)))
               (let
                 [source-id : i64 (intern-id-slot-decode stored-id)]
-                [slot-key : String (array-ref intern-pool-slots source-id)]
                 [slot-hash : i64 (array-ref intern-map-hash-slots cursor)]
                 (if (and
                   (= slot-hash hash)
-                  (intern-string-slice-eq? slot-key text start len))
+                  (intern-string-slice-eq?
+                    (& (array-ref intern-pool-slots source-id))
+                    (& text)
+                    start
+                    len))
                   (begin
                     (cfg
                       compile-profile
@@ -3128,9 +3153,9 @@
       (InternSourceNameSession
         table-id-cell
         generation-cell
-        intern-pool-slots
-        intern-map-id-slots
-        intern-map-hash-slots
+        (intern-global-shared-view intern-pool-slots)
+        (intern-global-shared-view intern-map-id-slots)
+        (intern-global-shared-view intern-map-hash-slots)
         map-ready-cell
         (intern-active-table-id)
         intern-reset-generation
@@ -3260,11 +3285,19 @@
         (struct-get identity id)
         (intern-source-name-session-lookup session text))]))
 
+;; Interned strings live in the persistent intern arena and are immutable after
+;; publication. This is the zero-copy shared-view boundary for the public
+;; String-shaped compatibility API.
+(define (intern-pool-string-shared-view [id : i64]) : String
+  (unsafe
+    (ptr-read
+      (ptr-offset (ptr-cast (array-data intern-pool-slots) : (Ptr String)) id))))
+
 ;: Recover the original String for an interned id.
 (define (intern-str [id : i64]) : String
   (cfg
     compile-profile
-    (if (or (< id 0) (>= id (array-length intern-pool-slots)))
+    (if (or (< id 0) (>= id (intern-capacity)))
       (begin
         (set!
           intern-profile-invalid-str-count
@@ -3273,8 +3306,8 @@
         "<invalid-intern-id>")
       (begin
         (set! intern-profile-render-count (+ intern-profile-render-count 1))
-        (array-ref intern-pool-slots id)))
-    (array-ref intern-pool-slots id)))
+        (intern-pool-string-shared-view id)))
+    (intern-pool-string-shared-view id)))
 
 ;; Typed render boundary. Callers with a structural key or a missing i64 cannot
 ;; call this API without an explicit, checked domain conversion.

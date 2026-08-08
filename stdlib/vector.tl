@@ -41,7 +41,8 @@
 ;# Consuming traversal uses `into-iterator` / `into-next`. Constructing the
 ;# iterator moves the vector exactly once, and each `IntoNext.Item` owns its
 ;# element. An internal live-slot bitmap lets `into-next` extract through
-;# `array-take!` without copying or cloning; repeated exhaustion is stable.
+;# private `__tl_array-take!` without copying or cloning; repeated exhaustion
+;# is stable.
 ;# Cleanup-owning element types select an ownership-safe specialization whose
 ;# backing arrays contain only constructed elements. `set` cleans replacements,
 ;# `push-owned` supports consuming expression-style construction, yielded items
@@ -191,7 +192,7 @@
                 (IntoNext.Done)
                 (let
                   [taken : (Tuple bool ,T)
-                    (array-take!
+                    (__tl_array-take!
                       (struct-get
                         (struct-get (struct-get iter vec) state)
                         slots)
@@ -220,7 +221,7 @@
               (while (< index count)
                 (let
                   [taken : (Tuple bool ,T)
-                    (array-take!
+                    (__tl_array-take!
                       (struct-get state slots)
                       (struct-get state live)
                       index)]
@@ -274,7 +275,7 @@
             false)
             (let
               [taken : (Tuple bool ,T)
-                (array-take!
+                (__tl_array-take!
                   (struct-get (struct-get v state) slots)
                   (struct-get (struct-get v state) live)
                   index)]
@@ -474,7 +475,7 @@
                   (Item (,iter-mut-borrow-name source ,iter-mut-item-type)))
                 ;; Consuming iteration owns the moved backing storage. The bitmap
                 ;; records which live-prefix slots still own values, so each Item
-                ;; can move exactly once through `array-take!`.
+                ;; can move exactly once through private `__tl_array-take!`.
                 (defstruct ,into-iter-name
                   (slots (__tl_dyn-array ,T))
                   (live (__tl_dyn-array bool))
@@ -544,7 +545,7 @@
                       (,into-done-name)
                       (let
                         [taken : (Tuple bool ,T)
-                          (array-take!
+                          (__tl_array-take!
                             (struct-get iter slots)
                             (struct-get iter live)
                             index)]

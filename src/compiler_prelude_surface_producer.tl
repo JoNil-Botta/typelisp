@@ -114,7 +114,7 @@
   [pools : ast.AstNodePoolContext]) : load.ResultCompilerLoadWithPaths
   (match (load.compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
     load-state
-    load.compiler-load-runtime-prelude-path
+    (load.compiler-load-runtime-prelude-path-shared-view)
     (cfg_env.sym-i64-empty)
     roots
     cfgs

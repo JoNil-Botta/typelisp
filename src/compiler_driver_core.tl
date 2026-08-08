@@ -174,11 +174,21 @@
 ;; globals before an explicitly owned pool arena is destroyed. Production jobs
 ;; do not read or write through this context; their next load receives its
 ;; `AstNodePoolContext` directly.
-(define compiler-driver-detached-compat-pools : compiler_ast_types.AstNodePoolContext
+(define compiler-driver-detached-compat-pools : (__tl_dyn-array
+    compiler_ast_types.AstNodePoolContext)
   ;; This sentinel is never read or written. Snapshot the process-global
   ;; compatibility fallback instead of allocating a duplicate 64K expression
   ;; segment into the process-lifetime default arena.
-  (compiler_ast_types.ast-node-pool-context-capture-active))
+  (make-array (compiler_ast_types.ast-node-pool-context-capture-active)))
+
+;; The detached compatibility context shares process-lifetime arena pools. A
+;; shallow view is safe only at this internal compatibility boundary.
+(define (compiler-driver-detached-compat-pools-shared-view) : compiler_ast_types.AstNodePoolContext
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (array-data compiler-driver-detached-compat-pools)
+        : (Ptr compiler_ast_types.AstNodePoolContext)))))
 
 (define (compiler-driver-state-detach-active-pools-if-owned!
   [pools : compiler_ast_types.AstNodePoolContext]) : unit
@@ -186,7 +196,7 @@
     (compiler_ast_types.ast-node-pool-owner-arena-handle)
     (compiler_ast_types.ast-node-pool-context-owner-arena pools))
     (compiler_ast_types.ast-node-pool-context-install!
-      compiler-driver-detached-compat-pools)
+      (compiler-driver-detached-compat-pools-shared-view))
     unit))
 
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
@@ -676,12 +686,6 @@
     (ci.intern-compat-state-persistent-arena-reset!
       (array-ref (struct-get state intern-state) 0))))
 
-;; Compatibility/test install of the state's builtin table into the process
-;; globals. Production driver paths no longer install builtins: parse derives
-;; the table and state-owned reset validates against the state's own cells.
-(define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
-  (cbi.state-install! (array-ref (struct-get state builtin-ids) 0)))
-
 ;; The state's owned builtin/CTFE id snapshot.
 (define (compiler-driver-state-owned-builtins [state : CompilerDriverState]) : cbi.CompilerBuiltinIdsState
   (array-ref (struct-get state builtin-ids) 0))
@@ -803,22 +807,6 @@
     profile-state
     backend-state))
 
-(define (compiler-driver-lowered-from-pools-and-profile-state
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [pools : compiler_ast_types.AstNodePoolContext]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
-  (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
-    (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
-      program
-      spans
-      pools
-      profile-state
-      backend-state)))
-
 (define (compiler-driver-runtime-prelude-cache-lookup-with-state
   [load-state : compiler_load.CompilerLoadSessionState]
   [key : compiler_load.CompilerLoadPreludeCacheKey]) : compiler_load.CompilerLoadPreludeCacheLookup
@@ -831,7 +819,7 @@
 (define (compiler-driver-runtime-prelude-cache-lookup
   [key : compiler_load.CompilerLoadPreludeCacheKey]) : compiler_load.CompilerLoadPreludeCacheLookup
   (compiler-driver-runtime-prelude-cache-lookup-with-state
-    compiler_load.compiler-load-active-session-state
+    (compiler_load.compiler-load-active-session-state-shared-view)
     key))
 
 (define (compiler-driver-runtime-prelude-cache-store-with-state
@@ -856,7 +844,7 @@
   [modules : compiler_ast_types.AstDeclModuleList]
   [seen : sym_i64_env.SymI64Env]) : unit
   (compiler-driver-runtime-prelude-cache-store-with-state
-    compiler_load.compiler-load-active-session-state
+    (compiler_load.compiler-load-active-session-state-shared-view)
     key
     decls
     paths
@@ -2026,36 +2014,6 @@
                             (box-get diag)
                             input-path))))]))))]))))
 
-(define (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state
-  [pools : compiler_ast_types.AstNodePoolContext]
-  [input-path : String]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
-  [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
-  [opt-level : i64]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverBuffer
-  (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
-    (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
-      pools
-      input-path
-      program
-      spans
-      target
-      has-target
-      mode
-      opt-level
-      emit-entry
-      crt-entry
-      profile-state
-      backend-state)))
-
 (define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
@@ -2259,36 +2217,6 @@
                           (compiler_diagnostic.compiler-diagnostic-with-path
                             (box-get diag)
                             input-path))))]))))]))))
-
-(define (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state
-  [pools : compiler_ast_types.AstNodePoolContext]
-  [input-path : String]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
-  [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
-  [opt-level : i64]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverPic
-  (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
-    (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
-      pools
-      input-path
-      program
-      spans
-      target
-      has-target
-      mode
-      opt-level
-      emit-entry
-      crt-entry
-      profile-state
-      backend-state)))
 
 ;; Serial/test compatibility adapters. Driver-owned compile paths carry the
 ;; state from ResultCompilerDriverLowered into the explicit variants above.
@@ -2789,7 +2717,7 @@
     [pools : compiler_ast_types.AstNodePoolContext]) : CompilerDriverPreludeSurface
     (match (tlci.tlci-producer-identity-admit
       outer-build
-      build_identity.compiler-build-git-hash)
+      (build_identity.compiler-build-git-hash-shared-view))
       [(tlci.TlciProducerIdentityAdmission.ExactMatch)
         (match (compiler_surface_hydrate.compiler-surface-key rodata)
           [(compiler_surface_hydrate.ResultCompilerSurfaceKey.Missing)
@@ -2880,7 +2808,7 @@
   (begin
     (compiler-driver-note-prelude-source-pipeline!)
     (match (compiler_load.compiler-load-stdlib-prelude-file-with-roots-cfg
-      compiler_load.compiler-load-runtime-prelude-path
+      (compiler_load.compiler-load-runtime-prelude-path-shared-view)
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       cfgs)
@@ -3056,7 +2984,7 @@
     (compiler-driver-note-prelude-source-pipeline!)
     (match (compiler_load.compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
       load-state
-      compiler_load.compiler-load-runtime-prelude-path
+      (compiler_load.compiler-load-runtime-prelude-path-shared-view)
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       cfgs
@@ -3210,9 +3138,9 @@
             ;; routing must not depend on an unrelated later import happening
             ;; to resolve core_macros.tl from the embedded payload.
             (compiler_load.compiler-load-note-embedded-module!
-              compiler_load.compiler-load-core-macro-prelude-path)
+              (compiler_load.compiler-load-core-macro-prelude-path-shared-view))
             (compiler_load.compiler-load-note-embedded-module!
-              compiler_load.compiler-load-runtime-prelude-path)
+              (compiler_load.compiler-load-runtime-prelude-path-shared-view))
             (compiler_load.compiler-load-session-state-note-embedded-stdlib-source!
               load-state)
             (cfg
@@ -3362,7 +3290,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : compiler_ast_types.AstNodePoolContext]) : compiler_load.ResultCompilerLoadWithPaths
   (compiler-driver-load-source-with-runtime-with-state-and-pools
-    compiler_load.compiler-load-active-session-state
+    (compiler_load.compiler-load-active-session-state-shared-view)
     input-path
     source
     stdlib-roots

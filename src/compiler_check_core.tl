@@ -157,7 +157,7 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
       (compiler_load.compiler-load-serial-test-session-state)
-      tc.tc-prefix-snapshot-serial-test-cache-state
+      (tc.tc-prefix-snapshot-serial-test-cache-state-shared-view)
       job-state
       (ast.ast-program decls)
       paths
@@ -308,37 +308,6 @@
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ResultCompilerCheckWithPaths.Err
-          (cdiag.compiler-diagnostic-list-box-single diag)))]))
-
-(define (compiler-check-file-loaded-with-prelude
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [prelude : compiler_load.ResultCompilerLoadWithPaths]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
-  (match prelude
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok
-        prelude-decls
-        prelude-paths
-        prelude-modules
-        prelude-seen)
-      (compiler-check-loaded-with-prelude-cache
-        path
-        prelude-decls
-        (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
-        (compiler_load.compiler-load-file-with-paths-and-roots-cfg
-          path
-          prelude-seen
-          stdlib-roots
-          cfgs)
-        stdlib-roots
-        (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
-          "typecheck-prefix-check"
-          stdlib-roots
-          cfgs))]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-      (begin
-        (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err
           (cdiag.compiler-diagnostic-list-box-single diag)))]))
 
 (define (compiler-check-file-with-roots
@@ -545,7 +514,9 @@
 (import compiler_ast_types as ast)
 (define selected : ast.AstType (ast.AstType.I64))
 (define (main) : i64
-  (match selected [(ast.AstType.I64) 42] [_ 0]))")
+  (match (unsafe (ptr-read (ptr-addr-of selected)))
+    [(ast.AstType.I64) 42]
+    [_ 0]))")
 
 (define (compiler-check-export-source) : String
   "(defstruct Pair (left i64))

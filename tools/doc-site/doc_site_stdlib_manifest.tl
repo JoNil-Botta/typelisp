@@ -28,6 +28,10 @@
 (define doc-site-stdlib-module-suffix : String
   ".tl")
 
+(define (doc-site-stdlib-dir-shared-view) : String
+  (unsafe
+    (ptr-read (ptr-addr-of doc-site-stdlib-dir))))
+
 (define (doc-site-stdlib-module-file? [name : String]) : bool
   (let
     [n : i64 (string.string-length name)]
@@ -42,7 +46,7 @@
 
 (define (doc-site-stdlib-module-names) : doc_site_manifest_names.Vec
   (let
-    [dir : String doc-site-stdlib-dir]
+    [dir : String (doc-site-stdlib-dir-shared-view)]
     (match (fs.try-read-dir (& dir))
       [(fs.OkIoStringVector entries)
         (let

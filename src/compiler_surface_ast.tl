@@ -955,7 +955,7 @@
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (if (= tag 0)
-      ast.ast-decl-meta-runtime
+      (ast.ast-decl-meta-runtime-shared-view)
       (if (= tag 1)
         (let
           [generated-tag : i64 (codec.surface-ast-read-i64! reader)]
@@ -978,7 +978,7 @@
           (codec.surface-ast-reader-fail!
             reader
             "surface ast: invalid declaration metadata")
-          ast.ast-decl-meta-runtime)))))
+          (ast.ast-decl-meta-runtime-shared-view))))))
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest)
@@ -1704,7 +1704,7 @@
           decl-slots
           0
           (ast.AstDecl.DefFn
-            ast.ast-decl-meta-runtime
+            (ast.ast-decl-meta-runtime-shared-view)
             fn-id
             (ast.AstParamList view-param-slots 1)
             borrowed-slice
@@ -1714,7 +1714,7 @@
           decl-slots
           1
           (ast.AstDecl.DefMacro
-            ast.ast-decl-meta-runtime
+            (ast.ast-decl-meta-runtime-shared-view)
             macro-id
             (ast.AstMacroParamList macro-param-slots 1)
             ast.AstType.Unit

@@ -18455,6 +18455,9 @@
     index
     end-value
     lanes
+    ""
+    ""
+    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -18471,6 +18474,9 @@
     (compiler_ir_types.CompilerIrValue.Var 1)
     (compiler_ir_types.CompilerIrValue.Var 2)
     8
+    ""
+    ""
+    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -18502,6 +18508,94 @@
             "    xorl %eax, %eax\n    kmovw %eax, %k1\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-avx512-tail-mask-planned-assignments
+  [index-location : compiler_regalloc.CompilerRegLocation]) : compiler_regalloc.CompilerRegAssignmentList
+  (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        (compiler_abi.compiler-abi-mask-register-id 1)))
+    (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.CompilerRegAssignment 1 index-location)
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Spill -16))
+        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-avx512-tail-mask-planned-case-ok?
+  [index-location : compiler_regalloc.CompilerRegLocation]
+  [lanes : i64]
+  [index-load : String]
+  [mask-part : String]
+  [mask-move : String]) : bool
+  (match (compiler_backend.compiler-backend-emit-avx512-tail-mask
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    "_tl_tail_planned"
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler-backend-avx512-tail-mask-planned-assignments index-location)
+    0
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ir_types.CompilerIrValue.Var 2)
+    lanes
+    "%rcx"
+    "%r10"
+    "%r11"
+    (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains? asm index-load)
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq -16(%rbp), %rcx\n")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    subq %r10, %rcx\n")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          (str_cat.str-cat "    " mask-move " " mask-part ", %k1\n"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%r8"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%r9")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-tail-mask-planned-ok?) : bool
+  (and
+    ;; Preserve an index already homed in the fixed shift-count register.
+    (compiler-backend-avx512-tail-mask-planned-case-ok?
+      (compiler_regalloc.CompilerRegLocation.Register
+        compiler_abi.compiler-reg-id-rcx)
+      8
+      "    movq %rcx, %r10\n"
+      "%r11d"
+      "kmovw")
+    ;; Spilled dynamic indices cover every supported AVX-512 mask width.
+    (compiler-backend-avx512-tail-mask-planned-case-ok?
+      (compiler_regalloc.CompilerRegLocation.Spill -8)
+      8
+      "    movq -8(%rbp), %r10\n"
+      "%r11d"
+      "kmovw")
+    (compiler-backend-avx512-tail-mask-planned-case-ok?
+      (compiler_regalloc.CompilerRegLocation.Spill -8)
+      16
+      "    movq -8(%rbp), %r10\n"
+      "%r11d"
+      "kmovw")
+    (compiler-backend-avx512-tail-mask-planned-case-ok?
+      (compiler_regalloc.CompilerRegLocation.Spill -8)
+      32
+      "    movq -8(%rbp), %r10\n"
+      "%r11d"
+      "kmovd")
+    (compiler-backend-avx512-tail-mask-planned-case-ok?
+      (compiler_regalloc.CompilerRegLocation.Spill -8)
+      64
+      "    movq -8(%rbp), %r10\n"
+      "%r11"
+      "kmovq")))
+
 (define (compiler-backend-avx512-tail-mask-ok?) : bool
   (and
     (compiler-backend-avx512-tail-mask-emits?
@@ -18524,7 +18618,8 @@
       (compiler_ir_types.CompilerIrValue.I64 3)
       64
       "    movq $7, %rax\n    kmovq %rax, %k1\n")
-    (compiler-backend-avx512-tail-mask-dynamic-zero-ok?)))
+    (compiler-backend-avx512-tail-mask-dynamic-zero-ok?)
+    (compiler-backend-avx512-tail-mask-planned-ok?)))
 
 (define (compiler-backend-avx2-tail-mask-assignments) : compiler_regalloc.CompilerRegAssignmentList
   (compiler_regalloc.compiler-reg-assignment-cons
@@ -35670,6 +35765,93 @@
                               (compiler_abi.compiler-abi-vector-register-id 11)))
                           compiler_regalloc.CompilerRegAssignmentList.Nil)))))))))))))
 
+(define (compiler-backend-scratch-vreg-tail-mask-test-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.TailMask
+          0
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          8)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.TailMask
+            3
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ir_types.CompilerIrValue.I64 8)
+            8)
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-tail-mask-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
+  (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        (compiler_abi.compiler-abi-mask-register-id 1)))
+    (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-rcx))
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.CompilerRegAssignment
+            3
+            (compiler_regalloc.CompilerRegLocation.Register
+              (compiler_abi.compiler-abi-mask-register-id 2)))
+          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+
+(define (compiler-backend-scratch-vreg-tail-mask-pressure-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          4
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.TailMask
+            0
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            8)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 4)))
+            compiler_ir_types.CompilerIrInstrList.Nil))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-tail-mask-pressure-assignments) : compiler_regalloc.CompilerRegAssignmentList
+  (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        (compiler_abi.compiler-abi-mask-register-id 1)))
+    (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r13))
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.CompilerRegAssignment
+            4
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-rcx))
+          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+
 (define (compiler-backend-scratch-vreg-indexed-simd-fused-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.compiler-ir-block
@@ -36285,6 +36467,24 @@
       (compiler_abi.compiler-abi-register-spelling
         (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 ordinal))]))
 
+(define (compiler-backend-scratch-test-plan-register-string
+  [plan : compiler_regalloc.CompilerRegScratchPlan]
+  [point : i64]
+  [ordinal : i64]) : String
+  (compiler_abi.compiler-abi-register-spelling
+    (compiler_regalloc.compiler-reg-scratch-plan-register plan point ordinal)))
+
+(define (compiler-backend-scratch-test-xmm-family-index [reg : String]) : i64
+  (compiler_regalloc.compiler-reg-xmm-family-index
+    (compiler_abi.compiler-abi-register-id-from-spelling reg)))
+
+(define (compiler-backend-scratch-test-registers-overlap?
+  [left : String]
+  [right : String]) : bool
+  (compiler_regalloc.compiler-reg-registers-overlap?
+    (compiler_abi.compiler-abi-register-id-from-spelling left)
+    (compiler_abi.compiler-abi-register-id-from-spelling right)))
+
 (define (compiler-backend-scratch-test-success-count
   [result : compiler_regalloc.CompilerRegScratchPlanResult]) : i64
   (match result
@@ -36330,25 +36530,28 @@
               scratch)
             (and
               (= (compiler_regalloc.compiler-reg-plan-var-count out-plan 3) 4)
-              (match (array-ref (struct-get scratch items) 0)
-                [(compiler_regalloc.CompilerRegScratchAssignment
-                    requirement
-                    assigned)
-                  (and
-                    (string.eq assigned reg)
-                    (= (struct-get requirement point) 0)
-                    (= (struct-get requirement ordinal) 0)
-                    (= (struct-get requirement lo) 0)
-                    (= (struct-get requirement hi) 1)
-                    (match (struct-get requirement role)
-                      [(compiler_regalloc.CompilerRegScratchRole.CallTarget)
-                        true]
-                      [_ false])
-                    (match (struct-get
-                      (struct-get requirement constraint)
-                      register-class)
-                      [(compiler_regalloc.CompilerRegScratchClass.Gp) true]
-                      [_ false]))]))])
+              (let
+                [item : compiler_regalloc.CompilerRegScratchAssignment
+                  (array-ref (struct-get scratch items) 0)]
+                [requirement : compiler_regalloc.CompilerRegScratchRequirement
+                  (struct-get item requirement)]
+                [assigned : i64 (struct-get item register)]
+                (and
+                  (string.eq
+                    (compiler_abi.compiler-abi-register-spelling assigned)
+                    reg)
+                  (= (struct-get requirement point) 0)
+                  (= (struct-get requirement ordinal) 0)
+                  (= (struct-get requirement lo) 0)
+                  (= (struct-get requirement hi) 1)
+                  (match (struct-get requirement role)
+                    [(compiler_regalloc.CompilerRegScratchRole.CallTarget) true]
+                    [_ false])
+                  (match (struct-get
+                    (struct-get requirement constraint)
+                    register-class)
+                    [(compiler_regalloc.CompilerRegScratchClass.Gp) true]
+                    [_ false]))))])
         ;; Wrapping is per-function: the base runtime plan still exposes the
         ;; immutable empty scratch plan after a function-specific view exists.
         (match listed
@@ -36421,7 +36624,7 @@
                       requirement)
                     constraint)
                   excluded)
-                "%r8")
+                compiler_abi.compiler-reg-id-r8)
               (compiler_regalloc.compiler-reg-id-seq-contains?
                 (struct-get
                   (struct-get
@@ -36430,7 +36633,7 @@
                       requirement)
                     constraint)
                   excluded)
-                "%r8"))])))
+                compiler_abi.compiler-reg-id-r8))])))
     true))
 
 (define (compiler-backend-scratch-vreg-aggregate-plan-ok?) : bool
@@ -36669,6 +36872,8 @@
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
           compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        (struct-get index backend-state)]
       (match (compiler_backend.compiler-backend-emit-pack-words
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         cycle-assignments
@@ -36680,7 +36885,9 @@
         false
         "%r14"
         "%r15"
-        (compiler_diagnostic.compiler-diagnostic-at-start "" ""))
+        (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
         [(compiler_backend.ResultCompilerBackend.Ok aggregate)
           (match (compiler-backend-test-emit-scalar-stack-call-arg-text
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -36796,11 +37003,14 @@
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
           compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        (struct-get index backend-state)]
       (match (compiler_backend.compiler-backend-emit-addr-of
         assignments
         2
         0
-        "%r14")
+        "%r14"
+        backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok addr-of)
           (match (compiler_backend.compiler-backend-emit-gep
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -36811,7 +37021,8 @@
             (compiler_ast_types.AstType.U64)
             0
             "%r14"
-            "%r15")
+            "%r15"
+            backend-state)
             [(compiler_backend.ResultCompilerBackend.Ok gep)
               (match (compiler_backend.compiler-backend-emit-load-instr
                 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -36820,7 +37031,8 @@
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 (compiler_ast_types.AstType.I64)
                 "%r14"
-                "%r15")
+                "%r15"
+                backend-state)
                 [(compiler_backend.ResultCompilerBackend.Ok load)
                   (match (compiler_backend.compiler-backend-emit-store-ptr
                     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -36830,7 +37042,8 @@
                     (compiler_ast_types.AstType.I64)
                     index
                     "%r14"
-                    "%r15")
+                    "%r15"
+                    backend-state)
                     [(compiler_backend.ResultCompilerBackend.Ok store)
                       (match (compiler_backend.compiler-backend-emit-copy-bytes
                         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -36841,7 +37054,8 @@
                         "%r12"
                         "%r13"
                         "%r14"
-                        "")
+                        ""
+                        backend-state)
                         [(compiler_backend.ResultCompilerBackend.Ok copy)
                           (match (compiler_backend.compiler-backend-emit-bounds-check
                             (compiler_backend.CompilerBackendTarget.Linux)
@@ -36924,6 +37138,9 @@
               compiler_regalloc.CompilerRegAssignmentList.Nil)))]
       [diag : compiler_diagnostic.CompilerDiagnostic
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
+      [backend-state : compiler_backend.CompilerBackendState
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
       [pack : compiler_backend.ResultCompilerBackend
         (compiler_backend.compiler-backend-emit-pack-words
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -36936,9 +37153,11 @@
           false
           "%xmm14"
           "%r15"
-          diag)]
+          diag
+          backend-state)]
       [_group-enable : unit
         (compiler_backend.compiler-backend-group-vars-enable!
+          backend-state
           (compiler_liveness.compiler-live-set1 0)
           (compiler_liveness.compiler-live-set-empty))]
       [word : compiler_backend.ResultCompilerBackend
@@ -36951,9 +37170,10 @@
           (compiler_ast_types.AstType.F64)
           3
           "%xmm13"
-          diag)]
+          diag
+          backend-state)]
       [_group-disable : unit
-        (compiler_backend.compiler-backend-group-vars-disable!)]
+        (compiler_backend.compiler-backend-group-vars-disable! backend-state)]
       [copy : compiler_backend.ResultCompilerBackend
         (compiler_backend.compiler-backend-emit-copy-bytes
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -36964,18 +37184,21 @@
           "%r12"
           "%r13"
           "%r14"
-          "%xmm12")]
+          "%xmm12"
+          backend-state)]
       [c-memory : compiler_backend.ResultCompilerBackend
         (begin
           (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
             "%xmm11")
           (compiler_backend.compiler-backend-emit-c-memory-stack-arg
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (compiler_backend.CompilerBackendTarget.Linux)
             assignments
             (compiler_ir_types.CompilerIrValue.Var 0)
             0
             24
-            "%r14"))]
+            "%r14"
+            backend-state))]
       [_reset-c-memory : unit
         (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
           "")]
@@ -37063,17 +37286,22 @@
           2
           (compiler-backend-scratch-vreg-c-abi-return-test-assignments))]
       [planned : String (compiler-backend-scratch-test-register result 0)]
+      [backend-state : compiler_backend.CompilerBackendState
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
       (and
         (= (compiler-backend-scratch-test-plan-count result) 2)
         (= (compiler-backend-scratch-test-success-count result) 1)
         (string.eq planned "%r12")
         (string.eq
           (compiler_backend.compiler-backend-scavenge-c-abi-return-base-save-reg
-            planned)
+            planned
+            backend-state)
           planned)
         (string.eq
           (compiler_backend.compiler-backend-scavenge-c-abi-return-store-base-reg
-            planned)
+            planned
+            backend-state)
           planned)))
     true))
 
@@ -37508,6 +37736,8 @@
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
           compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        (struct-get index backend-state)]
       (match (compiler_backend.compiler-backend-emit-load-instr
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         assignments
@@ -37515,7 +37745,8 @@
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ast_types.AstType.F64)
         "%r14"
-        "%xmm14")
+        "%xmm14"
+        backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok load)
           (match (compiler_backend.compiler-backend-emit-store-ptr
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -37525,7 +37756,8 @@
             (compiler_ast_types.AstType.F64)
             index
             "%r15"
-            "%xmm15")
+            "%xmm15"
+            backend-state)
             [(compiler_backend.ResultCompilerBackend.Ok store-ptr)
               (match (compiler_backend.compiler-backend-emit-store-value-to-address
                 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -37536,7 +37768,8 @@
                 index
                 (array.make-array String 0)
                 0
-                "%xmm13")
+                "%xmm13"
+                backend-state)
                 [(compiler_backend.ResultCompilerBackend.Ok store)
                   (let
                     [fused-load : String
@@ -37545,7 +37778,8 @@
                         0
                         "8(%r12)"
                         (compiler_ast_types.AstType.F64)
-                        "%xmm12")]
+                        "%xmm12"
+                        backend-state)]
                     (and
                       (compiler_backend.compiler-backend-string-contains?
                         load
@@ -37695,16 +37929,15 @@
         (= (compiler-backend-scratch-test-success-count arith) 1)
         (= (compiler-backend-scratch-test-plan-count arith-windows) 1)
         (= (compiler-backend-scratch-test-success-count arith-windows) 1)
-        (>= (compiler_regalloc.compiler-reg-xmm-family-index arith-reg) 0)
-        (not (= (compiler_regalloc.compiler-reg-xmm-family-index arith-reg) 6))
+        (>= (compiler-backend-scratch-test-xmm-family-index arith-reg) 0)
+        (not (= (compiler-backend-scratch-test-xmm-family-index arith-reg) 6))
         (= (compiler-backend-scratch-test-plan-count compare) 2)
         (= (compiler-backend-scratch-test-success-count compare) 2)
         (= (compiler-backend-scratch-test-plan-count compare-windows) 2)
         (= (compiler-backend-scratch-test-success-count compare-windows) 2)
-        (>= (compiler_regalloc.compiler-reg-xmm-family-index compare-xmm) 0)
-        (< (compiler_regalloc.compiler-reg-xmm-family-index compare-gp) 0)
-        (not
-          (= (compiler_regalloc.compiler-reg-xmm-family-index compare-xmm) 7))
+        (>= (compiler-backend-scratch-test-xmm-family-index compare-xmm) 0)
+        (< (compiler-backend-scratch-test-xmm-family-index compare-gp) 0)
+        (not (= (compiler-backend-scratch-test-xmm-family-index compare-xmm) 7))
         (= (compiler-backend-scratch-test-plan-count unop) 1)
         (= (compiler-backend-scratch-test-success-count unop) 1)
         (= (compiler-backend-scratch-test-plan-count arith-return) 2)
@@ -37725,7 +37958,7 @@
           (compiler-backend-scratch-test-register compare-return 0)
           "%rax")
         (>=
-          (compiler_regalloc.compiler-reg-xmm-family-index
+          (compiler-backend-scratch-test-xmm-family-index
             (compiler-backend-scratch-test-register compare-return 1))
           0)
         (=
@@ -37784,9 +38017,9 @@
                   [(compiler_regalloc.CompilerRegScratchRole.FloatReturnResultXmm)
                     true]
                   [_ false])
-                (string.eq
+                (=
                   (struct-get (struct-get requirement constraint) fixed)
-                  "%xmm0")
+                  (compiler_abi.compiler-abi-xmm-register-id 0))
                 (match (struct-get
                   (struct-get requirement constraint)
                   register-class)
@@ -37802,9 +38035,9 @@
                   [(compiler_regalloc.CompilerRegScratchRole.FloatReturnResultGp)
                     true]
                   [_ false])
-                (string.eq
+                (=
                   (struct-get (struct-get requirement constraint) fixed)
-                  "%rax")
+                  compiler_abi.compiler-reg-id-rax)
                 (match (struct-get
                   (struct-get requirement constraint)
                   register-class)
@@ -37853,6 +38086,9 @@
         (compiler-backend-scratch-vreg-float-compare-test-assignments)]
       [return-assignments : compiler_regalloc.CompilerRegAssignmentList
         (compiler-backend-scratch-vreg-float-arith-return-test-assignments)]
+      [backend-state : compiler_backend.CompilerBackendState
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
       (match (compiler_backend.compiler-backend-emit-float-binop-spill-direct
         arith-assignments
         0
@@ -37860,7 +38096,8 @@
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ir_types.CompilerIrValue.F64 0x4000000000000000)
         (compiler_ast_types.AstType.F64)
-        "%xmm14")
+        "%xmm14"
+        backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok arith)
           (match (compiler_backend.compiler-backend-emit-binop-with-plan
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -37879,7 +38116,8 @@
             "%r14"
             ""
             ""
-            "")
+            ""
+            backend-state)
             [(compiler_backend.ResultCompilerBackend.Ok compare)
               (match (compiler_backend.compiler-backend-emit-unop-with-plan
                 (compiler-backend-scratch-vreg-float-unop-test-assignments)
@@ -37887,7 +38125,8 @@
                 (compiler_ir_types.CompilerIrUnOp.Neg)
                 (compiler_ir_types.CompilerIrValue.Var 1)
                 (compiler_ast_types.AstType.F64)
-                "%xmm15")
+                "%xmm15"
+                backend-state)
                 [(compiler_backend.ResultCompilerBackend.Ok unop)
                   (match (compiler_backend.compiler-backend-emit-float-arith-return
                     return-assignments
@@ -37897,7 +38136,8 @@
                     (compiler_ast_types.AstType.F64)
                     "%xmm0"
                     "%xmm14"
-                    "    ret\n")
+                    "    ret\n"
+                    backend-state)
                     [(compiler_backend.ResultCompilerBackend.Ok arith-return)
                       (match (compiler_backend.compiler-backend-emit-float-compare-return
                         (compiler-backend-scratch-vreg-float-compare-return-test-assignments)
@@ -37908,7 +38148,8 @@
                         "%rax"
                         "%xmm14"
                         "%xmm15"
-                        "    ret\n")
+                        "    ret\n"
+                        backend-state)
                         [(compiler_backend.ResultCompilerBackend.Ok
                             compare-return)
                           (and
@@ -38021,7 +38262,7 @@
         (not (string.eq splat-gp ""))
         (not (string.eq splat-xmm ""))
         (not (string.eq splat-gp "%r8"))
-        (not (= (compiler_regalloc.compiler-reg-xmm-family-index splat-xmm) 6))
+        (not (= (compiler-backend-scratch-test-xmm-family-index splat-xmm) 6))
         (string.eq
           splat-gp
           (compiler-backend-scratch-test-register splat-dense 0))
@@ -38033,12 +38274,10 @@
         (not (string.eq reduce-acc ""))
         (not (string.eq reduce-temp ""))
         (not (string.eq reduce-acc reduce-temp))
-        (not (= (compiler_regalloc.compiler-reg-xmm-family-index reduce-acc) 2))
-        (not (= (compiler_regalloc.compiler-reg-xmm-family-index reduce-acc) 6))
-        (not
-          (= (compiler_regalloc.compiler-reg-xmm-family-index reduce-temp) 2))
-        (not
-          (= (compiler_regalloc.compiler-reg-xmm-family-index reduce-temp) 6))
+        (not (= (compiler-backend-scratch-test-xmm-family-index reduce-acc) 2))
+        (not (= (compiler-backend-scratch-test-xmm-family-index reduce-acc) 6))
+        (not (= (compiler-backend-scratch-test-xmm-family-index reduce-temp) 2))
+        (not (= (compiler-backend-scratch-test-xmm-family-index reduce-temp) 6))
         (string.eq
           reduce-acc
           (compiler-backend-scratch-test-register reduce-dense 0))
@@ -38052,21 +38291,21 @@
         (not (string.eq prefix-work0 ""))
         (not (string.eq prefix-work1 ""))
         (not (string.eq prefix-gp "%r8"))
-        (not (= (compiler_regalloc.compiler-reg-xmm-family-index prefix-xmm) 6))
+        (not (= (compiler-backend-scratch-test-xmm-family-index prefix-xmm) 6))
         (not
-          (= (compiler_regalloc.compiler-reg-xmm-family-index prefix-work0) 6))
+          (= (compiler-backend-scratch-test-xmm-family-index prefix-work0) 6))
         (not
-          (= (compiler_regalloc.compiler-reg-xmm-family-index prefix-work1) 6))
+          (= (compiler-backend-scratch-test-xmm-family-index prefix-work1) 6))
         (not
-          (compiler_regalloc.compiler-reg-registers-overlap?
+          (compiler-backend-scratch-test-registers-overlap?
             prefix-xmm
             prefix-work0))
         (not
-          (compiler_regalloc.compiler-reg-registers-overlap?
+          (compiler-backend-scratch-test-registers-overlap?
             prefix-xmm
             prefix-work1))
         (not
-          (compiler_regalloc.compiler-reg-registers-overlap?
+          (compiler-backend-scratch-test-registers-overlap?
             prefix-work0
             prefix-work1))
         (string.eq
@@ -38353,6 +38592,156 @@
                               1))))])])])]))
     true))
 
+(define (compiler-backend-scratch-vreg-tail-mask-roles-ok?
+  [plan : compiler_regalloc.CompilerRegScratchPlan]) : bool
+  (let
+    [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+      (struct-get plan items)]
+    (and
+      (match (struct-get (struct-get (array-ref items 0) requirement) role)
+        [(compiler_regalloc.CompilerRegScratchRole.TailMaskCount) true]
+        [_ false])
+      (match (struct-get (struct-get (array-ref items 1) requirement) role)
+        [(compiler_regalloc.CompilerRegScratchRole.TailMaskIndex) true]
+        [_ false])
+      (match (struct-get (struct-get (array-ref items 2) requirement) role)
+        [(compiler_regalloc.CompilerRegScratchRole.TailMaskBits) true]
+        [_ false]))))
+
+(define (compiler-backend-scratch-vreg-tail-mask-plan-pair-ok?
+  [plan : compiler_regalloc.CompilerRegScratchPlan]
+  [dense-plan : compiler_regalloc.CompilerRegScratchPlan]) : bool
+  (let
+    [count : i64
+      (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 0)]
+    [index : i64
+      (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 1)]
+    [mask : i64 (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 2)]
+    (and
+      (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 3)
+      (= (compiler_backend.compiler-backend-scratch-plan-success-count plan) 3)
+      (= count compiler_abi.compiler-reg-id-rcx)
+      (not (= index compiler_abi.compiler-reg-id-invalid))
+      (not (= mask compiler_abi.compiler-reg-id-invalid))
+      (not (compiler_regalloc.compiler-reg-registers-overlap? count index))
+      (not (compiler_regalloc.compiler-reg-registers-overlap? count mask))
+      (not (compiler_regalloc.compiler-reg-registers-overlap? index mask))
+      (not (= index compiler_abi.compiler-reg-id-r12))
+      (not (= mask compiler_abi.compiler-reg-id-r12))
+      (=
+        (compiler_regalloc.compiler-reg-scratch-plan-register plan 2 0)
+        compiler_abi.compiler-reg-id-invalid)
+      (=
+        count
+        (compiler_regalloc.compiler-reg-scratch-plan-register dense-plan 0 0))
+      (=
+        index
+        (compiler_regalloc.compiler-reg-scratch-plan-register dense-plan 0 1))
+      (=
+        mask
+        (compiler_regalloc.compiler-reg-scratch-plan-register dense-plan 0 2))
+      (compiler-backend-scratch-vreg-tail-mask-roles-ok? plan))))
+
+(define (compiler-backend-scratch-vreg-tail-mask-pressure-plan-ok?
+  [plan : compiler_regalloc.CompilerRegScratchPlan]) : bool
+  (let
+    [count : i64
+      (compiler_regalloc.compiler-reg-scratch-plan-register plan 2 0)]
+    [index : i64
+      (compiler_regalloc.compiler-reg-scratch-plan-register plan 2 1)]
+    [mask : i64 (compiler_regalloc.compiler-reg-scratch-plan-register plan 2 2)]
+    (and
+      (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 3)
+      (= (compiler_backend.compiler-backend-scratch-plan-success-count plan) 2)
+      (= count compiler_abi.compiler-reg-id-invalid)
+      (not (= index compiler_abi.compiler-reg-id-invalid))
+      (not (= mask compiler_abi.compiler-reg-id-invalid))
+      (not (compiler_regalloc.compiler-reg-registers-overlap? index mask))
+      (not (= index compiler_abi.compiler-reg-id-rcx))
+      (not (= mask compiler_abi.compiler-reg-id-rcx))
+      (not (= index compiler_abi.compiler-reg-id-r12))
+      (not (= mask compiler_abi.compiler-reg-id-r12))
+      (not (= index compiler_abi.compiler-reg-id-r13))
+      (not (= mask compiler_abi.compiler-reg-id-r13)))))
+
+(define (compiler-backend-scratch-vreg-tail-mask-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [blocks : compiler_ir_types.CompilerIrBlockList
+        (compiler-backend-scratch-vreg-tail-mask-test-blocks)]
+      [assignments : compiler_regalloc.CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-tail-mask-test-assignments)]
+      [listed : compiler_regalloc.CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_tail_mask"
+          blocks
+          4
+          assignments)]
+      [dense : compiler_regalloc.CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_tail_mask_dense"
+          (compiler_ir_types.compiler-ir-block-list-compact blocks)
+          4
+          assignments)]
+      [windows : compiler_regalloc.CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (compiler_abi.CompilerRegTargetAbi.Windows)
+          "scratch_vreg_tail_mask_windows"
+          blocks
+          4
+          assignments)]
+      [pressure : compiler_regalloc.CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_tail_mask_pressure"
+          (compiler-backend-scratch-vreg-tail-mask-pressure-blocks)
+          5
+          (compiler-backend-scratch-vreg-tail-mask-pressure-assignments))]
+      [pressure-windows : compiler_regalloc.CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (compiler_abi.CompilerRegTargetAbi.Windows)
+          "scratch_vreg_tail_mask_pressure_windows"
+          (compiler-backend-scratch-vreg-tail-mask-pressure-blocks)
+          5
+          (compiler-backend-scratch-vreg-tail-mask-pressure-assignments))]
+      (match listed
+        [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
+          (match dense
+            [(compiler_regalloc.CompilerRegScratchPlanResult.Result
+                _
+                dense-plan)
+              (match windows
+                [(compiler_regalloc.CompilerRegScratchPlanResult.Result
+                    _
+                    windows-plan)
+                  (and
+                    (compiler-backend-scratch-vreg-tail-mask-plan-pair-ok?
+                      plan
+                      dense-plan)
+                    (=
+                      (compiler_regalloc.compiler-reg-scratch-plan-register
+                        windows-plan
+                        0
+                        0)
+                      compiler_abi.compiler-reg-id-rcx)
+                    (=
+                      (compiler_backend.compiler-backend-scratch-plan-success-count
+                        windows-plan)
+                      3)
+                    (match pressure
+                      [(compiler_regalloc.CompilerRegScratchPlanResult.Result
+                          _
+                          pressure-plan)
+                        (compiler-backend-scratch-vreg-tail-mask-pressure-plan-ok?
+                          pressure-plan)])
+                    (match pressure-windows
+                      [(compiler_regalloc.CompilerRegScratchPlanResult.Result
+                          _
+                          pressure-plan)
+                        (compiler-backend-scratch-vreg-tail-mask-pressure-plan-ok?
+                          pressure-plan)]))])])]))
+    true))
+
 (define (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?) : bool
   (cfg
     scratch-vreg
@@ -38382,6 +38771,9 @@
             compiler_regalloc.CompilerRegAssignmentList.Nil))]
       [diag : compiler_diagnostic.CompilerDiagnostic
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
+      [backend-state : compiler_backend.CompilerBackendState
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
       (match (compiler_backend.compiler-backend-emit-vector-splat
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         splat-assignments
@@ -38391,7 +38783,8 @@
         (compiler_ast_types.AstType.I64)
         "%r14"
         "%xmm14"
-        diag)
+        diag
+        backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok splat)
           (match (compiler_backend.compiler-backend-emit-vector-reduce
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -38403,7 +38796,8 @@
             (compiler_ast_types.AstType.I64)
             "%xmm14"
             "%xmm15"
-            diag)
+            diag
+            backend-state)
             [(compiler_backend.ResultCompilerBackend.Ok avx2)
               (match (compiler_backend.compiler-backend-emit-vector-reduce
                 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -38415,7 +38809,8 @@
                 (compiler_ast_types.AstType.I64)
                 "%xmm14"
                 "%xmm15"
-                diag)
+                diag
+                backend-state)
                 [(compiler_backend.ResultCompilerBackend.Ok avx512)
                   (and
                     (compiler_backend.compiler-backend-string-contains?
@@ -38518,7 +38913,7 @@
       (and
         (= (compiler-backend-scratch-test-plan-count cast) 3)
         (= (compiler-backend-scratch-test-success-count cast) 3)
-        (>= (compiler_regalloc.compiler-reg-xmm-family-index cast-xmm) 0)
+        (>= (compiler-backend-scratch-test-xmm-family-index cast-xmm) 0)
         (not (string.eq cast-gp0 ""))
         (not (string.eq cast-gp1 ""))
         (not (string.eq cast-gp0 cast-gp1))
@@ -38535,7 +38930,7 @@
           (compiler-backend-scratch-test-register cast-dense 2))
         (= (compiler-backend-scratch-test-plan-count cast-windows) 3)
         (= (compiler-backend-scratch-test-success-count cast-windows) 3)
-        (>= (compiler_regalloc.compiler-reg-xmm-family-index cast-win-xmm) 0)
+        (>= (compiler-backend-scratch-test-xmm-family-index cast-win-xmm) 0)
         (not (string.eq cast-win-gp0 ""))
         (not (string.eq cast-win-gp1 ""))
         (not (string.eq cast-win-gp0 cast-win-gp1))
@@ -38544,12 +38939,12 @@
         (= (compiler-backend-scratch-test-plan-count gp-only) 1)
         (= (compiler-backend-scratch-test-success-count gp-only) 1)
         (not (string.eq gp-only-reg ""))
-        (< (compiler_regalloc.compiler-reg-xmm-family-index gp-only-reg) 0)
+        (< (compiler-backend-scratch-test-xmm-family-index gp-only-reg) 0)
         (= (compiler-backend-scratch-test-plan-count bitcast) 2)
         (= (compiler-backend-scratch-test-success-count bitcast) 2)
-        (>= (compiler_regalloc.compiler-reg-xmm-family-index bitcast-xmm) 0)
+        (>= (compiler-backend-scratch-test-xmm-family-index bitcast-xmm) 0)
         (not (string.eq bitcast-gp ""))
-        (< (compiler_regalloc.compiler-reg-xmm-family-index bitcast-gp) 0)
+        (< (compiler-backend-scratch-test-xmm-family-index bitcast-gp) 0)
         (string.eq
           bitcast-xmm
           (compiler-backend-scratch-test-register bitcast-dense 0))
@@ -38558,8 +38953,8 @@
           (compiler-backend-scratch-test-register bitcast-dense 1))
         (= (compiler-backend-scratch-test-plan-count mov) 1)
         (= (compiler-backend-scratch-test-success-count mov) 1)
-        (>= (compiler_regalloc.compiler-reg-xmm-family-index mov-xmm) 0)
-        (not (= (compiler_regalloc.compiler-reg-xmm-family-index mov-xmm) 6))
+        (>= (compiler-backend-scratch-test-xmm-family-index mov-xmm) 0)
+        (not (= (compiler-backend-scratch-test-xmm-family-index mov-xmm) 6))
         (=
           (compiler_regalloc.compiler-reg-scratch-cast-slot-count
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -38645,6 +39040,8 @@
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
           compiler_ir_types.CompilerIrExternList.Nil)]
+      [backend-state : compiler_backend.CompilerBackendState
+        (struct-get index backend-state)]
       [cast-assignments : compiler_regalloc.CompilerRegAssignmentList
         (compiler-backend-scratch-vreg-cast-test-assignments)]
       [gp-only-assignments : compiler_regalloc.CompilerRegAssignmentList
@@ -38665,7 +39062,8 @@
         index
         "%xmm14"
         "%r14"
-        "%r15")
+        "%r15"
+        backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok cast-asm)
           (match (compiler_backend.compiler-backend-emit-cast
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -38679,7 +39077,8 @@
             index
             "%r14"
             ""
-            "")
+            ""
+            backend-state)
             [(compiler_backend.ResultCompilerBackend.Ok gp-only-asm)
               (match (compiler_backend.compiler-backend-emit-bitcast
                 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -38690,7 +39089,8 @@
                 (compiler_ast_types.AstType.U64)
                 index
                 "%xmm14"
-                "%r14")
+                "%r14"
+                backend-state)
                 [(compiler_backend.ResultCompilerBackend.Ok bitcast-asm)
                   (match (compiler_backend.compiler-backend-emit-mov
                     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -38700,7 +39100,8 @@
                     (compiler_ast_types.AstType.F64)
                     index
                     2
-                    "%xmm14")
+                    "%xmm14"
+                    backend-state)
                     [(compiler_backend.ResultCompilerBackend.Ok mov-asm)
                       (and
                         (compiler_backend.compiler-backend-string-contains?
@@ -39013,7 +39414,7 @@
             compiler_abi.compiler-reg-id-r10)
           (=
             (struct-get (array-ref items 2) register)
-            (compiler_abi.compiler-abi-xmm-register-id 2))
+            (compiler_abi.compiler-abi-xmm-register-id 0))
           (=
             (struct-get (array-ref items 3) register)
             compiler_abi.compiler-reg-id-invalid)
@@ -40088,15 +40489,15 @@
               compiler_regalloc.CompilerRegScratchAssignment)
               (struct-get plan items)]
             [rax : String
-              (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 0)]
+              (compiler-backend-scratch-test-plan-register-string plan 0 0)]
             [rdx : String
-              (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 1)]
+              (compiler-backend-scratch-test-plan-register-string plan 0 1)]
             [temp0 : String
-              (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 2)]
+              (compiler-backend-scratch-test-plan-register-string plan 0 2)]
             [temp1 : String
-              (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 3)]
+              (compiler-backend-scratch-test-plan-register-string plan 0 3)]
             [temp2 : String
-              (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 4)]
+              (compiler-backend-scratch-test-plan-register-string plan 0 4)]
             (and
               (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 5)
               (string.eq rax "%rax")
@@ -40121,20 +40522,20 @@
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.FixedRdx) true]
                 [_ false])
-              (string.eq
+              (=
                 (struct-get
                   (struct-get
                     (struct-get (array-ref items 0) requirement)
                     constraint)
                   fixed)
-                "%rax")
-              (string.eq
+                compiler_abi.compiler-reg-id-rax)
+              (=
                 (struct-get
                   (struct-get
                     (struct-get (array-ref items 1) requirement)
                     constraint)
                   fixed)
-                "%rdx")))]))
+                compiler_abi.compiler-reg-id-rdx)))]))
     true))
 
 (define (compiler-backend-scratch-vreg-scalar-shift-blocks) : compiler_ir_types.CompilerIrBlockList
@@ -40163,9 +40564,9 @@
       [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
         (let
           [fixed : String
-            (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 0)]
+            (compiler-backend-scratch-test-plan-register-string plan 0 0)]
           [result : String
-            (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 1)]
+            (compiler-backend-scratch-test-plan-register-string plan 0 1)]
           (and
             (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 2)
             (string.eq fixed "%rcx")
@@ -40209,7 +40610,7 @@
           (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 1)
           (not
             (string.eq
-              (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 0)
+              (compiler-backend-scratch-test-plan-register-string plan 0 0)
               ""))
           (match (struct-get
             (struct-get (array-ref (struct-get plan items) 0) requirement)
@@ -40263,11 +40664,11 @@
       [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
         (let
           [lhs : String
-            (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 0)]
+            (compiler-backend-scratch-test-plan-register-string plan 0 0)]
           [rhs : String
-            (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 1)]
+            (compiler-backend-scratch-test-plan-register-string plan 0 1)]
           [test : String
-            (compiler_regalloc.compiler-reg-scratch-plan-register plan 2 0)]
+            (compiler-backend-scratch-test-plan-register-string plan 2 0)]
           (and
             (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 3)
             (not (string.eq lhs ""))
@@ -40334,6 +40735,9 @@
     (let
       [assignments : compiler_regalloc.CompilerRegAssignmentList
         (compiler-backend-scratch-vreg-select-assignments)]
+      [backend-state : compiler_backend.CompilerBackendState
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
       (match (compiler-backend-scratch-test-result
         "scratch_vreg_select"
         (compiler-backend-scratch-vreg-select-blocks)
@@ -40342,11 +40746,11 @@
         [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
           (let
             [result : String
-              (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 0)]
+              (compiler-backend-scratch-test-plan-register-string plan 0 0)]
             [value : String
-              (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 1)]
+              (compiler-backend-scratch-test-plan-register-string plan 0 1)]
             [test : String
-              (compiler_regalloc.compiler-reg-scratch-plan-register plan 0 2)]
+              (compiler-backend-scratch-test-plan-register-string plan 0 2)]
             (match (compiler_backend.compiler-backend-emit-scalar-select
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
               assignments
@@ -40358,7 +40762,8 @@
               result
               value
               test
-              (compiler_diagnostic.compiler-diagnostic-at-start "" ""))
+              (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+              backend-state)
               [(compiler_backend.ResultCompilerBackend.Ok asm)
                 (and
                   (= (compiler_regalloc.compiler-reg-scratch-plan-count plan) 3)
@@ -40431,13 +40836,17 @@
               compiler_regalloc.CompilerRegAssignmentList.Nil)))]
       [fallthrough : compiler_backend.CompilerBackendMaybeLabel
         (compiler_backend.CompilerBackendMaybeLabel.No)]
+      [backend-state : compiler_backend.CompilerBackendState
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
       [div-guard : String
         (compiler_backend.compiler-backend-div-overflow-guard-asm-with-plan
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (compiler_ast_types.AstType.I64)
           "%r8"
           "%r12"
-          "%r13")]
+          "%r13"
+          backend-state)]
       [literal-ok : bool
         (match (compiler_backend.compiler-backend-binop-literal-divmod-asm-here-with-plan
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -40446,7 +40855,8 @@
           (compiler_ast_types.AstType.I64)
           "%r12"
           "%r13"
-          "%r14")
+          "%r14"
+          backend-state)
           [(compiler_backend.CompilerBackendMaybeAsm.Some asm)
             (and
               (compiler_backend.compiler-backend-string-contains? asm "%r12")
@@ -40460,6 +40870,7 @@
         (not
           (string.eq
             (compiler_backend.compiler-backend-scavenge-binop-return-rhs-reg
+              backend-state
               assignments
               (compiler_ir_types.CompilerIrBinOp.Eq)
               (compiler_ir_types.CompilerIrValue.Var 1)
@@ -40480,7 +40891,8 @@
             (compiler_ast_types.AstType.I64)
             (compiler_ast_types.AstType.I64)
             "%rcx"
-            "%r14")
+            "%r14"
+            backend-state)
           "    movq -16(%rbp), %rcx\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-binop-spill-direct-shift
@@ -40494,7 +40906,8 @@
             (compiler_ast_types.AstType.I64)
             (compiler_ast_types.AstType.I64)
             "%rcx"
-            "%r14")
+            "%r14"
+            backend-state)
           "    shlq %cl, %r14\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-binop-spill-direct-shift
@@ -40508,7 +40921,8 @@
             (compiler_ast_types.AstType.I64)
             (compiler_ast_types.AstType.I64)
             "%rcx"
-            "%r14")
+            "%r14"
+            backend-state)
           "    movq %r14, %rcx\n")
         (not
           (compiler-backend-scratch-vreg-result-contains?
@@ -40523,7 +40937,8 @@
               (compiler_ast_types.AstType.I64)
               (compiler_ast_types.AstType.I64)
               "%rcx"
-              "%r14")
+              "%r14"
+              backend-state)
             "    shlq %cl, %rcx\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-branch-with-plan
@@ -40534,7 +40949,8 @@
             (compiler_ir_types.compiler-ir-label "yes")
             (compiler_ir_types.compiler-ir-label "no")
             fallthrough
-            "%r14")
+            "%r14"
+            backend-state)
           "    testq %r14, %r14\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-compare-branch-with-plan
@@ -40549,7 +40965,8 @@
             (compiler_ir_types.compiler-ir-label "no")
             fallthrough
             "%r14"
-            "%r15")
+            "%r15"
+            backend-state)
           "    movq -16(%rbp), %r15\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-compare-branch-with-plan
@@ -40564,7 +40981,8 @@
             (compiler_ir_types.compiler-ir-label "no")
             fallthrough
             "%r14"
-            "%r14")
+            "%r14"
+            backend-state)
           "    cmpq ")
         (not
           (compiler-backend-scratch-vreg-result-contains?
@@ -40582,7 +41000,8 @@
               (compiler_ir_types.compiler-ir-label "no")
               fallthrough
               "%r14"
-              "%r14")
+              "%r14"
+              backend-state)
             "    cmpq %r14, %r14\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-binop-direct-compare
@@ -40594,7 +41013,8 @@
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64)
-            "%r14")
+            "%r14"
+            backend-state)
           "    cmpq ")
         (not
           (compiler-backend-scratch-vreg-result-contains?
@@ -40607,7 +41027,8 @@
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ast_types.AstType.I64)
-              "%r14")
+              "%r14"
+              backend-state)
             "    cmpq %r14, %r14\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-load-compare-branch-with-plan
@@ -40621,7 +41042,8 @@
             (compiler_ir_types.compiler-ir-label "no")
             fallthrough
             "%r14"
-            "%r15")
+            "%r15"
+            backend-state)
           "    cmpq %r15, (%r14)\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-gep-load-compare-branch-with-plan
@@ -40638,7 +41060,8 @@
             (compiler_ir_types.compiler-ir-label "no")
             fallthrough
             "%r14"
-            "%r15")
+            "%r15"
+            backend-state)
           "    cmpq %r15, 16(%r14)\n")
         ;; #6250: a fused gep+load bit test must emit testq (bit semantics),
         ;; never cmpq (equality semantics).
@@ -40657,7 +41080,8 @@
             (compiler_ir_types.compiler-ir-label "no")
             fallthrough
             "%r14"
-            "%r15")
+            "%r15"
+            backend-state)
           "    testq %r15, 16(%r14)\n")
         (not
           (compiler-backend-scratch-vreg-result-contains?
@@ -40675,7 +41099,8 @@
               (compiler_ir_types.compiler-ir-label "no")
               fallthrough
               "%r14"
-              "%r15")
+              "%r15"
+              backend-state)
             "    cmpq %r15, 16(%r14)\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-load-compare-branch-with-plan
@@ -40689,7 +41114,8 @@
             (compiler_ir_types.compiler-ir-label "no")
             fallthrough
             "%r14"
-            "%r15")
+            "%r15"
+            backend-state)
           "    testq %r15, (%r14)\n")
         (not
           (compiler-backend-scratch-vreg-result-contains?
@@ -40704,7 +41130,8 @@
               (compiler_ir_types.compiler-ir-label "no")
               fallthrough
               "%r14"
-              "%r15")
+              "%r15"
+              backend-state)
             "    cmpq %r15, (%r14)\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-unop-with-plan
@@ -40713,7 +41140,8 @@
             (compiler_ir_types.CompilerIrUnOp.Neg)
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ast_types.AstType.I64)
-            "%r14")
+            "%r14"
+            backend-state)
           "    negq %r14\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler_backend.compiler-backend-emit-cpuid
@@ -40722,7 +41150,8 @@
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.Var 1)
             1
-            "%r14")
+            "%r14"
+            backend-state)
           "    movq %rbx, %r14\n    cpuid\n")))
     true))
 
@@ -41175,6 +41604,7 @@
         (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
         (compiler-backend-scratch-vreg-simd-plan-ok?)
         (compiler-backend-scratch-vreg-indexed-simd-plan-ok?)
+        (compiler-backend-scratch-vreg-tail-mask-plan-ok?)
         (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-conversion-plan-ok?)
         (compiler-backend-scratch-vreg-conversion-emission-uses-plan-ok?)

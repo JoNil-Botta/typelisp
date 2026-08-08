@@ -165,44 +165,33 @@
 ;; Macro expansion consumes user-written call nodes before the checked program
 ;; reaches tooling. Keep the resolved call-head facts in the owning compiler
 ;; job, then let semantic-index consumers copy them before the next file reset.
-;; Record strings live in a disposable generation; the grow-only slot arrays
-;; stay in the job arena and are bounded by the largest check seen by that job.
-(defstruct TcMacroCallSite
-  (path String)
-  (macro-name-id i64)
-  (definition-module-id i64)
-  (declaration-id i64)
-  (span ast.AstSourceSpan)
-  (editable bool)
-  (generator String)
-  (item String)
-  (key String))
-
+;; The grow-only scalar record slab stays in the job arena and is bounded by
+;; the largest check seen by that job. Intern IDs keep strings out of this hot
+;; state graph; semantic-index consumers copy their text before the next reset.
 (defstruct TcMacroCallSiteStateData
   (enabled bool)
-  (records (__tl_dyn-array TcMacroCallSite))
-  (live (__tl_dyn-array bool))
+  (records (__tl_dyn-array i64))
+  (capacity i64)
   (len i64)
   (seen-sites tc_i64_i64_map.Map)
   (fixed-storage-arena i64)
-  (string-arena i64)
-  ;; These are borrowed only while one declaration is being expanded. Every
-  ;; appended record copies the strings into string-arena.
-  (active-path String)
+  ;; Intern IDs keep active and recorded metadata job-local without embedding
+  ;; cleanup-owning Strings in the hot typecheck state graph.
+  (active-path-id i64)
   (active-editable bool)
-  (active-generator String)
-  (active-item String)
-  (active-key String))
+  (active-generator-id i64)
+  (active-item-id i64)
+  (active-key-id i64))
 
 (defstruct TcMacroCallSiteState
   (address i64))
 
 (defstruct TcMacroCallSiteActiveDecl
-  (path String)
+  (path-id i64)
   (editable bool)
-  (generator String)
-  (item String)
-  (key String))
+  (generator-id i64)
+  (item-id i64)
+  (key-id i64))
 
 (defstruct TcTypeEnvStore
   (bindings (__tl_dyn-array TcTypeEnvBinding))
@@ -475,17 +464,16 @@
         0
         (TcMacroCallSiteStateData
           false
-          (array.make-array TcMacroCallSite 0)
-          (array.make-array bool 0)
+          (array.make-array i64 0)
+          0
           0
           (tc_i64_i64_map.with-capacity 64)
           (arena.tl_arena_current)
-          0
-          ""
+          -1
           false
-          ""
-          ""
-          ""))
+          -1
+          -1
+          -1))
       (TcMacroCallSiteState
         (cast
           (unsafe
@@ -674,24 +662,17 @@
     (array-set! (struct-get state control) 5 0)
     (array-set! (struct-get state control) 9 0)))
 
-(define (tc-macro-call-site-fallback) : TcMacroCallSite
-  (TcMacroCallSite
-    ""
-    -1
-    cbi.compiler-builtin-id-fix-empty
-    -1
-    (ast.ast-source-span 0 0 0 0)
-    false
-    ""
-    ""
-    ""))
+(define tc-macro-call-site-record-stride : i64
+  12)
+
+(define (tc-macro-call-site-record-slot [index : i64] [field : i64]) : i64
+  (+ (* index tc-macro-call-site-record-stride) field))
 
 (define (tc-macro-call-site-state-storage-grow! [state : TcMacroCallSiteState]) : unit
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    [old-records : (__tl_dyn-array TcMacroCallSite) (struct-get data records)]
-    [old-live : (__tl_dyn-array bool) (struct-get data live)]
-    [old-capacity : i64 (array-length old-records)]
+    [old-records : (__tl_dyn-array i64) (struct-get data records)]
+    [old-capacity : i64 (struct-get data capacity)]
     [new-capacity : i64
       (if (< old-capacity 1)
         16
@@ -701,24 +682,18 @@
     [_set-owner : unit
       (unsafe
         (arena.tl_arena_set owner))]
-    [new-records : (__tl_dyn-array TcMacroCallSite)
-      (array.make-array TcMacroCallSite new-capacity)]
-    [new-live : (__tl_dyn-array bool) (array.make-array bool new-capacity)]
+    [new-records : (__tl_dyn-array i64)
+      (array.make-array i64 (* new-capacity tc-macro-call-site-record-stride))]
     [index : i64 0]
     (begin
-      (while (< index (struct-get data len))
-        (let
-          [taken : (Tuple bool TcMacroCallSite)
-            (__tl_array-take! old-records old-live index)]
-          (begin
-            (if (tuple-ref taken 0)
-              (begin
-                (array-set! new-records index (tuple-ref taken 1))
-                (array-set! new-live index true))
-              unit)
-            (set! index (+ index 1)))))
+      (while (<
+        index
+        (* (struct-get data len) tc-macro-call-site-record-stride))
+        (begin
+          (array-set! new-records index (array-ref old-records index))
+          (set! index (+ index 1))))
       (set! (struct-get data records) new-records)
-      (set! (struct-get data live) new-live)
+      (set! (struct-get data capacity) new-capacity)
       (set! (struct-get data fixed-storage-arena) (arena.tl_arena_current))
       (tc-macro-call-site-state-data-set! state data)
       (unsafe
@@ -727,77 +702,27 @@
             (struct-get data fixed-storage-arena)
             previous))))))
 
-(define (tc-macro-call-site-string-arena-ensure! [state : TcMacroCallSiteState]) : i64
-  (let
-    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    (if (= (struct-get data string-arena) 0)
-      (let
-        [previous : i64 (arena.tl_arena_current)]
-        [owner : i64 (arena.tl_arena_make_small)]
-        (begin
-          (set! (struct-get data string-arena) owner)
-          (tc-macro-call-site-state-data-set! state data)
-          (unsafe
-            (arena.tl_arena_set previous))
-          owner))
-      (struct-get data string-arena))))
-
-(define (tc-macro-call-site-string-arena-finish!
-  [state : TcMacroCallSiteState]
-  [previous : i64]
-  [owner : i64]) : unit
-  (let
-    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    [head : i64 (arena.tl_arena_current)]
-    (begin
-      (set! (struct-get data string-arena) head)
-      (tc-macro-call-site-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            head
-            previous))))))
-
-(define (tc-macro-call-site-string-arena-release!
-  [state : TcMacroCallSiteState]) : unit
-  (let
-    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    [string-arena : i64 (struct-get data string-arena)]
-    (begin
-      (if (= string-arena 0)
-        unit
-        (unsafe
-          (arena.tl_arena_destroy string-arena)))
-      (set! (struct-get data string-arena) 0)
-      (tc-macro-call-site-state-data-set! state data))))
-
-(define (tc-macro-call-site-span-eq?
-  [left : ast.AstSourceSpan]
-  [right : ast.AstSourceSpan]) : bool
-  (and
-    (=
-      (ast.ast-source-span-start-line left)
-      (ast.ast-source-span-start-line right))
-    (=
-      (ast.ast-source-span-start-col left)
-      (ast.ast-source-span-start-col right))
-    (= (ast.ast-source-span-end-line left) (ast.ast-source-span-end-line right))
-    (= (ast.ast-source-span-end-col left) (ast.ast-source-span-end-col right))))
-
 (define (tc-macro-call-site-record-key-eq?
-  [record : TcMacroCallSite]
-  [path : String]
+  [data : TcMacroCallSiteStateData]
+  [index : i64]
+  [path-id : i64]
   [definition-module-id : i64]
   [declaration-id : i64]
   [span : ast.AstSourceSpan]) : bool
-  (and
-    (= (struct-get record definition-module-id) definition-module-id)
-    (= (struct-get record declaration-id) declaration-id)
-    (string.eq (struct-get record path) path)
-    (tc-macro-call-site-span-eq? (struct-get record span) span)))
+  (let
+    [records : (__tl_dyn-array i64) (struct-get data records)]
+    [base : i64 (tc-macro-call-site-record-slot index 0)]
+    (and
+      (= (array-ref records base) path-id)
+      (= (array-ref records (+ base 2)) definition-module-id)
+      (= (array-ref records (+ base 3)) declaration-id)
+      (= (array-ref records (+ base 4)) (ast.ast-source-span-start-line span))
+      (= (array-ref records (+ base 5)) (ast.ast-source-span-start-col span))
+      (= (array-ref records (+ base 6)) (ast.ast-source-span-end-line span))
+      (= (array-ref records (+ base 7)) (ast.ast-source-span-end-col span)))))
 
 (define (tc-macro-call-site-key-hash
-  [path : String]
+  [path-id : i64]
   [definition-module-id : i64]
   [declaration-id : i64]
   [span : ast.AstSourceSpan]) : i64
@@ -806,9 +731,7 @@
       (hash.combine
         (hash.combine
           (hash.combine
-            (hash.combine
-              (hash.string-key (& path))
-              (hash.i64 definition-module-id))
+            (hash.combine (hash.i64 path-id) (hash.i64 definition-module-id))
             (hash.i64 declaration-id))
           (hash.i64 (ast.ast-source-span-start-line span)))
         (hash.i64 (ast.ast-source-span-start-col span)))
@@ -817,7 +740,7 @@
 
 (define (tc-macro-call-site-state-contains-key?
   [data : TcMacroCallSiteStateData]
-  [path : String]
+  [path-id : i64]
   [definition-module-id : i64]
   [declaration-id : i64]
   [span : ast.AstSourceSpan]) : bool
@@ -828,8 +751,9 @@
       (while (and (not found) (< index (struct-get data len)))
         (begin
           (if (tc-macro-call-site-record-key-eq?
-            (array-ref (struct-get data records) index)
-            path
+            data
+            index
+            path-id
             definition-module-id
             declaration-id
             span)
@@ -841,7 +765,7 @@
 (define (tc-macro-call-site-state-contains?
   [state : TcMacroCallSiteState]
   [site-hash : i64]
-  [path : String]
+  [path-id : i64]
   [definition-module-id : i64]
   [declaration-id : i64]
   [span : ast.AstSourceSpan]) : bool
@@ -850,27 +774,25 @@
     (match (tc_i64_i64_map.get (& (struct-get data seen-sites)) site-hash)
       [(tc_i64_i64_map.LookupFound index)
         (if (and (>= index 0) (< index (struct-get data len)))
-          (let
-            [record : TcMacroCallSite
-              (array-ref (struct-get data records) index)]
-            (if (tc-macro-call-site-record-key-eq?
-              record
-              path
+          (if (tc-macro-call-site-record-key-eq?
+            data
+            index
+            path-id
+            definition-module-id
+            declaration-id
+            span)
+            true
+            ;; Pool-generation node-ID reuse is rare. Preserve exactness by
+            ;; falling back to the full key only on that collision path.
+            (tc-macro-call-site-state-contains-key?
+              data
+              path-id
               definition-module-id
               declaration-id
-              span)
-              true
-              ;; Pool-generation node-ID reuse is rare. Preserve exactness by
-              ;; falling back to the full key only on that collision path.
-              (tc-macro-call-site-state-contains-key?
-                data
-                path
-                definition-module-id
-                declaration-id
-                span)))
+              span))
           (tc-macro-call-site-state-contains-key?
             data
-            path
+            path-id
             definition-module-id
             declaration-id
             span))]
@@ -914,54 +836,57 @@
   [span : ast.AstSourceSpan]) : unit
   (let
     [active : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    [path : String (struct-get active active-path)]
+    [path-id : i64 (struct-get active active-path-id)]
     [site-hash : i64
       (tc-macro-call-site-key-hash
-        path
+        path-id
         definition-module-id
         declaration-id
         span)]
     (if (tc-macro-call-site-state-contains?
       state
       site-hash
-      path
+      path-id
       definition-module-id
       declaration-id
       span)
       unit
       (begin
-        (if (>=
-          (struct-get active len)
-          (array-length (struct-get active records)))
+        (if (>= (struct-get active len) (struct-get active capacity))
           (tc-macro-call-site-state-storage-grow! state)
           unit)
         (let
-          [previous : i64 (arena.tl_arena_current)]
-          [owner : i64 (tc-macro-call-site-string-arena-ensure! state)]
-          [_set-owner : unit
-            (unsafe
-              (arena.tl_arena_set owner))]
           [latest : TcMacroCallSiteStateData
             (tc-macro-call-site-state-data state)]
           [index : i64 (struct-get latest len)]
+          [base : i64 (tc-macro-call-site-record-slot index 0)]
+          [records : (__tl_dyn-array i64) (struct-get latest records)]
           (begin
+            (array-set! records base path-id)
+            (array-set! records (+ base 1) macro-name-id)
+            (array-set! records (+ base 2) definition-module-id)
+            (array-set! records (+ base 3) declaration-id)
             (array-set!
-              (struct-get latest records)
-              index
-              (TcMacroCallSite
-                (string.copy (& path))
-                macro-name-id
-                definition-module-id
-                declaration-id
-                span
-                (struct-get active active-editable)
-                (string.copy (& (struct-get active active-generator)))
-                (string.copy (& (struct-get active active-item)))
-                (string.copy (& (struct-get active active-key)))))
-            (array-set! (struct-get latest live) index true)
+              records
+              (+ base 4)
+              (ast.ast-source-span-start-line span))
+            (array-set! records (+ base 5) (ast.ast-source-span-start-col span))
+            (array-set! records (+ base 6) (ast.ast-source-span-end-line span))
+            (array-set! records (+ base 7) (ast.ast-source-span-end-col span))
+            (array-set!
+              records
+              (+ base 8)
+              (if (struct-get active active-editable)
+                1
+                0))
+            (array-set!
+              records
+              (+ base 9)
+              (struct-get active active-generator-id))
+            (array-set! records (+ base 10) (struct-get active active-item-id))
+            (array-set! records (+ base 11) (struct-get active active-key-id))
             (set! (struct-get latest len) (+ index 1))
             (tc-macro-call-site-state-data-set! state latest)
-            (tc-macro-call-site-string-arena-finish! state previous owner)
             (tc-macro-call-site-state-seen-note! state site-hash index)))))))
 
 (define (tc-macro-call-site-state-set-active-decl!
@@ -971,31 +896,31 @@
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
     (begin
-      (set! (struct-get data active-path) path)
+      (set! (struct-get data active-path-id) (ci.intern path))
       (match meta
         [(ast.AstGeneratedDeclMeta.No)
           (begin
             (set! (struct-get data active-editable) true)
-            (set! (struct-get data active-generator) "")
-            (set! (struct-get data active-item) "")
-            (set! (struct-get data active-key) ""))]
+            (set! (struct-get data active-generator-id) -1)
+            (set! (struct-get data active-item-id) -1)
+            (set! (struct-get data active-key-id) -1))]
         [(ast.AstGeneratedDeclMeta.Some generator item _ key)
           (begin
             (set! (struct-get data active-editable) false)
-            (set! (struct-get data active-generator) generator)
-            (set! (struct-get data active-item) item)
-            (set! (struct-get data active-key) key))])
+            (set! (struct-get data active-generator-id) (ci.intern generator))
+            (set! (struct-get data active-item-id) (ci.intern item))
+            (set! (struct-get data active-key-id) (ci.intern key)))])
       (tc-macro-call-site-state-data-set! state data))))
 
 (define (tc-macro-call-site-state-active-decl [state : TcMacroCallSiteState]) : TcMacroCallSiteActiveDecl
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
     (TcMacroCallSiteActiveDecl
-      (struct-get data active-path)
+      (struct-get data active-path-id)
       (struct-get data active-editable)
-      (struct-get data active-generator)
-      (struct-get data active-item)
-      (struct-get data active-key))))
+      (struct-get data active-generator-id)
+      (struct-get data active-item-id)
+      (struct-get data active-key-id))))
 
 (define (tc-macro-call-site-state-restore-active-decl!
   [state : TcMacroCallSiteState]
@@ -1003,47 +928,105 @@
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
     (begin
-      (set! (struct-get data active-path) (struct-get active path))
+      (set! (struct-get data active-path-id) (struct-get active path-id))
       (set! (struct-get data active-editable) (struct-get active editable))
-      (set! (struct-get data active-generator) (struct-get active generator))
-      (set! (struct-get data active-item) (struct-get active item))
-      (set! (struct-get data active-key) (struct-get active key))
+      (set!
+        (struct-get data active-generator-id)
+        (struct-get active generator-id))
+      (set! (struct-get data active-item-id) (struct-get active item-id))
+      (set! (struct-get data active-key-id) (struct-get active key-id))
       (tc-macro-call-site-state-data-set! state data))))
 
 (define (tc-macro-call-site-state-reset! [state : TcMacroCallSiteState]) : unit
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    [index : i64 0]
     (begin
-      (while (< index (struct-get data len))
-        (let
-          [_taken : (Tuple bool TcMacroCallSite)
-            (__tl_array-take!
-              (struct-get data records)
-              (struct-get data live)
-              index)]
-          (set! index (+ index 1))))
       (set! (struct-get data len) 0)
-      (set! (struct-get data active-path) "")
+      (set! (struct-get data active-path-id) -1)
       (set! (struct-get data active-editable) false)
-      (set! (struct-get data active-generator) "")
-      (set! (struct-get data active-item) "")
-      (set! (struct-get data active-key) "")
+      (set! (struct-get data active-generator-id) -1)
+      (set! (struct-get data active-item-id) -1)
+      (set! (struct-get data active-key-id) -1)
       (tc-cache-map-clear! (&mut (struct-get data seen-sites)))
-      (tc-macro-call-site-state-data-set! state data)
-      (tc-macro-call-site-string-arena-release! state))))
+      (tc-macro-call-site-state-data-set! state data))))
+
+(define (tc-macro-call-site-text [id : i64]) : String
+  (if (< id 0)
+    ""
+    (ci.intern-str id)))
 
 (define (tc-macro-call-site-count-for-state [state : TcMacroCallSiteState]) : i64
   (struct-get (tc-macro-call-site-state-data state) len))
 
-(define (tc-macro-call-site-at-for-state
+(define (tc-macro-call-site-field-for-state
   [state : TcMacroCallSiteState]
-  [index : i64]) : TcMacroCallSite
+  [index : i64]
+  [field : i64]
+  [fallback : i64]) : i64
   (let
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
     (if (and (>= index 0) (< index (struct-get data len)))
-      (array-ref (struct-get data records) index)
-      (tc-macro-call-site-fallback))))
+      (array-ref
+        (struct-get data records)
+        (tc-macro-call-site-record-slot index field))
+      fallback)))
+
+(define (tc-macro-call-site-path-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : String
+  (tc-macro-call-site-text
+    (tc-macro-call-site-field-for-state state index 0 -1)))
+
+(define (tc-macro-call-site-macro-name-id-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : i64
+  (tc-macro-call-site-field-for-state state index 1 -1))
+
+(define (tc-macro-call-site-definition-module-id-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : i64
+  (tc-macro-call-site-field-for-state
+    state
+    index
+    2
+    cbi.compiler-builtin-id-fix-empty))
+
+(define (tc-macro-call-site-declaration-id-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : i64
+  (tc-macro-call-site-field-for-state state index 3 -1))
+
+(define (tc-macro-call-site-span-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : ast.AstSourceSpan
+  (ast.ast-source-span
+    (tc-macro-call-site-field-for-state state index 4 0)
+    (tc-macro-call-site-field-for-state state index 5 0)
+    (tc-macro-call-site-field-for-state state index 6 0)
+    (tc-macro-call-site-field-for-state state index 7 0)))
+
+(define (tc-macro-call-site-editable-for-state?
+  [state : TcMacroCallSiteState]
+  [index : i64]) : bool
+  (= (tc-macro-call-site-field-for-state state index 8 0) 1))
+
+(define (tc-macro-call-site-generator-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : String
+  (tc-macro-call-site-text
+    (tc-macro-call-site-field-for-state state index 9 -1)))
+
+(define (tc-macro-call-site-item-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : String
+  (tc-macro-call-site-text
+    (tc-macro-call-site-field-for-state state index 10 -1)))
+
+(define (tc-macro-call-site-key-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : String
+  (tc-macro-call-site-text
+    (tc-macro-call-site-field-for-state state index 11 -1)))
 
 ;; Internal macro/typecheck pass boundaries reset file lookup carriers but must
 ;; not tear down a caller-owned inlay generation active for the whole request.
@@ -89799,7 +89782,7 @@
     [previous-active : TcMacroCallSiteActiveDecl
       (if record-sites
         (tc-macro-call-site-state-active-decl site-state)
-        (TcMacroCallSiteActiveDecl "" false "" "" ""))]
+        (TcMacroCallSiteActiveDecl -1 false -1 -1 -1))]
     [_set-active : unit
       (if record-sites
         (tc-macro-call-site-state-set-active-decl!
@@ -90754,7 +90737,7 @@
     [previous-active : TcMacroCallSiteActiveDecl
       (if record-sites
         (tc-macro-call-site-state-active-decl site-state)
-        (TcMacroCallSiteActiveDecl "" false "" "" ""))]
+        (TcMacroCallSiteActiveDecl -1 false -1 -1 -1))]
     [_set-active : unit
       (if record-sites
         (tc-macro-call-site-state-set-active-decl!

@@ -2725,13 +2725,22 @@
 
 (define (compiler-semantic-record-macro-call-site!
   [state : CompilerSemanticWalkState]
-  [site : tc.TcMacroCallSite]
+  [sites : tc.TcMacroCallSiteState]
+  [site-index : i64]
   [source : String]) : unit
   (let
     [ctx : tc.TcContext (struct-get state ctx)]
     [env : tc.TcTypeEnv (struct-get state top-env)]
-    [name-id : i64 (struct-get site macro-name-id)]
-    [definition-module-id : i64 (struct-get site definition-module-id)]
+    [name-id : i64
+      (tc.tc-macro-call-site-macro-name-id-for-state sites site-index)]
+    [definition-module-id : i64
+      (tc.tc-macro-call-site-definition-module-id-for-state sites site-index)]
+    [declaration-id : i64
+      (tc.tc-macro-call-site-declaration-id-for-state sites site-index)]
+    [source-span : ast.AstSourceSpan
+      (tc.tc-macro-call-site-span-for-state sites site-index)]
+    [site-editable : bool
+      (tc.tc-macro-call-site-editable-for-state? sites site-index)]
     [display-name : String (tc.tc-env-key-name-text name-id)]
     [decl-ctx : tc.TcContext
       (if (= definition-module-id cbi.compiler-builtin-id-fix-empty)
@@ -2744,7 +2753,7 @@
       (compiler-semantic-symbol-for-decl
         decl-ctx
         definition-module-id
-        (struct-get site declaration-id)
+        declaration-id
         name-id
         CompilerSemanticSymbolKind.Macro)]
     [resolved-type : String
@@ -2762,27 +2771,23 @@
             name-id
             display-name)]
         [(CompilerSemanticMaybeHandle.None) "macro"])]
-    [path : String (struct-get site path)]
+    [path : String (tc.tc-macro-call-site-path-for-state sites site-index)]
     [span : CompilerSemanticSpan
-      (if (and (struct-get site editable) (not (string.eq source "")))
-        (compiler-semantic-use-span-from-origin
-          path
-          source
-          (struct-get site span))
-        (CompilerSemanticSpan
-          (string.copy (& path))
-          -1
-          -1
-          (struct-get site span)))]
-    [editable : bool
-      (and (struct-get site editable) (>= (struct-get span start-byte) 0))]
+      (if (and site-editable (not (string.eq source "")))
+        (compiler-semantic-use-span-from-origin path source source-span)
+        (CompilerSemanticSpan (string.copy (& path)) -1 -1 source-span))]
+    [editable : bool (and site-editable (>= (struct-get span start-byte) 0))]
+    [generator : String
+      (tc.tc-macro-call-site-generator-for-state sites site-index)]
+    [item : String (tc.tc-macro-call-site-item-for-state sites site-index)]
+    [key : String (tc.tc-macro-call-site-key-for-state sites site-index)]
     [provenance : CompilerSemanticProvenance
       (if editable
         CompilerSemanticProvenance.EditableSource
         (CompilerSemanticProvenance.Generated
-          (string.copy (& (struct-get site generator)))
-          (string.copy (& (struct-get site item)))
-          (string.copy (& (struct-get site key)))))]
+          (string.copy (& generator))
+          (string.copy (& item))
+          (string.copy (& key))))]
     (compiler-semantic-record-vec-push!
       (&mut (box-get (struct-get state records)))
       (CompilerSemanticRecord
@@ -2812,12 +2817,12 @@
     [cached-source : String ""]
     (while (< index count)
       (let
-        [site : tc.TcMacroCallSite
-          (tc.tc-macro-call-site-at-for-state sites index)]
-        [path : String (struct-get site path)]
+        [path : String (tc.tc-macro-call-site-path-for-state sites index)]
+        [editable : bool
+          (tc.tc-macro-call-site-editable-for-state? sites index)]
         (begin
           (if (and
-            (struct-get site editable)
+            editable
             (or (not cached) (not (string.eq path cached-path))))
             (begin
               (set! cached-path (string.copy (& path)))
@@ -2828,8 +2833,9 @@
             unit)
           (compiler-semantic-record-macro-call-site!
             state
-            site
-            (if (struct-get site editable)
+            sites
+            index
+            (if editable
               cached-source
               ""))
           (set! index (+ index 1)))))))

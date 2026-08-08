@@ -181,9 +181,10 @@
 ;; A liveness handle belongs to exactly one immutable CompilerIrFunction value.
 ;; Regalloc creates a fresh handle after every IR rewrite, then shares its
 ;; baseline analysis through all read-only planning helpers for that version.
-;; The edge-precise result is populated only for the scalar coalescer, which is
-;; the sole consumer.  Keeping both analyses here makes the version boundary
-;; explicit and prevents accidental cross-function reuse.
+;; The edge-precise result is populated only for scalar opt2 allocation and
+;; coalescing. Keeping both analyses here lets the coalescer retain its one
+;; deliberately conservative exclusion while making the version boundary
+;; explicit and preventing accidental cross-function reuse.
 (defenum CompilerRegMaybeLiveness
   (No)
   (Some live.CompilerFunctionLiveness))
@@ -22994,13 +22995,13 @@
             interval-index
             clobber-points
             storage-identity-vars)))]
-    ;; Edge-precise interference index (LLVM PHIElimination semantics) used ONLY to
-    ;; gate coalescing: a loop-carried phi value and its back-edge / merge input do
-    ;; not really interfere (the conservative index spuriously overlaps them via
-    ;; phi-inputs-live-at-the-header), so this lets the carry coalesce into ONE
-    ;; interval. Allocation/eviction below keep the conservative interval-index, so
-    ;; a precision error here can only mis-coalesce (caught by the fixpoint), never
-    ;; under-approximate allocation interference.
+    ;; Coalescing interference uses a hybrid view. Scalar opt2 allocation already
+    ;; receives the edge-precise interval-index at the plan entry; the hybrid adds
+    ;; the same precise phi-edge segments while retaining a separately built
+    ;; conservative view for the live-out-input exclusion. A loop-carried phi and
+    ;; its back-edge / merge input do not really interfere (the baseline spuriously
+    ;; overlaps them via phi-inputs-live-at-the-header), so this lets the carry
+    ;; coalesce into one interval without weakening that defensive exclusion.
     [coalesce-index : CompilerRegIntervalIndex
       (if (compiler-reg-move-list-empty? moves)
         interval-index
@@ -36065,6 +36066,20 @@
     (compiler-reg-single-block-livein-gap-function))
     [(CompilerRegPlan.Plan _ _ intervals _ _ _)
       (compiler-reg-interval-range? intervals 0 0 2)]))
+
+;; Allocation must consume the edge-precise phi view, not merely compute it for
+;; coalescing. In this loop, baseline liveness leaks the entry value through the
+;; whole function (0..11) and the back-edge input back to entry (1..12). Exact
+;; predecessor-edge uses instead produce the three ranges asserted below.
+(define (compiler-reg-scalar-edge-precise-allocation-intervals-ok?) : bool
+  (match (compiler-reg-plan-function-scalar
+    (compiler-reg-loop-backedge-function))
+    [(CompilerRegPlan.Plan _ _ intervals _ _ _)
+      (and
+        (= (compiler-reg-interval-seq-count intervals) 3)
+        (compiler-reg-interval-range? intervals 0 0 4)
+        (compiler-reg-interval-range? intervals 1 4 6)
+        (compiler-reg-interval-range? intervals 2 4 12))]))
 
 (define (compiler-reg-scalar-loop-backedge-ok?) : bool
   (match (compiler-reg-plan-function-scalar

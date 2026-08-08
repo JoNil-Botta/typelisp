@@ -3579,13 +3579,12 @@ move-only values and as copies for copyable values:
   Cleanup-owning global replacement remains rejected without explicit cleanup
   transfer. In every case, the right-hand side is checked independently and
   cannot move a non-Copy value out of another global.
-- Tuple, fixed-array, struct, and enum constructors. Constructor arguments are
-  consumed by value unless their expression is copyable or explicitly borrowed
-  by a reference form.
-- `array-set!` value arguments. A move-only element value would be consumed by
-  the store, but v1 rejects arrays of move-only elements and stores of
-  move-only elements; unique mutable element access and element replacement
-  cleanup are reserved.
+- Tuple, fixed-array, struct, and enum constructors. Constructor operands are
+  by-value positions, but the compatibility transition is not yet uniform for
+  every move-only type. Fixed-array literals follow the current-state matrix
+  below.
+- Fixed-array element stores. Both `(set! (array-ref place index) value)` and
+  the transitional `array-set!` spelling follow the current-state matrix below.
 - `array-take!` fixed-array elements. `(array-take! items index)` transfers the
   old element value to its result and immediately writes `(init : T)` back to
   the same slot, so the source place remains fully initialized and is not
@@ -3608,6 +3607,30 @@ move-only values and as copies for copyable values:
   the lambda literal. Immutable reference captures are governed by section
   3.10.4. Capturing a mutable reference moves the unique reference and keeps
   its referent exclusively borrowed through the closure's last direct use.
+
+**Fixed-array element ownership transition.** Fixed arrays whose element type
+is not `Copyable` are accepted. The following table describes the behavior
+implemented during the compatibility transition; it is not the uniform target
+ownership model:
+
+| Operation | Current behavior |
+| --- | --- |
+| Fixed-array literal `(array value ...)` | A `Copyable` initializer is copied. A move-only initializer is consumed only when the closed transition predicate recognizes its type: `Box`, a recognized thread-safe runtime handle, or a cleanup-owning struct. An ordinary move-only handle such as `String` is still copied at the representation level, so its source remains usable. |
+| Ordinary `(array-ref items index)` value use | A `Copyable` element is copied. In a non-consuming compatibility context, a move-only element is also representation-copied and its slot remains initialized. This can create an owning-handle alias; it is transitional behavior, not an implicit deep `clone`. The separate rule for non-Copy global places still rejects a by-value read from a global array. |
+| Consuming `(array-ref items literal-index)` use | A consuming context, including a `(:consume)` parameter or a type in the closed transition set, moves the exact literal-index path. Reusing that element is rejected, while disjoint literal elements remain usable. A later literal-index store reinitializes that exact path after its receiver, index, and value have been checked. |
+| Consuming `(array-ref items computed-index)` use | Rejected because the checker cannot identify one exact moved path. Consuming a compatibility dynamic-array element is likewise rejected. Use the checked fixed-array `array-take!` operation when immediate `init` replacement is suitable. |
+| `(set! (array-ref items index) value)` / `array-set!` | Non-`Copyable` elements are accepted, but the current store compatibility-copies its right-hand-side representation instead of consuming it. This includes cleanup-owning values, so the source can remain usable and alias the stored owner. Literal-index stores still update exact-path reinitialization facts. |
+
+The target semantics are intentionally stricter. #6215 makes structural
+`Copyable`/`MoveOnly` classification apply uniformly and removes compatibility
+sharing plus `(:consume)`. #6240 owns the normalized public place/`set!`
+surface, consume-on-assignment behavior, and rejection of overwriting a live
+cleanup-owning element. Without a Drop system, overwriting another live
+move-only element may leave its old arena-owned storage unreachable until the
+arena is reclaimed; overwriting a cleanup owner must not silently lose its
+cleanup obligation. #6234 owns fixed-array destructuring, #6235 supplied the
+checked `array-take!` operation described above, and #6241 owns general
+caller-supplied replacement.
 
 **Concrete closure calls.** Lambda literals and their direct local bindings
 retain the checker-only shared, mutable, or consuming capability described in
@@ -3698,9 +3721,11 @@ Tuple-element assignment likewise reinitializes the selected literal-index
 path.
 Box-place assignment updates boxed storage but does not reinitialize a moved
 box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
-`struct-get`, `tuple-ref`, and `array-ref` may copy out only copyable fields
-or elements, and may move out move-only fields/elements only where this
-tracked-path policy accepts the path. A consuming `match` is the enum
+`struct-get` and `tuple-ref` may copy out only copyable fields or slots, and
+may move out move-only fields/slots only where this tracked-path policy accepts
+the path. Fixed-array reads follow the compatibility matrix above: a consuming
+literal-index read moves a tracked path, while a non-consuming move-only read
+still representation-copies the handle. A consuming `match` is the enum
 exception: it moves the whole scrutinee first, then binds payload values owned
 by the selected arm. Constructor-shaped tuple destructuring likewise consumes
 the whole owned tuple and transfers every bound slot; direct partial move-out

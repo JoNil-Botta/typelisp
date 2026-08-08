@@ -20,6 +20,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.test)
 (import stdlib.io)
+(import stdlib.arena)
 
 ;; --- self-test ---------------------------------------------------------------
 (define (compiler-lower-smoke-source) : String
@@ -442,6 +443,30 @@
         (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
         want)]
     [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
+
+(define (compiler-lower-pool-copy-arena-restoration-ok?) : bool
+  (let
+    [home : arena.Arena (arena.current)]
+    [owner : arena.Arena (arena.make)]
+    [ok : bool
+      (let
+        [pools : compiler_ast_types.AstNodePoolContext
+          (compiler_ast_types.ast-node-pool-context-new-with-capacities-in-arena
+            8
+            8
+            (arena.raw-handle owner))]
+        [copied : String
+          (compiler_lower.lower-copy-string-into-pools "pool-owned" pools)]
+        (and (arena.eq? (arena.current) home) (string.eq copied "pool-owned")))]
+    (begin
+      (arena.destroy-safe! owner)
+      ok)))
+
+(test
+  compiler-lower-pool-copy-arena-restoration
+  (test.assert-true
+    (compiler-lower-pool-copy-arena-restoration-ok?)
+    "lower pool-copy helper restores caller arena"))
 
 (define (compiler-lower-maybe-span-start-ok?
   [found-span : compiler_ir_types.CompilerMaybeSourceSpan]

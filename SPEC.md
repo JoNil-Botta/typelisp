@@ -5962,8 +5962,9 @@ sites.
 `stdlib.str_cat`'s `(str_cat.str-cat ...)`; incremental builders use
 `stdlib.text_buf`. `str-cat` uses direct one-allocation `stdlib.string`
 helpers for two to five operands and expands longer calls to an internal
-`string.concat-all` call over a packed `(Array String)`, so long calls
-allocate no chunk intermediates. The deprecated `string-append` and
+`string.concat-all` call over a borrowed native `Slice String` view of one
+compiler-private packed buffer, so long calls allocate no chunk intermediates.
+The deprecated `string-append` and
 `string-concat` names remain staged lint targets for old source, while
 `tl_string_concat*` remains a runtime-plan compatibility ABI documented below.
 

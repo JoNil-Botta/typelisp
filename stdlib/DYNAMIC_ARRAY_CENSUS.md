@@ -16,7 +16,15 @@ borrowed APIs.
   `&mut`.
 - `stdlib/process.tl`, `stdlib/msvc.tl`, `stdlib/env.tl`, `stdlib/fs.tl`,
   `stdlib/random.tl`, CLI drivers, doc tooling, and LSP tooling use local
-  generated `(vector T)` aliases for public or tool-facing growable sequences.
+  generated `(vector T)` aliases or native `Slice` parameters for public or
+  tool-facing sequences.
+- Argument parsing, weighted random selection, and bulk String concatenation
+  accept borrowed Vec/native-Slice views. Their former unsized-array entry
+  points have been removed.
+- Domain collection wrappers and the generated queue/hashmap/set/text-buffer
+  families retain identical capacity storage under compiler-private
+  `__tl_dyn-array`; their public operations expose only wrapper, Vec, or Slice
+  types.
 - `examples/lexer.tl` and `examples/calc.tl` now use generated token vectors
   instead of exposing token streams as public dynamic arrays.
 - `examples/parser.tl` still uses small dynamic arrays as parser cursor and
@@ -29,8 +37,6 @@ borrowed APIs.
 These unsized arrays should stay isolated until private-buffer or byte-buffer
 surfaces replace them.
 
-- Collection internals in `stdlib/queue.tl`, `stdlib/hashmap.tl`,
-  `stdlib/set.tl`, and `stdlib/text_buf*.tl`.
 - Binary and byte storage in `stdlib/byte_buf.tl`, `stdlib/byte_buf_core.tl`,
   `stdlib/ffi.tl`,
   `stdlib/io.tl`, `stdlib/fs.tl`, `stdlib/process_runtime.tl`,

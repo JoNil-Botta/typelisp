@@ -27,7 +27,7 @@
 
 ;: Dense ordered sequence of syntax expressions.
 (defstruct ExprList
-  (items (Array Expr))
+  (items (__tl_dyn-array Expr))
   (len i64))
 
 ;: Pair of expressions used by clause-oriented macro forms.
@@ -37,7 +37,7 @@
 
 ;: Dense ordered sequence of expression clauses.
 (defstruct ExprClauseList
-  (items (Array ExprClause))
+  (items (__tl_dyn-array ExprClause))
   (len i64))
 
 ;: Let-like binding clause used by binding-introducing macro forms.
@@ -49,7 +49,7 @@
 
 ;: Dense ordered sequence of binding clauses.
 (defstruct ExprBindingClauseList
-  (items (Array ExprBindingClause))
+  (items (__tl_dyn-array ExprBindingClause))
   (len i64))
 
 ;: Match pattern syntax value built during macro CTFE.
@@ -60,7 +60,7 @@
 
 ;: Dense ordered sequence of match pattern syntax values.
 (defstruct PatternList
-  (items (Array Pattern))
+  (items (__tl_dyn-array Pattern))
   (len i64))
 
 ;: Generated match arm made from a pattern and result expression.
@@ -70,12 +70,12 @@
 
 ;: Dense ordered sequence of generated match arms.
 (defstruct MatchArmList
-  (items (Array MatchArm))
+  (items (__tl_dyn-array MatchArm))
   (len i64))
 
 ;: Dense ordered sequence of reflected type descriptors.
 (defstruct TypeInfoList
-  (items (Array TypeInfo))
+  (items (__tl_dyn-array TypeInfo))
   (len i64))
 
 ;: Reflected struct field name and type.
@@ -85,7 +85,7 @@
 
 ;: Dense ordered sequence of reflected struct fields.
 (defstruct TypeFieldList
-  (items (Array TypeField))
+  (items (__tl_dyn-array TypeField))
   (len i64))
 
 ;: Reflected enum variant payload type.
@@ -94,7 +94,7 @@
 
 ;: Dense ordered sequence of reflected enum variant payloads.
 (defstruct TypeVariantPayloadList
-  (items (Array TypeVariantPayload))
+  (items (__tl_dyn-array TypeVariantPayload))
   (len i64))
 
 ;: Reflected enum variant name and payload list.
@@ -104,7 +104,7 @@
 
 ;: Dense ordered sequence of reflected enum variants.
 (defstruct TypeVariantList
-  (items (Array TypeVariant))
+  (items (__tl_dyn-array TypeVariant))
   (len i64))
 
 ;: Reflected nominal type parameter name and resolved type.
@@ -114,7 +114,7 @@
 
 ;: Dense ordered sequence of reflected nominal type parameters.
 (defstruct TypeParamList
-  (items (Array TypeParam))
+  (items (__tl_dyn-array TypeParam))
   (len i64))
 
 ;: Compile-time reflection descriptor for a TypeLisp type.

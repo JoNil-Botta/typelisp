@@ -1399,6 +1399,8 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_loa
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_interpreted_fallbacks|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_source_interpreted|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_expr_results|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_direct_expr_results|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_direct_shell_env_folds|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_module_results|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_decls_results|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_resolution_us|"
@@ -1407,6 +1409,10 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_ent
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_invoke_calls|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_shell_learns|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_shell_cache_hits|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_us|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_calls|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_alloc_kb|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_live_kb|"
 # The repo's own stdlib is content-identical to the embedded payload, so
 # the catalog dispatches here too; shell entries keep the counted
 # interpreted fallback (and their per-identity profile rows above). On
@@ -1440,6 +1446,18 @@ else
     assert_profile_counter_at_least_in \
         "$CHECK_STDERR" \
         "typecheck.macro.stdlib_tlci_native_dispatches" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_tlci_direct_expr_results" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.walk_direct_marshal_calls" \
         1 \
         "$CHECK_STDOUT" \
         "$CHECK_STDERR"
@@ -1519,6 +1537,15 @@ assert_profile_counter_at_least_in \
     1 \
     "$STDLIB_TLCI_EMBEDDED_STDOUT" \
     "$STDLIB_TLCI_EMBEDDED_STDERR"
+embedded_native_expr=$(profile_counter_value_in \
+    "$STDLIB_TLCI_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_native_expr_results")
+embedded_direct_expr=$(profile_counter_value_in \
+    "$STDLIB_TLCI_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_direct_expr_results")
+if [ "$embedded_direct_expr" -ne "$embedded_native_expr" ]; then
+    fail "embedded expression commits bypassed direct capture: native=$embedded_native_expr direct=$embedded_direct_expr"
+fi
 # A pristine stdlib root is content-identical to the embedded payload, so
 # the catalog dispatches for it too; the byte-parity requirement below is
 # the contract that matters.

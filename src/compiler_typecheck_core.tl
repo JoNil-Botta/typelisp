@@ -3560,6 +3560,34 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-alloc-start : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-live-start : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-walk-native-dispatch-ns : i64
     0))
 (cfg
@@ -3714,6 +3742,49 @@
       (set!
         compiler-tc-macro-walk-bind-params-calls
         (+ compiler-tc-macro-walk-bind-params-calls 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-direct-marshal-start!) : unit
+    (begin
+      (set!
+        compiler-tc-macro-walk-direct-marshal-start-ns
+        (compiler-tc-walk-now-ns))
+      (set!
+        compiler-tc-macro-walk-direct-marshal-alloc-start
+        (profile.alloc-total))
+      (set!
+        compiler-tc-macro-walk-direct-marshal-live-start
+        (profile.alloc-live)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-direct-marshal-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-macro-walk-direct-marshal-ns
+        (+
+          compiler-tc-macro-walk-direct-marshal-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-macro-walk-direct-marshal-start-ns)))
+      (set!
+        compiler-tc-macro-walk-direct-marshal-alloc-bytes
+        (+
+          compiler-tc-macro-walk-direct-marshal-alloc-bytes
+          (-
+            (profile.alloc-total)
+            compiler-tc-macro-walk-direct-marshal-alloc-start)))
+      (set!
+        compiler-tc-macro-walk-direct-marshal-live-bytes
+        (+
+          compiler-tc-macro-walk-direct-marshal-live-bytes
+          (-
+            (profile.alloc-live)
+            compiler-tc-macro-walk-direct-marshal-live-start)))
+      (set!
+        compiler-tc-macro-walk-direct-marshal-calls
+        (+ compiler-tc-macro-walk-direct-marshal-calls 1)))))
 
 (cfg
   compile-profile
@@ -3968,7 +4039,7 @@
     0))
 (cfg
   compile-profile
-  (define compiler-tc-walk-decl-sample-start-binds : i64
+  (define compiler-tc-walk-decl-sample-start-captures : i64
     0))
 (cfg
   compile-profile
@@ -4424,15 +4495,19 @@
           (- (profile.alloc-total) compiler-tc-walk-decl-sample-start-alloc)
           (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live)
           (>
-            compiler-tc-macro-walk-bind-params-calls
-            compiler-tc-walk-decl-sample-start-binds)))
+            (+
+              compiler-tc-macro-walk-bind-params-calls
+              compiler-tc-macro-walk-direct-marshal-calls)
+            compiler-tc-walk-decl-sample-start-captures)))
       (set! compiler-tc-walk-decl-sample-kind 0)
       (set! compiler-tc-walk-decl-sample-start-ns (compiler-tc-walk-now-ns))
       (set! compiler-tc-walk-decl-sample-start-alloc (profile.alloc-total))
       (set! compiler-tc-walk-decl-sample-start-live (profile.alloc-live))
       (set!
-        compiler-tc-walk-decl-sample-start-binds
-        compiler-tc-macro-walk-bind-params-calls))))
+        compiler-tc-walk-decl-sample-start-captures
+        (+
+          compiler-tc-macro-walk-bind-params-calls
+          compiler-tc-macro-walk-direct-marshal-calls)))))
 
 ;; Hygiene-rebuild and transformer-output-rewalk regions. Both re-enter
 ;; themselves (hygiene through its own recursion, the output re-walk through
@@ -5625,6 +5700,14 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-stdlib-tlci-direct-expr-results : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-stdlib-tlci-direct-shell-env-folds : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-stdlib-tlci-native-module-results : i64
     0))
 (cfg
@@ -5815,6 +5898,8 @@
       (set! compiler-tc-macro-stdlib-tlci-shell-learns 0)
       (set! compiler-tc-macro-stdlib-tlci-shell-cache-hits 0)
       (set! compiler-tc-macro-stdlib-tlci-native-expr-results 0)
+      (set! compiler-tc-macro-stdlib-tlci-direct-expr-results 0)
+      (set! compiler-tc-macro-stdlib-tlci-direct-shell-env-folds 0)
       (set! compiler-tc-macro-stdlib-tlci-native-module-results 0)
       (set! compiler-tc-macro-stdlib-tlci-native-decls-results 0)
       (set! compiler-tc-macro-stdlib-tlci-entry-resolution-ns 0)
@@ -6502,6 +6587,12 @@
         "stdlib_tlci_native_expr_results"
         compiler-tc-macro-stdlib-tlci-native-expr-results)
       (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_direct_expr_results"
+        compiler-tc-macro-stdlib-tlci-direct-expr-results)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_direct_shell_env_folds"
+        compiler-tc-macro-stdlib-tlci-direct-shell-env-folds)
+      (compiler-tc-macro-counter-profile-line
         "stdlib_tlci_native_module_results"
         compiler-tc-macro-stdlib-tlci-native-module-results)
       (compiler-tc-macro-counter-profile-line
@@ -6550,6 +6641,12 @@
         "walk_bind_params_calls"
         compiler-tc-macro-walk-bind-params-calls)
       (compiler-tc-macro-counter-profile-line
+        "walk_direct_marshal_us"
+        (/ compiler-tc-macro-walk-direct-marshal-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_direct_marshal_calls"
+        compiler-tc-macro-walk-direct-marshal-calls)
+      (compiler-tc-macro-counter-profile-line
         "walk_native_dispatch_us"
         (/ compiler-tc-macro-walk-native-dispatch-ns 1000))
       (compiler-tc-macro-counter-profile-line
@@ -6591,6 +6688,12 @@
       (compiler-tc-macro-counter-profile-line
         "walk_bind_params_live_kb"
         (/ compiler-tc-macro-walk-bind-params-live-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_direct_marshal_alloc_kb"
+        (/ compiler-tc-macro-walk-direct-marshal-alloc-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_direct_marshal_live_kb"
+        (/ compiler-tc-macro-walk-direct-marshal-live-bytes 1024))
       (compiler-tc-macro-counter-profile-line
         "walk_native_dispatch_alloc_kb"
         (/ compiler-tc-macro-walk-native-dispatch-alloc-bytes 1024))
@@ -76005,6 +76108,18 @@
   (Ok ctfe_support.CompilerCtfeValue)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+(defenum ResultMacroCapturedValue
+  (Ok ctfe_support.CompilerCtfeValue)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultMacroCapturedOperands
+  (Ok
+    (__tl_dyn-array ctfe_support.CompilerCtfeValue)
+    i64
+    ctfe_support.CtfeEnv
+    ast.AstNodePoolContext)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
 (defenum ResultMacroValueEnv
   (Ok ctfe_support.CompilerCtfeValue ctfe_support.CtfeEnv)
   (Err (Box cdiag.CompilerDiagnostic)))
@@ -83132,13 +83247,17 @@
 (define macro-hygiene-produced-refcounts : (__tl_dyn-array i64)
   (array.make-array i64 1))
 
-(define (macro-hygiene-produced-eval-start! [env : ctfe_support.CtfeEnv]) : unit
+(define (macro-hygiene-produced-eval-start-with-pools!
+  [pools : ast.AstNodePoolContext]) : unit
   (begin
     (set! macro-hygiene-produced-active false)
     (set!
       macro-hygiene-produced-floor
-      (ast.ast-node-pool-context-expr-len
-        (ctfe_support.ctfe-env-syntax-pool-context env)))))
+      (ast.ast-node-pool-context-expr-len pools))))
+
+(define (macro-hygiene-produced-eval-start! [env : ctfe_support.CtfeEnv]) : unit
+  (macro-hygiene-produced-eval-start-with-pools!
+    (ctfe_support.ctfe-env-syntax-pool-context env)))
 
 (define (macro-hygiene-produced-refcounts-ensure! [needed : i64]) : unit
   (if (<= needed (array.length macro-hygiene-produced-refcounts))
@@ -88001,22 +88120,127 @@
       (ctfe_support.CtfeMaybeSyntaxPools.None))))
 
 (define (macro-captured-expr-list-value
-  [env : ctfe_support.CtfeEnv]
+  [syntax-pools : ctfe_support.CtfeMaybeSyntaxPools]
   [args : ast.AstExprList]) : ctfe_support.CompilerCtfeValue
-  (match (macro-captured-syntax-pools env)
+  (match syntax-pools
     [(ctfe_support.CtfeMaybeSyntaxPools.Some pools)
       (ctfe_support.CompilerCtfeValue.CapturedExprList args pools)]
     [(ctfe_support.CtfeMaybeSyntaxPools.None)
       (ctfe_support.CompilerCtfeValue.ExprList args)]))
 
 (define (macro-captured-expr-clause-list-value
-  [env : ctfe_support.CtfeEnv]
+  [syntax-pools : ctfe_support.CtfeMaybeSyntaxPools]
   [clauses : ast.AstExprClauseList]) : ctfe_support.CompilerCtfeValue
-  (match (macro-captured-syntax-pools env)
+  (match syntax-pools
     [(ctfe_support.CtfeMaybeSyntaxPools.Some pools)
       (ctfe_support.CompilerCtfeValue.CapturedExprClauseList clauses pools)]
     [(ctfe_support.CtfeMaybeSyntaxPools.None)
       (ctfe_support.CompilerCtfeValue.ExprClauseList clauses)]))
+
+(define (macro-captured-binding-clause-list-value
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [capture-expr-types : bool]
+  [clauses : ast.AstExprBindingClauseList]) : ctfe_support.CompilerCtfeValue
+  (ctfe_support.CompilerCtfeValue.ExprBindingClauseList
+    (macro-captured-binding-clause-list ctx type-env capture-expr-types clauses)))
+
+;; Operand checking can append typed proxy nodes to the active caller pool.
+;; Select the capture pool only after that check, retaining an already selected
+;; pool when it is newer still.
+(define (macro-variadic-syntax-pools-after-check
+  [env : ctfe_support.CtfeEnv]
+  [current : ctfe_support.CtfeMaybeSyntaxPools]) : ctfe_support.CtfeMaybeSyntaxPools
+  (match (macro-captured-syntax-pools env)
+    [(ctfe_support.CtfeMaybeSyntaxPools.Some active-pools)
+      (match current
+        [(ctfe_support.CtfeMaybeSyntaxPools.Some current-pools)
+          (if (>
+            (ast.ast-node-pool-context-expr-len current-pools)
+            (ast.ast-node-pool-context-expr-len active-pools))
+            current
+            (ctfe_support.CtfeMaybeSyntaxPools.Some active-pools))]
+        [(ctfe_support.CtfeMaybeSyntaxPools.None)
+          (ctfe_support.CtfeMaybeSyntaxPools.Some active-pools)])]
+    [(ctfe_support.CtfeMaybeSyntaxPools.None) current]))
+
+;; Binding-clause-list values carry child expression IDs but no pool-bearing
+;; value variant. The scalar `for` shape needs the caller pool after checking
+;; its prefix, while unrelated definition-owned suffixes must retain the
+;; definition pool. Other captured values select their owner normally.
+(define (macro-captured-param-syntax-pools-after-check
+  [current : ctfe_support.CtfeMaybeSyntaxPools]
+  [value : ctfe_support.CompilerCtfeValue]
+  [rebase-binding-clauses? : bool]) : ctfe_support.CtfeMaybeSyntaxPools
+  (match value
+    [(ctfe_support.CompilerCtfeValue.ExprBindingClauseList _)
+      (if rebase-binding-clauses?
+        (ctfe_support.CtfeMaybeSyntaxPools.Some
+          (ast.ast-node-pool-context-capture-active))
+        current)]
+    [_ (ctfe_support.ctfe-syntax-pools-for-value current value)]))
+
+(define (macro-capture-variadic-param
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [name : i64]
+  [ty : ast.AstType]
+  [args : ast.AstExprList]
+  [env : ctfe_support.CtfeEnv]
+  [syntax-pools : ctfe_support.CtfeMaybeSyntaxPools]
+  [capture-expr-types : bool]) : ResultMacroCapturedValue
+  (cond
+    [(tc-macro-type-param-kind? ty)
+      (ResultMacroCapturedValue.Err
+        (box
+          (ctfe_support.ctfe-diagnostic-at-expr
+            (ast.AstExpr.Var name)
+            "typecheck: type macro operand cannot be variadic")))]
+    [(tc-macro-module-param-kind? ty)
+      (ResultMacroCapturedValue.Err
+        (box
+          (ctfe_support.ctfe-diagnostic-at-expr
+            (ast.AstExpr.Var name)
+            "typecheck: Module macro operand cannot be variadic")))]
+    [(macro-param-expr-clause? ctx fallback-module fallback-module-id ty)
+      (match (macro-expr-clause-list-from-args args)
+        [(ResultMacroClauseList.Ok clauses)
+          (ResultMacroCapturedValue.Ok
+            (macro-captured-expr-clause-list-value
+              (macro-variadic-syntax-pools-after-check env syntax-pools)
+              clauses))]
+        [(ResultMacroClauseList.Err diag) (ResultMacroCapturedValue.Err diag)])]
+    [(macro-param-expr-binding-clause?
+        ctx
+        fallback-module
+        fallback-module-id
+        ty)
+      (match (macro-expr-binding-clause-list-from-args args)
+        [(ResultMacroBindingClauseList.Ok clauses)
+          (ResultMacroCapturedValue.Ok
+            (macro-captured-binding-clause-list-value
+              ctx
+              type-env
+              capture-expr-types
+              clauses))]
+        [(ResultMacroBindingClauseList.Err diag)
+          (ResultMacroCapturedValue.Err diag)])]
+    [else
+      (match (macro-check-variadic-operands
+        ctx
+        type-env
+        fallback-module
+        fallback-module-id
+        ty
+        args)
+        [(ResultMacroCheck.Ok)
+          (ResultMacroCapturedValue.Ok
+            (macro-captured-expr-list-value
+              (macro-variadic-syntax-pools-after-check env syntax-pools)
+              args))]
+        [(ResultMacroCheck.Err diag) (ResultMacroCapturedValue.Err diag)])]))
 
 (define (macro-bind-variadic-param
   [ctx : TcContext]
@@ -88028,71 +88252,32 @@
   [args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]
   [capture-expr-types : bool]) : ResultMacroEnv
-  (cond
-    [(tc-macro-type-param-kind? ty)
-      (ResultMacroEnv.Err
-        (box
-          (ctfe_support.ctfe-diagnostic-at-expr
-            (ast.AstExpr.Var name)
-            "typecheck: type macro operand cannot be variadic")))]
-    [(tc-macro-module-param-kind? ty)
-      (ResultMacroEnv.Err
-        (box
-          (ctfe_support.ctfe-diagnostic-at-expr
-            (ast.AstExpr.Var name)
-            "typecheck: Module macro operand cannot be variadic")))]
-    [(macro-param-expr-clause? ctx fallback-module fallback-module-id ty)
-      (match (macro-expr-clause-list-from-args args)
-        [(ResultMacroClauseList.Ok clauses)
-          (ResultMacroEnv.Ok
-            (ctfe_support.ctfe-env-extend-id
-              env
-              name
-              (macro-captured-expr-clause-list-value env clauses)))]
-        [(ResultMacroClauseList.Err diag) (ResultMacroEnv.Err diag)])]
-    [(macro-param-expr-binding-clause?
-        ctx
-        fallback-module
-        fallback-module-id
-        ty)
-      (match (macro-expr-binding-clause-list-from-args args)
-        [(ResultMacroBindingClauseList.Ok clauses)
-          (let
-            [captured : ast.AstExprBindingClauseList
-              (macro-captured-binding-clause-list
-                ctx
-                type-env
-                capture-expr-types
-                clauses)]
-            ;; Binding-clause values carry child expression IDs but, unlike
-            ;; CapturedExpr(List), have no pool-bearing value variant. Rebase
-            ;; after operand typing so CTFE builders cannot allocate over a
-            ;; newly appended borrow/place child and create a cyclic AST.
-            [captured-env : ctfe_support.CtfeEnv
+  (match (macro-capture-variadic-param
+    ctx
+    type-env
+    fallback-module
+    fallback-module-id
+    name
+    ty
+    args
+    env
+    (ctfe_support.ctfe-env-syntax-pools env)
+    capture-expr-types)
+    [(ResultMacroCapturedValue.Ok value)
+      (let
+        ;; Binding-clause values carry child expression IDs but no pool-bearing
+        ;; value variant. Rebase after operand typing so CTFE builders cannot
+        ;; allocate over a newly appended borrow/place child and form a cycle.
+        [captured-env : ctfe_support.CtfeEnv
+          (match value
+            [(ctfe_support.CompilerCtfeValue.ExprBindingClauseList _)
               (ctfe_support.ctfe-env-rebase-syntax-pools
                 env
                 (ast.ast-node-pool-context-capture-active))]
-            (ResultMacroEnv.Ok
-              (ctfe_support.ctfe-env-extend-id
-                captured-env
-                name
-                (ctfe_support.CompilerCtfeValue.ExprBindingClauseList captured))))]
-        [(ResultMacroBindingClauseList.Err diag) (ResultMacroEnv.Err diag)])]
-    [else
-      (match (macro-check-variadic-operands
-        ctx
-        type-env
-        fallback-module
-        fallback-module-id
-        ty
-        args)
-        [(ResultMacroCheck.Ok)
-          (ResultMacroEnv.Ok
-            (ctfe_support.ctfe-env-extend-id
-              env
-              name
-              (macro-captured-expr-list-value env args)))]
-        [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]))
+            [_ env])]
+        (ResultMacroEnv.Ok
+          (ctfe_support.ctfe-env-extend-id captured-env name value)))]
+    [(ResultMacroCapturedValue.Err diag) (ResultMacroEnv.Err diag)]))
 
 ;; A direct caller string literal is the one `Expr` shape that public macro
 ;; code can inspect without evaluating. Keep its literal node in the active
@@ -88119,7 +88304,16 @@
         (ast.AstExpr.Literal (ast.AstLiteral.String string-id)))]
     [_ arg-id]))
 
-(define (macro-bind-fixed-param
+(define (macro-env-extend-captured-param
+  [env : ctfe_support.CtfeEnv]
+  [name : i64]
+  [ty : ast.AstType]
+  [value : ctfe_support.CompilerCtfeValue]) : ctfe_support.CtfeEnv
+  (if (tc-macro-module-param-kind? ty)
+    (ctfe_support.ctfe-env-extend-typed-id env name value (ast.AstType.String))
+    (ctfe_support.ctfe-env-extend-id env name value)))
+
+(define (macro-capture-fixed-param
   [ctx : TcContext]
   [decls : ast.AstDeclList]
   [fallback-module : String]
@@ -88131,8 +88325,7 @@
   [type-kinds : ast.AstMacroTypeKindList]
   [arg-id : i64]
   [arg-expr : ast.AstExpr]
-  [capture-expr-types : bool]
-  [env : ctfe_support.CtfeEnv]) : ResultMacroEnv
+  [capture-expr-types : bool]) : ResultMacroCapturedValue
   (cond
     [(tc-macro-type-param-kind? ty)
       (match (macro-type-arg-with-fallback
@@ -88150,13 +88343,10 @@
             (& type-kinds)
             arg-expr)
             [(ResultMacroCheck.Ok)
-              (ResultMacroEnv.Ok
-                (ctfe_support.ctfe-env-extend-id
-                  env
-                  name
-                  (ctfe_support.CompilerCtfeValue.Type resolved-ty)))]
-            [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]
-        [(ResultMacroTypeArg.Err diag) (ResultMacroEnv.Err diag)])]
+              (ResultMacroCapturedValue.Ok
+                (ctfe_support.CompilerCtfeValue.Type resolved-ty))]
+            [(ResultMacroCheck.Err diag) (ResultMacroCapturedValue.Err diag)])]
+        [(ResultMacroTypeArg.Err diag) (ResultMacroCapturedValue.Err diag)])]
     [(tc-macro-module-param-kind? ty)
       (match (macro-module-strategy-arg-with-fallback
         ctx
@@ -88164,13 +88354,9 @@
         fallback-module-id
         arg-expr)
         [(ResultMacroModuleArg.Ok module module-id)
-          (ResultMacroEnv.Ok
-            (ctfe_support.ctfe-env-extend-typed-id
-              env
-              name
-              (ctfe_support.CompilerCtfeValue.String module module-id)
-              (ast.AstType.String)))]
-        [(ResultMacroModuleArg.Err diag) (ResultMacroEnv.Err diag)])]
+          (ResultMacroCapturedValue.Ok
+            (ctfe_support.CompilerCtfeValue.String module module-id))]
+        [(ResultMacroModuleArg.Err diag) (ResultMacroCapturedValue.Err diag)])]
     [else
       ;; Every remaining param kind needs the resolved signature type;
       ;; resolve it once instead of once per kind predicate plus once per
@@ -88186,26 +88372,21 @@
           [(tc-macro-expr-clause-type? resolved-expected)
             (match (macro-expr-clause-from-arg arg-expr)
               [(ResultMacroClause.Ok clause)
-                (ResultMacroEnv.Ok
-                  (ctfe_support.ctfe-env-extend-id
-                    env
-                    name
-                    (ctfe_support.CompilerCtfeValue.ExprClause clause)))]
-              [(ResultMacroClause.Err diag) (ResultMacroEnv.Err diag)])]
+                (ResultMacroCapturedValue.Ok
+                  (ctfe_support.CompilerCtfeValue.ExprClause clause))]
+              [(ResultMacroClause.Err diag) (ResultMacroCapturedValue.Err diag)])]
           [(tc-macro-expr-binding-clause-type? resolved-expected)
             (match (macro-expr-binding-clause-from-arg arg-expr)
               [(ResultMacroBindingClause.Ok clause)
-                (ResultMacroEnv.Ok
-                  (ctfe_support.ctfe-env-extend-id
-                    env
-                    name
-                    (ctfe_support.CompilerCtfeValue.ExprBindingClause
-                      (macro-captured-binding-clause
-                        ctx
-                        type-env
-                        capture-expr-types
-                        clause))))]
-              [(ResultMacroBindingClause.Err diag) (ResultMacroEnv.Err diag)])]
+                (ResultMacroCapturedValue.Ok
+                  (ctfe_support.CompilerCtfeValue.ExprBindingClause
+                    (macro-captured-binding-clause
+                      ctx
+                      type-env
+                      capture-expr-types
+                      clause)))]
+              [(ResultMacroBindingClause.Err diag)
+                (ResultMacroCapturedValue.Err diag)])]
           [else
             (match (macro-check-operand-with-resolved
               ctx
@@ -88213,23 +88394,51 @@
               resolved-expected
               arg-expr)
               [(ResultMacroCheck.Ok)
-                (ResultMacroEnv.Ok
-                  (ctfe_support.ctfe-env-extend-id
-                    env
-                    name
-                    (ctfe_support.CompilerCtfeValue.Expr
-                      (if (and
-                        capture-expr-types
-                        (tc-type-eq resolved-expected (ast.AstType.Expr)))
-                        (macro-captured-expr-node ctx arg-id arg-expr)
-                        arg-id)
-                      (macro-captured-expr-produced-type
-                        ctx
-                        type-env
-                        resolved-expected
-                        capture-expr-types
-                        arg-expr))))]
-              [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]))]))
+                (ResultMacroCapturedValue.Ok
+                  (ctfe_support.CompilerCtfeValue.Expr
+                    (if (and
+                      capture-expr-types
+                      (tc-type-eq resolved-expected (ast.AstType.Expr)))
+                      (macro-captured-expr-node ctx arg-id arg-expr)
+                      arg-id)
+                    (macro-captured-expr-produced-type
+                      ctx
+                      type-env
+                      resolved-expected
+                      capture-expr-types
+                      arg-expr)))]
+              [(ResultMacroCheck.Err diag) (ResultMacroCapturedValue.Err diag)])]))]))
+
+(define (macro-bind-fixed-param
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [type-env : TcTypeEnv]
+  [macro-name : String]
+  [name : i64]
+  [ty : ast.AstType]
+  [type-kinds : ast.AstMacroTypeKindList]
+  [arg-id : i64]
+  [arg-expr : ast.AstExpr]
+  [capture-expr-types : bool]
+  [env : ctfe_support.CtfeEnv]) : ResultMacroEnv
+  (match (macro-capture-fixed-param
+    ctx
+    decls
+    fallback-module
+    fallback-module-id
+    type-env
+    macro-name
+    name
+    ty
+    type-kinds
+    arg-id
+    arg-expr
+    capture-expr-types)
+    [(ResultMacroCapturedValue.Ok value)
+      (ResultMacroEnv.Ok (macro-env-extend-captured-param env name ty value))]
+    [(ResultMacroCapturedValue.Err diag) (ResultMacroEnv.Err diag)]))
 
 ;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.
 ;; A trailing variadic parameter collects the remaining operands. A non-final
@@ -88322,8 +88531,8 @@
                           (ast.ast-macro-param-fallback))
                           [(ast.AstMacroParam.Param _ _ next-variadic _)
                             next-variadic])]
-                      [captured : ast.AstExprBindingClauseList
-                        (macro-captured-binding-clause-list
+                      [value : ctfe_support.CompilerCtfeValue
+                        (macro-captured-binding-clause-list-value
                           ctx
                           type-env
                           capture-expr-types
@@ -88348,8 +88557,7 @@
                         (ctfe_support.ctfe-env-extend-id
                           captured-env
                           pname
-                          (ctfe_support.CompilerCtfeValue.ExprBindingClauseList
-                            captured))
+                          value)
                         capture-expr-types
                         call-expr))]
                   [(ResultMacroBindingClauseList.Err diag)
@@ -88398,6 +88606,240 @@
                       capture-expr-types
                       call-expr)]
                   [(ResultMacroEnv.Err diag) (ResultMacroEnv.Err diag)]))))])]))
+
+;; Capture checked operands directly into the fixed native ABI array. This
+;; walker deliberately mirrors `macro-bind-params-at`; the shared capture
+;; helpers above own all validation and value construction, while this layer
+;; owns only arity, mixed-prefix traversal, and syntax-pool selection.
+(define (macro-capture-params-direct
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [type-env : TcTypeEnv]
+  [macro-name : String]
+  [params : ast.AstMacroParamList]
+  [args : ast.AstExprList]
+  [env : ctfe_support.CtfeEnv]
+  [capture-expr-types : bool]
+  [call-expr : ast.AstExpr]) : ResultMacroCapturedOperands
+  (macro-capture-params-direct-at
+    ctx
+    decls
+    fallback-module
+    fallback-module-id
+    type-env
+    macro-name
+    (& params)
+    (& args)
+    0
+    0
+    env
+    (ctfe_support.ctfe-env-syntax-pools env)
+    (array.make-array ctfe_support.CompilerCtfeValue 8)
+    capture-expr-types
+    call-expr))
+
+(define (macro-capture-params-direct-at
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [type-env : TcTypeEnv]
+  [macro-name : String]
+  [params : (& params ast.AstMacroParamList)]
+  [args : (& args ast.AstExprList)]
+  [param-index : i64]
+  [arg-index : i64]
+  [env : ctfe_support.CtfeEnv]
+  [syntax-pools : ctfe_support.CtfeMaybeSyntaxPools]
+  [operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
+  [capture-expr-types : bool]
+  [call-expr : ast.AstExpr]) : ResultMacroCapturedOperands
+  (cond
+    [(>= param-index (ast.ast-macro-param-list-len params))
+      (if (>= arg-index (struct-get args len))
+        (ResultMacroCapturedOperands.Ok
+          operands
+          param-index
+          env
+          (match syntax-pools
+            [(ctfe_support.CtfeMaybeSyntaxPools.Some pools) pools]
+            [(ctfe_support.CtfeMaybeSyntaxPools.None)
+              (ctfe_support.ctfe-env-pools env)]))
+        (ResultMacroCapturedOperands.Err
+          (box
+            (ctfe_support.ctfe-diagnostic-at-expr
+              call-expr
+              "macro call has too many arguments"))))]
+    [else
+      (match (ast.ast-macro-param-list-get
+        params
+        param-index
+        (ast.ast-macro-param-fallback))
+        [(ast.AstMacroParam.Param pname pty variadic type-kinds)
+          (if variadic
+            (if (>= (+ param-index 1) (ast.ast-macro-param-list-len params))
+              (match (macro-capture-variadic-param
+                ctx
+                type-env
+                fallback-module
+                fallback-module-id
+                pname
+                pty
+                (ast.ast-expr-list-tail-from-ref args arg-index)
+                env
+                syntax-pools
+                capture-expr-types)
+                [(ResultMacroCapturedValue.Ok value)
+                  (begin
+                    (array-set! operands param-index value)
+                    (macro-capture-params-direct-at
+                      ctx
+                      decls
+                      fallback-module
+                      fallback-module-id
+                      type-env
+                      macro-name
+                      params
+                      args
+                      (+ param-index 1)
+                      (struct-get args len)
+                      env
+                      (macro-captured-param-syntax-pools-after-check
+                        syntax-pools
+                        value
+                        true)
+                      operands
+                      capture-expr-types
+                      call-expr))]
+                [(ResultMacroCapturedValue.Err diag)
+                  (ResultMacroCapturedOperands.Err diag)])
+              (if (macro-param-expr-binding-clause?
+                ctx
+                fallback-module
+                fallback-module-id
+                pty)
+                (match (macro-expr-binding-clause-prefix-from-args
+                  args
+                  arg-index)
+                  [(ResultMacroBindingClauseList.Ok clauses)
+                    (let
+                      ;; Capture this definition-owned flag before typing a
+                      ;; caller clause can install a newer active syntax pool.
+                      [rebase-captured-pools? : bool
+                        (match (ast.ast-macro-param-list-get
+                          params
+                          (+ param-index 1)
+                          (ast.ast-macro-param-fallback))
+                          [(ast.AstMacroParam.Param _ _ next-variadic _)
+                            next-variadic])]
+                      [value : ctfe_support.CompilerCtfeValue
+                        (macro-captured-binding-clause-list-value
+                          ctx
+                          type-env
+                          capture-expr-types
+                          clauses)]
+                      (begin
+                        (array-set! operands param-index value)
+                        (macro-capture-params-direct-at
+                          ctx
+                          decls
+                          fallback-module
+                          fallback-module-id
+                          type-env
+                          macro-name
+                          params
+                          args
+                          (+ param-index 1)
+                          (+ arg-index (struct-get (& clauses) len))
+                          env
+                          (macro-captured-param-syntax-pools-after-check
+                            syntax-pools
+                            value
+                            rebase-captured-pools?)
+                          operands
+                          capture-expr-types
+                          call-expr)))]
+                  [(ResultMacroBindingClauseList.Err diag)
+                    (ResultMacroCapturedOperands.Err diag)])
+                (ResultMacroCapturedOperands.Err
+                  (box
+                    (ctfe_support.ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
+            (if (>= arg-index (struct-get args len))
+              (ResultMacroCapturedOperands.Err
+                (box
+                  (ctfe_support.ctfe-diagnostic-at-expr
+                    call-expr
+                    "macro call has too few arguments")))
+              (let
+                [arg : i64 (ast.ast-expr-list-get args arg-index 0)]
+                [arg-expr : ast.AstExpr (ast.ast-node-get arg)]
+                (match (macro-capture-fixed-param
+                  ctx
+                  decls
+                  fallback-module
+                  fallback-module-id
+                  type-env
+                  macro-name
+                  pname
+                  pty
+                  type-kinds
+                  arg
+                  arg-expr
+                  capture-expr-types)
+                  [(ResultMacroCapturedValue.Ok value)
+                    (begin
+                      (array-set! operands param-index value)
+                      (macro-capture-params-direct-at
+                        ctx
+                        decls
+                        fallback-module
+                        fallback-module-id
+                        type-env
+                        macro-name
+                        params
+                        args
+                        (+ param-index 1)
+                        (+ arg-index 1)
+                        env
+                        (macro-captured-param-syntax-pools-after-check
+                          syntax-pools
+                          value
+                          false)
+                        operands
+                        capture-expr-types
+                        call-expr))]
+                  [(ResultMacroCapturedValue.Err diag)
+                    (ResultMacroCapturedOperands.Err diag)]))))])]))
+
+(define (macro-fold-captured-operands-env
+  [params : ast.AstMacroParamList]
+  [operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
+  [count : i64]
+  [base-env : ctfe_support.CtfeEnv]) : ctfe_support.CtfeEnv
+  (let
+    [env : ctfe_support.CtfeEnv base-env]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (match (ast.ast-macro-param-list-get
+          (& params)
+          index
+          (ast.ast-macro-param-fallback))
+          [(ast.AstMacroParam.Param pname pty _ _)
+            (begin
+              (set!
+                env
+                (macro-env-extend-captured-param
+                  env
+                  pname
+                  pty
+                  (array-ref operands index)))
+              (set! index (+ index 1)))]))
+      env)))
 
 ;; Route embedded-stdlib macro calls through the TLCI catalog before the
 ;; semantic CTFE fallback. The mapped catalog owns its package-agnostic index
@@ -88483,6 +88925,7 @@
 
 (defenum MacroNativeStdlibTlciResult
   (No)
+  (Shell)
   (Value ctfe_support.CompilerCtfeValue)
   (Err cdiag.CompilerDiagnostic))
 
@@ -88493,32 +88936,41 @@
 (define macro-stdlib-tlci-native-cookie : i64
   0x1cf1)
 
-;; Execute a resolved native entry with the exact operand values the
-;; interpreted binding produced: the bound CTFE environment is consulted per
-;; parameter name, so marshalling cannot diverge from interpretation. A
-;; successful call that commits no result permanently marks this catalog entry
-;; as a shell for the mapping generation. Any nonzero status remains retryable
-;; and surfaces as the same diagnostic contract the interpreter uses.
+;; Execute a resolved native entry with either directly prepared operands or
+;; the exact values in an interpreted binding. The direct mode starts at
+;; `index = count`, so it performs no parameter-name lookup. A successful call
+;; that commits no result permanently marks this catalog entry as a shell for
+;; the mapping generation. Any nonzero status remains retryable and surfaces
+;; as the same diagnostic contract the interpreter uses.
 (cfg
   embedded-stdlib-tlci
   (define (macro-try-stdlib-tlci-native-resolved
-    [ctx : TcContext]
+    [host-pools : ast.AstNodePoolContext]
     [identity : String]
     [resolved : tlci_loader_support.TlciResolvedMacroEntry]
     [params : ast.AstMacroParamList]
     [ret : ast.AstType]
     [env : ctfe_support.CtfeEnv]
-    [call-expr : ast.AstExpr]) : MacroNativeStdlibTlciResult
+    [call-expr : ast.AstExpr]
+    [prepared-operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
+    [prepared-count : i64]
+    [prepared : bool]) : MacroNativeStdlibTlciResult
     (if (not (embedded_tlci.compiler-embedded-stdlib-tlci-session-open!))
       MacroNativeStdlibTlciResult.No
       (let
-        [count : i64 (struct-get params len)]
+        [count : i64
+          (if prepared
+            prepared-count
+            (struct-get params len))]
         [operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)
-          (array.make-array ctfe_support.CompilerCtfeValue 8)]
-        [index : i64 0]
+          prepared-operands]
+        [index : i64
+          (if prepared
+            count
+            0)]
         [ok : bool (<= count 8)]
         (begin
-          (while (and ok (< index count))
+          (while (and (not prepared) ok (< index count))
             (match (array-ref (struct-get params slots) index)
               [(ast.AstMacroParam.Param pname _ _ _)
                 (match (ctfe_support.ctfe-env-lookup-id env pname)
@@ -88531,7 +88983,7 @@
             MacroNativeStdlibTlciResult.No
             (begin
               (embedded_tlci.compiler-comptime-host-session-open!
-                (tc-context-pools ctx)
+                host-pools
                 operands
                 count
                 (ctfe_support.ctfe-fuel-limit)
@@ -88613,7 +89065,7 @@
                                       (+
                                         compiler-tc-macro-stdlib-tlci-shell-learns
                                         1)))
-                                  MacroNativeStdlibTlciResult.No)]
+                                  MacroNativeStdlibTlciResult.Shell)]
                               [(tlci_loader_support.ResultTlciLoaderUnit.Err
                                   message)
                                 (begin
@@ -88674,13 +89126,16 @@
         (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
           [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
             (macro-try-stdlib-tlci-native-resolved
-              ctx
+              (tc-context-pools ctx)
               identity
               resolved
               params
               ret
               env
-              call-expr)]
+              call-expr
+              (array.make-array ctfe_support.CompilerCtfeValue 8)
+              (struct-get params len)
+              false)]
           [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
             (begin
               (cfg
@@ -88706,8 +89161,6 @@
     [_call-expr : ast.AstExpr]) : MacroNativeStdlibTlciResult
     MacroNativeStdlibTlciResult.No))
 
-;; Run a macro transformer via CTFE. Module/declaration macro expansion also
-;; needs the bound CTFE environment while normalizing generated import operands.
 (define (macro-result-provenance-reset-with-captured-body!
   [captured-body? : bool]) : unit
   (begin
@@ -88719,7 +89172,304 @@
       (ctfe_support.ctfe-result-may-contain-macro-note!)
       unit)))
 
-(define (macro-eval-transformer-expanded-with-env
+(defenum MacroDirectStdlibTlciResult
+  (No)
+  (BoundFallback)
+  (Value ctfe_support.CompilerCtfeValue)
+  (PreparedEnv ctfe_support.CtfeEnv)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(define (macro-note-stdlib-tlci-resolved-fallback!) : unit
+  (cfg
+    compile-profile
+    (begin
+      (set!
+        compiler-tc-macro-stdlib-tlci-catalog-hits
+        (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1))
+      (set!
+        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+    unit))
+
+(define (macro-note-stdlib-tlci-shell-fallback!) : unit
+  (cfg
+    compile-profile
+    (begin
+      (set!
+        compiler-tc-macro-stdlib-tlci-catalog-hits
+        (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1))
+      (set!
+        compiler-tc-macro-stdlib-tlci-shell-cache-hits
+        (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1))
+      (set!
+        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+    unit))
+
+(define (macro-note-stdlib-tlci-missing-fallback!) : unit
+  (cfg
+    compile-profile
+    (begin
+      (set!
+        compiler-tc-macro-stdlib-tlci-catalog-misses
+        (+ compiler-tc-macro-stdlib-tlci-catalog-misses 1))
+      (set!
+        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+    unit))
+
+(define (macro-note-stdlib-tlci-unavailable-fallback!) : unit
+  (cfg
+    compile-profile
+    (begin
+      (set!
+        compiler-tc-macro-stdlib-tlci-load-failures
+        (+ compiler-tc-macro-stdlib-tlci-load-failures 1))
+      (set!
+        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+    unit))
+
+;; Expression position can resolve the catalog before binding. A native
+;; commit consumes the shared capture values directly. If the first dispatch
+;; learns a registration shell, fold those same values into the semantic
+;; fallback environment once rather than checking the operands again.
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-try-stdlib-tlci-direct-expression
+    [ctx : TcContext]
+    [decls : ast.AstDeclList]
+    [fallback-module : String]
+    [fallback-module-id : i64]
+    [type-env : TcTypeEnv]
+    [macro-name-id : i64]
+    [macro-name : String]
+    [params : ast.AstMacroParamList]
+    [ret : ast.AstType]
+    [expanded-args : ast.AstExprList]
+    [call-expr : ast.AstExpr]) : MacroDirectStdlibTlciResult
+    (if (or
+      (not macro-expand-stdlib-tlci-route-active)
+      (> (struct-get (& params) len) 8)
+      (not (cload.compiler-load-embedded-stdlib-module-id? fallback-module)))
+      MacroDirectStdlibTlciResult.No
+      (let
+        [identity : String
+          (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
+            macro-name
+            (str_cat.str-cat fallback-module "/" macro-name))]
+        (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
+          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
+            (begin
+              (cfg compile-profile (compiler-tc-walk-direct-marshal-start!))
+              (match (let
+                [capture-result : ResultMacroCapturedOperands
+                  (macro-capture-params-direct
+                    ctx
+                    decls
+                    fallback-module
+                    fallback-module-id
+                    type-env
+                    macro-name
+                    params
+                    expanded-args
+                    (tc-ctfe-env ctx)
+                    (macro-expand-expr-type-macro?
+                      fallback-module-id
+                      macro-name-id)
+                    call-expr)]
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-tc-walk-direct-marshal-finish!))
+                  capture-result))
+                [(ResultMacroCapturedOperands.Err diag)
+                  (MacroDirectStdlibTlciResult.Err diag)]
+                [(ResultMacroCapturedOperands.Ok
+                    operands
+                    count
+                    base-env
+                    syntax-pools)
+                  (begin
+                    (ctfe_support.ctfe-result-hygiene-free-reset!)
+                    (macro-result-provenance-reset-with-captured-body!
+                      (macro-binding-prefix-transformer?
+                        ctx
+                        fallback-module
+                        fallback-module-id
+                        macro-name-id
+                        params))
+                    (macro-hygiene-produced-eval-start-with-pools! syntax-pools)
+                    (cfg
+                      compile-profile
+                      (compiler-tc-walk-native-dispatch-start!))
+                    (cfg compile-profile (compiler-tc-macro-profile-start))
+                    (match (let
+                      [native-result : MacroNativeStdlibTlciResult
+                        (macro-try-stdlib-tlci-native-resolved
+                          syntax-pools
+                          identity
+                          resolved
+                          params
+                          ret
+                          base-env
+                          call-expr
+                          operands
+                          count
+                          true)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-tc-walk-native-dispatch-finish!))
+                        native-result))
+                      [(MacroNativeStdlibTlciResult.Value value)
+                        (begin
+                          (tc-context-install-pools! ctx)
+                          (cfg
+                            compile-profile
+                            (begin
+                              (set!
+                                compiler-tc-macro-stdlib-tlci-direct-expr-results
+                                (+
+                                  compiler-tc-macro-stdlib-tlci-direct-expr-results
+                                  1))
+                              (compiler-tc-macro-profile-finish
+                                (ci.intern-composite-pair-id
+                                  fallback-module-id
+                                  macro-name-id)
+                                macro-name
+                                expanded-args)))
+                          (MacroDirectStdlibTlciResult.Value
+                            (ctfe_support.ctfe-capture-syntax-value-with-pools
+                              value
+                              syntax-pools)))]
+                      [(MacroNativeStdlibTlciResult.Err diag)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-tc-macro-profile-finish
+                              (ci.intern-composite-pair-id
+                                fallback-module-id
+                                macro-name-id)
+                              macro-name
+                              expanded-args))
+                          (MacroDirectStdlibTlciResult.Err (box diag)))]
+                      [(MacroNativeStdlibTlciResult.Shell)
+                        (begin
+                          (macro-note-stdlib-tlci-resolved-fallback!)
+                          (cfg
+                            compile-profile
+                            (set!
+                              compiler-tc-macro-stdlib-tlci-direct-shell-env-folds
+                              (+
+                                compiler-tc-macro-stdlib-tlci-direct-shell-env-folds
+                                1)))
+                          (MacroDirectStdlibTlciResult.PreparedEnv
+                            (macro-fold-captured-operands-env
+                              params
+                              operands
+                              count
+                              (ctfe_support.ctfe-env-rebase-syntax-pools
+                                base-env
+                                syntax-pools))))]
+                      [(MacroNativeStdlibTlciResult.No)
+                        (begin
+                          (macro-note-stdlib-tlci-resolved-fallback!)
+                          MacroDirectStdlibTlciResult.BoundFallback)]))]))]
+          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
+            (begin
+              (macro-note-stdlib-tlci-shell-fallback!)
+              MacroDirectStdlibTlciResult.BoundFallback)]
+          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
+            (begin
+              (macro-note-stdlib-tlci-missing-fallback!)
+              MacroDirectStdlibTlciResult.BoundFallback)]
+          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
+            (begin
+              (macro-note-stdlib-tlci-unavailable-fallback!)
+              MacroDirectStdlibTlciResult.BoundFallback)])))))
+
+(cfg
+  (not embedded-stdlib-tlci)
+  (define (macro-try-stdlib-tlci-direct-expression
+    [_ctx : TcContext]
+    [_decls : ast.AstDeclList]
+    [_fallback-module : String]
+    [_fallback-module-id : i64]
+    [_type-env : TcTypeEnv]
+    [_macro-name-id : i64]
+    [_macro-name : String]
+    [_params : ast.AstMacroParamList]
+    [_ret : ast.AstType]
+    [_expanded-args : ast.AstExprList]
+    [_call-expr : ast.AstExpr]) : MacroDirectStdlibTlciResult
+    MacroDirectStdlibTlciResult.No))
+
+(define (macro-prepare-transformer-pools! [ctx : TcContext]) : unit
+  ;; Argument normalization may extend the owned context while the global
+  ;; active pool still points at an older caller snapshot.
+  (if (ast.ast-node-pool-compat-context-active?)
+    unit
+    (let
+      [owned-pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+      [active-pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      (if (or
+        (>
+          (ast.ast-node-pool-context-expr-len owned-pools)
+          (ast.ast-node-pool-context-expr-len active-pools))
+        (>
+          (ast.ast-node-pool-context-type-len owned-pools)
+          (ast.ast-node-pool-context-type-len active-pools)))
+        (tc-context-install-pools! ctx)
+        (tc-context-capture-active-pools! ctx)))))
+
+(define (macro-eval-transformer-interpreted-with-env
+  [ctx : TcContext]
+  ;; lint-allow: unused-variable -- used by compile-profile builds.
+  [fallback-module-id : i64]
+  ;; lint-allow: unused-variable -- used by compile-profile builds.
+  [macro-name-id : i64]
+  ;; lint-allow: unused-variable -- used by compile-profile builds.
+  [macro-name : String]
+  [body : ast.AstExpr]
+  [captured-body? : bool]
+  ;; lint-allow: unused-variable -- used by compile-profile builds.
+  [expanded-args : ast.AstExprList]
+  [env : ctfe_support.CtfeEnv]) : ResultMacroValueEnv
+  (begin
+    (ctfe_support.ctfe-result-hygiene-free-reset!)
+    (macro-result-provenance-reset-with-captured-body! captured-body?)
+    (macro-hygiene-produced-eval-start! env)
+    (cfg compile-profile (compiler-tc-macro-profile-start))
+    (match (ctfe_support.ctfe-eval-node
+      body
+      (ctfe_support.ctfe-env-extend-id
+        env
+        (ctfe_support.ctfe-hygiene-enabled-id)
+        (ctfe_support.CompilerCtfeValue.Bool true))
+      (ctfe_support.ctfe-fuel-limit))
+      [(ctfe_support.ResultCtfe.Ok value _)
+        (begin
+          (tc-context-install-pools! ctx)
+          (cfg
+            compile-profile
+            (compiler-tc-macro-profile-finish
+              (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+              macro-name
+              expanded-args))
+          (ResultMacroValueEnv.Ok value env))]
+      [(ctfe_support.ResultCtfe.Err diag)
+        (begin
+          (cfg
+            compile-profile
+            (compiler-tc-macro-profile-finish
+              (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+              macro-name
+              expanded-args))
+          (ResultMacroValueEnv.Err diag))])))
+
+(define (macro-bind-transformer-expanded-profiled
   [ctx : TcContext]
   [decls : ast.AstDeclList]
   [fallback-module : String]
@@ -88728,32 +89478,12 @@
   [macro-name-id : i64]
   [macro-name : String]
   [params : ast.AstMacroParamList]
-  [ret : ast.AstType]
-  [body : ast.AstExpr]
   [expanded-args : ast.AstExprList]
-  [call-expr : ast.AstExpr]) : ResultMacroValueEnv
+  [call-expr : ast.AstExpr]) : ResultMacroEnv
   (begin
-    ;; Macro argument normalization may have already extended this context
-    ;; while the global active pool still points at an older caller snapshot.
-    ;; Do not overwrite the newer context in that case; otherwise retain the
-    ;; usual capture of the active pool.
-    (if (ast.ast-node-pool-compat-context-active?)
-      unit
-      (let
-        [owned-pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-        [active-pools : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-capture-active)]
-        (if (or
-          (>
-            (ast.ast-node-pool-context-expr-len owned-pools)
-            (ast.ast-node-pool-context-expr-len active-pools))
-          (>
-            (ast.ast-node-pool-context-type-len owned-pools)
-            (ast.ast-node-pool-context-type-len active-pools)))
-          (tc-context-install-pools! ctx)
-          (tc-context-capture-active-pools! ctx))))
+    (macro-prepare-transformer-pools! ctx)
     (cfg compile-profile (compiler-tc-walk-bind-params-start!))
-    (match (let
+    (let
       [bind-result : ResultMacroEnv
         (macro-bind-params
           ctx
@@ -88769,103 +89499,117 @@
           call-expr)]
       (begin
         (cfg compile-profile (compiler-tc-walk-bind-params-finish!))
-        bind-result))
-      [(ResultMacroEnv.Ok env)
-        (begin
-          ;; Both routes publish per-transformer syntax metadata. Reset before
-          ;; native dispatch as well as before an interpreted fallback so an
-          ;; earlier expansion cannot leak either marker into this result.
-          (ctfe_support.ctfe-result-hygiene-free-reset!)
-          (macro-result-provenance-reset-with-captured-body!
-            (macro-binding-prefix-transformer?
+        bind-result))))
+
+;; Run a macro transformer via CTFE. Module/declaration macro expansion also
+;; needs the bound CTFE environment while normalizing generated import operands.
+(define (macro-eval-transformer-expanded-with-env
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [type-env : TcTypeEnv]
+  [macro-name-id : i64]
+  [macro-name : String]
+  [params : ast.AstMacroParamList]
+  [ret : ast.AstType]
+  [body : ast.AstExpr]
+  [expanded-args : ast.AstExprList]
+  [call-expr : ast.AstExpr]) : ResultMacroValueEnv
+  (match (macro-bind-transformer-expanded-profiled
+    ctx
+    decls
+    fallback-module
+    fallback-module-id
+    type-env
+    macro-name-id
+    macro-name
+    params
+    expanded-args
+    call-expr)
+    [(ResultMacroEnv.Ok env)
+      (begin
+        ;; Both routes publish per-transformer syntax metadata. Reset before
+        ;; native dispatch as well as before an interpreted fallback so an
+        ;; earlier expansion cannot leak either marker into this result.
+        (ctfe_support.ctfe-result-hygiene-free-reset!)
+        (macro-result-provenance-reset-with-captured-body!
+          (macro-binding-prefix-transformer?
+            ctx
+            fallback-module
+            fallback-module-id
+            macro-name-id
+            params))
+        (macro-hygiene-produced-eval-start! env)
+        (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
+        (cfg compile-profile (compiler-tc-macro-profile-start))
+        (match (let
+          [native-result : MacroNativeStdlibTlciResult
+            (macro-try-stdlib-tlci-native
               ctx
               fallback-module
-              fallback-module-id
-              macro-name-id
-              params))
-          (macro-hygiene-produced-eval-start! env)
-          (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
-          (cfg compile-profile (compiler-tc-macro-profile-start))
-          (match (let
-            [native-result : MacroNativeStdlibTlciResult
-              (macro-try-stdlib-tlci-native
-                ctx
-                fallback-module
-                macro-name
-                params
-                ret
-                env
-                call-expr)]
+              macro-name
+              params
+              ret
+              env
+              call-expr)]
+          (begin
+            (cfg compile-profile (compiler-tc-walk-native-dispatch-finish!))
+            native-result))
+          [(MacroNativeStdlibTlciResult.Value value)
             (begin
-              (cfg compile-profile (compiler-tc-walk-native-dispatch-finish!))
-              native-result))
-            [(MacroNativeStdlibTlciResult.Value value)
-              (begin
-                (tc-context-install-pools! ctx)
-                (cfg
-                  compile-profile
-                  (compiler-tc-macro-profile-finish
-                    (ci.intern-composite-pair-id
-                      fallback-module-id
-                      macro-name-id)
-                    macro-name
-                    expanded-args))
-                (ResultMacroValueEnv.Ok value env))]
-            [(MacroNativeStdlibTlciResult.Err diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-tc-macro-profile-finish
-                    (ci.intern-composite-pair-id
-                      fallback-module-id
-                      macro-name-id)
-                    macro-name
-                    expanded-args))
-                (ResultMacroValueEnv.Err (box diag)))]
-            [(MacroNativeStdlibTlciResult.No)
-              (begin
-                (macro-note-stdlib-tlci-route fallback-module macro-name)
-                (ctfe_support.ctfe-result-hygiene-free-reset!)
-                (macro-result-provenance-reset-with-captured-body!
-                  (macro-binding-prefix-transformer?
-                    ctx
-                    fallback-module
-                    fallback-module-id
-                    macro-name-id
-                    params))
-                (macro-hygiene-produced-eval-start! env)
-                (cfg compile-profile (compiler-tc-macro-profile-start))
-                (match (ctfe_support.ctfe-eval-node
-                  body
-                  (ctfe_support.ctfe-env-extend-id
-                    env
-                    (ctfe_support.ctfe-hygiene-enabled-id)
-                    (ctfe_support.CompilerCtfeValue.Bool true))
-                  (ctfe_support.ctfe-fuel-limit))
-                  [(ctfe_support.ResultCtfe.Ok value _)
-                    (begin
-                      (tc-context-install-pools! ctx)
-                      (cfg
-                        compile-profile
-                        (compiler-tc-macro-profile-finish
-                          (ci.intern-composite-pair-id
-                            fallback-module-id
-                            macro-name-id)
-                          macro-name
-                          expanded-args))
-                      (ResultMacroValueEnv.Ok value env))]
-                  [(ctfe_support.ResultCtfe.Err diag)
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-tc-macro-profile-finish
-                          (ci.intern-composite-pair-id
-                            fallback-module-id
-                            macro-name-id)
-                          macro-name
-                          expanded-args))
-                      (ResultMacroValueEnv.Err diag))]))]))]
-      [(ResultMacroEnv.Err diag) (ResultMacroValueEnv.Err diag)])))
+              (tc-context-install-pools! ctx)
+              (cfg
+                compile-profile
+                (compiler-tc-macro-profile-finish
+                  (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+                  macro-name
+                  expanded-args))
+              (ResultMacroValueEnv.Ok value env))]
+          [(MacroNativeStdlibTlciResult.Err diag)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-tc-macro-profile-finish
+                  (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+                  macro-name
+                  expanded-args))
+              (ResultMacroValueEnv.Err (box diag)))]
+          [(MacroNativeStdlibTlciResult.No)
+            (begin
+              (macro-note-stdlib-tlci-route fallback-module macro-name)
+              (macro-eval-transformer-interpreted-with-env
+                ctx
+                fallback-module-id
+                macro-name-id
+                macro-name
+                body
+                (macro-binding-prefix-transformer?
+                  ctx
+                  fallback-module
+                  fallback-module-id
+                  macro-name-id
+                  params)
+                expanded-args
+                env))]
+          [(MacroNativeStdlibTlciResult.Shell)
+            (begin
+              (macro-note-stdlib-tlci-route fallback-module macro-name)
+              (macro-eval-transformer-interpreted-with-env
+                ctx
+                fallback-module-id
+                macro-name-id
+                macro-name
+                body
+                (macro-binding-prefix-transformer?
+                  ctx
+                  fallback-module
+                  fallback-module-id
+                  macro-name-id
+                  params)
+                expanded-args
+                env))]))]
+    [(ResultMacroEnv.Err diag) (ResultMacroValueEnv.Err diag)]))
 
 ;; Run a macro transformer via CTFE. Callers decide how to interpret the
 ;; returned syntax value for expression, module, or declaration positions.
@@ -88882,21 +89626,85 @@
   [body : ast.AstExpr]
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValue
-  (match (macro-eval-transformer-expanded-with-env
-    ctx
-    decls
-    fallback-module
-    fallback-module-id
-    type-env
-    macro-name-id
-    macro-name
-    params
-    ret
-    body
-    expanded-args
-    call-expr)
-    [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
-    [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)]))
+  (begin
+    (macro-prepare-transformer-pools! ctx)
+    (match (macro-try-stdlib-tlci-direct-expression
+      ctx
+      decls
+      fallback-module
+      fallback-module-id
+      type-env
+      macro-name-id
+      macro-name
+      params
+      ret
+      expanded-args
+      call-expr)
+      [(MacroDirectStdlibTlciResult.Value value) (ResultMacroValue.Ok value)]
+      [(MacroDirectStdlibTlciResult.Err diag) (ResultMacroValue.Err diag)]
+      [(MacroDirectStdlibTlciResult.PreparedEnv env)
+        (match (macro-eval-transformer-interpreted-with-env
+          ctx
+          fallback-module-id
+          macro-name-id
+          macro-name
+          body
+          (macro-binding-prefix-transformer?
+            ctx
+            fallback-module
+            fallback-module-id
+            macro-name-id
+            params)
+          expanded-args
+          env)
+          [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
+          [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)])]
+      [(MacroDirectStdlibTlciResult.BoundFallback)
+        (match (macro-bind-transformer-expanded-profiled
+          ctx
+          decls
+          fallback-module
+          fallback-module-id
+          type-env
+          macro-name-id
+          macro-name
+          params
+          expanded-args
+          call-expr)
+          [(ResultMacroEnv.Ok env)
+            (match (macro-eval-transformer-interpreted-with-env
+              ctx
+              fallback-module-id
+              macro-name-id
+              macro-name
+              body
+              (macro-binding-prefix-transformer?
+                ctx
+                fallback-module
+                fallback-module-id
+                macro-name-id
+                params)
+              expanded-args
+              env)
+              [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
+              [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)])]
+          [(ResultMacroEnv.Err diag) (ResultMacroValue.Err diag)])]
+      [(MacroDirectStdlibTlciResult.No)
+        (match (macro-eval-transformer-expanded-with-env
+          ctx
+          decls
+          fallback-module
+          fallback-module-id
+          type-env
+          macro-name-id
+          macro-name
+          params
+          ret
+          body
+          expanded-args
+          call-expr)
+          [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
+          [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)])])))
 
 (define (macro-binding-prefix-form? [expr : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan expr)

@@ -11,8 +11,8 @@
     [v : Vec (new)]
     [words : svec.Vec (svec.new)]
     (begin
-      (push (&mut v) 10)
-      (push (&mut v) 32)
+      (push! v 10)
+      (push! v 32)
       (svec.push-ref! (&mut words) "x")
       (test.assert-i64-eq
         (+ (len (& v)) (svec.len (& words)))

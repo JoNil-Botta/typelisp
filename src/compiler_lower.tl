@@ -48,7 +48,7 @@
 ;; just a shared store plus an independent head/count pair, so extending a child
 ;; cannot change its parent.
 (defstruct LowerNameStore
-  (segments (Array (Array LowerNameBinding)))
+  (segments (__tl_dyn-array (__tl_dyn-array LowerNameBinding)))
   (segment-count i64)
   (len i64)
   (arena i64))
@@ -107,17 +107,18 @@
         compiler-lower-profile-name-env-stores
         (+ compiler-lower-profile-name-env-stores 1)))
     (let
-      [segments : (Array (Array LowerNameBinding))
-        (make-array (Array LowerNameBinding) 4)]
-      [first : (Array LowerNameBinding) (make-array LowerNameBinding 16)]
+      [segments : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
+        (make-array (__tl_dyn-array LowerNameBinding) 4)]
+      [first : (__tl_dyn-array LowerNameBinding)
+        (make-array LowerNameBinding 16)]
       [owner : i64 (lower-name-arena-owner-root (arena.tl_arena_current))]
       (begin
         (array-set! segments 0 first)
         (LowerNameStore segments 1 0 owner)))))
 
 (define (lower-name-store-segments-copy-range!
-  [dst : (&mut dst (Array (Array LowerNameBinding)))]
-  [src : (& src (Array (Array LowerNameBinding)))]
+  [dst : (&mut dst (__tl_dyn-array (__tl_dyn-array LowerNameBinding)))]
+  [src : (& src (__tl_dyn-array (__tl_dyn-array LowerNameBinding)))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -143,9 +144,9 @@
       (if (< count capacity)
         unit
         (let
-          [bigger : (Array (Array LowerNameBinding))
+          [bigger : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
             (make-array
-              (Array LowerNameBinding)
+              (__tl_dyn-array LowerNameBinding)
               (if (< capacity 1)
                 4
                 (* capacity 2)))]
@@ -177,7 +178,7 @@
   (let
     [segment-index : i64 (/ index 16)]
     [offset : i64 (- index (* segment-index 16))]
-    [segment : (Array LowerNameBinding)
+    [segment : (__tl_dyn-array LowerNameBinding)
       (array-ref (struct-get store segments) segment-index)]
     (array-set! segment offset binding)))
 
@@ -189,7 +190,7 @@
   (let
     [segment-index : i64 (/ index 16)]
     [offset : i64 (- index (* segment-index 16))]
-    [segment : (Array LowerNameBinding)
+    [segment : (__tl_dyn-array LowerNameBinding)
       (array-ref (struct-get store segments) segment-index)]
     (unsafe
       (ptr-read (ptr-offset (array-data segment) offset)))))
@@ -299,8 +300,8 @@
 
 (defstruct LowerNameCache
   (ids lower_i64_i64_map.Map)
-  (logical-ids (Array i64))
-  (symbol-ids (Array i64))
+  (logical-ids (__tl_dyn-array i64))
+  (symbol-ids (__tl_dyn-array i64))
   (logical-symbols lower_i64_i64_map.Map)
   (module-paths LowerModulePathIndex)
   (clone-roots clone_support.CloneRootEntries)
@@ -406,7 +407,7 @@
 
 (defenum LowerTypeCache
   (No)
-  (Some lower_i64_i64_map.Map (Array ast.AstType) i64 LowerTypeParent))
+  (Some lower_i64_i64_map.Map (__tl_dyn-array ast.AstType) i64 LowerTypeParent))
 
 ;; Flattened dotted imports emit a module marker when entering an imported file
 ;; and another when returning to its importer. Lowering can therefore revisit
@@ -468,15 +469,15 @@
 ;; set and an extension of it live at the same time. Only the reach worklist,
 ;; which threads one state linearly, uses the in-place push/pop pair.
 (defstruct LowerIdSet
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (len i64))
 
 ;; Parallel key/value arrays in cons order (oldest first). Lookup scans from the
 ;; tail so the most recent binding still shadows, and both `cons` and `remove`
 ;; build fresh arrays so every substitution value stays independent.
 (defstruct LowerSpmdInlineSubst
-  (names (Array i64))
-  (values (Array ast.AstExpr))
+  (names (__tl_dyn-array i64))
+  (values (__tl_dyn-array ast.AstExpr))
   (len i64))
 
 ;; Function reachability is ID-native. `all-functions` maps the canonical
@@ -523,14 +524,14 @@
 
 (defstruct LowerFunctionBodyIndex
   (ids lower_i64_i64_map.Map)
-  (bodies (Array LowerMaybeFunctionBody))
+  (bodies (__tl_dyn-array LowerMaybeFunctionBody))
   (next i64))
 
 (defenum LowerPrunedProgram
   (Program ast.AstProgram ast.AstDeclPathList))
 
 (defstruct LowerDeclKeepPlan
-  (keep (Array i64))
+  (keep (__tl_dyn-array i64))
   (source-count i64))
 
 (defenum LowerPrunedProgramWithPlan
@@ -635,7 +636,7 @@
   (value LowerVectorMapValue))
 
 (defstruct LowerVectorMapStoreList
-  (items (Array LowerVectorMapStore))
+  (items (__tl_dyn-array LowerVectorMapStore))
   (count i64))
 
 (defenum LowerMaybeVectorMapStore
@@ -658,8 +659,8 @@
   (BinOp ir.CompilerIrBinOp ir.CompilerIrValue ir.CompilerIrValue))
 
 (defstruct LowerVectorMapValueCache
-  (keys (Array LowerVectorMapValueKey))
-  (values (Array ir.CompilerIrValue))
+  (keys (__tl_dyn-array LowerVectorMapValueKey))
+  (values (__tl_dyn-array ir.CompilerIrValue))
   (count i64))
 
 (defenum LowerVectorMapCachedEmit
@@ -714,15 +715,15 @@
   (Split i64 i64))
 
 (defstruct LowerArrayVarSet
-  (vars (Array i64))
-  (offsets (Array i64))
+  (vars (__tl_dyn-array i64))
+  (offsets (__tl_dyn-array i64))
   (count i64))
 
 (defenum LowerCapture
   (Capture i64 i64 ast.AstType i64))
 
 (defstruct LowerCaptureList
-  (items (Array LowerCapture))
+  (items (__tl_dyn-array LowerCapture))
   (count i64))
 
 (defenum LowerCapturePlan
@@ -842,7 +843,7 @@
   (Slot ast.AstType i64))
 
 (defstruct LowerCAbiSlotList
-  (items (Array LowerCAbiSlot))
+  (items (__tl_dyn-array LowerCAbiSlot))
   (count i64))
 
 (defenum LowerCAbiAggregate
@@ -1289,9 +1290,9 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defstruct LowerCleanupStack
-  (hidden-name-ids (Array i64))
-  (cleanup-name-ids (Array i64))
-  (live-name-ids (Array i64))
+  (hidden-name-ids (__tl_dyn-array i64))
+  (cleanup-name-ids (__tl_dyn-array i64))
+  (live-name-ids (__tl_dyn-array i64))
   (count i64))
 
 (defenum LowerResourceBindings
@@ -2206,7 +2207,7 @@
   (let
     [count : i64 (lower-name-env-count left)]
     [cur : LowerNameEnv left]
-    [bindings : (Array LowerNameFlatBinding)
+    [bindings : (__tl_dyn-array LowerNameFlatBinding)
       (make-array LowerNameFlatBinding count)]
     [index : i64 0]
     [out : LowerNameEnv right]
@@ -2402,8 +2403,8 @@
   [fallback-symbol-id : i64]) : unit
   (let
     [ids : lower_i64_i64_map.Map (struct-get cache ids)]
-    [logical-ids : (Array i64) (struct-get cache logical-ids)]
-    [symbol-ids : (Array i64) (struct-get cache symbol-ids)]
+    [logical-ids : (__tl_dyn-array i64) (struct-get cache logical-ids)]
+    [symbol-ids : (__tl_dyn-array i64) (struct-get cache symbol-ids)]
     [logical-symbols : lower_i64_i64_map.Map (struct-get cache logical-symbols)]
     [module-paths : LowerModulePathIndex (struct-get cache module-paths)]
     (if (< source-id 0)
@@ -3327,12 +3328,12 @@
 ;; the original order, so the intern pool receives the same insertions with the
 ;; same IDs; later visits reuse the ID that intern-generated-canonical-name
 ;; would have returned from its existing slot anyway.
-(define lower-alias-symbol-memo : (Array i64)
+(define lower-alias-symbol-memo : (__tl_dyn-array i64)
   (make-array i64 0))
 
 (define (lower-alias-symbol-memo-reset! [count : i64]) : unit
   (let
-    [slots : (Array i64)
+    [slots : (__tl_dyn-array i64)
       (make-array
         i64
         (if (< count 1)
@@ -4906,7 +4907,7 @@
     ;; Match the backing slot rather than binding the row to a local first: the
     ;; local materialised a 104 B copy, while a projection match loads the tag
     ;; and hands the slot straight on (aggregate arguments pass by reference).
-    [decl-slots : (Array ast.AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
@@ -5321,7 +5322,7 @@
         [index : i64 (array-ref lower-module-decl-index-starts slot)]
         [end : i64 (array-ref lower-module-decl-index-ends slot)]
         [decl-offset : i64 (struct-get decls offset)]
-        [decl-slots : (Array ast.AstDecl) (struct-get decls slots)]
+        [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
         (begin
           (while (< index end)
             (let
@@ -5377,11 +5378,11 @@
   -1)
 (define lower-module-decl-index-modules : lower_i64_i64_map.Map
   (lower_i64_i64_map.with-capacity 16))
-(define lower-module-decl-index-starts : (Array i64)
+(define lower-module-decl-index-starts : (__tl_dyn-array i64)
   (make-array i64 0))
-(define lower-module-decl-index-ends : (Array i64)
+(define lower-module-decl-index-ends : (__tl_dyn-array i64)
   (make-array i64 0))
-(define lower-module-decl-index-positions : (Array i64)
+(define lower-module-decl-index-positions : (__tl_dyn-array i64)
   (make-array i64 0))
 (define lower-module-decl-index-arena : i64
   0)
@@ -5409,7 +5410,7 @@
     (let
       [count : i64 (struct-get decls len)]
       [decl-offset : i64 (struct-get decls offset)]
-      [decl-slots : (Array ast.AstDecl) (struct-get decls slots)]
+      [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
       [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
       ;; The index outlives the transient scratch arenas active during
       ;; lowering, so its backing allocations live in a dedicated arena
@@ -5426,10 +5427,10 @@
           (arena.tl_arena_set lower-module-decl-index-arena))]
       [modules : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 512)]
       [module-count : i64 0]
-      [counts : (Array i64) (make-array i64 (+ count 1))]
-      [starts : (Array i64) (make-array i64 (+ count 1))]
-      [ends : (Array i64) (make-array i64 (+ count 1))]
-      [positions : (Array i64) (make-array i64 (+ count 1))]
+      [counts : (__tl_dyn-array i64) (make-array i64 (+ count 1))]
+      [starts : (__tl_dyn-array i64) (make-array i64 (+ count 1))]
+      [ends : (__tl_dyn-array i64) (make-array i64 (+ count 1))]
+      [positions : (__tl_dyn-array i64) (make-array i64 (+ count 1))]
       [cur-module-id : i64 empty-module-id]
       [i : i64 0]
       [running : i64 0]
@@ -6201,7 +6202,7 @@
     items
     (let
       [len : i64 (struct-get items len)]
-      [slots : (Array i64) (make-array i64 (+ len 1))]
+      [slots : (__tl_dyn-array i64) (make-array i64 (+ len 1))]
       [index : i64 0]
       (begin
         (while (< index len)
@@ -6216,7 +6217,7 @@
 ;; which is why the spare tail slot is overwritten in place when it exists.
 (define (lower-id-set-push [items : LowerIdSet] [name : i64]) : LowerIdSet
   (let
-    [slots : (Array i64) (struct-get items slots)]
+    [slots : (__tl_dyn-array i64) (struct-get items slots)]
     [len : i64 (struct-get items len)]
     (begin
       (if (< len (array-length slots))
@@ -6302,8 +6303,8 @@
   [name : i64]) : LowerSpmdInlineSubst
   (let
     [len : i64 (struct-get subs len)]
-    [names : (Array i64) (make-array i64 len)]
-    [values : (Array ast.AstExpr) (make-array ast.AstExpr len)]
+    [names : (__tl_dyn-array i64) (make-array i64 len)]
+    [values : (__tl_dyn-array ast.AstExpr) (make-array ast.AstExpr len)]
     [index : i64 0]
     [kept : i64 0]
     (begin
@@ -6327,8 +6328,8 @@
   [rest : LowerSpmdInlineSubst]) : LowerSpmdInlineSubst
   (let
     [len : i64 (struct-get rest len)]
-    [names : (Array i64) (make-array i64 (+ len 1))]
-    [values : (Array ast.AstExpr) (make-array ast.AstExpr (+ len 1))]
+    [names : (__tl_dyn-array i64) (make-array i64 (+ len 1))]
+    [values : (__tl_dyn-array ast.AstExpr) (make-array ast.AstExpr (+ len 1))]
     [index : i64 0]
     (begin
       (while (< index len)
@@ -8224,7 +8225,7 @@
   ;; backing slot instead of a stepped-out 104 B copy.
   (let
     [count : i64 (ast.ast-decl-list-len (& source-decls))]
-    [decl-slots : (Array ast.AstDecl) (struct-get source-decls slots)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get source-decls slots)]
     [decl-offset : i64 (struct-get source-decls offset)]
     [index : i64 0]
     [cur-module-id : i64 module-id]
@@ -9549,7 +9550,7 @@
   [decl-path-owner-id : i64]) : LowerFunctionBodyIndex
   (let
     [ids : lower_i64_i64_map.Map (struct-get index ids)]
-    [bodies : (Array LowerMaybeFunctionBody) (struct-get index bodies)]
+    [bodies : (__tl_dyn-array LowerMaybeFunctionBody) (struct-get index bodies)]
     [next : i64 (struct-get index next)]
     (begin
       (array-set!
@@ -11170,7 +11171,7 @@
   ;; the step copied 104 B and wrote a 144 B result per declaration.
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-slots : (Array ast.AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     [index : i64 0]
     [current-module : String module]
@@ -11391,7 +11392,7 @@
     [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
     [out-paths : ast.AstDeclPathList
       (ast.ast-decl-path-list-with-capacity count)]
-    [keep : (Array i64) (make-array i64 count)]
+    [keep : (__tl_dyn-array i64) (make-array i64 count)]
     [source-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [index : i64 0]
     (begin
@@ -11449,7 +11450,7 @@
 
 (define (lower-decl-keep-plan-all [count : i64]) : LowerDeclKeepPlan
   (let
-    [keep : (Array i64) (make-array i64 count)]
+    [keep : (__tl_dyn-array i64) (make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -11482,7 +11483,7 @@
     [(ast.AstProgram.Program decls-box)
       (let
         [decls : ast.AstDeclList (box-get decls-box)]
-        [keep : (Array i64) (struct-get plan keep)]
+        [keep : (__tl_dyn-array i64) (struct-get plan keep)]
         [source-count : i64 (struct-get plan source-count)]
         [roots : clone_support.CloneNameSet
           (clone_support.clone-root-entries-to-set
@@ -11516,9 +11517,9 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set base-arena))]
-    [source : (Array i64) (struct-get plan keep)]
+    [source : (__tl_dyn-array i64) (struct-get plan keep)]
     [count : i64 (struct-get plan source-count)]
-    [keep : (Array i64) (make-array i64 count)]
+    [keep : (__tl_dyn-array i64) (make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -11544,7 +11545,7 @@
         [decls : ast.AstDeclList (box-get decls-box)]
         [count : i64 (ast.ast-decl-list-len (& decls))]
         [source-count : i64 (struct-get plan source-count)]
-        [keep : (Array i64) (struct-get plan keep)]
+        [keep : (__tl_dyn-array i64) (struct-get plan keep)]
         [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
         [index : i64 0]
         (begin
@@ -11568,7 +11569,7 @@
   [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
     [source-count : i64 (struct-get plan source-count)]
-    [keep : (Array i64) (struct-get plan keep)]
+    [keep : (__tl_dyn-array i64) (struct-get plan keep)]
     [count : i64 (ast.ast-decl-path-list-len (& paths))]
     [limit : i64
       (if (< source-count count)
@@ -18508,7 +18509,7 @@
   [captures : LowerCaptureList]
   [name-id : i64]) : bool
   (let
-    [items : (Array LowerCapture) (struct-get captures items)]
+    [items : (__tl_dyn-array LowerCapture) (struct-get captures items)]
     [count : i64 (struct-get captures count)]
     [index : i64 0]
     [found : bool false]
@@ -18531,7 +18532,7 @@
   [captures : LowerCaptureList]
   [capture : LowerCapture]) : LowerCaptureList
   (let
-    [items : (Array LowerCapture) (struct-get captures items)]
+    [items : (__tl_dyn-array LowerCapture) (struct-get captures items)]
     [count : i64 (struct-get captures count)]
     (begin
       (array-push! items capture)
@@ -19277,7 +19278,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [env-value : ir.CompilerIrValue]
-  [items : (Array LowerCapture)]
+  [items : (__tl_dyn-array LowerCapture)]
   [index : i64]) : ResultLowerState
   (if (< index 0)
     (ResultLowerState.Ok state)
@@ -19391,7 +19392,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env-value : ir.CompilerIrValue]
-  [items : (Array LowerCapture)]
+  [items : (__tl_dyn-array LowerCapture)]
   [index : i64]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]) : ResultLowerEnv
@@ -20048,9 +20049,11 @@
   [hidden-name-id : i64]
   [cleanup-name-id : i64]) : LowerCleanupStack
   (let
-    [hidden-name-ids : (Array i64) (struct-get cleanups hidden-name-ids)]
-    [cleanup-name-ids : (Array i64) (struct-get cleanups cleanup-name-ids)]
-    [live-name-ids : (Array i64) (struct-get cleanups live-name-ids)]
+    [hidden-name-ids : (__tl_dyn-array i64)
+      (struct-get cleanups hidden-name-ids)]
+    [cleanup-name-ids : (__tl_dyn-array i64)
+      (struct-get cleanups cleanup-name-ids)]
+    [live-name-ids : (__tl_dyn-array i64) (struct-get cleanups live-name-ids)]
     [count : i64 (struct-get cleanups count)]
     (begin
       (array-push! hidden-name-ids hidden-name-id)
@@ -20068,9 +20071,11 @@
   [cleanup-name-id : i64]
   [live-name-id : i64]) : LowerCleanupStack
   (let
-    [hidden-name-ids : (Array i64) (struct-get cleanups hidden-name-ids)]
-    [cleanup-name-ids : (Array i64) (struct-get cleanups cleanup-name-ids)]
-    [live-name-ids : (Array i64) (struct-get cleanups live-name-ids)]
+    [hidden-name-ids : (__tl_dyn-array i64)
+      (struct-get cleanups hidden-name-ids)]
+    [cleanup-name-ids : (__tl_dyn-array i64)
+      (struct-get cleanups cleanup-name-ids)]
+    [live-name-ids : (__tl_dyn-array i64) (struct-get cleanups live-name-ids)]
     [count : i64 (struct-get cleanups count)]
     (begin
       (array-push! hidden-name-ids hidden-name-id)
@@ -20101,9 +20106,9 @@
 (define (lower-emit-cleanup-stack-at
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
-  [hidden-name-ids : (Array i64)]
-  [cleanup-name-ids : (Array i64)]
-  [live-name-ids : (Array i64)]
+  [hidden-name-ids : (__tl_dyn-array i64)]
+  [cleanup-name-ids : (__tl_dyn-array i64)]
+  [live-name-ids : (__tl_dyn-array i64)]
   [index : i64]) : ResultLowerState
   (if (< index 0)
     (ResultLowerState.Ok state)
@@ -24517,11 +24522,11 @@
 ;; collision (different id, same slot) misses via the stored-id check.
 (define tc-rtf-cap : i64
   65536)
-(define tc-rtf-gen-arr : (Array i64)
+(define tc-rtf-gen-arr : (__tl_dyn-array i64)
   (make-array i64 tc-rtf-cap))
-(define tc-rtf-id-arr : (Array i64)
+(define tc-rtf-id-arr : (__tl_dyn-array i64)
   (make-array i64 tc-rtf-cap))
-(define tc-rtf-ty-arr : (Array ast.AstType)
+(define tc-rtf-ty-arr : (__tl_dyn-array ast.AstType)
   (make-array ast.AstType tc-rtf-cap))
 (define tc-rtf-current-gen : i64
   0)
@@ -28811,7 +28816,7 @@
 
 (define (lower-c-abi-slot-list-single [slot : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
-    [items : (Array LowerCAbiSlot) (make-array LowerCAbiSlot 1)]
+    [items : (__tl_dyn-array LowerCAbiSlot) (make-array LowerCAbiSlot 1)]
     (begin
       (array-set! items 0 slot)
       (LowerCAbiSlotList items 1))))
@@ -28820,7 +28825,7 @@
   [first : LowerCAbiSlot]
   [second : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
-    [items : (Array LowerCAbiSlot) (make-array LowerCAbiSlot 2)]
+    [items : (__tl_dyn-array LowerCAbiSlot) (make-array LowerCAbiSlot 2)]
     (begin
       (array-set! items 0 first)
       (array-set! items 1 second)
@@ -29871,7 +29876,7 @@
 
 (define (lower-c-abi-ir-return-slots-from
   [slots : LowerCAbiSlotList]
-  [out : (Array ir.CompilerIrCAbiReturnSlot)]
+  [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -29888,7 +29893,7 @@
 (define (lower-c-abi-ir-return-slots [slots : LowerCAbiSlotList]) : ir.CompilerIrCAbiReturnSlotList
   (let
     [count : i64 (lower-c-abi-slot-list-count slots)]
-    [out : (Array ir.CompilerIrCAbiReturnSlot)
+    [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
       (array.make-array ir.CompilerIrCAbiReturnSlot count)]
     (begin
       (lower-c-abi-ir-return-slots-from slots out 0 count)
@@ -40558,8 +40563,8 @@
   [var : i64]
   [offset : i64]) : LowerArrayVarSet
   (let
-    [vars : (Array i64) (struct-get set vars)]
-    [offsets : (Array i64) (struct-get set offsets)]
+    [vars : (__tl_dyn-array i64) (struct-get set vars)]
+    [offsets : (__tl_dyn-array i64) (struct-get set offsets)]
     [count : i64 (struct-get set count)]
     [index : i64 0]
     [found : bool false]
@@ -40583,8 +40588,8 @@
   [left : LowerArrayVarSet]
   [right : LowerArrayVarSet]) : LowerArrayVarSet
   (let
-    [vars : (Array i64) (struct-get right vars)]
-    [offsets : (Array i64) (struct-get right offsets)]
+    [vars : (__tl_dyn-array i64) (struct-get right vars)]
+    [offsets : (__tl_dyn-array i64) (struct-get right offsets)]
     [count : i64 (struct-get right count)]
     [index : i64 0]
     [out : LowerArrayVarSet left]
@@ -40602,7 +40607,7 @@
 
 (define (lower-array-var-set-max-offset [set : LowerArrayVarSet]) : i64
   (let
-    [offsets : (Array i64) (struct-get set offsets)]
+    [offsets : (__tl_dyn-array i64) (struct-get set offsets)]
     [count : i64 (struct-get set count)]
     [index : i64 0]
     [max-offset : i64 0]
@@ -40633,8 +40638,8 @@
         20
         1)]
     [merged : LowerArrayVarSet (lower-array-var-set-merge left right)]
-    [vars : (Array i64) (struct-get merged vars)]
-    [offsets : (Array i64) (struct-get merged offsets)]
+    [vars : (__tl_dyn-array i64) (struct-get merged vars)]
+    [offsets : (__tl_dyn-array i64) (struct-get merged offsets)]
     (and
       (= (struct-get merged count) 3)
       (= (array-length vars) 3)
@@ -45362,7 +45367,7 @@
   [stores : LowerVectorMapStoreList]
   [store : LowerVectorMapStore]) : LowerVectorMapStoreList
   (let
-    [items : (Array LowerVectorMapStore) (struct-get stores items)]
+    [items : (__tl_dyn-array LowerVectorMapStore) (struct-get stores items)]
     [count : i64 (struct-get stores count)]
     (begin
       (array-push! items store)
@@ -48377,8 +48382,8 @@
   [key : LowerVectorMapValueKey]
   [value : ir.CompilerIrValue]) : LowerVectorMapValueCache
   (let
-    [keys : (Array LowerVectorMapValueKey) (struct-get cache keys)]
-    [values : (Array ir.CompilerIrValue) (struct-get cache values)]
+    [keys : (__tl_dyn-array LowerVectorMapValueKey) (struct-get cache keys)]
+    [values : (__tl_dyn-array ir.CompilerIrValue) (struct-get cache values)]
     [count : i64 (struct-get cache count)]
     (begin
       (array-push! keys key)
@@ -49823,7 +49828,7 @@
       (let
         [s : LowerState state]
         [count : i64 (struct-get stores count)]
-        [results : (Array ir.CompilerIrValue)
+        [results : (__tl_dyn-array ir.CompilerIrValue)
           (make-array ir.CompilerIrValue count)]
         [store-index : i64 0]
         [cache : LowerVectorMapValueCache preheader-cache]
@@ -55395,7 +55400,7 @@
       (let
         [s : LowerState state]
         [count : i64 (struct-get stores count)]
-        [results : (Array ir.CompilerIrValue)
+        [results : (__tl_dyn-array ir.CompilerIrValue)
           (make-array ir.CompilerIrValue count)]
         [store-index : i64 0]
         [cache : LowerVectorMapValueCache (lower-vector-map-value-cache-empty)]
@@ -60294,13 +60299,14 @@
 
 (define lower-variant-arm-memo-generation : i64
   0)
-(define lower-variant-arm-memo-stamps : (Array i64)
+(define lower-variant-arm-memo-stamps : (__tl_dyn-array i64)
   (array.make-array i64 256))
-(define lower-variant-arm-memo-keys : (Array i64)
+(define lower-variant-arm-memo-keys : (__tl_dyn-array i64)
   (array.make-array i64 256))
-(define lower-variant-arm-memo-scrut-tys : (Array ast.AstType)
+(define lower-variant-arm-memo-scrut-tys : (__tl_dyn-array ast.AstType)
   (array.make-array ast.AstType 256))
-(define lower-variant-arm-memo-outcomes : (Array LowerVariantArmResolution)
+(define lower-variant-arm-memo-outcomes : (__tl_dyn-array
+    LowerVariantArmResolution)
   (array.make-array LowerVariantArmResolution 256))
 
 (define (lower-variant-arm-memo-next-gen!) : unit
@@ -61524,8 +61530,8 @@
 ;; strings must survive the scratch rewind, so the scope mirrors
 ;; `tc-check-fn-decl-scoped` and forces persistent intern storage while active.
 (defstruct CompilerLowerArenaState
-  (scratch-arena (Array i64))
-  (ir-arena (Array i64)))
+  (scratch-arena (__tl_dyn-array i64))
+  (ir-arena (__tl_dyn-array i64)))
 
 (define lower-scratch-arena : i64
   0)
@@ -61596,8 +61602,8 @@
 
 (define (compiler-lower-arena-state-new) : CompilerLowerArenaState
   (let
-    [scratch : (Array i64) (make-array i64 1)]
-    [ir : (Array i64) (make-array i64 1)]
+    [scratch : (__tl_dyn-array i64) (make-array i64 1)]
+    [ir : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (array-set! scratch 0 0)
       (array-set! ir 0 0)
@@ -63131,7 +63137,7 @@
     ;; local first materialised a 104 B copy that `ast-decl-unwrapped` then
     ;; copied again; an aggregate argument is passed by reference, so the
     ;; projection costs nothing.
-    [decl-slots : (Array ast.AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)

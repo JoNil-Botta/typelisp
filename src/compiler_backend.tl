@@ -249,7 +249,7 @@
   (Copy i64 CompilerBackendPhiSource compiler_ast_types.AstType))
 
 (defstruct CompilerBackendPhiCopySeq
-  (slots (Array CompilerBackendPhiCopy))
+  (slots (__tl_dyn-array CompilerBackendPhiCopy))
   (len i64))
 
 (define (compiler-backend-phi-copy-seq-with-capacity [capacity : i64]) : CompilerBackendPhiCopySeq
@@ -258,8 +258,8 @@
     0))
 
 (define (compiler-backend-phi-copy-copy-range!
-  [dst : (&mut dst (Array CompilerBackendPhiCopy))]
-  [src : (& src (Array CompilerBackendPhiCopy))]
+  [dst : (&mut dst (__tl_dyn-array CompilerBackendPhiCopy))]
+  [src : (& src (__tl_dyn-array CompilerBackendPhiCopy))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -275,7 +275,7 @@
     (if (< (struct-get seq len) (array-length (struct-get seq slots)))
       unit
       (let
-        [bigger : (Array CompilerBackendPhiCopy)
+        [bigger : (__tl_dyn-array CompilerBackendPhiCopy)
           (array.make-array
             CompilerBackendPhiCopy
             (compiler-backend-seq-capacity
@@ -459,8 +459,8 @@
 ;; never rebuilt, and deadness stays OUT of the packed word because array-set!
 ;; rewrites a whole element.
 (defstruct CompilerBackendPeepholeLineVec
-  (lines (Array CompilerBackendPeepholeLineRecord))
-  (live (Array i64))
+  (lines (__tl_dyn-array CompilerBackendPeepholeLineRecord))
+  (live (__tl_dyn-array i64))
   (len i64))
 
 ;; The physical chunks the streaming peephole parses in place, in emission
@@ -470,7 +470,7 @@
 ;; `chunks-normalize` restores that invariant for any caller that appends a
 ;; partial line, so the walk itself never has to join across a boundary.
 (defstruct CompilerBackendPeepholeChunkArray
-  (items (Array String))
+  (items (__tl_dyn-array String))
   (count i64)
   (total i64))
 
@@ -535,7 +535,7 @@
 
 (defenum CompilerBackendGlobalTypeTable
   (Empty)
-  (Dense backend_i64_i64_map.Map (Array compiler_ast_types.AstType)))
+  (Dense backend_i64_i64_map.Map (__tl_dyn-array compiler_ast_types.AstType)))
 
 (defenum ResultCompilerBackend
   (Ok String)
@@ -911,9 +911,9 @@
   ;; exact intern capability so concurrent backend jobs never consult a
   ;; process-global opt-level switch.
   (scalar-registers-enabled bool)
-  (user-symbol-cache-keys (Array i64))
-  (user-symbol-cache-values (Array String))
-  (user-symbol-cache-epochs (Array i64))
+  (user-symbol-cache-keys (__tl_dyn-array i64))
+  (user-symbol-cache-values (__tl_dyn-array String))
+  (user-symbol-cache-epochs (__tl_dyn-array i64))
   (user-symbol-cache-epoch i64)
   (user-symbol-cache-count i64)
   (user-symbol-cache-generation i64)
@@ -927,13 +927,13 @@
   ;; Retained operand render storage is owned by this state's lazy arena.
   ;; Keep all eight lanes empty until their first relevant use.
   (lazy-table-arena i64)
-  (slot-cache-values (Array String))
-  (slot-cache-epochs (Array i64))
+  (slot-cache-values (__tl_dyn-array String))
+  (slot-cache-epochs (__tl_dyn-array i64))
   (slot-cache-epoch i64)
-  (frame-offset-cache-values (Array String))
-  (frame-offset-cache-epochs (Array i64))
-  (immediate-cache-values (Array String))
-  (immediate-cache-epochs (Array i64)))
+  (frame-offset-cache-values (__tl_dyn-array String))
+  (frame-offset-cache-epochs (__tl_dyn-array i64))
+  (immediate-cache-values (__tl_dyn-array String))
+  (immediate-cache-epochs (__tl_dyn-array i64)))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1193,20 +1193,20 @@
 
 (defstruct CompilerBackendProgramIndex
   (functions backend_i64_i64_map.Map)
-  (function-names (Array String))
-  (function-signatures (Array CompilerBackendMaybeSignature))
+  (function-names (__tl_dyn-array String))
+  (function-signatures (__tl_dyn-array CompilerBackendMaybeSignature))
   (extern-signatures backend_i64_i64_map.Map)
-  (extern-names (Array String))
-  (extern-signature-values (Array CompilerBackendMaybeSignature))
+  (extern-names (__tl_dyn-array String))
+  (extern-signature-values (__tl_dyn-array CompilerBackendMaybeSignature))
   ;; Extern call classification, packed by extern slot: bit 0 is C ABI,
   ;; bit 1 has aggregate parameters, and the remaining bits encode the
   ;; C-varargs fixed-parameter count plus one. The reference index maps both
   ;; source names and link symbols to this same slot.
-  (extern-call-infos (Array i64))
+  (extern-call-infos (__tl_dyn-array i64))
   (extern-references backend_i64_i64_map.Map)
   (extern-link-references backend_i64_i64_map.Map)
-  (extern-link-symbols (Array i64))
-  (extern-provided (Array bool))
+  (extern-link-symbols (__tl_dyn-array i64))
+  (extern-provided (__tl_dyn-array bool))
   ;; Aggregate type name -> machine-word count, for every register-group
   ;; type constructed anywhere in the program (whole-program compile). Drives the
   ;; backend/regalloc 2-word-vs-handle decision that the type name alone cannot.
@@ -1234,17 +1234,17 @@
   ;; Sparse path-id -> deterministic one-based file number map, plus paths in
   ;; first-seen order.  This avoids allocating intern-capacity entries when a
   ;; program has only a handful of source files.
-  (Files backend_i64_i64_map.Map (Array i64) i64))
+  (Files backend_i64_i64_map.Map (__tl_dyn-array i64) i64))
 
 (defstruct CompilerBackendSourceSpanIndex
   (entries backend_i64_i64_map.Map)
-  (values (Array compiler_ir_types.CompilerMaybeSourceSpan))
+  (values (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan))
   (debug-files CompilerBackendDebugFileIndex)
   (backend-state CompilerBackendState))
 
 (defstruct CompilerBackendDebugFileBuildState
   (numbers backend_i64_i64_map.Map)
-  (paths (Array i64))
+  (paths (__tl_dyn-array i64))
   (count i64)
   (backend-state CompilerBackendState))
 
@@ -1520,10 +1520,12 @@
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     [owner : arena.Arena (arena.Arena (struct-get data owner-arena))]
-    [keys : (Array i64) (in-arena owner (array.make-array i64 capacity))]
-    [values : (Array String)
+    [keys : (__tl_dyn-array i64)
+      (in-arena owner (array.make-array i64 capacity))]
+    [values : (__tl_dyn-array String)
       (in-arena owner (array.make-array String capacity))]
-    [epochs : (Array i64) (in-arena owner (array.make-array i64 capacity))]
+    [epochs : (__tl_dyn-array i64)
+      (in-arena owner (array.make-array i64 capacity))]
     [i : i64 0]
     (begin
       (while (< i capacity)
@@ -1541,15 +1543,19 @@
   [new-capacity : i64]) : unit
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    [old-keys : (Array i64) (struct-get data user-symbol-cache-keys)]
-    [old-values : (Array String) (struct-get data user-symbol-cache-values)]
-    [old-epochs : (Array i64) (struct-get data user-symbol-cache-epochs)]
+    [old-keys : (__tl_dyn-array i64) (struct-get data user-symbol-cache-keys)]
+    [old-values : (__tl_dyn-array String)
+      (struct-get data user-symbol-cache-values)]
+    [old-epochs : (__tl_dyn-array i64)
+      (struct-get data user-symbol-cache-epochs)]
     [old-capacity : i64 (array-length old-keys)]
     [owner : arena.Arena (arena.Arena (struct-get data owner-arena))]
-    [keys : (Array i64) (in-arena owner (array.make-array i64 new-capacity))]
-    [values : (Array String)
+    [keys : (__tl_dyn-array i64)
+      (in-arena owner (array.make-array i64 new-capacity))]
+    [values : (__tl_dyn-array String)
       (in-arena owner (array.make-array String new-capacity))]
-    [epochs : (Array i64) (in-arena owner (array.make-array i64 new-capacity))]
+    [epochs : (__tl_dyn-array i64)
+      (in-arena owner (array.make-array i64 new-capacity))]
     [i : i64 0]
     (begin
       (while (< i new-capacity)
@@ -1598,9 +1604,11 @@
           (compiler-backend-state-user-symbol-cache-allocate! state 16)
           (compiler-backend-state-user-symbol-id state name-id))
         (let
-          [keys : (Array i64) (struct-get data user-symbol-cache-keys)]
-          [values : (Array String) (struct-get data user-symbol-cache-values)]
-          [epochs : (Array i64) (struct-get data user-symbol-cache-epochs)]
+          [keys : (__tl_dyn-array i64) (struct-get data user-symbol-cache-keys)]
+          [values : (__tl_dyn-array String)
+            (struct-get data user-symbol-cache-values)]
+          [epochs : (__tl_dyn-array i64)
+            (struct-get data user-symbol-cache-epochs)]
           [epoch : i64 (struct-get data user-symbol-cache-epoch)]
           [slot : i64
             (compiler-backend-state-user-symbol-cache-hash name-id capacity)]
@@ -1693,7 +1701,7 @@
   (spans compiler_ir_types.CompilerSourceSpans)
   (span-index CompilerBackendSourceSpanIndex)
   (func-diag compiler_diagnostic.CompilerDiagnostic)
-  (use-counts (Array i64))
+  (use-counts (__tl_dyn-array i64))
   (backend-state CompilerBackendState)
   (function-state CompilerBackendFunctionState))
 
@@ -1746,11 +1754,11 @@
   (Err String))
 
 (defstruct BackendStringSeq
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 (defstruct BackendSymbolSeq
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (len i64))
 
 ;; Mutable per-function values are grouped by representation.  Each hot update
@@ -1758,17 +1766,17 @@
 ;; opaque handle.  Empty reference-bearing sentinels live in the backend job's
 ;; owner arena and are restored before a function scratch arena is rewound.
 (defstruct CompilerBackendFunctionStateData
-  (i64s (Array i64))
-  (bools (Array bool))
-  (modes (Array CompilerBackendMode))
-  (strings (Array String))
-  (i64-arrays (Array (Array i64)))
-  (live-sets (Array compiler_liveness.CompilerLiveI64Set))
-  (emit-modes (Array CompilerBackendEmitInstrsMode))
-  (instr-seqs (Array compiler_ir_types.CompilerIrInstrSeq))
-  (phi-targets (Array BackendSymbolSeq))
-  (abort-targets (Array CompilerBackendTarget))
-  (empty-i64-array (Array i64))
+  (i64s (__tl_dyn-array i64))
+  (bools (__tl_dyn-array bool))
+  (modes (__tl_dyn-array CompilerBackendMode))
+  (strings (__tl_dyn-array String))
+  (i64-arrays (__tl_dyn-array (__tl_dyn-array i64)))
+  (live-sets (__tl_dyn-array compiler_liveness.CompilerLiveI64Set))
+  (emit-modes (__tl_dyn-array CompilerBackendEmitInstrsMode))
+  (instr-seqs (__tl_dyn-array compiler_ir_types.CompilerIrInstrSeq))
+  (phi-targets (__tl_dyn-array BackendSymbolSeq))
+  (abort-targets (__tl_dyn-array CompilerBackendTarget))
+  (empty-i64-array (__tl_dyn-array i64))
   (empty-live-set compiler_liveness.CompilerLiveI64Set)
   (empty-instr-seq compiler_ir_types.CompilerIrInstrSeq)
   (empty-symbol-seq BackendSymbolSeq))
@@ -1842,33 +1850,35 @@
 
 (define (compiler-backend-function-state-new) : CompilerBackendFunctionState
   (let
-    [empty-i64-array : (Array i64) (array.make-array i64 0)]
+    [empty-i64-array : (__tl_dyn-array i64) (array.make-array i64 0)]
     [empty-live-set : compiler_liveness.CompilerLiveI64Set
       (compiler_liveness.compiler-live-set-empty)]
     [empty-instr-seq : compiler_ir_types.CompilerIrInstrSeq
       (compiler-backend-empty-instr-seq)]
     [empty-symbol-seq : BackendSymbolSeq (BackendSymbolSeq empty-i64-array 0)]
-    [i64s : (Array i64)
+    [i64s : (__tl_dyn-array i64)
       (array.make-array i64 compiler-backend-function-i64-count)]
-    [bools : (Array bool)
+    [bools : (__tl_dyn-array bool)
       (array.make-array bool compiler-backend-function-bool-count)]
-    [modes : (Array CompilerBackendMode)
+    [modes : (__tl_dyn-array CompilerBackendMode)
       (array.make-array CompilerBackendMode 1)]
-    [strings : (Array String)
+    [strings : (__tl_dyn-array String)
       (array.make-array String compiler-backend-function-string-count)]
-    [i64-arrays : (Array (Array i64))
-      (array.make-array (Array i64) compiler-backend-function-i64-array-count)]
-    [live-sets : (Array compiler_liveness.CompilerLiveI64Set)
+    [i64-arrays : (__tl_dyn-array (__tl_dyn-array i64))
+      (array.make-array
+        (__tl_dyn-array i64)
+        compiler-backend-function-i64-array-count)]
+    [live-sets : (__tl_dyn-array compiler_liveness.CompilerLiveI64Set)
       (array.make-array
         compiler_liveness.CompilerLiveI64Set
         compiler-backend-function-live-set-count)]
-    [emit-modes : (Array CompilerBackendEmitInstrsMode)
+    [emit-modes : (__tl_dyn-array CompilerBackendEmitInstrsMode)
       (array.make-array CompilerBackendEmitInstrsMode 1)]
-    [instr-seqs : (Array compiler_ir_types.CompilerIrInstrSeq)
+    [instr-seqs : (__tl_dyn-array compiler_ir_types.CompilerIrInstrSeq)
       (array.make-array compiler_ir_types.CompilerIrInstrSeq 1)]
-    [phi-targets : (Array BackendSymbolSeq)
+    [phi-targets : (__tl_dyn-array BackendSymbolSeq)
       (array.make-array BackendSymbolSeq 1)]
-    [abort-targets : (Array CompilerBackendTarget)
+    [abort-targets : (__tl_dyn-array CompilerBackendTarget)
       (array.make-array CompilerBackendTarget 1)]
     [cell : (__tl_dyn-array CompilerBackendFunctionStateData)
       (array.make-array CompilerBackendFunctionStateData 1)]
@@ -2101,7 +2111,7 @@
 
 (define (compiler-backend-function-state-i64-array
   [state : CompilerBackendFunctionState]
-  [index : i64]) : (Array i64)
+  [index : i64]) : (__tl_dyn-array i64)
   (array-ref
     (struct-get (compiler-backend-function-state-data state) i64-arrays)
     index))
@@ -2109,7 +2119,7 @@
 (define (compiler-backend-function-state-set-i64-array!
   [state : CompilerBackendFunctionState]
   [index : i64]
-  [value : (Array i64)]) : unit
+  [value : (__tl_dyn-array i64)]) : unit
   (array-set!
     (struct-get (compiler-backend-function-state-data state) i64-arrays)
     index
@@ -2192,8 +2202,8 @@
   (let
     [data : CompilerBackendFunctionStateData
       (compiler-backend-function-state-data state)]
-    [i64s : (Array i64) (struct-get data i64s)]
-    [bools : (Array bool) (struct-get data bools)]
+    [i64s : (__tl_dyn-array i64) (struct-get data i64s)]
+    [bools : (__tl_dyn-array bool) (struct-get data bools)]
     [index : i64 0]
     (begin
       (while (< index (array-length i64s))
@@ -2261,7 +2271,7 @@
   (bits u64))
 
 (defstruct BackendFloatSeq
-  (slots (Array BackendFloatEntry))
+  (slots (__tl_dyn-array BackendFloatEntry))
   (len i64))
 
 ;; Capacity-doubling growth for the array-backed backend sequences (same shape as
@@ -2272,8 +2282,8 @@
     (* cap 2)))
 
 (define (compiler-backend-string-copy-range!
-  [dst : (&mut dst (Array String))]
-  [src : (& src (Array String))]
+  [dst : (&mut dst (__tl_dyn-array String))]
+  [src : (& src (__tl_dyn-array String))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -2289,7 +2299,7 @@
     (if (< (struct-get seq len) (array-length (struct-get seq slots)))
       unit
       (let
-        [bigger : (Array String)
+        [bigger : (__tl_dyn-array String)
           (array.make-array
             String
             (compiler-backend-seq-capacity
@@ -2307,8 +2317,8 @@
         (set! (struct-get seq len) (+ index 1))))))
 
 (define (compiler-backend-symbol-copy-range!
-  [dst : (&mut dst (Array i64))]
-  [src : (& src (Array i64))]
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [src : (& src (__tl_dyn-array i64))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -2324,7 +2334,7 @@
     (if (< (struct-get seq len) (array-length (struct-get seq slots)))
       unit
       (let
-        [bigger : (Array i64)
+        [bigger : (__tl_dyn-array i64)
           (array.make-array
             i64
             (compiler-backend-seq-capacity
@@ -2342,8 +2352,8 @@
         (set! (struct-get seq len) (+ index 1))))))
 
 (define (compiler-backend-float-copy-range!
-  [dst : (&mut dst (Array BackendFloatEntry))]
-  [src : (& src (Array BackendFloatEntry))]
+  [dst : (&mut dst (__tl_dyn-array BackendFloatEntry))]
+  [src : (& src (__tl_dyn-array BackendFloatEntry))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -2359,7 +2369,7 @@
     (if (< (struct-get seq len) (array-length (struct-get seq slots)))
       unit
       (let
-        [bigger : (Array BackendFloatEntry)
+        [bigger : (__tl_dyn-array BackendFloatEntry)
           (array.make-array
             BackendFloatEntry
             (compiler-backend-seq-capacity
@@ -2408,11 +2418,11 @@
   262144)
 (define compiler-backend-peephole-carry-safe-bytes-capacity : i64
   16777216)
-(define compiler-backend-peephole-carry-safe-offsets : (Array i64)
+(define compiler-backend-peephole-carry-safe-offsets : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define compiler-backend-peephole-carry-safe-lengths : (Array i64)
+(define compiler-backend-peephole-carry-safe-lengths : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define compiler-backend-peephole-carry-safe-bytes : (Array u8)
+(define compiler-backend-peephole-carry-safe-bytes : (__tl_dyn-array u8)
   (array.make-array u8 0))
 (define compiler-backend-peephole-carry-safe-bytes-count : i64
   0)
@@ -2894,7 +2904,7 @@
 ;;
 ;; the spans table), not the mangled assembly symbol.
 (define (compiler-backend-source-span-index-fill
-  [values : (Array compiler_ir_types.CompilerMaybeSourceSpan)]
+  [values : (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan)]
   [index : i64]) : unit
   (if (>= index (array-length values))
     unit
@@ -2905,7 +2915,7 @@
 (define (compiler-backend-source-span-index-add
   [entries : compiler_ir_types.CompilerSourceSpansEntryList]
   [map : backend_i64_i64_map.Map (:consume)]
-  [values : (Array compiler_ir_types.CompilerMaybeSourceSpan)]) : backend_i64_i64_map.Map
+  [values : (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan)]) : backend_i64_i64_map.Map
   (compiler-backend-source-span-index-add-array
     (struct-get entries slots)
     (- (struct-get entries len) 1)
@@ -2913,10 +2923,10 @@
     values))
 
 (define (compiler-backend-source-span-index-add-array
-  [slots : (Array compiler_ir_types.CompilerSourceSpansEntry)]
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerSourceSpansEntry)]
   [index : i64]
   [map : backend_i64_i64_map.Map (:consume)]
-  [values : (Array compiler_ir_types.CompilerMaybeSourceSpan)]) : backend_i64_i64_map.Map
+  [values : (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan)]) : backend_i64_i64_map.Map
   (if (< index 0)
     map
     (match (array-ref slots index)
@@ -2951,7 +2961,7 @@
     [(compiler_ir_types.CompilerSourceSpans.Spans entries _ _)
       (let
         [count : i64 (compiler_ir_types.compiler-source-spans-count spans)]
-        [values : (Array compiler_ir_types.CompilerMaybeSourceSpan)
+        [values : (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan)
           (array.make-array compiler_ir_types.CompilerMaybeSourceSpan count)]
         (begin
           (compiler-backend-source-span-index-fill values 0)
@@ -3084,7 +3094,7 @@
           " x "
           (compiler_ir_types.compiler-ir-type-name type-segment-bases elem-ty))))))
 
-(define compiler-backend-xmm-family-xmm : (Array String)
+(define compiler-backend-xmm-family-xmm : (__tl_dyn-array String)
   (make-array
     "%xmm0"
     "%xmm1"
@@ -3118,7 +3128,7 @@
     "%xmm29"
     "%xmm30"
     "%xmm31"))
-(define compiler-backend-xmm-family-ymm : (Array String)
+(define compiler-backend-xmm-family-ymm : (__tl_dyn-array String)
   (make-array
     "%ymm0"
     "%ymm1"
@@ -3152,7 +3162,7 @@
     "%ymm29"
     "%ymm30"
     "%ymm31"))
-(define compiler-backend-xmm-family-zmm : (Array String)
+(define compiler-backend-xmm-family-zmm : (__tl_dyn-array String)
   (make-array
     "%zmm0"
     "%zmm1"
@@ -3227,7 +3237,7 @@
 (define (compiler-backend-vector-home-to-zmm [home : i64]) : String
   (compiler-backend-xmm-family-register home "zmm"))
 
-(define (compiler-backend-vector-temp-candidates) : (Array i64)
+(define (compiler-backend-vector-temp-candidates) : (__tl_dyn-array i64)
   (make-array
     (compiler_abi.compiler-abi-vector-register-id 6)
     (compiler_abi.compiler-abi-vector-register-id 7)
@@ -3255,8 +3265,8 @@
     (string.eq reg exclude2)))
 
 (define (compiler-backend-vector-temp-zmm-iter
-  [starts : (Array i64)]
-  [ends : (Array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [vars : i64]
   [point : i64]
@@ -3264,7 +3274,7 @@
   [exclude1 : String]
   [exclude2 : String]
   [role : String]
-  [candidates : (Array i64)]
+  [candidates : (__tl_dyn-array i64)]
   [i : i64]) : ResultBackendReg
   (if (>= i (array-length candidates))
     (ResultBackendReg.Err
@@ -3863,7 +3873,7 @@
   (let
     [base-home : String
       (compiler-backend-simd-base-home backend-state assignments base)]
-    [addr-exclude : (Array String)
+    [addr-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-ops2
         backend-state
         assignments
@@ -3898,7 +3908,7 @@
         (let
           [index-home : String
             (compiler-backend-simd-index-home backend-state assignments index)]
-          [index-exclude : (Array String)
+          [index-exclude : (__tl_dyn-array String)
             (compiler-backend-scavenge-exclude-append addr-exclude 7 base-reg)]
           [index-reg : String
             (if (string.eq index-home "")
@@ -4082,7 +4092,7 @@
     [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
     [(CompilerBackendMaybeAsm.No)
       (let
-        [no-exclude : (Array String) (array.make-array String 0)]
+        [no-exclude : (__tl_dyn-array String) (array.make-array String 0)]
         [gp-reg : String
           (if (> (string.string-length planned-gp) 0)
             planned-gp
@@ -5120,7 +5130,7 @@
     [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
     [(CompilerBackendMaybeAsm.No)
       (let
-        [no-exclude : (Array String) (array.make-array String 0)]
+        [no-exclude : (__tl_dyn-array String) (array.make-array String 0)]
         [gp-reg : String
           (if (> (string.string-length planned-gp) 0)
             planned-gp
@@ -7671,7 +7681,7 @@
 
 (define (compiler-backend-vector-load-binop-foldable?
   [type-segment-bases : i64]
-  [use-counts : (Array i64)]
+  [use-counts : (__tl_dyn-array i64)]
   [load-dst : i64]
   [load-lanes : i64]
   [load-elem-ty : compiler_ast_types.AstType]
@@ -8069,7 +8079,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [work0 : String (compiler-backend-vector-prefix-work work0-xmm "ymm")]
-    [exclude : (Array String)
+    [exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-ops2
         backend-state
         assignments
@@ -8145,7 +8155,7 @@
         (ResultCompilerBackend.Ok (str_cat.str-cat asm work0 "\n"))]
       [(CompilerBackendMaybeAsm.No)
         (let
-          [exclude : (Array String)
+          [exclude : (__tl_dyn-array String)
             (compiler-backend-scavenge-exclude-ops2
               backend-state
               assignments
@@ -8219,7 +8229,7 @@
         (match elem-ty
           [(compiler_ast_types.AstType.Bool) (compiler_ast_types.AstType.I8)]
           [_ elem-ty])]
-      [no-exclude : (Array String) (array.make-array String 0)]
+      [no-exclude : (__tl_dyn-array String) (array.make-array String 0)]
       [dst-scratch-xmm : String
         (if (string.eq planned-xmm "")
           (compiler-backend-scavenge-xmm-reg
@@ -8642,7 +8652,7 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [exclude : (Array String)
+    [exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-ops2
         backend-state
         assignments
@@ -8656,7 +8666,7 @@
         7
         "%r10"
         backend-state)]
-    [bits-exclude : (Array String)
+    [bits-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-append exclude 7 carry-gp)]
     [bits-gp : String
       (compiler-backend-planned-or-scavenge-reg
@@ -8750,7 +8760,7 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [no-exclude : (Array String) (array.make-array String 0)]
+    [no-exclude : (__tl_dyn-array String) (array.make-array String 0)]
     [dst-scratch-xmm : String
       (if (string.eq planned-xmm "")
         (compiler-backend-scavenge-xmm-reg
@@ -8916,13 +8926,13 @@
         (compiler-backend-state-function-state backend-state))]
     [needs-xmm-work : bool
       (or avx2? (not (compiler-backend-vector-prefix-bool-op? op)))]
-    [operand-exclude : (Array String)
+    [operand-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-ops2
         backend-state
         assignments
         src
         carry)]
-    [dst-exclude : (Array String)
+    [dst-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-append operand-exclude 7 planned-xmm)]
     [work0 : String
       (if needs-xmm-work
@@ -8934,7 +8944,7 @@
           "%xmm0"
           backend-state)
         "%xmm0")]
-    [work1-exclude : (Array String)
+    [work1-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-append dst-exclude 8 work0)]
     [work1 : String
       (if needs-xmm-work
@@ -9121,7 +9131,7 @@
         backend-state)]
     [index-home : String
       (compiler-backend-simd-index-home backend-state assignments index)]
-    [index-exclude : (Array String)
+    [index-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-ops2
         backend-state
         assignments
@@ -9133,7 +9143,7 @@
         (not (string.eq index-home count-reg)))
         index-home
         (compiler-backend-scavenge-reg-here index-exclude 7 "%r8" backend-state))]
-    [mask-exclude : (Array String)
+    [mask-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-append index-exclude 7 index-reg)]
     [mask-reg : String
       (compiler-backend-scavenge-reg-here mask-exclude 8 "%r9" backend-state)]
@@ -12512,7 +12522,7 @@
 (define (compiler-backend-emit-function-entry-fpo-push
   [symbol : String]
   [frame : i64]
-  [push-regs : (Array String)]
+  [push-regs : (__tl_dyn-array String)]
   [push-count : i64]) : String
   (let
     [sub-s : i64 (compiler-backend-rsp-rebase-push-sub frame push-count)]
@@ -12546,7 +12556,7 @@
   [frame : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [vars : i64]
-  [push-regs : (Array String)]
+  [push-regs : (__tl_dyn-array String)]
   [push-count : i64]) : String
   (let
     [sub-s : i64 (compiler-backend-rsp-rebase-push-sub frame push-count)]
@@ -12995,7 +13005,7 @@
   (let
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
-    [sources : (Array i64)
+    [sources : (__tl_dyn-array i64)
       (compiler-backend-function-state-i64-array
         function-state
         compiler-backend-function-i64-array-addr-of-forwarding-src)]
@@ -13306,7 +13316,7 @@
   0)
 (define compiler-backend-emergency-used-count : i64
   0)
-(define compiler-backend-emergency-regs : (Array i64)
+(define compiler-backend-emergency-regs : (__tl_dyn-array i64)
   (make-array i64 16))
 (cfg
   scavenge-census
@@ -14172,13 +14182,13 @@
         [_set-owner : unit
           (unsafe
             (arena.tl_arena_set owner))]
-        [slot-values : (Array String)
+        [slot-values : (__tl_dyn-array String)
           (array.make-array String compiler-backend-slot-cache-capacity)]
-        [slot-epochs : (Array i64)
+        [slot-epochs : (__tl_dyn-array i64)
           (array.make-array i64 compiler-backend-slot-cache-capacity)]
-        [frame-values : (Array String)
+        [frame-values : (__tl_dyn-array String)
           (array.make-array String compiler-backend-slot-cache-capacity)]
-        [frame-epochs : (Array i64)
+        [frame-epochs : (__tl_dyn-array i64)
           (array.make-array i64 compiler-backend-slot-cache-capacity)]
         (begin
           (set! (struct-get data slot-cache-values) slot-values)
@@ -14204,8 +14214,8 @@
         [_set-owner : unit
           (unsafe
             (arena.tl_arena_set owner))]
-        [values : (Array String) (array.make-array String 8192)]
-        [epochs : (Array i64) (array.make-array i64 8192)]
+        [values : (__tl_dyn-array String) (array.make-array String 8192)]
+        [epochs : (__tl_dyn-array i64) (array.make-array i64 8192)]
         (begin
           (set! (struct-get data immediate-cache-values) values)
           (set! (struct-get data immediate-cache-epochs) epochs)
@@ -14239,8 +14249,8 @@
         (let
           [data : CompilerBackendStateData (compiler-backend-state-data state)]
           [epoch : i64 (struct-get data slot-cache-epoch)]
-          [epochs : (Array i64) (struct-get data slot-cache-epochs)]
-          [values : (Array String) (struct-get data slot-cache-values)]
+          [epochs : (__tl_dyn-array i64) (struct-get data slot-cache-epochs)]
+          [values : (__tl_dyn-array String) (struct-get data slot-cache-values)]
           (if (= (array-ref epochs var-id) epoch)
             (array-ref values var-id)
             (let
@@ -14283,8 +14293,9 @@
               [data : CompilerBackendStateData
                 (compiler-backend-state-data state)]
               [epoch : i64 (struct-get data slot-cache-epoch)]
-              [epochs : (Array i64) (struct-get data frame-offset-cache-epochs)]
-              [values : (Array String)
+              [epochs : (__tl_dyn-array i64)
+                (struct-get data frame-offset-cache-epochs)]
+              [values : (__tl_dyn-array String)
                 (struct-get data frame-offset-cache-values)]
               (if (= (array-ref epochs idx) epoch)
                 (array-ref values idx)
@@ -14317,8 +14328,9 @@
         [idx : i64 (+ n 4096)]
         [data : CompilerBackendStateData (compiler-backend-state-data state)]
         [epoch : i64 (struct-get data slot-cache-epoch)]
-        [epochs : (Array i64) (struct-get data immediate-cache-epochs)]
-        [values : (Array String) (struct-get data immediate-cache-values)]
+        [epochs : (__tl_dyn-array i64) (struct-get data immediate-cache-epochs)]
+        [values : (__tl_dyn-array String)
+          (struct-get data immediate-cache-values)]
         (if (= (array-ref epochs idx) epoch)
           (array-ref values idx)
           (let
@@ -16559,7 +16571,7 @@
         elem-ty
         backend-state)
       (let
-        [no-exclude : (Array String) (make-array String 0)]
+        [no-exclude : (__tl_dyn-array String) (make-array String 0)]
         [gp-reg : String
           (compiler-backend-scavenge-reg dst no-exclude 0 "%r8" backend-state)]
         (str_cat.str-cat
@@ -17419,7 +17431,7 @@
   [src : String]
   [dst : String]
   [sse? : bool]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (or
@@ -17592,7 +17604,7 @@
           (if (compiler-backend-pack-word-dst-register? dst1)
             dst1
             "")]
-        [scratch0-exclude : (Array String)
+        [scratch0-exclude : (__tl_dyn-array String)
           (compiler-backend-three-exclude src1-home dst0-reg dst1-reg)]
         [scratch0 : String
           (if (string.eq planned0 "")
@@ -17609,7 +17621,7 @@
                 "%r8"
                 backend-state))
             planned0)]
-        [scratch1-exclude : (Array String)
+        [scratch1-exclude : (__tl_dyn-array String)
           (compiler-backend-three-exclude scratch0 dst0-reg dst1-reg)]
         [scratch1 : String
           (if (string.eq planned1 "")
@@ -17939,7 +17951,8 @@
                       dst-home
                       is-float)
                     (let
-                      [no-exclude : (Array String) (array.make-array String 0)]
+                      [no-exclude : (__tl_dyn-array String)
+                        (array.make-array String 0)]
                       [scratch : String
                         (if (string.eq planned "")
                           (if is-float
@@ -18374,10 +18387,11 @@
             ""
             "backend: register-group load requires var operand")))]))
 
-(define (compiler-backend-group-stack-exclude [operand : String]) : (Array
+(define (compiler-backend-group-stack-exclude [operand : String]) : (__tl_dyn-array
     String)
   (let
-    [base : (Array String) (compiler-backend-c-abi-stage-exclude-with "%r11")]
+    [base : (__tl_dyn-array String)
+      (compiler-backend-c-abi-stage-exclude-with "%r11")]
     (if (compiler-backend-peephole-register-operand? operand)
       (compiler-backend-scavenge-exclude-append
         base
@@ -18634,7 +18648,7 @@
   [vars : i64]
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-group-word-operand-with-backend-state
@@ -18672,7 +18686,7 @@
   [vars : i64]
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
@@ -18892,7 +18906,7 @@
     [left : i64 (compiler_ir_types.compiler-ir-test-symbol "left")]
     [right : i64 (compiler_ir_types.compiler-ir-test-symbol "right")]
     [ids : backend_i64_i64_map.Map (backend_i64_i64_map.with-capacity 16)]
-    [values : (Array compiler_ast_types.AstType)
+    [values : (__tl_dyn-array compiler_ast_types.AstType)
       (array.make-array compiler_ast_types.AstType 3)]
     (begin
       (array-set! values 0 (compiler_ast_types.AstType.I64))
@@ -18944,7 +18958,7 @@
 (define (compiler-backend-global-types-fill
   [globals : compiler_ir_types.CompilerIrGlobalList]
   [ids : backend_i64_i64_map.Map (:consume)]
-  [values : (Array compiler_ast_types.AstType)]
+  [values : (__tl_dyn-array compiler_ast_types.AstType)]
   [index : i64]) : backend_i64_i64_map.Map
   (match globals
     [(compiler_ir_types.CompilerIrGlobalList.Nil) ids]
@@ -18973,7 +18987,7 @@
   [globals : compiler_ir_types.CompilerIrGlobalList]) : CompilerBackendGlobalTypeTable
   (let
     [count : i64 (compiler-backend-global-type-count globals)]
-    [values : (Array compiler_ast_types.AstType)
+    [values : (__tl_dyn-array compiler_ast_types.AstType)
       (array.make-array compiler_ast_types.AstType count)]
     (if (= count 0)
       CompilerBackendGlobalTypeTable.Empty
@@ -19349,7 +19363,8 @@
       ;; The two guard temps (INT_MIN, -1) are transient (dead before the idiv).
       ;; Scavenge them instead of hardcoding guard temps, excluding the dividend
       ;; (%rax), %rdx, the divisor, and each other.
-      [min-excl : (Array String) (make-array "%rax" "%rdx" divisor-reg)]
+      [min-excl : (__tl_dyn-array String)
+        (make-array "%rax" "%rdx" divisor-reg)]
       [min-full : String
         (compiler-backend-planned-or-scavenge-reg-here
           planned-min
@@ -19357,7 +19372,7 @@
           3
           "%r10"
           backend-state)]
-      [neg-excl : (Array String)
+      [neg-excl : (__tl_dyn-array String)
         (make-array "%rax" "%rdx" divisor-reg min-full)]
       [neg-full : String
         (compiler-backend-planned-or-scavenge-reg-here
@@ -19739,33 +19754,38 @@
 ;; Synthetic occupancy entries for the scavenge context: count + per-entry
 ;; register / start point / end point.
 (defenum CompilerBackendConstHoistSynth
-  (CompilerBackendConstHoistSynth i64 (Array i64) (Array i64) (Array i64)))
+  (CompilerBackendConstHoistSynth
+    i64
+    (__tl_dyn-array i64)
+    (__tl_dyn-array i64)
+    (__tl_dyn-array i64)))
 
 (define compiler-backend-const-hoist-site-count : i64
   0)
-(define compiler-backend-const-hoist-site-points : (Array i64)
+(define compiler-backend-const-hoist-site-points : (__tl_dyn-array i64)
   (make-array i64 1))
-(define compiler-backend-const-hoist-site-regs : (Array i64)
+(define compiler-backend-const-hoist-site-regs : (__tl_dyn-array i64)
   (make-array i64 1))
-(define compiler-backend-const-hoist-site-frame-operands : (Array String)
+(define compiler-backend-const-hoist-site-frame-operands : (__tl_dyn-array
+    String)
   (make-array String 1))
-(define compiler-backend-const-hoist-site-values : (Array i64)
+(define compiler-backend-const-hoist-site-values : (__tl_dyn-array i64)
   (make-array i64 1))
-(define compiler-backend-const-hoist-site-wide : (Array bool)
+(define compiler-backend-const-hoist-site-wide : (__tl_dyn-array bool)
   (make-array bool 1))
-(define compiler-backend-const-hoist-site-frame : (Array bool)
+(define compiler-backend-const-hoist-site-frame : (__tl_dyn-array bool)
   (make-array bool 1))
 (define compiler-backend-const-hoist-inject-count : i64
   0)
-(define compiler-backend-const-hoist-inject-labels : (Array i64)
+(define compiler-backend-const-hoist-inject-labels : (__tl_dyn-array i64)
   (make-array i64 1))
-(define compiler-backend-const-hoist-inject-texts : (Array String)
+(define compiler-backend-const-hoist-inject-texts : (__tl_dyn-array String)
   (make-array String 1))
 
 ;; true = inject BEFORE the label (the header-is-entry-block case: the load
 ;; goes at prologue end, so back edges re-enter after it); false = after the
 ;; label (a dedicated preheader block).
-(define compiler-backend-const-hoist-inject-pres : (Array bool)
+(define compiler-backend-const-hoist-inject-pres : (__tl_dyn-array bool)
   (make-array bool 1))
 
 ;; A frame-home magic is initialized through %rbx. The same stable, per-function
@@ -20084,7 +20104,7 @@
             le)])]))
 
 (define (compiler-backend-const-hoist-side-entry?
-  [orig : (Array compiler_ir_types.CompilerIrBlock)]
+  [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
   [ids : backend_label_i64_map.Map]
   [h : i64]
   [le : i64]) : bool
@@ -20148,11 +20168,11 @@
 ;; the count; the indices themselves land in `out`, and `lo` drops to the
 ;; smallest index seen (progress for the chain walk below).
 (define (compiler-backend-const-hoist-collect-outside-preds
-  [orig : (Array compiler_ir_types.CompilerIrBlock)]
+  [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
   [ids : backend_label_i64_map.Map]
   [lo : i64]
   [le : i64]
-  [out : (Array i64)]) : i64
+  [out : (__tl_dyn-array i64)]) : i64
   (let
     [n : i64 (array-length orig)]
     [p : i64 0]
@@ -20182,8 +20202,8 @@
 
 ;; True when every collected pred block is call-free.
 (define (compiler-backend-const-hoist-all-call-free?
-  [orig : (Array compiler_ir_types.CompilerIrBlock)]
-  [preds : (Array i64)]
+  [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
+  [preds : (__tl_dyn-array i64)]
   [count : i64]) : bool
   (let
     [i : i64 0]
@@ -20210,12 +20230,12 @@
 ;; exists. Side-entry freedom over the resolved span is re-checked by the
 ;; caller with h := the resolved index.
 (define (compiler-backend-const-hoist-resolve-inject
-  [orig : (Array compiler_ir_types.CompilerIrBlock)]
+  [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
   [ids : backend_label_i64_map.Map]
   [h : i64]
   [le : i64]) : i64
   (let
-    [preds : (Array i64) (make-array i64 17)]
+    [preds : (__tl_dyn-array i64) (make-array i64 17)]
     [lo : i64 h]
     [depth : i64 0]
     [found : i64 (- 0 1)]
@@ -20261,7 +20281,7 @@
       found)))
 
 (define (compiler-backend-const-hoist-region-leaf?
-  [orig : (Array compiler_ir_types.CompilerIrBlock)]
+  [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
   [h : i64]
   [le : i64]) : bool
   (let
@@ -20299,7 +20319,7 @@
 
 ;; Is `point` already recorded as a hoisted site?
 (define (compiler-backend-const-hoist-point-recorded?
-  [points : (Array i64)]
+  [points : (__tl_dyn-array i64)]
   [count : i64]
   [point : i64]) : bool
   (let
@@ -20318,8 +20338,8 @@
 ;; are identified by their first occurrence, which is also the tie-break rank
 ;; below, so this is the one place the dedup key is spelled out.
 (define (compiler-backend-const-hoist-key-first?
-  [values : (Array i64)]
-  [wide : (Array bool)]
+  [values : (__tl_dyn-array i64)]
+  [wide : (__tl_dyn-array bool)]
   [i : i64]) : bool
   (let
     [j : i64 0]
@@ -20338,8 +20358,8 @@
 ;; How many entries in [0, count) share entry `i`'s (value, wide?) key -- the
 ;; STATIC site count of that constant inside this region.
 (define (compiler-backend-const-hoist-key-sites
-  [values : (Array i64)]
-  [wide : (Array bool)]
+  [values : (__tl_dyn-array i64)]
+  [wide : (__tl_dyn-array bool)]
   [count : i64]
   [i : i64]) : i64
   (let
@@ -20377,11 +20397,11 @@
 ;; order over the region's keys with no map iteration anywhere, which keeps the
 ;; emitted plan reproducible.
 (define (compiler-backend-const-hoist-award-order!
-  [values : (Array i64)]
-  [wide : (Array bool)]
+  [values : (__tl_dyn-array i64)]
+  [wide : (__tl_dyn-array bool)]
   [count : i64]
-  [order : (Array i64)]
-  [tally : (Array i64)]) : i64
+  [order : (__tl_dyn-array i64)]
+  [tally : (__tl_dyn-array i64)]) : i64
   (let
     [distinct : i64 0]
     [i : i64 0]
@@ -20420,9 +20440,9 @@
 ;; hoist whose synthetic span overlaps [lo, hi].
 (define (compiler-backend-const-hoist-free-candidates
   [cands : compiler_regalloc.CompilerRegIdSeq]
-  [synth-regs : (Array i64)]
-  [synth-lo : (Array i64)]
-  [synth-hi : (Array i64)]
+  [synth-regs : (__tl_dyn-array i64)]
+  [synth-lo : (__tl_dyn-array i64)]
+  [synth-hi : (__tl_dyn-array i64)]
   [synth-count : i64]
   [lo : i64]
   [hi : i64]) : compiler_regalloc.CompilerRegIdSeq
@@ -20459,7 +20479,7 @@
 ;; Cheap prescan: any constant-home candidate anywhere in the function?
 (define (compiler-backend-const-hoist-any-constant?
   [type-segment-bases : i64]
-  [orig : (Array compiler_ir_types.CompilerIrBlock)]) : bool
+  [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]) : bool
   (let
     [n : i64 (array-length orig)]
     [b : i64 0]
@@ -20470,7 +20490,7 @@
           (match (array-ref orig b)
             [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
               (let
-                [slots : (Array compiler_ir_types.CompilerIrInstr)
+                [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
                   (struct-get instrs slots)]
                 [count : i64 (struct-get instrs len)]
                 [k : i64 0]
@@ -20509,7 +20529,7 @@
     (if (<= count 1)
       empty
       (let
-        [orig : (Array compiler_ir_types.CompilerIrBlock)
+        [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
           (match dense-blocks
             [(compiler_ir_types.CompilerIrBlockList.Array seq)
               (struct-get seq slots)]
@@ -20524,11 +20544,11 @@
                 (backend_label_i64_map.with-capacity
                   (compiler_regalloc.compiler-reg-bits-map-capacity count))
                 0)]
-            [loop-ends : (Array i64)
+            [loop-ends : (__tl_dyn-array i64)
               (compiler_regalloc.compiler-reg-preheader-loop-ends
                 dense-blocks
                 count)]
-            [points : (Array i64)
+            [points : (__tl_dyn-array i64)
               (compiler_regalloc.compiler-reg-loop-phi-mb-block-points orig)]
             [interval-index : compiler_regalloc.CompilerRegIntervalIndex
               (compiler_regalloc.compiler-reg-interval-index-build
@@ -20536,32 +20556,34 @@
                 vars)]
             [site-cap : i64 (compiler-backend-const-hoist-site-cap)]
             [synth-cap : i64 (compiler-backend-const-hoist-synth-cap)]
-            [site-points : (Array i64) (make-array i64 site-cap)]
-            [site-regs : (Array i64) (make-array i64 site-cap)]
-            [site-frame-operands : (Array String) (make-array String site-cap)]
-            [site-values : (Array i64) (make-array i64 site-cap)]
-            [site-wide : (Array bool) (make-array bool site-cap)]
-            [site-frame : (Array bool) (make-array bool site-cap)]
+            [site-points : (__tl_dyn-array i64) (make-array i64 site-cap)]
+            [site-regs : (__tl_dyn-array i64) (make-array i64 site-cap)]
+            [site-frame-operands : (__tl_dyn-array String)
+              (make-array String site-cap)]
+            [site-values : (__tl_dyn-array i64) (make-array i64 site-cap)]
+            [site-wide : (__tl_dyn-array bool) (make-array bool site-cap)]
+            [site-frame : (__tl_dyn-array bool) (make-array bool site-cap)]
             [site-count : i64 0]
-            [inject-labels : (Array i64) (make-array i64 synth-cap)]
-            [inject-texts : (Array String) (make-array String synth-cap)]
-            [inject-pres : (Array bool) (make-array bool synth-cap)]
+            [inject-labels : (__tl_dyn-array i64) (make-array i64 synth-cap)]
+            [inject-texts : (__tl_dyn-array String)
+              (make-array String synth-cap)]
+            [inject-pres : (__tl_dyn-array bool) (make-array bool synth-cap)]
             [inject-count : i64 0]
-            [synth-regs : (Array i64) (make-array i64 synth-cap)]
-            [synth-lo : (Array i64) (make-array i64 synth-cap)]
-            [synth-hi : (Array i64) (make-array i64 synth-cap)]
+            [synth-regs : (__tl_dyn-array i64) (make-array i64 synth-cap)]
+            [synth-lo : (__tl_dyn-array i64) (make-array i64 synth-cap)]
+            [synth-hi : (__tl_dyn-array i64) (make-array i64 synth-cap)]
             [synth-count : i64 0]
             [frame-count : i64 0]
             ;; per-loop scratch: candidate site points/magics (before register
             ;; assignment), sized by the global cap
-            [loop-points : (Array i64) (make-array i64 site-cap)]
-            [loop-values : (Array i64) (make-array i64 site-cap)]
-            [loop-wide : (Array bool) (make-array bool site-cap)]
+            [loop-points : (__tl_dyn-array i64) (make-array i64 site-cap)]
+            [loop-values : (__tl_dyn-array i64) (make-array i64 site-cap)]
+            [loop-wide : (__tl_dyn-array bool) (make-array bool site-cap)]
             ;; per-loop scratch: the award sequence over the region's DISTINCT
             ;; keys (first-occurrence index + static site count), rebuilt for
             ;; every region by const-hoist-award-order!.
-            [loop-order : (Array i64) (make-array i64 site-cap)]
-            [loop-tally : (Array i64) (make-array i64 site-cap)]
+            [loop-order : (__tl_dyn-array i64) (make-array i64 site-cap)]
+            [loop-tally : (__tl_dyn-array i64) (make-array i64 site-cap)]
             [h : i64 0]
             (begin
               (while (< h count)
@@ -20658,7 +20680,7 @@
                                           _
                                           instrs)
                                         (let
-                                          [slots : (Array
+                                          [slots : (__tl_dyn-array
                                             compiler_ir_types.CompilerIrInstr)
                                             (struct-get instrs slots)]
                                           [icount : i64 (struct-get instrs len)]
@@ -20912,7 +20934,7 @@
     [(CompilerBackendConstHoistSynth n _ _ _) (+ vars n)]))
 
 (define (compiler-backend-const-hoist-extend-assignments-from
-  [regs : (Array i64)]
+  [regs : (__tl_dyn-array i64)]
   [n : i64]
   [i : i64]
   [vars : i64]
@@ -20947,8 +20969,8 @@
         assignments)]))
 
 (define (compiler-backend-const-hoist-extend-intervals-from
-  [lo : (Array i64)]
-  [hi : (Array i64)]
+  [lo : (__tl_dyn-array i64)]
+  [hi : (__tl_dyn-array i64)]
   [n : i64]
   [i : i64]
   [vars : i64]
@@ -20993,7 +21015,7 @@
 ;; synthetic scavenge-occupancy suffix; instruction lookup continues to use the
 ;; stable point/ordinal map in CompilerRegScratchPlan, including failed slots.
 (define (compiler-backend-scratch-plan-success-count-from
-  [items : (Array compiler_regalloc.CompilerRegScratchAssignment)]
+  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
   [index : i64]
   [count : i64]) : i64
   (if (>= index (array-length items))
@@ -21012,7 +21034,7 @@
   (compiler-backend-scratch-plan-success-count-from (struct-get plan items) 0 0))
 
 (define (compiler-backend-scratch-plan-occupancy-fill-range!
-  [masks : (Array i64)]
+  [masks : (__tl_dyn-array i64)]
   [lo : i64]
   [hi : i64]
   [reg : i64]) : unit
@@ -21030,9 +21052,9 @@
         (set! i (+ i 1))))))
 
 (define (compiler-backend-scratch-plan-occupancy-fill!
-  [items : (Array compiler_regalloc.CompilerRegScratchAssignment)]
+  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
   [index : i64]
-  [masks : (Array i64)]) : unit
+  [masks : (__tl_dyn-array i64)]) : unit
   (if (>= index (array-length items))
     unit
     (let
@@ -21054,9 +21076,9 @@
 
 (define (compiler-backend-scratch-plan-occupancy-build
   [plan : compiler_regalloc.CompilerRegScratchPlan]
-  [instruction-count : i64]) : (Array i64)
+  [instruction-count : i64]) : (__tl_dyn-array i64)
   (let
-    [masks : (Array i64) (array.make-array i64 instruction-count)]
+    [masks : (__tl_dyn-array i64) (array.make-array i64 instruction-count)]
     (begin
       (compiler-backend-scratch-plan-occupancy-fill!
         (struct-get plan items)
@@ -21070,7 +21092,7 @@
   (+ vars (compiler-backend-scratch-plan-success-count plan)))
 
 (define (compiler-backend-scratch-plan-extend-assignments-from
-  [items : (Array compiler_regalloc.CompilerRegScratchAssignment)]
+  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
   [index : i64]
   [success : i64]
   [vars : i64]
@@ -21111,7 +21133,7 @@
     assignments))
 
 (define (compiler-backend-scratch-plan-extend-intervals-from
-  [items : (Array compiler_regalloc.CompilerRegScratchAssignment)]
+  [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)]
   [index : i64]
   [success : i64]
   [vars : i64]
@@ -21191,7 +21213,7 @@
 (define (compiler-backend-planned-or-scavenge-reg
   [planned : String]
   [dst : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
@@ -21201,7 +21223,7 @@
 
 (define (compiler-backend-planned-or-scavenge-reg-here
   [planned : String]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
@@ -21216,7 +21238,7 @@
 (define (compiler-backend-planned-or-scavenge-xmm-reg
   [planned : String]
   [dst : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
@@ -21231,7 +21253,7 @@
 
 (define (compiler-backend-scavenge-divmod-src-reg
   [dst : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
   (begin
@@ -21249,7 +21271,7 @@
         reg))))
 
 (define (compiler-backend-scavenge-divmod-src-reg-here
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
   (begin
@@ -21268,7 +21290,7 @@
 (define (compiler-backend-planned-or-scavenge-divmod-src-reg
   [planned : String]
   [dst : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq planned "")
@@ -21281,7 +21303,7 @@
 
 (define (compiler-backend-planned-or-scavenge-divmod-src-reg-here
   [planned : String]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
   (if (string.eq planned "")
@@ -22231,7 +22253,7 @@
               "%r8"
               backend-state)
             "")]
-        [src-excl : (Array String)
+        [src-excl : (__tl_dyn-array String)
           (compiler-backend-divmod-dividend-exclude magic)]
         [src : String
           (compiler-backend-planned-or-scavenge-divmod-src-reg
@@ -22257,7 +22279,7 @@
               (str_cat.str-cat "    movq %rax, " src "\n" asm))]
           [(CompilerBackendMaybeAsm.No) (CompilerBackendMaybeAsm.No)]))
       (let
-        [op-excl : (Array String)
+        [op-excl : (__tl_dyn-array String)
           (compiler-backend-binop-scavenge-exclude-for-op op)]
         [magic : String
           (compiler-backend-planned-or-scavenge-reg
@@ -22271,7 +22293,7 @@
               6)
             "%r8"
             backend-state)]
-        [dividend-excl : (Array String)
+        [dividend-excl : (__tl_dyn-array String)
           (compiler-backend-divmod-dividend-exclude magic)]
         [dividend : String
           (compiler-backend-planned-or-scavenge-reg
@@ -22288,7 +22310,7 @@
               6)
             "%r10"
             backend-state)]
-        [mask-excl : (Array String)
+        [mask-excl : (__tl_dyn-array String)
           (compiler-backend-divmod-mask-exclude magic dividend)]
         [mask : String
           (compiler-backend-planned-or-scavenge-reg
@@ -23468,7 +23490,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [rhs-reg : String (compiler-backend-float-value-register assignments rhs)]
-    [exclude : (Array String)
+    [exclude : (__tl_dyn-array String)
       (if (string.eq rhs-reg "")
         (array.make-array String 0)
         (compiler-backend-one-exclude rhs-reg))]
@@ -23603,7 +23625,7 @@
   (if (compiler-backend-compare-op? op)
     (let
       [rhs-reg : String (compiler-backend-float-value-register assignments rhs)]
-      [xmm-exclude : (Array String)
+      [xmm-exclude : (__tl_dyn-array String)
         (if (string.eq rhs-reg "")
           (make-array String 0)
           (compiler-backend-one-exclude rhs-reg))]
@@ -23648,7 +23670,7 @@
           "")]
       (if (string.eq rhs-operand "")
         (let
-          [rhs-temp-exclude : (Array String)
+          [rhs-temp-exclude : (__tl_dyn-array String)
             (compiler-backend-one-exclude lhs-reg)]
           [rhs-temp : String
             (compiler-backend-planned-or-scavenge-xmm-reg
@@ -23710,7 +23732,7 @@
       (let
         [rhs-reg : String
           (compiler-backend-float-value-register assignments rhs)]
-        [exclude : (Array String)
+        [exclude : (__tl_dyn-array String)
           (if (string.eq rhs-reg "")
             (make-array String 0)
             (compiler-backend-one-exclude rhs-reg))]
@@ -23735,7 +23757,7 @@
             backend-state)]
         (if (string.eq rhs-operand "")
           (let
-            [rhs-temp-exclude : (Array String)
+            [rhs-temp-exclude : (__tl_dyn-array String)
               (compiler-backend-one-exclude result-reg)]
             [rhs-temp : String
               (compiler-backend-planned-or-scavenge-xmm-reg
@@ -24360,7 +24382,7 @@
         rhs
         operand-ty
         backend-state)]
-    [exclude : (Array String)
+    [exclude : (__tl_dyn-array String)
       (if (string.eq rhs-reg "")
         (compiler-backend-binop-scavenge-exclude-for-op op)
         (compiler-backend-scavenge-exclude-with rhs-reg))]
@@ -24425,7 +24447,7 @@
         [point : i64
           (compiler-backend-function-state-emission-point
             (compiler-backend-state-function-state backend-state))]
-        [ends : (Array i64)
+        [ends : (__tl_dyn-array i64)
           (compiler-backend-global-shared-view
             compiler-backend-scavenge-ctx-ends)]
         (and
@@ -24596,7 +24618,8 @@
         (not (string.eq dst-home magic))
         (not (string.eq dst-home hoist-reg))
         (not (and lhs-live-after (string.eq dst-home lhs-home))))]
-    [src-excl : (Array String) (compiler-backend-divmod-dividend-exclude magic)]
+    [src-excl : (__tl_dyn-array String)
+      (compiler-backend-divmod-dividend-exclude magic)]
     [src : String
       (cond
         [direct-rax-src? "%rax"]
@@ -25950,7 +25973,7 @@
       (let
         [lhs-reg : String
           (compiler-backend-float-value-register assignments lhs)]
-        [exclude : (Array String)
+        [exclude : (__tl_dyn-array String)
           (if (string.eq lhs-reg "")
             (make-array String 0)
             (compiler-backend-one-exclude lhs-reg))]
@@ -26031,7 +26054,7 @@
         (let
           [rhs-reg : String
             (compiler-backend-float-value-register assignments rhs)]
-          [xmm-exclude : (Array String)
+          [xmm-exclude : (__tl_dyn-array String)
             (if (string.eq rhs-reg "")
               (make-array String 0)
               (compiler-backend-one-exclude rhs-reg))]
@@ -26056,9 +26079,9 @@
               backend-state)]
           (if (string.eq rhs-operand "")
             (let
-              [rhs-temp-exclude0 : (Array String)
+              [rhs-temp-exclude0 : (__tl_dyn-array String)
                 (compiler-backend-one-exclude lhs-temp)]
-              [rhs-temp-exclude : (Array String)
+              [rhs-temp-exclude : (__tl_dyn-array String)
                 (if (string.eq lhs-home "")
                   rhs-temp-exclude0
                   (compiler-backend-scavenge-exclude-append
@@ -26140,7 +26163,7 @@
   (let
     [rhs-home : String
       (compiler-backend-value-register-home backend-state assignments rhs)]
-    [exclude : (Array String)
+    [exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-append
         (compiler-backend-scavenge-exclude-append
           (compiler-backend-binop-scavenge-exclude-for-op op)
@@ -26768,7 +26791,7 @@
           [_ ""]))]
     [_ ""]))
 
-(define (compiler-backend-compare-rhs-scavenge-exclude [lhs-reg : String]) : (Array
+(define (compiler-backend-compare-rhs-scavenge-exclude [lhs-reg : String]) : (__tl_dyn-array
     String)
   (if (string.eq lhs-reg "")
     (compiler-backend-binop-scavenge-exclude-build)
@@ -28395,7 +28418,7 @@
                   (if (string.eq dst-home "")
                     (if (string.eq planned-value "")
                       (let
-                        [no-exclude : (Array String)
+                        [no-exclude : (__tl_dyn-array String)
                           (array.make-array String 0)]
                         (compiler-backend-scavenge-xmm-reg
                           dst
@@ -28450,7 +28473,7 @@
       (if (string.eq dst-home "")
         (if (string.eq planned-value "")
           (let
-            [no-exclude : (Array String) (make-array String 0)]
+            [no-exclude : (__tl_dyn-array String) (make-array String 0)]
             (compiler-backend-scavenge-xmm-reg
               dst
               no-exclude
@@ -28476,7 +28499,7 @@
   [dst : i64]
   [addr : String]
   [ty : compiler_ast_types.AstType]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [planned-value : String]
   [backend-state : CompilerBackendState]) : String
@@ -28552,20 +28575,20 @@
 ;; Minimal exclude for an addressing-base scavenge: the base register only holds
 ;; a pointer that is immediately dereferenced and dead after, so nothing extra
 ;; needs excluding, and it must not exclude the common caller-saved fallbacks.
-(define (compiler-backend-addr-scavenge-exclude) : (Array String)
+(define (compiler-backend-addr-scavenge-exclude) : (__tl_dyn-array String)
   (make-array String 0))
 
 ;; Exclude an already-chosen register R (so a second scavenge at the same point
 ;; cannot collide with it).
-(define (compiler-backend-one-exclude [r : String]) : (Array String)
+(define (compiler-backend-one-exclude [r : String]) : (__tl_dyn-array String)
   (make-array r))
 
 ;; Exclude two already-chosen registers without excluding unrelated pool
 ;; registers. Used for address operands that must survive a load temp.
-(define (compiler-backend-two-exclude [r1 : String] [r2 : String]) : (Array
+(define (compiler-backend-two-exclude [r1 : String] [r2 : String]) : (__tl_dyn-array
     String)
   (let
-    [a : (Array String) (make-array String 2)]
+    [a : (__tl_dyn-array String) (make-array String 2)]
     (begin
       (array-set! a 0 r1)
       (array-set! a 1 r2)
@@ -28576,7 +28599,7 @@
 (define (compiler-backend-three-exclude
   [r1 : String]
   [r2 : String]
-  [r3 : String]) : (Array String)
+  [r3 : String]) : (__tl_dyn-array String)
   (make-array r1 r2 r3))
 
 (define (compiler-backend-param-register-exclude-location-count
@@ -28610,7 +28633,7 @@
 
 (define (compiler-backend-param-register-exclude-fill-location
   [location : compiler_regalloc.CompilerRegLocation]
-  [out : (Array String)]
+  [out : (__tl_dyn-array String)]
   [index : i64]) : i64
   (match location
     [(compiler_regalloc.CompilerRegLocation.Register reg)
@@ -28633,7 +28656,7 @@
 (define (compiler-backend-param-register-exclude-fill
   [params : compiler_ir_types.CompilerIrParamList]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
-  [out : (Array String)]
+  [out : (__tl_dyn-array String)]
   [index : i64]) : i64
   (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
     [(compiler_ir_types.CompilerIrParamList.Nil) index]
@@ -28660,10 +28683,11 @@
 
 (define (compiler-backend-param-register-exclude
   [params : compiler_ir_types.CompilerIrParamList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : (Array String)
+  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : (__tl_dyn-array
+    String)
   (let
     [n : i64 (compiler-backend-param-register-exclude-count params assignments)]
-    [out : (Array String) (make-array String n)]
+    [out : (__tl_dyn-array String) (make-array String n)]
     (begin
       (compiler-backend-param-register-exclude-fill params assignments out 0)
       out)))
@@ -28672,7 +28696,7 @@
 ;; register (so a second scavenge at the same point avoids it). Pooled scratch
 ;; registers such as r10/r11 stay available unless the caller passes one as
 ;; `extra`.
-(define (compiler-backend-scavenge-exclude-with [extra : String]) : (Array
+(define (compiler-backend-scavenge-exclude-with [extra : String]) : (__tl_dyn-array
     String)
   (make-array "%rax" "%rdx" "%rcx" "" "" extra))
 
@@ -28680,10 +28704,10 @@
   8)
 
 ;; c-abi-stage-exclude plus one already-chosen scratch (so a 2nd scavenge differs).
-(define (compiler-backend-c-abi-stage-exclude-with [extra : String]) : (Array
+(define (compiler-backend-c-abi-stage-exclude-with [extra : String]) : (__tl_dyn-array
     String)
   (let
-    [a : (Array String)
+    [a : (__tl_dyn-array String)
       (make-array String compiler-backend-c-abi-stage-exclude-count)]
     (begin
       (array-set! a 0 "%rax")
@@ -28716,7 +28740,7 @@
   (if (>= size 16)
     (if (string.eq planned "")
       (let
-        [no-exclude : (Array String) (make-array String 0)]
+        [no-exclude : (__tl_dyn-array String) (make-array String 0)]
         (compiler-backend-scavenge-xmm-reg
           -1
           no-exclude
@@ -28957,7 +28981,7 @@
   [dst : compiler_ir_types.CompilerIrValue]
   [src : compiler_ir_types.CompilerIrValue]
   [size : i64]
-  [protect : (Array String)]
+  [protect : (__tl_dyn-array String)]
   [protect-n : i64]
   [planned-dst : String]
   [planned-src : String]
@@ -28997,9 +29021,9 @@
                   backend-state
                   assignments
                   src))]
-            [src-exclude-base : (Array String)
+            [src-exclude-base : (__tl_dyn-array String)
               (compiler-backend-one-exclude dst-reg)]
-            [src-exclude : (Array String)
+            [src-exclude : (__tl_dyn-array String)
               (compiler-backend-scavenge-exclude-merge
                 src-exclude-base
                 1
@@ -29017,9 +29041,9 @@
                 src-home)]
             [copy-xmm : String
               (compiler-backend-copy-xmm-scratch size planned-xmm backend-state)]
-            [copy-gp-exclude-base : (Array String)
+            [copy-gp-exclude-base : (__tl_dyn-array String)
               (compiler-backend-two-exclude dst-reg src-reg)]
-            [copy-gp-exclude : (Array String)
+            [copy-gp-exclude : (__tl_dyn-array String)
               (compiler-backend-scavenge-exclude-merge
                 copy-gp-exclude-base
                 2
@@ -29074,7 +29098,7 @@
   [planned-xmm : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [no-protect : (Array String) (make-array String 0)]
+    [no-protect : (__tl_dyn-array String) (make-array String 0)]
     (compiler-backend-emit-copy-bytes-avoid
       type-segment-bases
       assignments
@@ -29163,7 +29187,7 @@
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [value : compiler_ir_types.CompilerIrValue]
-  [out : (Array String)]
+  [out : (__tl_dyn-array String)]
   [index : i64]) : i64
   (let
     [home : String
@@ -29179,7 +29203,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [cursor : i64]
-  [out : (Array String)]
+  [out : (__tl_dyn-array String)]
   [index : i64]) : i64
   (if (< cursor (struct-get instrs len))
     (let
@@ -29248,7 +29272,7 @@
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [index : i64]) : (Array String)
+  [index : i64]) : (__tl_dyn-array String)
   (let
     [n : i64
       (compiler-backend-copy-run-protect-count
@@ -29256,7 +29280,7 @@
         assignments
         instrs
         index)]
-    [out : (Array String) (make-array String n)]
+    [out : (__tl_dyn-array String) (make-array String n)]
     (begin
       (compiler-backend-copy-run-protect-fill
         backend-state
@@ -29283,7 +29307,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [src : compiler_ir_types.CompilerIrValue]
   [size : i64]
-  [protect : (Array String)]
+  [protect : (__tl_dyn-array String)]
   [protect-n : i64]
   [gep-disp : i64]
   [planned-dst : String]
@@ -29346,7 +29370,7 @@
   [src : compiler_ir_types.CompilerIrValue]
   [size : i64]
   [disp : i64]
-  [protect : (Array String)]
+  [protect : (__tl_dyn-array String)]
   [protect-n : i64]
   [planned-dst : String]
   [planned-src : String]
@@ -29479,7 +29503,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [src : compiler_ir_types.CompilerIrValue]
   [size : i64]
-  [protect : (Array String)]
+  [protect : (__tl_dyn-array String)]
   [protect-n : i64]
   [gep-disp : i64]
   [planned-dst : String]
@@ -29766,7 +29790,7 @@
   [src-spelling : String]
   [src-disp : i64]
   [size : i64]
-  [protect : (Array String)]
+  [protect : (__tl_dyn-array String)]
   [protect-n : i64]
   [planned-dst : String]
   [planned-value : String]
@@ -29849,7 +29873,7 @@
   [dst-spelling : String]
   [dst-disp : i64]
   [size : i64]
-  [protect : (Array String)]
+  [protect : (__tl_dyn-array String)]
   [protect-n : i64]
   [planned-src : String]
   [planned-value : String]
@@ -29932,7 +29956,7 @@
   [base-home : String]
   [offset-home : String]
   [src-home : String]
-  [protect : (Array String)]
+  [protect : (__tl_dyn-array String)]
   [protect-n : i64]
   [gep-disp : i64]
   [planned-index : String]
@@ -30033,7 +30057,7 @@
     [copy-xmm : String
       (if (string.eq compiler-backend-current-c-memory-planned-xmm "")
         (let
-          [no-exclude : (Array String) (array.make-array String 0)]
+          [no-exclude : (__tl_dyn-array String) (array.make-array String 0)]
           (compiler-backend-scavenge-xmm-reg
             -1
             no-exclude
@@ -30623,7 +30647,7 @@
   [ty : compiler_ast_types.AstType]
   [addr : String]
   [program-index : CompilerBackendProgramIndex]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [planned-value : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -30991,7 +31015,7 @@
                 (if (string.eq addr "")
                   (compiler-backend-base-deref scav-fold)
                   addr)]
-              [store-exclude : (Array String)
+              [store-exclude : (__tl_dyn-array String)
                 (if (string.eq addr "")
                   (compiler-backend-one-exclude scav-fold)
                   (compiler-backend-two-exclude base-reg scav-idx))]
@@ -31383,7 +31407,7 @@
                   0)
                 "%r8"
                 backend-state))]
-          [scratch-exclude : (Array String)
+          [scratch-exclude : (__tl_dyn-array String)
             (compiler-backend-one-exclude value-reg)]
           [scratch-reg : String
             (if (> (string.string-length planned-scratch-gp) 0)
@@ -32150,7 +32174,7 @@
     ;; `%rax` is the cursor/result register below, so exclude it from the head
     ;; pick as well. Once the head is loaded, the root scratch is dead and is
     ;; deliberately recycled as the next-cursor/profile scratch.
-    [head-exclude : (Array String)
+    [head-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-append
         (compiler-backend-one-exclude scav)
         1
@@ -32366,8 +32390,8 @@
   [backend-state : CompilerBackendState]
   [functions : compiler_ir_types.CompilerIrFunctionList]
   [ids : backend_i64_i64_map.Map (:consume)]
-  [names : (Array String)]
-  [signatures : (Array CompilerBackendMaybeSignature)]
+  [names : (__tl_dyn-array String)]
+  [signatures : (__tl_dyn-array CompilerBackendMaybeSignature)]
   [index : i64]) : backend_i64_i64_map.Map
   (match functions
     [(compiler_ir_types.CompilerIrFunctionList.Nil) ids]
@@ -32410,8 +32434,8 @@
   [backend-state : CompilerBackendState]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [ids : backend_i64_i64_map.Map (:consume)]
-  [names : (Array String)]
-  [signatures : (Array CompilerBackendMaybeSignature)]
+  [names : (__tl_dyn-array String)]
+  [signatures : (__tl_dyn-array CompilerBackendMaybeSignature)]
   [out-index : i64]
   [seq-index : i64]) : backend_i64_i64_map.Map
   (if (>=
@@ -32492,9 +32516,9 @@
   [type-segment-bases : i64]
   [externs : compiler_ir_types.CompilerIrExternList]
   [signature-ids : backend_i64_i64_map.Map (:consume)]
-  [names : (Array String)]
-  [signatures : (Array CompilerBackendMaybeSignature)]
-  [call-infos : (Array i64)]
+  [names : (__tl_dyn-array String)]
+  [signatures : (__tl_dyn-array CompilerBackendMaybeSignature)]
+  [call-infos : (__tl_dyn-array i64)]
   [index : i64]) : backend_i64_i64_map.Map
   (match externs
     [(compiler_ir_types.CompilerIrExternList.Nil) signature-ids]
@@ -32558,8 +32582,8 @@
 (define (compiler-backend-program-index-extern-links-into
   [externs : compiler_ir_types.CompilerIrExternList]
   [link-references : backend_i64_i64_map.Map (:consume)]
-  [link-symbols : (Array i64)]
-  [provideds : (Array bool)]
+  [link-symbols : (__tl_dyn-array i64)]
+  [provideds : (__tl_dyn-array bool)]
   [index : i64]) : backend_i64_i64_map.Map
   (match externs
     [(compiler_ir_types.CompilerIrExternList.Nil) link-references]
@@ -33227,15 +33251,20 @@
       (compiler_regalloc.compiler-reg-clear-c-memory-call-names!)]
     [function-count : i64 (compiler-backend-function-list-count functions)]
     [extern-count : i64 (compiler-backend-extern-list-count externs)]
-    [function-names : (Array String) (array.make-array String function-count)]
-    [function-signatures : (Array CompilerBackendMaybeSignature)
+    [function-names : (__tl_dyn-array String)
+      (array.make-array String function-count)]
+    [function-signatures : (__tl_dyn-array CompilerBackendMaybeSignature)
       (array.make-array CompilerBackendMaybeSignature function-count)]
-    [extern-names : (Array String) (array.make-array String extern-count)]
-    [extern-signatures : (Array CompilerBackendMaybeSignature)
+    [extern-names : (__tl_dyn-array String)
+      (array.make-array String extern-count)]
+    [extern-signatures : (__tl_dyn-array CompilerBackendMaybeSignature)
       (array.make-array CompilerBackendMaybeSignature extern-count)]
-    [extern-call-infos : (Array i64) (array.make-array i64 extern-count)]
-    [extern-link-symbols : (Array i64) (array.make-array i64 extern-count)]
-    [extern-provided : (Array bool) (array.make-array bool extern-count)]
+    [extern-call-infos : (__tl_dyn-array i64)
+      (array.make-array i64 extern-count)]
+    [extern-link-symbols : (__tl_dyn-array i64)
+      (array.make-array i64 extern-count)]
+    [extern-provided : (__tl_dyn-array bool)
+      (array.make-array bool extern-count)]
     [function-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-functions-into
         backend-state
@@ -33472,7 +33501,7 @@
   [out : compiler_liveness.CompilerLiveI64Set]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_liveness.CompilerLiveI64Set
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -33522,7 +33551,7 @@
 
 (define (compiler-backend-remap-group-vars
   [groups : compiler_liveness.CompilerLiveI64Set]
-  [remap : (Array i64)]) : compiler_liveness.CompilerLiveI64Set
+  [remap : (__tl_dyn-array i64)]) : compiler_liveness.CompilerLiveI64Set
   (let
     [index : i64 0]
     [out : compiler_liveness.CompilerLiveI64Set
@@ -35678,7 +35707,7 @@
   [types : compiler_regalloc.CompilerRegVarTypes]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendOutgoingFrameScan
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -35895,7 +35924,7 @@
   (BackendArgMove i64 CompilerBackendArgMoveSource))
 
 (defstruct CompilerBackendArgMoveSeq
-  (slots (Array CompilerBackendArgMove))
+  (slots (__tl_dyn-array CompilerBackendArgMove))
   (len i64))
 
 (define (compiler-backend-arg-move-seq-with-capacity [capacity : i64]) : CompilerBackendArgMoveSeq
@@ -35904,8 +35933,8 @@
     0))
 
 (define (compiler-backend-arg-move-copy-range!
-  [dst : (&mut dst (Array CompilerBackendArgMove))]
-  [src : (& src (Array CompilerBackendArgMove))]
+  [dst : (&mut dst (__tl_dyn-array CompilerBackendArgMove))]
+  [src : (& src (__tl_dyn-array CompilerBackendArgMove))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -35921,7 +35950,7 @@
     (if (< (struct-get seq len) (array-length (struct-get seq slots)))
       unit
       (let
-        [bigger : (Array CompilerBackendArgMove)
+        [bigger : (__tl_dyn-array CompilerBackendArgMove)
           (array.make-array
             CompilerBackendArgMove
             (compiler-backend-seq-capacity
@@ -36269,7 +36298,7 @@
             backend-state
             assignments
             all)))]
-    [cands : (Array i64)
+    [cands : (__tl_dyn-array i64)
       (compiler-backend-global-shared-view
         compiler-backend-scavenge-candidate-pool)]
     (compiler-backend-phi-temp-pick-reg-iter
@@ -38019,7 +38048,7 @@
 (define (compiler-backend-phi-float-temp-scratch
   [backend-state : CompilerBackendState]) : String
   (let
-    [no-exclude : (Array String) (make-array String 0)]
+    [no-exclude : (__tl_dyn-array String) (make-array String 0)]
     (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2" backend-state)))
 
 (define (compiler-backend-emit-phi-float-temp-save
@@ -38352,7 +38381,7 @@
   [occupied-mask : i64]
   [exclude-mask : i64]
   [plan-mask : i64]
-  [cands : (& cands (Array i64))]
+  [cands : (& cands (__tl_dyn-array i64))]
   [i : i64]
   [n : i64]) : i64
   (if (>= i n)
@@ -38558,7 +38587,7 @@
       (if (compiler-backend-float-type? ty)
         (compiler-backend-float-value-register assignments value)
         (compiler-backend-value-scalar-register backend-state assignments value))]
-    [exclude : (Array String)
+    [exclude : (__tl_dyn-array String)
       (if (string.eq src-home "")
         (array.make-array String 0)
         (compiler-backend-one-exclude src-home))]
@@ -40197,7 +40226,7 @@
 (define (compiler-backend-instr-seq-return-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -41202,7 +41231,7 @@
         [dst-home : String (compiler-backend-var-register-home assignments dst)]
         [src-home : String
           (compiler-backend-float-value-register assignments src)]
-        [exclude : (Array String)
+        [exclude : (__tl_dyn-array String)
           (if (string.eq src-home "")
             (array.make-array String 0)
             (compiler-backend-one-exclude src-home))]
@@ -41281,7 +41310,7 @@
                     backend-state
                     assignments
                     src)]
-                [exclude : (Array String)
+                [exclude : (__tl_dyn-array String)
                   (if (string.eq src-home "")
                     (array.make-array String 0)
                     (compiler-backend-one-exclude src-home))]
@@ -43149,7 +43178,7 @@
 (define (compiler-backend-emit-c-abi-return-slot-stores-array
   [type-segment-bases : i64]
   [base-reg : String]
-  [slots : (Array compiler_ir_types.CompilerIrCAbiReturnSlot)]
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)]
   [index : i64]
   [count : i64]
   [int-idx : i64]
@@ -43222,7 +43251,8 @@
               "(%rsp)\n")))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-c-abi-return-store-base-exclude) : (Array String)
+(define (compiler-backend-c-abi-return-store-base-exclude) : (__tl_dyn-array
+    String)
   (make-array "%rax" "%rdx"))
 
 (define (compiler-backend-scavenge-c-abi-return-store-base-reg
@@ -43277,7 +43307,7 @@
   (let
     [r11-occupied : bool
       (compiler-backend-assignments-use-reg? assignments "%r11")]
-    [exclude : (Array String)
+    [exclude : (__tl_dyn-array String)
       (if r11-occupied
         (compiler-backend-scavenge-exclude-append
           (compiler-backend-scavenge-exclude-with "%r8")
@@ -43350,7 +43380,7 @@
         backend-state)
         [(ResultCompilerBackend.Ok leaf-asm)
           (let
-            [ex : (Array String) (array.make-array String 3)]
+            [ex : (__tl_dyn-array String) (array.make-array String 3)]
             (begin
               (array-set! ex 0 "%rcx")
               (array-set! ex 1 "%rdx")
@@ -44161,7 +44191,7 @@
     [index-home : String
       (compiler-backend-value-scalar-register backend-state assignments index)]
     [need-index-scratch : bool (or (not (= base 0)) (string.eq index-home ""))]
-    [index-exclude : (Array String)
+    [index-exclude : (__tl_dyn-array String)
       (if (and need-index-scratch (not (string.eq index-home "")))
         (compiler-backend-one-exclude index-home)
         (array.make-array String 0))]
@@ -44179,7 +44209,8 @@
             backend-state)
           planned-index-reg)
         index-home)]
-    [table-exclude : (Array String) (compiler-backend-one-exclude index-reg)]
+    [table-exclude : (__tl_dyn-array String)
+      (compiler-backend-one-exclude index-reg)]
     [table-reg : String
       (if (compiler-backend-state-absolute-switch-ok? backend-state)
         ""
@@ -45464,7 +45495,7 @@
                         (box-get message)
                         instr-diag)))]))
             (let
-              [no-exclude : (Array String) (array.make-array String 0)]
+              [no-exclude : (__tl_dyn-array String) (array.make-array String 0)]
               (match (compiler-backend-emit-store-value-to-address
                 ctx.type-segment-bases
                 ctx.assignments
@@ -45696,10 +45727,12 @@
   false)
 (define compiler-backend-use-home-mask-value : i64
   0)
-(define compiler-backend-use-home-mask-empty-counts : (Array i64)
+(define compiler-backend-use-home-mask-empty-counts : (__tl_dyn-array i64)
   (make-array i64 0))
 
-(define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
+(define (compiler-backend-use-count-inc
+  [counts : (__tl_dyn-array i64)]
+  [var : i64]) : unit
   (if (< var 0)
     unit
     (begin
@@ -45720,7 +45753,7 @@
           unit)))))
 
 (define (compiler-backend-count-value-use
-  [counts : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
   [value : compiler_ir_types.CompilerIrValue]) : unit
   (match value
     [(compiler_ir_types.CompilerIrValue.Var id)
@@ -45728,7 +45761,7 @@
     [_ unit]))
 
 (define (compiler-backend-count-value-list-uses
-  [counts : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
   [values : compiler_ir_types.CompilerIrValueList]) : unit
   (match values
     [(compiler_ir_types.CompilerIrValueList.Nil) unit]
@@ -45742,8 +45775,8 @@
         (compiler-backend-count-value-list-uses counts (box-get rest)))]))
 
 (define (compiler-backend-count-call-args-array-uses
-  [counts : (Array i64)]
-  [values : (Array compiler_ir_types.CompilerIrValue)]
+  [counts : (__tl_dyn-array i64)]
+  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]
   [index : i64]) : unit
   (if (>= index (array-length values))
     unit
@@ -45752,7 +45785,7 @@
       (compiler-backend-count-call-args-array-uses counts values (+ index 1)))))
 
 (define (compiler-backend-count-call-args-uses
-  [counts : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
   [args : compiler_ir_types.CompilerIrCallArgs]) : unit
   (match args
     [(compiler_ir_types.CompilerIrCallArgs.Nil) unit]
@@ -45766,7 +45799,7 @@
       (compiler-backend-count-call-args-array-uses counts values 0)]))
 
 (define (compiler-backend-count-spmd-call-args-uses
-  [counts : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
   [args : compiler_ir_types.CompilerIrSpmdCallArgList]) : unit
   (match args
     [(compiler_ir_types.CompilerIrSpmdCallArgList.Nil) unit]
@@ -45780,7 +45813,7 @@
       (let
         [i : i64 0]
         [count : i64 (struct-get seq len)]
-        [slots : (Array compiler_ir_types.CompilerIrSpmdCallArg)
+        [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
           (struct-get seq slots)]
         (while (< i count)
           (begin
@@ -45790,7 +45823,7 @@
             (set! i (+ i 1)))))]))
 
 (define (compiler-backend-count-phi-input-uses
-  [counts : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
   [inputs : compiler_ir_types.CompilerIrPhiInputList]) : unit
   (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
     [(compiler_ir_types.CompilerIrPhiInputList.Nil) unit]
@@ -45804,7 +45837,7 @@
         (compiler-backend-count-phi-input-uses counts (box-get rest)))]))
 
 (define (compiler-backend-count-instr-uses
-  [counts : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
   [instr : compiler_ir_types.CompilerIrInstr]) : unit
   (match instr
     [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
@@ -46025,10 +46058,10 @@
       (compiler-backend-count-value-use counts index)]))
 
 (define (compiler-backend-count-instr-seq-uses
-  [counts : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -46040,7 +46073,7 @@
       unit)))
 
 (define (compiler-backend-count-block-uses
-  [counts : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
@@ -46054,7 +46087,7 @@
       (compiler-backend-count-block-seq-uses counts seq)]))
 
 (define (compiler-backend-count-block-seq-uses
-  [counts : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]) : unit
   (let
     [index : i64 0]
@@ -46070,14 +46103,16 @@
 
 (define (compiler-backend-function-use-counts
   [vars : i64]
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : (Array i64)
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : (__tl_dyn-array i64)
   (let
-    [counts : (Array i64) (array.make-array i64 vars)]
+    [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
     (begin
       (compiler-backend-count-block-uses counts blocks)
       counts)))
 
-(define (compiler-backend-var-single-use? [counts : (Array i64)] [var : i64]) : bool
+(define (compiler-backend-var-single-use?
+  [counts : (__tl_dyn-array i64)]
+  [var : i64]) : bool
   (if (< var 0)
     false
     (if (>= var (array-length counts))
@@ -46107,11 +46142,11 @@
 ;; `counts` holds exactly the ordinary function-wide use counts, which decide
 ;; the "used exactly once" half of the test.
 (define (compiler-backend-gep-fusion-pin-seq!
-  [counts : (Array i64)]
-  [adjacent : (Array bool)]
+  [counts : (__tl_dyn-array i64)]
+  [adjacent : (__tl_dyn-array bool)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -46139,8 +46174,8 @@
           (set! index (+ index 1)))))))
 
 (define (compiler-backend-gep-fusion-pin-block-seq!
-  [counts : (Array i64)]
-  [adjacent : (Array bool)]
+  [counts : (__tl_dyn-array i64)]
+  [adjacent : (__tl_dyn-array bool)]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]) : unit
   (let
     [index : i64 0]
@@ -46153,8 +46188,8 @@
         (set! index (+ index 1))))))
 
 (define (compiler-backend-gep-fusion-pin-blocks!
-  [counts : (Array i64)]
-  [adjacent : (Array bool)]
+  [counts : (__tl_dyn-array i64)]
+  [adjacent : (__tl_dyn-array bool)]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
@@ -46171,8 +46206,8 @@
       (compiler-backend-gep-fusion-pin-block-seq! counts adjacent seq)]))
 
 (define (compiler-backend-gep-fusion-pin-candidate?
-  [counts : (Array i64)]
-  [adjacent : (Array bool)]
+  [counts : (__tl_dyn-array i64)]
+  [adjacent : (__tl_dyn-array bool)]
   [vars : i64]) : bool
   (let
     [index : i64 0]
@@ -46197,8 +46232,8 @@
   (if (<= vars 0)
     (compiler_liveness.compiler-live-set-empty)
     (let
-      [counts : (Array i64) (array.make-array i64 vars)]
-      [adjacent : (Array bool) (array.make-array bool vars)]
+      [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [adjacent : (__tl_dyn-array bool) (array.make-array bool vars)]
       [_walk : unit
         (compiler-backend-gep-fusion-pin-blocks! counts adjacent blocks)]
       (if (not
@@ -46209,7 +46244,7 @@
             (compiler_regalloc.compiler-reg-assignment-index-build
               assignments
               vars)]
-          [words : (Array i64)
+          [words : (__tl_dyn-array i64)
             (compiler_liveness.compiler-live-set-builder (- vars 1))]
           [index : i64 0]
           [pinned : bool false]
@@ -46256,7 +46291,7 @@
   (let
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
-    [use-counts : (Array i64)
+    [use-counts : (__tl_dyn-array i64)
       (compiler-backend-function-state-i64-array
         function-state
         compiler-backend-function-i64-array-fuse-use-counts)]
@@ -46281,11 +46316,11 @@
   (let
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
-    [use-counts : (Array i64)
+    [use-counts : (__tl_dyn-array i64)
       (compiler-backend-function-state-i64-array
         function-state
         compiler-backend-function-i64-array-fuse-use-counts)]
-    [free-counts : (Array i64)
+    [free-counts : (__tl_dyn-array i64)
       (compiler-backend-function-state-i64-array
         function-state
         compiler-backend-function-i64-array-fuse-free-counts)]
@@ -46304,7 +46339,7 @@
 ;; immediately preceding compare or boolean negation (a "free branch" whose
 ;; result need not be materialized); otherwise -1.
 (define (compiler-backend-fuse-free-branch-var
-  [slots : (Array compiler_ir_types.CompilerIrInstr)]
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
   [j : i64]) : i64
   (if (<= j 0)
     (- 0 1)
@@ -46330,11 +46365,11 @@
       [_ (- 0 1)])))
 
 (define (compiler-backend-count-instr-seq-use-facts
-  [counts : (Array i64)]
-  [free : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
+  [free : (__tl_dyn-array i64)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [n : i64 (struct-get instrs len)]
     [j : i64 0]
@@ -46349,8 +46384,8 @@
         (set! j (+ j 1))))))
 
 (define (compiler-backend-count-block-use-facts
-  [counts : (Array i64)]
-  [free : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
+  [free : (__tl_dyn-array i64)]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
@@ -46364,8 +46399,8 @@
       (compiler-backend-count-block-seq-use-facts counts free seq)]))
 
 (define (compiler-backend-count-block-seq-use-facts
-  [counts : (Array i64)]
-  [free : (Array i64)]
+  [counts : (__tl_dyn-array i64)]
+  [free : (__tl_dyn-array i64)]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]) : unit
   (let
     [index : i64 0]
@@ -46381,8 +46416,8 @@
 
 (define (compiler-backend-fuse-need-enable!
   [backend-state : CompilerBackendState]
-  [use-counts : (Array i64)]
-  [free-counts : (Array i64)]) : unit
+  [use-counts : (__tl_dyn-array i64)]
+  [free-counts : (__tl_dyn-array i64)]) : unit
   (let
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
@@ -46408,7 +46443,7 @@
     false))
 
 (define (compiler-backend-addr-of-forwarding-fill!
-  [items : (Array i64)]
+  [items : (__tl_dyn-array i64)]
   [index : i64]) : unit
   (if (>= index (array-length items))
     unit
@@ -46417,8 +46452,8 @@
       (compiler-backend-addr-of-forwarding-fill! items (+ index 1)))))
 
 (define (compiler-backend-addr-of-forwarding-record!
-  [items : (Array i64)]
-  [use-counts : (Array i64)]
+  [items : (__tl_dyn-array i64)]
+  [use-counts : (__tl_dyn-array i64)]
   [instr : compiler_ir_types.CompilerIrInstr]) : unit
   (match instr
     [(compiler_ir_types.CompilerIrInstr.AddrOf dst src)
@@ -46447,11 +46482,11 @@
     [_ unit]))
 
 (define (compiler-backend-addr-of-forwarding-record-seq!
-  [items : (Array i64)]
-  [use-counts : (Array i64)]
+  [items : (__tl_dyn-array i64)]
+  [use-counts : (__tl_dyn-array i64)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -46466,8 +46501,8 @@
       unit)))
 
 (define (compiler-backend-addr-of-forwarding-record-blocks!
-  [items : (Array i64)]
-  [use-counts : (Array i64)]
+  [items : (__tl_dyn-array i64)]
+  [use-counts : (__tl_dyn-array i64)]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
@@ -46490,8 +46525,8 @@
         seq)]))
 
 (define (compiler-backend-addr-of-forwarding-record-block-seq!
-  [items : (Array i64)]
-  [use-counts : (Array i64)]
+  [items : (__tl_dyn-array i64)]
+  [use-counts : (__tl_dyn-array i64)]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]) : unit
   (let
     [index : i64 0]
@@ -46512,9 +46547,9 @@
   [backend-state : CompilerBackendState]
   [vars : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [use-counts : (Array i64)]) : unit
+  [use-counts : (__tl_dyn-array i64)]) : unit
   (let
-    [items : (Array i64) (array.make-array i64 vars)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 vars)]
     (begin
       (compiler-backend-addr-of-forwarding-fill! items 0)
       (compiler-backend-addr-of-forwarding-record-blocks!
@@ -46550,7 +46585,7 @@
   [load-dst : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [use-counts : (Array i64)]) : bool
+  [use-counts : (__tl_dyn-array i64)]) : bool
   (if (< index (struct-get instrs len))
     (let
       [maybe-cmp : compiler_ir_types.CompilerIrInstr
@@ -47433,7 +47468,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [use-counts : (Array i64)]
+  [use-counts : (__tl_dyn-array i64)]
   [base : compiler_ir_types.CompilerIrValue]
   [offset0 : compiler_ir_types.CompilerIrValue]
   [elem-ty0 : compiler_ast_types.AstType]
@@ -48044,7 +48079,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [use-counts : (Array i64)]
+  [use-counts : (__tl_dyn-array i64)]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
   [load-dst : i64]
@@ -48107,7 +48142,7 @@
 (define (compiler-backend-gep-load-alu-index-exclude
   [base-reg : String]
   [offset-home : String]
-  [dst-home : String]) : (Array String)
+  [dst-home : String]) : (__tl_dyn-array String)
   (make-array
     "%rax"
     "%rdx"
@@ -50426,7 +50461,7 @@
         (not (string.eq dst-home magic))
         (not (string.eq dst-home hoist-reg))
         (not (string.eq dst-home lhs-home)))]
-    [src-exclude : (Array String)
+    [src-exclude : (__tl_dyn-array String)
       (compiler-backend-divmod-dividend-exclude magic)]
     (cond
       [own-src? lhs-home]
@@ -51695,7 +51730,7 @@
         ctx.assignments
         instrs
         index)]
-    [protect : (Array String)
+    [protect : (__tl_dyn-array String)
       (compiler-backend-copy-run-protect-exclude
         (struct-get ctx backend-state)
         ctx.assignments
@@ -52092,7 +52127,7 @@
             ctx.assignments
             instrs
             after-gep)]
-        [protect : (Array String)
+        [protect : (__tl_dyn-array String)
           (compiler-backend-copy-run-protect-exclude
             (struct-get ctx backend-state)
             ctx.assignments
@@ -52400,7 +52435,7 @@
                         ctx.assignments
                         instrs
                         after-load)]
-                    [protect : (Array String)
+                    [protect : (__tl_dyn-array String)
                       (compiler-backend-copy-run-protect-exclude
                         (struct-get ctx backend-state)
                         ctx.assignments
@@ -52683,7 +52718,7 @@
                         ctx.assignments
                         instrs
                         after-gep)]
-                    [protect : (Array String)
+                    [protect : (__tl_dyn-array String)
                       (compiler-backend-copy-run-protect-exclude
                         (struct-get ctx backend-state)
                         ctx.assignments
@@ -53560,7 +53595,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
   [func-diag : compiler_diagnostic.CompilerDiagnostic]
-  [use-counts : (Array i64)]
+  [use-counts : (__tl_dyn-array i64)]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match block
     [(compiler_ir_types.CompilerIrBlock.Block label instrs)
@@ -53696,7 +53731,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
   [func-diag : compiler_diagnostic.CompilerDiagnostic]
-  [use-counts : (Array i64)]
+  [use-counts : (__tl_dyn-array i64)]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     (ResultCompilerBackend.Ok "")
@@ -53789,7 +53824,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
   [func-diag : compiler_diagnostic.CompilerDiagnostic]
-  [use-counts : (Array i64)]
+  [use-counts : (__tl_dyn-array i64)]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) (ResultCompilerBackend.Ok "")]
@@ -53903,7 +53938,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
   [func-diag : compiler_diagnostic.CompilerDiagnostic]
-  [use-counts : (Array i64)]) : ResultCompilerBackend
+  [use-counts : (__tl_dyn-array i64)]) : ResultCompilerBackend
   ;; One body buffer per function: the whole block/instruction spine appends
   ;; into it and this is the single finish boundary, handing the pipeline the
   ;; same body String emit-blocks always returned.
@@ -54272,7 +54307,7 @@
     [home : String (compiler-backend-var-register-home assignments var-id)]
     (if (string.eq home "")
       (let
-        [exclude : (Array String)
+        [exclude : (__tl_dyn-array String)
           (compiler-backend-param-register-exclude all-params assignments)]
         [exclude-n : i64
           (compiler-backend-param-register-exclude-count all-params assignments)]
@@ -54393,7 +54428,7 @@
                       int-idx
                       float-idx
                       position)]
-                  [param-exclude : (Array String)
+                  [param-exclude : (__tl_dyn-array String)
                     (compiler-backend-param-register-exclude
                       all-params
                       assignments)]
@@ -54591,7 +54626,7 @@
                             (compiler-backend-param-register-exclude-count
                               all-params
                               assignments)]
-                          [exclude : (Array String)
+                          [exclude : (__tl_dyn-array String)
                             (compiler-backend-param-register-exclude
                               all-params
                               assignments)]
@@ -54880,10 +54915,10 @@
       count)))
 
 (define (compiler-backend-scavenge-occupancy-event-capacity
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [present : (Array i64)]
-  [items : (Array compiler_regalloc.CompilerRegLocation)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
+  [present : (__tl_dyn-array i64)]
+  [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)]
   [limit : i64]
   [vars : i64]
   [instr-count : i64]) : i64
@@ -54921,7 +54956,7 @@
         events))))
 
 (define (compiler-backend-scavenge-exclude-mask
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [n : i64]) : i64
   (let
     [i : i64 0]
@@ -54938,7 +54973,7 @@
       mask)))
 
 (define (compiler-backend-scavenge-occupancy-instr-count
-  [ends : (Array i64)]
+  [ends : (__tl_dyn-array i64)]
   [vars : i64]) : i64
   (let
     [v : i64 0]
@@ -54957,10 +54992,10 @@
       (+ max-end 1))))
 
 (define (compiler-backend-scavenge-occupancy-add-event!
-  [heads : (Array i64)]
-  [event-bits : (Array i64)]
-  [event-deltas : (Array i64)]
-  [event-next : (Array i64)]
+  [heads : (__tl_dyn-array i64)]
+  [event-bits : (__tl_dyn-array i64)]
+  [event-deltas : (__tl_dyn-array i64)]
+  [event-next : (__tl_dyn-array i64)]
   [event : i64]
   [bit-index : i64]
   [delta : i64]
@@ -54978,10 +55013,10 @@
       (+ used 1))))
 
 (define (compiler-backend-scavenge-occupancy-add-mask-events!
-  [heads : (Array i64)]
-  [event-bits : (Array i64)]
-  [event-deltas : (Array i64)]
-  [event-next : (Array i64)]
+  [heads : (__tl_dyn-array i64)]
+  [event-bits : (__tl_dyn-array i64)]
+  [event-deltas : (__tl_dyn-array i64)]
+  [event-next : (__tl_dyn-array i64)]
   [event : i64]
   [mask : i64]
   [delta : i64]
@@ -55011,10 +55046,10 @@
       out)))
 
 (define (compiler-backend-scavenge-occupancy-add-range!
-  [heads : (Array i64)]
-  [event-bits : (Array i64)]
-  [event-deltas : (Array i64)]
-  [event-next : (Array i64)]
+  [heads : (__tl_dyn-array i64)]
+  [event-bits : (__tl_dyn-array i64)]
+  [event-deltas : (__tl_dyn-array i64)]
+  [event-next : (__tl_dyn-array i64)]
   [start-i : i64]
   [end-i : i64]
   [mask : i64]
@@ -55038,11 +55073,11 @@
       used)))
 
 (define (compiler-backend-scavenge-occupancy-mask-at-event
-  [heads : (Array i64)]
-  [event-bits : (Array i64)]
-  [event-deltas : (Array i64)]
-  [event-next : (Array i64)]
-  [active-counts : (Array i64)]
+  [heads : (__tl_dyn-array i64)]
+  [event-bits : (__tl_dyn-array i64)]
+  [event-deltas : (__tl_dyn-array i64)]
+  [event-next : (__tl_dyn-array i64)]
+  [active-counts : (__tl_dyn-array i64)]
   [event : i64]) : i64
   (let
     [node : i64 (array-ref heads event)]
@@ -55073,17 +55108,17 @@
       mask)))
 
 (define (compiler-backend-scavenge-occupancy-build
-  [starts : (Array i64)]
-  [ends : (Array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
   [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
-  [vars : i64]) : (Array i64)
+  [vars : i64]) : (__tl_dyn-array i64)
   (let
     [instr-count : i64
       (compiler-backend-scavenge-occupancy-instr-count ends vars)]
     [event-count : i64 (+ instr-count 1)]
-    [heads : (Array i64) (make-array i64 event-count)]
-    [present : (Array i64) (struct-get assignment-index present)]
-    [items : (Array compiler_regalloc.CompilerRegLocation)
+    [heads : (__tl_dyn-array i64) (make-array i64 event-count)]
+    [present : (__tl_dyn-array i64) (struct-get assignment-index present)]
+    [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
       (struct-get assignment-index items)]
     [limit : i64 (array-length present)]
     [max-events : i64
@@ -55095,11 +55130,11 @@
         limit
         vars
         instr-count)]
-    [event-bits : (Array i64) (make-array i64 max-events)]
-    [event-deltas : (Array i64) (make-array i64 max-events)]
-    [event-next : (Array i64) (make-array i64 max-events)]
-    [out : (Array i64) (make-array i64 instr-count)]
-    [active-counts : (Array i64)
+    [event-bits : (__tl_dyn-array i64) (make-array i64 max-events)]
+    [event-deltas : (__tl_dyn-array i64) (make-array i64 max-events)]
+    [event-next : (__tl_dyn-array i64) (make-array i64 max-events)]
+    [out : (__tl_dyn-array i64) (make-array i64 instr-count)]
+    [active-counts : (__tl_dyn-array i64)
       (make-array i64 compiler-backend-scavenge-reg-bit-count)]
     [v : i64 0]
     [event-used : i64 0]
@@ -55175,8 +55210,8 @@
 
 (define (compiler-backend-scavenge-assignment-index-fill!
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
-  [present : (Array i64)]
-  [items : (Array compiler_regalloc.CompilerRegLocation)]
+  [present : (__tl_dyn-array i64)]
+  [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)]
   [mask : i64]) : i64
   (match assignments
     [(compiler_regalloc.CompilerRegAssignmentList.Nil) mask]
@@ -55210,8 +55245,8 @@
       (if (< vars 1)
         1
         vars)]
-    [present : (Array i64) (make-array i64 n)]
-    [items : (Array compiler_regalloc.CompilerRegLocation)
+    [present : (__tl_dyn-array i64) (make-array i64 n)]
+    [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
       (make-array compiler_regalloc.CompilerRegLocation n)]
     (begin
       (compiler_regalloc.compiler-reg-fill-location-array
@@ -55241,8 +55276,8 @@
 (cfg
   scavenge-self-check
   (define (compiler-backend-scavenge-free-for-instr?
-    [starts : (& starts (Array i64))]
-    [ends : (& ends (Array i64))]
+    [starts : (& starts (__tl_dyn-array i64))]
+    [ends : (& ends (__tl_dyn-array i64))]
     [assignment-index
       : (& assignment-index compiler_regalloc.CompilerRegAssignmentIndex)]
     [vars : i64]
@@ -55261,9 +55296,9 @@
 ;; intervals + assignments for the function currently being emitted, so the
 ;; backend can ask which physical register is free at an instruction's point
 ;; instead of hardcoding scratch. Installed once per function (read-only).
-(define compiler-backend-scavenge-ctx-starts : (Array i64)
+(define compiler-backend-scavenge-ctx-starts : (__tl_dyn-array i64)
   (make-array i64 1))
-(define compiler-backend-scavenge-ctx-ends : (Array i64)
+(define compiler-backend-scavenge-ctx-ends : (__tl_dyn-array i64)
   (make-array i64 1))
 
 (define (compiler-backend-scavenge-empty-assignments) : compiler_regalloc.CompilerRegAssignmentList
@@ -55275,9 +55310,9 @@
     1))
 (define compiler-backend-scavenge-ctx-plan-reg-mask : i64
   0)
-(define compiler-backend-scavenge-ctx-occupied-masks : (Array i64)
+(define compiler-backend-scavenge-ctx-occupied-masks : (__tl_dyn-array i64)
   (make-array i64 1))
-(define compiler-backend-scavenge-ctx-scratch-masks : (Array i64)
+(define compiler-backend-scavenge-ctx-scratch-masks : (__tl_dyn-array i64)
   (make-array i64 1))
 (define compiler-backend-scavenge-ctx-vars : i64
   0)
@@ -55384,11 +55419,11 @@
       (= (string.string-length final-body) (string.string-length emitted-body)))))
 
 (define (compiler-backend-set-scavenge-ctx-ready!
-  [starts : (Array i64)]
-  [ends : (Array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
   [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
   [plan-mask : i64]
-  [occupied-masks : (Array i64)]
+  [occupied-masks : (__tl_dyn-array i64)]
   [vars : i64]) : unit
   (begin
     (set! compiler-backend-scavenge-ctx-starts starts)
@@ -55402,13 +55437,13 @@
     (set! compiler-backend-scavenge-ctx-vars vars)))
 
 (define (compiler-backend-set-scavenge-ctx-index!
-  [starts : (Array i64)]
-  [ends : (Array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
   [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
   [plan-mask : i64]
   [vars : i64]) : unit
   (let
-    [occupied-masks : (Array i64)
+    [occupied-masks : (__tl_dyn-array i64)
       (compiler-backend-scavenge-occupancy-build
         starts
         ends
@@ -55423,8 +55458,8 @@
       vars)))
 
 (define (compiler-backend-set-scavenge-ctx!
-  [starts : (Array i64)]
-  [ends : (Array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [ends : (__tl_dyn-array i64)]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [vars : i64]) : unit
   (match (compiler-backend-scavenge-assignment-index-build assignments vars)
@@ -55442,8 +55477,8 @@
     [blocks : compiler_ir_types.CompilerIrBlockList]
     [liveness : compiler_liveness.CompilerFunctionLiveness]
     [point : i64]
-    [starts : (Array i64)]
-    [ends : (Array i64)]) : i64
+    [starts : (__tl_dyn-array i64)]
+    [ends : (__tl_dyn-array i64)]) : i64
     (match blocks
       [(compiler_ir_types.CompilerIrBlockList.Nil) point]
       [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
@@ -55454,7 +55489,8 @@
                 (compiler_regalloc.compiler-reg-live-intervals-find-afters
                   liveness
                   label)]
-              [after-items : (Array compiler_liveness.CompilerLiveI64Set)
+              [after-items : (__tl_dyn-array
+                compiler_liveness.CompilerLiveI64Set)
                 (struct-get live-afters items)]
               [count : i64 (struct-get instrs len)]
               (begin
@@ -55516,8 +55552,8 @@
                 (compiler_regalloc.compiler-reg-interval-index-build
                   intervals
                   slot-vars)]
-              [starts : (Array i64) (struct-get interval-index starts)]
-              [ends : (Array i64) (struct-get interval-index ends)]
+              [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
+              [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
               (compiler-backend-set-scavenge-ctx-ready!
                 starts
                 ends
@@ -55531,7 +55567,7 @@
                 slot-vars))])))))
 
 (define (compiler-backend-scavenge-excluded?
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [n : i64]
   [reg : String]) : bool
   (let
@@ -55549,7 +55585,8 @@
 ;; Exclude set for binop scavenging: a safe superset of every binop op's fixed
 ;; registers (div/mul: rax/rdx; shift: rcx; fallback binops: rax=lhs). Pooled
 ;; scratch registers such as r10/r11 must stay available to the scavenger.
-(define (compiler-backend-binop-scavenge-exclude-build) : (Array String)
+(define (compiler-backend-binop-scavenge-exclude-build) : (__tl_dyn-array
+    String)
   (make-array "%rax" "%rdx" "%rcx" "" ""))
 
 ;; Op-specific scavenge exclude: only the registers THIS op actually clobbers
@@ -55559,7 +55596,7 @@
 ;; fallback. Returns a size-5 array (padded with zero-bit empty-string sentinels).
 ;; div/mod -> rax:rdx, mul -> rax/rdx, shift -> rcx, everything else -> nothing extra.
 (define (compiler-backend-binop-scavenge-exclude-for-op
-  [op : compiler_ir_types.CompilerIrBinOp]) : (Array String)
+  [op : compiler_ir_types.CompilerIrBinOp]) : (__tl_dyn-array String)
   (let
     [rax-extra : String
       (match op
@@ -55588,22 +55625,22 @@
 ;; The freeness query cannot see a sibling scratch's transient use at the same
 ;; point, so each scavenge excludes the already-picked regs. The sibling fallback
 ;; registers themselves stay available unless they were actually picked.
-(define (compiler-backend-divmod-dividend-exclude [magic : String]) : (Array
+(define (compiler-backend-divmod-dividend-exclude [magic : String]) : (__tl_dyn-array
     String)
   (make-array "%rax" "%rdx" "" "" magic))
 
 (define (compiler-backend-divmod-mask-exclude
   [magic : String]
-  [dividend : String]) : (Array String)
+  [dividend : String]) : (__tl_dyn-array String)
   (make-array "%rax" "%rdx" "" "" magic dividend))
 
 ;; Append one register to an exclude array (returns a fresh size-(n+1) array).
 (define (compiler-backend-scavenge-exclude-append
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [n : i64]
-  [extra : String]) : (Array String)
+  [extra : String]) : (__tl_dyn-array String)
   (let
-    [a : (Array String) (make-array String (+ n 1))]
+    [a : (__tl_dyn-array String) (make-array String (+ n 1))]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -55615,12 +55652,12 @@
 
 ;; Concatenate two exclude arrays into a fresh array.
 (define (compiler-backend-scavenge-exclude-merge
-  [left : (Array String)]
+  [left : (__tl_dyn-array String)]
   [left-n : i64]
-  [right : (Array String)]
-  [right-n : i64]) : (Array String)
+  [right : (__tl_dyn-array String)]
+  [right-n : i64]) : (__tl_dyn-array String)
   (let
-    [a : (Array String) (make-array String (+ left-n right-n))]
+    [a : (__tl_dyn-array String) (make-array String (+ left-n right-n))]
     [i : i64 0]
     [j : i64 0]
     (begin
@@ -55644,7 +55681,7 @@
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
   [v1 : compiler_ir_types.CompilerIrValue]
-  [v2 : compiler_ir_types.CompilerIrValue]) : (Array String)
+  [v2 : compiler_ir_types.CompilerIrValue]) : (__tl_dyn-array String)
   (let
     [h1 : String
       (compiler-backend-value-scalar-register backend-state assignments v1)]
@@ -55667,7 +55704,7 @@
 ;; them, e.g. the emission's dst-home + an operand's home reg). "" stays a zero-bit
 ;; sentinel. Pooled scratch registers such as r10/r11 stay available unless one is
 ;; one of the explicit register names. n = 7.
-(define (compiler-backend-scavenge-exclude-regs2 [r1 : String] [r2 : String]) : (Array
+(define (compiler-backend-scavenge-exclude-regs2 [r1 : String] [r2 : String]) : (__tl_dyn-array
     String)
   (make-array
     "%rax"
@@ -55685,7 +55722,7 @@
 ;; Scavenge candidate pool. The first 11 entries are the legacy pool; ABI-special
 ;; %rsi/%rdi/%rax come last so they are only used when the older pool is occupied
 ;; and the point-local occupancy/exclude masks prove them free.
-(define (compiler-backend-scavenge-candidates) : (Array i64)
+(define (compiler-backend-scavenge-candidates) : (__tl_dyn-array i64)
   (make-array
     compiler_abi.compiler-reg-id-r9
     compiler_abi.compiler-reg-id-rcx
@@ -55702,23 +55739,23 @@
     compiler_abi.compiler-reg-id-rdi
     compiler_abi.compiler-reg-id-rax))
 
-(define compiler-backend-scavenge-candidate-pool : (Array i64)
+(define compiler-backend-scavenge-candidate-pool : (__tl_dyn-array i64)
   (compiler-backend-scavenge-candidates))
 
-(define (compiler-backend-scavenge-rcx-candidates) : (Array i64)
+(define (compiler-backend-scavenge-rcx-candidates) : (__tl_dyn-array i64)
   (make-array compiler_abi.compiler-reg-id-rcx))
 
-(define compiler-backend-scavenge-rcx-candidate-pool : (Array i64)
+(define compiler-backend-scavenge-rcx-candidate-pool : (__tl_dyn-array i64)
   (compiler-backend-scavenge-rcx-candidates))
 
-(define (compiler-backend-scavenge-xmm-candidates) : (Array i64)
+(define (compiler-backend-scavenge-xmm-candidates) : (__tl_dyn-array i64)
   (make-array
     (compiler_abi.compiler-abi-xmm-register-id 2)
     (compiler_abi.compiler-abi-xmm-register-id 3)
     (compiler_abi.compiler-abi-xmm-register-id 4)
     (compiler_abi.compiler-abi-xmm-register-id 5)))
 
-(define compiler-backend-scavenge-xmm-candidate-pool : (Array i64)
+(define compiler-backend-scavenge-xmm-candidate-pool : (__tl_dyn-array i64)
   (compiler-backend-scavenge-xmm-candidates))
 (define compiler-backend-scavenge-plan-win64-bit : i64
   0x4000000000000000)
@@ -55826,7 +55863,7 @@
 ;; superset(5)+a few operand homes vs candidate count) -> fallback last resort.
 ;; Returns the first non-excluded candidate index, or -1 = "use the fallback".
 (define (compiler-backend-scavenge-emergency-fallback-free?
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [occupied-mask : i64]
   [fallback : String]) : bool
@@ -55840,12 +55877,12 @@
       0)))
 
 (define (compiler-backend-scavenge-emergency-cand-index
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [exclude-mask : i64]
   [occupied-mask : i64]
   [fallback : String]
-  [cands : (& cands (Array i64))]
+  [cands : (& cands (__tl_dyn-array i64))]
   [n : i64]) : i64
   (if (compiler-backend-scavenge-emergency-fallback-free?
     exclude
@@ -55876,13 +55913,13 @@
         found))))
 
 (define (compiler-backend-scavenge-pick-iter
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [exclude-mask : i64]
   [occupied-mask : i64]
   [plan-mask : i64]
   [fallback : String]
-  [cands : (& cands (Array i64))]
+  [cands : (& cands (__tl_dyn-array i64))]
   [i : i64]
   [n : i64]) : String
   (if (>= i n)
@@ -55953,7 +55990,7 @@
 ;; a no-free-register case).
 (define (compiler-backend-scavenge-pick-with-mask
   [occupied-mask : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]) : String
   (let
@@ -55976,10 +56013,10 @@
 
 (define (compiler-backend-scavenge-pick-from-mask
   [occupied-mask : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
-  [cands : (& cands (Array i64))]) : String
+  [cands : (& cands (__tl_dyn-array i64))]) : String
   (let
     [exclude-mask : i64
       (compiler-backend-scavenge-exclude-mask exclude exclude-n)]
@@ -56000,7 +56037,7 @@
 
 (define (compiler-backend-scavenge-xmm-reg
   [dst-var : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
@@ -56019,7 +56056,7 @@
           compiler-backend-scavenge-ctx-assignment-index
           dst-var)
         "")]
-    [ex : (Array String)
+    [ex : (__tl_dyn-array String)
       (if (string.eq dst-home "")
         exclude
         (compiler-backend-scavenge-exclude-append exclude exclude-n dst-home))]
@@ -56050,8 +56087,8 @@
 (cfg
   scavenge-self-check
   (define (compiler-backend-scavenge-freeness-check!
-    [starts : (& starts (Array i64))]
-    [ends : (& ends (Array i64))]
+    [starts : (& starts (__tl_dyn-array i64))]
+    [ends : (& ends (__tl_dyn-array i64))]
     [assignment-index
       : (& assignment-index compiler_regalloc.CompilerRegAssignmentIndex)]
     [vars : i64]
@@ -56080,12 +56117,12 @@
 ;; tier, without adding a pending save that would leak when the fusion rejects.
 (define (compiler-backend-scavenge-pick-iter-peek
   [occupied-mask : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [exclude-mask : i64]
   [plan-mask : i64]
   [fallback : String]
-  [cands : (& cands (Array i64))]
+  [cands : (& cands (__tl_dyn-array i64))]
   [i : i64]
   [n : i64]) : String
   (if (>= i n)
@@ -56121,7 +56158,7 @@
 
 (define (compiler-backend-scavenge-pick-with-mask-peek
   [occupied-mask : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]) : String
   (let
@@ -56144,7 +56181,7 @@
 
 (define (compiler-backend-scavenge-reg-peek
   [dst-var : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
@@ -56159,7 +56196,7 @@
           compiler-backend-scavenge-ctx-assignment-index
           dst-var)
         "")]
-    [ex : (Array String)
+    [ex : (__tl_dyn-array String)
       (if (string.eq dst-home "")
         exclude
         (compiler-backend-scavenge-exclude-append exclude exclude-n dst-home))]
@@ -56178,7 +56215,7 @@
 ;; occupied, pick another free pooled candidate or use the emergency wrapper.
 (define (compiler-backend-scavenge-reg
   [dst-var : i64]
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
@@ -56210,7 +56247,7 @@
           compiler-backend-scavenge-ctx-assignment-index
           dst-var)
         "")]
-    [ex : (Array String)
+    [ex : (__tl_dyn-array String)
       (if (string.eq dst-home "")
         exclude
         (compiler-backend-scavenge-exclude-append exclude exclude-n dst-home))]
@@ -56242,7 +56279,7 @@
 ;; var's def point -- for instructions that define no variable (compare-branch,
 ;; GEP store/copy, etc.). Returns `fallback` until the fallback register is pooled.
 (define (compiler-backend-scavenge-reg-here
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
@@ -56270,7 +56307,7 @@
       reg)))
 
 (define (compiler-backend-scavenge-rcx-reg-here
-  [exclude : (Array String)]
+  [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : String
   (let
@@ -56300,8 +56337,8 @@
 (cfg
   scavenge-self-check
   (define (compiler-backend-scavenge-check-instr
-    [starts : (Array i64)]
-    [ends : (Array i64)]
+    [starts : (__tl_dyn-array i64)]
+    [ends : (__tl_dyn-array i64)]
     [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
     [vars : i64]
     [name : String]
@@ -56426,8 +56463,8 @@
 (cfg
   scavenge-self-check
   (define (compiler-backend-scavenge-check-seq
-    [starts : (Array i64)]
-    [ends : (Array i64)]
+    [starts : (__tl_dyn-array i64)]
+    [ends : (__tl_dyn-array i64)]
     [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
     [vars : i64]
     [name : String]
@@ -56435,10 +56472,10 @@
     [live-afters : compiler_liveness.CompilerLiveInstrSetVec]
     [point : i64]) : i64
     (let
-      [slots : (Array compiler_ir_types.CompilerIrInstr)
+      [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
         (struct-get instrs slots)]
       [count : i64 (struct-get instrs len)]
-      [after-items : (Array compiler_liveness.CompilerLiveI64Set)
+      [after-items : (__tl_dyn-array compiler_liveness.CompilerLiveI64Set)
         (struct-get live-afters items)]
       [index : i64 0]
       [out : i64 point]
@@ -56463,8 +56500,8 @@
 (cfg
   scavenge-self-check
   (define (compiler-backend-scavenge-check-blocks
-    [starts : (Array i64)]
-    [ends : (Array i64)]
+    [starts : (__tl_dyn-array i64)]
+    [ends : (__tl_dyn-array i64)]
     [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
     [vars : i64]
     [name : String]
@@ -56531,8 +56568,8 @@
             emit-blocks)]
         [liveness : compiler_liveness.CompilerFunctionLiveness
           (compiler_liveness.compiler-live-analyze-function func)]
-        [starts : (Array i64) (make-array i64 slot-vars)]
-        [ends : (Array i64) (make-array i64 slot-vars)]
+        [starts : (__tl_dyn-array i64) (make-array i64 slot-vars)]
+        [ends : (__tl_dyn-array i64) (make-array i64 slot-vars)]
         [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
           (compiler_regalloc.compiler-reg-assignment-index-build
             assignments
@@ -57095,9 +57132,9 @@
 ;; `.seh_pushreg` and no `.seh_setframe`. Saved-CSR names are indexed by
 ;; ABI-specific callee-save slot: common 0..4 = r12..r15,rbx; Linux 5 = rbp;
 ;; Win64 5..7 = rsi,rdi,rbp. "" = not saved.
-(define (compiler-backend-rsp-rebase-make-push-regs) : (Array String)
+(define (compiler-backend-rsp-rebase-make-push-regs) : (__tl_dyn-array String)
   (let
-    [regs : (Array String) (make-array String 8)]
+    [regs : (__tl_dyn-array String) (make-array String 8)]
     [idx : i64 0]
     (begin
       (while (< idx (array-length regs))
@@ -57107,7 +57144,7 @@
       regs)))
 
 ;; Shared no-push array for the stage-1 / adapter / fallback call sites.
-(define compiler-backend-rsp-rebase-no-push : (Array String)
+(define compiler-backend-rsp-rebase-no-push : (__tl_dyn-array String)
   (compiler-backend-rsp-rebase-make-push-regs))
 
 ;; Fill `regs` with the plan-saved CSR names (slot-idx order); returns the
@@ -57116,10 +57153,10 @@
 ;; it is fixed before body emission and matches every inline restore site.
 (define (compiler-backend-fill-push-csr-regs!
   [assignments : compiler_regalloc.CompilerRegAssignmentList]
-  [regs : (Array String)]
+  [regs : (__tl_dyn-array String)]
   [backend-state : CompilerBackendState]) : i64
   (let
-    [names : (Array i64) (make-array i64 8)]
+    [names : (__tl_dyn-array i64) (make-array i64 8)]
     [idx : i64 0]
     [count : i64 0]
     (begin
@@ -57169,7 +57206,8 @@
 ;; The popq run restoring the pushed CSRs: highest slot idx first (lowest
 ;; address = last pushed), matching the existing pop-run epilogue order.
 ;; Lines joined by newlines with NO trailing newline (append-line adds it).
-(define (compiler-backend-rsp-rebase-pop-run [push-regs : (Array String)]) : String
+(define (compiler-backend-rsp-rebase-pop-run
+  [push-regs : (__tl_dyn-array String)]) : String
   (let
     [idx : i64 (- (array-length push-regs) 1)]
     [acc : String ""]
@@ -57204,7 +57242,7 @@
   [te : i64]
   [end : i64]
   [mnemonic-kind : i64]
-  [push-regs : (Array String)]
+  [push-regs : (__tl_dyn-array String)]
   [slot-vars : i64]) : i64
   (let
     [p : i64 (compiler-backend-rsp-rebase-find-rbp data m end)]
@@ -57371,7 +57409,7 @@
   [text : String]
   [frame : i64]
   [fpo : bool]
-  [push-regs : (Array String)]
+  [push-regs : (__tl_dyn-array String)]
   [push-count : i64]
   [slot-vars : i64]
   [backend-state : CompilerBackendState]) : String
@@ -57896,28 +57934,28 @@
   131072)
 (define compiler-backend-sweep-bytes-capacity : i64
   8388608)
-(define compiler-backend-sweep-sym-off : (Array i64)
+(define compiler-backend-sweep-sym-off : (__tl_dyn-array i64)
   (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-sym-len : (Array i64)
+(define compiler-backend-sweep-sym-len : (__tl_dyn-array i64)
   (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-lo-arr : (Array i64)
+(define compiler-backend-sweep-lo-arr : (__tl_dyn-array i64)
   (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-hi-arr : (Array i64)
+(define compiler-backend-sweep-hi-arr : (__tl_dyn-array i64)
   (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-disp-arr : (Array i64)
+(define compiler-backend-sweep-disp-arr : (__tl_dyn-array i64)
   (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-win64-arr : (Array i64)
+(define compiler-backend-sweep-win64-arr : (__tl_dyn-array i64)
   (array.make-array i64 compiler-backend-sweep-capacity))
 
 ;; Emergency-slot window [em-lo, em-hi] in the same canonical delta-0
 ;; rsp-relative bytes as [lo, hi]. Empty (em-lo > em-hi) when the function used
 ;; no emergency scavenge slots or has outgoing stack-arg space (whose callee
 ;; reads are invisible to the text scan and may alias the emergency window).
-(define compiler-backend-sweep-em-lo-arr : (Array i64)
+(define compiler-backend-sweep-em-lo-arr : (__tl_dyn-array i64)
   (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-em-hi-arr : (Array i64)
+(define compiler-backend-sweep-em-hi-arr : (__tl_dyn-array i64)
   (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-sym-bytes : (Array u8)
+(define compiler-backend-sweep-sym-bytes : (__tl_dyn-array u8)
   (array.make-array u8 compiler-backend-sweep-bytes-capacity))
 (define compiler-backend-sweep-sym-bytes-count : i64
   0)
@@ -58217,9 +58255,9 @@
 ;; Append `v` at `count` into a growable i64 scratch array; returns the
 ;; (possibly reallocated) array. The caller advances its own count.
 (define (compiler-backend-sweep-i64-push
-  [arr : (Array i64)]
+  [arr : (__tl_dyn-array i64)]
   [count : i64]
-  [v : i64]) : (Array i64)
+  [v : i64]) : (__tl_dyn-array i64)
   (if (< count (array-length arr))
     (begin
       (array-set! arr count v)
@@ -58230,7 +58268,7 @@
         (if (< old 64)
           128
           (* old 2))]
-      [na : (Array i64) (make-array i64 ncap)]
+      [na : (__tl_dyn-array i64) (make-array i64 ncap)]
       [k : i64 0]
       (begin
         (while (< k count)
@@ -58273,7 +58311,7 @@
 ;; function/helper boundary); returns that record's index, or `count`. The probe
 ;; is a packed bit decided once, when the record was built.
 (define (compiler-backend-sweep-region-end-records
-  [recs : (Array CompilerBackendPeepholeLineRecord)]
+  [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)]
   [start : i64]
   [count : i64]) : i64
   (let
@@ -58526,7 +58564,7 @@
 ;; grow-on-demand array reallocated there would dangle after the next arena
 ;; rewind (the arena-transient rule of the operand-string caches applies to
 ;; every module-level array).
-(define compiler-backend-sweep-coverage-bits : (Array i64)
+(define compiler-backend-sweep-coverage-bits : (__tl_dyn-array i64)
   (array.make-array i64 4096))
 
 ;; Largest coverage window served by the bitmap, in i64 words (64 bytes per
@@ -58536,8 +58574,8 @@
   4096)
 
 (define (compiler-backend-sweep-region-records!
-  [recs : (Array CompilerBackendPeepholeLineRecord)]
-  [live : (Array i64)]
+  [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)]
+  [live : (__tl_dyn-array i64)]
   [rstart : i64]
   [rend : i64]
   [lo : i64]
@@ -58552,11 +58590,11 @@
     [win64-tail : bool false]
     [watermark : i64 4611686018427387904]
     [none : i64 compiler-backend-sweep-no-candidate]
-    [reads-lo : (Array i64) (make-array i64 64)]
-    [reads-hi : (Array i64) (make-array i64 64)]
+    [reads-lo : (__tl_dyn-array i64) (make-array i64 64)]
+    [reads-hi : (__tl_dyn-array i64) (make-array i64 64)]
     [read-count : i64 0]
-    [cand-pos : (Array i64) (make-array i64 32)]
-    [cand-off : (Array i64) (make-array i64 32)]
+    [cand-pos : (__tl_dyn-array i64) (make-array i64 32)]
+    [cand-off : (__tl_dyn-array i64) (make-array i64 32)]
     [cand-count : i64 0]
     [i : i64 rstart]
     (begin
@@ -58992,8 +59030,9 @@
   (if (>= start-cursor compiler-backend-sweep-count)
     start-cursor
     (let
-      [recs : (Array CompilerBackendPeepholeLineRecord) (struct-get v lines)]
-      [live : (Array i64) (struct-get v live)]
+      [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+        (struct-get v lines)]
+      [live : (__tl_dyn-array i64) (struct-get v live)]
       [count : i64 (struct-get v len)]
       [cursor : i64 start-cursor]
       [i : i64 0]
@@ -59093,11 +59132,11 @@
 ;; offset kind (1 = Var, 0 = other) and element size as a drift check: a
 ;; consumption mismatch marks the function poisoned and emission fails loudly
 ;; rather than addressing with a stale displacement.
-(define compiler-backend-gep-fold-disp-table : (Array i64)
+(define compiler-backend-gep-fold-disp-table : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define compiler-backend-gep-fold-kind-table : (Array i64)
+(define compiler-backend-gep-fold-kind-table : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define compiler-backend-gep-fold-scale-table : (Array i64)
+(define compiler-backend-gep-fold-scale-table : (__tl_dyn-array i64)
   (array.make-array i64 0))
 (define compiler-backend-gep-fold-cursor : i64
   0)
@@ -59189,13 +59228,13 @@
 ;; Blocks as an array so per-candidate segment scans can address their block
 ;; by ordinal.
 (define (compiler-backend-gep-fold-block-array
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : (Array
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : (__tl_dyn-array
     compiler_ir_types.CompilerIrBlock)
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
-        [out : (Array compiler_ir_types.CompilerIrBlock)
+        [out : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
           (array.make-array compiler_ir_types.CompilerIrBlock count)]
         [j : i64 0]
         (begin
@@ -59211,7 +59250,7 @@
       (let
         [flat : compiler_ir_types.CompilerIrBlockList blocks]
         [count : i64 (compiler_ir_types.compiler-ir-block-list-count-cons flat)]
-        [out : (Array compiler_ir_types.CompilerIrBlock)
+        [out : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
           (array.make-array compiler_ir_types.CompilerIrBlock count)]
         [cursor : compiler_ir_types.CompilerIrBlockList flat]
         [j : i64 0]
@@ -59227,7 +59266,7 @@
           out))]))
 
 (define (compiler-backend-gep-fold-count-geps
-  [barr : (Array compiler_ir_types.CompilerIrBlock)]) : i64
+  [barr : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]) : i64
   (let
     [total : i64 0]
     [b : i64 0]
@@ -59238,7 +59277,7 @@
             [instrs : compiler_ir_types.CompilerIrInstrSeq
               (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
             [n : i64 (struct-get instrs len)]
-            [slots : (Array compiler_ir_types.CompilerIrInstr)
+            [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
               (struct-get instrs slots)]
             [j : i64 0]
             (while (< j n)
@@ -59252,8 +59291,8 @@
       total)))
 
 (define (compiler-backend-gep-fold-count-defs
-  [defs : (Array i64)]
-  [barr : (Array compiler_ir_types.CompilerIrBlock)]) : unit
+  [defs : (__tl_dyn-array i64)]
+  [barr : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]) : unit
   (let
     [b : i64 0]
     (while (< b (array-length barr))
@@ -59262,7 +59301,7 @@
           [instrs : compiler_ir_types.CompilerIrInstrSeq
             (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
           [n : i64 (struct-get instrs len)]
-          [slots : (Array compiler_ir_types.CompilerIrInstr)
+          [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
             (struct-get instrs slots)]
           [j : i64 0]
           (while (< j n)
@@ -59279,12 +59318,12 @@
 
 ;; Pass 1: record candidate adds (base, k, block ordinal, position).
 (define (compiler-backend-gep-fold-scan-adds
-  [barr : (Array compiler_ir_types.CompilerIrBlock)]
-  [defs : (Array i64)]
-  [cand-base : (Array i64)]
-  [cand-k : (Array i64)]
-  [cand-block : (Array i64)]
-  [cand-pos : (Array i64)]) : unit
+  [barr : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
+  [defs : (__tl_dyn-array i64)]
+  [cand-base : (__tl_dyn-array i64)]
+  [cand-k : (__tl_dyn-array i64)]
+  [cand-block : (__tl_dyn-array i64)]
+  [cand-pos : (__tl_dyn-array i64)]) : unit
   (let
     [b : i64 0]
     (while (< b (array-length barr))
@@ -59293,7 +59332,7 @@
           [instrs : compiler_ir_types.CompilerIrInstrSeq
             (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
           [n : i64 (struct-get instrs len)]
-          [slots : (Array compiler_ir_types.CompilerIrInstr)
+          [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
             (struct-get instrs slots)]
           [j : i64 0]
           (while (< j n)
@@ -59331,14 +59370,14 @@
 ;; folded gep position; a disqualifying gep-index use kills the candidate.
 (define (compiler-backend-gep-fold-scan-geps
   [type-segment-bases : i64]
-  [barr : (Array compiler_ir_types.CompilerIrBlock)]
-  [defs : (Array i64)]
-  [cand-base : (Array i64)]
-  [cand-k : (Array i64)]
-  [cand-block : (Array i64)]
-  [cand-pos : (Array i64)]
-  [gep-uses : (Array i64)]
-  [gep-last : (Array i64)]) : unit
+  [barr : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
+  [defs : (__tl_dyn-array i64)]
+  [cand-base : (__tl_dyn-array i64)]
+  [cand-k : (__tl_dyn-array i64)]
+  [cand-block : (__tl_dyn-array i64)]
+  [cand-pos : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [gep-last : (__tl_dyn-array i64)]) : unit
   (let
     [b : i64 0]
     (while (< b (array-length barr))
@@ -59347,7 +59386,7 @@
           [instrs : compiler_ir_types.CompilerIrInstrSeq
             (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
           [n : i64 (struct-get instrs len)]
-          [slots : (Array compiler_ir_types.CompilerIrInstr)
+          [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
             (struct-get instrs slots)]
           [j : i64 0]
           (while (< j n)
@@ -59399,7 +59438,7 @@
   [to : i64]
   [var : i64]) : bool
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [j : i64 (+ from 1)]
     [found : bool false]
@@ -59419,13 +59458,13 @@
 ;; candidate (two rounds cover the parallel-offset shape; deeper chains
 ;; conservatively keep their adds).
 (define (compiler-backend-gep-fold-validate
-  [barr : (Array compiler_ir_types.CompilerIrBlock)]
-  [uses : (Array i64)]
-  [cand-base : (Array i64)]
-  [cand-block : (Array i64)]
-  [cand-pos : (Array i64)]
-  [gep-uses : (Array i64)]
-  [gep-last : (Array i64)]) : unit
+  [barr : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
+  [uses : (__tl_dyn-array i64)]
+  [cand-base : (__tl_dyn-array i64)]
+  [cand-block : (__tl_dyn-array i64)]
+  [cand-pos : (__tl_dyn-array i64)]
+  [gep-uses : (__tl_dyn-array i64)]
+  [gep-last : (__tl_dyn-array i64)]) : unit
   (begin
     (let
       [v : i64 0]
@@ -59465,7 +59504,8 @@
                 (set! v (+ v 1)))))
           (set! round (+ round 1)))))))
 
-(define (compiler-backend-gep-fold-any-valid? [cand-base : (Array i64)]) : bool
+(define (compiler-backend-gep-fold-any-valid?
+  [cand-base : (__tl_dyn-array i64)]) : bool
   (let
     [v : i64 0]
     [found : bool false]
@@ -59481,13 +59521,13 @@
 ;; Pass 4: rebuild each block with elided adds deleted and folded geps
 ;; retargeted to the base var; fill the dst -> byte-displacement table.
 (define (compiler-backend-gep-fold-record-ordinal!
-  [cursor-cell : (Array i64)]
+  [cursor-cell : (__tl_dyn-array i64)]
   [disp : i64]
   [kind : i64]
   [scale : i64]
-  [disp-table : (Array i64)]
-  [kind-table : (Array i64)]
-  [scale-table : (Array i64)]) : unit
+  [disp-table : (__tl_dyn-array i64)]
+  [kind-table : (__tl_dyn-array i64)]
+  [scale-table : (__tl_dyn-array i64)]) : unit
   (let
     [cursor : i64 (array-ref cursor-cell 0)]
     (if (< cursor (array-length disp-table))
@@ -59502,18 +59542,18 @@
   [type-segment-bases : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [block-ord : i64]
-  [cand-base : (Array i64)]
-  [cand-k : (Array i64)]
-  [cand-block : (Array i64)]
-  [cursor-cell : (Array i64)]
-  [disp-table : (Array i64)]
-  [kind-table : (Array i64)]
-  [scale-table : (Array i64)]) : compiler_ir_types.CompilerIrInstrSeq
+  [cand-base : (__tl_dyn-array i64)]
+  [cand-k : (__tl_dyn-array i64)]
+  [cand-block : (__tl_dyn-array i64)]
+  [cursor-cell : (__tl_dyn-array i64)]
+  [disp-table : (__tl_dyn-array i64)]
+  [kind-table : (__tl_dyn-array i64)]
+  [scale-table : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerIrInstrSeq
   (let
     [n : i64 (struct-get instrs len)]
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
-    [out : (Array compiler_ir_types.CompilerIrInstr)
+    [out : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (array.make-array compiler_ir_types.CompilerIrInstr n)]
     [w : i64 0]
     [j : i64 0]
@@ -59595,16 +59635,16 @@
 
 (define (compiler-backend-gep-fold-rewrite-blocks
   [type-segment-bases : i64]
-  [barr : (Array compiler_ir_types.CompilerIrBlock)]
-  [cand-base : (Array i64)]
-  [cand-k : (Array i64)]
-  [cand-block : (Array i64)]
-  [disp-table : (Array i64)]
-  [kind-table : (Array i64)]
-  [scale-table : (Array i64)]) : compiler_ir_types.CompilerIrBlockList
+  [barr : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
+  [cand-base : (__tl_dyn-array i64)]
+  [cand-k : (__tl_dyn-array i64)]
+  [cand-block : (__tl_dyn-array i64)]
+  [disp-table : (__tl_dyn-array i64)]
+  [kind-table : (__tl_dyn-array i64)]
+  [scale-table : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerIrBlockList
   (let
-    [cursor-cell : (Array i64) (array.make-array i64 1)]
-    [rebuilt : (Array compiler_ir_types.CompilerIrBlock)
+    [cursor-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [rebuilt : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
       (array.make-array compiler_ir_types.CompilerIrBlock (array-length barr))]
     [b : i64 0]
     [out : compiler_ir_types.CompilerIrBlockList
@@ -59653,7 +59693,7 @@
         [instrs : compiler_ir_types.CompilerIrInstrSeq
           (compiler-backend-gep-fold-block-instrs block)]
         [n : i64 (struct-get instrs len)]
-        [slots : (Array compiler_ir_types.CompilerIrInstr)
+        [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
           (struct-get instrs slots)]
         [j : i64 0]
         [found : bool false]
@@ -59688,7 +59728,7 @@
               (compiler-backend-gep-fold-block-instrs
                 (compiler_ir_types.compiler-ir-block-seq-ref blocks b))]
             [n : i64 (struct-get instrs len)]
-            [slots : (Array compiler_ir_types.CompilerIrInstr)
+            [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
               (struct-get instrs slots)]
             [j : i64 0]
             (while (and (< j n) (not found))
@@ -59718,16 +59758,17 @@
       (not (compiler-backend-gep-fold-blocks-have-candidate? blocks)))
       blocks
       (let
-        [barr : (Array compiler_ir_types.CompilerIrBlock)
+        [barr : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
           (compiler-backend-gep-fold-block-array blocks)]
-        [defs : (Array i64) (array.make-array i64 vars)]
-        [uses : (Array i64) (compiler-backend-function-use-counts vars blocks)]
-        [cand-base : (Array i64) (array.make-array i64 vars)]
-        [cand-k : (Array i64) (array.make-array i64 vars)]
-        [cand-block : (Array i64) (array.make-array i64 vars)]
-        [cand-pos : (Array i64) (array.make-array i64 vars)]
-        [gep-uses : (Array i64) (array.make-array i64 vars)]
-        [gep-last : (Array i64) (array.make-array i64 vars)]
+        [defs : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [uses : (__tl_dyn-array i64)
+          (compiler-backend-function-use-counts vars blocks)]
+        [cand-base : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [cand-k : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [cand-block : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [cand-pos : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [gep-uses : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [gep-last : (__tl_dyn-array i64) (array.make-array i64 vars)]
         (begin
           (compiler-backend-gep-fold-count-defs defs barr)
           (let
@@ -59764,9 +59805,12 @@
           (if (compiler-backend-gep-fold-any-valid? cand-base)
             (let
               [gep-count : i64 (compiler-backend-gep-fold-count-geps barr)]
-              [disp-table : (Array i64) (array.make-array i64 gep-count)]
-              [kind-table : (Array i64) (array.make-array i64 gep-count)]
-              [scale-table : (Array i64) (array.make-array i64 gep-count)]
+              [disp-table : (__tl_dyn-array i64)
+                (array.make-array i64 gep-count)]
+              [kind-table : (__tl_dyn-array i64)
+                (array.make-array i64 gep-count)]
+              [scale-table : (__tl_dyn-array i64)
+                (array.make-array i64 gep-count)]
               [out : compiler_ir_types.CompilerIrBlockList
                 (compiler-backend-gep-fold-rewrite-blocks
                   type-segment-bases
@@ -60442,8 +60486,9 @@
           (compiler-backend-function-symbol-index program-index name)]
         [label-scope : String
           (compiler-backend-function-label-scope program-index name)]
-        [use-counts : (Array i64) (array.make-array i64 scratch-vars)]
-        [fuse-free-counts : (Array i64) (array.make-array i64 scratch-vars)]
+        [use-counts : (__tl_dyn-array i64) (array.make-array i64 scratch-vars)]
+        [fuse-free-counts : (__tl_dyn-array i64)
+          (array.make-array i64 scratch-vars)]
         [_use-facts : unit
           (compiler-backend-count-block-use-facts
             use-counts
@@ -60936,7 +60981,7 @@
                           ;; epilogue rewrites see the same registers. On audit
                           ;; failure the ORIGINAL text (mov saves intact) feeds
                           ;; the stage-1 keep-rbp fallback unchanged.
-                          [push-regs : (Array String)
+                          [push-regs : (__tl_dyn-array String)
                             (compiler-backend-rsp-rebase-make-push-regs)]
                           [push-count : i64
                             (if fpo-target
@@ -62398,7 +62443,7 @@
 
 (define (compiler-backend-collect-call-args-array-collections
   [collections : CompilerBackendProgramCollections (:consume)]
-  [values : (Array compiler_ir_types.CompilerIrValue)]
+  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]
   [index : i64]) : CompilerBackendProgramCollections
   (if (>= index (array-length values))
     collections
@@ -62442,7 +62487,7 @@
         [out : CompilerBackendProgramCollections collections]
         [i : i64 0]
         [count : i64 (struct-get seq len)]
-        [slots : (Array compiler_ir_types.CompilerIrSpmdCallArg)
+        [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
           (struct-get seq slots)]
         (begin
           (while (< i count)
@@ -62712,7 +62757,7 @@
   [collections : CompilerBackendProgramCollections]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : CompilerBackendProgramCollections
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
@@ -62774,7 +62819,8 @@
   (match spans
     [(compiler_ir_types.CompilerSourceSpans.Spans _ instr-entries _)
       (let
-        [slots : (Array compiler_ir_types.CompilerSourceSpansInstrEntry)
+        [slots : (__tl_dyn-array
+          compiler_ir_types.CompilerSourceSpansInstrEntry)
           (struct-get instr-entries slots)]
         [count : i64 (struct-get instr-entries len)]
         [index : i64 0]
@@ -62970,7 +63016,7 @@
   [floats : BackendFloatSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [slots : (Array BackendFloatEntry) (struct-get floats slots)]
+    [slots : (__tl_dyn-array BackendFloatEntry) (struct-get floats slots)]
     [count : i64 (struct-get floats len)]
     [index : i64 0]
     [out : text_buf.TextBuf buf]
@@ -63446,7 +63492,7 @@
   [index : CompilerBackendRuntimeIndex (:consume)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : CompilerBackendRuntimeIndex
   (let
-    [slots : (Array compiler_ir_types.CompilerIrInstr)
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [i : i64 0]
@@ -65304,7 +65350,7 @@
         [out : object_target.CompilerBackendObjectTargetParts parts]
         [i : i64 0]
         [count : i64 (struct-get seq len)]
-        [slots : (Array compiler_ir_types.CompilerIrSpmdCallArg)
+        [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
           (struct-get seq slots)]
         (begin
           (while (< i count)
@@ -68034,7 +68080,7 @@
   [parts : object_target.CompilerBackendObjectTargetParts]
   [floats : BackendFloatSeq]) : object_target.CompilerBackendObjectTargetParts
   (let
-    [slots : (Array BackendFloatEntry) (struct-get floats slots)]
+    [slots : (__tl_dyn-array BackendFloatEntry) (struct-get floats slots)]
     [count : i64 (struct-get floats len)]
     [index : i64 0]
     [out : object_target.CompilerBackendObjectTargetParts parts]
@@ -68886,11 +68932,11 @@
   16384)
 (define compiler-backend-peephole-owner-global-bytes-capacity : i64
   1048576)
-(define compiler-backend-peephole-owner-global-offsets : (Array i64)
+(define compiler-backend-peephole-owner-global-offsets : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define compiler-backend-peephole-owner-global-lengths : (Array i64)
+(define compiler-backend-peephole-owner-global-lengths : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define compiler-backend-peephole-owner-global-bytes : (Array u8)
+(define compiler-backend-peephole-owner-global-bytes : (__tl_dyn-array u8)
   (array.make-array u8 0))
 (define compiler-backend-peephole-owner-global-bytes-count : i64
   0)
@@ -71608,10 +71654,10 @@
 ;; The arrays are ordinary group-arena storage, exactly as the LineVec's were.
 ;; The sink is re-OPENED at the head of every walk and is never read outside
 ;; one, so a rewind between groups leaves nothing live behind it.
-(define compiler-backend-peephole-records-lines : (Array
+(define compiler-backend-peephole-records-lines : (__tl_dyn-array
     CompilerBackendPeepholeLineRecord)
   (array.make-array CompilerBackendPeepholeLineRecord 0))
-(define compiler-backend-peephole-records-live : (Array i64)
+(define compiler-backend-peephole-records-live : (__tl_dyn-array i64)
   (array.make-array i64 0))
 (define compiler-backend-peephole-records-len : i64
   0)
@@ -71644,9 +71690,9 @@
       (if (< (array-length compiler-backend-peephole-records-lines) 1)
         1
         (* (array-length compiler-backend-peephole-records-lines) 2))]
-    [lines : (Array CompilerBackendPeepholeLineRecord)
+    [lines : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
       (array.make-array CompilerBackendPeepholeLineRecord new-cap)]
-    [live : (Array i64) (array.make-array i64 new-cap)]
+    [live : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     [k : i64 0]
     (begin
       (while (< k len)
@@ -71908,7 +71954,7 @@
   [chunk : i64]
   [start : i64]) : bool
   (let
-    [items : (Array String) (struct-get chunks items)]
+    [items : (__tl_dyn-array String) (struct-get chunks items)]
     [count : i64 (struct-get chunks count)]
     [c : i64 chunk]
     [i : i64 start]
@@ -71929,7 +71975,7 @@
   [chunk : i64]
   [start : i64]) : bool
   (let
-    [items : (Array String) (struct-get chunks items)]
+    [items : (__tl_dyn-array String) (struct-get chunks items)]
     [count : i64 (struct-get chunks count)]
     [c : i64 chunk]
     [i : i64 start]
@@ -72291,7 +72337,7 @@
 ;; every group the backend emits (each chunk is one whole function text), so
 ;; this pass is the invariant check that keeps the walk render-free.
 (define (compiler-backend-peephole-chunks-split-line-count
-  [items : (Array String)]
+  [items : (__tl_dyn-array String)]
   [count : i64]) : i64
   (let
     [k : i64 0]
@@ -72310,7 +72356,7 @@
 ;; single invariant: a line is always contained in the chunk it starts in. The
 ;; join allocates only when a caller appended a partial line.
 (define (compiler-backend-peephole-chunks-normalize
-  [items : (Array String)]
+  [items : (__tl_dyn-array String)]
   [count : i64]
   [total : i64]) : CompilerBackendPeepholeChunkArray
   (let
@@ -72319,7 +72365,8 @@
     (if (= split 0)
       (CompilerBackendPeepholeChunkArray items count total)
       (let
-        [joined : (Array String) (array.make-array String (- count split))]
+        [joined : (__tl_dyn-array String)
+          (array.make-array String (- count split))]
         [w : i64 0]
         [k : i64 0]
         (begin
@@ -72347,7 +72394,7 @@
   (let
     [chunks : text_buf.TextBufChunkList (struct-get group chunks)]
     [count : i64 (text_buf.chunk-count chunks 0)]
-    [items : (Array String) (array.make-array String count)]
+    [items : (__tl_dyn-array String) (array.make-array String count)]
     (begin
       (text_buf.chunks-fill-array-rev chunks items (- count 1))
       (compiler-backend-peephole-chunks-normalize
@@ -72359,7 +72406,7 @@
 ;; so the whole-string peephole entry points share the chunk walk.
 (define (compiler-backend-peephole-single-chunk-array [asm : String]) : CompilerBackendPeepholeChunkArray
   (let
-    [items : (Array String) (array.make-array String 1)]
+    [items : (__tl_dyn-array String) (array.make-array String 1)]
     (begin
       (array-set! items 0 asm)
       (CompilerBackendPeepholeChunkArray items 1 (string.string-length asm)))))
@@ -72369,8 +72416,9 @@
 (define (compiler-backend-peephole-records-length
   [v : CompilerBackendPeepholeLineVec]) : i64
   (let
-    [recs : (Array CompilerBackendPeepholeLineRecord) (struct-get v lines)]
-    [live : (Array i64) (struct-get v live)]
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+      (struct-get v lines)]
+    [live : (__tl_dyn-array i64) (struct-get v live)]
     [count : i64 (struct-get v len)]
     [total : i64 0]
     [i : i64 0]
@@ -72403,8 +72451,9 @@
   [v : CompilerBackendPeepholeLineVec]
   [dst : (MutPtr u8)]) : unit
   (let
-    [recs : (Array CompilerBackendPeepholeLineRecord) (struct-get v lines)]
-    [live : (Array i64) (struct-get v live)]
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+      (struct-get v lines)]
+    [live : (__tl_dyn-array i64) (struct-get v live)]
     [count : i64 (struct-get v len)]
     [out-pos : i64 0]
     [run-active : bool false]
@@ -72492,7 +72541,7 @@
     (if (= total 0)
       ""
       (let
-        [out : (Array u8) (array.make-array u8 total)]
+        [out : (__tl_dyn-array u8) (array.make-array u8 total)]
         [dst : (MutPtr u8)
           (unsafe
             (array-data out))]
@@ -72538,7 +72587,7 @@
   (let
     [chunks : text_buf.TextBufChunkList (struct-get buf chunks)]
     [chunk-count : i64 (text_buf.chunk-count chunks 0)]
-    [items : (Array String) (array.make-array String chunk-count)]
+    [items : (__tl_dyn-array String) (array.make-array String chunk-count)]
     [initial : CompilerBackendPeepholeChunkState
       (CompilerBackendPeepholeChunkState (text_buf.empty) (text_buf.empty))]
     (begin
@@ -72869,15 +72918,16 @@
 ;; nor a guard-ok label, so the held emit and the replay need no guard-owner
 ;; snapshot handling.
 (define (compiler-backend-peephole-held-labels-push
-  [labels : (Array CompilerBackendPeepholeLine)]
+  [labels : (__tl_dyn-array CompilerBackendPeepholeLine)]
   [count : i64]
-  [line : CompilerBackendPeepholeLine]) : (Array CompilerBackendPeepholeLine)
+  [line : CompilerBackendPeepholeLine]) : (__tl_dyn-array
+    CompilerBackendPeepholeLine)
   (if (< count (array-length labels))
     (begin
       (array-set! labels count line)
       labels)
     (let
-      [bigger : (Array CompilerBackendPeepholeLine)
+      [bigger : (__tl_dyn-array CompilerBackendPeepholeLine)
         (array.make-array
           CompilerBackendPeepholeLine
           (* 2 (array-length labels)))]
@@ -72894,7 +72944,7 @@
   [chunks : CompilerBackendPeepholeChunkArray]
   [drop-fallthrough? : bool]) : CompilerBackendPeepholeLineVec
   (let
-    [items : (Array String) (struct-get chunks items)]
+    [items : (__tl_dyn-array String) (struct-get chunks items)]
     [chunk-count : i64 (struct-get chunks count)]
     [_sink : unit
       (compiler-backend-peephole-records-open!
@@ -72915,7 +72965,7 @@
       (compiler-backend-peephole-empty-line)]
     [held-target-start : i64 0]
     [held-target-stop : i64 0]
-    [held-labels : (Array CompilerBackendPeepholeLine)
+    [held-labels : (__tl_dyn-array CompilerBackendPeepholeLine)
       (array.make-array CompilerBackendPeepholeLine 8)]
     [held-label-count : i64 0]
     [c : i64 0]
@@ -73238,8 +73288,9 @@
   [v : CompilerBackendPeepholeLineVec]
   [asm : String]) : (text_buf_borrowed.TextBufBorrowed asm)
   (let
-    [recs : (Array CompilerBackendPeepholeLineRecord) (struct-get v lines)]
-    [live : (Array i64) (struct-get v live)]
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+      (struct-get v lines)]
+    [live : (__tl_dyn-array i64) (struct-get v live)]
     [count : i64 (struct-get v len)]
     [buf : (text_buf_borrowed.TextBufBorrowed asm) out]
     [i : i64 0]
@@ -74960,7 +75011,7 @@
 
 (define (compiler-backend-test-set-compiler-backend-addr-of-forwarding-src!
   [backend-state : CompilerBackendState]
-  [value : (Array i64)]) : unit
+  [value : (__tl_dyn-array i64)]) : unit
   (compiler-backend-function-state-set-i64-array!
     (compiler-backend-state-function-state backend-state)
     compiler-backend-function-i64-array-addr-of-forwarding-src
@@ -74987,7 +75038,7 @@
   (set! compiler-backend-const-hoist-site-count value))
 
 (define (compiler-backend-test-set-compiler-backend-const-hoist-site-regs!
-  [value : (Array i64)]) : unit
+  [value : (__tl_dyn-array i64)]) : unit
   (set! compiler-backend-const-hoist-site-regs value))
 
 (define (compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
@@ -75076,7 +75127,7 @@
 
 (define (compiler-backend-test-set-compiler-backend-fuse-free-counts!
   [backend-state : CompilerBackendState]
-  [value : (Array i64)]) : unit
+  [value : (__tl_dyn-array i64)]) : unit
   (compiler-backend-function-state-set-i64-array!
     (compiler-backend-state-function-state backend-state)
     compiler-backend-function-i64-array-fuse-free-counts
@@ -75092,7 +75143,7 @@
 
 (define (compiler-backend-test-set-compiler-backend-fuse-use-counts!
   [backend-state : CompilerBackendState]
-  [value : (Array i64)]) : unit
+  [value : (__tl_dyn-array i64)]) : unit
   (compiler-backend-function-state-set-i64-array!
     (compiler-backend-state-function-state backend-state)
     compiler-backend-function-i64-array-fuse-use-counts
@@ -75103,7 +75154,7 @@
   (set! compiler-backend-gep-fold-cursor value))
 
 (define (compiler-backend-test-set-compiler-backend-gep-fold-disp-table!
-  [value : (Array i64)]) : unit
+  [value : (__tl_dyn-array i64)]) : unit
   (set! compiler-backend-gep-fold-disp-table value))
 
 (define (compiler-backend-test-set-compiler-backend-gep-fold-drift!
@@ -75111,7 +75162,7 @@
   (set! compiler-backend-gep-fold-drift value))
 
 (define (compiler-backend-test-set-compiler-backend-gep-fold-kind-table!
-  [value : (Array i64)]) : unit
+  [value : (__tl_dyn-array i64)]) : unit
   (set! compiler-backend-gep-fold-kind-table value))
 
 (define (compiler-backend-test-set-compiler-backend-gep-fold-ready!
@@ -75119,7 +75170,7 @@
   (set! compiler-backend-gep-fold-ready value))
 
 (define (compiler-backend-test-set-compiler-backend-gep-fold-scale-table!
-  [value : (Array i64)]) : unit
+  [value : (__tl_dyn-array i64)]) : unit
   (set! compiler-backend-gep-fold-scale-table value))
 
 (define (compiler-backend-test-set-compiler-backend-identity-tail-forwarder-active!
@@ -75139,11 +75190,11 @@
   (set! compiler-backend-phi-xmm-cycle-register-count value))
 
 (define (compiler-backend-test-set-compiler-backend-scavenge-ctx-occupied-masks!
-  [value : (Array i64)]) : unit
+  [value : (__tl_dyn-array i64)]) : unit
   (set! compiler-backend-scavenge-ctx-occupied-masks value))
 
 (define (compiler-backend-test-set-compiler-backend-scavenge-ctx-scratch-masks!
-  [value : (Array i64)]) : unit
+  [value : (__tl_dyn-array i64)]) : unit
   (set! compiler-backend-scavenge-ctx-scratch-masks value))
 
 ;; Test-only dotted-import read boundary.
@@ -75173,7 +75224,7 @@
 (define (compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count) : i64
   compiler-backend-phi-xmm-cycle-fallback-count)
 
-(define (compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks) : (Array
+(define (compiler-backend-test-get-compiler-backend-scavenge-ctx-occupied-masks) : (__tl_dyn-array
     i64)
   (compiler-backend-global-shared-view
     compiler-backend-scavenge-ctx-occupied-masks))
@@ -75191,7 +75242,7 @@
 (define (compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask) : i64
   compiler-backend-scavenge-ctx-plan-reg-mask)
 
-(define (compiler-backend-test-get-compiler-backend-scavenge-ctx-scratch-masks) : (Array
+(define (compiler-backend-test-get-compiler-backend-scavenge-ctx-scratch-masks) : (__tl_dyn-array
     i64)
   (compiler-backend-global-shared-view
     compiler-backend-scavenge-ctx-scratch-masks))
@@ -75236,7 +75287,7 @@
   compiler-backend-emergency-pending-count)
 
 (define (compiler-backend-test-get-compiler-backend-addr-of-forwarding-src
-  [backend-state : CompilerBackendState]) : (Array i64)
+  [backend-state : CompilerBackendState]) : (__tl_dyn-array i64)
   (compiler-backend-function-state-i64-array
     (compiler-backend-state-function-state backend-state)
     compiler-backend-function-i64-array-addr-of-forwarding-src))
@@ -75288,7 +75339,7 @@
 (define (compiler-backend-test-get-compiler-backend-control-mnemonic-jmp) : i64
   compiler-backend-control-mnemonic-jmp)
 
-(define (compiler-backend-test-get-compiler-backend-gep-fold-scale-table) : (Array
+(define (compiler-backend-test-get-compiler-backend-gep-fold-scale-table) : (__tl_dyn-array
     i64)
   (compiler-backend-global-shared-view compiler-backend-gep-fold-scale-table))
 
@@ -75297,15 +75348,15 @@
   (compiler-backend-function-state-phi-targets
     (compiler-backend-state-function-state backend-state)))
 
-(define (compiler-backend-test-get-compiler-backend-scavenge-ctx-starts) : (Array
+(define (compiler-backend-test-get-compiler-backend-scavenge-ctx-starts) : (__tl_dyn-array
     i64)
   (compiler-backend-global-shared-view compiler-backend-scavenge-ctx-starts))
 
-(define (compiler-backend-test-get-compiler-backend-gep-fold-disp-table) : (Array
+(define (compiler-backend-test-get-compiler-backend-gep-fold-disp-table) : (__tl_dyn-array
     i64)
   (compiler-backend-global-shared-view compiler-backend-gep-fold-disp-table))
 
-(define (compiler-backend-test-get-compiler-backend-gep-fold-kind-table) : (Array
+(define (compiler-backend-test-get-compiler-backend-gep-fold-kind-table) : (__tl_dyn-array
     i64)
   (compiler-backend-global-shared-view compiler-backend-gep-fold-kind-table))
 
@@ -75317,7 +75368,7 @@
 (define (compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok) : bool
   compiler-backend-rsp-rebase-last-ok)
 
-(define (compiler-backend-test-get-compiler-backend-rsp-rebase-no-push) : (Array
+(define (compiler-backend-test-get-compiler-backend-rsp-rebase-no-push) : (__tl_dyn-array
     String)
   (compiler-backend-global-shared-view compiler-backend-rsp-rebase-no-push))
 
@@ -75338,7 +75389,7 @@
   (compiler-backend-function-state-emit-current-site
     (compiler-backend-state-function-state backend-state)))
 
-(define (compiler-backend-test-get-compiler-backend-scavenge-ctx-ends) : (Array
+(define (compiler-backend-test-get-compiler-backend-scavenge-ctx-ends) : (__tl_dyn-array
     i64)
   (compiler-backend-global-shared-view compiler-backend-scavenge-ctx-ends))
 
@@ -75488,7 +75539,7 @@
       (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
-    [forwarded : (Array i64) (make-array i64 3)]
+    [forwarded : (__tl_dyn-array i64) (make-array i64 3)]
     [_forward : unit
       (begin
         (compiler-backend-addr-of-forwarding-fill! forwarded 0)
@@ -75524,7 +75575,7 @@
   (compiler-backend-current-fn-win64? backend-state))
 
 (define (compiler-backend-test-get-compiler-backend-fuse-free-counts
-  [backend-state : CompilerBackendState]) : (Array i64)
+  [backend-state : CompilerBackendState]) : (__tl_dyn-array i64)
   (compiler-backend-function-state-i64-array
     (compiler-backend-state-function-state backend-state)
     compiler-backend-function-i64-array-fuse-free-counts))
@@ -75536,7 +75587,7 @@
     compiler-backend-function-bool-fuse-need-ready))
 
 (define (compiler-backend-test-get-compiler-backend-fuse-use-counts
-  [backend-state : CompilerBackendState]) : (Array i64)
+  [backend-state : CompilerBackendState]) : (__tl_dyn-array i64)
   (compiler-backend-function-state-i64-array
     (compiler-backend-state-function-state backend-state)
     compiler-backend-function-i64-array-fuse-use-counts))
@@ -75547,7 +75598,7 @@
 (define (compiler-backend-test-get-compiler-backend-emergency-used) : bool
   compiler-backend-emergency-used)
 
-(define (compiler-backend-test-get-compiler-backend-emergency-regs) : (Array
+(define (compiler-backend-test-get-compiler-backend-emergency-regs) : (__tl_dyn-array
     i64)
   (compiler-backend-global-shared-view compiler-backend-emergency-regs))
 

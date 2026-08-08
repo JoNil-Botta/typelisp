@@ -5303,7 +5303,7 @@
       "typecheck: integer operator expects matching integer operands: expected i32, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-cmp-mismatch-source)
-      "typecheck: comparison expects matching ordered scalar operands")
+      "typecheck: comparison expects matching ordered scalar operands, got i32 and bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-arity-many-source)
       "typecheck: call arity mismatch: f expected 1 argument, got 2 arguments")

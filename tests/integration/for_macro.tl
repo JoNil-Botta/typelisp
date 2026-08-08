@@ -1,6 +1,7 @@
 ;; Scalar `for` selects the iterator protocol from source ownership, evaluates
 ;; every source once, and stops at the shortest source when clauses are zipped.
 (import stdlib.iterator)
+(import stdlib.string)
 (import stdlib.vector)
 
 (defstruct ForCounter
@@ -45,6 +46,91 @@
 
 (define (reset-for-cleanup-total!) : unit
   (set! for-cleanup-total 0))
+
+(define (consume-native-for-string [value : String]) : i64
+  (string.string-length value))
+
+(define (sum-native-array [items : (& source (Array i64 3))]) : i64
+  (let
+    [total : i64 0]
+    (begin
+      (for [item items] (set! total (+ total (deref item))))
+      total)))
+
+(define (bump-native-array! [items : (&mut source (Array i64 3))]) : unit
+  (for [item items] (set! (deref item) (+ (deref item) 10))))
+
+(define (sum-native-slice [items : (& source (Slice i64))]) : i64
+  (let
+    [total : i64 0]
+    (begin
+      (for [item items] (set! total (+ total (deref item))))
+      total)))
+
+(define (bump-native-slice! [items : (&mut source (Slice i64))]) : unit
+  (for [item items] (set! (deref item) (+ (deref item) 10))))
+
+(define (native-for-return) : i64
+  (begin
+    (for [item (array (ann 42 : i64) (ann 99 : i64))] (return item))
+    0))
+
+(define (native-for-ok?) : bool
+  (let
+    [copy-items : (Array i64 3) (array 1 2 3)]
+    [borrowed-items : (Array i64 3) (array 1 2 3)]
+    [slice-items : (Array i64 4) (array 1 2 3 100)]
+    [strings : (Array String 3) (array "a" "bc" "def")]
+    [empty-items : (Array i64 0) (array)]
+    [zip-left : (Array i64 3) (array 1 2 3)]
+    [zip-right : (Array i64 2) (array 10 20)]
+    [break-items : (Array i64 3) (array 1 2 3)]
+    [grid : (Array (Array i64 2) 2) (array (array 1 2) (array 3 4))]
+    [owned-total : i64 0]
+    [string-total : i64 0]
+    [zip-total : i64 0]
+    [nested-total : i64 0]
+    [empty-visits : i64 0]
+    [break-visits : i64 0]
+    (begin
+      (for [item copy-items] (set! owned-total (+ owned-total item)))
+      (for
+        [item : String strings]
+        (set! string-total (+ string-total (consume-native-for-string item))))
+      (for
+        [left zip-left]
+        [right zip-right]
+        (set! zip-total (+ zip-total (+ left right))))
+      (for
+        [row grid]
+        (for [item row] (set! nested-total (+ nested-total item))))
+      (for [item empty-items] (set! empty-visits (+ empty-visits item)))
+      (for [item break-items] (set! break-visits (+ break-visits item)) (break))
+      (let
+        [array-before : i64 (sum-native-array (& borrowed-items))]
+        (begin
+          (bump-native-array! (&mut borrowed-items))
+          (let
+            [array-after : i64 (sum-native-array (& borrowed-items))]
+            [slice-before : i64
+              (sum-native-slice (slice-view (& slice-items) 0 3))]
+            (begin
+              (bump-native-slice! (slice-mut-view (&mut slice-items) 0 3))
+              (and
+                (= (+ owned-total (array-ref copy-items 0)) 7)
+                (= string-total 6)
+                (= zip-total 33)
+                (= nested-total 10)
+                (= empty-visits 0)
+                (= break-visits 1)
+                (= (+ array-before array-after) 42)
+                (=
+                  (+
+                    slice-before
+                    (sum-native-slice (slice-view (& slice-items) 0 3)))
+                  42)
+                (= (array-ref slice-items 3) 100)
+                (= (native-for-return) 42)))))))))
 
 (define (for-cleanup-later-done-ok?) : bool
   (let
@@ -159,4 +245,5 @@
         [(not (for-cleanup-break-ok?)) 7]
         [(not (for-cleanup-continue-ok?)) 8]
         [(not (for-cleanup-return-ok?)) 9]
+        [(not (native-for-ok?)) 10]
         [else 42]))))

@@ -1400,6 +1400,33 @@
                   "0"
                   "0")
                 (+ value-opened type-opened 1))))))]
+    ;; `(ann e : T)` has the same stack shape as `cast`, but preserves the
+    ;; annotation node so integer literals keep their requested scalar type.
+    [(compiler_ast_types.AstExpr.Ann value-node ty-id)
+      (let
+        [value-opened : i64
+          (embedded-native-template-ops params value-node ops ops-count)]
+        (if (< value-opened 0)
+          -1
+          (let
+            [type-opened : i64
+              (embedded-native-template-type-ops
+                params
+                (compiler_ast_types.ty-node-get ty-id)
+                ops
+                ops-count)]
+            (if (< type-opened 0)
+              -1
+              (begin
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-ann)
+                  "0"
+                  "0"
+                  "0")
+                (+ value-opened type-opened 1))))))]
     ;; Typed `(init : T)`: quote the annotation as a type value, then let the
     ;; host reconstruct the same Init node as interpreted quasiquote. Refs
     ;; #5606.
@@ -2864,6 +2891,42 @@
                   ops-count)]
               [(and
                   (or
+                    (string.eq head "comptime.expr-for-owned-state")
+                    (string.eq head "expr-for-owned-state"))
+                  (= argc 4))
+                (embedded-native-computed-for-owned-ops
+                  params
+                  (& args)
+                  4
+                  0
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-for-owned-step")
+                    (string.eq head "expr-for-owned-step"))
+                  (= argc 5))
+                (embedded-native-computed-for-owned-ops
+                  params
+                  (& args)
+                  5
+                  1
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-for-owned-step-typed")
+                    (string.eq head "expr-for-owned-step-typed"))
+                  (= argc 6))
+                (embedded-native-computed-for-owned-ops
+                  params
+                  (& args)
+                  6
+                  2
+                  ops
+                  ops-count)]
+              [(and
+                  (or
                     (string.eq head "comptime.expr-resource-scope")
                     (string.eq head "expr-resource-scope"))
                   (= argc 5))
@@ -2972,6 +3035,19 @@
                   ops-count)]
               [(and
                   (or
+                    (string.eq head "comptime.expr-array-ref")
+                    (string.eq head "expr-array-ref"))
+                  (= argc 2))
+                (embedded-native-computed-binary-ops
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-array-ref)
+                  ops
+                  ops-count)]
+              [(and
+                  (or
                     (string.eq head "comptime.expr-list-empty")
                     (string.eq head "expr-list-empty"))
                   (= argc 0))
@@ -2998,6 +3074,30 @@
                     tlci_core.tlci-host-callback-name-expr-list-cons)
                   ops
                   ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-borrow")
+                    (string.eq head "expr-borrow"))
+                  (= argc 1))
+                (let
+                  [opened : i64
+                    (embedded-native-computed-expr-ops
+                      params
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                      ops
+                      ops-count)]
+                  (if (< opened 0)
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        (tlci_core.tlci-host-callback-name-shared-view
+                          tlci_core.tlci-host-callback-name-expr-borrow)
+                        "0"
+                        "0"
+                        "0")
+                      (+ opened 1))))]
               [(and
                   (or
                     (string.eq head "comptime.expr-mut-borrow")
@@ -4341,6 +4441,60 @@
               (begin
                 (embedded-native-template-push! ops ops-count op "0" "0" "0")
                 (+ first-opened second-opened third-opened 1)))))))))
+
+(define (embedded-native-computed-call-args-ops
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [args : (& args compiler_ast_types.AstExprList)]
+  [index : i64]
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
+  (if (>= index (compiler_ast_types.ast-expr-list-len args))
+    0
+    (let
+      [opened : i64
+        (embedded-native-computed-expr-ops
+          params
+          (compiler_ast_types.ast-expr-list-get args index 0)
+          ops
+          ops-count)]
+      (if (< opened 0)
+        -1
+        (let
+          [rest-opened : i64
+            (embedded-native-computed-call-args-ops
+              params
+              args
+              (+ index 1)
+              ops
+              ops-count)]
+          (if (< rest-opened 0)
+            -1
+            (+ opened rest-opened)))))))
+
+(define (embedded-native-computed-for-owned-ops
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [args : (& args compiler_ast_types.AstExprList)]
+  [expected-count : i64]
+  [mode : i64]
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
+  (if (not (= (compiler_ast_types.ast-expr-list-len args) expected-count))
+    -1
+    (let
+      [opened : i64
+        (embedded-native-computed-call-args-ops params args 0 ops ops-count)]
+      (if (< opened 0)
+        -1
+        (begin
+          (embedded-native-template-push!
+            ops
+            ops-count
+            (tlci_core.tlci-host-callback-name-shared-view
+              tlci_core.tlci-host-callback-name-expr-for-owned)
+            (string.int->string mode)
+            "0"
+            "0")
+          (+ opened 1))))))
 
 (define (embedded-native-computed-resource-scope-ops
   [params : (& params compiler_ast_types.AstMacroParamList)]
@@ -6274,6 +6428,7 @@
     "(extern comptime-host-operand-type-key-eq (:symbol \"_tl_comptime_host_operand-type-key-eq\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-type (:symbol \"_tl_comptime_host_expr-type\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-cast (:symbol \"_tl_comptime_host_expr-cast\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-ann (:symbol \"_tl_comptime_host_expr-ann\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-init (:symbol \"_tl_comptime_host_expr-init\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-bool-literal (:symbol \"_tl_comptime_host_expr-bool-literal\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-int-literal (:symbol \"_tl_comptime_host_expr-int-literal\") : (-> i64 i64 i64 i64 i64 i64))\n"
@@ -6392,6 +6547,7 @@
     "(extern comptime-host-expr-set-var (:symbol \"_tl_comptime_host_expr-set-var\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-resource-scope (:symbol \"_tl_comptime_host_expr-resource-scope\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-let-scope (:symbol \"_tl_comptime_host_expr-let-scope\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-for-owned (:symbol \"_tl_comptime_host_expr-for-owned\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-not (:symbol \"_tl_comptime_host_expr-not\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-while (:symbol \"_tl_comptime_host_expr-while\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-let-binding-typed (:symbol \"_tl_comptime_host_let-binding-typed\") : (-> i64 i64 i64 i64 i64 i64))\n"

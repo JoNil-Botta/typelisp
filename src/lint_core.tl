@@ -2436,6 +2436,30 @@
       (if (lint-expr-uses-import? (ast.ast-node-get cond) alias module-name)
         true
         (lint-expr-uses-import? (ast.ast-node-get body) alias module-name))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (if (lint-expr-uses-import?
+        (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
+        alias
+        module-name)
+        true
+        (lint-expr-uses-import?
+          (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
+          alias
+          module-name))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (if (and
+          (>= expected-type 0)
+          (lint-expr-uses-import?
+            (ast.ast-node-get expected-type)
+            alias
+            module-name))
+          true
+          (lint-expr-uses-import?
+            (ast.ast-node-get (ast.ast-for-owned-step-body (& payload)))
+            alias
+            module-name)))]
     [(ast.AstExpr.Begin exprs)
       (lint-expr-list-uses-import? exprs alias module-name)]
     [(ast.AstExpr.Unsafe exprs)
@@ -3750,6 +3774,18 @@
     [(ast.AstExpr.StringRef text index)
       (lint-unsafe-scan-two-nodes text index scope)]
     [(ast.AstExpr.While cond body) (lint-unsafe-scan-two-nodes cond body scope)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (lint-unsafe-scan-two-nodes
+        (ast.ast-for-owned-state-source (& payload))
+        (ast.ast-for-owned-state-body (& payload))
+        scope)]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        (if (>= expected-type 0)
+          (lint-unsafe-scan-two-nodes expected-type body scope)
+          (lint-unsafe-scan-node body scope)))]
     [(ast.AstExpr.Begin items) (lint-unsafe-scan-expr-list items scope)]
     [(ast.AstExpr.Unsafe items)
       (let
@@ -6985,6 +7021,22 @@
       (lint-single-element-array-expr
         (ast.ast-node-get body)
         (lint-single-element-array-expr (ast.ast-node-get cond) state))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (lint-single-element-array-expr
+        (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
+        (lint-single-element-array-expr
+          (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
+          state))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (lint-single-element-array-expr
+          (ast.ast-node-get (ast.ast-for-owned-step-body (& payload)))
+          (if (>= expected-type 0)
+            (lint-single-element-array-expr
+              (ast.ast-node-get expected-type)
+              state)
+            state)))]
     [(ast.AstExpr.Begin exprs)
       (lint-single-element-array-expr-list exprs state)]
     [(ast.AstExpr.Unsafe exprs)
@@ -7492,6 +7544,37 @@
         (lint-unused-assignment-note-reads
           (ast.ast-node-get body)
           (lint-unused-assignment-note-reads (ast.ast-node-get cond) state)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (lint-unused-assignment-clear-pending
+        (lint-unused-assignment-note-reads
+          (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
+          (lint-unused-assignment-note-reads
+            (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
+            state)))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        (lint-unused-assignment-note-reads
+          (ast.ast-node-get body)
+          (lint-unused-assignment-note-reads
+            (ast.ast-node-get done)
+            (if (>= expected-type 0)
+              (lint-unused-assignment-note-reads
+                (ast.ast-node-get expected-type)
+                (lint-unused-assignment-note-reads
+                  (ast.ast-node-get index)
+                  (lint-unused-assignment-note-reads
+                    (ast.ast-node-get source)
+                    state)))
+              (lint-unused-assignment-note-reads
+                (ast.ast-node-get index)
+                (lint-unused-assignment-note-reads
+                  (ast.ast-node-get source)
+                  state))))))]
     [(ast.AstExpr.Begin exprs)
       (lint-unused-assignment-note-reads-list exprs state)]
     [(ast.AstExpr.Unsafe exprs)
@@ -10411,6 +10494,50 @@
         (ast.ast-node-get body)
         (lint-unused-variable-expr (ast.ast-node-get cond) state span)
         span)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (lint-unused-variable-expr
+        (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
+        (lint-unused-variable-expr
+          (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
+          state
+          span)
+        span)]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        [read-state : LintUnusedVariableState
+          (lint-unused-variable-expr
+            (ast.ast-node-get done)
+            (if (>= expected-type 0)
+              (lint-unused-variable-expr
+                (ast.ast-node-get expected-type)
+                (lint-unused-variable-expr
+                  (ast.ast-node-get index)
+                  (lint-unused-variable-expr
+                    (ast.ast-node-get source)
+                    state
+                    span)
+                  span)
+                span)
+              (lint-unused-variable-expr
+                (ast.ast-node-get index)
+                (lint-unused-variable-expr (ast.ast-node-get source) state span)
+                span))
+            span)]
+        (match (ast.ast-expr-unspan (ast.ast-node-get binding))
+          [(ast.AstExpr.Var name)
+            (lint-unused-variable-index-scope
+              name
+              (ast.ast-node-get body)
+              read-state
+              span)]
+          [_
+            (lint-unused-variable-expr (ast.ast-node-get body) read-state span)]))]
     [(ast.AstExpr.Begin exprs) (lint-unused-variable-expr-list exprs state)]
     [(ast.AstExpr.Unsafe exprs)
       (begin
@@ -11881,6 +12008,23 @@
         [cond : ast.AstExpr (ast.ast-node-get cond-box)]
         [body : ast.AstExpr (ast.ast-node-get body-box)]
         (lint-walk-expr body threshold (lint-walk-expr cond threshold acc)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (lint-walk-expr
+        (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
+        threshold
+        (lint-walk-expr
+          (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
+          threshold
+          acc))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (lint-walk-expr
+          (ast.ast-node-get (ast.ast-for-owned-step-body (& payload)))
+          threshold
+          (if (>= expected-type 0)
+            (lint-walk-expr (ast.ast-node-get expected-type) threshold acc)
+            acc)))]
     [(ast.AstExpr.Begin exprs)
       (lint-walk-value-sequence-expr-list
         exprs

@@ -183,7 +183,7 @@
 ;; CFG map is integer-keyed, which is what the optimizer, register allocator and
 ;; backend want. Only emission and diagnostics ask for the text back. `-1` is
 ;; the absent label, matching the symbol family's negative-id contract.
-(define compiler-ir-label-slots : (Array String)
+(define compiler-ir-label-slots : (__tl_dyn-array String)
   (array.make-array String 1024))
 (define compiler-ir-label-count : i64
   0)
@@ -195,7 +195,7 @@
 (define (compiler-ir-label-grow!) : unit
   (let
     [old-len : i64 (array-length compiler-ir-label-slots)]
-    [next : (Array String) (array.make-array String (* old-len 2))]
+    [next : (__tl_dyn-array String) (array.make-array String (* old-len 2))]
     [index : i64 0]
     (begin
       (while (< index old-len)
@@ -315,7 +315,7 @@
 (define (compiler-ir-symbol-base) : i64
   (* 4 (ci.intern-capacity)))
 
-(define compiler-ir-symbol-slots : (Array String)
+(define compiler-ir-symbol-slots : (__tl_dyn-array String)
   (array.make-array String 1024))
 (define compiler-ir-symbol-count : i64
   0)
@@ -327,7 +327,7 @@
 (define (compiler-ir-symbol-grow!) : unit
   (let
     [old-len : i64 (array-length compiler-ir-symbol-slots)]
-    [next : (Array String) (array.make-array String (* old-len 2))]
+    [next : (__tl_dyn-array String) (array.make-array String (* old-len 2))]
     [index : i64 0]
     (begin
       (while (< index old-len)
@@ -453,7 +453,7 @@
   (Some CompilerIrValue))
 
 (defstruct CompilerIrValueSeq
-  (slots (Array CompilerIrValue))
+  (slots (__tl_dyn-array CompilerIrValue))
   (len i64))
 
 (defenum CompilerIrValueList
@@ -465,7 +465,7 @@
   (Nil)
   (One CompilerIrValue)
   (Two CompilerIrValue CompilerIrValue)
-  (Array (Array CompilerIrValue)))
+  (Array (__tl_dyn-array CompilerIrValue)))
 
 (defenum CompilerIrSpmdBackend
   (Scalar)
@@ -481,7 +481,7 @@
   (Arg CompilerIrSpmdValueClass CompilerIrValue ast.AstType))
 
 (defstruct CompilerIrSpmdCallArgSeq
-  (slots (Array CompilerIrSpmdCallArg))
+  (slots (__tl_dyn-array CompilerIrSpmdCallArg))
   (len i64))
 
 (defenum CompilerIrSpmdCallArgList
@@ -497,7 +497,7 @@
   (Slot ast.AstType i64))
 
 (defstruct CompilerIrCAbiReturnSlotSeq
-  (slots (Array CompilerIrCAbiReturnSlot))
+  (slots (__tl_dyn-array CompilerIrCAbiReturnSlot))
   (len i64))
 
 (defenum CompilerIrCAbiReturnSlotList
@@ -510,7 +510,7 @@
   (label i64))
 
 (defstruct CompilerIrPhiInputSeq
-  (slots (Array CompilerIrPhiInput))
+  (slots (__tl_dyn-array CompilerIrPhiInput))
   (len i64))
 
 (defenum CompilerIrPhiInputList
@@ -522,7 +522,7 @@
   (Case i64 i64))
 
 (defstruct CompilerIrSwitchCaseSeq
-  (slots (Array CompilerIrSwitchCase))
+  (slots (__tl_dyn-array CompilerIrSwitchCase))
   (len i64))
 
 (defenum CompilerIrSwitchCaseList
@@ -917,14 +917,14 @@
   (Cons CompilerIrInstr (Box CompilerIrInstrList)))
 
 (defstruct CompilerIrInstrSeq
-  (slots (Array CompilerIrInstr))
+  (slots (__tl_dyn-array CompilerIrInstr))
   (len i64))
 
 (defenum CompilerIrBlock
   (Block i64 CompilerIrInstrSeq))
 
 (defstruct CompilerIrBlockSeq
-  (slots (Array CompilerIrBlock))
+  (slots (__tl_dyn-array CompilerIrBlock))
   (len i64))
 
 (defenum CompilerIrBlockList
@@ -936,7 +936,7 @@
   (Param String ast.AstType i64))
 
 (defstruct CompilerIrParamSeq
-  (slots (Array CompilerIrParam))
+  (slots (__tl_dyn-array CompilerIrParam))
   (len i64))
 
 (defenum CompilerIrParamList
@@ -948,7 +948,7 @@
   (Function i64 CompilerIrParamList ast.AstType i64 CompilerIrBlockList))
 
 (defstruct CompilerIrFunctionSeq
-  (slots (Array CompilerIrFunction))
+  (slots (__tl_dyn-array CompilerIrFunction))
   (len i64))
 
 (defenum CompilerIrFunctionList
@@ -960,7 +960,7 @@
   (Global i64 ast.AstType CompilerIrValue))
 
 (defstruct CompilerIrGlobalSeq
-  (slots (Array CompilerIrGlobal))
+  (slots (__tl_dyn-array CompilerIrGlobal))
   (len i64))
 
 (defenum CompilerIrGlobalList
@@ -983,7 +983,7 @@
     bool))
 
 (defstruct CompilerIrExternSeq
-  (slots (Array CompilerIrExtern))
+  (slots (__tl_dyn-array CompilerIrExtern))
   (len i64))
 
 (defenum CompilerIrExternList
@@ -1004,7 +1004,8 @@
   [rest : CompilerIrValueList]) : CompilerIrValueList
   (let
     [count : i64 (+ 1 (compiler-ir-value-list-count rest))]
-    [slots : (Array CompilerIrValue) (array.make-array CompilerIrValue count)]
+    [slots : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue count)]
     (begin
       (array-set! slots 0 value)
       (compiler-ir-value-list-fill-array rest slots 1)
@@ -1016,7 +1017,7 @@
     [_ (CompilerIrValueList.Array (compiler-ir-value-seq-from-list values))]))
 
 (define (compiler-ir-value-seq-to-list-rev
-  [slots : (Array CompilerIrValue)]
+  [slots : (__tl_dyn-array CompilerIrValue)]
   [index : i64]
   [acc : CompilerIrValueList]) : CompilerIrValueList
   (let
@@ -1052,7 +1053,7 @@
   [rest : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
   (let
     [count : i64 (+ 1 (compiler-ir-c-abi-return-slot-list-count rest))]
-    [slots : (Array CompilerIrCAbiReturnSlot)
+    [slots : (__tl_dyn-array CompilerIrCAbiReturnSlot)
       (array.make-array CompilerIrCAbiReturnSlot count)]
     (begin
       (array-set! slots 0 slot)
@@ -1070,7 +1071,7 @@
 
 (define (compiler-ir-c-abi-return-slot-list-fill-array
   [items : CompilerIrCAbiReturnSlotList]
-  [slots : (Array CompilerIrCAbiReturnSlot)]
+  [slots : (__tl_dyn-array CompilerIrCAbiReturnSlot)]
   [index : i64]) : unit
   (match items
     [(CompilerIrCAbiReturnSlotList.Nil) unit]
@@ -1085,14 +1086,15 @@
       (let
         [read : i64 0]
         [count : i64 (struct-get seq len)]
-        [source : (Array CompilerIrCAbiReturnSlot) (struct-get seq slots)]
+        [source : (__tl_dyn-array CompilerIrCAbiReturnSlot)
+          (struct-get seq slots)]
         (while (< read count)
           (begin
             (array-set! slots (+ index read) (array-ref source read))
             (set! read (+ read 1)))))]))
 
 (define (compiler-ir-c-abi-return-slot-seq-to-list-rev
-  [slots : (Array CompilerIrCAbiReturnSlot)]
+  [slots : (__tl_dyn-array CompilerIrCAbiReturnSlot)]
   [index : i64]
   [acc : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
   (let
@@ -1128,7 +1130,7 @@
   [rest : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (let
     [count : i64 (+ 1 (compiler-ir-phi-input-list-count rest))]
-    [slots : (Array CompilerIrPhiInput)
+    [slots : (__tl_dyn-array CompilerIrPhiInput)
       (array.make-array CompilerIrPhiInput count)]
     (begin
       (array-set! slots 0 (CompilerIrPhiInput value label))
@@ -1144,7 +1146,7 @@
 
 (define (compiler-ir-phi-input-list-fill-array
   [inputs : CompilerIrPhiInputList]
-  [slots : (Array CompilerIrPhiInput)]
+  [slots : (__tl_dyn-array CompilerIrPhiInput)]
   [index : i64]) : unit
   (match inputs
     [(CompilerIrPhiInputList.Nil) unit]
@@ -1156,7 +1158,7 @@
       (let
         [read : i64 0]
         [count : i64 (struct-get seq len)]
-        [source : (Array CompilerIrPhiInput) (struct-get seq slots)]
+        [source : (__tl_dyn-array CompilerIrPhiInput) (struct-get seq slots)]
         (while (< read count)
           (begin
             (array-set! slots (+ index read) (array-ref source read))
@@ -1165,14 +1167,14 @@
 (define (compiler-ir-phi-input-seq-from-list [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputSeq
   (let
     [count : i64 (compiler-ir-phi-input-list-count inputs)]
-    [slots : (Array CompilerIrPhiInput)
+    [slots : (__tl_dyn-array CompilerIrPhiInput)
       (array.make-array CompilerIrPhiInput count)]
     (begin
       (compiler-ir-phi-input-list-fill-array inputs slots 0)
       (CompilerIrPhiInputSeq slots count))))
 
 (define (compiler-ir-phi-input-seq-to-list-rev
-  [slots : (Array CompilerIrPhiInput)]
+  [slots : (__tl_dyn-array CompilerIrPhiInput)]
   [index : i64]
   [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (let
@@ -1225,7 +1227,7 @@
   [rest : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
   (let
     [count : i64 (+ 1 (compiler-ir-switch-case-list-count rest))]
-    [slots : (Array CompilerIrSwitchCase)
+    [slots : (__tl_dyn-array CompilerIrSwitchCase)
       (array.make-array CompilerIrSwitchCase count)]
     (begin
       (array-set! slots 0 (CompilerIrSwitchCase.Case tag label))
@@ -1241,7 +1243,7 @@
 
 (define (compiler-ir-switch-case-list-fill-array
   [cases : CompilerIrSwitchCaseList]
-  [slots : (Array CompilerIrSwitchCase)]
+  [slots : (__tl_dyn-array CompilerIrSwitchCase)]
   [index : i64]) : unit
   (match cases
     [(CompilerIrSwitchCaseList.Nil) unit]
@@ -1256,7 +1258,7 @@
       (let
         [read : i64 0]
         [count : i64 (struct-get seq len)]
-        [source : (Array CompilerIrSwitchCase) (struct-get seq slots)]
+        [source : (__tl_dyn-array CompilerIrSwitchCase) (struct-get seq slots)]
         (while (< read count)
           (begin
             (array-set! slots (+ index read) (array-ref source read))
@@ -1264,7 +1266,7 @@
 
 (define (compiler-ir-switch-case-list-fill-array-reversed
   [cases : CompilerIrSwitchCaseList]
-  [slots : (Array CompilerIrSwitchCase)]
+  [slots : (__tl_dyn-array CompilerIrSwitchCase)]
   [index : i64]) : unit
   (match cases
     [(CompilerIrSwitchCaseList.Nil) unit]
@@ -1280,7 +1282,7 @@
         [read : i64 0]
         [count : i64 (struct-get seq len)]
         [write : i64 index]
-        [source : (Array CompilerIrSwitchCase) (struct-get seq slots)]
+        [source : (__tl_dyn-array CompilerIrSwitchCase) (struct-get seq slots)]
         (while (< read count)
           (begin
             (array-set! slots write (array-ref source read))
@@ -1291,7 +1293,7 @@
   [cases : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseSeq
   (let
     [count : i64 (compiler-ir-switch-case-list-count cases)]
-    [slots : (Array CompilerIrSwitchCase)
+    [slots : (__tl_dyn-array CompilerIrSwitchCase)
       (array.make-array CompilerIrSwitchCase count)]
     (begin
       (compiler-ir-switch-case-list-fill-array cases slots 0)
@@ -1301,14 +1303,14 @@
   [cases : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseSeq
   (let
     [count : i64 (compiler-ir-switch-case-list-count cases)]
-    [slots : (Array CompilerIrSwitchCase)
+    [slots : (__tl_dyn-array CompilerIrSwitchCase)
       (array.make-array CompilerIrSwitchCase count)]
     (begin
       (compiler-ir-switch-case-list-fill-array-reversed cases slots (- count 1))
       (CompilerIrSwitchCaseSeq slots count))))
 
 (define (compiler-ir-switch-case-seq-to-list-rev
-  [slots : (Array CompilerIrSwitchCase)]
+  [slots : (__tl_dyn-array CompilerIrSwitchCase)]
   [index : i64]
   [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
   (let
@@ -1362,7 +1364,7 @@
 
 (define (compiler-ir-instr-list-fill-array
   [instrs : CompilerIrInstrList]
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]) : unit
   (match instrs
     [(CompilerIrInstrList.Nil) unit]
@@ -1374,13 +1376,14 @@
 (define (compiler-ir-instr-seq-from-list [instrs : CompilerIrInstrList]) : CompilerIrInstrSeq
   (let
     [count : i64 (compiler-ir-instr-list-count instrs)]
-    [slots : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [slots : (__tl_dyn-array CompilerIrInstr)
+      (array.make-array CompilerIrInstr count)]
     (begin
       (compiler-ir-instr-list-fill-array instrs slots 0)
       (CompilerIrInstrSeq slots count))))
 
 (define (compiler-ir-instr-seq-to-list-rev
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [acc : CompilerIrInstrList]) : CompilerIrInstrList
   (let
@@ -1431,7 +1434,7 @@
     [_ fallback]))
 
 (define (compiler-ir-instr-array-loop-dst-or
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [fallback : i64]) : i64
   (compiler-ir-instr-loop-dst-or (array-ref slots index) fallback))
@@ -1553,7 +1556,7 @@
 
 (define (compiler-ir-block-list-fill-array
   [blocks : CompilerIrBlockList]
-  [slots : (Array CompilerIrBlock)]
+  [slots : (__tl_dyn-array CompilerIrBlock)]
   [index : i64]) : unit
   (match blocks
     [(CompilerIrBlockList.Nil) unit]
@@ -1572,7 +1575,7 @@
 
 (define (compiler-ir-block-list-fill-array-reversed
   [blocks : CompilerIrBlockList]
-  [slots : (Array CompilerIrBlock)]
+  [slots : (__tl_dyn-array CompilerIrBlock)]
   [index : i64]) : unit
   (match blocks
     [(CompilerIrBlockList.Nil) unit]
@@ -1588,7 +1591,7 @@
         [i : i64 0]
         [n : i64 (struct-get seq len)]
         [write : i64 index]
-        [src : (Array CompilerIrBlock) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrBlock) (struct-get seq slots)]
         (while (< i n)
           (begin
             (array-set! slots write (array-ref src i))
@@ -1598,7 +1601,8 @@
 (define (compiler-ir-block-seq-from-list [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
   (let
     [count : i64 (compiler-ir-block-list-count-cons blocks)]
-    [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+    [slots : (__tl_dyn-array CompilerIrBlock)
+      (array.make-array CompilerIrBlock count)]
     (begin
       (compiler-ir-block-list-fill-array blocks slots 0)
       (CompilerIrBlockSeq slots count))))
@@ -1607,13 +1611,14 @@
   [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
   (let
     [count : i64 (compiler-ir-block-list-count-cons blocks)]
-    [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+    [slots : (__tl_dyn-array CompilerIrBlock)
+      (array.make-array CompilerIrBlock count)]
     (begin
       (compiler-ir-block-list-fill-array-reversed blocks slots (- count 1))
       (CompilerIrBlockSeq slots count))))
 
 (define (compiler-ir-block-seq-to-list-rev
-  [slots : (Array CompilerIrBlock)]
+  [slots : (__tl_dyn-array CompilerIrBlock)]
   [index : i64]
   [acc : CompilerIrBlockList]) : CompilerIrBlockList
   (let
@@ -1672,7 +1677,8 @@
   [rest : CompilerIrParamList]) : CompilerIrParamList
   (let
     [count : i64 (+ 1 (compiler-ir-param-list-count rest))]
-    [slots : (Array CompilerIrParam) (array.make-array CompilerIrParam count)]
+    [slots : (__tl_dyn-array CompilerIrParam)
+      (array.make-array CompilerIrParam count)]
     (begin
       (array-set! slots 0 param)
       (compiler-ir-param-list-fill-array rest slots 1)
@@ -1687,7 +1693,7 @@
 
 (define (compiler-ir-param-list-fill-array
   [params : CompilerIrParamList]
-  [slots : (Array CompilerIrParam)]
+  [slots : (__tl_dyn-array CompilerIrParam)]
   [index : i64]) : unit
   (match params
     [(CompilerIrParamList.Nil) unit]
@@ -1699,7 +1705,7 @@
       (let
         [read : i64 0]
         [count : i64 (struct-get seq len)]
-        [source : (Array CompilerIrParam) (struct-get seq slots)]
+        [source : (__tl_dyn-array CompilerIrParam) (struct-get seq slots)]
         (while (< read count)
           (begin
             (array-set! slots (+ index read) (array-ref source read))
@@ -1708,13 +1714,14 @@
 (define (compiler-ir-param-seq-from-list [params : CompilerIrParamList]) : CompilerIrParamSeq
   (let
     [count : i64 (compiler-ir-param-list-count params)]
-    [slots : (Array CompilerIrParam) (array.make-array CompilerIrParam count)]
+    [slots : (__tl_dyn-array CompilerIrParam)
+      (array.make-array CompilerIrParam count)]
     (begin
       (compiler-ir-param-list-fill-array params slots 0)
       (CompilerIrParamSeq slots count))))
 
 (define (compiler-ir-param-seq-to-list-rev
-  [slots : (Array CompilerIrParam)]
+  [slots : (__tl_dyn-array CompilerIrParam)]
   [index : i64]
   [acc : CompilerIrParamList]) : CompilerIrParamList
   (let
@@ -1766,7 +1773,7 @@
 
 (define (compiler-ir-function-list-fill-array
   [functions : CompilerIrFunctionList]
-  [slots : (Array CompilerIrFunction)]
+  [slots : (__tl_dyn-array CompilerIrFunction)]
   [index : i64]) : unit
   (match functions
     [(CompilerIrFunctionList.Nil) unit]
@@ -1778,7 +1785,7 @@
       (let
         [i : i64 0]
         [n : i64 (struct-get seq len)]
-        [src : (Array CompilerIrFunction) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrFunction) (struct-get seq slots)]
         (while (< i n)
           (begin
             (array-set! slots (+ index i) (array-ref src i))
@@ -1786,7 +1793,7 @@
 
 (define (compiler-ir-function-list-fill-array-reversed
   [functions : CompilerIrFunctionList]
-  [slots : (Array CompilerIrFunction)]
+  [slots : (__tl_dyn-array CompilerIrFunction)]
   [index : i64]) : unit
   (match functions
     [(CompilerIrFunctionList.Nil) unit]
@@ -1802,7 +1809,7 @@
         [i : i64 0]
         [n : i64 (struct-get seq len)]
         [write : i64 index]
-        [src : (Array CompilerIrFunction) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrFunction) (struct-get seq slots)]
         (while (< i n)
           (begin
             (array-set! slots write (array-ref src i))
@@ -1813,7 +1820,7 @@
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionSeq
   (let
     [count : i64 (compiler-ir-function-list-count-cons functions)]
-    [slots : (Array CompilerIrFunction)
+    [slots : (__tl_dyn-array CompilerIrFunction)
       (array.make-array CompilerIrFunction count)]
     (begin
       (compiler-ir-function-list-fill-array functions slots 0)
@@ -1823,7 +1830,7 @@
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionSeq
   (let
     [count : i64 (compiler-ir-function-list-count-cons functions)]
-    [slots : (Array CompilerIrFunction)
+    [slots : (__tl_dyn-array CompilerIrFunction)
       (array.make-array CompilerIrFunction count)]
     (begin
       (compiler-ir-function-list-fill-array-reversed
@@ -1833,7 +1840,7 @@
       (CompilerIrFunctionSeq slots count))))
 
 (define (compiler-ir-function-seq-to-list-rev
-  [slots : (Array CompilerIrFunction)]
+  [slots : (__tl_dyn-array CompilerIrFunction)]
   [index : i64]
   [acc : CompilerIrFunctionList]) : CompilerIrFunctionList
   (let
@@ -1881,15 +1888,15 @@
     (compiler-ir-function-seq-from-reversed-list functions)))
 
 (defstruct CompilerIrInstrBuilder
-  (slots (Array CompilerIrInstr))
+  (slots (__tl_dyn-array CompilerIrInstr))
   (len i64))
 
 (defstruct CompilerIrBlockBuilder
-  (slots (Array CompilerIrBlock))
+  (slots (__tl_dyn-array CompilerIrBlock))
   (len i64))
 
 (defstruct CompilerIrFunctionBuilder
-  (slots (Array CompilerIrFunction))
+  (slots (__tl_dyn-array CompilerIrFunction))
   (len i64))
 
 (define (compiler-ir-builder-capacity [capacity : i64]) : i64
@@ -1911,8 +1918,8 @@
   (compiler-ir-instr-builder-with-capacity 8))
 
 (define (compiler-ir-instr-builder-copy-range!
-  [dst : (&mut dst (Array CompilerIrInstr))]
-  [src : (& src (Array CompilerIrInstr))]
+  [dst : (&mut dst (__tl_dyn-array CompilerIrInstr))]
+  [src : (& src (__tl_dyn-array CompilerIrInstr))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -1929,7 +1936,8 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array CompilerIrInstr) (make-array CompilerIrInstr new-cap)]
+    [bigger : (__tl_dyn-array CompilerIrInstr)
+      (make-array CompilerIrInstr new-cap)]
     (begin
       (compiler-ir-instr-builder-copy-range!
         (&mut bigger)
@@ -1980,8 +1988,8 @@
   (compiler-ir-block-builder-with-capacity 4))
 
 (define (compiler-ir-block-builder-copy-range!
-  [dst : (&mut dst (Array CompilerIrBlock))]
-  [src : (& src (Array CompilerIrBlock))]
+  [dst : (&mut dst (__tl_dyn-array CompilerIrBlock))]
+  [src : (& src (__tl_dyn-array CompilerIrBlock))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -1998,7 +2006,8 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array CompilerIrBlock) (make-array CompilerIrBlock new-cap)]
+    [bigger : (__tl_dyn-array CompilerIrBlock)
+      (make-array CompilerIrBlock new-cap)]
     (begin
       (compiler-ir-block-builder-copy-range!
         (&mut bigger)
@@ -2032,7 +2041,7 @@
       (let
         [index : i64 0]
         [count : i64 (struct-get seq len)]
-        [src : (Array CompilerIrBlock) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrBlock) (struct-get seq slots)]
         (while (< index count)
           (begin
             (compiler-ir-block-builder-push! builder (array-ref src index))
@@ -2051,8 +2060,8 @@
   (compiler-ir-function-builder-with-capacity 8))
 
 (define (compiler-ir-function-builder-copy-range!
-  [dst : (&mut dst (Array CompilerIrFunction))]
-  [src : (& src (Array CompilerIrFunction))]
+  [dst : (&mut dst (__tl_dyn-array CompilerIrFunction))]
+  [src : (& src (__tl_dyn-array CompilerIrFunction))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -2069,7 +2078,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array CompilerIrFunction)
+    [bigger : (__tl_dyn-array CompilerIrFunction)
       (make-array CompilerIrFunction new-cap)]
     (begin
       (compiler-ir-function-builder-copy-range!
@@ -2104,7 +2113,7 @@
       (let
         [index : i64 0]
         [count : i64 (struct-get seq len)]
-        [src : (Array CompilerIrFunction) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrFunction) (struct-get seq slots)]
         (while (< index count)
           (begin
             (compiler-ir-function-builder-push! builder (array-ref src index))
@@ -2129,7 +2138,8 @@
   [builder : (& builder CompilerIrFunctionBuilder)]) : CompilerIrFunctionList
   (let
     [count : i64 (struct-get builder len)]
-    [slots : (Array CompilerIrFunction) (make-array CompilerIrFunction count)]
+    [slots : (__tl_dyn-array CompilerIrFunction)
+      (make-array CompilerIrFunction count)]
     (begin
       (compiler-ir-function-builder-copy-range!
         (&mut slots)
@@ -2157,7 +2167,7 @@
 
 (define (compiler-ir-global-list-fill-array-reversed
   [globals : CompilerIrGlobalList]
-  [slots : (Array CompilerIrGlobal)]
+  [slots : (__tl_dyn-array CompilerIrGlobal)]
   [index : i64]) : unit
   (match globals
     [(CompilerIrGlobalList.Nil) unit]
@@ -2173,7 +2183,7 @@
         [i : i64 0]
         [n : i64 (struct-get seq len)]
         [write : i64 index]
-        [src : (Array CompilerIrGlobal) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrGlobal) (struct-get seq slots)]
         (while (< i n)
           (begin
             (array-set! slots write (array-ref src i))
@@ -2182,7 +2192,7 @@
 
 (define (compiler-ir-global-seq-to-list [globals : CompilerIrGlobalSeq]) : CompilerIrGlobalList
   (let
-    [slots : (Array CompilerIrGlobal) (struct-get globals slots)]
+    [slots : (__tl_dyn-array CompilerIrGlobal) (struct-get globals slots)]
     [cursor : i64 (- (struct-get globals len) 1)]
     [out : CompilerIrGlobalList CompilerIrGlobalList.Nil]
     (begin
@@ -2204,14 +2214,15 @@
   [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
   (let
     [count : i64 (compiler-ir-global-list-count globals)]
-    [slots : (Array CompilerIrGlobal) (array.make-array CompilerIrGlobal count)]
+    [slots : (__tl_dyn-array CompilerIrGlobal)
+      (array.make-array CompilerIrGlobal count)]
     (begin
       (compiler-ir-global-list-fill-array-reversed globals slots (- count 1))
       (CompilerIrGlobalList.Array (CompilerIrGlobalSeq slots count)))))
 
 (define (compiler-ir-extern-list-fill-array-reversed
   [externs : CompilerIrExternList]
-  [slots : (Array CompilerIrExtern)]
+  [slots : (__tl_dyn-array CompilerIrExtern)]
   [index : i64]) : unit
   (match externs
     [(CompilerIrExternList.Nil) unit]
@@ -2227,7 +2238,7 @@
         [i : i64 0]
         [n : i64 (struct-get seq len)]
         [write : i64 index]
-        [src : (Array CompilerIrExtern) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrExtern) (struct-get seq slots)]
         (while (< i n)
           (begin
             (array-set! slots write (array-ref src i))
@@ -2236,7 +2247,7 @@
 
 (define (compiler-ir-extern-seq-to-list [externs : CompilerIrExternSeq]) : CompilerIrExternList
   (let
-    [slots : (Array CompilerIrExtern) (struct-get externs slots)]
+    [slots : (__tl_dyn-array CompilerIrExtern) (struct-get externs slots)]
     [cursor : i64 (- (struct-get externs len) 1)]
     [out : CompilerIrExternList CompilerIrExternList.Nil]
     (begin
@@ -2258,7 +2269,8 @@
   [externs : CompilerIrExternList]) : CompilerIrExternList
   (let
     [count : i64 (compiler-ir-extern-list-count externs)]
-    [slots : (Array CompilerIrExtern) (array.make-array CompilerIrExtern count)]
+    [slots : (__tl_dyn-array CompilerIrExtern)
+      (array.make-array CompilerIrExtern count)]
     (begin
       (compiler-ir-extern-list-fill-array-reversed externs slots (- count 1))
       (CompilerIrExternList.Array (CompilerIrExternSeq slots count)))))
@@ -2375,8 +2387,8 @@
 
 (define (compiler-ir-clone-spmd-call-arg-seq-fill
   [pools : ast.AstNodePoolContext]
-  [src : (Array CompilerIrSpmdCallArg)]
-  [dst : (Array CompilerIrSpmdCallArg)]
+  [src : (__tl_dyn-array CompilerIrSpmdCallArg)]
+  [dst : (__tl_dyn-array CompilerIrSpmdCallArg)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -2393,8 +2405,8 @@
   [seq : CompilerIrSpmdCallArgSeq]) : CompilerIrSpmdCallArgSeq
   (let
     [count : i64 (struct-get seq len)]
-    [src : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
-    [dst : (Array CompilerIrSpmdCallArg)
+    [src : (__tl_dyn-array CompilerIrSpmdCallArg) (struct-get seq slots)]
+    [dst : (__tl_dyn-array CompilerIrSpmdCallArg)
       (array.make-array CompilerIrSpmdCallArg count)]
     (begin
       (compiler-ir-clone-spmd-call-arg-seq-fill pools src dst 0 count)
@@ -2433,8 +2445,8 @@
 
 (define (compiler-ir-clone-c-abi-return-slot-seq-fill
   [pools : ast.AstNodePoolContext]
-  [src : (Array CompilerIrCAbiReturnSlot)]
-  [dst : (Array CompilerIrCAbiReturnSlot)]
+  [src : (__tl_dyn-array CompilerIrCAbiReturnSlot)]
+  [dst : (__tl_dyn-array CompilerIrCAbiReturnSlot)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -2456,8 +2468,8 @@
   [seq : CompilerIrCAbiReturnSlotSeq]) : CompilerIrCAbiReturnSlotSeq
   (let
     [count : i64 (struct-get seq len)]
-    [src : (Array CompilerIrCAbiReturnSlot) (struct-get seq slots)]
-    [dst : (Array CompilerIrCAbiReturnSlot)
+    [src : (__tl_dyn-array CompilerIrCAbiReturnSlot) (struct-get seq slots)]
+    [dst : (__tl_dyn-array CompilerIrCAbiReturnSlot)
       (array.make-array CompilerIrCAbiReturnSlot count)]
     (begin
       (compiler-ir-clone-c-abi-return-slot-seq-fill pools src dst 0 count)
@@ -3086,8 +3098,8 @@
 
 (define (compiler-ir-clone-instr-seq-fill
   [pools : ast.AstNodePoolContext]
-  [src : (Array CompilerIrInstr)]
-  [dst : (Array CompilerIrInstr)]
+  [src : (__tl_dyn-array CompilerIrInstr)]
+  [dst : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]) : unit
   (let
@@ -3107,8 +3119,9 @@
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [count : i64 (struct-get instrs len)]
-    [src : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [dst : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [src : (__tl_dyn-array CompilerIrInstr) (struct-get instrs slots)]
+    [dst : (__tl_dyn-array CompilerIrInstr)
+      (array.make-array CompilerIrInstr count)]
     (begin
       (compiler-ir-clone-instr-seq-fill pools src dst 0 count)
       (CompilerIrInstrSeq dst count))))
@@ -3395,8 +3408,8 @@
 (define (compiler-ir-clone-function-seq-shell [seq : CompilerIrFunctionSeq]) : CompilerIrFunctionSeq
   (let
     [count : i64 (struct-get seq len)]
-    [source : (Array CompilerIrFunction) (struct-get seq slots)]
-    [dest : (Array CompilerIrFunction)
+    [source : (__tl_dyn-array CompilerIrFunction) (struct-get seq slots)]
+    [dest : (__tl_dyn-array CompilerIrFunction)
       (array.make-array CompilerIrFunction count)]
     [i : i64 0]
     (begin
@@ -3701,7 +3714,7 @@
 
 (define (compiler-ir-value-list-fill-array
   [values : CompilerIrValueList]
-  [out : (Array CompilerIrValue)]
+  [out : (__tl_dyn-array CompilerIrValue)]
   [index : i64]) : unit
   (match values
     [(CompilerIrValueList.Nil) unit]
@@ -3713,7 +3726,7 @@
       (let
         [read : i64 0]
         [count : i64 (struct-get seq len)]
-        [source : (Array CompilerIrValue) (struct-get seq slots)]
+        [source : (__tl_dyn-array CompilerIrValue) (struct-get seq slots)]
         (while (< read count)
           (begin
             (array-set! out (+ index read) (array-ref source read))
@@ -3722,7 +3735,8 @@
 (define (compiler-ir-value-seq-from-list [values : CompilerIrValueList]) : CompilerIrValueSeq
   (let
     [count : i64 (compiler-ir-value-list-count values)]
-    [slots : (Array CompilerIrValue) (array.make-array CompilerIrValue count)]
+    [slots : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue count)]
     (begin
       (compiler-ir-value-list-fill-array values slots 0)
       (CompilerIrValueSeq slots count))))
@@ -3730,7 +3744,8 @@
 (define (compiler-ir-call-args-array [values : CompilerIrValueList]) : CompilerIrCallArgs
   (let
     [count : i64 (compiler-ir-value-list-count values)]
-    [out : (Array CompilerIrValue) (array.make-array CompilerIrValue count)]
+    [out : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue count)]
     (begin
       (compiler-ir-value-list-fill-array values out 0)
       (CompilerIrCallArgs.Array out))))
@@ -3755,7 +3770,7 @@
             [_ (compiler-ir-call-args-array values)])])]))
 
 (define (compiler-ir-call-args-array-render
-  [values : (Array CompilerIrValue)]
+  [values : (__tl_dyn-array CompilerIrValue)]
   [index : i64]) : String
   (if (>= index (array-length values))
     ""
@@ -3816,7 +3831,7 @@
   [index : i64]) : String
   (let
     [count : i64 (struct-get seq len)]
-    [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+    [slots : (__tl_dyn-array CompilerIrSpmdCallArg) (struct-get seq slots)]
     (if (>= index count)
       ""
       (str_cat.str-cat
@@ -3860,7 +3875,7 @@
 
 (define (compiler-ir-spmd-call-arg-list-fill-array
   [args : CompilerIrSpmdCallArgList]
-  [slots : (Array CompilerIrSpmdCallArg)]
+  [slots : (__tl_dyn-array CompilerIrSpmdCallArg)]
   [index : i64]) : unit
   (match args
     [(CompilerIrSpmdCallArgList.Nil) unit]
@@ -3876,7 +3891,7 @@
 
 (define (compiler-ir-spmd-call-arg-seq-fill-array
   [seq : CompilerIrSpmdCallArgSeq]
-  [slots : (Array CompilerIrSpmdCallArg)]
+  [slots : (__tl_dyn-array CompilerIrSpmdCallArg)]
   [src-index : i64]
   [dst-index : i64]) : unit
   (if (>= src-index (struct-get seq len))
@@ -3899,7 +3914,7 @@
     [(CompilerIrSpmdCallArgList.Cons _ _)
       (let
         [count : i64 (compiler-ir-spmd-call-arg-count args)]
-        [slots : (Array CompilerIrSpmdCallArg)
+        [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
           (array.make-array CompilerIrSpmdCallArg count)]
         (begin
           (compiler-ir-spmd-call-arg-list-fill-array args slots 0)
@@ -5046,7 +5061,7 @@
   (Entry CompilerIrSymbolId i64 ast.AstSourceSpan))
 
 (defstruct CompilerSourceSpansEntryList
-  (slots (Array CompilerSourceSpansEntry))
+  (slots (__tl_dyn-array CompilerSourceSpansEntry))
   (len i64))
 
 ;; Instruction spans are keyed by typed ids instead of rendered strings: a
@@ -5066,7 +5081,7 @@
   (Entry CompilerSourceSpansInstrKey i64 ast.AstSourceSpan))
 
 (defstruct CompilerSourceSpansInstrEntryList
-  (slots (Array CompilerSourceSpansInstrEntry))
+  (slots (__tl_dyn-array CompilerSourceSpansInstrEntry))
   (len i64))
 
 (defenum CompilerSourceSpans
@@ -5110,8 +5125,8 @@
   (struct-get entries len))
 
 (define (compiler-source-spans-entry-list-copy-array-range!
-  [dst : (&mut dst (Array CompilerSourceSpansEntry))]
-  [src : (& src (Array CompilerSourceSpansEntry))]
+  [dst : (&mut dst (__tl_dyn-array CompilerSourceSpansEntry))]
+  [src : (& src (__tl_dyn-array CompilerSourceSpansEntry))]
   [index : i64]
   [count : i64]) : unit
   (let
@@ -5137,7 +5152,8 @@
   [entries : CompilerSourceSpansEntryList]
   [entry : CompilerSourceSpansEntry]) : CompilerSourceSpansEntryList
   (let
-    [slots : (Array CompilerSourceSpansEntry) (struct-get entries slots)]
+    [slots : (__tl_dyn-array CompilerSourceSpansEntry)
+      (struct-get entries slots)]
     [len : i64 (struct-get entries len)]
     [cap : i64 (array-length slots)]
     (if (< len cap)
@@ -5147,7 +5163,7 @@
       (let
         [new-cap : i64
           (compiler-source-spans-entry-list-capacity-for (+ len 1))]
-        [bigger : (Array CompilerSourceSpansEntry)
+        [bigger : (__tl_dyn-array CompilerSourceSpansEntry)
           (make-array CompilerSourceSpansEntry new-cap)]
         (begin
           (compiler-source-spans-entry-list-copy-array-range!
@@ -5179,8 +5195,8 @@
         [_ false])]))
 
 (define (compiler-source-spans-instr-entry-list-copy-array-range!
-  [dst : (&mut dst (Array CompilerSourceSpansInstrEntry))]
-  [src : (& src (Array CompilerSourceSpansInstrEntry))]
+  [dst : (&mut dst (__tl_dyn-array CompilerSourceSpansInstrEntry))]
+  [src : (& src (__tl_dyn-array CompilerSourceSpansInstrEntry))]
   [index : i64]
   [count : i64]) : unit
   (let
@@ -5194,7 +5210,8 @@
   [entries : CompilerSourceSpansInstrEntryList]
   [entry : CompilerSourceSpansInstrEntry]) : CompilerSourceSpansInstrEntryList
   (let
-    [slots : (Array CompilerSourceSpansInstrEntry) (struct-get entries slots)]
+    [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)
+      (struct-get entries slots)]
     [len : i64 (struct-get entries len)]
     [cap : i64 (array-length slots)]
     (if (< len cap)
@@ -5204,7 +5221,7 @@
       (let
         [new-cap : i64
           (compiler-source-spans-entry-list-capacity-for (+ len 1))]
-        [bigger : (Array CompilerSourceSpansInstrEntry)
+        [bigger : (__tl_dyn-array CompilerSourceSpansInstrEntry)
           (make-array CompilerSourceSpansInstrEntry new-cap)]
         (begin
           (compiler-source-spans-instr-entry-list-copy-array-range!
@@ -5228,9 +5245,10 @@
 (define (compiler-source-spans-entry-list-escape
   [entries : CompilerSourceSpansEntryList]) : CompilerSourceSpansEntryList
   (let
-    [slots : (Array CompilerSourceSpansEntry) (struct-get entries slots)]
+    [slots : (__tl_dyn-array CompilerSourceSpansEntry)
+      (struct-get entries slots)]
     [len : i64 (struct-get entries len)]
-    [copy : (Array CompilerSourceSpansEntry)
+    [copy : (__tl_dyn-array CompilerSourceSpansEntry)
       (make-array CompilerSourceSpansEntry len)]
     (begin
       (compiler-source-spans-entry-list-copy-array-range!
@@ -5243,9 +5261,10 @@
 (define (compiler-source-spans-instr-entry-list-escape
   [entries : CompilerSourceSpansInstrEntryList]) : CompilerSourceSpansInstrEntryList
   (let
-    [slots : (Array CompilerSourceSpansInstrEntry) (struct-get entries slots)]
+    [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)
+      (struct-get entries slots)]
     [len : i64 (struct-get entries len)]
-    [copy : (Array CompilerSourceSpansInstrEntry)
+    [copy : (__tl_dyn-array CompilerSourceSpansInstrEntry)
       (make-array CompilerSourceSpansInstrEntry len)]
     (begin
       (compiler-source-spans-instr-entry-list-copy-array-range!
@@ -5264,7 +5283,7 @@
         instr-count)]))
 
 (define (compiler-source-spans-instr-entry-array-lookup
-  [slots : (Array CompilerSourceSpansInstrEntry)]
+  [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
   [index : i64]
   [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceSpan
   (if (< index 0)
@@ -5276,7 +5295,7 @@
           (compiler-source-spans-instr-entry-array-lookup slots (- index 1) key))])))
 
 (define (compiler-source-spans-instr-entry-array-lookup-location
-  [slots : (Array CompilerSourceSpansInstrEntry)]
+  [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
   [index : i64]
   [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceLocation
   (if (< index 0)
@@ -5338,7 +5357,7 @@
         instr-count)]))
 
 (define (compiler-source-spans-entry-array-lookup
-  [slots : (Array CompilerSourceSpansEntry)]
+  [slots : (__tl_dyn-array CompilerSourceSpansEntry)]
   [index : i64]
   [name : CompilerIrSymbolId]) : CompilerMaybeSourceSpan
   (if (< index 0)
@@ -5350,7 +5369,7 @@
           (compiler-source-spans-entry-array-lookup slots (- index 1) name))])))
 
 (define (compiler-source-spans-entry-array-lookup-location
-  [slots : (Array CompilerSourceSpansEntry)]
+  [slots : (__tl_dyn-array CompilerSourceSpansEntry)]
   [index : i64]
   [name : CompilerIrSymbolId]) : CompilerMaybeSourceLocation
   (if (< index 0)
@@ -5899,9 +5918,10 @@
             [entry-index : i64 (struct-get base-entries len)]
             [instr-index : i64 (struct-get base-instr-entries len)]
             [out : CompilerSourceSpans base]
-            [complete-entry-slots : (Array CompilerSourceSpansEntry)
+            [complete-entry-slots : (__tl_dyn-array CompilerSourceSpansEntry)
               (struct-get complete-entries slots)]
-            [complete-instr-slots : (Array CompilerSourceSpansInstrEntry)
+            [complete-instr-slots : (__tl_dyn-array
+              CompilerSourceSpansInstrEntry)
               (struct-get complete-instr-entries slots)]
             (begin
               (while (< entry-index (struct-get complete-entries len))
@@ -6061,7 +6081,7 @@
     [_ 0]))
 
 (define (compiler-ir-instr-seq-call-arg-count-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -6081,7 +6101,7 @@
     0))
 
 (define (compiler-ir-instr-seq-phi-input-count-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -6230,7 +6250,7 @@
 (define (compiler-ir-function-seq-block-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
     [count : i64 (struct-get functions len)]
     [index : i64 0]
     [acc : i64 0]
@@ -6246,7 +6266,7 @@
 (define (compiler-ir-function-seq-instruction-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
     [count : i64 (struct-get functions len)]
     [index : i64 0]
     [acc : i64 0]
@@ -6264,7 +6284,7 @@
 (define (compiler-ir-function-seq-empty-block-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
     [count : i64 (struct-get functions len)]
     [index : i64 0]
     [acc : i64 0]
@@ -6282,7 +6302,7 @@
 (define (compiler-ir-function-seq-max-instruction-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
     [count : i64 (struct-get functions len)]
     [index : i64 0]
     [acc : i64 0]
@@ -6301,7 +6321,7 @@
 (define (compiler-ir-function-seq-max-block-instruction-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
     [count : i64 (struct-get functions len)]
     [index : i64 0]
     [acc : i64 0]
@@ -6320,7 +6340,7 @@
 (define (compiler-ir-function-seq-call-arg-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
     [count : i64 (struct-get functions len)]
     [index : i64 0]
     [acc : i64 0]
@@ -6338,7 +6358,7 @@
 (define (compiler-ir-function-seq-phi-input-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
     [count : i64 (struct-get functions len)]
     [index : i64 0]
     [acc : i64 0]
@@ -6355,7 +6375,7 @@
 
 (define (compiler-ir-function-seq-var-count [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (Array CompilerIrFunction) (struct-get functions slots)]
+    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
     [count : i64 (struct-get functions len)]
     [index : i64 0]
     [acc : i64 0]
@@ -6704,7 +6724,7 @@
   [index : i64]) : String
   (let
     [count : i64 (struct-get seq len)]
-    [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+    [slots : (__tl_dyn-array CompilerIrSpmdCallArg) (struct-get seq slots)]
     (if (>= index count)
       ""
       (str_cat.str-cat

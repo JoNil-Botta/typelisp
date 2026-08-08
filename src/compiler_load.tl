@@ -5256,6 +5256,13 @@
         alias
         summary
         locals)]
+    [(ast.AstPattern.Array patterns)
+      (compiler-load-session-state-lazy-pattern-list-demand
+        state
+        (box-get patterns)
+        alias
+        summary
+        locals)]
     [(ast.AstPattern.Variant name patterns)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-name-demand
@@ -5270,7 +5277,9 @@
           alias
           summary
           locals))]
-    [_ (compiler-load-lazy-alias-demand-none)]))
+    [(ast.AstPattern.Wildcard) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstPattern.Binding _) (compiler-load-lazy-alias-demand-none)]
+    [(ast.AstPattern.Literal _) (compiler-load-lazy-alias-demand-none)]))
 
 (define (compiler-load-session-state-lazy-pattern-list-demand-at?
   [state : CompilerLoadSessionState]
@@ -5336,12 +5345,18 @@
         state
         (box-get patterns)
         locals)]
+    [(ast.AstPattern.Array patterns)
+      (compiler-load-session-state-lazy-pattern-list-locals
+        state
+        (box-get patterns)
+        locals)]
     [(ast.AstPattern.Variant _ patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (box-get patterns)
         locals)]
-    [_ locals]))
+    [(ast.AstPattern.Wildcard) locals]
+    [(ast.AstPattern.Literal _) locals]))
 
 (define (compiler-load-session-state-lazy-pattern-list-locals-at
   [state : CompilerLoadSessionState]

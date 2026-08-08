@@ -295,7 +295,7 @@
 (define (args-owned [args : (ProcessBorrowedStringList text)]) : process.ProcessStringList
   (let
     [n : i64 (args-count args)]
-    [slots : (Array String) (array.make-array String n)]
+    [slots : (__tl_dyn-array String) (array.make-array String n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -308,8 +308,8 @@
 (define (env-owned [env : (ProcessBorrowedEnvList text)]) : process.ProcessEnvList
   (let
     [n : i64 (env-count env)]
-    [names : (Array String) (array.make-array String n)]
-    [values : (Array String) (array.make-array String n)]
+    [names : (__tl_dyn-array String) (array.make-array String n)]
+    [values : (__tl_dyn-array String) (array.make-array String n)]
     [i : i64 0]
     (begin
       (while (< i n)

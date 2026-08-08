@@ -27,7 +27,7 @@
 
 ;: Dense ordered sequence of syntax expressions.
 (defstruct ExprList
-  (items (Array Expr))
+  (items (__tl_dyn-array Expr))
   (len i64))
 
 ;: Pair of expressions used by clause-oriented macro forms.
@@ -37,7 +37,7 @@
 
 ;: Dense ordered sequence of expression clauses.
 (defstruct ExprClauseList
-  (items (Array ExprClause))
+  (items (__tl_dyn-array ExprClause))
   (len i64))
 
 ;: Let-like binding clause used by binding-introducing macro forms.
@@ -49,7 +49,7 @@
 
 ;: Dense ordered sequence of binding clauses.
 (defstruct ExprBindingClauseList
-  (items (Array ExprBindingClause))
+  (items (__tl_dyn-array ExprBindingClause))
   (len i64))
 
 ;: Match pattern syntax value built during macro CTFE.
@@ -60,7 +60,7 @@
 
 ;: Dense ordered sequence of match pattern syntax values.
 (defstruct PatternList
-  (items (Array Pattern))
+  (items (__tl_dyn-array Pattern))
   (len i64))
 
 ;: Generated match arm made from a pattern and result expression.
@@ -70,12 +70,12 @@
 
 ;: Dense ordered sequence of generated match arms.
 (defstruct MatchArmList
-  (items (Array MatchArm))
+  (items (__tl_dyn-array MatchArm))
   (len i64))
 
 ;: Dense ordered sequence of reflected type descriptors.
 (defstruct TypeInfoList
-  (items (Array TypeInfo))
+  (items (__tl_dyn-array TypeInfo))
   (len i64))
 
 ;: Reflected struct field name and type.
@@ -85,7 +85,7 @@
 
 ;: Dense ordered sequence of reflected struct fields.
 (defstruct TypeFieldList
-  (items (Array TypeField))
+  (items (__tl_dyn-array TypeField))
   (len i64))
 
 ;: Reflected enum variant payload type.
@@ -94,7 +94,7 @@
 
 ;: Dense ordered sequence of reflected enum variant payloads.
 (defstruct TypeVariantPayloadList
-  (items (Array TypeVariantPayload))
+  (items (__tl_dyn-array TypeVariantPayload))
   (len i64))
 
 ;: Reflected enum variant name and payload list.
@@ -104,7 +104,7 @@
 
 ;: Dense ordered sequence of reflected enum variants.
 (defstruct TypeVariantList
-  (items (Array TypeVariant))
+  (items (__tl_dyn-array TypeVariant))
   (len i64))
 
 ;: Reflected nominal type parameter name and resolved type.
@@ -114,7 +114,7 @@
 
 ;: Dense ordered sequence of reflected nominal type parameters.
 (defstruct TypeParamList
-  (items (Array TypeParam))
+  (items (__tl_dyn-array TypeParam))
   (len i64))
 
 ;: Compile-time reflection descriptor for a TypeLisp type.
@@ -180,10 +180,20 @@
 (define (expr-struct-set [target : Expr] [field : String] [value : Expr]) : Expr
   (expr-struct-set target field value))
 
+;: Build an explicit inferred-lifetime shared borrow expression during macro CTFE.
+;: The expanded program validates that `place` is a borrowable place.
+(define (expr-borrow [place : Expr]) : Expr
+  (expr-borrow place))
+
 ;: Build an explicit inferred-lifetime mutable borrow expression during macro CTFE.
 ;: The expanded program validates that `place` is a mutable borrowable place.
 (define (expr-mut-borrow [place : Expr]) : Expr
   (expr-mut-borrow place))
+
+;: Build an array-reference expression during macro CTFE.
+;: The expanded program validates the target and index types and bounds checks.
+(define (expr-array-ref [target : Expr] [index : Expr]) : Expr
+  (expr-array-ref target index))
 
 ;: Build an ordered empty expression argument list during macro CTFE.
 (define (expr-list-empty) : ExprList
@@ -339,6 +349,35 @@
 
 ;: Build a single-binding inferred-type `let` scope during macro CTFE.
 (define (expr-let-scope [_name : String] [_init : Expr] [body : Expr]) : Expr
+  body)
+
+;; Internal scalar-for planner builders. These remain ordinary bootstrap
+;; stubs; macro CTFE replaces them with opaque compiler nodes.
+;: Build the ownership state scope for scalar iteration over an owned source.
+(define (expr-for-owned-state
+  [_source-name : Expr]
+  [_index-name : Expr]
+  [_source : Expr]
+  [body : Expr]) : Expr
+  body)
+
+;: Build one inferred-binding step for scalar iteration over an owned source.
+(define (expr-for-owned-step
+  [_source-name : Expr]
+  [_index-name : Expr]
+  [_binding-name : Expr]
+  [_done-name : Expr]
+  [body : Expr]) : Expr
+  body)
+
+;: Build one typed-binding step for scalar iteration over an owned source.
+(define (expr-for-owned-step-typed
+  [_source-name : Expr]
+  [_index-name : Expr]
+  [_binding-name : Expr]
+  [_expected-type : Expr]
+  [_done-name : Expr]
+  [body : Expr]) : Expr
   body)
 
 ;: Build assignment to a variable named by a compile-time string.

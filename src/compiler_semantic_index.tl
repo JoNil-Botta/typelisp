@@ -2024,6 +2024,17 @@
         (box-get items)
         search-start
         search-limit)]
+    [(ast.AstPattern.Array items)
+      (compiler-semantic-bind-pattern-list!
+        state
+        scope
+        env
+        fact-env
+        facts-available
+        bound-names
+        (box-get items)
+        search-start
+        search-limit)]
     [(ast.AstPattern.Variant _ items)
       (compiler-semantic-bind-pattern-list!
         state
@@ -2713,6 +2724,133 @@
       (compiler-semantic-walk-decl! state (box-get inner))]
     [_ unit]))
 
+(define (compiler-semantic-source-for-path
+  [path : String]
+  [entry-path : String]
+  [entry-source : String]) : String
+  (cond
+    [(string.eq path entry-path) (string.copy (& entry-source))]
+    [(and (not (string.eq path "")) (io.file-exists? path))
+      (byte_buf.to-string (io.read-file path))]
+    [else ""]))
+
+(define (compiler-semantic-record-macro-call-site!
+  [state : CompilerSemanticWalkState]
+  [sites : tc.TcMacroCallSiteState]
+  [site-index : i64]
+  [source : String]) : unit
+  (let
+    [ctx : tc.TcContext (struct-get state ctx)]
+    [env : tc.TcTypeEnv (struct-get state top-env)]
+    [name-id : i64
+      (tc.tc-macro-call-site-macro-name-id-for-state sites site-index)]
+    [definition-module-id : i64
+      (tc.tc-macro-call-site-definition-module-id-for-state sites site-index)]
+    [declaration-id : i64
+      (tc.tc-macro-call-site-declaration-id-for-state sites site-index)]
+    [source-span : ast.AstSourceSpan
+      (tc.tc-macro-call-site-span-for-state sites site-index)]
+    [site-editable : bool
+      (tc.tc-macro-call-site-editable-for-state? sites site-index)]
+    [display-name : String (tc.tc-env-key-name-text name-id)]
+    [decl-ctx : tc.TcContext
+      (if (= definition-module-id cbi.compiler-builtin-id-fix-empty)
+        (tc.tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
+        (tc.tc-context-with-module-id
+          ctx
+          (tc.macro-decl-module-display definition-module-id)
+          definition-module-id))]
+    [symbol : CompilerSemanticSymbolId
+      (compiler-semantic-symbol-for-decl
+        decl-ctx
+        definition-module-id
+        declaration-id
+        name-id
+        CompilerSemanticSymbolKind.Macro)]
+    [resolved-type : String
+      (match (compiler-semantic-decl-handle
+        decl-ctx
+        definition-module-id
+        name-id
+        CompilerSemanticSymbolKind.Macro)
+        [(CompilerSemanticMaybeHandle.Some handle)
+          (compiler-semantic-decl-type
+            decl-ctx
+            env
+            (compiler-semantic-handle-decl decl-ctx handle)
+            CompilerSemanticSymbolKind.Macro
+            name-id
+            display-name)]
+        [(CompilerSemanticMaybeHandle.None) "macro"])]
+    [path : String (tc.tc-macro-call-site-path-for-state sites site-index)]
+    [span : CompilerSemanticSpan
+      (if (and site-editable (not (string.eq source "")))
+        (compiler-semantic-use-span-from-origin path source source-span)
+        (CompilerSemanticSpan (string.copy (& path)) -1 -1 source-span))]
+    [editable : bool (and site-editable (>= (struct-get span start-byte) 0))]
+    [generator : String
+      (tc.tc-macro-call-site-generator-for-state sites site-index)]
+    [item : String (tc.tc-macro-call-site-item-for-state sites site-index)]
+    [key : String (tc.tc-macro-call-site-key-for-state sites site-index)]
+    [provenance : CompilerSemanticProvenance
+      (if editable
+        CompilerSemanticProvenance.EditableSource
+        (CompilerSemanticProvenance.Generated
+          (string.copy (& generator))
+          (string.copy (& item))
+          (string.copy (& key))))]
+    (compiler-semantic-record-vec-push!
+      (&mut (box-get (struct-get state records)))
+      (CompilerSemanticRecord
+        symbol
+        CompilerSemanticRecordRole.Use
+        CompilerSemanticSymbolKind.Macro
+        (string.copy (& display-name))
+        (string.copy (& resolved-type))
+        ""
+        (struct-get symbol module-id)
+        span
+        editable
+        provenance))))
+
+(define (compiler-semantic-record-macro-call-sites!
+  [state : CompilerSemanticWalkState]
+  [entry-path : String]
+  [entry-source : String]) : unit
+  (let
+    [sites : tc.TcMacroCallSiteState
+      (tc.tc-job-state-macro-call-sites
+        (tc.tc-context-job-state (struct-get state ctx)))]
+    [count : i64 (tc.tc-macro-call-site-count-for-state sites)]
+    [index : i64 0]
+    [cached : bool false]
+    [cached-path : String ""]
+    [cached-source : String ""]
+    (while (< index count)
+      (let
+        [path : String (tc.tc-macro-call-site-path-for-state sites index)]
+        [editable : bool
+          (tc.tc-macro-call-site-editable-for-state? sites index)]
+        (begin
+          (if (and
+            editable
+            (or (not cached) (not (string.eq path cached-path))))
+            (begin
+              (set! cached-path (string.copy (& path)))
+              (set!
+                cached-source
+                (compiler-semantic-source-for-path path entry-path entry-source))
+              (set! cached true))
+            unit)
+          (compiler-semantic-record-macro-call-site!
+            state
+            sites
+            index
+            (if editable
+              cached-source
+              ""))
+          (set! index (+ index 1)))))))
+
 (define (compiler-semantic-index-build-owned
   [ctx : tc.TcContext]
   [env : tc.TcTypeEnv]
@@ -2939,6 +3077,10 @@
                   [(CompilerSemanticMaybeDecl.None) unit])
                 (compiler-semantic-walk-decl! walk-state decl)
                 (set! index (+ index 1)))))
+          (compiler-semantic-record-macro-call-sites!
+            walk-state
+            entry-path
+            entry-source)
           (let
             [result : CompilerSemanticSourceIndex
               (CompilerSemanticSourceIndex
@@ -2958,36 +3100,43 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
-  (begin
-    (cfg compile-profile (check_core.compiler-check-profile-start))
-    (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
-      (ast.ast-program decls)
-      paths
-      stdlib-roots
-      cache-scope)
-      [(tc.ResultCompilerTypecheckChecked.Ok summary ctx env checked-paths)
-        (begin
-          (cfg
-            compile-profile
-            (check_core.compiler-check-profile-finish "typecheck"))
-          (ResultCompilerCheckWithSemanticIndex.Ok
-            summary
-            (compiler-semantic-index-build-owned
-              ctx
-              env
-              checked-paths
-              path
-              source)))]
-      [(tc.ResultCompilerTypecheckChecked.Err diag)
-        (begin
-          (cfg
-            compile-profile
-            (check_core.compiler-check-profile-finish "typecheck"))
-          (ResultCompilerCheckWithSemanticIndex.Err
-            (box
-              (check_core.compiler-check-diagnostics-with-fallback-path
-                (box-get diag)
-                path))))])))
+  (let
+    [macro-sites : tc.TcMacroCallSiteState
+      (tc.tc-job-state-macro-call-sites (tc.tc-serial-job-state))]
+    (begin
+      (tc.tc-macro-call-site-state-set-enabled! macro-sites true)
+      (cfg compile-profile (check_core.compiler-check-profile-start))
+      (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
+        (ast.ast-program decls)
+        paths
+        stdlib-roots
+        cache-scope)
+        [(tc.ResultCompilerTypecheckChecked.Ok summary ctx env checked-paths)
+          (let
+            [index : CompilerSemanticSourceIndex
+              (compiler-semantic-index-build-owned
+                ctx
+                env
+                checked-paths
+                path
+                source)]
+            (begin
+              (cfg
+                compile-profile
+                (check_core.compiler-check-profile-finish "typecheck"))
+              (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
+              (ResultCompilerCheckWithSemanticIndex.Ok summary index)))]
+        [(tc.ResultCompilerTypecheckChecked.Err diag)
+          (begin
+            (cfg
+              compile-profile
+              (check_core.compiler-check-profile-finish "typecheck"))
+            (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
+            (ResultCompilerCheckWithSemanticIndex.Err
+              (box
+                (check_core.compiler-check-diagnostics-with-fallback-path
+                  (box-get diag)
+                  path))))]))))
 
 (define (compiler-check-loaded-with-prelude-index-cache
   [path : String]
@@ -3329,6 +3478,64 @@
       (>= start 0)
       (>= end start)
       (string.eq (string.substring source start (- end start)) expected))))
+
+(define (compiler-semantic-source-index-find-macro-use
+  [index : (& index CompilerSemanticSourceIndex)]
+  [name : String]
+  [editable : bool]
+  [occurrence : i64]) : i64
+  (let
+    [record-index : i64 0]
+    [seen : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< record-index (struct-get index len)))
+        (let
+          [record : CompilerSemanticRecord
+            (array-ref (struct-get index records) record-index)]
+          (begin
+            (if (and
+              (match (struct-get record role)
+                [(CompilerSemanticRecordRole.Use) true]
+                [_ false])
+              (match (struct-get record kind)
+                [(CompilerSemanticSymbolKind.Macro) true]
+                [_ false])
+              (= (struct-get record editable) editable)
+              (string.eq (struct-get record display-name) name))
+              (if (= seen occurrence)
+                (set! found record-index)
+                (set! seen (+ seen 1)))
+              unit)
+            (set! record-index (+ record-index 1)))))
+      found)))
+
+(define (compiler-semantic-source-index-count-macro-uses
+  [index : (& index CompilerSemanticSourceIndex)]
+  [name : String]
+  [editable : bool]) : i64
+  (let
+    [record-index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< record-index (struct-get index len))
+        (let
+          [record : CompilerSemanticRecord
+            (array-ref (struct-get index records) record-index)]
+          (begin
+            (if (and
+              (match (struct-get record role)
+                [(CompilerSemanticRecordRole.Use) true]
+                [_ false])
+              (match (struct-get record kind)
+                [(CompilerSemanticSymbolKind.Macro) true]
+                [_ false])
+              (= (struct-get record editable) editable)
+              (string.eq (struct-get record display-name) name))
+              (set! count (+ count 1))
+              unit)
+            (set! record-index (+ record-index 1)))))
+      count)))
 
 (define (compiler-semantic-record-vec-growth-ok?) : bool
   (let
@@ -3807,6 +4014,348 @@
                     false)]))))]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
+(define (compiler-check-semantic-index-macro-source) : String
+  "(module semantic.macro.entry)
+(import semantic.index.macro_dep as dep)
+;: Local macro documentation.
+(defmacro (local-wrap [value : Expr]) : Expr
+  `(+ ,value 1))
+(defmacro (outer-wrap [value : Expr]) : Expr
+  `(local-wrap ,value))
+(defmacro (imported-wrap [value : Expr]) : Expr
+  `(+ ,value 10))
+(defmacro (unused-template) : Expr
+  `(local-wrap 99))
+(defmacro (emit-one) : Decls
+  `(define generated-from-macro : i64 (local-wrap 5)))
+(defmacro (make-module [key : String]) : Module
+  `(begin
+    (module semantic.generated.module)
+    (define generated-key : String ,key)))
+(emit-one)
+(import (make-module \"one\") as made)
+(define same-text : String \"local-wrap\")
+; local-wrap in a comment is not a call.
+(define (plain [value : i64]) : i64 value)
+(define (ordinary-shadow) : i64
+  (let [local-wrap : i64 4] local-wrap))
+(define (run) : i64
+  (+ (local-wrap 1)
+    (+ (local-wrap (local-wrap 2))
+      (+ (imported-wrap 3)
+        (+ (dep.imported-wrap 4)
+          (+ (outer-wrap 5) (plain 6)))))))
+")
+
+(define (compiler-check-semantic-index-macro-records-ok?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [path : String]
+  [source : String]) : bool
+  (let
+    [local-definition-index : i64
+      (compiler-semantic-source-index-find-definition index path "local-wrap")]
+    [outer-definition-index : i64
+      (compiler-semantic-source-index-find-definition index path "outer-wrap")]
+    [import-definition-index : i64
+      (compiler-semantic-source-index-find-definition
+        index
+        "src/tests/semantic/index/macro_dep.tl"
+        "imported-wrap")]
+    [shadow-definition-index : i64
+      (compiler-semantic-source-index-find-definition
+        index
+        path
+        "imported-wrap")]
+    [local-use-zero-index : i64
+      (compiler-semantic-source-index-find-macro-use index "local-wrap" true 0)]
+    [local-use-one-index : i64
+      (compiler-semantic-source-index-find-macro-use index "local-wrap" true 1)]
+    [local-use-two-index : i64
+      (compiler-semantic-source-index-find-macro-use index "local-wrap" true 2)]
+    [generated-use-index : i64
+      (compiler-semantic-source-index-find-macro-use index "local-wrap" false 0)]
+    [import-use-index : i64
+      (compiler-semantic-source-index-find-macro-use
+        index
+        "imported-wrap"
+        true
+        1)]
+    [shadow-use-index : i64
+      (compiler-semantic-source-index-find-macro-use
+        index
+        "imported-wrap"
+        true
+        0)]
+    [emit-use-index : i64
+      (compiler-semantic-source-index-find-macro-use index "emit-one" true 0)]
+    [module-use-index : i64
+      (compiler-semantic-source-index-find-macro-use index "make-module" true 0)]
+    [outer-use-index : i64
+      (compiler-semantic-source-index-find-macro-use index "outer-wrap" true 0)]
+    (if (or
+      (< local-definition-index 0)
+      (< outer-definition-index 0)
+      (< import-definition-index 0)
+      (< shadow-definition-index 0)
+      (< local-use-zero-index 0)
+      (< local-use-one-index 0)
+      (< local-use-two-index 0)
+      (< generated-use-index 0)
+      (< import-use-index 0)
+      (< shadow-use-index 0)
+      (< emit-use-index 0)
+      (< module-use-index 0)
+      (< outer-use-index 0))
+      false
+      (let
+        [local-definition : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index local-definition-index)]
+        [outer-definition : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index outer-definition-index)]
+        [import-definition : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index import-definition-index)]
+        [shadow-definition : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index shadow-definition-index)]
+        [local-use-zero : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index local-use-zero-index)]
+        [local-use-one : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index local-use-one-index)]
+        [local-use-two : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index local-use-two-index)]
+        [generated-use : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index generated-use-index)]
+        [import-use : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index import-use-index)]
+        [shadow-use : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index shadow-use-index)]
+        [emit-use : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index emit-use-index)]
+        [module-use : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index module-use-index)]
+        [outer-use : CompilerSemanticRecord
+          (compiler-semantic-source-index-get index outer-use-index)]
+        (and
+          (=
+            (compiler-semantic-source-index-count-macro-uses
+              index
+              "local-wrap"
+              true)
+            3)
+          (=
+            (compiler-semantic-source-index-count-macro-uses
+              index
+              "local-wrap"
+              false)
+            1)
+          (=
+            (compiler-semantic-source-index-count-macro-uses
+              index
+              "imported-wrap"
+              true)
+            2)
+          (=
+            (compiler-semantic-source-index-count-macro-uses
+              index
+              "emit-one"
+              true)
+            1)
+          (=
+            (compiler-semantic-source-index-count-macro-uses
+              index
+              "make-module"
+              true)
+            1)
+          (=
+            (compiler-semantic-source-index-count-macro-uses
+              index
+              "outer-wrap"
+              true)
+            1)
+          (=
+            (compiler-semantic-source-index-count-macro-uses index "plain" true)
+            0)
+          (compiler-semantic-symbol-id-eq?
+            (struct-get local-definition symbol)
+            (struct-get local-use-zero symbol))
+          (compiler-semantic-symbol-id-eq?
+            (struct-get local-definition symbol)
+            (struct-get local-use-one symbol))
+          (compiler-semantic-symbol-id-eq?
+            (struct-get local-definition symbol)
+            (struct-get local-use-two symbol))
+          (compiler-semantic-symbol-id-eq?
+            (struct-get local-definition symbol)
+            (struct-get generated-use symbol))
+          (compiler-semantic-symbol-id-eq?
+            (struct-get outer-definition symbol)
+            (struct-get outer-use symbol))
+          (compiler-semantic-symbol-id-eq?
+            (struct-get import-definition symbol)
+            (struct-get import-use symbol))
+          (compiler-semantic-symbol-id-eq?
+            (struct-get shadow-definition symbol)
+            (struct-get shadow-use symbol))
+          (string.eq
+            (struct-get local-definition resolved-type)
+            (struct-get local-use-zero resolved-type))
+          (string.eq
+            (struct-get import-definition resolved-type)
+            (struct-get import-use resolved-type))
+          (string.eq
+            (struct-get shadow-definition resolved-type)
+            (struct-get shadow-use resolved-type))
+          (<
+            (struct-get (struct-get local-use-zero span) start-byte)
+            (struct-get (struct-get local-use-one span) start-byte))
+          (<
+            (struct-get (struct-get local-use-one span) start-byte)
+            (struct-get (struct-get local-use-two span) start-byte))
+          (not
+            (compiler-semantic-symbol-id-eq?
+              (struct-get import-definition symbol)
+              (struct-get shadow-use symbol)))
+          (compiler-semantic-record-span-text-eq?
+            source
+            local-use-zero
+            "local-wrap")
+          (compiler-semantic-record-span-text-eq?
+            source
+            local-use-one
+            "local-wrap")
+          (compiler-semantic-record-span-text-eq?
+            source
+            local-use-two
+            "local-wrap")
+          (compiler-semantic-record-span-text-eq?
+            source
+            import-use
+            "dep.imported-wrap")
+          (compiler-semantic-record-span-text-eq?
+            source
+            shadow-use
+            "imported-wrap")
+          (compiler-semantic-record-span-text-eq? source emit-use "emit-one")
+          (compiler-semantic-record-span-text-eq?
+            source
+            module-use
+            "make-module")
+          (compiler-semantic-record-span-text-eq? source outer-use "outer-wrap")
+          (string.eq
+            (struct-get local-definition documentation)
+            "Local macro documentation.")
+          (string.eq
+            (struct-get import-definition documentation)
+            "Imported macro documentation.")
+          (not (string.eq (struct-get local-use-zero resolved-type) ""))
+          (not (string.eq (struct-get import-use resolved-type) ""))
+          (< (struct-get (struct-get generated-use span) start-byte) 0)
+          (not (struct-get generated-use editable))
+          (match (struct-get generated-use provenance)
+            [(CompilerSemanticProvenance.Generated generator _ key)
+              (and (not (string.eq generator "")) (not (string.eq key "")))]
+            [_ false]))))))
+
+(define (compiler-check-semantic-index-macro-call-sites-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_macro_entry.tl"]
+    [source : String (compiler-check-semantic-index-macro-source)]
+    [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
+    (match (compiler-check-source-index-with-roots path source (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
+        (let
+          [first-ok : bool
+            (compiler-check-semantic-index-macro-records-ok?
+              (& first)
+              path
+              source)]
+          [first-local-index : i64
+            (compiler-semantic-source-index-find-macro-use
+              (& first)
+              "local-wrap"
+              true
+              0)]
+          [first-local : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& first) first-local-index)]
+          (match (compiler-check-source-index-with-roots path source (svec.new))
+            [(ResultCompilerCheckWithSemanticIndex.Ok _ second)
+              (let
+                [second-local-index : i64
+                  (compiler-semantic-source-index-find-macro-use
+                    (& second)
+                    "local-wrap"
+                    true
+                    0)]
+                [second-local : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& second)
+                    second-local-index)]
+                [reset-ok : bool
+                  (match (compiler-check-source-index-with-roots
+                    path
+                    "(module semantic.macro.entry)
+(define plain : i64 1)"
+                    (svec.new))
+                    [(ResultCompilerCheckWithSemanticIndex.Ok _ replacement)
+                      (let
+                        [empty : bool
+                          (and
+                            (=
+                              (compiler-semantic-source-index-count-macro-uses
+                                (& replacement)
+                                "local-wrap"
+                                true)
+                              0)
+                            (=
+                              (compiler-semantic-source-index-count-macro-uses
+                                (& replacement)
+                                "imported-wrap"
+                                true)
+                              0)
+                            (=
+                              (compiler-semantic-source-index-count-macro-uses
+                                (& replacement)
+                                "emit-one"
+                                true)
+                              0))]
+                        (begin
+                          (compiler-semantic-source-index-release!
+                            (&mut replacement))
+                          empty))]
+                    [(ResultCompilerCheckWithSemanticIndex.Err _) false])]
+                [ok : bool
+                  (and
+                    first-ok
+                    reset-ok
+                    (compiler-check-semantic-index-macro-records-ok?
+                      (& second)
+                      path
+                      source)
+                    (>= first-local-index 0)
+                    (>= second-local-index 0)
+                    (compiler-semantic-symbol-id-eq?
+                      (struct-get first-local symbol)
+                      (struct-get second-local symbol))
+                    (=
+                      (struct-get (struct-get first-local span) start-byte)
+                      (struct-get (struct-get second-local span) start-byte)))]
+                (begin
+                  (compiler-semantic-source-index-release! (&mut second))
+                  (compiler-semantic-source-index-release! (&mut first))
+                  (and
+                    ok
+                    (=
+                      owners-before
+                      (compiler-semantic-source-index-live-owner-count))
+                    (not
+                      (tc.tc-macro-call-site-state-enabled?
+                        (tc.tc-job-state-macro-call-sites
+                          (tc.tc-serial-job-state)))))))]
+            [(ResultCompilerCheckWithSemanticIndex.Err _)
+              (begin
+                (compiler-semantic-source-index-release! (&mut first))
+                false)]))]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
 (define (compiler-check-semantic-index-inferred-locals-ok?) : bool
   (let
     [path : String "src/tests/semantic_index_inferred_locals.tl"]
@@ -4238,5 +4787,6 @@
 (define (compiler-check-semantic-index-ok?) : bool
   (and
     (compiler-check-semantic-index-base-ok?)
+    (compiler-check-semantic-index-macro-call-sites-ok?)
     (compiler-check-semantic-index-inferred-locals-ok?)
     (compiler-check-semantic-index-dense-scopes-ok?)))

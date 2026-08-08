@@ -2035,6 +2035,8 @@
       (selfhost-lint-dead-maybe-type-refs maybe-ty refs)]
     [(ast.AstPattern.Tuple items)
       (selfhost-lint-dead-pattern-list-refs (box-get items) refs)]
+    [(ast.AstPattern.Array items)
+      (selfhost-lint-dead-pattern-list-refs (box-get items) refs)]
     [(ast.AstPattern.Wildcard) refs]
     [(ast.AstPattern.Binding _) refs]
     [(ast.AstPattern.Variant name items)
@@ -2207,6 +2209,32 @@
       (selfhost-lint-dead-expr-refs
         (ast.ast-node-get body)
         (selfhost-lint-dead-expr-refs (ast.ast-node-get cond) refs))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (selfhost-lint-dead-expr-refs
+        (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
+        (selfhost-lint-dead-expr-refs
+          (ast.ast-node-get (ast.ast-for-owned-state-source (& payload)))
+          refs))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        (selfhost-lint-dead-expr-refs
+          (ast.ast-node-get body)
+          (selfhost-lint-dead-expr-refs
+            (ast.ast-node-get done)
+            (if (>= expected-type 0)
+              (selfhost-lint-dead-expr-refs
+                (ast.ast-node-get expected-type)
+                (selfhost-lint-dead-expr-refs
+                  (ast.ast-node-get index)
+                  (selfhost-lint-dead-expr-refs (ast.ast-node-get source) refs)))
+              (selfhost-lint-dead-expr-refs
+                (ast.ast-node-get index)
+                (selfhost-lint-dead-expr-refs (ast.ast-node-get source) refs))))))]
     [(ast.AstExpr.Begin exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
     [(ast.AstExpr.Unsafe exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
     [(ast.AstExpr.Set target value)

@@ -4,38 +4,51 @@
 
 (define (main) : i64
   (let
-    [sections : String
+    [vector-sections : String
       (doc_site_expand_pages_core.doc-site-expand-generated-sections
         "stdlib/vector.tl")]
+    [queue-sections : String
+      (doc_site_expand_pages_core.doc-site-expand-generated-sections
+        "stdlib/queue.tl")]
     (if (and
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
-        sections
+        vector-sections
         "stdlib.vector.generated.i64")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
-        sections
+        vector-sections
         "generated-module-import")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
-        sections
+        vector-sections
         "ivec")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
-        sections
+        vector-sections
         "<h3><a href=\"#tl-Vec\">Vec</a></h3>")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
-        sections
+        vector-sections
         "<h3><a href=\"#tl-new\">new</a></h3>")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
-        sections
+        vector-sections
         "<h3><a href=\"#tl-len\">len</a></h3>")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
-        sections
+        vector-sections
         "<h3><a href=\"#tl-push\">push</a></h3>")
       (not
         (doc_site_expand_pages_core.doc-site-expand-string-contains?
-          sections
+          vector-sections
           "tl-from-array"))
       (not
         (doc_site_expand_pages_core.doc-site-expand-string-contains?
-          sections
-          "tl-to-array")))
+          vector-sections
+          "tl-to-array"))
+      (doc_site_expand_pages_core.doc-site-expand-string-contains?
+        queue-sections
+        "stdlib.queue.deque.generated.i64")
+      (doc_site_expand_pages_core.doc-site-expand-string-contains?
+        queue-sections
+        "(__tl_dyn-array i64)")
+      (not
+        (doc_site_expand_pages_core.doc-site-expand-string-contains?
+          queue-sections
+          "(Array i64)")))
       42
-      (io.panic "doc-site-expand: generated vector smoke mismatch"))))
+      (io.panic "doc-site-expand: generated collection smoke mismatch"))))

@@ -2407,8 +2407,9 @@
             (struct-get graph blocks))))]))
 
 ;; ---------------------------------------------------------------------------
-;; Edge-precise (SSA) phi liveness -- used ONLY to build the coalescer's
-;; interference index (NOT allocation, NOT the backend).
+;; Edge-precise (SSA) phi liveness -- used by scalar opt2 allocation and its
+;; coalescer. The backend consumes the resulting plan, not this analysis
+;; directly.
 ;;
 ;; The baseline liveness above treats a phi `P = phi[(V_i, B_i)]` as USING every
 ;; input V_i AT THE PHI BLOCK (compiler-live-instr-uses returns all inputs). That
@@ -2423,10 +2424,11 @@
 ;; edge (LLVM PHIElimination semantics: the input is a COPY at the end of the
 ;; predecessor): phi inputs are NOT uses at the phi block, and each input V_i is
 ;; added to the live-out of its predecessor B_i. This removes the spurious overlap
-;; while staying SOUND (it is the exact SSA interference). It is used only to admit
-;; coalesces the conservative test wrongly rejected; allocation/eviction keep the
-;; conservative index, so an error here cannot under-approximate allocation
-;; interference -- only mis-coalesce, which the self-host fixpoint catches.
+;; while staying SOUND (it is the exact SSA interference). Scalar opt2 uses it
+;; for allocation/eviction as well as the precise side of coalescing; the
+;; coalescer's live-out-input exclusion separately retains its deliberately
+;; conservative segment view. Bootstrap fixpoint and focused interval tests
+;; guard both consumers.
 ;; ---------------------------------------------------------------------------
 (define (compiler-live-instr-uses-nophi [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
   (match instr

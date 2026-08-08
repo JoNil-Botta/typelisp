@@ -8837,6 +8837,20 @@
     [(reg.CompilerRegPlan.Plan _ _ intervals _ _ _)
       (reg.compiler-reg-interval-range? intervals 0 0 2)]))
 
+;; Allocation must consume the edge-precise phi view, not merely compute it for
+;; coalescing. In this loop, baseline liveness leaks the entry value through the
+;; whole function (0..11) and the back-edge input back to entry (1..12). Exact
+;; predecessor-edge uses instead produce the three ranges asserted below.
+(define (compiler-reg-scalar-edge-precise-allocation-intervals-ok?) : bool
+  (match (reg.compiler-reg-plan-function-scalar
+    (compiler-reg-loop-backedge-function))
+    [(reg.CompilerRegPlan.Plan _ _ intervals _ _ _)
+      (and
+        (= (reg.compiler-reg-interval-seq-count intervals) 3)
+        (reg.compiler-reg-interval-range? intervals 0 0 4)
+        (reg.compiler-reg-interval-range? intervals 1 4 6)
+        (reg.compiler-reg-interval-range? intervals 2 4 12))]))
+
 (define (compiler-reg-scalar-loop-backedge-ok?) : bool
   (match (reg.compiler-reg-plan-function-scalar
     (compiler-reg-loop-backedge-function))
@@ -11214,6 +11228,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-interval-guardrail-ok?"
       (compiler-reg-scalar-interval-guardrail-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-scalar-edge-precise-allocation-intervals-ok?"
+      (compiler-reg-scalar-edge-precise-allocation-intervals-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-loop-backedge-ok?"
       (compiler-reg-scalar-loop-backedge-ok?))

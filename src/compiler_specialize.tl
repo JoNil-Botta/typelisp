@@ -782,6 +782,10 @@
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (spec-template-env-shadow-pattern-list templates patterns))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (spec-template-env-shadow-pattern-list templates patterns))]
     [(ast.AstPattern.Wildcard) templates]
     [(ast.AstPattern.Binding name)
       (spec-template-env-shadow-name templates name)]
@@ -3964,6 +3968,10 @@
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (spec-value-subst-remove-pattern-list subs patterns))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (spec-value-subst-remove-pattern-list subs patterns))]
     [(ast.AstPattern.Wildcard) subs]
     [(ast.AstPattern.Binding name) (spec-value-subst-remove-name subs name)]
     [(ast.AstPattern.Variant _ patterns-box)
@@ -4060,6 +4068,10 @@
   (match pattern
     [(ast.AstPattern.Var name _) (spec-type-subst-remove-name subs name)]
     [(ast.AstPattern.Tuple patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (spec-type-subst-remove-pattern-list subs patterns))]
+    [(ast.AstPattern.Array patterns-box)
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (spec-type-subst-remove-pattern-list subs patterns))]
@@ -4972,6 +4984,40 @@
                           (ResultSpecEnsure.Err diag)])]
                     [(ResultSpecBuild.Err diag) (ResultSpecEnsure.Err diag)]))]))])]))
 
+(define (spec-for-owned-state-exprs
+  [source-name : i64]
+  [index-name : i64]
+  [source : i64]
+  [body : i64]) : ast.AstExprList
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity 4)]
+    (begin
+      (ast.ast-expr-list-push (&mut out) source-name)
+      (ast.ast-expr-list-push (&mut out) index-name)
+      (ast.ast-expr-list-push (&mut out) source)
+      (ast.ast-expr-list-push (&mut out) body)
+      out)))
+
+(define (spec-for-owned-step-exprs
+  [source-name : i64]
+  [index-name : i64]
+  [binding-name : i64]
+  [expected-type : i64]
+  [done-name : i64]
+  [body : i64]) : ast.AstExprList
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity 6)]
+    (begin
+      (ast.ast-expr-list-push (&mut out) source-name)
+      (ast.ast-expr-list-push (&mut out) index-name)
+      (ast.ast-expr-list-push (&mut out) binding-name)
+      (if (>= expected-type 0)
+        (ast.ast-expr-list-push (&mut out) expected-type)
+        unit)
+      (ast.ast-expr-list-push (&mut out) done-name)
+      (ast.ast-expr-list-push (&mut out) body)
+      out)))
+
 (define (spec-rewrite-expr
   [expr : ast.AstExpr]
   [templates : SpecTemplateEnv]
@@ -5306,6 +5352,62 @@
                   body-state)]
               [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (match (spec-rewrite-expr-list
+        (spec-for-owned-state-exprs
+          (ast.ast-for-owned-state-source-name (& payload))
+          (ast.ast-for-owned-state-index-name (& payload))
+          (ast.ast-for-owned-state-source (& payload))
+          (ast.ast-for-owned-state-body (& payload)))
+        templates
+        state)
+        [(ResultSpecExprList.Ok rewritten rewritten-state)
+          (ResultSpecExpr.Ok
+            (ast.ast-expr-for-owned-state-with-pools
+              (spec-state-pools state)
+              (ast.ast-expr-list-get (& rewritten) 0 0)
+              (ast.ast-expr-list-get (& rewritten) 1 0)
+              (ast.ast-expr-list-get (& rewritten) 2 0)
+              (ast.ast-expr-list-get (& rewritten) 3 0))
+            rewritten-state)]
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (match (spec-rewrite-expr-list
+          (spec-for-owned-step-exprs
+            (ast.ast-for-owned-step-source-name (& payload))
+            (ast.ast-for-owned-step-index-name (& payload))
+            (ast.ast-for-owned-step-binding-name (& payload))
+            expected-type
+            (ast.ast-for-owned-step-done-name (& payload))
+            (ast.ast-for-owned-step-body (& payload)))
+          templates
+          state)
+          [(ResultSpecExprList.Ok rewritten rewritten-state)
+            (let
+              [typed? : bool (>= expected-type 0)]
+              [done-index : i64
+                (if typed?
+                  4
+                  3)]
+              [body-index : i64
+                (if typed?
+                  5
+                  4)]
+              (ResultSpecExpr.Ok
+                (ast.ast-expr-for-owned-step-with-pools
+                  (spec-state-pools state)
+                  (ast.ast-expr-list-get (& rewritten) 0 0)
+                  (ast.ast-expr-list-get (& rewritten) 1 0)
+                  (ast.ast-expr-list-get (& rewritten) 2 0)
+                  (if typed?
+                    (ast.ast-expr-list-get (& rewritten) 3 0)
+                    -1)
+                  (ast.ast-expr-list-get (& rewritten) done-index 0)
+                  (ast.ast-expr-list-get (& rewritten) body-index 0))
+                rewritten-state))]
+          [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)]))]
     [(ast.AstExpr.Begin exprs)
       (match (spec-rewrite-expr-list exprs templates state)
         [(ResultSpecExprList.Ok rewritten state2)
@@ -6368,6 +6470,60 @@
                     rewritten-body))]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (match (spec-substitute-values-expr-list-with-owner
+        owner
+        (spec-for-owned-state-exprs
+          (ast.ast-for-owned-state-source-name (& payload))
+          (ast.ast-for-owned-state-index-name (& payload))
+          (ast.ast-for-owned-state-source (& payload))
+          (ast.ast-for-owned-state-body (& payload)))
+        subs)
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok
+            (ast.ast-expr-for-owned-state-with-pools
+              (spec-owner-pools owner)
+              (ast.ast-expr-list-get (& rewritten) 0 0)
+              (ast.ast-expr-list-get (& rewritten) 1 0)
+              (ast.ast-expr-list-get (& rewritten) 2 0)
+              (ast.ast-expr-list-get (& rewritten) 3 0)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (match (spec-substitute-values-expr-list-with-owner
+          owner
+          (spec-for-owned-step-exprs
+            (ast.ast-for-owned-step-source-name (& payload))
+            (ast.ast-for-owned-step-index-name (& payload))
+            (ast.ast-for-owned-step-binding-name (& payload))
+            expected-type
+            (ast.ast-for-owned-step-done-name (& payload))
+            (ast.ast-for-owned-step-body (& payload)))
+          subs)
+          [(ResultSpecSubExprList.Ok rewritten)
+            (let
+              [typed? : bool (>= expected-type 0)]
+              [done-index : i64
+                (if typed?
+                  4
+                  3)]
+              [body-index : i64
+                (if typed?
+                  5
+                  4)]
+              (ResultSpecSubExpr.Ok
+                (ast.ast-expr-for-owned-step-with-pools
+                  (spec-owner-pools owner)
+                  (ast.ast-expr-list-get (& rewritten) 0 0)
+                  (ast.ast-expr-list-get (& rewritten) 1 0)
+                  (ast.ast-expr-list-get (& rewritten) 2 0)
+                  (if typed?
+                    (ast.ast-expr-list-get (& rewritten) 3 0)
+                    -1)
+                  (ast.ast-expr-list-get (& rewritten) done-index 0)
+                  (ast.ast-expr-list-get (& rewritten) body-index 0))))]
+          [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.Begin exprs)
       (match (spec-substitute-values-expr-list-with-owner owner exprs subs)
         [(ResultSpecSubExprList.Ok rewritten)
@@ -7736,6 +7892,60 @@
                     rewritten-body))]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (match (spec-substitute-types-expr-list-with-owner
+        owner
+        (spec-for-owned-state-exprs
+          (ast.ast-for-owned-state-source-name (& payload))
+          (ast.ast-for-owned-state-index-name (& payload))
+          (ast.ast-for-owned-state-source (& payload))
+          (ast.ast-for-owned-state-body (& payload)))
+        subs)
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok
+            (ast.ast-expr-for-owned-state-with-pools
+              (spec-owner-pools owner)
+              (ast.ast-expr-list-get (& rewritten) 0 0)
+              (ast.ast-expr-list-get (& rewritten) 1 0)
+              (ast.ast-expr-list-get (& rewritten) 2 0)
+              (ast.ast-expr-list-get (& rewritten) 3 0)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (match (spec-substitute-types-expr-list-with-owner
+          owner
+          (spec-for-owned-step-exprs
+            (ast.ast-for-owned-step-source-name (& payload))
+            (ast.ast-for-owned-step-index-name (& payload))
+            (ast.ast-for-owned-step-binding-name (& payload))
+            expected-type
+            (ast.ast-for-owned-step-done-name (& payload))
+            (ast.ast-for-owned-step-body (& payload)))
+          subs)
+          [(ResultSpecSubExprList.Ok rewritten)
+            (let
+              [typed? : bool (>= expected-type 0)]
+              [done-index : i64
+                (if typed?
+                  4
+                  3)]
+              [body-index : i64
+                (if typed?
+                  5
+                  4)]
+              (ResultSpecSubExpr.Ok
+                (ast.ast-expr-for-owned-step-with-pools
+                  (spec-owner-pools owner)
+                  (ast.ast-expr-list-get (& rewritten) 0 0)
+                  (ast.ast-expr-list-get (& rewritten) 1 0)
+                  (ast.ast-expr-list-get (& rewritten) 2 0)
+                  (if typed?
+                    (ast.ast-expr-list-get (& rewritten) 3 0)
+                    -1)
+                  (ast.ast-expr-list-get (& rewritten) done-index 0)
+                  (ast.ast-expr-list-get (& rewritten) body-index 0))))]
+          [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.Begin exprs)
       (match (spec-substitute-types-expr-list-with-owner owner exprs subs)
         [(ResultSpecSubExprList.Ok rewritten)

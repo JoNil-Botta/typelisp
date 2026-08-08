@@ -135,7 +135,7 @@
         "alpha beta"
         "append order")
       (let
-        [items : (Array String) (array.make-array String 5)]
+        [items : (__tl_dyn-array String) (array.make-array String 5)]
         (begin
           (array-set! items 0 "skip")
           (array-set! items 1 "alpha")

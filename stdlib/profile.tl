@@ -7,7 +7,7 @@
 
 ;: Shared scratch for the time helper's OS out-parameters. Allocated once at
 ;: module initialization so `now-ms` does not allocate on every sample.
-(define now-scratch : (Array i64)
+(define now-scratch : (__tl_dyn-array i64)
   (array.make-array i64 2))
 
 ;: Windows kernel32 high-resolution performance counter bindings.
@@ -185,10 +185,10 @@
     unit
     (test-fail)))
 
-;: Allocate an array so allocation counters have observable work.
-(define (test-allocation) : (Array i64)
+;: Allocate private dynamic storage so allocation counters have observable work.
+(define (test-allocation) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (array.make-array i64 4)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 4)]
     (begin
       (array-set! items 0 12)
       items)))
@@ -203,7 +203,7 @@
     (let
       [before-total : i64 (alloc-total)]
       [before-live : i64 (alloc-live)]
-      [items : (Array i64) (test-allocation)]
+      [items : (__tl_dyn-array i64) (test-allocation)]
       [after-total : i64 (alloc-total)]
       [after-live : i64 (alloc-live)]
       [peak : i64 (alloc-peak)]

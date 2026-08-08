@@ -499,6 +499,10 @@
   (Some ast.AstExprList)
   (None))
 
+(defenum CompilerCtfeMaybeExprClauseList
+  (Some ast.AstExprClauseList)
+  (None))
+
 (define (compiler-comptime-host-value-expr-list
   [value : ctfe_support.CompilerCtfeValue]) : CompilerCtfeMaybeExprList
   (match value
@@ -507,6 +511,15 @@
     [(ctfe_support.CompilerCtfeValue.CapturedExprList items _)
       (CompilerCtfeMaybeExprList.Some items)]
     [_ (CompilerCtfeMaybeExprList.None)]))
+
+(define (compiler-comptime-host-value-expr-clause-list
+  [value : ctfe_support.CompilerCtfeValue]) : CompilerCtfeMaybeExprClauseList
+  (match value
+    [(ctfe_support.CompilerCtfeValue.ExprClauseList items)
+      (CompilerCtfeMaybeExprClauseList.Some items)]
+    [(ctfe_support.CompilerCtfeValue.CapturedExprClauseList items _)
+      (CompilerCtfeMaybeExprClauseList.Some items)]
+    [_ (CompilerCtfeMaybeExprClauseList.None)]))
 
 ;; An unspanned expression held in a session local. Captured expressions retain
 ;; their caller pool context, just like operand probes and local ExprList
@@ -621,10 +634,24 @@
   (match value
     [(ctfe_support.CompilerCtfeValue.CapturedExpr _ _ pools) pools]
     [(ctfe_support.CompilerCtfeValue.CapturedExprList _ pools) pools]
+    [(ctfe_support.CompilerCtfeValue.CapturedExprClause _ pools) pools]
+    [(ctfe_support.CompilerCtfeValue.CapturedExprClauseList _ pools) pools]
     [_
       (array-ref
         (compiler-comptime-host-global-shared-view compiler-comptime-host-pools)
         0)]))
+
+(define (compiler-comptime-host-expr-value-for-owner
+  [owner : ctfe_support.CompilerCtfeValue]
+  [node : i64]) : ctfe_support.CompilerCtfeValue
+  (match (ctfe_support.ctfe-value-syntax-pools owner)
+    [(ctfe_support.CtfeMaybeSyntaxPools.Some pools)
+      (ctfe_support.CompilerCtfeValue.CapturedExpr
+        node
+        (ast.AstType.Expr)
+        pools)]
+    [(ctfe_support.CtfeMaybeSyntaxPools.None)
+      (ctfe_support.CompilerCtfeValue.Expr node (ast.AstType.Expr))]))
 
 ;; The `Spanned`-unwrapped expression an operand denotes, mirroring
 ;; `ctfe-match-expr-variant`'s `ctfe-expr-unspan` before it inspects a variant.
@@ -2329,6 +2356,63 @@
                       (compiler-comptime-host-push!
                         (ctfe_support.CompilerCtfeValue.Expr
                           (ast.ast-expr-cast-with-pools
+                            (array-ref
+                              (compiler-comptime-host-global-shared-view
+                                compiler-comptime-host-pools)
+                              0)
+                            value-node
+                            ty)
+                          (ast.AstType.Expr))))]
+                  [_ tlci.tlci-host-callback-status-bad-request]))))]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
+;; expr-ann: pop the type value then the operand expression and preserve the
+;; annotation node produced by `(ann e : T)`.
+(define (compiler-comptime-host-callback-expr-ann
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 2)
+            tlci.tlci-host-callback-status-bad-request
+            (let
+              [type-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 1))]
+              [value-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 2))]
+              [value-node : i64 (compiler-comptime-host-value-node value-value)]
+              (if (< value-node 0)
+                tlci.tlci-host-callback-status-bad-request
+                (match type-value
+                  [(ctfe_support.CompilerCtfeValue.Type ty)
+                    (begin
+                      (set!
+                        compiler-comptime-host-stack-len
+                        (- compiler-comptime-host-stack-len 2))
+                      (compiler-comptime-host-push!
+                        (ctfe_support.CompilerCtfeValue.Expr
+                          (ast.ast-expr-ann-with-pools
                             (array-ref
                               (compiler-comptime-host-global-shared-view
                                 compiler-comptime-host-pools)
@@ -6895,6 +6979,126 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+(define (compiler-comptime-host-stack-expr-node [index : i64]) : i64
+  (if (or (< index 0) (>= index compiler-comptime-host-stack-len))
+    -1
+    (compiler-comptime-host-value-node
+      (array-ref
+        (compiler-comptime-host-global-shared-view compiler-comptime-host-stack)
+        index))))
+
+(define (compiler-comptime-host-build-expr-for-owned! [mode : i64]) : i64
+  (let
+    [count : i64
+      (match mode
+        [0 4]
+        [1 5]
+        [2 6]
+        [_ -1])]
+    [base : i64 (- compiler-comptime-host-stack-len count)]
+    (if (or (< count 0) (< base 0))
+      tlci.tlci-host-callback-status-bad-request
+      (let
+        [node0 : i64 (compiler-comptime-host-stack-expr-node base)]
+        [node1 : i64 (compiler-comptime-host-stack-expr-node (+ base 1))]
+        [node2 : i64 (compiler-comptime-host-stack-expr-node (+ base 2))]
+        [node3 : i64 (compiler-comptime-host-stack-expr-node (+ base 3))]
+        [node4 : i64
+          (if (>= count 5)
+            (compiler-comptime-host-stack-expr-node (+ base 4))
+            -1)]
+        [node5 : i64
+          (if (= count 6)
+            (compiler-comptime-host-stack-expr-node (+ base 5))
+            -1)]
+        [valid? : bool
+          (match mode
+            [0 (and (>= node0 0) (>= node1 0) (>= node2 0) (>= node3 0))]
+            [1
+              (and
+                (>= node0 0)
+                (>= node1 0)
+                (>= node2 0)
+                (>= node3 0)
+                (>= node4 0))]
+            [2
+              (and
+                (>= node0 0)
+                (>= node1 0)
+                (>= node2 0)
+                (>= node3 0)
+                (>= node4 0)
+                (>= node5 0))]
+            [_ false])]
+        (if (not valid?)
+          tlci.tlci-host-callback-status-bad-request
+          (let
+            [built : i64
+              (match mode
+                [0
+                  (ast.ast-expr-for-owned-state-with-pools
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)
+                    node0
+                    node1
+                    node2
+                    node3)]
+                [1
+                  (ast.ast-expr-for-owned-step-with-pools
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)
+                    node0
+                    node1
+                    node2
+                    -1
+                    node3
+                    node4)]
+                [2
+                  (ast.ast-expr-for-owned-step-with-pools
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)
+                    node0
+                    node1
+                    node2
+                    node3
+                    node4
+                    node5)]
+                [_ -1])]
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len count))
+              (compiler-comptime-host-push!
+                (ctfe_support.CompilerCtfeValue.Expr built (ast.AstType.Expr))))))))))
+
+(define (compiler-comptime-host-callback-expr-for-owned
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64 (compiler-comptime-host-build-expr-for-owned! arg-a)]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 (define (compiler-comptime-host-callback-expr-not
   [session : i64]
   [_arg-a : i64]
@@ -7228,60 +7432,62 @@
               [continue-on-true : bool (not (= arg-b 0))]
               (if (or (< when-false-node 0) (< when-true-node 0))
                 tlci.tlci-host-callback-status-bad-request
-                (match (array-ref
-                  (compiler-comptime-host-global-shared-view
-                    compiler-comptime-host-operands)
-                  arg-a)
-                  [(ctfe_support.CompilerCtfeValue.ExprList items)
-                    (let
-                      [pools : ast.AstNodePoolContext
-                        (array-ref
-                          (compiler-comptime-host-global-shared-view
-                            compiler-comptime-host-pools)
-                          0)]
-                      [index : i64
-                        (- (ctfe_support.ctfe-expr-list-length items) 1)]
-                      [out-node : i64
-                        (if continue-on-true
-                          when-true-node
-                          when-false-node)]
-                      (begin
-                        ;; Mirrors ctfe-eval-expr-list-fold-if-plain-at exactly:
-                        ;; right-to-left, terminals from the two stack values.
-                        (while (>= index 0)
-                          (let
-                            [cond-node : i64
-                              (ctfe_support.ctfe-expr-list-nth items index)]
-                            (begin
-                              (set!
-                                out-node
-                                (ast.ast-expr-if-with-pools
-                                  pools
-                                  cond-node
-                                  (if continue-on-true
-                                    out-node
-                                    when-true-node)
-                                  (if continue-on-true
-                                    when-false-node
-                                    out-node)))
-                              (set! index (- index 1)))))
-                        (set!
-                          compiler-comptime-host-stack-len
-                          (- compiler-comptime-host-stack-len 2))
-                        (if (and
-                          (ctfe_support.ctfe-hygiene-inert-literal-node?
-                            pools
-                            when-true-node)
-                          (ctfe_support.ctfe-hygiene-inert-literal-node?
-                            pools
-                            when-false-node))
-                          (ctfe_support.ctfe-result-hygiene-free-note! out-node)
-                          unit)
-                        (compiler-comptime-host-push!
-                          (ctfe_support.CompilerCtfeValue.Expr
-                            out-node
-                            (ast.AstType.Expr)))))]
-                  [_ tlci.tlci-host-callback-status-bad-request]))))]
+                (let
+                  [operand-value : ctfe_support.CompilerCtfeValue
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-operands)
+                      arg-a)]
+                  (match (compiler-comptime-host-value-expr-list operand-value)
+                    [(CompilerCtfeMaybeExprList.Some items)
+                      (let
+                        [pools : ast.AstNodePoolContext
+                          (compiler-comptime-host-value-pools operand-value)]
+                        [index : i64
+                          (- (ctfe_support.ctfe-expr-list-length items) 1)]
+                        [out-node : i64
+                          (if continue-on-true
+                            when-true-node
+                            when-false-node)]
+                        (begin
+                          ;; Mirrors ctfe-eval-expr-list-fold-if-plain-at exactly:
+                          ;; right-to-left, terminals from the two stack values.
+                          (while (>= index 0)
+                            (let
+                              [cond-node : i64
+                                (ctfe_support.ctfe-expr-list-nth items index)]
+                              (begin
+                                (set!
+                                  out-node
+                                  (ast.ast-expr-if-with-pools
+                                    pools
+                                    cond-node
+                                    (if continue-on-true
+                                      out-node
+                                      when-true-node)
+                                    (if continue-on-true
+                                      when-false-node
+                                      out-node)))
+                                (set! index (- index 1)))))
+                          (set!
+                            compiler-comptime-host-stack-len
+                            (- compiler-comptime-host-stack-len 2))
+                          (if (and
+                            (ctfe_support.ctfe-hygiene-inert-literal-node?
+                              pools
+                              when-true-node)
+                            (ctfe_support.ctfe-hygiene-inert-literal-node?
+                              pools
+                              when-false-node))
+                            (ctfe_support.ctfe-result-hygiene-free-note!
+                              out-node)
+                            unit)
+                          (compiler-comptime-host-push!
+                            (compiler-comptime-host-expr-value-for-owner
+                              operand-value
+                              out-node))))]
+                    [(CompilerCtfeMaybeExprList.None)
+                      tlci.tlci-host-callback-status-bad-request])))))]
         (begin
           (when
             (not (= result tlci.tlci-host-callback-status-ok))
@@ -7326,81 +7532,85 @@
                 (compiler-comptime-host-value-node missing-value)]
               (if (or (< else-not-final-node 0) (< missing-node 0))
                 tlci.tlci-host-callback-status-bad-request
-                (match (array-ref
-                  (compiler-comptime-host-global-shared-view
-                    compiler-comptime-host-operands)
-                  arg-a)
-                  [(ctfe_support.CompilerCtfeValue.ExprClauseList items)
-                    (let
-                      [pools : ast.AstNodePoolContext
-                        (array-ref
-                          (compiler-comptime-host-global-shared-view
-                            compiler-comptime-host-pools)
-                          0)]
-                      [n : i64
-                        (ctfe_support.ctfe-expr-clause-list-length items)]
-                      [out-node : i64 missing-node]
-                      [index : i64 (- n 2)]
-                      (begin
-                        ;; Mirrors ctfe-eval-expr-clause-list-fold-if exactly:
-                        ;; the final clause seeds the accumulator (its result
-                        ;; when it is an else clause, the missing marker
-                        ;; otherwise), then right-to-left each clause wraps an
-                        ;; if, with a non-final else collapsing to the marker.
-                        (if (> n 0)
-                          (let
-                            [final-clause : ast.AstExprClause
-                              (ctfe_support.ctfe-expr-clause-list-nth
-                                items
-                                (- n 1))]
-                            (if (ctfe_support.ctfe-expr-else-with-pools?
-                              pools
-                              (ctfe_support.ctfe-expr-clause-first final-clause))
-                              (set!
-                                out-node
-                                (ctfe_support.ctfe-expr-clause-second
+                (let
+                  [operand-value : ctfe_support.CompilerCtfeValue
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-operands)
+                      arg-a)]
+                  (match (compiler-comptime-host-value-expr-clause-list
+                    operand-value)
+                    [(CompilerCtfeMaybeExprClauseList.Some items)
+                      (let
+                        [pools : ast.AstNodePoolContext
+                          (compiler-comptime-host-value-pools operand-value)]
+                        [n : i64
+                          (ctfe_support.ctfe-expr-clause-list-length items)]
+                        [out-node : i64 missing-node]
+                        [index : i64 (- n 2)]
+                        (begin
+                          ;; Mirrors ctfe-eval-expr-clause-list-fold-if exactly:
+                          ;; the final clause seeds the accumulator (its result
+                          ;; when it is an else clause, the missing marker
+                          ;; otherwise), then right-to-left each clause wraps an
+                          ;; if, with a non-final else collapsing to the marker.
+                          (if (> n 0)
+                            (let
+                              [final-clause : ast.AstExprClause
+                                (ctfe_support.ctfe-expr-clause-list-nth
+                                  items
+                                  (- n 1))]
+                              (if (ctfe_support.ctfe-expr-else-with-pools?
+                                pools
+                                (ctfe_support.ctfe-expr-clause-first
                                   final-clause))
-                              unit))
-                          unit)
-                        (while (>= index 0)
-                          (let
-                            [clause : ast.AstExprClause
-                              (ctfe_support.ctfe-expr-clause-list-nth
-                                items
-                                index)]
-                            [test-node : i64
-                              (ctfe_support.ctfe-expr-clause-first clause)]
-                            (begin
-                              (set!
-                                out-node
-                                (if (ctfe_support.ctfe-expr-else-with-pools?
-                                  pools
-                                  test-node)
-                                  else-not-final-node
-                                  (ast.ast-expr-if-with-pools
+                                (set!
+                                  out-node
+                                  (ctfe_support.ctfe-expr-clause-second
+                                    final-clause))
+                                unit))
+                            unit)
+                          (while (>= index 0)
+                            (let
+                              [clause : ast.AstExprClause
+                                (ctfe_support.ctfe-expr-clause-list-nth
+                                  items
+                                  index)]
+                              [test-node : i64
+                                (ctfe_support.ctfe-expr-clause-first clause)]
+                              (begin
+                                (set!
+                                  out-node
+                                  (if (ctfe_support.ctfe-expr-else-with-pools?
                                     pools
-                                    test-node
-                                    (ctfe_support.ctfe-expr-clause-second
-                                      clause)
-                                    out-node)))
-                              (set! index (- index 1)))))
-                        (set!
-                          compiler-comptime-host-stack-len
-                          (- compiler-comptime-host-stack-len 2))
-                        (if (and
-                          (ctfe_support.ctfe-hygiene-inert-literal-node?
-                            pools
-                            missing-node)
-                          (ctfe_support.ctfe-hygiene-inert-literal-node?
-                            pools
-                            else-not-final-node))
-                          (ctfe_support.ctfe-result-hygiene-free-note! out-node)
-                          unit)
-                        (compiler-comptime-host-push!
-                          (ctfe_support.CompilerCtfeValue.Expr
-                            out-node
-                            (ast.AstType.Expr)))))]
-                  [_ tlci.tlci-host-callback-status-bad-request]))))]
+                                    test-node)
+                                    else-not-final-node
+                                    (ast.ast-expr-if-with-pools
+                                      pools
+                                      test-node
+                                      (ctfe_support.ctfe-expr-clause-second
+                                        clause)
+                                      out-node)))
+                                (set! index (- index 1)))))
+                          (set!
+                            compiler-comptime-host-stack-len
+                            (- compiler-comptime-host-stack-len 2))
+                          (if (and
+                            (ctfe_support.ctfe-hygiene-inert-literal-node?
+                              pools
+                              missing-node)
+                            (ctfe_support.ctfe-hygiene-inert-literal-node?
+                              pools
+                              else-not-final-node))
+                            (ctfe_support.ctfe-result-hygiene-free-note!
+                              out-node)
+                            unit)
+                          (compiler-comptime-host-push!
+                            (compiler-comptime-host-expr-value-for-owner
+                              operand-value
+                              out-node))))]
+                    [(CompilerCtfeMaybeExprClauseList.None)
+                      tlci.tlci-host-callback-status-bad-request])))))]
         (begin
           (when
             (not (= result tlci.tlci-host-callback-status-ok))
@@ -7613,6 +7823,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-cast)
         compiler-comptime-host-callback-expr-cast)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-ann)
+        compiler-comptime-host-callback-expr-ann)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view
@@ -8198,6 +8413,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-let-scope)
         compiler-comptime-host-callback-expr-let-scope)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-for-owned)
+        compiler-comptime-host-callback-expr-for-owned)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

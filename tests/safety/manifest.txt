@@ -301,6 +301,12 @@ tuple_element_use_after_move_reject|check-fail|tests/safety/tuple_element_use_af
 tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_reject.tl|-|use of moved value `pair`
 tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move non-Copy value through shared reference
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+fixed_array_match_pattern_arity_reject|check-fail|tests/safety/fixed_array_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
+fixed_array_match_pattern_wrong_type_reject|check-fail|tests/safety/fixed_array_match_pattern_wrong_type_reject.tl|-|tuple match requires (tuple ...)
+fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_array_match_pattern_refutable_nested_reject.tl|-|requires binding, wildcard, or nested tuple, struct, or box pattern
+fixed_array_match_pattern_source_reuse_reject|check-fail|tests/safety/fixed_array_match_pattern_source_reuse_reject.tl|-|use of moved value `items`
+fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
 serialize_missing_object_hook_reject|check-fail|tests/safety/serialize_missing_object_hook_reject.tl|-|typecheck: strategy module serialize_missing_object_hook_format does not export hook object-finish
@@ -407,7 +413,8 @@ consume_parameter_unknown_metadata_reject|check-fail|tests/safety/consume_parame
 consume_parameter_duplicate_metadata_reject|check-fail|tests/safety/consume_parameter_duplicate_metadata_reject.tl|-|parse: duplicate parameter metadata
 consume_parameter_function_metadata_arity_reject|check-fail|tests/safety/consume_parameter_function_metadata_arity_reject.tl|-|parse: (:consume T) expects exactly one type
 vector_into_iterator_source_reuse_reject|check-fail|tests/safety/vector_into_iterator_source_reuse_reject.tl|-|use of moved value `values`
-for_owned_source_reuse_reject|check-fail|tests/safety/for_owned_source_reuse_reject.tl|-|use of moved value `values`
+for_owned_source_reuse_reject|check-fail|tests/safety/for_owned_source_reuse_reject.tl|-|use of moved value `items`
+for_native_mut_item_capture_reject|check-fail|tests/safety/for_native_mut_item_capture_reject.tl|-|lambda cannot capture mutable reference
 vector_into_iterator_borrow_live_reject|check-fail|tests/safety/vector_into_iterator_borrow_live_reject.tl|-|cannot move borrowed place `values`
 vector_into_iterator_mutate_after_reject|check-fail|tests/safety/vector_into_iterator_mutate_after_reject.tl|-|use of moved value `values`
 vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_iterator_second_consume_reject.tl|-|use of moved value `values`

@@ -1094,10 +1094,12 @@ fi
 # The reconciled #5675/#6173 tree retains 52 segments: the authoritative
 # Windows probe measured 3,357,074 used nodes, 3,407,872 capacity, and
 # 109,051,904 physical payload bytes.
-# #6371's relocation of compiler self-test fixtures out of production modules
-# brought ast_expr_pool.macro_expand back to 51 segments: the authoritative
-# Windows probe measured 3,331,983 used nodes, 3,342,336 capacity, and
-# 106,954,752 physical payload bytes.
+# #6371's pre-reconciliation relocation of compiler self-test fixtures out of
+# production modules brought ast_expr_pool.macro_expand back to 51 segments:
+# the authoritative Windows probe measured 3,331,983 used nodes. Reconciliation
+# with current main's added compiler features returns the combined tree to 52
+# segments: 3,361,826 used nodes, 3,407,872 capacity, and 109,051,904 physical
+# payload bytes.
 # #5937's persistent typechecker list storage and focused wide/deep tests
 # crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
 # Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload
@@ -1132,6 +1134,14 @@ fi
 # typecheck boundary, but its shallow-view cleanup plus #6362's dead-definition
 # removal brought the authoritative Windows probe back to 31 segments: 2,018,603
 # used nodes, 2,031,616 capacity, and 65,011,712 physical payload bytes.
+# #6236's scalar fixed-array/native-slice `for` support, reconciled with #6369,
+# crossed that boundary from 31 to 32 segments: the authoritative Windows probe
+# measured 2,034,470 used nodes, 2,097,152 capacity, and 67,108,864 physical
+# payload bytes.
+# #6371's relocation of compiler self-test fixtures out of production modules
+# brings the combined tree back to 31 segments: the authoritative Windows probe
+# measured 2,008,157 used nodes, 2,031,616 capacity, and 65,011,712 physical
+# payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1165,7 +1175,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 51 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 52 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 31 65536 32 \
@@ -1399,6 +1409,8 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_loa
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_interpreted_fallbacks|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_source_interpreted|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_expr_results|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_direct_expr_results|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_direct_shell_env_folds|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_module_results|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_decls_results|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_resolution_us|"
@@ -1407,6 +1419,10 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_ent
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_invoke_calls|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_shell_learns|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_shell_cache_hits|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_us|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_calls|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_alloc_kb|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_live_kb|"
 # The repo's own stdlib is content-identical to the embedded payload, so
 # the catalog dispatches here too; shell entries keep the counted
 # interpreted fallback (and their per-identity profile rows above). On
@@ -1440,6 +1456,18 @@ else
     assert_profile_counter_at_least_in \
         "$CHECK_STDERR" \
         "typecheck.macro.stdlib_tlci_native_dispatches" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_tlci_direct_expr_results" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.walk_direct_marshal_calls" \
         1 \
         "$CHECK_STDOUT" \
         "$CHECK_STDERR"
@@ -1519,6 +1547,15 @@ assert_profile_counter_at_least_in \
     1 \
     "$STDLIB_TLCI_EMBEDDED_STDOUT" \
     "$STDLIB_TLCI_EMBEDDED_STDERR"
+embedded_native_expr=$(profile_counter_value_in \
+    "$STDLIB_TLCI_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_native_expr_results")
+embedded_direct_expr=$(profile_counter_value_in \
+    "$STDLIB_TLCI_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_direct_expr_results")
+if [ "$embedded_direct_expr" -ne "$embedded_native_expr" ]; then
+    fail "embedded expression commits bypassed direct capture: native=$embedded_native_expr direct=$embedded_direct_expr"
+fi
 # A pristine stdlib root is content-identical to the embedded payload, so
 # the catalog dispatches for it too; the byte-parity requirement below is
 # the contract that matters.

@@ -28,7 +28,7 @@ borrow_reborrow_stored_reference_aggregate|tests/integration/borrow_reborrow_sto
 vector_shared_iterator|tests/integration/vector_shared_iterator.tl|42|-|-|stdlib/vector.tl
 vector_consuming_iterator|tests/integration/vector_consuming_iterator.tl|42|-|-|stdlib/vector.tl
 vector_cleanup_consuming_iterator|tests/integration/vector_cleanup_consuming_iterator.tl|42|-|-|stdlib/vector.tl stdlib/test.tl
-for_macro|tests/integration/for_macro.tl|42|-|-|stdlib/iterator.tl stdlib/vector.tl
+for_macro|tests/integration/for_macro.tl|42|-|-|stdlib/iterator.tl stdlib/string.tl stdlib/vector.tl
 two_phase_mutable_call_borrow|tests/integration/two_phase_mutable_call_borrow.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 core_macros_headerless_prelude_import|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-
@@ -254,6 +254,7 @@ spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|spmd_vec_support.t
 spmd_gather_oob|tests/integration/spmd_gather_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_gather_oob/spmd_gather_oob.tl:29:55: array index out of bounds: index=9223372036854775807 length=8\n
 spmd_gather_lane_offset_oob|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_gather_lane_offset_oob/spmd_gather_lane_offset_oob.tl:29:33: array index out of bounds: index=-9223372036854775808 length=8\n
 spmd_atomic_scatter|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl spmd_vec_support.tl
+spmd_scalar_for_native|tests/integration/spmd_scalar_for_native.tl|42|-|-|-
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|spmd_vec_support.tl
 spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|spmd_vec_support.tl
 spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|spmd_vec_support.tl
@@ -322,6 +323,7 @@ tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-
 tuple_match_pattern|tests/integration/tuple_match_pattern.tl|42|-|-|stdlib/string.tl
+fixed_array_match_pattern|tests/integration/fixed_array_match_pattern.tl|42|-|-|stdlib/string.tl
 u16_div_zero_trap|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/u16_div_zero_trap/u16_div_zero_trap.tl:3:5: integer division or remainder error: dividend=1 divisor=0\n
 u64_float_casts|tests/integration/u64_float_casts.tl|0|-|-|-
 u64_high_bit_load_compare|tests/integration/u64_high_bit_load_compare.tl|42|-|-|-

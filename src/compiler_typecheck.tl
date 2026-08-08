@@ -10,6 +10,7 @@
 (import compiler_parse_core as parser)
 (import compiler_symbols as csym)
 (import compiler_embedded_stdlib as ces)
+(import stdlib.arena)
 (import stdlib.string)
 (import sym_i64_env)
 (import compiler_builtin_ids as cbi)
@@ -1828,6 +1829,43 @@
     (match (tc_core.tc-inline-variant-layout-list-ref variants index)
       [(tc_core.TcInlineVariantLayout.Variant name-id _ _ _) name-id])))
 
+;; The retained layout builders allocate in their cache-owned arena but must
+;; restore the caller's active arena after each allocation. Exercise all three
+;; builder families directly, including cache-owner reuse and reset.
+(define (compiler-typecheck-inline-layout-storage-arena-ok?) : bool
+  (begin
+    (tc_core.tc-agg-caches-reset!)
+    (tc_core.tc-agg-layout-cache-storage-reset!)
+    (let
+      [home : i64 (arena.raw-handle (arena.current))]
+      [fields : tc_core.TcInlineFieldLayoutList
+        (tc_core.tc-inline-field-layout-list-with-count 4)]
+      [storage : i64 (tc_core.tc-agg-layout-cache-storage-arena-handle-value)]
+      [after-fields : i64 (arena.raw-handle (arena.current))]
+      [payloads : tc_core.TcInlinePayloadLayoutList
+        (tc_core.tc-inline-payload-layout-list-with-count 3)]
+      [after-payloads : i64 (arena.raw-handle (arena.current))]
+      [variants : tc_core.TcInlineVariantLayoutList
+        (tc_core.tc-inline-variant-layout-list-with-count 2)]
+      [after-variants : i64 (arena.raw-handle (arena.current))]
+      [ok : bool
+        (and
+          (> storage 0)
+          (= storage (tc_core.tc-agg-layout-cache-storage-arena-handle-value))
+          (= home after-fields)
+          (= home after-payloads)
+          (= home after-variants)
+          (= (tc_core.tc-inline-field-layout-list-count fields) 4)
+          (= (tc_core.tc-inline-payload-layout-list-count payloads) 3)
+          (= (tc_core.tc-inline-variant-layout-list-count variants) 2))]
+      (begin
+        (tc_core.tc-agg-layout-cache-storage-reset!)
+        (tc_core.tc-agg-caches-reset!)
+        (and
+          ok
+          (= (arena.raw-handle (arena.current)) home)
+          (= (tc_core.tc-agg-layout-cache-storage-arena-handle-value) 0))))))
+
 (define (compiler-typecheck-inline-layout-query-ok?) : bool
   (match (parser.parse-ast-source
     (compiler-typecheck-inline-layout-query-source))
@@ -2439,6 +2477,9 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-layout-query-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-storage-arena-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-layout-error-ok?
@@ -5303,7 +5344,7 @@
       "typecheck: integer operator expects matching integer operands: expected i32, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-cmp-mismatch-source)
-      "typecheck: comparison expects matching ordered scalar operands")
+      "typecheck: comparison expects matching ordered scalar operands, got i32 and bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-arity-many-source)
       "typecheck: call arity mismatch: f expected 1 argument, got 2 arguments")

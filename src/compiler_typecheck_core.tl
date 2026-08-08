@@ -4,6 +4,7 @@
 (import stdlib.array)
 (import stdlib.comptime)
 (import stdlib.hashmap)
+(import stdlib.hash)
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 (import compiler_symbols as csym)
@@ -160,6 +161,37 @@
 
 (defstruct TcInlayHintState
   (address i64))
+
+;; Macro expansion consumes user-written call nodes before the checked program
+;; reaches tooling. Keep the resolved call-head facts in the owning compiler
+;; job, then let semantic-index consumers copy them before the next file reset.
+;; The grow-only scalar record slab stays in the job arena and is bounded by
+;; the largest check seen by that job. Intern IDs keep strings out of this hot
+;; state graph; semantic-index consumers copy their text before the next reset.
+(defstruct TcMacroCallSiteStateData
+  (enabled bool)
+  (records (__tl_dyn-array i64))
+  (capacity i64)
+  (len i64)
+  (seen-sites tc_i64_i64_map.Map)
+  (fixed-storage-arena i64)
+  ;; Intern IDs keep active and recorded metadata job-local without embedding
+  ;; cleanup-owning Strings in the hot typecheck state graph.
+  (active-path-id i64)
+  (active-editable bool)
+  (active-generator-id i64)
+  (active-item-id i64)
+  (active-key-id i64))
+
+(defstruct TcMacroCallSiteState
+  (address i64))
+
+(defstruct TcMacroCallSiteActiveDecl
+  (path-id i64)
+  (editable bool)
+  (generator-id i64)
+  (item-id i64)
+  (key-id i64))
 
 (defstruct TcTypeEnvStore
   (bindings (__tl_dyn-array TcTypeEnvBinding))
@@ -340,7 +372,8 @@
   (source-key-cache TcSourceKeyCacheState)
   (topenv-membership TcTopEnvMembershipState)
   (thread-name-kind TcThreadNameKindState)
-  (inlay-hints TcInlayHintState))
+  (inlay-hints TcInlayHintState)
+  (macro-call-sites TcMacroCallSiteState))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
@@ -421,6 +454,33 @@
             (ptr->int (ptr-cast (array-data cell) : (Ptr TcInlayHintStateData))))
           : i64)))))
 
+(define (tc-macro-call-site-state-new) : TcMacroCallSiteState
+  (let
+    [cell : (__tl_dyn-array TcMacroCallSiteStateData)
+      (array.make-array TcMacroCallSiteStateData 1)]
+    (begin
+      (array-set!
+        cell
+        0
+        (TcMacroCallSiteStateData
+          false
+          (array.make-array i64 0)
+          0
+          0
+          (tc_i64_i64_map.with-capacity 64)
+          (arena.tl_arena_current)
+          -1
+          false
+          -1
+          -1
+          -1))
+      (TcMacroCallSiteState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (array-data cell) : (Ptr TcMacroCallSiteStateData))))
+          : i64)))))
+
 (define (tc-source-key-cache-state-new) : TcSourceKeyCacheState
   (TcSourceKeyCacheState
     (array.make-array i64 8192)
@@ -446,7 +506,8 @@
           (tc-source-key-cache-state-new)
           (tc-topenv-membership-state-new)
           (tc-thread-name-kind-state-new)
-          (tc-inlay-hint-state-new)))
+          (tc-inlay-hint-state-new)
+          (tc-macro-call-site-state-new)))
       (TcJobState
         (cast
           (unsafe
@@ -470,6 +531,9 @@
 (define (tc-job-state-inlay-hints [state : TcJobState]) : TcInlayHintState
   (struct-get (tc-job-state-data state) inlay-hints))
 
+(define (tc-job-state-macro-call-sites [state : TcJobState]) : TcMacroCallSiteState
+  (struct-get (tc-job-state-data state) macro-call-sites))
+
 (define (tc-inlay-hint-state-data [state : TcInlayHintState]) : TcInlayHintStateData
   (unsafe
     (ptr-read
@@ -486,6 +550,35 @@
         (cast (struct-get state address) : u64)
         : (MutPtr TcInlayHintStateData))
       data)))
+
+(define (tc-macro-call-site-state-data [state : TcMacroCallSiteState]) : TcMacroCallSiteStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (Ptr TcMacroCallSiteStateData)))))
+
+(define (tc-macro-call-site-state-data-set!
+  [state : TcMacroCallSiteState]
+  [data : TcMacroCallSiteStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (MutPtr TcMacroCallSiteStateData))
+      data)))
+
+(define (tc-macro-call-site-state-enabled? [state : TcMacroCallSiteState]) : bool
+  (struct-get (tc-macro-call-site-state-data state) enabled))
+
+(define (tc-macro-call-site-state-set-enabled!
+  [state : TcMacroCallSiteState]
+  [enabled : bool]) : unit
+  (let
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (begin
+      (set! (struct-get data enabled) enabled)
+      (tc-macro-call-site-state-data-set! state data))))
 
 (define (tc-topenv-membership-state-data [state : TcTopEnvMembershipState]) : TcTopEnvMembershipStateData
   (unsafe
@@ -568,6 +661,372 @@
     (array-set! (struct-get state control) 2 0)
     (array-set! (struct-get state control) 5 0)
     (array-set! (struct-get state control) 9 0)))
+
+(define tc-macro-call-site-record-stride : i64
+  12)
+
+(define (tc-macro-call-site-record-slot [index : i64] [field : i64]) : i64
+  (+ (* index tc-macro-call-site-record-stride) field))
+
+(define (tc-macro-call-site-state-storage-grow! [state : TcMacroCallSiteState]) : unit
+  (let
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    [old-records : (__tl_dyn-array i64) (struct-get data records)]
+    [old-capacity : i64 (struct-get data capacity)]
+    [new-capacity : i64
+      (if (< old-capacity 1)
+        16
+        (* old-capacity 2))]
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (struct-get data fixed-storage-arena)]
+    [_set-owner : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [new-records : (__tl_dyn-array i64)
+      (array.make-array i64 (* new-capacity tc-macro-call-site-record-stride))]
+    [index : i64 0]
+    (begin
+      (while (<
+        index
+        (* (struct-get data len) tc-macro-call-site-record-stride))
+        (begin
+          (array-set! new-records index (array-ref old-records index))
+          (set! index (+ index 1))))
+      (set! (struct-get data records) new-records)
+      (set! (struct-get data capacity) new-capacity)
+      (set! (struct-get data fixed-storage-arena) (arena.tl_arena_current))
+      (tc-macro-call-site-state-data-set! state data)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous owner)
+            (struct-get data fixed-storage-arena)
+            previous))))))
+
+(define (tc-macro-call-site-record-key-eq?
+  [data : TcMacroCallSiteStateData]
+  [index : i64]
+  [path-id : i64]
+  [definition-module-id : i64]
+  [declaration-id : i64]
+  [span : ast.AstSourceSpan]) : bool
+  (let
+    [records : (__tl_dyn-array i64) (struct-get data records)]
+    [base : i64 (tc-macro-call-site-record-slot index 0)]
+    (and
+      (= (array-ref records base) path-id)
+      (= (array-ref records (+ base 2)) definition-module-id)
+      (= (array-ref records (+ base 3)) declaration-id)
+      (= (array-ref records (+ base 4)) (ast.ast-source-span-start-line span))
+      (= (array-ref records (+ base 5)) (ast.ast-source-span-start-col span))
+      (= (array-ref records (+ base 6)) (ast.ast-source-span-end-line span))
+      (= (array-ref records (+ base 7)) (ast.ast-source-span-end-col span)))))
+
+(define (tc-macro-call-site-key-hash
+  [path-id : i64]
+  [definition-module-id : i64]
+  [declaration-id : i64]
+  [span : ast.AstSourceSpan]) : i64
+  (hash.combine
+    (hash.combine
+      (hash.combine
+        (hash.combine
+          (hash.combine
+            (hash.combine (hash.i64 path-id) (hash.i64 definition-module-id))
+            (hash.i64 declaration-id))
+          (hash.i64 (ast.ast-source-span-start-line span)))
+        (hash.i64 (ast.ast-source-span-start-col span)))
+      (hash.i64 (ast.ast-source-span-end-line span)))
+    (hash.i64 (ast.ast-source-span-end-col span))))
+
+(define (tc-macro-call-site-state-contains-key?
+  [data : TcMacroCallSiteStateData]
+  [path-id : i64]
+  [definition-module-id : i64]
+  [declaration-id : i64]
+  [span : ast.AstSourceSpan]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index (struct-get data len)))
+        (begin
+          (if (tc-macro-call-site-record-key-eq?
+            data
+            index
+            path-id
+            definition-module-id
+            declaration-id
+            span)
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (tc-macro-call-site-state-contains?
+  [state : TcMacroCallSiteState]
+  [site-hash : i64]
+  [path-id : i64]
+  [definition-module-id : i64]
+  [declaration-id : i64]
+  [span : ast.AstSourceSpan]) : bool
+  (let
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (match (tc_i64_i64_map.get (& (struct-get data seen-sites)) site-hash)
+      [(tc_i64_i64_map.LookupFound index)
+        (if (and (>= index 0) (< index (struct-get data len)))
+          (if (tc-macro-call-site-record-key-eq?
+            data
+            index
+            path-id
+            definition-module-id
+            declaration-id
+            span)
+            true
+            ;; Pool-generation node-ID reuse is rare. Preserve exactness by
+            ;; falling back to the full key only on that collision path.
+            (tc-macro-call-site-state-contains-key?
+              data
+              path-id
+              definition-module-id
+              declaration-id
+              span))
+          (tc-macro-call-site-state-contains-key?
+            data
+            path-id
+            definition-module-id
+            declaration-id
+            span))]
+      [(tc_i64_i64_map.LookupMissing) false])))
+
+(define (tc-macro-call-site-state-seen-note!
+  [state : TcMacroCallSiteState]
+  [site-hash : i64]
+  [record-index : i64]) : unit
+  (let
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (match (tc_i64_i64_map.get (& (struct-get data seen-sites)) site-hash)
+      [(tc_i64_i64_map.LookupFound _) unit]
+      [(tc_i64_i64_map.LookupMissing)
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [owner : i64 (struct-get data fixed-storage-arena)]
+          [_set-owner : unit
+            (unsafe
+              (arena.tl_arena_set owner))]
+          (begin
+            (tc_i64_i64_map.insert-ref!
+              (&mut (struct-get data seen-sites))
+              site-hash
+              record-index)
+            (set!
+              (struct-get data fixed-storage-arena)
+              (arena.tl_arena_current))
+            (tc-macro-call-site-state-data-set! state data)
+            (unsafe
+              (arena.tl_arena_set
+                (if (= previous owner)
+                  (struct-get data fixed-storage-arena)
+                  previous)))))])))
+
+(define (tc-macro-call-site-state-record!
+  [state : TcMacroCallSiteState]
+  [macro-name-id : i64]
+  [definition-module-id : i64]
+  [declaration-id : i64]
+  [span : ast.AstSourceSpan]) : unit
+  (let
+    [active : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    [path-id : i64 (struct-get active active-path-id)]
+    [site-hash : i64
+      (tc-macro-call-site-key-hash
+        path-id
+        definition-module-id
+        declaration-id
+        span)]
+    (if (tc-macro-call-site-state-contains?
+      state
+      site-hash
+      path-id
+      definition-module-id
+      declaration-id
+      span)
+      unit
+      (begin
+        (if (>= (struct-get active len) (struct-get active capacity))
+          (tc-macro-call-site-state-storage-grow! state)
+          unit)
+        (let
+          [latest : TcMacroCallSiteStateData
+            (tc-macro-call-site-state-data state)]
+          [index : i64 (struct-get latest len)]
+          [base : i64 (tc-macro-call-site-record-slot index 0)]
+          [records : (__tl_dyn-array i64) (struct-get latest records)]
+          (begin
+            (array-set! records base path-id)
+            (array-set! records (+ base 1) macro-name-id)
+            (array-set! records (+ base 2) definition-module-id)
+            (array-set! records (+ base 3) declaration-id)
+            (array-set!
+              records
+              (+ base 4)
+              (ast.ast-source-span-start-line span))
+            (array-set! records (+ base 5) (ast.ast-source-span-start-col span))
+            (array-set! records (+ base 6) (ast.ast-source-span-end-line span))
+            (array-set! records (+ base 7) (ast.ast-source-span-end-col span))
+            (array-set!
+              records
+              (+ base 8)
+              (if (struct-get active active-editable)
+                1
+                0))
+            (array-set!
+              records
+              (+ base 9)
+              (struct-get active active-generator-id))
+            (array-set! records (+ base 10) (struct-get active active-item-id))
+            (array-set! records (+ base 11) (struct-get active active-key-id))
+            (set! (struct-get latest len) (+ index 1))
+            (tc-macro-call-site-state-data-set! state latest)
+            (tc-macro-call-site-state-seen-note! state site-hash index)))))))
+
+(define (tc-macro-call-site-state-set-active-decl!
+  [state : TcMacroCallSiteState]
+  [path : String]
+  [meta : ast.AstGeneratedDeclMeta]) : unit
+  (let
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (begin
+      (set! (struct-get data active-path-id) (ci.intern path))
+      (match meta
+        [(ast.AstGeneratedDeclMeta.No)
+          (begin
+            (set! (struct-get data active-editable) true)
+            (set! (struct-get data active-generator-id) -1)
+            (set! (struct-get data active-item-id) -1)
+            (set! (struct-get data active-key-id) -1))]
+        [(ast.AstGeneratedDeclMeta.Some generator item _ key)
+          (begin
+            (set! (struct-get data active-editable) false)
+            (set! (struct-get data active-generator-id) (ci.intern generator))
+            (set! (struct-get data active-item-id) (ci.intern item))
+            (set! (struct-get data active-key-id) (ci.intern key)))])
+      (tc-macro-call-site-state-data-set! state data))))
+
+(define (tc-macro-call-site-state-active-decl [state : TcMacroCallSiteState]) : TcMacroCallSiteActiveDecl
+  (let
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (TcMacroCallSiteActiveDecl
+      (struct-get data active-path-id)
+      (struct-get data active-editable)
+      (struct-get data active-generator-id)
+      (struct-get data active-item-id)
+      (struct-get data active-key-id))))
+
+(define (tc-macro-call-site-state-restore-active-decl!
+  [state : TcMacroCallSiteState]
+  [active : TcMacroCallSiteActiveDecl]) : unit
+  (let
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (begin
+      (set! (struct-get data active-path-id) (struct-get active path-id))
+      (set! (struct-get data active-editable) (struct-get active editable))
+      (set!
+        (struct-get data active-generator-id)
+        (struct-get active generator-id))
+      (set! (struct-get data active-item-id) (struct-get active item-id))
+      (set! (struct-get data active-key-id) (struct-get active key-id))
+      (tc-macro-call-site-state-data-set! state data))))
+
+(define (tc-macro-call-site-state-reset! [state : TcMacroCallSiteState]) : unit
+  (let
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (begin
+      (set! (struct-get data len) 0)
+      (set! (struct-get data active-path-id) -1)
+      (set! (struct-get data active-editable) false)
+      (set! (struct-get data active-generator-id) -1)
+      (set! (struct-get data active-item-id) -1)
+      (set! (struct-get data active-key-id) -1)
+      (tc-cache-map-clear! (&mut (struct-get data seen-sites)))
+      (tc-macro-call-site-state-data-set! state data))))
+
+(define (tc-macro-call-site-text [id : i64]) : String
+  (if (< id 0)
+    ""
+    (ci.intern-str id)))
+
+(define (tc-macro-call-site-count-for-state [state : TcMacroCallSiteState]) : i64
+  (struct-get (tc-macro-call-site-state-data state) len))
+
+(define (tc-macro-call-site-field-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]
+  [field : i64]
+  [fallback : i64]) : i64
+  (let
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (if (and (>= index 0) (< index (struct-get data len)))
+      (array-ref
+        (struct-get data records)
+        (tc-macro-call-site-record-slot index field))
+      fallback)))
+
+(define (tc-macro-call-site-path-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : String
+  (tc-macro-call-site-text
+    (tc-macro-call-site-field-for-state state index 0 -1)))
+
+(define (tc-macro-call-site-macro-name-id-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : i64
+  (tc-macro-call-site-field-for-state state index 1 -1))
+
+(define (tc-macro-call-site-definition-module-id-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : i64
+  (tc-macro-call-site-field-for-state
+    state
+    index
+    2
+    cbi.compiler-builtin-id-fix-empty))
+
+(define (tc-macro-call-site-declaration-id-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : i64
+  (tc-macro-call-site-field-for-state state index 3 -1))
+
+(define (tc-macro-call-site-span-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : ast.AstSourceSpan
+  (ast.ast-source-span
+    (tc-macro-call-site-field-for-state state index 4 0)
+    (tc-macro-call-site-field-for-state state index 5 0)
+    (tc-macro-call-site-field-for-state state index 6 0)
+    (tc-macro-call-site-field-for-state state index 7 0)))
+
+(define (tc-macro-call-site-editable-for-state?
+  [state : TcMacroCallSiteState]
+  [index : i64]) : bool
+  (= (tc-macro-call-site-field-for-state state index 8 0) 1))
+
+(define (tc-macro-call-site-generator-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : String
+  (tc-macro-call-site-text
+    (tc-macro-call-site-field-for-state state index 9 -1)))
+
+(define (tc-macro-call-site-item-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : String
+  (tc-macro-call-site-text
+    (tc-macro-call-site-field-for-state state index 10 -1)))
+
+(define (tc-macro-call-site-key-for-state
+  [state : TcMacroCallSiteState]
+  [index : i64]) : String
+  (tc-macro-call-site-text
+    (tc-macro-call-site-field-for-state state index 11 -1)))
 
 ;; Internal macro/typecheck pass boundaries reset file lookup carriers but must
 ;; not tear down a caller-owned inlay generation active for the whole request.
@@ -1822,45 +2281,36 @@
     (array.make-array i64 0)))
 
 ;; Aggregate layouts outlive transient typecheck/lowering scratch regions.
-;; Keep their dense metadata arrays in a cache-owned arena and retain its newest
-;; segment after every allocation. A fixed node-pool arena handle becomes stale
-;; as soon as that segment fills, causing every later array to reserve a sibling
-;; segment that no owner can advance to.
-(define tc-agg-layout-cache-storage-arena : i64
-  0)
+;; Keep their dense metadata arrays in a cache-owned arena. Arena handles name
+;; stable roots, so one typed handle remains valid as physical segments grow.
+(define tc-agg-layout-cache-storage-arena : arena.Arena
+  (arena.Arena 0))
 
 (define (tc-agg-layout-cache-storage-arena-handle-value) : i64
-  tc-agg-layout-cache-storage-arena)
+  (arena.raw-handle tc-agg-layout-cache-storage-arena))
 
-(define (tc-agg-layout-cache-storage-handle) : i64
-  (begin
-    (if (= tc-agg-layout-cache-storage-arena 0)
+(define (tc-agg-layout-cache-storage-handle) : arena.Arena
+  (let
+    [storage : arena.Arena tc-agg-layout-cache-storage-arena]
+    (if (= (arena.raw-handle storage) 0)
       ;; Selfhost retains less than 1 MiB here. A small root leaves ample
       ;; headroom and still grows through the ordinary arena overflow path.
-      (set! tc-agg-layout-cache-storage-arena (arena.tl_arena_make_small))
-      unit)
-    tc-agg-layout-cache-storage-arena))
+      (let
+        [fresh : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+        (begin
+          (set! tc-agg-layout-cache-storage-arena fresh)
+          fresh))
+      storage)))
 
 (define (tc-agg-layout-cache-storage-reset!) : unit
   (let
-    [storage : i64 tc-agg-layout-cache-storage-arena]
+    [storage : arena.Arena tc-agg-layout-cache-storage-arena]
     (begin
-      (set! tc-agg-layout-cache-storage-arena 0)
-      (if (= storage 0)
+      (set! tc-agg-layout-cache-storage-arena (arena.Arena 0))
+      (if (= (arena.raw-handle storage) 0)
         unit
         (unsafe
-          (arena.tl_arena_destroy storage))))))
-
-(define (tc-agg-layout-cache-storage-restore! [previous : i64] [storage : i64]) : unit
-  (let
-    [head : i64 (arena.tl_arena_current)]
-    (begin
-      (set! tc-agg-layout-cache-storage-arena head)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous storage)
-            head
-            previous))))))
+          (arena.destroy storage))))))
 
 ;; Builders know the final cardinality from their AST vectors. Allocate one
 ;; right-sized backing array in the retained cache arena, fill it in source
@@ -1883,18 +2333,9 @@
   (array-set! (struct-get items slots) index value))
 
 (define (tc-inline-field-layout-list-with-count [count : i64]) : TcInlineFieldLayoutList
-  (let
-    [previous : i64 (arena.tl_arena_current)]
-    [storage : i64 (tc-agg-layout-cache-storage-handle)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
-      (let
-        [out : TcInlineFieldLayoutList
-          (TcInlineFieldLayoutList (array.make-array TcInlineFieldLayout count))]
-        (begin
-          (tc-agg-layout-cache-storage-restore! previous storage)
-          out)))))
+  (in-arena
+    (tc-agg-layout-cache-storage-handle)
+    (TcInlineFieldLayoutList (array.make-array TcInlineFieldLayout count))))
 
 (define (tc-inline-field-layout-list-count [items : TcInlineFieldLayoutList]) : i64
   (array-length (struct-get items slots)))
@@ -1911,19 +2352,9 @@
   (array-set! (struct-get items slots) index value))
 
 (define (tc-inline-payload-layout-list-with-count [count : i64]) : TcInlinePayloadLayoutList
-  (let
-    [previous : i64 (arena.tl_arena_current)]
-    [storage : i64 (tc-agg-layout-cache-storage-handle)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
-      (let
-        [out : TcInlinePayloadLayoutList
-          (TcInlinePayloadLayoutList
-            (array.make-array TcInlinePayloadLayout count))]
-        (begin
-          (tc-agg-layout-cache-storage-restore! previous storage)
-          out)))))
+  (in-arena
+    (tc-agg-layout-cache-storage-handle)
+    (TcInlinePayloadLayoutList (array.make-array TcInlinePayloadLayout count))))
 
 (define (tc-inline-payload-layout-list-count
   [items : TcInlinePayloadLayoutList]) : i64
@@ -1941,19 +2372,9 @@
   (array-set! (struct-get items slots) index value))
 
 (define (tc-inline-variant-layout-list-with-count [count : i64]) : TcInlineVariantLayoutList
-  (let
-    [previous : i64 (arena.tl_arena_current)]
-    [storage : i64 (tc-agg-layout-cache-storage-handle)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set storage))
-      (let
-        [out : TcInlineVariantLayoutList
-          (TcInlineVariantLayoutList
-            (array.make-array TcInlineVariantLayout count))]
-        (begin
-          (tc-agg-layout-cache-storage-restore! previous storage)
-          out)))))
+  (in-arena
+    (tc-agg-layout-cache-storage-handle)
+    (TcInlineVariantLayoutList (array.make-array TcInlineVariantLayout count))))
 
 (define (tc-inline-variant-layout-list-count
   [items : TcInlineVariantLayoutList]) : i64
@@ -3101,6 +3522,34 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-alloc-start : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-direct-marshal-live-start : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-walk-native-dispatch-ns : i64
     0))
 (cfg
@@ -3255,6 +3704,49 @@
       (set!
         compiler-tc-macro-walk-bind-params-calls
         (+ compiler-tc-macro-walk-bind-params-calls 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-direct-marshal-start!) : unit
+    (begin
+      (set!
+        compiler-tc-macro-walk-direct-marshal-start-ns
+        (compiler-tc-walk-now-ns))
+      (set!
+        compiler-tc-macro-walk-direct-marshal-alloc-start
+        (profile.alloc-total))
+      (set!
+        compiler-tc-macro-walk-direct-marshal-live-start
+        (profile.alloc-live)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-direct-marshal-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-macro-walk-direct-marshal-ns
+        (+
+          compiler-tc-macro-walk-direct-marshal-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-macro-walk-direct-marshal-start-ns)))
+      (set!
+        compiler-tc-macro-walk-direct-marshal-alloc-bytes
+        (+
+          compiler-tc-macro-walk-direct-marshal-alloc-bytes
+          (-
+            (profile.alloc-total)
+            compiler-tc-macro-walk-direct-marshal-alloc-start)))
+      (set!
+        compiler-tc-macro-walk-direct-marshal-live-bytes
+        (+
+          compiler-tc-macro-walk-direct-marshal-live-bytes
+          (-
+            (profile.alloc-live)
+            compiler-tc-macro-walk-direct-marshal-live-start)))
+      (set!
+        compiler-tc-macro-walk-direct-marshal-calls
+        (+ compiler-tc-macro-walk-direct-marshal-calls 1)))))
 
 (cfg
   compile-profile
@@ -3509,7 +4001,7 @@
     0))
 (cfg
   compile-profile
-  (define compiler-tc-walk-decl-sample-start-binds : i64
+  (define compiler-tc-walk-decl-sample-start-captures : i64
     0))
 (cfg
   compile-profile
@@ -3965,15 +4457,19 @@
           (- (profile.alloc-total) compiler-tc-walk-decl-sample-start-alloc)
           (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live)
           (>
-            compiler-tc-macro-walk-bind-params-calls
-            compiler-tc-walk-decl-sample-start-binds)))
+            (+
+              compiler-tc-macro-walk-bind-params-calls
+              compiler-tc-macro-walk-direct-marshal-calls)
+            compiler-tc-walk-decl-sample-start-captures)))
       (set! compiler-tc-walk-decl-sample-kind 0)
       (set! compiler-tc-walk-decl-sample-start-ns (compiler-tc-walk-now-ns))
       (set! compiler-tc-walk-decl-sample-start-alloc (profile.alloc-total))
       (set! compiler-tc-walk-decl-sample-start-live (profile.alloc-live))
       (set!
-        compiler-tc-walk-decl-sample-start-binds
-        compiler-tc-macro-walk-bind-params-calls))))
+        compiler-tc-walk-decl-sample-start-captures
+        (+
+          compiler-tc-macro-walk-bind-params-calls
+          compiler-tc-macro-walk-direct-marshal-calls)))))
 
 ;; Hygiene-rebuild and transformer-output-rewalk regions. Both re-enter
 ;; themselves (hygiene through its own recursion, the output re-walk through
@@ -5166,6 +5662,14 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-stdlib-tlci-direct-expr-results : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-stdlib-tlci-direct-shell-env-folds : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-stdlib-tlci-native-module-results : i64
     0))
 (cfg
@@ -5356,6 +5860,8 @@
       (set! compiler-tc-macro-stdlib-tlci-shell-learns 0)
       (set! compiler-tc-macro-stdlib-tlci-shell-cache-hits 0)
       (set! compiler-tc-macro-stdlib-tlci-native-expr-results 0)
+      (set! compiler-tc-macro-stdlib-tlci-direct-expr-results 0)
+      (set! compiler-tc-macro-stdlib-tlci-direct-shell-env-folds 0)
       (set! compiler-tc-macro-stdlib-tlci-native-module-results 0)
       (set! compiler-tc-macro-stdlib-tlci-native-decls-results 0)
       (set! compiler-tc-macro-stdlib-tlci-entry-resolution-ns 0)
@@ -6043,6 +6549,12 @@
         "stdlib_tlci_native_expr_results"
         compiler-tc-macro-stdlib-tlci-native-expr-results)
       (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_direct_expr_results"
+        compiler-tc-macro-stdlib-tlci-direct-expr-results)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_direct_shell_env_folds"
+        compiler-tc-macro-stdlib-tlci-direct-shell-env-folds)
+      (compiler-tc-macro-counter-profile-line
         "stdlib_tlci_native_module_results"
         compiler-tc-macro-stdlib-tlci-native-module-results)
       (compiler-tc-macro-counter-profile-line
@@ -6091,6 +6603,12 @@
         "walk_bind_params_calls"
         compiler-tc-macro-walk-bind-params-calls)
       (compiler-tc-macro-counter-profile-line
+        "walk_direct_marshal_us"
+        (/ compiler-tc-macro-walk-direct-marshal-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_direct_marshal_calls"
+        compiler-tc-macro-walk-direct-marshal-calls)
+      (compiler-tc-macro-counter-profile-line
         "walk_native_dispatch_us"
         (/ compiler-tc-macro-walk-native-dispatch-ns 1000))
       (compiler-tc-macro-counter-profile-line
@@ -6132,6 +6650,12 @@
       (compiler-tc-macro-counter-profile-line
         "walk_bind_params_live_kb"
         (/ compiler-tc-macro-walk-bind-params-live-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_direct_marshal_alloc_kb"
+        (/ compiler-tc-macro-walk-direct-marshal-alloc-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_direct_marshal_live_kb"
+        (/ compiler-tc-macro-walk-direct-marshal-live-bytes 1024))
       (compiler-tc-macro-counter-profile-line
         "walk_native_dispatch_alloc_kb"
         (/ compiler-tc-macro-walk-native-dispatch-alloc-bytes 1024))
@@ -22218,6 +22742,10 @@
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (tc-source-pattern-list-policy-ok ctx patterns))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (tc-source-pattern-list-policy-ok ctx patterns))]
     [(ast.AstPattern.Variant _ patterns-box)
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
@@ -31215,6 +31743,8 @@
   (match expr
     [(ast.AstExpr.Let _) true]
     [(ast.AstExpr.While _ _) true]
+    [(ast.AstExpr.ForOwnedState _) true]
+    [(ast.AstExpr.ForOwnedStep _) true]
     [(ast.AstExpr.Foreach _) true]
     [(ast.AstExpr.SpmdReduce _) true]
     [(ast.AstExpr.SpmdScan _) true]
@@ -31606,7 +32136,11 @@
   (if (and (tc-ordered-comparison-type? left) (tc-type-eq left right))
     (ResultTcType.Ok (ast.AstType.Bool))
     (ResultTcType.Err
-      "typecheck: comparison expects matching ordered scalar operands")))
+      (str_cat.str-cat
+        "typecheck: comparison expects matching ordered scalar operands, got "
+        (tc-type-render left)
+        " and "
+        (tc-type-render right)))))
 
 (define (tc-unop-type [op : ast.AstUnOp] [ty : ast.AstType]) : ResultTcType
   (match op
@@ -41954,6 +42488,171 @@
         (ast.ty-node-get elem-ty))]
     [_ (tc-spmd-expr ctx expr-bases env spmd-env value)]))
 
+(define (tc-spmd-array-length-call? [func : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan func)
+    [(ast.AstExpr.Var raw-name)
+      (let
+        [hygiene-global : bool (tc-hygiene-global-name-id? raw-name)]
+        [name-id : i64 (tc-builtin-call-name-id raw-name hygiene-global)]
+        (cbi.compiler-builtin-typecheck-array-length-id? name-id))]
+    [_ false]))
+
+(define (tc-spmd-array-length-call
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : ast.AstType]
+  [args : ast.AstExprList]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-expr-list ctx expr-bases env spmd-env args)
+    [(ResultTcSpmdExprListInfo.Ok info)
+      (match info
+        [(TcSpmdExprListInfo class next-env)
+          (tc-spmd-finish expr-ty class next-env)])]
+    [(ResultTcSpmdExprListInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
+
+(define (tc-spmd-for-owned-state
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [source-name : i64]
+  [index-name : i64]
+  [source : i64]
+  [body : i64]
+  [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
+  (let
+    [source-expr : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases source)]
+    [body-expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body)]
+    [source-name-id : i64 (tc-for-owned-name-id expr-bases source-name)]
+    [index-name-id : i64 (tc-for-owned-name-id expr-bases index-name)]
+    (match (tc-spmd-expr ctx expr-bases env spmd-env source-expr)
+      [(ResultTcSpmdExprInfo.Ok source-info)
+        (match source-info
+          [(TcSpmdExprInfo source-ty source-class source-env)
+            (let
+              [mark : TcSpmdEnvMark (tc-spmd-env-mark source-env)]
+              [body-env : TcTypeEnv
+                (tc-bind-id
+                  (tc-bind-id env source-name-id source-ty)
+                  index-name-id
+                  (ast.AstType.I64))]
+              [body-spmd-env : TcSpmdEnv
+                (tc-spmd-env-bind-id
+                  (tc-spmd-env-bind-id
+                    source-env
+                    source-name-id
+                    source-ty
+                    source-class
+                    TcSpmdScope.Local)
+                  index-name-id
+                  (ast.AstType.I64)
+                  TcSpmdClass.Uniform
+                  TcSpmdScope.Local)]
+              (match (tc-spmd-expr
+                ctx
+                expr-bases
+                body-env
+                body-spmd-env
+                body-expr)
+                [(ResultTcSpmdExprInfo.Ok body-info)
+                  (match body-info
+                    [(TcSpmdExprInfo _ body-class final-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        body-class
+                        (tc-spmd-env-restore final-env mark))])]
+                [(ResultTcSpmdExprInfo.Err message)
+                  (ResultTcSpmdExprInfo.Err message)]))])]
+      [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)])))
+
+(define (tc-spmd-for-owned-step-body
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [binding-name : i64]
+  [body : i64]
+  [elem-ty : ast.AstType]
+  [item-class : TcSpmdClass]
+  [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
+  (let
+    [binding-name-id : i64 (tc-for-owned-name-id expr-bases binding-name)]
+    [mark : TcSpmdEnvMark (tc-spmd-env-mark spmd-env)]
+    [body-env : TcTypeEnv (tc-bind-id env binding-name-id elem-ty)]
+    [body-spmd-env : TcSpmdEnv
+      (tc-spmd-env-bind-id
+        spmd-env
+        binding-name-id
+        elem-ty
+        item-class
+        TcSpmdScope.Local)]
+    [body-expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body)]
+    (match (tc-spmd-expr ctx expr-bases body-env body-spmd-env body-expr)
+      [(ResultTcSpmdExprInfo.Ok body-info)
+        (match body-info
+          [(TcSpmdExprInfo _ body-class final-env)
+            (tc-spmd-finish
+              expr-ty
+              body-class
+              (tc-spmd-env-restore final-env mark))])]
+      [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)])))
+
+(define (tc-spmd-for-owned-step
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [source-name : i64]
+  [index-name : i64]
+  [binding-name : i64]
+  [done-name : i64]
+  [body : i64]
+  [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
+  (let
+    [source-expr : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases source-name)]
+    [index-expr : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases index-name)]
+    [done-expr : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases done-name)]
+    (match (tc-spmd-expr ctx expr-bases env spmd-env source-expr)
+      [(ResultTcSpmdExprInfo.Ok source-info)
+        (match source-info
+          [(TcSpmdExprInfo source-ty source-class source-env)
+            (match (tc-spmd-expr ctx expr-bases env source-env index-expr)
+              [(ResultTcSpmdExprInfo.Ok index-info)
+                (match index-info
+                  [(TcSpmdExprInfo _ index-class index-env)
+                    (match (tc-spmd-expr ctx expr-bases env index-env done-expr)
+                      [(ResultTcSpmdExprInfo.Ok done-info)
+                        (match done-info
+                          [(TcSpmdExprInfo _ done-class done-env)
+                            (match (tc-type-strip-region
+                              (tc-resolve-type ctx source-ty))
+                              [(ast.AstType.Array elem-id _)
+                                (tc-spmd-for-owned-step-body
+                                  ctx
+                                  expr-bases
+                                  env
+                                  done-env
+                                  binding-name
+                                  body
+                                  (tc-context-type-get ctx elem-id)
+                                  (tc-spmd-merge-class
+                                    source-class
+                                    (tc-spmd-merge-class index-class done-class))
+                                  expr-ty)]
+                              [_
+                                (ResultTcSpmdExprInfo.Err
+                                  "typecheck: scalar for owned step requires fixed-array state")])])]
+                      [(ResultTcSpmdExprInfo.Err message)
+                        (ResultTcSpmdExprInfo.Err message)])])]
+              [(ResultTcSpmdExprInfo.Err message)
+                (ResultTcSpmdExprInfo.Err message)])])]
+      [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)])))
+
 (define (tc-spmd-expr-typed
   [ctx : TcContext]
   [expr-bases : i64]
@@ -41967,6 +42666,29 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-spmd-expr-typed ctx expr-bases env spmd-env inner expr-ty))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (tc-spmd-for-owned-state
+        ctx
+        expr-bases
+        env
+        spmd-env
+        (ast.ast-for-owned-state-source-name (& payload))
+        (ast.ast-for-owned-state-index-name (& payload))
+        (ast.ast-for-owned-state-source (& payload))
+        (ast.ast-for-owned-state-body (& payload))
+        expr-ty)]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (tc-spmd-for-owned-step
+        ctx
+        expr-bases
+        env
+        spmd-env
+        (ast.ast-for-owned-step-source-name (& payload))
+        (ast.ast-for-owned-step-index-name (& payload))
+        (ast.ast-for-owned-step-binding-name (& payload))
+        (ast.ast-for-owned-step-done-name (& payload))
+        (ast.ast-for-owned-step-body (& payload))
+        expr-ty)]
     [(ast.AstExpr.Literal _)
       (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(ast.AstExpr.SpmdProgramIndex)
@@ -42052,7 +42774,9 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args))]
+        (if (tc-spmd-array-length-call? func)
+          (tc-spmd-array-length-call ctx expr-bases env spmd-env expr-ty args)
+          (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args)))]
     [(ast.AstExpr.BracketClause items)
       (match (tc-spmd-expr-list ctx expr-bases env spmd-env items)
         [(ResultTcSpmdExprListInfo.Ok info)
@@ -43027,6 +43751,10 @@
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (tc-pattern-list-add-bound-names patterns bound))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (tc-pattern-list-add-bound-names patterns bound))]
     [(ast.AstPattern.Wildcard) bound]
     [(ast.AstPattern.Binding name)
       (tc-string-list-add bound (tc-env-key-name-text name))]
@@ -43060,6 +43788,8 @@
   (match pattern
     [(ast.AstPattern.Var name _) (tc-name-id-list-add bound name)]
     [(ast.AstPattern.Tuple patterns-box)
+      (tc-pattern-list-add-bound-name-ids (box-get patterns-box) bound)]
+    [(ast.AstPattern.Array patterns-box)
       (tc-pattern-list-add-bound-name-ids (box-get patterns-box) bound)]
     [(ast.AstPattern.Wildcard) bound]
     [(ast.AstPattern.Binding name) (tc-name-id-list-add bound name)]
@@ -43278,6 +44008,29 @@
               bound
               (+ index 1))))])))
 
+(define (tc-for-owned-name-id [expr-bases : i64] [expr-id : i64]) : i64
+  (tc-expr-var-name-id (ast.ast-expr-segment-bases-get expr-bases expr-id)))
+
+(define (tc-for-owned-add-bound-name
+  [expr-bases : i64]
+  [expr-id : i64]
+  [bound : TcStringList]) : TcStringList
+  (let
+    [name-id : i64 (tc-for-owned-name-id expr-bases expr-id)]
+    (if (>= name-id 0)
+      (tc-string-list-add bound (tc-env-key-name-text name-id))
+      bound)))
+
+(define (tc-for-owned-add-bound-source-id
+  [expr-bases : i64]
+  [expr-id : i64]
+  [bound : TcNameIdList]) : TcNameIdList
+  (let
+    [name-id : i64 (tc-for-owned-name-id expr-bases expr-id)]
+    (if (>= name-id 0)
+      (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name-id))
+      bound)))
+
 (define (tc-expr-uses-free-name?
   [expr-bases : i64]
   [expr : ast.AstExpr]
@@ -43445,6 +44198,64 @@
         (or
           (tc-expr-uses-free-name? expr-bases cond name bound)
           (tc-expr-uses-free-name? expr-bases body name bound)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        (or
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-source (& payload)))
+            name
+            bound)
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-body (& payload)))
+            name
+            (tc-for-owned-add-bound-name
+              expr-bases
+              index-name
+              (tc-for-owned-add-bound-name expr-bases source-name bound)))))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        (or
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases source-name)
+            name
+            bound)
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases index-name)
+            name
+            bound)
+          (if (>= expected-type 0)
+            (tc-expr-uses-free-name?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases expected-type)
+              name
+              bound)
+            false)
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases done-name)
+            name
+            bound)
+          (tc-expr-uses-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body)
+            name
+            (tc-for-owned-add-bound-name expr-bases binding-name bound))))]
     [(ast.AstExpr.Begin exprs)
       (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
     [(ast.AstExpr.Unsafe exprs)
@@ -44016,6 +44827,10 @@
       (let
         [patterns : ast.AstPatternList (box-get patterns-box)]
         (tc-pattern-list-add-bound-source-ids patterns bound))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (tc-pattern-list-add-bound-source-ids patterns bound))]
     [(ast.AstPattern.Wildcard) bound]
     [(ast.AstPattern.Binding name)
       (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))]
@@ -44368,6 +45183,71 @@
         (or
           (tc-expr-uses-free-source-id? expr-bases cond target-1 target-2 bound)
           (tc-expr-uses-free-source-id? expr-bases body target-1 target-2 bound)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-source (& payload)))
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-body (& payload)))
+            target-1
+            target-2
+            (tc-for-owned-add-bound-source-id
+              expr-bases
+              index-name
+              (tc-for-owned-add-bound-source-id expr-bases source-name bound)))))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases source-name)
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases index-name)
+            target-1
+            target-2
+            bound)
+          (if (>= expected-type 0)
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases expected-type)
+              target-1
+              target-2
+              bound)
+            false)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases done-name)
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body)
+            target-1
+            target-2
+            (tc-for-owned-add-bound-source-id expr-bases binding-name bound))))]
     [(ast.AstExpr.Begin exprs)
       (tc-expr-list-uses-free-source-id?
         expr-bases
@@ -45200,6 +46080,64 @@
         (or
           (tc-expr-sets-free-name? expr-bases cond name bound)
           (tc-expr-sets-free-name? expr-bases body name bound)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        (or
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-source (& payload)))
+            name
+            bound)
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-for-owned-state-body (& payload)))
+            name
+            (tc-for-owned-add-bound-name
+              expr-bases
+              index-name
+              (tc-for-owned-add-bound-name expr-bases source-name bound)))))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        (or
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases source-name)
+            name
+            bound)
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases index-name)
+            name
+            bound)
+          (if (>= expected-type 0)
+            (tc-expr-sets-free-name?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases expected-type)
+              name
+              bound)
+            false)
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases done-name)
+            name
+            bound)
+          (tc-expr-sets-free-name?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body)
+            name
+            (tc-for-owned-add-bound-name expr-bases binding-name bound))))]
     [(ast.AstExpr.Begin exprs)
       (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
     [(ast.AstExpr.Unsafe exprs)
@@ -49319,7 +50257,10 @@
               (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
         [_
           (ResultTcBorrowPlace.Err
-            "typecheck: array-ref borrow requires array place")])]))
+            (string.append
+              "typecheck: array-ref borrow requires array place, got "
+              (tc-type-render
+                (tc-type-strip-region (tc-resolve-type ctx array-ty)))))])]))
 
 (define (tc-borrow-place-box-get [ctx : TcContext] [place : TcBorrowPlace]) : ResultTcBorrowPlace
   (match place
@@ -49738,6 +50679,62 @@
     [_
       (ResultTcTypeList.Err "typecheck: tuple pattern requires Tuple scrutinee")]))
 
+(defenum ResultTcArrayPatternInfo
+  (Ok ast.AstType i64)
+  (Err String))
+
+(define (tc-array-pattern-info [ctx : TcContext] [array-ty : ast.AstType]) : ResultTcArrayPatternInfo
+  (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+    [(ast.AstType.Array elem-id count)
+      (ResultTcArrayPatternInfo.Ok
+        (tc-project-from-region-container
+          array-ty
+          (tc-context-type-get ctx elem-id))
+        count)]
+    [_
+      (ResultTcArrayPatternInfo.Err
+        "typecheck: array pattern requires fixed Array scrutinee")]))
+
+(define (tc-bind-array-sub-pattern-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [patterns : (& patterns ast.AstPatternList)]
+  [elem-ty : ast.AstType]
+  [count : i64]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast.ast-pattern-list-len patterns))
+    (if (>= index count)
+      (ResultTcEnv.Ok env)
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns))))
+    (if (>= index count)
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns)))
+      (match (tc-bind-tuple-sub-pattern
+        ctx
+        env
+        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
+        elem-ty)
+        [(ResultTcEnv.Ok next-env)
+          (tc-bind-array-sub-pattern-list-at
+            ctx
+            next-env
+            patterns
+            elem-ty
+            count
+            (+ index 1))]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))))
+
+(define (tc-bind-array-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [array-ty : ast.AstType]
+  [patterns : ast.AstPatternList]) : ResultTcEnv
+  (match (tc-array-pattern-info ctx array-ty)
+    [(ResultTcArrayPatternInfo.Ok elem-ty count)
+      (tc-bind-array-sub-pattern-list-at ctx env (& patterns) elem-ty count 0)]
+    [(ResultTcArrayPatternInfo.Err message) (ResultTcEnv.Err message)]))
+
 (define (tc-bind-tuple-sub-pattern-list
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -49800,6 +50797,8 @@
     [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
     [(ast.AstPattern.Tuple patterns-box)
       (tc-bind-tuple-pattern ctx env elem-ty (box-get patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
+      (tc-bind-array-pattern ctx env elem-ty (box-get patterns-box))]
     [(ast.AstPattern.Variant name _)
       (match (tc-type-strip-region (tc-resolve-type ctx elem-ty))
         [(ast.AstType.Struct _) (tc-bind-sub-pattern ctx env pattern elem-ty)]
@@ -49934,6 +50933,8 @@
             (box-get patterns-box)
             (box-get elem-types-box))]
         [_ false])]
+    [(ast.AstPattern.Array patterns-box)
+      (tc-array-pattern-irrefutable? ctx (box-get patterns-box) inner-ty)]
     [(ast.AstPattern.Variant name args-box)
       (if (tc-box-pattern-name? name)
         (match (tc-type-strip-region (tc-resolve-type ctx inner-ty))
@@ -50164,6 +51165,8 @@
       [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
       [(ast.AstPattern.Tuple patterns-box)
         (tc-bind-tuple-pattern ctx env ty (box-get patterns-box))]
+      [(ast.AstPattern.Array patterns-box)
+        (tc-bind-array-pattern ctx env ty (box-get patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList (box-get args-box)]
@@ -50225,6 +51228,8 @@
       [(ast.AstPattern.Literal lit) (tc-bind-literal-pattern env lit ty)]
       [(ast.AstPattern.Tuple patterns-box)
         (tc-bind-tuple-pattern ctx env ty (box-get patterns-box))]
+      [(ast.AstPattern.Array patterns-box)
+        (tc-bind-array-pattern ctx env ty (box-get patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList (box-get args-box)]
@@ -50283,6 +51288,57 @@
 
 (define (tc-borrowed-field-ref-type [lifetime : i64] [field-ty : ast.AstType]) : ast.AstType
   (ast.ast-ty-ref lifetime (tc-borrow-referent-type field-ty)))
+
+(define (tc-bind-borrowed-array-sub-pattern-list-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [patterns : (& patterns ast.AstPatternList)]
+  [elem-ty : ast.AstType]
+  [count : i64]
+  [index : i64]) : ResultTcEnv
+  (if (>= index (ast.ast-pattern-list-len patterns))
+    (if (>= index count)
+      (ResultTcEnv.Ok env)
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns))))
+    (if (>= index count)
+      (ResultTcEnv.Err
+        (tc-pattern-arity-message count (ast.ast-pattern-list-len patterns)))
+      (match (tc-bind-borrowed-tuple-sub-pattern
+        ctx
+        env
+        lifetime
+        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
+        elem-ty)
+        [(ResultTcEnv.Ok next-env)
+          (tc-bind-borrowed-array-sub-pattern-list-at
+            ctx
+            next-env
+            lifetime
+            patterns
+            elem-ty
+            count
+            (+ index 1))]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))))
+
+(define (tc-bind-borrowed-array-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [array-ty : ast.AstType]
+  [patterns : ast.AstPatternList]) : ResultTcEnv
+  (match (tc-array-pattern-info ctx array-ty)
+    [(ResultTcArrayPatternInfo.Ok elem-ty count)
+      (tc-bind-borrowed-array-sub-pattern-list-at
+        ctx
+        env
+        lifetime
+        (& patterns)
+        elem-ty
+        count
+        0)]
+    [(ResultTcArrayPatternInfo.Err message) (ResultTcEnv.Err message)]))
 
 (define (tc-bind-borrowed-tuple-sub-pattern-list
   [ctx : TcContext]
@@ -50405,6 +51461,13 @@
     [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
     [(ast.AstPattern.Tuple patterns-box)
       (tc-bind-borrowed-tuple-pattern
+        ctx
+        env
+        lifetime
+        elem-ty
+        (box-get patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
+      (tc-bind-borrowed-array-pattern
         ctx
         env
         lifetime
@@ -50575,6 +51638,13 @@
           lifetime
           ty
           (box-get patterns-box))]
+      [(ast.AstPattern.Array patterns-box)
+        (tc-bind-borrowed-array-pattern
+          ctx
+          env
+          lifetime
+          ty
+          (box-get patterns-box))]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList (box-get args-box)]
@@ -50733,6 +51803,21 @@
               [_
                 (ResultTcEnv.Err
                   "typecheck: borrowed tuple match requires (tuple ...), binding, or wildcard pattern")])]
+          [(ast.AstType.Array _ _)
+            (match pattern
+              [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+              [(ast.AstPattern.Binding name)
+                (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
+              [(ast.AstPattern.Array patterns-box)
+                (tc-bind-borrowed-array-pattern
+                  ctx
+                  env
+                  lifetime
+                  referent-ty
+                  (box-get patterns-box))]
+              [_
+                (ResultTcEnv.Err
+                  "typecheck: borrowed fixed-array match requires (array ...), binding, or wildcard pattern")])]
           [(ast.AstType.Box _)
             (match pattern
               [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
@@ -50844,6 +51929,16 @@
         [_
           (ResultTcEnv.Err
             "typecheck: tuple match requires (tuple ...), binding, or wildcard pattern")])]
+    [(ast.AstType.Array _ _)
+      (match pattern
+        [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+        [(ast.AstPattern.Binding name)
+          (ResultTcEnv.Ok (tc-bind-id env name scrut-ty))]
+        [(ast.AstPattern.Array patterns-box)
+          (tc-bind-array-pattern ctx env scrut-ty (box-get patterns-box))]
+        [_
+          (ResultTcEnv.Err
+            "typecheck: fixed-array match requires (array ...), binding, or wildcard pattern")])]
     [(ast.AstType.Expr) (tc-bind-expr-match-pattern ctx env pattern)]
     [(ast.AstType.Var name)
       (if (= name cbi.compiler-builtin-id-fix-ExprClause)
@@ -51996,6 +53091,37 @@
       [(ResultTcStructDecl.Err _) false])
     false))
 
+(define (tc-array-pattern-list-irrefutable-at?
+  [ctx : TcContext]
+  [patterns : (& patterns ast.AstPatternList)]
+  [elem-ty : ast.AstType]
+  [count : i64]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-pattern-list-len patterns))
+    (>= index count)
+    (if (>= index count)
+      false
+      (and
+        (tc-sub-pattern-irrefutable?
+          ctx
+          (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
+          elem-ty)
+        (tc-array-pattern-list-irrefutable-at?
+          ctx
+          patterns
+          elem-ty
+          count
+          (+ index 1))))))
+
+(define (tc-array-pattern-irrefutable?
+  [ctx : TcContext]
+  [patterns : ast.AstPatternList]
+  [array-ty : ast.AstType]) : bool
+  (match (tc-array-pattern-info ctx array-ty)
+    [(ResultTcArrayPatternInfo.Ok elem-ty count)
+      (tc-array-pattern-list-irrefutable-at? ctx (& patterns) elem-ty count 0)]
+    [(ResultTcArrayPatternInfo.Err _) false]))
+
 (define (tc-sub-pattern-irrefutable?
   [ctx : TcContext]
   [pattern : ast.AstPattern]
@@ -52010,6 +53136,8 @@
         [(ResultTcTypeList.Ok elem-types)
           (tc-pattern-list-irrefutable? ctx (box-get patterns-box) elem-types)]
         [(ResultTcTypeList.Err _) false])]
+    [(ast.AstPattern.Array patterns-box)
+      (tc-array-pattern-irrefutable? ctx (box-get patterns-box) field-ty)]
     [(ast.AstPattern.Variant name args-box)
       (let
         [args : ast.AstPatternList (box-get args-box)]
@@ -52340,6 +53468,13 @@
             (box-get patterns-box)
             (box-get elem-types-box))]
         [_ false])]
+    [(ast.AstType.Array _ _)
+      (match pattern
+        [(ast.AstPattern.Wildcard) true]
+        [(ast.AstPattern.Binding _) true]
+        [(ast.AstPattern.Array patterns-box)
+          (tc-array-pattern-irrefutable? ctx (box-get patterns-box) scrut-ty)]
+        [_ false])]
     [(ast.AstType.Ref _ referent-box)
       (match (tc-type-strip-region
         (tc-resolve-type ctx (ast.ty-node-get referent-box)))
@@ -52352,6 +53487,16 @@
                 ctx
                 (box-get patterns-box)
                 (box-get elem-types-box))]
+            [_ false])]
+        [(ast.AstType.Array _ _)
+          (match pattern
+            [(ast.AstPattern.Wildcard) true]
+            [(ast.AstPattern.Binding _) true]
+            [(ast.AstPattern.Array patterns-box)
+              (tc-array-pattern-irrefutable?
+                ctx
+                (box-get patterns-box)
+                (ast.ty-node-get referent-box))]
             [_ false])]
         [_
           (match pattern
@@ -54631,6 +55776,174 @@
           [(ResultTcType.Err message) (ResultTcType.Err message)])]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
+(define (tc-for-owned-name-id-result
+  [ctx : TcContext]
+  [expr-id : i64]
+  [role : String]) : ResultTcExprId
+  (let
+    [name-id : i64
+      (match (ast.ast-expr-unspan-with-pools
+        (tc-context-pools ctx)
+        (tc-context-expr-get ctx expr-id))
+        [(ast.AstExpr.Var name) name]
+        [_ -1])]
+    (if (>= name-id 0)
+      (ResultTcExprId.Ok name-id)
+      (ResultTcExprId.Err
+        (string.append
+          "typecheck: internal scalar for planner expected a variable for "
+          (string.append
+            role
+            (string.append
+              ", got "
+              (ctfe_support.ctfe-describe-expr
+                (ast.ast-expr-unspan-with-pools
+                  (tc-context-pools ctx)
+                  (tc-context-expr-get ctx expr-id))))))))))
+
+(define (tc-for-owned-expected-type [ctx : TcContext] [expected-id : i64]) : ResultTcType
+  (let
+    [expected : ast.AstExpr (tc-context-expr-get ctx expected-id)]
+    (match (ctfe_support.ctfe-expr-to-type
+      expected
+      expected
+      (tc-ctfe-env ctx)
+      (ctfe_support.ctfe-fuel-limit))
+      [(ctfe_support.ResultCtfeQuoteType.Ok ty _)
+        (ResultTcType.Ok (tc-resolve-type ctx ty))]
+      [(ctfe_support.ResultCtfeQuoteType.Err diag)
+        (ResultTcType.Err (cdiag.compiler-diagnostic-message (box-get diag)))])))
+
+(define (tc-for-owned-body-unit
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [body-id : i64]) : ResultTcType
+  (match (tc-expr-id ctx env body-id)
+    [(ResultTcType.Ok body-ty)
+      (match (tc-expect
+        body-ty
+        (ast.AstType.Unit)
+        "typecheck: scalar for body must produce unit")
+        [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Unit))]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+
+(define (tc-for-owned-state-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-name-id : i64]
+  [index-name-id : i64]
+  [source-id : i64]
+  [body-id : i64]) : ResultTcType
+  (match (tc-for-owned-name-id-result ctx source-name-id "source state")
+    [(ResultTcExprId.Ok source-name)
+      (match (tc-for-owned-name-id-result ctx index-name-id "source index")
+        [(ResultTcExprId.Ok index-name)
+          (match (tc-expr-id ctx env source-id)
+            [(ResultTcType.Ok source-ty)
+              (match (tc-type-strip-region (tc-resolve-type ctx source-ty))
+                [(ast.AstType.Array _ _)
+                  (tc-for-owned-body-unit
+                    ctx
+                    (tc-bind-id
+                      (tc-bind-id env source-name source-ty)
+                      index-name
+                      (ast.AstType.I64))
+                    body-id)]
+                [_
+                  (ResultTcType.Err
+                    "typecheck: scalar for owned planner requires a fixed-array source")])]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])]
+        [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
+    [(ResultTcExprId.Err message) (ResultTcType.Err message)]))
+
+(define (tc-for-owned-step-after-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [binding-name : i64]
+  [expected-id : i64]
+  [elem-ty : ast.AstType]
+  [body-id : i64]) : ResultTcType
+  (match (if (>= expected-id 0)
+    (tc-for-owned-expected-type ctx expected-id)
+    (ResultTcType.Ok elem-ty))
+    [(ResultTcType.Ok expected-ty)
+      (match (tc-expect
+        elem-ty
+        expected-ty
+        "typecheck: scalar for item annotation mismatch")
+        [(ResultTcUnit.Ok)
+          (tc-for-owned-body-unit
+            ctx
+            (tc-bind-id env binding-name elem-ty)
+            body-id)]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+
+(define (tc-for-owned-step-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-id : i64]
+  [index-id : i64]
+  [binding-id : i64]
+  [expected-id : i64]
+  [done-id : i64]
+  [body-id : i64]) : ResultTcType
+  (match (tc-for-owned-name-id-result ctx source-id "source state")
+    [(ResultTcExprId.Ok _)
+      (match (tc-for-owned-name-id-result ctx index-id "source index")
+        [(ResultTcExprId.Ok _)
+          (match (tc-for-owned-name-id-result ctx binding-id "item binding")
+            [(ResultTcExprId.Ok binding-name)
+              (match (tc-for-owned-name-id-result ctx done-id "done flag")
+                [(ResultTcExprId.Ok _)
+                  (match (tc-expr-id ctx env source-id)
+                    [(ResultTcType.Ok source-ty)
+                      (match (tc-type-strip-region
+                        (tc-resolve-type ctx source-ty))
+                        [(ast.AstType.Array elem-id _)
+                          (match (tc-expr-with-expected-or-actual-id
+                            ctx
+                            env
+                            index-id
+                            (ast.AstType.I64))
+                            [(ResultTcType.Ok index-ty)
+                              (if (tc-integer-type? index-ty)
+                                (match (tc-expr-with-expected-or-actual-id
+                                  ctx
+                                  env
+                                  done-id
+                                  (ast.AstType.Bool))
+                                  [(ResultTcType.Ok done-ty)
+                                    (match (tc-expect
+                                      done-ty
+                                      (ast.AstType.Bool)
+                                      "typecheck: scalar for done state must be bool")
+                                      [(ResultTcUnit.Ok)
+                                        (tc-for-owned-step-after-types
+                                          ctx
+                                          env
+                                          binding-name
+                                          expected-id
+                                          (tc-context-type-get ctx elem-id)
+                                          body-id)]
+                                      [(ResultTcUnit.Err message)
+                                        (ResultTcType.Err message)])]
+                                  [(ResultTcType.Err message)
+                                    (ResultTcType.Err message)])
+                                (ResultTcType.Err
+                                  "typecheck: scalar for owned-array index must be integer"))]
+                            [(ResultTcType.Err message)
+                              (ResultTcType.Err message)])]
+                        [_
+                          (ResultTcType.Err
+                            "typecheck: scalar for owned step requires its matching fixed-array state")])]
+                    [(ResultTcType.Err message) (ResultTcType.Err message)])]
+                [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
+            [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
+        [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
+    [(ResultTcExprId.Err message) (ResultTcType.Err message)]))
+
 (define (tc-expr-inner [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
   (match expr
     [(ast.AstExpr.Spanned inner-box span)
@@ -55435,6 +56748,24 @@
         [index : ast.AstExpr (ast.ast-node-get index-box)]
         (tc-xgetbv-expr ctx env index))]
     [(ast.AstExpr.Syscall args) (tc-syscall-expr ctx env args)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (tc-for-owned-state-expr
+        ctx
+        env
+        (ast.ast-for-owned-state-source-name (& payload))
+        (ast.ast-for-owned-state-index-name (& payload))
+        (ast.ast-for-owned-state-source (& payload))
+        (ast.ast-for-owned-state-body (& payload)))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (tc-for-owned-step-expr
+        ctx
+        env
+        (ast.ast-for-owned-step-source-name (& payload))
+        (ast.ast-for-owned-step-index-name (& payload))
+        (ast.ast-for-owned-step-binding-name (& payload))
+        (ast.ast-for-owned-step-expected-type (& payload))
+        (ast.ast-for-owned-step-done-name (& payload))
+        (ast.ast-for-owned-step-body (& payload)))]
     [_ (ResultTcType.Err "typecheck: unsupported expression")]))
 
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
@@ -56206,6 +57537,13 @@
               (+ index 1))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
 
+(define (tc-for-owned-purity-add-bound [expr-id : i64] [bound : TcStringList]) : TcStringList
+  (let
+    [name-id : i64 (tc-expr-var-name-id (ast.ast-node-get expr-id))]
+    (if (>= name-id 0)
+      (tc-string-list-add bound (tc-env-key-name-text name-id))
+      bound)))
+
 (define (tc-comptime-purity-expr-mode
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -56416,6 +57754,52 @@
         template?
         cond
         body)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (match (tc-comptime-purity-node-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        (ast.ast-for-owned-state-source (& payload)))
+        [(ResultTcUnit.Ok)
+          (tc-comptime-purity-node-mode
+            ctx
+            env
+            (tc-for-owned-purity-add-bound
+              (ast.ast-for-owned-state-index-name (& payload))
+              (tc-for-owned-purity-add-bound
+                (ast.ast-for-owned-state-source-name (& payload))
+                bound))
+            chain
+            seen
+            template?
+            (ast.ast-for-owned-state-body (& payload)))]
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (match (tc-comptime-purity-node3-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        (ast.ast-for-owned-step-source-name (& payload))
+        (ast.ast-for-owned-step-index-name (& payload))
+        (ast.ast-for-owned-step-done-name (& payload)))
+        [(ResultTcUnit.Ok)
+          (tc-comptime-purity-node-mode
+            ctx
+            env
+            (tc-for-owned-purity-add-bound
+              (ast.ast-for-owned-step-binding-name (& payload))
+              bound)
+            chain
+            seen
+            template?
+            (ast.ast-for-owned-step-body (& payload)))]
+        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstExpr.Begin exprs)
       (tc-comptime-purity-expr-list-mode
         ctx
@@ -59794,6 +61178,11 @@
           ctx
           (& (box-get items))
           0)]
+      [(ast.AstPattern.Array items)
+        (tc-generated-pattern-list-dependent-construct-at?
+          ctx
+          (& (box-get items))
+          0)]
       [(ast.AstPattern.Variant _ items)
         (tc-generated-pattern-list-dependent-construct-at?
           ctx
@@ -60042,6 +61431,31 @@
           (tc-generated-expr-dependent-construct?
             ctx
             (tc-context-expr-get ctx body-id)))]
+      [(ast.AstExpr.ForOwnedState payload)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get
+              ctx
+              (ast.ast-for-owned-state-source (& payload))))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx (ast.ast-for-owned-state-body (& payload)))))]
+      [(ast.AstExpr.ForOwnedStep payload)
+        (let
+          [expected-type : i64
+            (ast.ast-for-owned-step-expected-type (& payload))]
+          (or
+            (if (>= expected-type 0)
+              (tc-generated-expr-dependent-construct?
+                ctx
+                (tc-context-expr-get ctx expected-type))
+              false)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get
+                ctx
+                (ast.ast-for-owned-step-body (& payload))))))]
       [(ast.AstExpr.Begin items)
         (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
       [(ast.AstExpr.Unsafe items)
@@ -62342,14 +63756,15 @@
 
 ;; Matching a cleanup-owning enum consumes the whole scrutinee value. Ordinary
 ;; enums stay compatibility-non-consuming for existing AST/IR-style sharing.
-;; Constructor-shaped tuple patterns are by-value destructuring, so every
-;; move-only tuple scrutinee is consumed while structurally Copy tuples remain
-;; available.
+;; Constructor-shaped tuple and fixed-array patterns are by-value
+;; destructuring, so every move-only aggregate scrutinee is consumed while
+;; structurally Copy aggregates remain available.
 (define (tc-type-consuming-match-scrutinee-now?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(ast.AstType.Tuple _) (tc-type-move-only? ctx ty)]
+    [(ast.AstType.Array _ _) (tc-type-move-only? ctx ty)]
     [_ (tc-cleanup-owning-enum-type? ctx ty)]))
 
 ;; The bare variable named by an init/rhs expression, unwrapping spans and
@@ -65787,6 +67202,142 @@
         loop-carried
         moved
         inner-box)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name-id : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name-id : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        [source-id : i64 (ast.ast-for-owned-state-source (& payload))]
+        [body-id : i64 (ast.ast-for-owned-state-body (& payload))]
+        [source-name : i64 (tc-for-owned-name-id expr-bases source-name-id)]
+        [index-name : i64 (tc-for-owned-name-id expr-bases index-name-id)]
+        (if (or (< source-name 0) (< index-name 0))
+          (TcMoveResult.Err
+            "typecheck: invalid internal scalar for owned-array state")
+          (match (tc-move-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            source-id)
+            [(TcMoveResult.Ok moved1)
+              (match (tc-body-type-fact-expr-id
+                "move.for_owned_source"
+                ctx
+                env
+                source-id)
+                [(ResultTcType.Ok source-ty)
+                  (match (tc-move-after-bind-known-type-id
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    loop-carried
+                    moved1
+                    source-id
+                    source-ty)
+                    [(TcMoveResult.Ok moved2)
+                      (match (tc-move-check-expr-id
+                        ctx
+                        expr-bases
+                        (tc-bind-id
+                          (tc-bind-id env source-name source-ty)
+                          index-name
+                          (ast.AstType.I64))
+                        (tc-moved-add
+                          (tc-moved-add locals source-name)
+                          index-name)
+                        (tc-moved-remove-root-state
+                          (tc-moved-remove-root-state loop-carried source-name)
+                          index-name)
+                        (tc-moved-remove-root-state
+                          (tc-moved-remove-root-state moved2 source-name)
+                          index-name)
+                        body-id)
+                        [(TcMoveResult.Ok moved3)
+                          (TcMoveResult.Ok
+                            (tc-moved-remove-root-state
+                              (tc-moved-remove-root-state moved3 source-name)
+                              index-name))]
+                        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                [(ResultTcType.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-id : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-id : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-id : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [done-id : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body-id : i64 (ast.ast-for-owned-step-body (& payload))]
+        [binding-name : i64 (tc-for-owned-name-id expr-bases binding-id)]
+        (if (< binding-name 0)
+          (TcMoveResult.Err
+            "typecheck: invalid internal scalar for item binding")
+          (match (tc-move-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            source-id)
+            [(TcMoveResult.Ok moved1)
+              (match (tc-move-check-expr-id
+                ctx
+                expr-bases
+                env
+                locals
+                loop-carried
+                moved1
+                index-id)
+                [(TcMoveResult.Ok moved2)
+                  (match (tc-move-check-expr-id
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    loop-carried
+                    moved2
+                    done-id)
+                    [(TcMoveResult.Ok moved3)
+                      (match (tc-body-type-fact-expr-id
+                        "move.for_owned_step_source"
+                        ctx
+                        env
+                        source-id)
+                        [(ResultTcType.Ok source-ty)
+                          (match (tc-type-strip-region
+                            (tc-resolve-type ctx source-ty))
+                            [(ast.AstType.Array elem-id _)
+                              (match (tc-move-check-expr-id
+                                ctx
+                                expr-bases
+                                (tc-bind-id
+                                  env
+                                  binding-name
+                                  (tc-context-type-get ctx elem-id))
+                                (tc-moved-add locals binding-name)
+                                (tc-moved-remove-root-state
+                                  loop-carried
+                                  binding-name)
+                                (tc-moved-remove-root-state moved3 binding-name)
+                                body-id)
+                                [(TcMoveResult.Ok moved4)
+                                  (TcMoveResult.Ok
+                                    (tc-moved-remove-root-state
+                                      moved4
+                                      binding-name))]
+                                [(TcMoveResult.Err message)
+                                  (TcMoveResult.Err message)])]
+                            [_
+                              (TcMoveResult.Err
+                                "typecheck: scalar for owned step requires fixed-array state")])]
+                        [(ResultTcType.Err message) (TcMoveResult.Err message)])]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
     [(ast.AstExpr.Literal _) (TcMoveResult.Ok moved)]
     [(ast.AstExpr.Var name)
       (let
@@ -72438,6 +73989,147 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (tc-borrow-check-expr-id ctx expr-bases env locals borrowed inner-box)]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name-id : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name-id : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        [source-id : i64 (ast.ast-for-owned-state-source (& payload))]
+        [body-id : i64 (ast.ast-for-owned-state-body (& payload))]
+        [source-name : i64 (tc-for-owned-name-id expr-bases source-name-id)]
+        [index-name : i64 (tc-for-owned-name-id expr-bases index-name-id)]
+        (if (or (< source-name 0) (< index-name 0))
+          (TcBorrowCheckResult.Err
+            "typecheck: invalid internal scalar for owned-array state")
+          (match (tc-borrow-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            source-id)
+            [(TcBorrowCheckResult.Ok borrowed1)
+              (match (tc-body-type-fact-expr-id
+                "borrow.for_owned_source"
+                ctx
+                env
+                source-id)
+                [(ResultTcType.Ok source-ty)
+                  (match (tc-borrow-check-after-bind-known-type-id
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    borrowed1
+                    source-name
+                    source-id
+                    source-ty)
+                    [(TcBorrowCheckResult.Ok borrowed2)
+                      (match (tc-borrow-check-expr-with-protected-id
+                        ctx
+                        expr-bases
+                        (tc-bind-id
+                          (tc-bind-id env source-name source-ty)
+                          index-name
+                          (ast.AstType.I64))
+                        (tc-moved-add
+                          (tc-moved-add locals source-name)
+                          index-name)
+                        (tc-borrow-check-remove-root-state
+                          (tc-borrow-check-remove-root-state
+                            borrowed2
+                            source-name)
+                          index-name)
+                        borrowed
+                        body-id)
+                        [(TcBorrowCheckResult.Ok borrowed3)
+                          (TcBorrowCheckResult.Ok
+                            (tc-borrow-check-remove-root-state
+                              (tc-borrow-check-remove-root-state
+                                borrowed3
+                                source-name)
+                              index-name))]
+                        [(TcBorrowCheckResult.Err message)
+                          (TcBorrowCheckResult.Err message)])]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)])]
+                [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-id : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-id : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-id : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [done-id : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body-id : i64 (ast.ast-for-owned-step-body (& payload))]
+        [binding-name : i64 (tc-for-owned-name-id expr-bases binding-id)]
+        (if (< binding-name 0)
+          (TcBorrowCheckResult.Err
+            "typecheck: invalid internal scalar for item binding")
+          (match (tc-borrow-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            source-id)
+            [(TcBorrowCheckResult.Ok borrowed1)
+              (match (tc-borrow-check-expr-id
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed1
+                index-id)
+                [(TcBorrowCheckResult.Ok borrowed2)
+                  (match (tc-borrow-check-expr-id
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    borrowed2
+                    done-id)
+                    [(TcBorrowCheckResult.Ok borrowed3)
+                      (match (tc-body-type-fact-expr-id
+                        "borrow.for_owned_step_source"
+                        ctx
+                        env
+                        source-id)
+                        [(ResultTcType.Ok source-ty)
+                          (match (tc-type-strip-region
+                            (tc-resolve-type ctx source-ty))
+                            [(ast.AstType.Array elem-id _)
+                              (match (tc-borrow-check-expr-with-protected-id
+                                ctx
+                                expr-bases
+                                (tc-bind-id
+                                  env
+                                  binding-name
+                                  (tc-context-type-get ctx elem-id))
+                                (tc-moved-add locals binding-name)
+                                (tc-borrow-check-remove-root-state
+                                  borrowed3
+                                  binding-name)
+                                borrowed
+                                body-id)
+                                [(TcBorrowCheckResult.Ok borrowed4)
+                                  (TcBorrowCheckResult.Ok
+                                    (tc-borrow-check-remove-root-state
+                                      borrowed4
+                                      binding-name))]
+                                [(TcBorrowCheckResult.Err message)
+                                  (TcBorrowCheckResult.Err message)])]
+                            [_
+                              (TcBorrowCheckResult.Err
+                                "typecheck: scalar for owned step requires fixed-array state")])]
+                        [(ResultTcType.Err message)
+                          (TcBorrowCheckResult.Err message)])]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)])]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])))]
     [(ast.AstExpr.Literal _) (TcBorrowCheckResult.Ok borrowed)]
     [(ast.AstExpr.Var name)
       (if (tc-dotted-local-field-name-id? env name)
@@ -74442,6 +76134,58 @@
   (Ok MacroMaybeDecl String i64)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+(defenum TcMaybeMacroCallHead
+  (Some i64 ast.AstSourceSpan)
+  (No))
+
+(define (tc-macro-call-head [ctx : TcContext] [expr : ast.AstExpr]) : TcMaybeMacroCallHead
+  (match expr
+    [(ast.AstExpr.Spanned inner-id span)
+      (match (tc-context-expr-get ctx inner-id)
+        [(ast.AstExpr.Var name-id) (TcMaybeMacroCallHead.Some name-id span)]
+        [(ast.AstExpr.Spanned nested-id nested-span)
+          (tc-macro-call-head ctx (ast.AstExpr.Spanned nested-id nested-span))]
+        [_ TcMaybeMacroCallHead.No])]
+    [_ TcMaybeMacroCallHead.No]))
+
+;; Record only call heads whose macro identity has already resolved. A source
+;; declaration must still carry a parser-domain name ID; hygiene/template or
+;; generated IDs are expansion internals and are not fabricated as editable
+;; records. Calls in a generated declaration retain that declaration's explicit
+;; generated provenance, with non-editable spans in the public index.
+(define (tc-macro-call-site-note!
+  [ctx : TcContext]
+  [func : ast.AstExpr]
+  [macro-name-id : i64]
+  [definition-module-id : i64]
+  [declaration-id : i64]) : unit
+  (let
+    [state : TcMacroCallSiteState
+      (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
+    [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
+    (if (not (struct-get data enabled))
+      unit
+      (match (tc-macro-call-head ctx func)
+        [(TcMaybeMacroCallHead.Some source-name-id span)
+          (let
+            [source-head : bool
+              (and
+                (ci.intern-renderable-id? source-name-id)
+                (not (ci.intern-generated-id-active? source-name-id))
+                (> (ast.ast-source-span-start-line span) 0)
+                (> (ast.ast-source-span-start-col span) 0))]
+            (if (if (struct-get data active-editable)
+              source-head
+              true)
+              (tc-macro-call-site-state-record!
+                state
+                macro-name-id
+                definition-module-id
+                declaration-id
+                span)
+              unit))]
+        [(TcMaybeMacroCallHead.No) unit]))))
+
 (defenum ResultMacroExpr
   (Ok i64)
   (Err (Box cdiag.CompilerDiagnostic)))
@@ -74548,6 +76292,18 @@
 
 (defenum ResultMacroValue
   (Ok ctfe_support.CompilerCtfeValue)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultMacroCapturedValue
+  (Ok ctfe_support.CompilerCtfeValue)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultMacroCapturedOperands
+  (Ok
+    (__tl_dyn-array ctfe_support.CompilerCtfeValue)
+    i64
+    ctfe_support.CtfeEnv
+    ast.AstNodePoolContext)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultMacroValueEnv
@@ -79005,6 +80761,18 @@
               patterns
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(ast.AstPattern.Array patterns-box)
+      (match (macro-pattern-list-to-spanned-sexpr
+        (box-get patterns-box)
+        span
+        origin)
+        [(ResultMacroSexpr.Ok patterns)
+          (ResultMacroSexpr.Ok
+            (reader.spanned-sexpr-list-prepend
+              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 125) span)
+              patterns
+              span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstPattern.Var _ _)
       (ResultMacroSexpr.Err
         (box
@@ -81677,13 +83445,17 @@
 (define macro-hygiene-produced-refcounts : (__tl_dyn-array i64)
   (array.make-array i64 1))
 
-(define (macro-hygiene-produced-eval-start! [env : ctfe_support.CtfeEnv]) : unit
+(define (macro-hygiene-produced-eval-start-with-pools!
+  [pools : ast.AstNodePoolContext]) : unit
   (begin
     (set! macro-hygiene-produced-active false)
     (set!
       macro-hygiene-produced-floor
-      (ast.ast-node-pool-context-expr-len
-        (ctfe_support.ctfe-env-syntax-pool-context env)))))
+      (ast.ast-node-pool-context-expr-len pools))))
+
+(define (macro-hygiene-produced-eval-start! [env : ctfe_support.CtfeEnv]) : unit
+  (macro-hygiene-produced-eval-start-with-pools!
+    (ctfe_support.ctfe-env-syntax-pool-context env)))
 
 (define (macro-hygiene-produced-refcounts-ensure! [needed : i64]) : unit
   (if (<= needed (array.length macro-hygiene-produced-refcounts))
@@ -81876,6 +83648,54 @@
       (begin
         (macro-hygiene-produced-note-id! expr-bases cond-box shared-path?)
         (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (begin
+        (macro-hygiene-produced-note-id!
+          expr-bases
+          (ast.ast-for-owned-state-source-name (& payload))
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          expr-bases
+          (ast.ast-for-owned-state-index-name (& payload))
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          expr-bases
+          (ast.ast-for-owned-state-source (& payload))
+          shared-path?)
+        (macro-hygiene-produced-note-id!
+          expr-bases
+          (ast.ast-for-owned-state-body (& payload))
+          shared-path?))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        (begin
+          (macro-hygiene-produced-note-id!
+            expr-bases
+            (ast.ast-for-owned-step-source-name (& payload))
+            shared-path?)
+          (macro-hygiene-produced-note-id!
+            expr-bases
+            (ast.ast-for-owned-step-index-name (& payload))
+            shared-path?)
+          (macro-hygiene-produced-note-id!
+            expr-bases
+            (ast.ast-for-owned-step-binding-name (& payload))
+            shared-path?)
+          (when
+            (>= expected-type 0)
+            (macro-hygiene-produced-note-id!
+              expr-bases
+              expected-type
+              shared-path?))
+          (macro-hygiene-produced-note-id!
+            expr-bases
+            (ast.ast-for-owned-step-done-name (& payload))
+            shared-path?)
+          (macro-hygiene-produced-note-id!
+            expr-bases
+            (ast.ast-for-owned-step-body (& payload))
+            shared-path?)))]
     [(ast.AstExpr.Begin exprs)
       (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
     [(ast.AstExpr.Unsafe exprs)
@@ -82433,6 +84253,12 @@
         (match (macro-hygiene-pattern-list patterns env macro-name depth)
           [(MacroHygienePatternList.PatternList npatterns next-env)
             (MacroHygienePattern.Pattern (ast.ast-pat-tuple npatterns) next-env)]))]
+    [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (box-get patterns-box)]
+        (match (macro-hygiene-pattern-list patterns env macro-name depth)
+          [(MacroHygienePatternList.PatternList npatterns next-env)
+            (MacroHygienePattern.Pattern (ast.ast-pat-array npatterns) next-env)]))]
     [(ast.AstPattern.Wildcard)
       (MacroHygienePattern.Pattern ast.AstPattern.Wildcard env)]
     [(ast.AstPattern.Binding name)
@@ -82872,6 +84698,84 @@
         (ast.ast-expr-while
           (macro-hygiene-expr expr-bases cond env macro-name depth)
           (macro-hygiene-expr expr-bases body env macro-name depth)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        [source : i64 (ast.ast-for-owned-state-source (& payload))]
+        [body : i64 (ast.ast-for-owned-state-body (& payload))]
+        [source-name-id : i64 (tc-for-owned-name-id expr-bases source-name)]
+        [index-name-id : i64 (tc-for-owned-name-id expr-bases index-name)]
+        (if (or (< source-name-id 0) (< index-name-id 0))
+          (ast.ast-expr-for-owned-state
+            (macro-hygiene-expr expr-bases source-name env macro-name depth)
+            (macro-hygiene-expr expr-bases index-name env macro-name depth)
+            (macro-hygiene-expr expr-bases source env macro-name depth)
+            (macro-hygiene-expr expr-bases body env macro-name depth))
+          (match (macro-hygiene-bind-name-id
+            env
+            macro-name
+            depth
+            source-name-id)
+            [(MacroHygieneName.Name nsource-name source-env)
+              (match (macro-hygiene-bind-name-id
+                source-env
+                macro-name
+                depth
+                index-name-id)
+                [(MacroHygieneName.Name nindex-name body-env)
+                  (ast.ast-expr-for-owned-state
+                    (ast.ast-node-push (ast.AstExpr.Var nsource-name))
+                    (ast.ast-node-push (ast.AstExpr.Var nindex-name))
+                    (macro-hygiene-expr expr-bases source env macro-name depth)
+                    (macro-hygiene-expr
+                      expr-bases
+                      body
+                      body-env
+                      macro-name
+                      depth))])])))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        [binding-name-id : i64 (tc-for-owned-name-id expr-bases binding-name)]
+        (if (< binding-name-id 0)
+          (ast.ast-expr-for-owned-step
+            (macro-hygiene-expr expr-bases source-name env macro-name depth)
+            (macro-hygiene-expr expr-bases index-name env macro-name depth)
+            (macro-hygiene-expr expr-bases binding-name env macro-name depth)
+            (if (>= expected-type 0)
+              (macro-hygiene-expr expr-bases expected-type env macro-name depth)
+              -1)
+            (macro-hygiene-expr expr-bases done-name env macro-name depth)
+            (macro-hygiene-expr expr-bases body env macro-name depth))
+          (let
+            ;; This binder is reconstructed from the user clause's name. Map
+            ;; its generated template identity back to that source identity so
+            ;; captured body references (including a nested `for` source) and
+            ;; generated cleanup references resolve to the same local.
+            [nbinding-name : i64
+              (tc-hygiene-template-source-id-or binding-name-id binding-name-id)]
+            [body-env : MacroHygieneEnv
+              (macro-hygiene-env-bind-raw env binding-name-id nbinding-name)]
+            (ast.ast-expr-for-owned-step
+              (macro-hygiene-expr expr-bases source-name env macro-name depth)
+              (macro-hygiene-expr expr-bases index-name env macro-name depth)
+              (ast.ast-node-push (ast.AstExpr.Var nbinding-name))
+              (if (>= expected-type 0)
+                (macro-hygiene-expr
+                  expr-bases
+                  expected-type
+                  env
+                  macro-name
+                  depth)
+                -1)
+              (macro-hygiene-expr expr-bases done-name env macro-name depth)
+              (macro-hygiene-expr expr-bases body body-env macro-name depth)))))]
     [(ast.AstExpr.Begin exprs)
       (ast.ast-node-push
         (ast.AstExpr.Begin
@@ -86336,6 +88240,27 @@
       (ctfe_support.ctfe-untyped-expr-type))
     resolved-expected))
 
+(define (macro-captured-binding-init-produced-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : ast.AstExpr]) : ast.AstType
+  (match (tc-expr ctx env arg)
+    [(ResultTcType.Ok actual)
+      (begin
+        ;; Binding-clause initializers can append structural referent types
+        ;; after the context snapshot used to begin macro expansion. Refresh
+        ;; before pushing the wrapper so those type IDs cannot alias.
+        (tc-context-capture-active-pools! ctx)
+        (let
+          [captured : ast.AstType
+            (ctfe_support.ctfe-captured-expr-type-with-pools
+              (tc-context-pools ctx)
+              (tc-resolve-type ctx actual))]
+          (begin
+            (tc-context-install-pools! ctx)
+            captured)))]
+    [(ResultTcType.Err _) (ctfe_support.ctfe-untyped-expr-type)]))
+
 (define (macro-captured-binding-clause
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -86348,11 +88273,9 @@
       (struct-get clause has-type)
       (struct-get clause ty)
       (struct-get clause init)
-      (macro-captured-expr-produced-type
+      (macro-captured-binding-init-produced-type
         ctx
         env
-        (ast.AstType.Expr)
-        true
         (ast.ast-node-get (struct-get clause init)))
       (struct-get clause span))))
 
@@ -86401,22 +88324,127 @@
       (ctfe_support.CtfeMaybeSyntaxPools.None))))
 
 (define (macro-captured-expr-list-value
-  [env : ctfe_support.CtfeEnv]
+  [syntax-pools : ctfe_support.CtfeMaybeSyntaxPools]
   [args : ast.AstExprList]) : ctfe_support.CompilerCtfeValue
-  (match (macro-captured-syntax-pools env)
+  (match syntax-pools
     [(ctfe_support.CtfeMaybeSyntaxPools.Some pools)
       (ctfe_support.CompilerCtfeValue.CapturedExprList args pools)]
     [(ctfe_support.CtfeMaybeSyntaxPools.None)
       (ctfe_support.CompilerCtfeValue.ExprList args)]))
 
 (define (macro-captured-expr-clause-list-value
-  [env : ctfe_support.CtfeEnv]
+  [syntax-pools : ctfe_support.CtfeMaybeSyntaxPools]
   [clauses : ast.AstExprClauseList]) : ctfe_support.CompilerCtfeValue
-  (match (macro-captured-syntax-pools env)
+  (match syntax-pools
     [(ctfe_support.CtfeMaybeSyntaxPools.Some pools)
       (ctfe_support.CompilerCtfeValue.CapturedExprClauseList clauses pools)]
     [(ctfe_support.CtfeMaybeSyntaxPools.None)
       (ctfe_support.CompilerCtfeValue.ExprClauseList clauses)]))
+
+(define (macro-captured-binding-clause-list-value
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [capture-expr-types : bool]
+  [clauses : ast.AstExprBindingClauseList]) : ctfe_support.CompilerCtfeValue
+  (ctfe_support.CompilerCtfeValue.ExprBindingClauseList
+    (macro-captured-binding-clause-list ctx type-env capture-expr-types clauses)))
+
+;; Operand checking can append typed proxy nodes to the active caller pool.
+;; Select the capture pool only after that check, retaining an already selected
+;; pool when it is newer still.
+(define (macro-variadic-syntax-pools-after-check
+  [env : ctfe_support.CtfeEnv]
+  [current : ctfe_support.CtfeMaybeSyntaxPools]) : ctfe_support.CtfeMaybeSyntaxPools
+  (match (macro-captured-syntax-pools env)
+    [(ctfe_support.CtfeMaybeSyntaxPools.Some active-pools)
+      (match current
+        [(ctfe_support.CtfeMaybeSyntaxPools.Some current-pools)
+          (if (>
+            (ast.ast-node-pool-context-expr-len current-pools)
+            (ast.ast-node-pool-context-expr-len active-pools))
+            current
+            (ctfe_support.CtfeMaybeSyntaxPools.Some active-pools))]
+        [(ctfe_support.CtfeMaybeSyntaxPools.None)
+          (ctfe_support.CtfeMaybeSyntaxPools.Some active-pools)])]
+    [(ctfe_support.CtfeMaybeSyntaxPools.None) current]))
+
+;; Binding-clause-list values carry child expression IDs but no pool-bearing
+;; value variant. The scalar `for` shape needs the caller pool after checking
+;; its prefix, while unrelated definition-owned suffixes must retain the
+;; definition pool. Other captured values select their owner normally.
+(define (macro-captured-param-syntax-pools-after-check
+  [current : ctfe_support.CtfeMaybeSyntaxPools]
+  [value : ctfe_support.CompilerCtfeValue]
+  [rebase-binding-clauses? : bool]) : ctfe_support.CtfeMaybeSyntaxPools
+  (match value
+    [(ctfe_support.CompilerCtfeValue.ExprBindingClauseList _)
+      (if rebase-binding-clauses?
+        (ctfe_support.CtfeMaybeSyntaxPools.Some
+          (ast.ast-node-pool-context-capture-active))
+        current)]
+    [_ (ctfe_support.ctfe-syntax-pools-for-value current value)]))
+
+(define (macro-capture-variadic-param
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [name : i64]
+  [ty : ast.AstType]
+  [args : ast.AstExprList]
+  [env : ctfe_support.CtfeEnv]
+  [syntax-pools : ctfe_support.CtfeMaybeSyntaxPools]
+  [capture-expr-types : bool]) : ResultMacroCapturedValue
+  (cond
+    [(tc-macro-type-param-kind? ty)
+      (ResultMacroCapturedValue.Err
+        (box
+          (ctfe_support.ctfe-diagnostic-at-expr
+            (ast.AstExpr.Var name)
+            "typecheck: type macro operand cannot be variadic")))]
+    [(tc-macro-module-param-kind? ty)
+      (ResultMacroCapturedValue.Err
+        (box
+          (ctfe_support.ctfe-diagnostic-at-expr
+            (ast.AstExpr.Var name)
+            "typecheck: Module macro operand cannot be variadic")))]
+    [(macro-param-expr-clause? ctx fallback-module fallback-module-id ty)
+      (match (macro-expr-clause-list-from-args args)
+        [(ResultMacroClauseList.Ok clauses)
+          (ResultMacroCapturedValue.Ok
+            (macro-captured-expr-clause-list-value
+              (macro-variadic-syntax-pools-after-check env syntax-pools)
+              clauses))]
+        [(ResultMacroClauseList.Err diag) (ResultMacroCapturedValue.Err diag)])]
+    [(macro-param-expr-binding-clause?
+        ctx
+        fallback-module
+        fallback-module-id
+        ty)
+      (match (macro-expr-binding-clause-list-from-args args)
+        [(ResultMacroBindingClauseList.Ok clauses)
+          (ResultMacroCapturedValue.Ok
+            (macro-captured-binding-clause-list-value
+              ctx
+              type-env
+              capture-expr-types
+              clauses))]
+        [(ResultMacroBindingClauseList.Err diag)
+          (ResultMacroCapturedValue.Err diag)])]
+    [else
+      (match (macro-check-variadic-operands
+        ctx
+        type-env
+        fallback-module
+        fallback-module-id
+        ty
+        args)
+        [(ResultMacroCheck.Ok)
+          (ResultMacroCapturedValue.Ok
+            (macro-captured-expr-list-value
+              (macro-variadic-syntax-pools-after-check env syntax-pools)
+              args))]
+        [(ResultMacroCheck.Err diag) (ResultMacroCapturedValue.Err diag)])]))
 
 (define (macro-bind-variadic-param
   [ctx : TcContext]
@@ -86428,61 +88456,32 @@
   [args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]
   [capture-expr-types : bool]) : ResultMacroEnv
-  (cond
-    [(tc-macro-type-param-kind? ty)
-      (ResultMacroEnv.Err
-        (box
-          (ctfe_support.ctfe-diagnostic-at-expr
-            (ast.AstExpr.Var name)
-            "typecheck: type macro operand cannot be variadic")))]
-    [(tc-macro-module-param-kind? ty)
-      (ResultMacroEnv.Err
-        (box
-          (ctfe_support.ctfe-diagnostic-at-expr
-            (ast.AstExpr.Var name)
-            "typecheck: Module macro operand cannot be variadic")))]
-    [(macro-param-expr-clause? ctx fallback-module fallback-module-id ty)
-      (match (macro-expr-clause-list-from-args args)
-        [(ResultMacroClauseList.Ok clauses)
-          (ResultMacroEnv.Ok
-            (ctfe_support.ctfe-env-extend-id
-              env
-              name
-              (macro-captured-expr-clause-list-value env clauses)))]
-        [(ResultMacroClauseList.Err diag) (ResultMacroEnv.Err diag)])]
-    [(macro-param-expr-binding-clause?
-        ctx
-        fallback-module
-        fallback-module-id
-        ty)
-      (match (macro-expr-binding-clause-list-from-args args)
-        [(ResultMacroBindingClauseList.Ok clauses)
-          (ResultMacroEnv.Ok
-            (ctfe_support.ctfe-env-extend-id
-              env
-              name
-              (ctfe_support.CompilerCtfeValue.ExprBindingClauseList
-                (macro-captured-binding-clause-list
-                  ctx
-                  type-env
-                  capture-expr-types
-                  clauses))))]
-        [(ResultMacroBindingClauseList.Err diag) (ResultMacroEnv.Err diag)])]
-    [else
-      (match (macro-check-variadic-operands
-        ctx
-        type-env
-        fallback-module
-        fallback-module-id
-        ty
-        args)
-        [(ResultMacroCheck.Ok)
-          (ResultMacroEnv.Ok
-            (ctfe_support.ctfe-env-extend-id
-              env
-              name
-              (macro-captured-expr-list-value env args)))]
-        [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]))
+  (match (macro-capture-variadic-param
+    ctx
+    type-env
+    fallback-module
+    fallback-module-id
+    name
+    ty
+    args
+    env
+    (ctfe_support.ctfe-env-syntax-pools env)
+    capture-expr-types)
+    [(ResultMacroCapturedValue.Ok value)
+      (let
+        ;; Binding-clause values carry child expression IDs but no pool-bearing
+        ;; value variant. Rebase after operand typing so CTFE builders cannot
+        ;; allocate over a newly appended borrow/place child and form a cycle.
+        [captured-env : ctfe_support.CtfeEnv
+          (match value
+            [(ctfe_support.CompilerCtfeValue.ExprBindingClauseList _)
+              (ctfe_support.ctfe-env-rebase-syntax-pools
+                env
+                (ast.ast-node-pool-context-capture-active))]
+            [_ env])]
+        (ResultMacroEnv.Ok
+          (ctfe_support.ctfe-env-extend-id captured-env name value)))]
+    [(ResultMacroCapturedValue.Err diag) (ResultMacroEnv.Err diag)]))
 
 ;; A direct caller string literal is the one `Expr` shape that public macro
 ;; code can inspect without evaluating. Keep its literal node in the active
@@ -86509,7 +88508,16 @@
         (ast.AstExpr.Literal (ast.AstLiteral.String string-id)))]
     [_ arg-id]))
 
-(define (macro-bind-fixed-param
+(define (macro-env-extend-captured-param
+  [env : ctfe_support.CtfeEnv]
+  [name : i64]
+  [ty : ast.AstType]
+  [value : ctfe_support.CompilerCtfeValue]) : ctfe_support.CtfeEnv
+  (if (tc-macro-module-param-kind? ty)
+    (ctfe_support.ctfe-env-extend-typed-id env name value (ast.AstType.String))
+    (ctfe_support.ctfe-env-extend-id env name value)))
+
+(define (macro-capture-fixed-param
   [ctx : TcContext]
   [decls : ast.AstDeclList]
   [fallback-module : String]
@@ -86521,8 +88529,7 @@
   [type-kinds : ast.AstMacroTypeKindList]
   [arg-id : i64]
   [arg-expr : ast.AstExpr]
-  [capture-expr-types : bool]
-  [env : ctfe_support.CtfeEnv]) : ResultMacroEnv
+  [capture-expr-types : bool]) : ResultMacroCapturedValue
   (cond
     [(tc-macro-type-param-kind? ty)
       (match (macro-type-arg-with-fallback
@@ -86540,13 +88547,10 @@
             (& type-kinds)
             arg-expr)
             [(ResultMacroCheck.Ok)
-              (ResultMacroEnv.Ok
-                (ctfe_support.ctfe-env-extend-id
-                  env
-                  name
-                  (ctfe_support.CompilerCtfeValue.Type resolved-ty)))]
-            [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]
-        [(ResultMacroTypeArg.Err diag) (ResultMacroEnv.Err diag)])]
+              (ResultMacroCapturedValue.Ok
+                (ctfe_support.CompilerCtfeValue.Type resolved-ty))]
+            [(ResultMacroCheck.Err diag) (ResultMacroCapturedValue.Err diag)])]
+        [(ResultMacroTypeArg.Err diag) (ResultMacroCapturedValue.Err diag)])]
     [(tc-macro-module-param-kind? ty)
       (match (macro-module-strategy-arg-with-fallback
         ctx
@@ -86554,13 +88558,9 @@
         fallback-module-id
         arg-expr)
         [(ResultMacroModuleArg.Ok module module-id)
-          (ResultMacroEnv.Ok
-            (ctfe_support.ctfe-env-extend-typed-id
-              env
-              name
-              (ctfe_support.CompilerCtfeValue.String module module-id)
-              (ast.AstType.String)))]
-        [(ResultMacroModuleArg.Err diag) (ResultMacroEnv.Err diag)])]
+          (ResultMacroCapturedValue.Ok
+            (ctfe_support.CompilerCtfeValue.String module module-id))]
+        [(ResultMacroModuleArg.Err diag) (ResultMacroCapturedValue.Err diag)])]
     [else
       ;; Every remaining param kind needs the resolved signature type;
       ;; resolve it once instead of once per kind predicate plus once per
@@ -86576,26 +88576,21 @@
           [(tc-macro-expr-clause-type? resolved-expected)
             (match (macro-expr-clause-from-arg arg-expr)
               [(ResultMacroClause.Ok clause)
-                (ResultMacroEnv.Ok
-                  (ctfe_support.ctfe-env-extend-id
-                    env
-                    name
-                    (ctfe_support.CompilerCtfeValue.ExprClause clause)))]
-              [(ResultMacroClause.Err diag) (ResultMacroEnv.Err diag)])]
+                (ResultMacroCapturedValue.Ok
+                  (ctfe_support.CompilerCtfeValue.ExprClause clause))]
+              [(ResultMacroClause.Err diag) (ResultMacroCapturedValue.Err diag)])]
           [(tc-macro-expr-binding-clause-type? resolved-expected)
             (match (macro-expr-binding-clause-from-arg arg-expr)
               [(ResultMacroBindingClause.Ok clause)
-                (ResultMacroEnv.Ok
-                  (ctfe_support.ctfe-env-extend-id
-                    env
-                    name
-                    (ctfe_support.CompilerCtfeValue.ExprBindingClause
-                      (macro-captured-binding-clause
-                        ctx
-                        type-env
-                        capture-expr-types
-                        clause))))]
-              [(ResultMacroBindingClause.Err diag) (ResultMacroEnv.Err diag)])]
+                (ResultMacroCapturedValue.Ok
+                  (ctfe_support.CompilerCtfeValue.ExprBindingClause
+                    (macro-captured-binding-clause
+                      ctx
+                      type-env
+                      capture-expr-types
+                      clause)))]
+              [(ResultMacroBindingClause.Err diag)
+                (ResultMacroCapturedValue.Err diag)])]
           [else
             (match (macro-check-operand-with-resolved
               ctx
@@ -86603,23 +88598,51 @@
               resolved-expected
               arg-expr)
               [(ResultMacroCheck.Ok)
-                (ResultMacroEnv.Ok
-                  (ctfe_support.ctfe-env-extend-id
-                    env
-                    name
-                    (ctfe_support.CompilerCtfeValue.Expr
-                      (if (and
-                        capture-expr-types
-                        (tc-type-eq resolved-expected (ast.AstType.Expr)))
-                        (macro-captured-expr-node ctx arg-id arg-expr)
-                        arg-id)
-                      (macro-captured-expr-produced-type
-                        ctx
-                        type-env
-                        resolved-expected
-                        capture-expr-types
-                        arg-expr))))]
-              [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]))]))
+                (ResultMacroCapturedValue.Ok
+                  (ctfe_support.CompilerCtfeValue.Expr
+                    (if (and
+                      capture-expr-types
+                      (tc-type-eq resolved-expected (ast.AstType.Expr)))
+                      (macro-captured-expr-node ctx arg-id arg-expr)
+                      arg-id)
+                    (macro-captured-expr-produced-type
+                      ctx
+                      type-env
+                      resolved-expected
+                      capture-expr-types
+                      arg-expr)))]
+              [(ResultMacroCheck.Err diag) (ResultMacroCapturedValue.Err diag)])]))]))
+
+(define (macro-bind-fixed-param
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [type-env : TcTypeEnv]
+  [macro-name : String]
+  [name : i64]
+  [ty : ast.AstType]
+  [type-kinds : ast.AstMacroTypeKindList]
+  [arg-id : i64]
+  [arg-expr : ast.AstExpr]
+  [capture-expr-types : bool]
+  [env : ctfe_support.CtfeEnv]) : ResultMacroEnv
+  (match (macro-capture-fixed-param
+    ctx
+    decls
+    fallback-module
+    fallback-module-id
+    type-env
+    macro-name
+    name
+    ty
+    type-kinds
+    arg-id
+    arg-expr
+    capture-expr-types)
+    [(ResultMacroCapturedValue.Ok value)
+      (ResultMacroEnv.Ok (macro-env-extend-captured-param env name ty value))]
+    [(ResultMacroCapturedValue.Err diag) (ResultMacroEnv.Err diag)]))
 
 ;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.
 ;; A trailing variadic parameter collects the remaining operands. A non-final
@@ -86702,28 +88725,45 @@
                   args
                   arg-index)
                   [(ResultMacroBindingClauseList.Ok clauses)
-                    (macro-bind-params-at
-                      ctx
-                      decls
-                      fallback-module
-                      fallback-module-id
-                      type-env
-                      macro-name
-                      params
-                      args
-                      (+ param-index 1)
-                      (+ arg-index (struct-get (& clauses) len))
-                      (ctfe_support.ctfe-env-extend-id
-                        env
-                        pname
-                        (ctfe_support.CompilerCtfeValue.ExprBindingClauseList
-                          (macro-captured-binding-clause-list
-                            ctx
-                            type-env
-                            capture-expr-types
-                            clauses)))
-                      capture-expr-types
-                      call-expr)]
+                    (let
+                      ;; Capture this definition-owned flag before typing a
+                      ;; caller clause can install a newer active syntax pool.
+                      [rebase-captured-env? : bool
+                        (match (ast.ast-macro-param-list-get
+                          params
+                          (+ param-index 1)
+                          (ast.ast-macro-param-fallback))
+                          [(ast.AstMacroParam.Param _ _ next-variadic _)
+                            next-variadic])]
+                      [value : ctfe_support.CompilerCtfeValue
+                        (macro-captured-binding-clause-list-value
+                          ctx
+                          type-env
+                          capture-expr-types
+                          clauses)]
+                      [captured-env : ctfe_support.CtfeEnv
+                        (if rebase-captured-env?
+                          (ctfe_support.ctfe-env-rebase-syntax-pools
+                            env
+                            (ast.ast-node-pool-context-capture-active))
+                          env)]
+                      (macro-bind-params-at
+                        ctx
+                        decls
+                        fallback-module
+                        fallback-module-id
+                        type-env
+                        macro-name
+                        params
+                        args
+                        (+ param-index 1)
+                        (+ arg-index (struct-get (& clauses) len))
+                        (ctfe_support.ctfe-env-extend-id
+                          captured-env
+                          pname
+                          value)
+                        capture-expr-types
+                        call-expr))]
                   [(ResultMacroBindingClauseList.Err diag)
                     (ResultMacroEnv.Err diag)])
                 (ResultMacroEnv.Err
@@ -86770,6 +88810,240 @@
                       capture-expr-types
                       call-expr)]
                   [(ResultMacroEnv.Err diag) (ResultMacroEnv.Err diag)]))))])]))
+
+;; Capture checked operands directly into the fixed native ABI array. This
+;; walker deliberately mirrors `macro-bind-params-at`; the shared capture
+;; helpers above own all validation and value construction, while this layer
+;; owns only arity, mixed-prefix traversal, and syntax-pool selection.
+(define (macro-capture-params-direct
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [type-env : TcTypeEnv]
+  [macro-name : String]
+  [params : ast.AstMacroParamList]
+  [args : ast.AstExprList]
+  [env : ctfe_support.CtfeEnv]
+  [capture-expr-types : bool]
+  [call-expr : ast.AstExpr]) : ResultMacroCapturedOperands
+  (macro-capture-params-direct-at
+    ctx
+    decls
+    fallback-module
+    fallback-module-id
+    type-env
+    macro-name
+    (& params)
+    (& args)
+    0
+    0
+    env
+    (ctfe_support.ctfe-env-syntax-pools env)
+    (array.make-array ctfe_support.CompilerCtfeValue 8)
+    capture-expr-types
+    call-expr))
+
+(define (macro-capture-params-direct-at
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [type-env : TcTypeEnv]
+  [macro-name : String]
+  [params : (& params ast.AstMacroParamList)]
+  [args : (& args ast.AstExprList)]
+  [param-index : i64]
+  [arg-index : i64]
+  [env : ctfe_support.CtfeEnv]
+  [syntax-pools : ctfe_support.CtfeMaybeSyntaxPools]
+  [operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
+  [capture-expr-types : bool]
+  [call-expr : ast.AstExpr]) : ResultMacroCapturedOperands
+  (cond
+    [(>= param-index (ast.ast-macro-param-list-len params))
+      (if (>= arg-index (struct-get args len))
+        (ResultMacroCapturedOperands.Ok
+          operands
+          param-index
+          env
+          (match syntax-pools
+            [(ctfe_support.CtfeMaybeSyntaxPools.Some pools) pools]
+            [(ctfe_support.CtfeMaybeSyntaxPools.None)
+              (ctfe_support.ctfe-env-pools env)]))
+        (ResultMacroCapturedOperands.Err
+          (box
+            (ctfe_support.ctfe-diagnostic-at-expr
+              call-expr
+              "macro call has too many arguments"))))]
+    [else
+      (match (ast.ast-macro-param-list-get
+        params
+        param-index
+        (ast.ast-macro-param-fallback))
+        [(ast.AstMacroParam.Param pname pty variadic type-kinds)
+          (if variadic
+            (if (>= (+ param-index 1) (ast.ast-macro-param-list-len params))
+              (match (macro-capture-variadic-param
+                ctx
+                type-env
+                fallback-module
+                fallback-module-id
+                pname
+                pty
+                (ast.ast-expr-list-tail-from-ref args arg-index)
+                env
+                syntax-pools
+                capture-expr-types)
+                [(ResultMacroCapturedValue.Ok value)
+                  (begin
+                    (array-set! operands param-index value)
+                    (macro-capture-params-direct-at
+                      ctx
+                      decls
+                      fallback-module
+                      fallback-module-id
+                      type-env
+                      macro-name
+                      params
+                      args
+                      (+ param-index 1)
+                      (struct-get args len)
+                      env
+                      (macro-captured-param-syntax-pools-after-check
+                        syntax-pools
+                        value
+                        true)
+                      operands
+                      capture-expr-types
+                      call-expr))]
+                [(ResultMacroCapturedValue.Err diag)
+                  (ResultMacroCapturedOperands.Err diag)])
+              (if (macro-param-expr-binding-clause?
+                ctx
+                fallback-module
+                fallback-module-id
+                pty)
+                (match (macro-expr-binding-clause-prefix-from-args
+                  args
+                  arg-index)
+                  [(ResultMacroBindingClauseList.Ok clauses)
+                    (let
+                      ;; Capture this definition-owned flag before typing a
+                      ;; caller clause can install a newer active syntax pool.
+                      [rebase-captured-pools? : bool
+                        (match (ast.ast-macro-param-list-get
+                          params
+                          (+ param-index 1)
+                          (ast.ast-macro-param-fallback))
+                          [(ast.AstMacroParam.Param _ _ next-variadic _)
+                            next-variadic])]
+                      [value : ctfe_support.CompilerCtfeValue
+                        (macro-captured-binding-clause-list-value
+                          ctx
+                          type-env
+                          capture-expr-types
+                          clauses)]
+                      (begin
+                        (array-set! operands param-index value)
+                        (macro-capture-params-direct-at
+                          ctx
+                          decls
+                          fallback-module
+                          fallback-module-id
+                          type-env
+                          macro-name
+                          params
+                          args
+                          (+ param-index 1)
+                          (+ arg-index (struct-get (& clauses) len))
+                          env
+                          (macro-captured-param-syntax-pools-after-check
+                            syntax-pools
+                            value
+                            rebase-captured-pools?)
+                          operands
+                          capture-expr-types
+                          call-expr)))]
+                  [(ResultMacroBindingClauseList.Err diag)
+                    (ResultMacroCapturedOperands.Err diag)])
+                (ResultMacroCapturedOperands.Err
+                  (box
+                    (ctfe_support.ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
+            (if (>= arg-index (struct-get args len))
+              (ResultMacroCapturedOperands.Err
+                (box
+                  (ctfe_support.ctfe-diagnostic-at-expr
+                    call-expr
+                    "macro call has too few arguments")))
+              (let
+                [arg : i64 (ast.ast-expr-list-get args arg-index 0)]
+                [arg-expr : ast.AstExpr (ast.ast-node-get arg)]
+                (match (macro-capture-fixed-param
+                  ctx
+                  decls
+                  fallback-module
+                  fallback-module-id
+                  type-env
+                  macro-name
+                  pname
+                  pty
+                  type-kinds
+                  arg
+                  arg-expr
+                  capture-expr-types)
+                  [(ResultMacroCapturedValue.Ok value)
+                    (begin
+                      (array-set! operands param-index value)
+                      (macro-capture-params-direct-at
+                        ctx
+                        decls
+                        fallback-module
+                        fallback-module-id
+                        type-env
+                        macro-name
+                        params
+                        args
+                        (+ param-index 1)
+                        (+ arg-index 1)
+                        env
+                        (macro-captured-param-syntax-pools-after-check
+                          syntax-pools
+                          value
+                          false)
+                        operands
+                        capture-expr-types
+                        call-expr))]
+                  [(ResultMacroCapturedValue.Err diag)
+                    (ResultMacroCapturedOperands.Err diag)]))))])]))
+
+(define (macro-fold-captured-operands-env
+  [params : ast.AstMacroParamList]
+  [operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
+  [count : i64]
+  [base-env : ctfe_support.CtfeEnv]) : ctfe_support.CtfeEnv
+  (let
+    [env : ctfe_support.CtfeEnv base-env]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (match (ast.ast-macro-param-list-get
+          (& params)
+          index
+          (ast.ast-macro-param-fallback))
+          [(ast.AstMacroParam.Param pname pty _ _)
+            (begin
+              (set!
+                env
+                (macro-env-extend-captured-param
+                  env
+                  pname
+                  pty
+                  (array-ref operands index)))
+              (set! index (+ index 1)))]))
+      env)))
 
 ;; Route embedded-stdlib macro calls through the TLCI catalog before the
 ;; semantic CTFE fallback. The mapped catalog owns its package-agnostic index
@@ -86855,6 +89129,7 @@
 
 (defenum MacroNativeStdlibTlciResult
   (No)
+  (Shell)
   (Value ctfe_support.CompilerCtfeValue)
   (Err cdiag.CompilerDiagnostic))
 
@@ -86865,32 +89140,41 @@
 (define macro-stdlib-tlci-native-cookie : i64
   0x1cf1)
 
-;; Execute a resolved native entry with the exact operand values the
-;; interpreted binding produced: the bound CTFE environment is consulted per
-;; parameter name, so marshalling cannot diverge from interpretation. A
-;; successful call that commits no result permanently marks this catalog entry
-;; as a shell for the mapping generation. Any nonzero status remains retryable
-;; and surfaces as the same diagnostic contract the interpreter uses.
+;; Execute a resolved native entry with either directly prepared operands or
+;; the exact values in an interpreted binding. The direct mode starts at
+;; `index = count`, so it performs no parameter-name lookup. A successful call
+;; that commits no result permanently marks this catalog entry as a shell for
+;; the mapping generation. Any nonzero status remains retryable and surfaces
+;; as the same diagnostic contract the interpreter uses.
 (cfg
   embedded-stdlib-tlci
   (define (macro-try-stdlib-tlci-native-resolved
-    [ctx : TcContext]
+    [host-pools : ast.AstNodePoolContext]
     [identity : String]
     [resolved : tlci_loader_support.TlciResolvedMacroEntry]
     [params : ast.AstMacroParamList]
     [ret : ast.AstType]
     [env : ctfe_support.CtfeEnv]
-    [call-expr : ast.AstExpr]) : MacroNativeStdlibTlciResult
+    [call-expr : ast.AstExpr]
+    [prepared-operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)]
+    [prepared-count : i64]
+    [prepared : bool]) : MacroNativeStdlibTlciResult
     (if (not (embedded_tlci.compiler-embedded-stdlib-tlci-session-open!))
       MacroNativeStdlibTlciResult.No
       (let
-        [count : i64 (struct-get params len)]
+        [count : i64
+          (if prepared
+            prepared-count
+            (struct-get params len))]
         [operands : (__tl_dyn-array ctfe_support.CompilerCtfeValue)
-          (array.make-array ctfe_support.CompilerCtfeValue 8)]
-        [index : i64 0]
+          prepared-operands]
+        [index : i64
+          (if prepared
+            count
+            0)]
         [ok : bool (<= count 8)]
         (begin
-          (while (and ok (< index count))
+          (while (and (not prepared) ok (< index count))
             (match (array-ref (struct-get params slots) index)
               [(ast.AstMacroParam.Param pname _ _ _)
                 (match (ctfe_support.ctfe-env-lookup-id env pname)
@@ -86903,7 +89187,7 @@
             MacroNativeStdlibTlciResult.No
             (begin
               (embedded_tlci.compiler-comptime-host-session-open!
-                (tc-context-pools ctx)
+                host-pools
                 operands
                 count
                 (ctfe_support.ctfe-fuel-limit)
@@ -86985,7 +89269,7 @@
                                       (+
                                         compiler-tc-macro-stdlib-tlci-shell-learns
                                         1)))
-                                  MacroNativeStdlibTlciResult.No)]
+                                  MacroNativeStdlibTlciResult.Shell)]
                               [(tlci_loader_support.ResultTlciLoaderUnit.Err
                                   message)
                                 (begin
@@ -87046,13 +89330,16 @@
         (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
           [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
             (macro-try-stdlib-tlci-native-resolved
-              ctx
+              (tc-context-pools ctx)
               identity
               resolved
               params
               ret
               env
-              call-expr)]
+              call-expr
+              (array.make-array ctfe_support.CompilerCtfeValue 8)
+              (struct-get params len)
+              false)]
           [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
             (begin
               (cfg
@@ -87078,9 +89365,315 @@
     [_call-expr : ast.AstExpr]) : MacroNativeStdlibTlciResult
     MacroNativeStdlibTlciResult.No))
 
-;; Run a macro transformer via CTFE. Module/declaration macro expansion also
-;; needs the bound CTFE environment while normalizing generated import operands.
-(define (macro-eval-transformer-expanded-with-env
+(define (macro-result-provenance-reset-with-captured-body!
+  [captured-body? : bool]) : unit
+  (begin
+    (ctfe_support.ctfe-result-macro-provenance-reset!)
+    ;; A transformer can splice a captured operand without reconstructing its
+    ;; call nodes. Preserve that input provenance so a nested macro is rewalked
+    ;; in the lexical environment introduced by the generated syntax.
+    (if captured-body?
+      (ctfe_support.ctfe-result-may-contain-macro-note!)
+      unit)))
+
+(defenum MacroDirectStdlibTlciResult
+  (No)
+  (BoundFallback)
+  (Value ctfe_support.CompilerCtfeValue)
+  (PreparedEnv ctfe_support.CtfeEnv)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(define (macro-note-stdlib-tlci-resolved-fallback!) : unit
+  (cfg
+    compile-profile
+    (begin
+      (set!
+        compiler-tc-macro-stdlib-tlci-catalog-hits
+        (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1))
+      (set!
+        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+    unit))
+
+(define (macro-note-stdlib-tlci-shell-fallback!) : unit
+  (cfg
+    compile-profile
+    (begin
+      (set!
+        compiler-tc-macro-stdlib-tlci-catalog-hits
+        (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1))
+      (set!
+        compiler-tc-macro-stdlib-tlci-shell-cache-hits
+        (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1))
+      (set!
+        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+    unit))
+
+(define (macro-note-stdlib-tlci-missing-fallback!) : unit
+  (cfg
+    compile-profile
+    (begin
+      (set!
+        compiler-tc-macro-stdlib-tlci-catalog-misses
+        (+ compiler-tc-macro-stdlib-tlci-catalog-misses 1))
+      (set!
+        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+    unit))
+
+(define (macro-note-stdlib-tlci-unavailable-fallback!) : unit
+  (cfg
+    compile-profile
+    (begin
+      (set!
+        compiler-tc-macro-stdlib-tlci-load-failures
+        (+ compiler-tc-macro-stdlib-tlci-load-failures 1))
+      (set!
+        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+        (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1)))
+    unit))
+
+;; Expression position can resolve the catalog before binding. A native
+;; commit consumes the shared capture values directly. If the first dispatch
+;; learns a registration shell, fold those same values into the semantic
+;; fallback environment once rather than checking the operands again.
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-try-stdlib-tlci-direct-expression
+    [ctx : TcContext]
+    [decls : ast.AstDeclList]
+    [fallback-module : String]
+    [fallback-module-id : i64]
+    [type-env : TcTypeEnv]
+    [macro-name-id : i64]
+    [macro-name : String]
+    [params : ast.AstMacroParamList]
+    [ret : ast.AstType]
+    [expanded-args : ast.AstExprList]
+    [call-expr : ast.AstExpr]) : MacroDirectStdlibTlciResult
+    (if (or
+      (not macro-expand-stdlib-tlci-route-active)
+      (> (struct-get (& params) len) 8)
+      (not (cload.compiler-load-embedded-stdlib-module-id? fallback-module)))
+      MacroDirectStdlibTlciResult.No
+      (let
+        [identity : String
+          (if (ctfe_support.ctfe-string-prefix? macro-name "stdlib.")
+            macro-name
+            (str_cat.str-cat fallback-module "/" macro-name))]
+        (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
+          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
+            (begin
+              (cfg compile-profile (compiler-tc-walk-direct-marshal-start!))
+              (match (let
+                [capture-result : ResultMacroCapturedOperands
+                  (macro-capture-params-direct
+                    ctx
+                    decls
+                    fallback-module
+                    fallback-module-id
+                    type-env
+                    macro-name
+                    params
+                    expanded-args
+                    (tc-ctfe-env ctx)
+                    (macro-expand-expr-type-macro?
+                      fallback-module-id
+                      macro-name-id)
+                    call-expr)]
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-tc-walk-direct-marshal-finish!))
+                  capture-result))
+                [(ResultMacroCapturedOperands.Err diag)
+                  (MacroDirectStdlibTlciResult.Err diag)]
+                [(ResultMacroCapturedOperands.Ok
+                    operands
+                    count
+                    base-env
+                    syntax-pools)
+                  (begin
+                    (ctfe_support.ctfe-result-hygiene-free-reset!)
+                    (macro-result-provenance-reset-with-captured-body!
+                      (macro-binding-prefix-transformer?
+                        ctx
+                        fallback-module
+                        fallback-module-id
+                        macro-name-id
+                        params))
+                    (macro-hygiene-produced-eval-start-with-pools! syntax-pools)
+                    (cfg
+                      compile-profile
+                      (compiler-tc-walk-native-dispatch-start!))
+                    (cfg compile-profile (compiler-tc-macro-profile-start))
+                    (match (let
+                      [native-result : MacroNativeStdlibTlciResult
+                        (macro-try-stdlib-tlci-native-resolved
+                          syntax-pools
+                          identity
+                          resolved
+                          params
+                          ret
+                          base-env
+                          call-expr
+                          operands
+                          count
+                          true)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-tc-walk-native-dispatch-finish!))
+                        native-result))
+                      [(MacroNativeStdlibTlciResult.Value value)
+                        (begin
+                          (tc-context-install-pools! ctx)
+                          (cfg
+                            compile-profile
+                            (begin
+                              (set!
+                                compiler-tc-macro-stdlib-tlci-direct-expr-results
+                                (+
+                                  compiler-tc-macro-stdlib-tlci-direct-expr-results
+                                  1))
+                              (compiler-tc-macro-profile-finish
+                                (ci.intern-composite-pair-id
+                                  fallback-module-id
+                                  macro-name-id)
+                                macro-name
+                                expanded-args)))
+                          (MacroDirectStdlibTlciResult.Value
+                            (ctfe_support.ctfe-capture-syntax-value-with-pools
+                              value
+                              syntax-pools)))]
+                      [(MacroNativeStdlibTlciResult.Err diag)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-tc-macro-profile-finish
+                              (ci.intern-composite-pair-id
+                                fallback-module-id
+                                macro-name-id)
+                              macro-name
+                              expanded-args))
+                          (MacroDirectStdlibTlciResult.Err (box diag)))]
+                      [(MacroNativeStdlibTlciResult.Shell)
+                        (begin
+                          (macro-note-stdlib-tlci-resolved-fallback!)
+                          (cfg
+                            compile-profile
+                            (set!
+                              compiler-tc-macro-stdlib-tlci-direct-shell-env-folds
+                              (+
+                                compiler-tc-macro-stdlib-tlci-direct-shell-env-folds
+                                1)))
+                          (MacroDirectStdlibTlciResult.PreparedEnv
+                            (macro-fold-captured-operands-env
+                              params
+                              operands
+                              count
+                              (ctfe_support.ctfe-env-rebase-syntax-pools
+                                base-env
+                                syntax-pools))))]
+                      [(MacroNativeStdlibTlciResult.No)
+                        (begin
+                          (macro-note-stdlib-tlci-resolved-fallback!)
+                          MacroDirectStdlibTlciResult.BoundFallback)]))]))]
+          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
+            (begin
+              (macro-note-stdlib-tlci-shell-fallback!)
+              MacroDirectStdlibTlciResult.BoundFallback)]
+          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
+            (begin
+              (macro-note-stdlib-tlci-missing-fallback!)
+              MacroDirectStdlibTlciResult.BoundFallback)]
+          [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
+            (begin
+              (macro-note-stdlib-tlci-unavailable-fallback!)
+              MacroDirectStdlibTlciResult.BoundFallback)])))))
+
+(cfg
+  (not embedded-stdlib-tlci)
+  (define (macro-try-stdlib-tlci-direct-expression
+    [_ctx : TcContext]
+    [_decls : ast.AstDeclList]
+    [_fallback-module : String]
+    [_fallback-module-id : i64]
+    [_type-env : TcTypeEnv]
+    [_macro-name-id : i64]
+    [_macro-name : String]
+    [_params : ast.AstMacroParamList]
+    [_ret : ast.AstType]
+    [_expanded-args : ast.AstExprList]
+    [_call-expr : ast.AstExpr]) : MacroDirectStdlibTlciResult
+    MacroDirectStdlibTlciResult.No))
+
+(define (macro-prepare-transformer-pools! [ctx : TcContext]) : unit
+  ;; Argument normalization may extend the owned context while the global
+  ;; active pool still points at an older caller snapshot.
+  (if (ast.ast-node-pool-compat-context-active?)
+    unit
+    (let
+      [owned-pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+      [active-pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      (if (or
+        (>
+          (ast.ast-node-pool-context-expr-len owned-pools)
+          (ast.ast-node-pool-context-expr-len active-pools))
+        (>
+          (ast.ast-node-pool-context-type-len owned-pools)
+          (ast.ast-node-pool-context-type-len active-pools)))
+        (tc-context-install-pools! ctx)
+        (tc-context-capture-active-pools! ctx)))))
+
+(define (macro-eval-transformer-interpreted-with-env
+  [ctx : TcContext]
+  ;; lint-allow: unused-variable -- used by compile-profile builds.
+  [fallback-module-id : i64]
+  ;; lint-allow: unused-variable -- used by compile-profile builds.
+  [macro-name-id : i64]
+  ;; lint-allow: unused-variable -- used by compile-profile builds.
+  [macro-name : String]
+  [body : ast.AstExpr]
+  [captured-body? : bool]
+  ;; lint-allow: unused-variable -- used by compile-profile builds.
+  [expanded-args : ast.AstExprList]
+  [env : ctfe_support.CtfeEnv]) : ResultMacroValueEnv
+  (begin
+    (ctfe_support.ctfe-result-hygiene-free-reset!)
+    (macro-result-provenance-reset-with-captured-body! captured-body?)
+    (macro-hygiene-produced-eval-start! env)
+    (cfg compile-profile (compiler-tc-macro-profile-start))
+    (match (ctfe_support.ctfe-eval-node
+      body
+      (ctfe_support.ctfe-env-extend-id
+        env
+        (ctfe_support.ctfe-hygiene-enabled-id)
+        (ctfe_support.CompilerCtfeValue.Bool true))
+      (ctfe_support.ctfe-fuel-limit))
+      [(ctfe_support.ResultCtfe.Ok value _)
+        (begin
+          (tc-context-install-pools! ctx)
+          (cfg
+            compile-profile
+            (compiler-tc-macro-profile-finish
+              (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+              macro-name
+              expanded-args))
+          (ResultMacroValueEnv.Ok value env))]
+      [(ctfe_support.ResultCtfe.Err diag)
+        (begin
+          (cfg
+            compile-profile
+            (compiler-tc-macro-profile-finish
+              (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+              macro-name
+              expanded-args))
+          (ResultMacroValueEnv.Err diag))])))
+
+(define (macro-bind-transformer-expanded-profiled
   [ctx : TcContext]
   [decls : ast.AstDeclList]
   [fallback-module : String]
@@ -87089,32 +89682,12 @@
   [macro-name-id : i64]
   [macro-name : String]
   [params : ast.AstMacroParamList]
-  [ret : ast.AstType]
-  [body : ast.AstExpr]
   [expanded-args : ast.AstExprList]
-  [call-expr : ast.AstExpr]) : ResultMacroValueEnv
+  [call-expr : ast.AstExpr]) : ResultMacroEnv
   (begin
-    ;; Macro argument normalization may have already extended this context
-    ;; while the global active pool still points at an older caller snapshot.
-    ;; Do not overwrite the newer context in that case; otherwise retain the
-    ;; usual capture of the active pool.
-    (if (ast.ast-node-pool-compat-context-active?)
-      unit
-      (let
-        [owned-pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-        [active-pools : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-capture-active)]
-        (if (or
-          (>
-            (ast.ast-node-pool-context-expr-len owned-pools)
-            (ast.ast-node-pool-context-expr-len active-pools))
-          (>
-            (ast.ast-node-pool-context-type-len owned-pools)
-            (ast.ast-node-pool-context-type-len active-pools)))
-          (tc-context-install-pools! ctx)
-          (tc-context-capture-active-pools! ctx))))
+    (macro-prepare-transformer-pools! ctx)
     (cfg compile-profile (compiler-tc-walk-bind-params-start!))
-    (match (let
+    (let
       [bind-result : ResultMacroEnv
         (macro-bind-params
           ctx
@@ -87130,91 +89703,117 @@
           call-expr)]
       (begin
         (cfg compile-profile (compiler-tc-walk-bind-params-finish!))
-        bind-result))
-      [(ResultMacroEnv.Ok env)
-        (begin
-          ;; Both routes publish per-transformer syntax metadata. Reset before
-          ;; native dispatch as well as before an interpreted fallback so an
-          ;; earlier expansion cannot leak either marker into this result.
-          (ctfe_support.ctfe-result-hygiene-free-reset!)
-          (ctfe_support.ctfe-result-macro-provenance-reset!)
-          (macro-hygiene-produced-eval-start! env)
-          (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
-          (cfg compile-profile (compiler-tc-macro-profile-start))
-          (match (let
-            [native-result : MacroNativeStdlibTlciResult
-              (macro-try-stdlib-tlci-native
-                ctx
-                fallback-module
-                macro-name
-                params
-                ret
-                env
-                call-expr)]
+        bind-result))))
+
+;; Run a macro transformer via CTFE. Module/declaration macro expansion also
+;; needs the bound CTFE environment while normalizing generated import operands.
+(define (macro-eval-transformer-expanded-with-env
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [type-env : TcTypeEnv]
+  [macro-name-id : i64]
+  [macro-name : String]
+  [params : ast.AstMacroParamList]
+  [ret : ast.AstType]
+  [body : ast.AstExpr]
+  [expanded-args : ast.AstExprList]
+  [call-expr : ast.AstExpr]) : ResultMacroValueEnv
+  (match (macro-bind-transformer-expanded-profiled
+    ctx
+    decls
+    fallback-module
+    fallback-module-id
+    type-env
+    macro-name-id
+    macro-name
+    params
+    expanded-args
+    call-expr)
+    [(ResultMacroEnv.Ok env)
+      (begin
+        ;; Both routes publish per-transformer syntax metadata. Reset before
+        ;; native dispatch as well as before an interpreted fallback so an
+        ;; earlier expansion cannot leak either marker into this result.
+        (ctfe_support.ctfe-result-hygiene-free-reset!)
+        (macro-result-provenance-reset-with-captured-body!
+          (macro-binding-prefix-transformer?
+            ctx
+            fallback-module
+            fallback-module-id
+            macro-name-id
+            params))
+        (macro-hygiene-produced-eval-start! env)
+        (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
+        (cfg compile-profile (compiler-tc-macro-profile-start))
+        (match (let
+          [native-result : MacroNativeStdlibTlciResult
+            (macro-try-stdlib-tlci-native
+              ctx
+              fallback-module
+              macro-name
+              params
+              ret
+              env
+              call-expr)]
+          (begin
+            (cfg compile-profile (compiler-tc-walk-native-dispatch-finish!))
+            native-result))
+          [(MacroNativeStdlibTlciResult.Value value)
             (begin
-              (cfg compile-profile (compiler-tc-walk-native-dispatch-finish!))
-              native-result))
-            [(MacroNativeStdlibTlciResult.Value value)
-              (begin
-                (tc-context-install-pools! ctx)
-                (cfg
-                  compile-profile
-                  (compiler-tc-macro-profile-finish
-                    (ci.intern-composite-pair-id
-                      fallback-module-id
-                      macro-name-id)
-                    macro-name
-                    expanded-args))
-                (ResultMacroValueEnv.Ok value env))]
-            [(MacroNativeStdlibTlciResult.Err diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-tc-macro-profile-finish
-                    (ci.intern-composite-pair-id
-                      fallback-module-id
-                      macro-name-id)
-                    macro-name
-                    expanded-args))
-                (ResultMacroValueEnv.Err (box diag)))]
-            [(MacroNativeStdlibTlciResult.No)
-              (begin
-                (macro-note-stdlib-tlci-route fallback-module macro-name)
-                (ctfe_support.ctfe-result-hygiene-free-reset!)
-                (ctfe_support.ctfe-result-macro-provenance-reset!)
-                (macro-hygiene-produced-eval-start! env)
-                (cfg compile-profile (compiler-tc-macro-profile-start))
-                (match (ctfe_support.ctfe-eval-node
-                  body
-                  (ctfe_support.ctfe-env-extend-id
-                    env
-                    (ctfe_support.ctfe-hygiene-enabled-id)
-                    (ctfe_support.CompilerCtfeValue.Bool true))
-                  (ctfe_support.ctfe-fuel-limit))
-                  [(ctfe_support.ResultCtfe.Ok value _)
-                    (begin
-                      (tc-context-install-pools! ctx)
-                      (cfg
-                        compile-profile
-                        (compiler-tc-macro-profile-finish
-                          (ci.intern-composite-pair-id
-                            fallback-module-id
-                            macro-name-id)
-                          macro-name
-                          expanded-args))
-                      (ResultMacroValueEnv.Ok value env))]
-                  [(ctfe_support.ResultCtfe.Err diag)
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-tc-macro-profile-finish
-                          (ci.intern-composite-pair-id
-                            fallback-module-id
-                            macro-name-id)
-                          macro-name
-                          expanded-args))
-                      (ResultMacroValueEnv.Err diag))]))]))]
-      [(ResultMacroEnv.Err diag) (ResultMacroValueEnv.Err diag)])))
+              (tc-context-install-pools! ctx)
+              (cfg
+                compile-profile
+                (compiler-tc-macro-profile-finish
+                  (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+                  macro-name
+                  expanded-args))
+              (ResultMacroValueEnv.Ok value env))]
+          [(MacroNativeStdlibTlciResult.Err diag)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-tc-macro-profile-finish
+                  (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+                  macro-name
+                  expanded-args))
+              (ResultMacroValueEnv.Err (box diag)))]
+          [(MacroNativeStdlibTlciResult.No)
+            (begin
+              (macro-note-stdlib-tlci-route fallback-module macro-name)
+              (macro-eval-transformer-interpreted-with-env
+                ctx
+                fallback-module-id
+                macro-name-id
+                macro-name
+                body
+                (macro-binding-prefix-transformer?
+                  ctx
+                  fallback-module
+                  fallback-module-id
+                  macro-name-id
+                  params)
+                expanded-args
+                env))]
+          [(MacroNativeStdlibTlciResult.Shell)
+            (begin
+              (macro-note-stdlib-tlci-route fallback-module macro-name)
+              (macro-eval-transformer-interpreted-with-env
+                ctx
+                fallback-module-id
+                macro-name-id
+                macro-name
+                body
+                (macro-binding-prefix-transformer?
+                  ctx
+                  fallback-module
+                  fallback-module-id
+                  macro-name-id
+                  params)
+                expanded-args
+                env))]))]
+    [(ResultMacroEnv.Err diag) (ResultMacroValueEnv.Err diag)]))
 
 ;; Run a macro transformer via CTFE. Callers decide how to interpret the
 ;; returned syntax value for expression, module, or declaration positions.
@@ -87231,21 +89830,237 @@
   [body : ast.AstExpr]
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValue
-  (match (macro-eval-transformer-expanded-with-env
-    ctx
-    decls
-    fallback-module
-    fallback-module-id
-    type-env
-    macro-name-id
-    macro-name
-    params
-    ret
-    body
-    expanded-args
-    call-expr)
-    [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
-    [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)]))
+  (begin
+    (macro-prepare-transformer-pools! ctx)
+    (match (macro-try-stdlib-tlci-direct-expression
+      ctx
+      decls
+      fallback-module
+      fallback-module-id
+      type-env
+      macro-name-id
+      macro-name
+      params
+      ret
+      expanded-args
+      call-expr)
+      [(MacroDirectStdlibTlciResult.Value value) (ResultMacroValue.Ok value)]
+      [(MacroDirectStdlibTlciResult.Err diag) (ResultMacroValue.Err diag)]
+      [(MacroDirectStdlibTlciResult.PreparedEnv env)
+        (match (macro-eval-transformer-interpreted-with-env
+          ctx
+          fallback-module-id
+          macro-name-id
+          macro-name
+          body
+          (macro-binding-prefix-transformer?
+            ctx
+            fallback-module
+            fallback-module-id
+            macro-name-id
+            params)
+          expanded-args
+          env)
+          [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
+          [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)])]
+      [(MacroDirectStdlibTlciResult.BoundFallback)
+        (match (macro-bind-transformer-expanded-profiled
+          ctx
+          decls
+          fallback-module
+          fallback-module-id
+          type-env
+          macro-name-id
+          macro-name
+          params
+          expanded-args
+          call-expr)
+          [(ResultMacroEnv.Ok env)
+            (match (macro-eval-transformer-interpreted-with-env
+              ctx
+              fallback-module-id
+              macro-name-id
+              macro-name
+              body
+              (macro-binding-prefix-transformer?
+                ctx
+                fallback-module
+                fallback-module-id
+                macro-name-id
+                params)
+              expanded-args
+              env)
+              [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
+              [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)])]
+          [(ResultMacroEnv.Err diag) (ResultMacroValue.Err diag)])]
+      [(MacroDirectStdlibTlciResult.No)
+        (match (macro-eval-transformer-expanded-with-env
+          ctx
+          decls
+          fallback-module
+          fallback-module-id
+          type-env
+          macro-name-id
+          macro-name
+          params
+          ret
+          body
+          expanded-args
+          call-expr)
+          [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
+          [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)])])))
+
+(define (macro-binding-prefix-form? [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan expr)
+    [(ast.AstExpr.BracketClause _) true]
+    [_ false]))
+
+(define (macro-expand-binding-prefix-items
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [items : ast.AstExprList]) : ResultMacroExpr
+  (let
+    [len : i64 (struct-get (& items) len)]
+    (if (<= len 1)
+      (ResultMacroExpr.Ok (ast.ast-expr-bracket-clause items))
+      (match (macro-expand-node
+        ctx
+        type-env
+        decls
+        depth
+        (ast.ast-expr-list-get (& items) (- len 1) 0))
+        [(ResultMacroExpr.Ok ninit)
+          (let
+            [out : ast.AstExprList (ast.ast-expr-list-with-capacity len)]
+            [index : i64 0]
+            (begin
+              (while (< index (- len 1))
+                (begin
+                  (ast.ast-expr-list-push
+                    (&mut out)
+                    (ast.ast-expr-list-get (& items) index 0))
+                  (set! index (+ index 1))))
+              (ast.ast-expr-list-push (&mut out) ninit)
+              (ResultMacroExpr.Ok (ast.ast-expr-bracket-clause out))))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))))
+
+(define (macro-expand-binding-prefix-form
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [expr : ast.AstExpr]) : ResultMacroExpr
+  (match expr
+    [(ast.AstExpr.Spanned inner span)
+      (match (macro-expand-binding-prefix-form
+        ctx
+        type-env
+        decls
+        depth
+        (ast.ast-node-get inner))
+        [(ResultMacroExpr.Ok ninner)
+          (ResultMacroExpr.Ok (ast.ast-expr-spanned ninner span))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.BracketClause items)
+      (macro-expand-binding-prefix-items ctx type-env decls depth items)]
+    [_
+      (ResultMacroExpr.Err
+        (box
+          (ctfe_support.ctfe-diagnostic-at-expr
+            expr
+            "typecheck: expected binding clause")))]))
+
+(define (macro-expand-binding-prefix-args-into
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [args : (& args ast.AstExprList)]
+  [index : i64]
+  [out : (&mut out ast.AstExprList)]) : ResultMacroCheck
+  (if (>= index (struct-get args len))
+    ResultMacroCheck.Ok
+    (let
+      [head-id : i64 (ast.ast-expr-list-get args index 0)]
+      [head : ast.AstExpr (ast.ast-node-get head-id)]
+      (if (macro-binding-prefix-form? head)
+        (match (macro-expand-binding-prefix-form ctx type-env decls depth head)
+          [(ResultMacroExpr.Ok nhead)
+            (begin
+              (ast.ast-expr-list-push out nhead)
+              (macro-expand-binding-prefix-args-into
+                ctx
+                type-env
+                decls
+                depth
+                args
+                (+ index 1)
+                out))]
+          [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])
+        (begin
+          ;; The remaining Expr operands are captured syntax. They must be
+          ;; expanded after the binding transformer introduces their lexical
+          ;; scope, not as arguments to the transformer itself.
+          (ast.ast-expr-list-append-from out args index)
+          ResultMacroCheck.Ok)))))
+
+(define (macro-expand-binding-prefix-args
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [args : ast.AstExprList]) : ResultMacroExprList
+  (let
+    [out : ast.AstExprList
+      (ast.ast-expr-list-with-capacity (struct-get (& args) len))]
+    (match (macro-expand-binding-prefix-args-into
+      ctx
+      type-env
+      decls
+      depth
+      (& args)
+      0
+      (&mut out))
+      [(ResultMacroCheck.Ok) (ResultMacroExprList.Ok out)]
+      [(ResultMacroCheck.Err diag) (ResultMacroExprList.Err diag)])))
+
+(define (macro-binding-prefix-transformer?
+  [ctx : TcContext]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [macro-name-id : i64]
+  [params : ast.AstMacroParamList]) : bool
+  (if (or
+    (not (string.eq (ci.intern-str macro-name-id) "for"))
+    (not (= (ast.ast-macro-param-list-len (& params)) 2)))
+    false
+    (match (ast.ast-macro-param-list-get
+      (& params)
+      0
+      (ast.ast-macro-param-fallback))
+      [(ast.AstMacroParam.Param _ binding-ty binding-variadic _)
+        (match (ast.ast-macro-param-list-get
+          (& params)
+          1
+          (ast.ast-macro-param-fallback))
+          [(ast.AstMacroParam.Param _ body-ty body-variadic _)
+            (and
+              binding-variadic
+              body-variadic
+              (macro-param-expr-binding-clause?
+                ctx
+                fallback-module
+                fallback-module-id
+                binding-ty)
+              (tc-type-eq
+                (macro-resolve-signature-type-id
+                  ctx
+                  fallback-module
+                  fallback-module-id
+                  body-ty)
+                (ast.AstType.Expr)))])])))
 
 (define (macro-eval-transformer
   [ctx : TcContext]
@@ -87261,11 +90076,19 @@
   [args : ast.AstExprList]
   [depth : i64]
   [call-expr : ast.AstExpr]) : ResultMacroValue
-  ;; Expand the operands first so a macro call passed as an argument (e.g. a
-  ;; nested `str_cat.str-cat`) is reduced to a plain expression before it is typechecked
-  ;; and bound; otherwise the operand typecheck sees the inner macro name as an
-  ;; unbound value.
-  (match (macro-expand-exprs ctx type-env decls depth args)
+  ;; Expand ordinary operands first so a macro call passed as an argument (e.g.
+  ;; a nested `str_cat.str-cat`) is reduced before it is typechecked. A
+  ;; binding-prefix transformer is different: only its clause initializers are
+  ;; in the caller's current scope; captured Expr bodies are expanded after the
+  ;; transformer introduces their binders.
+  (match (if (macro-binding-prefix-transformer?
+    ctx
+    fallback-module
+    fallback-module-id
+    macro-name-id
+    params)
+    (macro-expand-binding-prefix-args ctx type-env decls depth args)
+    (macro-expand-exprs ctx type-env decls depth args))
     [(ResultMacroExprList.Ok expanded-args)
       (macro-eval-transformer-expanded
         ctx
@@ -88450,21 +91273,28 @@
                     params
                     ret
                     body)
-                  (macro-expand-call
-                    ctx
-                    env
-                    decls
-                    macro-name
-                    declaration-id
-                    (macro-decl-name-display macro-name definition-module)
-                    (macro-decl-module-display definition-module)
-                    definition-module
-                    params
-                    ret
-                    body
-                    args
-                    depth
-                    expr)]
+                  (begin
+                    (tc-macro-call-site-note!
+                      ctx
+                      func
+                      macro-name
+                      definition-module
+                      declaration-id)
+                    (macro-expand-call
+                      ctx
+                      env
+                      decls
+                      macro-name
+                      declaration-id
+                      (macro-decl-name-display macro-name definition-module)
+                      (macro-decl-module-display definition-module)
+                      definition-module
+                      params
+                      ret
+                      body
+                      args
+                      depth
+                      expr))]
                 [(MacroMaybeDecl.No)
                   (match (macro-expand-compat-call
                     ctx
@@ -88619,6 +91449,92 @@
               (ResultMacroExpr.Ok (ast.ast-expr-while ncond nbody))]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        [source : i64 (ast.ast-for-owned-state-source (& payload))]
+        [body : i64 (ast.ast-for-owned-state-body (& payload))]
+        (match (macro-expand-node ctx env decls depth source)
+          [(ResultMacroExpr.Ok nsource)
+            (match (tc-expr-id ctx env nsource)
+              [(ResultTcType.Ok source-ty)
+                (let
+                  [source-name-id : i64
+                    (tc-for-owned-name-id
+                      (tc-context-expr-bases ctx)
+                      source-name)]
+                  [index-name-id : i64
+                    (tc-for-owned-name-id
+                      (tc-context-expr-bases ctx)
+                      index-name)]
+                  [body-env : TcTypeEnv
+                    (if (or (< source-name-id 0) (< index-name-id 0))
+                      env
+                      (tc-bind-id
+                        (tc-bind-id env source-name-id source-ty)
+                        index-name-id
+                        (ast.AstType.I64)))]
+                  (match (macro-expand-node ctx body-env decls depth body)
+                    [(ResultMacroExpr.Ok nbody)
+                      (ResultMacroExpr.Ok
+                        (ast.ast-expr-for-owned-state
+                          source-name
+                          index-name
+                          nsource
+                          nbody))]
+                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+              [(ResultTcType.Err message)
+                (ResultMacroExpr.Err
+                  (box (tc-expr-diag (ast.ast-node-get nsource) message)))])]
+          [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [source-name : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body : i64 (ast.ast-for-owned-step-body (& payload))]
+        [binding-name-id : i64
+          (tc-for-owned-name-id (tc-context-expr-bases ctx) binding-name)]
+        (match (tc-expr-id ctx env source-name)
+          [(ResultTcType.Ok source-ty)
+            (match (tc-type-strip-region (tc-resolve-type ctx source-ty))
+              [(ast.AstType.Array elem-id _)
+                (let
+                  [body-env : TcTypeEnv
+                    (if (< binding-name-id 0)
+                      env
+                      (tc-bind-id
+                        env
+                        binding-name-id
+                        (tc-context-type-get ctx elem-id)))]
+                  (match (if (>= expected-type 0)
+                    (macro-expand-node ctx env decls depth expected-type)
+                    (ResultMacroExpr.Ok -1))
+                    [(ResultMacroExpr.Ok nexpected)
+                      (match (macro-expand-node ctx body-env decls depth body)
+                        [(ResultMacroExpr.Ok nbody)
+                          (ResultMacroExpr.Ok
+                            (ast.ast-expr-for-owned-step
+                              source-name
+                              index-name
+                              binding-name
+                              nexpected
+                              done-name
+                              nbody))]
+                        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+              [_
+                (ResultMacroExpr.Err
+                  (box
+                    (tc-expr-diag
+                      (ast.ast-node-get source-name)
+                      "typecheck: scalar for owned step requires fixed-array state")))])]
+          [(ResultTcType.Err message)
+            (ResultMacroExpr.Err
+              (box (tc-expr-diag (ast.ast-node-get source-name) message)))]))]
     [(ast.AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
@@ -89209,34 +92125,42 @@
                       params
                       ret
                       _)
-                    (if (tc-macro-result-module? ret)
-                      (match (macro-expand-exprs
-                        call-ctx
-                        global-env
-                        orig-decls
-                        0
-                        args)
-                        [(ResultMacroExprList.Ok expanded-args)
-                          (match (macro-module-identity
-                            call-ctx
-                            orig-decls
-                            call-module
-                            call-module-id
-                            (macro-decl-name-display
-                              macro-name
-                              definition-module)
-                            (macro-decl-module-display definition-module)
-                            params
-                            expanded-args
-                            (tc-ctfe-env call-ctx)
-                            call-expr)
-                            [(spec.ResultGenKey.Ok identity _)
-                              (macro-find-generated-identity-module
-                                orig-decls
-                                identity)]
-                            [(spec.ResultGenKey.Err _) (TcMaybeNameId.No)])]
-                        [(ResultMacroExprList.Err _) (TcMaybeNameId.No)])
-                      (TcMaybeNameId.No))]
+                    (let
+                      [_semantic-use : unit
+                        (tc-macro-call-site-note!
+                          call-ctx
+                          func
+                          macro-name
+                          definition-module
+                          declaration-id)]
+                      (if (tc-macro-result-module? ret)
+                        (match (macro-expand-exprs
+                          call-ctx
+                          global-env
+                          orig-decls
+                          0
+                          args)
+                          [(ResultMacroExprList.Ok expanded-args)
+                            (match (macro-module-identity
+                              call-ctx
+                              orig-decls
+                              call-module
+                              call-module-id
+                              (macro-decl-name-display
+                                macro-name
+                                definition-module)
+                              (macro-decl-module-display definition-module)
+                              params
+                              expanded-args
+                              (tc-ctfe-env call-ctx)
+                              call-expr)
+                              [(spec.ResultGenKey.Ok identity _)
+                                (macro-find-generated-identity-module
+                                  orig-decls
+                                  identity)]
+                              [(spec.ResultGenKey.Err _) (TcMaybeNameId.No)])]
+                          [(ResultMacroExprList.Err _) (TcMaybeNameId.No)])
+                        (TcMaybeNameId.No)))]
                   [(MacroMaybeDecl.No) (TcMaybeNameId.No)]))]
             [(ResultMacroCallDeclModule.Err _) (TcMaybeNameId.No)]))]
       [_ (TcMaybeNameId.No)])))
@@ -89249,33 +92173,59 @@
   [module-id : i64]
   [decl : ast.AstDecl]
   [decl-path : String]) : ResultMacroDeclExpansion
-  (match decl
-    [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind _ _ alias span))
-      (match kind
-        [(ast.AstImportKind.Macro call-id context)
-          (match (macro-existing-module-import-target
-            ctx
-            top-env
-            orig-decls
-            module
-            module-id
-            call-id
-            context)
-            [(TcMaybeNameId.Some target-module-id)
-              (let
-                [target-module : String (ci.intern-str target-module-id)]
-                [expanded : ast.AstDeclList
-                  (macro-module-import-marker-decls
-                    target-module
-                    target-module-id
-                    alias
-                    (box-get span))]
-                (ResultMacroDeclExpansion.Ok
-                  expanded
-                  (macro-paths-for-decls expanded decl-path)))]
-            [(TcMaybeNameId.No) (macro-single-decl-expansion decl decl-path)])]
+  (let
+    [site-state : TcMacroCallSiteState
+      (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
+    [record-sites : bool (tc-macro-call-site-state-enabled? site-state)]
+    [previous-active : TcMacroCallSiteActiveDecl
+      (if record-sites
+        (tc-macro-call-site-state-active-decl site-state)
+        (TcMacroCallSiteActiveDecl -1 false -1 -1 -1))]
+    [_set-active : unit
+      (if record-sites
+        (tc-macro-call-site-state-set-active-decl!
+          site-state
+          decl-path
+          (ast.ast-decl-generated-meta decl))
+        unit)]
+    [result : ResultMacroDeclExpansion
+      (match decl
+        [(ast.AstDecl.Import
+            decl-meta
+            (ast.AstImportSpec.Spec kind _ _ alias span))
+          (match kind
+            [(ast.AstImportKind.Macro call-id context)
+              (match (macro-existing-module-import-target
+                ctx
+                top-env
+                orig-decls
+                module
+                module-id
+                call-id
+                context)
+                [(TcMaybeNameId.Some target-module-id)
+                  (let
+                    [target-module : String (ci.intern-str target-module-id)]
+                    [expanded : ast.AstDeclList
+                      (macro-module-import-marker-decls
+                        target-module
+                        target-module-id
+                        alias
+                        (box-get span))]
+                    (ResultMacroDeclExpansion.Ok
+                      expanded
+                      (macro-paths-for-decls expanded decl-path)))]
+                [(TcMaybeNameId.No)
+                  (macro-single-decl-expansion decl decl-path)])]
+            [_ (macro-single-decl-expansion decl decl-path)])]
         [_ (macro-single-decl-expansion decl decl-path)])]
-    [_ (macro-single-decl-expansion decl decl-path)]))
+    (begin
+      (if record-sites
+        (tc-macro-call-site-state-restore-active-decl!
+          site-state
+          previous-active)
+        unit)
+      result)))
 
 (define (macro-collapse-existing-module-imports
   [ctx : TcContext]
@@ -89810,114 +92760,123 @@
                       params
                       ret
                       body)
-                    (if (tc-macro-result-decls? ret)
-                      (match (macro-expand-exprs
-                        call-ctx
-                        global-env
-                        orig-decls
-                        0
-                        args)
-                        [(ResultMacroExprList.Ok expanded-args)
-                          (match (macro-module-identity
-                            call-ctx
-                            orig-decls
-                            call-module
-                            call-module-id
-                            (macro-decl-name-display
-                              macro-name
-                              definition-module)
-                            (macro-decl-module-display definition-module)
-                            params
-                            expanded-args
-                            (tc-ctfe-env call-ctx)
-                            call-expr)
-                            [(spec.ResultGenKey.Ok identity _)
-                              (match (macro-eval-transformer-expanded-with-env
-                                call-ctx
-                                orig-decls
-                                (macro-decl-module-display definition-module)
-                                definition-module
-                                global-env
+                    (let
+                      [_semantic-use : unit
+                        (tc-macro-call-site-note!
+                          call-ctx
+                          func
+                          macro-name
+                          definition-module
+                          declaration-id)]
+                      (if (tc-macro-result-decls? ret)
+                        (match (macro-expand-exprs
+                          call-ctx
+                          global-env
+                          orig-decls
+                          0
+                          args)
+                          [(ResultMacroExprList.Ok expanded-args)
+                            (match (macro-module-identity
+                              call-ctx
+                              orig-decls
+                              call-module
+                              call-module-id
+                              (macro-decl-name-display
                                 macro-name
-                                (macro-decl-name-display
+                                definition-module)
+                              (macro-decl-module-display definition-module)
+                              params
+                              expanded-args
+                              (tc-ctfe-env call-ctx)
+                              call-expr)
+                              [(spec.ResultGenKey.Ok identity _)
+                                (match (macro-eval-transformer-expanded-with-env
+                                  call-ctx
+                                  orig-decls
+                                  (macro-decl-module-display definition-module)
+                                  definition-module
+                                  global-env
                                   macro-name
-                                  definition-module)
-                                params
-                                ret
-                                body
-                                expanded-args
-                                call-expr)
-                                [(ResultMacroValueEnv.Ok value macro-env)
-                                  (let
-                                    [parse-dispatch : sym_i64_env.SymI64Env
-                                      (parser.compiler-parse-dispatch-env)]
-                                    (match (macro-decls-from-ctfe-value
-                                      (macro-hygiene-ctfe-output
-                                        (ast.ast-node-pool-active-expr-segment-bases)
-                                        value
-                                        (MacroHygieneContext
-                                          macro-name
-                                          definition-module
-                                          declaration-id
-                                          (tc-context-symbols call-ctx))
-                                        params
-                                        1)
-                                      call-expr
-                                      parse-dispatch)
-                                      [(ResultMacroParsedDecls.Ok generated)
-                                        (let
-                                          [generated : ast.AstDeclList
-                                            (if (tc-macro-param-list-needs-call-context?
-                                              params)
-                                              (macro-rewrite-generated-import-decls
-                                                call-ctx
-                                                orig-decls
-                                                module
-                                                (tc-context-module-id call-ctx)
-                                                definition-module
-                                                macro-env
-                                                generated)
-                                              generated)]
-                                          [contextual-generated : ast.AstDeclList
-                                            (macro-generated-context-decls
-                                              generated
-                                              definition-module)]
-                                          [flattened-generated : ast.AstDeclList
-                                            (macro-flatten-module-body-decls-in-module
-                                              contextual-generated
-                                              module-id)]
-                                          [wrapped : ast.AstDeclList
-                                            (macro-wrap-generated-decls-decls
-                                              flattened-generated
-                                              (macro-decl-name-display
-                                                macro-name
-                                                definition-module)
-                                              (macro-decls-generated-key
-                                                identity))]
-                                          (macro-decls-splice-with-memo
-                                            identity
-                                            wrapped
-                                            decl-path
-                                            call-expr))]
-                                      [(ResultMacroParsedDecls.Err diag)
-                                        (ResultMacroDeclExpansion.Err diag)]))]
-                                [(ResultMacroValueEnv.Err diag)
-                                  (ResultMacroDeclExpansion.Err diag)])]
-                            [(spec.ResultGenKey.Err diag)
-                              (ResultMacroDeclExpansion.Err diag)])]
-                        [(ResultMacroExprList.Err diag)
-                          (ResultMacroDeclExpansion.Err diag)])
-                      (if (tc-macro-result-module? ret)
-                        (ResultMacroDeclExpansion.Err
-                          (box
-                            (ctfe_support.ctfe-diagnostic-at-expr
-                              call-expr
-                              "typecheck: Module macro can only be used in import position")))
-                        (ResultMacroDeclExpansion.Err
-                          (box
-                            (ctfe_support.ctfe-diagnostic-at-expr
-                              call-expr
-                              "typecheck: expression macro cannot be used at module scope")))))]
+                                  (macro-decl-name-display
+                                    macro-name
+                                    definition-module)
+                                  params
+                                  ret
+                                  body
+                                  expanded-args
+                                  call-expr)
+                                  [(ResultMacroValueEnv.Ok value macro-env)
+                                    (let
+                                      [parse-dispatch : sym_i64_env.SymI64Env
+                                        (parser.compiler-parse-dispatch-env)]
+                                      (match (macro-decls-from-ctfe-value
+                                        (macro-hygiene-ctfe-output
+                                          (ast.ast-node-pool-active-expr-segment-bases)
+                                          value
+                                          (MacroHygieneContext
+                                            macro-name
+                                            definition-module
+                                            declaration-id
+                                            (tc-context-symbols call-ctx))
+                                          params
+                                          1)
+                                        call-expr
+                                        parse-dispatch)
+                                        [(ResultMacroParsedDecls.Ok generated)
+                                          (let
+                                            [generated : ast.AstDeclList
+                                              (if (tc-macro-param-list-needs-call-context?
+                                                params)
+                                                (macro-rewrite-generated-import-decls
+                                                  call-ctx
+                                                  orig-decls
+                                                  module
+                                                  (tc-context-module-id
+                                                    call-ctx)
+                                                  definition-module
+                                                  macro-env
+                                                  generated)
+                                                generated)]
+                                            [contextual-generated : ast.AstDeclList
+                                              (macro-generated-context-decls
+                                                generated
+                                                definition-module)]
+                                            [flattened-generated : ast.AstDeclList
+                                              (macro-flatten-module-body-decls-in-module
+                                                contextual-generated
+                                                module-id)]
+                                            [wrapped : ast.AstDeclList
+                                              (macro-wrap-generated-decls-decls
+                                                flattened-generated
+                                                (macro-decl-name-display
+                                                  macro-name
+                                                  definition-module)
+                                                (macro-decls-generated-key
+                                                  identity))]
+                                            (macro-decls-splice-with-memo
+                                              identity
+                                              wrapped
+                                              decl-path
+                                              call-expr))]
+                                        [(ResultMacroParsedDecls.Err diag)
+                                          (ResultMacroDeclExpansion.Err diag)]))]
+                                  [(ResultMacroValueEnv.Err diag)
+                                    (ResultMacroDeclExpansion.Err diag)])]
+                              [(spec.ResultGenKey.Err diag)
+                                (ResultMacroDeclExpansion.Err diag)])]
+                          [(ResultMacroExprList.Err diag)
+                            (ResultMacroDeclExpansion.Err diag)])
+                        (if (tc-macro-result-module? ret)
+                          (ResultMacroDeclExpansion.Err
+                            (box
+                              (ctfe_support.ctfe-diagnostic-at-expr
+                                call-expr
+                                "typecheck: Module macro can only be used in import position")))
+                          (ResultMacroDeclExpansion.Err
+                            (box
+                              (ctfe_support.ctfe-diagnostic-at-expr
+                                call-expr
+                                "typecheck: expression macro cannot be used at module scope"))))))]
                   [(MacroMaybeDecl.No)
                     (ResultMacroDeclExpansion.Err
                       (box
@@ -89972,167 +92931,178 @@
                       params
                       ret
                       body)
-                    (if (tc-macro-result-module? ret)
-                      ;; Always expand + materialize the module. There is no
-                      ;; "skip the import when the alias is textually
-                      ;; unreferenced" fast path: a declared
-                      ;; instantiation must be typechecked whether or not anything
-                      ;; references it (typecheck-completeness invariant).
-                      (match (macro-expand-exprs
-                        call-ctx
-                        global-env
-                        orig-decls
-                        0
-                        args)
-                        [(ResultMacroExprList.Ok expanded-args)
-                          (match (macro-module-identity
-                            call-ctx
-                            orig-decls
-                            (macro-decl-module-display definition-module)
-                            definition-module
-                            (macro-decl-name-display
-                              macro-name
-                              definition-module)
-                            (macro-decl-module-display definition-module)
-                            params
-                            expanded-args
-                            (tc-ctfe-env call-ctx)
-                            call-expr)
-                            [(spec.ResultGenKey.Ok identity _)
-                              (let
-                                [shortcut-safe? : bool
-                                  (macro-generated-identity-shortcut-safe-params?
-                                    call-ctx
-                                    (macro-decl-module-display
-                                      definition-module)
-                                    definition-module
-                                    params
-                                    expanded-args)]
-                                [shortcut-catalog : MacroGeneratedModuleCatalogEntry
-                                  (if shortcut-safe?
-                                    (macro-generated-module-memo-get-catalog
-                                      identity)
-                                    (MacroGeneratedModuleCatalogEntry.Empty))]
-                                (match shortcut-catalog
-                                  [(MacroGeneratedModuleCatalogEntry.Catalog
-                                      target-id
-                                      catalog
-                                      _
-                                      _
-                                      _
-                                      _)
-                                    (begin
-                                      (cfg
-                                        compile-profile
-                                        (compiler-tc-macro-profile-note-generated-module-memo-hit))
-                                      (cfg
-                                        compile-profile
-                                        (compiler-tc-macro-profile-note-generated-module-catalog-hit))
-                                      (let
-                                        [target-module : String
-                                          (ci.intern-str target-id)]
-                                        [marker : ast.AstDeclList
-                                          (macro-module-import-marker-decls
-                                            target-module
-                                            target-id
-                                            alias
-                                            span)]
-                                        [expanded : ast.AstDeclList
-                                          (match (macro-find-module-body-decls
-                                            orig-decls
-                                            target-module)
-                                            [(MacroMaybeDeclList.Some _) marker]
-                                            [(MacroMaybeDeclList.No)
-                                              (macro-decl-list-append
-                                                (ast.ast-decl-list-prepend-builder
-                                                  (ast.ast-decl-module-id
-                                                    target-id)
-                                                  catalog)
-                                                (ast.ast-decl-list-prepend-builder
-                                                  (ast.ast-decl-module-id
-                                                    module-id)
-                                                  marker))])]
-                                        (ResultMacroDeclExpansion.Ok
-                                          expanded
-                                          (macro-paths-for-decls
-                                            expanded
-                                            decl-path))))]
-                                  [(MacroGeneratedModuleCatalogEntry.Empty)
-                                    (match (macro-eval-transformer-expanded-with-env
+                    (let
+                      [_semantic-use : unit
+                        (tc-macro-call-site-note!
+                          call-ctx
+                          func
+                          macro-name
+                          definition-module
+                          declaration-id)]
+                      (if (tc-macro-result-module? ret)
+                        ;; Always expand + materialize the module. There is no
+                        ;; "skip the import when the alias is textually
+                        ;; unreferenced" fast path: a declared
+                        ;; instantiation must be typechecked whether or not anything
+                        ;; references it (typecheck-completeness invariant).
+                        (match (macro-expand-exprs
+                          call-ctx
+                          global-env
+                          orig-decls
+                          0
+                          args)
+                          [(ResultMacroExprList.Ok expanded-args)
+                            (match (macro-module-identity
+                              call-ctx
+                              orig-decls
+                              (macro-decl-module-display definition-module)
+                              definition-module
+                              (macro-decl-name-display
+                                macro-name
+                                definition-module)
+                              (macro-decl-module-display definition-module)
+                              params
+                              expanded-args
+                              (tc-ctfe-env call-ctx)
+                              call-expr)
+                              [(spec.ResultGenKey.Ok identity _)
+                                (let
+                                  [shortcut-safe? : bool
+                                    (macro-generated-identity-shortcut-safe-params?
                                       call-ctx
-                                      orig-decls
                                       (macro-decl-module-display
                                         definition-module)
                                       definition-module
-                                      global-env
-                                      macro-name
-                                      (macro-decl-name-display
-                                        macro-name
-                                        definition-module)
                                       params
-                                      ret
-                                      body
-                                      expanded-args
-                                      call-expr)
-                                      [(ResultMacroValueEnv.Ok value macro-env)
+                                      expanded-args)]
+                                  [shortcut-catalog : MacroGeneratedModuleCatalogEntry
+                                    (if shortcut-safe?
+                                      (macro-generated-module-memo-get-catalog
+                                        identity)
+                                      (MacroGeneratedModuleCatalogEntry.Empty))]
+                                  (match shortcut-catalog
+                                    [(MacroGeneratedModuleCatalogEntry.Catalog
+                                        target-id
+                                        catalog
+                                        _
+                                        _
+                                        _
+                                        _)
+                                      (begin
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-macro-profile-note-generated-module-memo-hit))
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-macro-profile-note-generated-module-catalog-hit))
                                         (let
-                                          [parse-dispatch : sym_i64_env.SymI64Env
-                                            (parser.compiler-parse-dispatch-env)]
-                                          (match (macro-module-decls-from-ctfe-value
-                                            (macro-hygiene-ctfe-output
-                                              (ast.ast-node-pool-active-expr-segment-bases)
-                                              value
-                                              (MacroHygieneContext
-                                                macro-name
-                                                definition-module
-                                                declaration-id
-                                                (tc-context-symbols call-ctx))
-                                              params
-                                              1)
-                                            call-expr
-                                            parse-dispatch)
-                                            [(ResultMacroParsedDecls.Ok
-                                                generated)
-                                              (macro-expand-module-generated-decls
-                                                ctx
-                                                top-env
-                                                orig-decls
-                                                module
-                                                module-id
-                                                alias
-                                                span
-                                                decl-path
-                                                (macro-decl-name-display
+                                          [target-module : String
+                                            (ci.intern-str target-id)]
+                                          [marker : ast.AstDeclList
+                                            (macro-module-import-marker-decls
+                                              target-module
+                                              target-id
+                                              alias
+                                              span)]
+                                          [expanded : ast.AstDeclList
+                                            (match (macro-find-module-body-decls
+                                              orig-decls
+                                              target-module)
+                                              [(MacroMaybeDeclList.Some _)
+                                                marker]
+                                              [(MacroMaybeDeclList.No)
+                                                (macro-decl-list-append
+                                                  (ast.ast-decl-list-prepend-builder
+                                                    (ast.ast-decl-module-id
+                                                      target-id)
+                                                    catalog)
+                                                  (ast.ast-decl-list-prepend-builder
+                                                    (ast.ast-decl-module-id
+                                                      module-id)
+                                                    marker))])]
+                                          (ResultMacroDeclExpansion.Ok
+                                            expanded
+                                            (macro-paths-for-decls
+                                              expanded
+                                              decl-path))))]
+                                    [(MacroGeneratedModuleCatalogEntry.Empty)
+                                      (match (macro-eval-transformer-expanded-with-env
+                                        call-ctx
+                                        orig-decls
+                                        (macro-decl-module-display
+                                          definition-module)
+                                        definition-module
+                                        global-env
+                                        macro-name
+                                        (macro-decl-name-display
+                                          macro-name
+                                          definition-module)
+                                        params
+                                        ret
+                                        body
+                                        expanded-args
+                                        call-expr)
+                                        [(ResultMacroValueEnv.Ok
+                                            value
+                                            macro-env)
+                                          (let
+                                            [parse-dispatch : sym_i64_env.SymI64Env
+                                              (parser.compiler-parse-dispatch-env)]
+                                            (match (macro-module-decls-from-ctfe-value
+                                              (macro-hygiene-ctfe-output
+                                                (ast.ast-node-pool-active-expr-segment-bases)
+                                                value
+                                                (MacroHygieneContext
                                                   macro-name
-                                                  definition-module)
-                                                identity
-                                                definition-module
-                                                macro-env
-                                                (tc-macro-param-list-needs-call-context?
-                                                  params)
-                                                true
-                                                generated
-                                                call-expr)]
-                                            [(ResultMacroParsedDecls.Err diag)
-                                              (ResultMacroDeclExpansion.Err
-                                                diag)]))]
-                                      [(ResultMacroValueEnv.Err diag)
-                                        (ResultMacroDeclExpansion.Err diag)])]))]
-                            [(spec.ResultGenKey.Err diag)
-                              (ResultMacroDeclExpansion.Err diag)])]
-                        [(ResultMacroExprList.Err diag)
-                          (ResultMacroDeclExpansion.Err diag)])
-                      (if (tc-macro-result-decls? ret)
-                        (ResultMacroDeclExpansion.Err
-                          (box
-                            (ctfe_support.ctfe-diagnostic-at-expr
-                              call-expr
-                              "typecheck: Decls macro cannot be used in import position")))
-                        (ResultMacroDeclExpansion.Err
-                          (box
-                            (ctfe_support.ctfe-diagnostic-at-expr
-                              call-expr
-                              "typecheck: expression macro cannot be used as module import")))))]
+                                                  definition-module
+                                                  declaration-id
+                                                  (tc-context-symbols call-ctx))
+                                                params
+                                                1)
+                                              call-expr
+                                              parse-dispatch)
+                                              [(ResultMacroParsedDecls.Ok
+                                                  generated)
+                                                (macro-expand-module-generated-decls
+                                                  ctx
+                                                  top-env
+                                                  orig-decls
+                                                  module
+                                                  module-id
+                                                  alias
+                                                  span
+                                                  decl-path
+                                                  (macro-decl-name-display
+                                                    macro-name
+                                                    definition-module)
+                                                  identity
+                                                  definition-module
+                                                  macro-env
+                                                  (tc-macro-param-list-needs-call-context?
+                                                    params)
+                                                  true
+                                                  generated
+                                                  call-expr)]
+                                              [(ResultMacroParsedDecls.Err diag)
+                                                (ResultMacroDeclExpansion.Err
+                                                  diag)]))]
+                                        [(ResultMacroValueEnv.Err diag)
+                                          (ResultMacroDeclExpansion.Err diag)])]))]
+                              [(spec.ResultGenKey.Err diag)
+                                (ResultMacroDeclExpansion.Err diag)])]
+                          [(ResultMacroExprList.Err diag)
+                            (ResultMacroDeclExpansion.Err diag)])
+                        (if (tc-macro-result-decls? ret)
+                          (ResultMacroDeclExpansion.Err
+                            (box
+                              (ctfe_support.ctfe-diagnostic-at-expr
+                                call-expr
+                                "typecheck: Decls macro cannot be used in import position")))
+                          (ResultMacroDeclExpansion.Err
+                            (box
+                              (ctfe_support.ctfe-diagnostic-at-expr
+                                call-expr
+                                "typecheck: expression macro cannot be used as module import"))))))]
                   [(MacroMaybeDecl.No)
                     (ResultMacroDeclExpansion.Err
                       (box
@@ -90158,55 +93128,88 @@
   [module-id : i64]
   [decl : ast.AstDecl]
   [decl-path : String]) : ResultMacroDeclExpansion
-  (match decl
-    [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind _ _ alias span))
-      (match kind
-        [(ast.AstImportKind.Macro call-id context)
-          (begin
-            (macro-expand-program-structural-change-note! 2)
-            (macro-expand-module-import
-              ctx
-              top-env
-              orig-decls
-              module
-              module-id
-              call-id
-              context
-              alias
-              (box-get span)
-              decl-path))]
-        [(ast.AstImportKind.MacroDecls call-id context)
-          (begin
-            (macro-expand-program-structural-change-note! 2)
-            (macro-expand-decls-splice
-              ctx
-              top-env
-              orig-decls
-              module
-              module-id
-              call-id
-              context
-              decl-path))]
-        [_ (macro-single-decl-expansion decl decl-path)])]
-    [_
-      (let
-        [decl-ctx : TcContext (tc-context-with-module-id ctx module module-id)]
-        [template : ast.AstDecl
-          (ast.ast-decl-with-meta (ast.ast-decl-meta-runtime-shared-view) decl)]
-        [uses-macro : bool
-          (macro-decl-uses-macro? decl-ctx orig-decls template)]
-        (if (not uses-macro)
-          (macro-single-decl-expansion decl decl-path)
-          (begin
-            (if (macro-decl-expansion-can-change-program? decl)
-              (macro-expand-program-structural-change-note! 1)
-              unit)
-            (match (macro-expand-decl decl-ctx local-env orig-decls template)
-              [(ResultMacroDecl.Ok expanded)
-                (macro-single-decl-expansion
-                  (ast.ast-decl-with-meta (ast.ast-decl-meta decl) expanded)
-                  decl-path)]
-              [(ResultMacroDecl.Err diag) (ResultMacroDeclExpansion.Err diag)]))))]))
+  (let
+    [site-state : TcMacroCallSiteState
+      (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
+    [record-sites : bool (tc-macro-call-site-state-enabled? site-state)]
+    [previous-active : TcMacroCallSiteActiveDecl
+      (if record-sites
+        (tc-macro-call-site-state-active-decl site-state)
+        (TcMacroCallSiteActiveDecl -1 false -1 -1 -1))]
+    [_set-active : unit
+      (if record-sites
+        (tc-macro-call-site-state-set-active-decl!
+          site-state
+          decl-path
+          (ast.ast-decl-generated-meta decl))
+        unit)]
+    [result : ResultMacroDeclExpansion
+      (match decl
+        [(ast.AstDecl.Import
+            decl-meta
+            (ast.AstImportSpec.Spec kind _ _ alias span))
+          (match kind
+            [(ast.AstImportKind.Macro call-id context)
+              (begin
+                (macro-expand-program-structural-change-note! 2)
+                (macro-expand-module-import
+                  ctx
+                  top-env
+                  orig-decls
+                  module
+                  module-id
+                  call-id
+                  context
+                  alias
+                  (box-get span)
+                  decl-path))]
+            [(ast.AstImportKind.MacroDecls call-id context)
+              (begin
+                (macro-expand-program-structural-change-note! 2)
+                (macro-expand-decls-splice
+                  ctx
+                  top-env
+                  orig-decls
+                  module
+                  module-id
+                  call-id
+                  context
+                  decl-path))]
+            [_ (macro-single-decl-expansion decl decl-path)])]
+        [_
+          (let
+            [decl-ctx : TcContext
+              (tc-context-with-module-id ctx module module-id)]
+            [template : ast.AstDecl
+              (ast.ast-decl-with-meta
+                (ast.ast-decl-meta-runtime-shared-view)
+                decl)]
+            [uses-macro : bool
+              (macro-decl-uses-macro? decl-ctx orig-decls template)]
+            (if (not uses-macro)
+              (macro-single-decl-expansion decl decl-path)
+              (begin
+                (if (macro-decl-expansion-can-change-program? decl)
+                  (macro-expand-program-structural-change-note! 1)
+                  unit)
+                (match (macro-expand-decl
+                  decl-ctx
+                  local-env
+                  orig-decls
+                  template)
+                  [(ResultMacroDecl.Ok expanded)
+                    (macro-single-decl-expansion
+                      (ast.ast-decl-with-meta (ast.ast-decl-meta decl) expanded)
+                      decl-path)]
+                  [(ResultMacroDecl.Err diag)
+                    (ResultMacroDeclExpansion.Err diag)]))))])]
+    (begin
+      (if record-sites
+        (tc-macro-call-site-state-restore-active-decl!
+          site-state
+          previous-active)
+        unit)
+      result)))
 
 ;; R3-P1 copy-out. Rebuild the declaration paths in the arena that is current on
 ;; entry; the path strings themselves can be generation-resident.
@@ -91308,6 +94311,33 @@
           (ast.ast-expr-segment-bases-get expr-bases body-box)]
         (or
           (macro-expr-might-fire? expr-bases cond)
+          (macro-expr-might-fire? expr-bases body)))]
+    [(ast.AstExpr.ForOwnedState payload)
+      (let
+        [source : ast.AstExpr
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-for-owned-state-source (& payload)))]
+        [body : ast.AstExpr
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-for-owned-state-body (& payload)))]
+        (or
+          (macro-expr-might-fire? expr-bases source)
+          (macro-expr-might-fire? expr-bases body)))]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+        [body : ast.AstExpr
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-for-owned-step-body (& payload)))]
+        (or
+          (if (>= expected-type 0)
+            (macro-expr-might-fire?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases expected-type))
+            false)
           (macro-expr-might-fire? expr-bases body)))]
     [(ast.AstExpr.Begin exprs) (macro-expr-list-might-fire? expr-bases exprs)]
     [(ast.AstExpr.Unsafe exprs) (macro-expr-list-might-fire? expr-bases exprs)]

@@ -126,6 +126,10 @@
         (begin
           (codec.surface-ast-write-i64! out 1)
           (surface-ast-write-pattern-list! out context (box-get items)))]
+      [(ast.AstPattern.Array items)
+        (begin
+          (codec.surface-ast-write-i64! out 6)
+          (surface-ast-write-pattern-list! out context (box-get items)))]
       [(ast.AstPattern.Wildcard) (codec.surface-ast-write-i64! out 2)]
       [(ast.AstPattern.Binding name)
         (begin
@@ -171,6 +175,8 @@
           (box (surface-ast-read-pattern-list! reader)))]
       [(= tag 5)
         (ast.AstPattern.Literal (codec.surface-ast-read-literal! reader))]
+      [(= tag 6)
+        (ast.AstPattern.Array (box (surface-ast-read-pattern-list! reader)))]
       [else
         (begin
           (codec.surface-ast-reader-fail!
@@ -693,7 +699,43 @@
       [(ast.AstExpr.Syscall args)
         (begin
           (codec.surface-ast-write-i64! out 78)
-          (surface-ast-write-expr-list! out args))])))
+          (surface-ast-write-expr-list! out args))]
+      [(ast.AstExpr.ForOwnedState payload)
+        (begin
+          (codec.surface-ast-write-i64! out 80)
+          (codec.surface-ast-write-i64!
+            out
+            (ast.ast-for-owned-state-source-name (& payload)))
+          (codec.surface-ast-write-i64!
+            out
+            (ast.ast-for-owned-state-index-name (& payload)))
+          (codec.surface-ast-write-i64!
+            out
+            (ast.ast-for-owned-state-source (& payload)))
+          (codec.surface-ast-write-i64!
+            out
+            (ast.ast-for-owned-state-body (& payload))))]
+      [(ast.AstExpr.ForOwnedStep payload)
+        (begin
+          (codec.surface-ast-write-i64! out 81)
+          (codec.surface-ast-write-i64!
+            out
+            (ast.ast-for-owned-step-source-name (& payload)))
+          (codec.surface-ast-write-i64!
+            out
+            (ast.ast-for-owned-step-index-name (& payload)))
+          (codec.surface-ast-write-i64!
+            out
+            (ast.ast-for-owned-step-binding-name (& payload)))
+          (codec.surface-ast-write-i64!
+            out
+            (ast.ast-for-owned-step-expected-type (& payload)))
+          (codec.surface-ast-write-i64!
+            out
+            (ast.ast-for-owned-step-done-name (& payload)))
+          (codec.surface-ast-write-i64!
+            out
+            (ast.ast-for-owned-step-body (& payload))))])))
 
 (define (surface-ast-read-expr! [reader : codec.SurfaceAstReader]) : ast.AstExpr
   (let
@@ -949,6 +991,22 @@
         (ast.AstExpr.FixedArrayTake
           (codec.surface-ast-read-i64! reader)
           (codec.surface-ast-read-i64! reader))]
+      [(= tag 80)
+        (ast.AstExpr.ForOwnedState
+          (ast.ast-for-owned-state-payload
+            (codec.surface-ast-read-i64! reader)
+            (codec.surface-ast-read-i64! reader)
+            (codec.surface-ast-read-i64! reader)
+            (codec.surface-ast-read-i64! reader)))]
+      [(= tag 81)
+        (ast.AstExpr.ForOwnedStep
+          (ast.ast-for-owned-step-payload
+            (codec.surface-ast-read-i64! reader)
+            (codec.surface-ast-read-i64! reader)
+            (codec.surface-ast-read-i64! reader)
+            (codec.surface-ast-read-i64! reader)
+            (codec.surface-ast-read-i64! reader)
+            (codec.surface-ast-read-i64! reader)))]
       [else
         (begin
           (codec.surface-ast-reader-fail!

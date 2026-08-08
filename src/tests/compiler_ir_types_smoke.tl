@@ -661,7 +661,8 @@
               compiler_ir_types.CompilerIrInstrList.Nil))))]
     [seq : compiler_ir_types.CompilerIrInstrSeq
       (compiler_ir_types.compiler-ir-instr-seq-from-list instrs)]
-    [slots : (Array compiler_ir_types.CompilerIrInstr) (struct-get seq slots)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
+      (struct-get seq slots)]
     (and
       (=
         (compiler_ir_types.compiler-ir-instr-loop-dst-or call-indirect (- 0 1))

@@ -226,7 +226,7 @@
                   [_ unit]))
               (set! scan (+ scan 1)))))
         `(let
-          [old-slots : (& map (Array GeneratedHashmapSlot))
+          [old-slots : (& map (__tl_dyn-array GeneratedHashmapSlot))
             (& (struct-get map slots))]
           [old-count : i64 (array_ops.length old-slots)]
           (while (< scan old-count)
@@ -260,7 +260,7 @@
     [get-value-or-body : comptime.Expr
       (if scalar-family
         `(let
-          [slots : (& map (Array GeneratedHashmapSlot))
+          [slots : (& map (__tl_dyn-array GeneratedHashmapSlot))
             (& (struct-get map slots))]
           [data : (Ptr GeneratedHashmapSlot)
             (unsafe
@@ -475,7 +475,7 @@
     [probe-decl : comptime.Expr
       (if scalar-family
         `(define (probe
-          [slots : (& slots (Array GeneratedHashmapSlot))]
+          [slots : (& slots (__tl_dyn-array GeneratedHashmapSlot))]
           [capacity : i64]
           [key : ,query-key-type]
           [hash : i64]) : GeneratedHashmapProbe
@@ -514,7 +514,7 @@
                   (GeneratedHashmapProbe.Absent first)
                   (GeneratedHashmapProbe.Full))))))
         `(define (probe
-          [slots : (& slots (Array GeneratedHashmapSlot))]
+          [slots : (& slots (__tl_dyn-array GeneratedHashmapSlot))]
           [capacity : i64]
           [key : ,query-key-type]
           [hash : i64]) : GeneratedHashmapProbe
@@ -565,7 +565,7 @@
       (if scalar-family
         `(define (find-index [map : (& map Map)] [key : ,query-key-type]) : i64
           (let
-            [slots : (& map (Array GeneratedHashmapSlot))
+            [slots : (& map (__tl_dyn-array GeneratedHashmapSlot))
               (& (struct-get map slots))]
             [data : (Ptr GeneratedHashmapSlot)
               (unsafe
@@ -617,7 +617,7 @@
     ;; untouched.
     [scalar-lookup-body : comptime.Expr
       `(let
-        [slots : (& map (Array GeneratedHashmapSlot))
+        [slots : (& map (__tl_dyn-array GeneratedHashmapSlot))
           (& (struct-get map slots))]
         [data : (Ptr GeneratedHashmapSlot)
           (unsafe
@@ -719,7 +719,7 @@
     [next-occupied-body : comptime.Expr
       (if scalar-family
         `(let
-          [slots : (& map (Array GeneratedHashmapSlot))
+          [slots : (& map (__tl_dyn-array GeneratedHashmapSlot))
             (& (struct-get map slots))]
           [data : (Ptr GeneratedHashmapSlot)
             (unsafe
@@ -810,7 +810,7 @@
     [publish-occupied-decl : comptime.Expr
       (if scalar-family
         `(define (publish-occupied!
-          [slots : (&mut slots (Array GeneratedHashmapSlot))]
+          [slots : (&mut slots (__tl_dyn-array GeneratedHashmapSlot))]
           [index : i64]
           [key : ,K]
           [value : ,V]) : unit
@@ -824,7 +824,7 @@
                 (struct-get slot state)
                 (GeneratedHashmapSlotState.Occupied)))))
         `(define (publish-occupied!
-          [slots : (&mut slots (Array GeneratedHashmapSlot))]
+          [slots : (&mut slots (__tl_dyn-array GeneratedHashmapSlot))]
           [index : i64]
           [key : ,K]
           [value : ,V]
@@ -855,7 +855,7 @@
           (Absent i64)
           (Full))
         (defstruct Map
-          (slots (Array GeneratedHashmapSlot))
+          (slots (__tl_dyn-array GeneratedHashmapSlot))
           (len i64)
           (growth-limit i64))
         (defenum Lookup
@@ -873,7 +873,7 @@
           (EntryOrInsertInserted ,V))
         (defstruct MutEntry
           (:lifetimes map)
-          (slots (&mut map (Array GeneratedHashmapSlot)))
+          (slots (&mut map (__tl_dyn-array GeneratedHashmapSlot)))
           (index i64)
           (present bool)
           (key ,K)
@@ -887,7 +887,7 @@
           ,key-eq-body)
         ,publish-occupied-decl
         (define (set-occupied-value!
-          [slots : (&mut slots (Array GeneratedHashmapSlot))]
+          [slots : (&mut slots (__tl_dyn-array GeneratedHashmapSlot))]
           [index : i64]
           [value : ,V]) : unit
           (let
@@ -900,7 +900,7 @@
                 [_ unit])
               unit)))
         (define (mark-occupied-tombstone!
-          [slots : (&mut slots (Array GeneratedHashmapSlot))]
+          [slots : (&mut slots (__tl_dyn-array GeneratedHashmapSlot))]
           [index : i64]) : unit
           (let
             [slot : (&mut slots GeneratedHashmapSlot)
@@ -980,7 +980,7 @@
               (if (< old-capacity 1)
                 1
                 (* old-capacity 2))]
-            [fresh : (Array GeneratedHashmapSlot)
+            [fresh : (__tl_dyn-array GeneratedHashmapSlot)
               (array_ops.make-array GeneratedHashmapSlot new-capacity)]
             [scan : i64 0]
             ;; Read the capacity back off `fresh` and mask with that, under an
@@ -1063,7 +1063,7 @@
           [key : ,query-key-type]) : (MutEntry map)
           (let
             [hash : i64 (hash-key key)]
-            [slots : (&mut map (Array GeneratedHashmapSlot))
+            [slots : (&mut map (__tl_dyn-array GeneratedHashmapSlot))
               (&mut (struct-get map slots))]
             [result : GeneratedHashmapProbe
               (probe (& slots) (array_ops.length slots) key hash)]

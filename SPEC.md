@@ -1710,15 +1710,34 @@ unvisited consuming items. In a zipped loop, every cleanup-owning item acquired
 before a later iterator reports `Done` is cleaned exactly once, in reverse
 acquisition order. The same item scopes unwind on `break`, `continue`, and
 `return`; moving an item in the body transfers that responsibility and suppresses
-its loop cleanup. This scalar construct is unrelated to SPMD `foreach` (section
-5.15).
+its loop cleanup.
+
+Fixed arrays and borrowed native `Slice` values use built-in scalar planning
+instead of nominal protocol lookup:
+
+- An owned `(Array T N)` evaluates into hidden loop state and yields each `T`
+  by value. A non-`Copy` source is consumed once; moving an item transfers that
+  element to the body. A structurally `Copy` source remains reusable.
+- A shared reference to `(Array T N)` or `(Slice T)` yields `(& source T)`.
+- A mutable reference to `(Array T N)` or `(Slice T)` yields a lending
+  `(&mut source T)` whose item cannot escape or remain live across the next
+  step.
+
+Native sources preserve the same single-evaluation, annotation, empty-loop,
+zip-shortest, nested-loop, `break`, and `return` rules. Fixed-array length is a
+reflected constant; Slice length is read from the borrowed view. The same
+scalar behavior is valid inside the scalar reference lowering of SPMD
+`foreach`; this does not turn scalar `for` into an SPMD gang loop.
 
 The scalar expansion is the ordinary checked-in `defmacro` in
-`stdlib/core_macros.tl`. It uses only the public `stdlib.comptime` syntax and
-reflection operations described in section 3.7.1. Compiler passes have no
-native `for` planner, name predicate, declaration-identity dispatch, or hidden
-AST-construction hook. Bare and explicitly qualified imports therefore execute
-the same transformer body, as does a renamed copy.
+`stdlib/core_macros.tl`. Nominal sources use only the public `stdlib.comptime`
+syntax and reflection operations described in section 3.7.1. Native fixed
+arrays use private compiler-owned state/step construction hooks so ownership
+transfer is represented directly rather than encoded as a public nominal
+protocol. Borrowed arrays and Slice values expand to ordinary checked element
+borrows. There is no user-visible native `for` syntax node or protocol name.
+Bare and explicitly qualified imports execute the same transformer body, as
+does a renamed copy.
 
 **Lifetime name selection.** For `(& place)`, the checker chooses the reference
 lifetime from the owner:
@@ -3560,13 +3579,12 @@ move-only values and as copies for copyable values:
   Cleanup-owning global replacement remains rejected without explicit cleanup
   transfer. In every case, the right-hand side is checked independently and
   cannot move a non-Copy value out of another global.
-- Tuple, fixed-array, struct, and enum constructors. Constructor arguments are
-  consumed by value unless their expression is copyable or explicitly borrowed
-  by a reference form.
-- `array-set!` value arguments. A move-only element value would be consumed by
-  the store, but v1 rejects arrays of move-only elements and stores of
-  move-only elements; unique mutable element access and element replacement
-  cleanup are reserved.
+- Tuple, fixed-array, struct, and enum constructors. Constructor operands are
+  by-value positions, but the compatibility transition is not yet uniform for
+  every move-only type. Fixed-array literals follow the current-state matrix
+  below.
+- Fixed-array element stores. Both `(set! (array-ref place index) value)` and
+  the transitional `array-set!` spelling follow the current-state matrix below.
 - `array-take!` fixed-array elements. `(array-take! items index)` transfers the
   old element value to its result and immediately writes `(init : T)` back to
   the same slot, so the source place remains fully initialized and is not
@@ -3584,11 +3602,41 @@ move-only values and as copies for copyable values:
   copyable tuple is copied at the by-value match boundary. Matching
   `(& place)` binds shared references to the selected tuple slots instead and
   leaves the owner initialized subject to the live borrow.
+- Fixed-array patterns. Matching an owned fixed array with
+  `(array p1 ... pn)` requires exactly `N` subpatterns for `(Array T N)`.
+  A move-only array is consumed and transfers its elements to bindings from
+  left to right; a copyable array is copied. Matching `(& place)` binds shared
+  references to the selected elements and leaves the owner initialized subject
+  to the live borrow.
 - Closure capture. Capturing a move-only local by value moves it into the
   closure environment at closure creation time; the local cannot be used after
   the lambda literal. Immutable reference captures are governed by section
   3.10.4. Capturing a mutable reference moves the unique reference and keeps
   its referent exclusively borrowed through the closure's last direct use.
+
+**Fixed-array element ownership transition.** Fixed arrays whose element type
+is not `Copyable` are accepted. The following table describes the behavior
+implemented during the compatibility transition; it is not the uniform target
+ownership model:
+
+| Operation | Current behavior |
+| --- | --- |
+| Fixed-array literal `(array value ...)` | A `Copyable` initializer is copied. A move-only initializer is consumed only when the closed transition predicate recognizes its type: `Box`, a recognized thread-safe runtime handle, or a cleanup-owning struct. An ordinary move-only handle such as `String` is still copied at the representation level, so its source remains usable. |
+| Ordinary `(array-ref items index)` value use | A `Copyable` element is copied. In a non-consuming compatibility context, a move-only element is also representation-copied and its slot remains initialized. This can create an owning-handle alias; it is transitional behavior, not an implicit deep `clone`. The separate rule for non-Copy global places still rejects a by-value read from a global array. |
+| Consuming `(array-ref items literal-index)` use | A consuming context, including a `(:consume)` parameter or a type in the closed transition set, moves the exact literal-index path. Reusing that element is rejected, while disjoint literal elements remain usable. A later literal-index store reinitializes that exact path after its receiver, index, and value have been checked. |
+| Consuming `(array-ref items computed-index)` use | Rejected because the checker cannot identify one exact moved path. Consuming a compatibility dynamic-array element is likewise rejected. Use the checked fixed-array `array-take!` operation when immediate `init` replacement is suitable. |
+| `(set! (array-ref items index) value)` / `array-set!` | Non-`Copyable` elements are accepted, but the current store compatibility-copies its right-hand-side representation instead of consuming it. This includes cleanup-owning values, so the source can remain usable and alias the stored owner. Literal-index stores still update exact-path reinitialization facts. |
+
+The target semantics are intentionally stricter. #6215 makes structural
+`Copyable`/`MoveOnly` classification apply uniformly and removes compatibility
+sharing plus `(:consume)`. #6240 owns the normalized public place/`set!`
+surface, consume-on-assignment behavior, and rejection of overwriting a live
+cleanup-owning element. Without a Drop system, overwriting another live
+move-only element may leave its old arena-owned storage unreachable until the
+arena is reclaimed; overwriting a cleanup owner must not silently lose its
+cleanup obligation. Fixed-array destructuring is available through
+`(array p1 ... pn)`, #6235 supplied the checked `array-take!` operation
+described above, and #6241 owns general caller-supplied replacement.
 
 **Concrete closure calls.** Lambda literals and their direct local bindings
 retain the checker-only shared, mutable, or consuming capability described in
@@ -3679,14 +3727,19 @@ Tuple-element assignment likewise reinitializes the selected literal-index
 path.
 Box-place assignment updates boxed storage but does not reinitialize a moved
 box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
-`struct-get`, `tuple-ref`, and `array-ref` may copy out only copyable fields
-or elements, and may move out move-only fields/elements only where this
-tracked-path policy accepts the path. A consuming `match` is the enum
+`struct-get` and `tuple-ref` may copy out only copyable fields or slots, and
+may move out move-only fields/slots only where this tracked-path policy accepts
+the path. Fixed-array reads follow the compatibility matrix above: a consuming
+literal-index read moves a tracked path, while a non-consuming move-only read
+still representation-copies the handle. A consuming enum `match` is an
 exception: it moves the whole scrutinee first, then binds payload values owned
 by the selected arm. Constructor-shaped tuple destructuring likewise consumes
 the whole owned tuple and transfers every bound slot; direct partial move-out
 continues to use `(tuple-ref place literal-index)`. Dotted numeric tuple
 projection syntax is not introduced.
+Constructor-shaped fixed-array destructuring likewise consumes the whole owned
+array and transfers every bound element from left to right; direct partial
+move-out continues to use `(array-ref place literal-index)`.
 
 **Diagnostics.** Move checking must produce source-located diagnostics for:
 
@@ -4153,6 +4206,14 @@ leaving a moved or uninitialized slot.
   borrowed tuple binds slot references carrying the scrutinee lifetime and
   does not move the owner. Tuple access outside a pattern remains
   `(tuple-ref place literal-index)`; numeric dotted syntax is not supported.
+- Fixed-array scrutinees support the constructor-shaped `(array p1 ... pn)`
+  pattern. Its arity must exactly match `(Array T N)`. Element subpatterns are
+  irrefutable bindings, `_`, or nested array, tuple, struct, and box patterns,
+  and compose recursively inside array, enum payload, struct field, tuple, and
+  box patterns. Owned move-only arrays are consumed and their elements transfer
+  from left to right; copyable arrays are copied. Matching a shared borrowed
+  array binds element references carrying the scrutinee lifetime without
+  moving the owner. The pattern introduces no run-time branch or allocation.
 - Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)` use
   the same variant, wildcard, literal payload, and nested variant pattern
   forms, but inspect the enum without moving the owner. Payload bindings are
@@ -4161,14 +4222,15 @@ leaving a moved or uninitialized slot.
 - Owned `(Box T)` scrutinees and owned enum payloads of type `(Box T)` support
   the explicit `(box inner-pattern)` pattern. The form takes exactly one inner
   pattern, reads the boxed `T`, and checks/binds the inner pattern against
-  `T`. Inner patterns are irrefutable: bindings, `_`, and nested `(box ...)`
-  patterns. Borrowed box patterns and refutable inner patterns are rejected
-  with focused diagnostics. In enum contexts, `(box ...)` resolves as an enum
-  variant pattern when the expected enum has such a variant.
+  `T`. Inner patterns are irrefutable: bindings, `_`, and nested array, tuple,
+  struct, and `(box ...)` patterns. Borrowed box patterns and refutable inner
+  patterns are rejected with focused diagnostics. In enum contexts, `(box
+  ...)` resolves as an enum variant pattern when the expected enum has such a
+  variant.
 - Scalar scrutinees support literal patterns plus `_`.
 - String literal patterns compare string contents, not pointer identity.
-- Bindings in enum and struct patterns introduce variables for payload fields
-  or struct fields.
+- Bindings in aggregate patterns introduce variables for payloads, fields,
+  slots, or elements.
 - A bare identifier at the top level of an enum `match` arm resolves as a
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
@@ -5918,8 +5980,9 @@ sites.
 `stdlib.str_cat`'s `(str_cat.str-cat ...)`; incremental builders use
 `stdlib.text_buf`. `str-cat` uses direct one-allocation `stdlib.string`
 helpers for two to five operands and expands longer calls to an internal
-`string.concat-all` call over a packed `(Array String)`, so long calls
-allocate no chunk intermediates. The deprecated `string-append` and
+`string.concat-all` call over a borrowed native `Slice String` view of one
+compiler-private packed buffer, so long calls allocate no chunk intermediates.
+The deprecated `string-append` and
 `string-concat` names remain staged lint targets for old source, while
 `tl_string_concat*` remains a runtime-plan compatibility ABI documented below.
 

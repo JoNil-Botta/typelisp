@@ -5784,6 +5784,7 @@
         backend-state)]
     [prologue : String
       (compiler_backend.compiler-backend-emit-function-entry-fpo-push
+        backend-state
         "_tl_gap1_push_unit"
         64
         push-regs
@@ -5929,6 +5930,7 @@
           backend-state))]
     [prologue : String
       (compiler_backend.compiler-backend-emit-function-entry-fpo-windows
+        backend-state
         "_tl_win64_fpo"
         frame
         assignments
@@ -6173,12 +6175,14 @@
           38)
         (=
           (compiler_backend.compiler-backend-win64-xmm-callee-slot-offset
+            backend-state
             sparse
             3
             0)
           -96)
         (=
           (compiler_backend.compiler-backend-win64-xmm-callee-slot-offset
+            backend-state
             sparse
             3
             9)
@@ -6978,6 +6982,7 @@
     [asm : compiler_backend.ResultCompilerBackend
       (begin
         (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
+          (struct-get index backend-state)
           "%xmm11")
         (compiler_backend.compiler-backend-emit-call-args
           bases
@@ -7111,6 +7116,7 @@
         (struct-get index backend-state))]
     [_reset-xmm : unit
       (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
+        (struct-get index backend-state)
         "")]
     [param-text : String
       (match params-asm
@@ -24021,19 +24027,26 @@
 
 (define (compiler-backend-gep-fold-disp-shape-ok?) : bool
   (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
     [folded : compiler_ir_types.CompilerIrBlockList
       (compiler_backend.compiler-backend-gep-fold-blocks
+        (compiler_backend.compiler-backend-state-function-state backend-state)
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         8
         (compiler-backend-gep-fold-test-blocks false))]
     [result : bool
       (if (not
-        (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready))
+        (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready
+          backend-state))
         false
-        (match (compiler-backend-emit-test-instrs
+        (match (compiler-backend-emit-test-instrs-target-with-backend-state
           (compiler-backend-gep-fold-test-entry-instrs folded)
           (compiler-backend-gep-fold-test-assignments)
-          8)
+          8
+          (compiler_backend.CompilerBackendTarget.Linux)
+          backend-state)
           [(compiler_backend.ResultCompilerBackend.Ok asm)
             (and
               (compiler_backend.compiler-backend-string-contains?
@@ -24047,28 +24060,39 @@
                 (compiler_backend.compiler-backend-string-contains?
                   asm
                   "leaq 1("))
-              (not (compiler_backend.compiler-backend-gep-fold-drift?)))]
+              (not
+                (compiler_backend.compiler-backend-gep-fold-drift?
+                  (compiler_backend.compiler-backend-state-function-state
+                    backend-state))))]
           [(compiler_backend.ResultCompilerBackend.Err _) false]))]
     (begin
-      (compiler_backend.compiler-backend-gep-fold-disable!)
+      (compiler_backend.compiler-backend-gep-fold-disable!
+        (compiler_backend.compiler-backend-state-function-state backend-state))
       result)))
 
 ;; A second (non-gep) use of the offset var keeps the add and the plain
 ;; zero-displacement addressing.
 (define (compiler-backend-gep-fold-multi-use-keeps-add-ok?) : bool
   (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
     [folded : compiler_ir_types.CompilerIrBlockList
       (compiler_backend.compiler-backend-gep-fold-blocks
+        (compiler_backend.compiler-backend-state-function-state backend-state)
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         8
         (compiler-backend-gep-fold-test-blocks true))]
     [result : bool
-      (if (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready)
+      (if (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready
+        backend-state)
         false
-        (match (compiler-backend-emit-test-instrs
+        (match (compiler-backend-emit-test-instrs-target-with-backend-state
           (compiler-backend-gep-fold-test-entry-instrs folded)
           (compiler-backend-gep-fold-test-assignments)
-          8)
+          8
+          (compiler_backend.CompilerBackendTarget.Linux)
+          backend-state)
           [(compiler_backend.ResultCompilerBackend.Ok asm)
             (and
               (compiler_backend.compiler-backend-string-contains? asm "(%r12,")
@@ -24078,7 +24102,8 @@
                   "8(%r12,")))]
           [(compiler_backend.ResultCompilerBackend.Err _) false]))]
     (begin
-      (compiler_backend.compiler-backend-gep-fold-disable!)
+      (compiler_backend.compiler-backend-gep-fold-disable!
+        (compiler_backend.compiler-backend-state-function-state backend-state))
       result)))
 
 ;; The disp-aware address builders.
@@ -24117,24 +24142,34 @@
 ;; emit-function gate turns this into a hard backend error).
 (define (compiler-backend-gep-fold-drift-detected-ok?) : bool
   (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
     [_folded : compiler_ir_types.CompilerIrBlockList
       (compiler_backend.compiler-backend-gep-fold-blocks
+        (compiler_backend.compiler-backend-state-function-state backend-state)
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         8
         (compiler-backend-gep-fold-test-blocks false))]
     [result : bool
       (if (not
-        (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready))
+        (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready
+          backend-state))
         false
         (begin
           ;; wrong scale: recorded scale is 8 (i64), consume with u8.
           (compiler_backend.compiler-backend-gep-fold-next!
+            (compiler_backend.compiler-backend-state-function-state
+              backend-state)
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.U8))
-          (compiler_backend.compiler-backend-gep-fold-drift?)))]
+          (compiler_backend.compiler-backend-gep-fold-drift?
+            (compiler_backend.compiler-backend-state-function-state
+              backend-state))))]
     (begin
-      (compiler_backend.compiler-backend-gep-fold-disable!)
+      (compiler_backend.compiler-backend-gep-fold-disable!
+        (compiler_backend.compiler-backend-state-function-state backend-state))
       result)))
 
 ;; A narrow (u8) load must NOT fold: the memory operand width would not match
@@ -29091,25 +29126,35 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-current-count
         backend-state)]
     [prev-gep-ready : bool
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready
+        backend-state)]
     [prev-gep-disp : (__tl_dyn-array i64)
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-disp-table)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-disp-table
+        backend-state)]
     [prev-gep-kind : (__tl_dyn-array i64)
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-kind-table)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-kind-table
+        backend-state)]
     [prev-gep-scale : (__tl_dyn-array i64)
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-scale-table)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-scale-table
+        backend-state)]
     [prev-gep-cursor : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-cursor)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-cursor
+        backend-state)]
     [prev-gep-drift : bool
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-drift)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-drift
+        backend-state)]
     [prev0-var : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override0-var)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override0-var
+        backend-state)]
     [prev0-reg : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override0-reg)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override0-reg
+        backend-state)]
     [prev1-var : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-var)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-var
+        backend-state)]
     [prev1-reg : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-reg)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-reg
+        backend-state)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
       (compiler-backend-divmod-polish-assignments)]
     [instrs : compiler_ir_types.CompilerIrInstrList
@@ -29125,8 +29170,10 @@
         compiler_ir_types.CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
-        (compiler_backend.compiler-backend-gep-fold-disable!)
-        (compiler_backend.compiler-backend-emit-home-overrides-disable!)
+        (compiler_backend.compiler-backend-gep-fold-disable!
+          (compiler_backend.compiler-backend-state-function-state backend-state))
+        (compiler_backend.compiler-backend-emit-home-overrides-disable!
+          (compiler_backend.compiler-backend-state-function-state backend-state))
         (compiler-backend-test-scavenge-install-ctx!
           "divmod_polish"
           compiler_ir_types.CompilerIrParamList.Nil
@@ -29164,18 +29211,25 @@
           backend-state
           prev-current-count)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-ready!
+          backend-state
           prev-gep-ready)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-disp-table!
+          backend-state
           prev-gep-disp)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-kind-table!
+          backend-state
           prev-gep-kind)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-scale-table!
+          backend-state
           prev-gep-scale)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-cursor!
+          backend-state
           prev-gep-cursor)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-drift!
+          backend-state
           prev-gep-drift)
         (compiler_backend.compiler-backend-divmod-overrides-install!
+          (compiler_backend.compiler-backend-state-function-state backend-state)
           prev0-var
           prev0-reg
           prev1-var
@@ -29362,25 +29416,35 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-current-count
         backend-state)]
     [prev-gep-ready : bool
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready
+        backend-state)]
     [prev-gep-disp : (__tl_dyn-array i64)
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-disp-table)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-disp-table
+        backend-state)]
     [prev-gep-kind : (__tl_dyn-array i64)
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-kind-table)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-kind-table
+        backend-state)]
     [prev-gep-scale : (__tl_dyn-array i64)
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-scale-table)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-scale-table
+        backend-state)]
     [prev-gep-cursor : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-cursor)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-cursor
+        backend-state)]
     [prev-gep-drift : bool
-      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-drift)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-drift
+        backend-state)]
     [prev0-var : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override0-var)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override0-var
+        backend-state)]
     [prev0-reg : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override0-reg)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override0-reg
+        backend-state)]
     [prev1-var : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-var)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-var
+        backend-state)]
     [prev1-reg : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-reg)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-reg
+        backend-state)]
     [prev-emergency-slot-offset : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emergency-slot-offset)]
     [assignments : compiler_regalloc.CompilerRegAssignmentList
@@ -29396,8 +29460,10 @@
         compiler_ir_types.CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
-        (compiler_backend.compiler-backend-gep-fold-disable!)
-        (compiler_backend.compiler-backend-emit-home-overrides-disable!)
+        (compiler_backend.compiler-backend-gep-fold-disable!
+          (compiler_backend.compiler-backend-state-function-state backend-state))
+        (compiler_backend.compiler-backend-emit-home-overrides-disable!
+          (compiler_backend.compiler-backend-state-function-state backend-state))
         (compiler-backend-test-scavenge-install-ctx!
           "c22_divmod_store_collision"
           compiler_ir_types.CompilerIrParamList.Nil
@@ -29437,18 +29503,25 @@
           backend-state
           prev-current-count)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-ready!
+          backend-state
           prev-gep-ready)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-disp-table!
+          backend-state
           prev-gep-disp)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-kind-table!
+          backend-state
           prev-gep-kind)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-scale-table!
+          backend-state
           prev-gep-scale)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-cursor!
+          backend-state
           prev-gep-cursor)
         (compiler_backend.compiler-backend-test-set-compiler-backend-gep-fold-drift!
+          backend-state
           prev-gep-drift)
         (compiler_backend.compiler-backend-divmod-overrides-install!
+          (compiler_backend.compiler-backend-state-function-state backend-state)
           prev0-var
           prev0-reg
           prev1-var
@@ -36776,6 +36849,9 @@
   (cfg
     scratch-vreg
     (let
+      [backend-state : compiler_backend.CompilerBackendState
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
       [assignments : compiler_regalloc.CompilerRegAssignmentList
         (compiler_regalloc.compiler-reg-assignment-cons
           (compiler_regalloc.CompilerRegAssignment
@@ -36936,9 +37012,11 @@
           false
           "%xmm14"
           "%r15"
-          diag)]
+          diag
+          backend-state)]
       [_group-enable : unit
         (compiler_backend.compiler-backend-group-vars-enable!
+          backend-state
           (compiler_liveness.compiler-live-set1 0)
           (compiler_liveness.compiler-live-set-empty))]
       [word : compiler_backend.ResultCompilerBackend
@@ -36951,9 +37029,10 @@
           (compiler_ast_types.AstType.F64)
           3
           "%xmm13"
-          diag)]
+          diag
+          backend-state)]
       [_group-disable : unit
-        (compiler_backend.compiler-backend-group-vars-disable!)]
+        (compiler_backend.compiler-backend-group-vars-disable! backend-state)]
       [copy : compiler_backend.ResultCompilerBackend
         (compiler_backend.compiler-backend-emit-copy-bytes
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -36964,20 +37043,25 @@
           "%r12"
           "%r13"
           "%r14"
-          "%xmm12")]
+          "%xmm12"
+          backend-state)]
       [c-memory : compiler_backend.ResultCompilerBackend
         (begin
           (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
+            backend-state
             "%xmm11")
           (compiler_backend.compiler-backend-emit-c-memory-stack-arg
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             (compiler_backend.CompilerBackendTarget.Linux)
             assignments
             (compiler_ir_types.CompilerIrValue.Var 0)
             0
             24
-            "%r14"))]
+            "%r14"
+            backend-state))]
       [_reset-c-memory : unit
         (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
+          backend-state
           "")]
       (and
         (compiler-backend-scratch-vreg-result-contains?
@@ -39458,6 +39542,9 @@
 ;; per-function preparation has established an empty table.
 (define (compiler-backend-shrinkwrap-admission-state-ok?) : bool
   (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
     [stale-regs : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (compiler_backend.compiler-backend-test-set-compiler-backend-const-hoist-site-count!
@@ -39485,6 +39572,7 @@
           (compiler_backend.compiler-backend-shrinkwrap-admission-state-clean?)
           (not
             (compiler_backend.compiler-backend-callee-needs-save?
+              backend-state
               compiler_regalloc.CompilerRegAssignmentList.Nil
               compiler_abi.compiler-reg-id-rbx))
           (= compiler_regalloc.compiler-reg-early-exit-prefix-count 2)
@@ -40783,10 +40871,16 @@
       (compiler_backend.compiler-backend-state-new intern-state)]
     [failure-state-a : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-state)]
+    [plan-state-a : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
+    [plan-state-b : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
     [function-a : compiler_backend.CompilerBackendFunctionState
       (compiler_backend.compiler-backend-state-function-state state-a)]
     [function-b : compiler_backend.CompilerBackendFunctionState
       (compiler_backend.compiler-backend-state-function-state state-b)]
+    [plan-function-a : compiler_backend.CompilerBackendFunctionState
+      (compiler_backend.compiler-backend-state-function-state plan-state-a)]
     [forward-a : (__tl_dyn-array i64) (make-array i64 5)]
     [forward-b : (__tl_dyn-array i64) (make-array i64 5)]
     [uses-a : (__tl_dyn-array i64) (make-array i64 5)]
@@ -40897,6 +40991,16 @@
         (compiler_backend.compiler-backend-test-set-compiler-backend-current-phi-targets!
           state-b
           (compiler_backend.BackendSymbolSeq labels-b 1)))]
+    [plan-gep-before-reset : bool
+      (compiler_backend.compiler-backend-test-register-plan-gep-isolation-stage!
+        plan-state-a
+        plan-state-b)]
+    [_reset-plan-a : unit
+      (compiler_backend.compiler-backend-function-state-reset! plan-function-a)]
+    [plan-gep-after-reset : bool
+      (compiler_backend.compiler-backend-test-register-plan-gep-isolation-reset-ok?
+        plan-state-a
+        plan-state-b)]
     [before-reset : bool
       (and
         (compiler_backend.compiler-backend-mode-avx2?
@@ -41078,6 +41182,8 @@
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     (and
       before-reset
+      plan-gep-before-reset
+      plan-gep-after-reset
       failure-ok
       failure-retired
       retired-stays-retired

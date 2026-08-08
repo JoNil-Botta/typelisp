@@ -709,7 +709,7 @@
       (while (< index (struct-get data len))
         (let
           [taken : (Tuple bool TcMacroCallSite)
-            (array-take! old-records old-live index)]
+            (__tl_array-take! old-records old-live index)]
           (begin
             (if (tuple-ref taken 0)
               (begin
@@ -1018,7 +1018,10 @@
       (while (< index (struct-get data len))
         (let
           [_taken : (Tuple bool TcMacroCallSite)
-            (array-take! (struct-get data records) (struct-get data live) index)]
+            (__tl_array-take!
+              (struct-get data records)
+              (struct-get data live)
+              index)]
           (set! index (+ index 1))))
       (set! (struct-get data len) 0)
       (set! (struct-get data active-path) "")

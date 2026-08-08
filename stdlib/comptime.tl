@@ -353,6 +353,7 @@
 
 ;; Internal scalar-for planner builders. These remain ordinary bootstrap
 ;; stubs; macro CTFE replaces them with opaque compiler nodes.
+;: Build the ownership state scope for scalar iteration over an owned source.
 (define (expr-for-owned-state
   [_source-name : Expr]
   [_index-name : Expr]
@@ -360,6 +361,7 @@
   [body : Expr]) : Expr
   body)
 
+;: Build one inferred-binding step for scalar iteration over an owned source.
 (define (expr-for-owned-step
   [_source-name : Expr]
   [_index-name : Expr]
@@ -368,6 +370,7 @@
   [body : Expr]) : Expr
   body)
 
+;: Build one typed-binding step for scalar iteration over an owned source.
 (define (expr-for-owned-step-typed
   [_source-name : Expr]
   [_index-name : Expr]

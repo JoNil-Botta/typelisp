@@ -71965,53 +71965,59 @@
   [end : i64]
   [key : i64]
   [memory-base : i64]) : i64
-  (let
-    [register? : bool
-      (compiler-backend-peephole-register-range? data start end)]
-    [packed-stack? : bool (compiler-backend-peephole-owner-key-stack? key)]
-    [base-rbp? : bool (= memory-base compiler-backend-peephole-memory-base-rbp)]
-    [base-rsp? : bool (= memory-base compiler-backend-peephole-memory-base-rsp)]
-    [leading-minus? : bool
-      (and (< start end) (= (compiler-backend-peephole-byte-at data start) 45))]
-    ;; The single parenthetical scan is needed exactly where the replaced
-    ;; substring searches ran: the general stack probe (no packed key, no
-    ;; end-anchored rbp/rsp base) and the rbp-base local-frame arm's
-    ;; "(%rsp)" search.
-    [parens : i64
-      (if (and
-        (not packed-stack?)
-        (or base-rbp? (and (not base-rsp?) (>= (- end start) 6))))
-        (compiler-backend-peephole-stack-parens-range data start end)
-        0)]
-    [stack? : bool (or packed-stack? base-rbp? base-rsp? (not (= parens 0)))]
-    [local-frame? : bool
-      (if packed-stack?
-        (or (not (= (bit-and (- key 1) 2) 0)) leading-minus?)
-        (cond
-          [base-rsp? true]
-          [base-rbp? (or leading-minus? (not (= (bit-and parens 2) 0)))]
-          [else
+  ;; Treat the already classified operand kind as a dispatch. Registers and
+  ;; canonical stack keys dominate generated movq operands; neither needs the
+  ;; general parenthetical scan or the predicates for unrelated kinds.
+  (cond
+    [(compiler-backend-peephole-register-range? data start end)
+      compiler-backend-peephole-op-register-flag]
+    [(compiler-backend-peephole-owner-key-stack? key)
+      (bit-or
+        compiler-backend-peephole-op-stack-flag
+        (if (or
+          (not (= (bit-and (- key 1) 2) 0))
+          (= (compiler-backend-peephole-byte-at data start) 45))
+          compiler-backend-peephole-op-local-frame-flag
+          0))]
+    [(= memory-base compiler-backend-peephole-memory-base-rsp)
+      (bit-or
+        compiler-backend-peephole-op-stack-flag
+        compiler-backend-peephole-op-local-frame-flag)]
+    [else
+      (let
+        [base-rbp? : bool
+          (= memory-base compiler-backend-peephole-memory-base-rbp)]
+        [leading-minus? : bool
+          (and
+            (< start end)
+            (= (compiler-backend-peephole-byte-at data start) 45))]
+        ;; This is the former general stack probe plus the rbp-base arm's
+        ;; additional "(%rsp)" check. Earlier arms proved there is no packed
+        ;; key and no end-anchored rsp base.
+        [parens : i64
+          (if (or base-rbp? (>= (- end start) 6))
+            (compiler-backend-peephole-stack-parens-range data start end)
+            0)]
+        [stack? : bool (or base-rbp? (not (= parens 0)))]
+        [local-frame? : bool
+          (if base-rbp?
+            (or leading-minus? (not (= (bit-and parens 2) 0)))
             (and
               stack?
               (or
                 (not (= (bit-and parens 2) 0))
-                (and leading-minus? (not (= (bit-and parens 1) 0)))))]))]
-    [r10-base? : bool (= memory-base compiler-backend-peephole-memory-base-r10)]
-    (+
-      (if register?
-        compiler-backend-peephole-op-register-flag
-        0)
-      (+
-        (if stack?
-          compiler-backend-peephole-op-stack-flag
-          0)
-        (+
-          (if local-frame?
-            compiler-backend-peephole-op-local-frame-flag
+                (and leading-minus? (not (= (bit-and parens 1) 0))))))]
+        (bit-or
+          (if stack?
+            compiler-backend-peephole-op-stack-flag
             0)
-          (if r10-base?
-            compiler-backend-peephole-op-r10-base-flag
-            0))))))
+          (bit-or
+            (if local-frame?
+              compiler-backend-peephole-op-local-frame-flag
+              0)
+            (if (= memory-base compiler-backend-peephole-memory-base-r10)
+              compiler-backend-peephole-op-r10-base-flag
+              0))))]))
 
 (define (compiler-backend-peephole-op-flag? [flags : i64] [flag : i64]) : bool
   (not (= (bit-and flags flag) 0)))

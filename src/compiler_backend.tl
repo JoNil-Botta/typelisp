@@ -59275,10 +59275,46 @@
                                               (set!
                                                 p
                                                 (if ok
-                                                  (compiler-backend-rsp-rebase-find-rbp
-                                                    data
-                                                    (+ p 6)
-                                                    end)
+                                                  (let
+                                                    [next-start : i64 (+ p 6)]
+                                                    [next-paren : i64
+                                                      (if (<=
+                                                        (+ next-start 5)
+                                                        end)
+                                                        (compiler-backend-peephole-scan-byte-range
+                                                          data
+                                                          next-start
+                                                          rbp-stop
+                                                          40)
+                                                        rbp-stop)]
+                                                    (if (>= next-paren rbp-stop)
+                                                      -1
+                                                      (if (and
+                                                        (=
+                                                          (compiler-backend-peephole-byte-at
+                                                            data
+                                                            (+ next-paren 1))
+                                                          37)
+                                                        (=
+                                                          (compiler-backend-peephole-byte-at
+                                                            data
+                                                            (+ next-paren 2))
+                                                          114)
+                                                        (=
+                                                          (compiler-backend-peephole-byte-at
+                                                            data
+                                                            (+ next-paren 3))
+                                                          98)
+                                                        (=
+                                                          (compiler-backend-peephole-byte-at
+                                                            data
+                                                            (+ next-paren 4))
+                                                          112))
+                                                        next-paren
+                                                        (compiler-backend-rsp-rebase-find-rbp
+                                                          data
+                                                          (+ next-paren 1)
+                                                          end))))
                                                   -1))))
                                           (if ok
                                             (set!

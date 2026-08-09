@@ -420,6 +420,32 @@
               (set! index (+ index 1))))
           supported))]))
 
+(define (compiler-windows-coff-object-globals-supported?
+  [globals : compiler_ir_types.CompilerIrGlobalList]) : bool
+  (match globals
+    [(compiler_ir_types.CompilerIrGlobalList.Nil) true]
+    [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
+      (match global
+        [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
+          (and
+            (compiler-windows-coff-object-value-supported? value)
+            (compiler-windows-coff-object-globals-supported? (box-get rest)))])]
+    [(compiler_ir_types.CompilerIrGlobalList.Array seq)
+      (let
+        [index : i64 0]
+        [count : i64 (compiler_ir_types.compiler-ir-global-seq-count seq)]
+        [supported : bool true]
+        (begin
+          (while (and supported (< index count))
+            (begin
+              (match (compiler_ir_types.compiler-ir-global-seq-ref seq index)
+                [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
+                  (set!
+                    supported
+                    (compiler-windows-coff-object-value-supported? value))])
+              (set! index (+ index 1))))
+          supported))]))
+
 (define (compiler-windows-coff-object-functions-supported?
   [backend-state : compiler_backend.CompilerBackendState]
   [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
@@ -472,10 +498,34 @@
   [backend-state : compiler_backend.CompilerBackendState]
   [program : compiler_ir_types.CompilerIrProgram]) : bool
   (match program
-    [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-      (compiler-windows-coff-object-functions-supported?
-        backend-state
-        functions)]))
+    [(compiler_ir_types.CompilerIrProgram.Program globals functions _)
+      (and
+        (compiler-windows-coff-object-globals-supported? globals)
+        (compiler-windows-coff-object-functions-supported?
+          backend-state
+          functions))]))
+
+(test
+  compiler-windows-coff-runtime-global-falls-back
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [globals : compiler_ir_types.CompilerIrGlobalList
+      (compiler_ir_types.CompilerIrGlobalList.Cons
+        (compiler_ir_types.CompilerIrGlobal.Global
+          1
+          (compiler_ast_types.AstType.I64)
+          (compiler_ir_types.CompilerIrValue.RuntimeGlobal 2))
+        (box compiler_ir_types.CompilerIrGlobalList.Nil))]
+    [program : compiler_ir_types.CompilerIrProgram
+      (compiler_ir_types.CompilerIrProgram.Program
+        globals
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    (test.assert-false
+      (compiler-windows-coff-object-program-supported? backend-state program)
+      "runtime-initialized globals stay on the assembly path")))
 
 (define (compiler-windows-batch-emit-optimized
   [backend-state : compiler_backend.CompilerBackendState]

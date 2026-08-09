@@ -28846,6 +28846,7 @@
 
 (define (compiler-backend-spill-immediate-binop-asm
   [op : compiler_ir_types.CompilerIrBinOp]
+  [rhs : i64]
   [result-ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
   (compiler_backend.compiler-backend-emit-binop
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -28870,7 +28871,7 @@
     1
     op
     (compiler_ir_types.CompilerIrValue.Var 0)
-    (compiler_ir_types.CompilerIrValue.I64 7)
+    (compiler_ir_types.CompilerIrValue.I64 rhs)
     result-ty
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
@@ -28878,20 +28879,23 @@
 (define (compiler-backend-spill-immediate-binop-home-ok?) : bool
   (match (compiler-backend-spill-immediate-binop-asm
     (compiler_ir_types.CompilerIrBinOp.Add)
+    7
     (compiler_ast_types.AstType.I64))
     [(compiler_backend.ResultCompilerBackend.Ok add-asm)
       (match (compiler-backend-spill-immediate-binop-asm
         (compiler_ir_types.CompilerIrBinOp.Lt)
+        7
         (compiler_ast_types.AstType.Bool))
         [(compiler_backend.ResultCompilerBackend.Ok cmp-asm)
           (and
             (compiler_backend.backend-and4
               (compiler_backend.compiler-backend-string-contains?
                 add-asm
-                "    movq %r12, %r8\n")
-              (compiler_backend.compiler-backend-string-contains?
-                add-asm
-                "    addq $7, %r8\n")
+                "    leaq 7(%r12), %r8\n")
+              (not
+                (compiler_backend.compiler-backend-string-contains?
+                  add-asm
+                  "    addq $7, %r8\n"))
               (compiler_backend.compiler-backend-string-contains?
                 cmp-asm
                 "    cmpq $7, %r8\n")
@@ -28912,6 +28916,76 @@
               (compiler_backend.compiler-backend-string-contains?
                 cmp-asm
                 "%rax")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-direct-immediate-zero-asm
+  [op : compiler_ir_types.CompilerIrBinOp]) : compiler_backend.ResultCompilerBackend
+  (compiler_backend.compiler-backend-emit-binop
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_regalloc.compiler-reg-var-types-insert
+      (compiler_regalloc.compiler-reg-var-types-insert
+        (compiler_regalloc.compiler-reg-var-types-empty)
+        1
+        (compiler_ast_types.AstType.I64))
+      0
+      (compiler_ast_types.AstType.I64))
+    (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
+    (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.CompilerRegAssignment
+        0
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r12))
+      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r13))
+        compiler_regalloc.CompilerRegAssignmentList.Nil))
+    1
+    op
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    (compiler_ir_types.CompilerIrValue.I64 0)
+    (compiler_ast_types.AstType.I64)
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active))))
+
+(define (compiler-backend-immediate-zero-compaction-ok?) : bool
+  (match (compiler-backend-spill-immediate-binop-asm
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    0
+    (compiler_ast_types.AstType.I64))
+    [(compiler_backend.ResultCompilerBackend.Ok spill-add)
+      (match (compiler-backend-spill-immediate-binop-asm
+        (compiler_ir_types.CompilerIrBinOp.Sub)
+        0
+        (compiler_ast_types.AstType.I64))
+        [(compiler_backend.ResultCompilerBackend.Ok spill-sub)
+          (match (compiler-backend-direct-immediate-zero-asm
+            (compiler_ir_types.CompilerIrBinOp.Add))
+            [(compiler_backend.ResultCompilerBackend.Ok direct-add)
+              (match (compiler-backend-direct-immediate-zero-asm
+                (compiler_ir_types.CompilerIrBinOp.Sub))
+                [(compiler_backend.ResultCompilerBackend.Ok direct-sub)
+                  (and
+                    (compiler_backend.compiler-backend-string-contains?
+                      spill-add
+                      "    movq %r12, %r8\n    movq %r8, -16(%rbp)\n")
+                    (string.eq spill-add spill-sub)
+                    (compiler_backend.compiler-backend-string-contains?
+                      direct-add
+                      "    movq %r12, %r13\n")
+                    (string.eq direct-add direct-sub)
+                    (not
+                      (compiler_backend.compiler-backend-string-contains?
+                        spill-add
+                        "$0"))
+                    (not
+                      (compiler_backend.compiler-backend-string-contains?
+                        direct-add
+                        "$0")))]
+                [(compiler_backend.ResultCompilerBackend.Err _) false])]
+            [(compiler_backend.ResultCompilerBackend.Err _) false])]
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -29771,6 +29845,62 @@
     ty
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))))
+
+(define (compiler-backend-literal-div-compactions-ok?) : bool
+  (let
+    [power-quotient : String
+      (compiler_backend.compiler-backend-signed-power-divmod-asm
+        8
+        false
+        false
+        "%r8"
+        "%r9"
+        "%r10")]
+    [power-remainder : String
+      (compiler_backend.compiler-backend-signed-power-divmod-asm
+        8
+        false
+        true
+        "%r8"
+        "%r9"
+        "%r10")]
+    (match (compiler-backend-divrem-binop-asm
+      (compiler_ir_types.CompilerIrBinOp.Div)
+      (compiler_ir_types.CompilerIrValue.I64 8)
+      (compiler_ast_types.AstType.I64))
+      [(compiler_backend.ResultCompilerBackend.Ok power-spill)
+        (match (compiler-backend-divrem-binop-asm
+          (compiler_ir_types.CompilerIrBinOp.Div)
+          (compiler_ir_types.CompilerIrValue.I64 3)
+          (compiler_ast_types.AstType.I64))
+          [(compiler_backend.ResultCompilerBackend.Ok magic-spill)
+            (and
+              ;; Quotient-only power division does not preserve the dividend.
+              (not
+                (compiler_backend.compiler-backend-string-contains?
+                  power-quotient
+                  "    movq %rax, %r9\n"))
+              (compiler_backend.compiler-backend-string-contains?
+                power-remainder
+                "    movq %rax, %r9\n")
+              ;; Power and magic quotient expansions both honor the requested
+              ;; %rax result and spill it without a fixed-register hop.
+              (compiler_backend.compiler-backend-string-contains?
+                power-spill
+                "    sarq $3, %rax\n    movq %rax, -24(%rbp)\n")
+              (not
+                (compiler_backend.compiler-backend-string-contains?
+                  power-spill
+                  "    sarq $3, %rax\n    movq %rax, %rdx\n"))
+              (compiler_backend.compiler-backend-string-contains?
+                magic-spill
+                "    addq %rdx, %rax\n    movq %rax, -24(%rbp)\n")
+              (not
+                (compiler_backend.compiler-backend-string-contains?
+                  magic-spill
+                  "    movq %rdx, %rax\n    movq %rax, -24(%rbp)\n")))]
+          [(compiler_backend.ResultCompilerBackend.Err _) false])]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-divrem-binop-guard-shape?
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -42695,6 +42825,7 @@ b_keep:
         (compiler-backend-direct-immediate-shift-home-ok?)
         (compiler-backend-direct-rcx-shift-home-ok?)
         (compiler-backend-spill-immediate-binop-home-ok?)
+        (compiler-backend-immediate-zero-compaction-ok?)
         (compiler-backend-spill-source-binop-home-ok?)
         (compiler-backend-spill-unop-home-ok?))
       (and
@@ -42703,6 +42834,7 @@ b_keep:
         (compiler-backend-signed-constant-divisor-clang-shape-ok?)
         (compiler-backend-divmod-producer-result-forwarding-ok?)
         (compiler-backend-c22-divmod-store-clobber-rejected-ok?)
+        (compiler-backend-literal-div-compactions-ok?)
         (compiler-backend-divrem-rax-rhs-preserved-ok?)
         (compiler-backend-safe-divrem-guard-elision-ok?))
       (and

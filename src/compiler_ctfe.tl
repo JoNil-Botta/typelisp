@@ -1243,6 +1243,47 @@
 (define (ctfe-layout-info-list-empty) : CtfeLayoutInfoList
   (ctfe-layout-info-list-with-capacity 0))
 
+(define (ctfe-metadata-grown-capacity [current : i64] [required : i64]) : i64
+  (let
+    [capacity : i64
+      (if (< current 4)
+        4
+        current)]
+    (begin
+      (while (< capacity required)
+        (set! capacity (* capacity 2)))
+      capacity)))
+
+(define (ctfe-layout-info-list-ensure-capacity
+  [items : CtfeLayoutInfoList (:consume)]
+  [required : i64]) : CtfeLayoutInfoList
+  (let
+    [slots : (__tl_dyn-array CtfeLayoutInfo) (struct-get items slots)]
+    [capacity : i64 (array.length slots)]
+    [len : i64 (struct-get items len)]
+    (if (<= required capacity)
+      items
+      (let
+        [grown : (__tl_dyn-array CtfeLayoutInfo)
+          (array.make-array
+            CtfeLayoutInfo
+            (ctfe-metadata-grown-capacity capacity required))]
+        [index : i64 0]
+        (begin
+          (while (< index len)
+            (begin
+              (array-set! grown index (array.ref slots index))
+              (set! index (+ index 1))))
+          ;; The id map grows independently on insert. Preserve it so the
+          ;; copied vector retains every first-wins slot without rebuilding a
+          ;; second key list solely for capacity changes.
+          (CtfeLayoutInfoList grown (struct-get items index) len))))))
+
+(define (ctfe-layout-info-list-contains-key-id?
+  [items : CtfeLayoutInfoList]
+  [key-id : i64]) : bool
+  (ctfe_key_map.contains? (& (struct-get items index)) key-id))
+
 (define (ctfe-layout-info-list-ref [items : CtfeLayoutInfoList] [index : i64]) : CtfeLayoutInfo
   (array.ref (struct-get items slots) index))
 
@@ -1303,6 +1344,33 @@
 
 (define (ctfe-reflect-info-list-empty) : CtfeReflectInfoList
   (ctfe-reflect-info-list-with-capacity 0))
+
+(define (ctfe-reflect-info-list-ensure-capacity
+  [items : CtfeReflectInfoList (:consume)]
+  [required : i64]) : CtfeReflectInfoList
+  (let
+    [slots : (__tl_dyn-array CtfeReflectInfo) (struct-get items slots)]
+    [capacity : i64 (array.length slots)]
+    [len : i64 (struct-get items len)]
+    (if (<= required capacity)
+      items
+      (let
+        [grown : (__tl_dyn-array CtfeReflectInfo)
+          (array.make-array
+            CtfeReflectInfo
+            (ctfe-metadata-grown-capacity capacity required))]
+        [index : i64 0]
+        (begin
+          (while (< index len)
+            (begin
+              (array-set! grown index (array.ref slots index))
+              (set! index (+ index 1))))
+          (CtfeReflectInfoList grown (struct-get items index) len))))))
+
+(define (ctfe-reflect-info-list-contains-key-id?
+  [items : CtfeReflectInfoList]
+  [key-id : i64]) : bool
+  (ctfe_key_map.contains? (& (struct-get items index)) key-id))
 
 (define (ctfe-reflect-info-list-ref [items : CtfeReflectInfoList] [index : i64]) : CtfeReflectInfo
   (array.ref (struct-get items slots) index))
@@ -2090,10 +2158,9 @@
             ""
             cbi.compiler-builtin-id-fix-empty
             (ctfe-reflect-info-list-with-capacity
-              ;; Spare slots let generated-module splices extend the cached
-              ;; metadata additively (compiler-typecheck-ctfe-env-extend-for-
-              ;; splice!) instead of forcing a whole-program rebuild.
-              (+ (ctfe-metadata-decl-capacity decls) 256)))))]))
+              ;; Splice extension grows this owner-arena vector geometrically;
+              ;; reserve only the known program surface here.
+              (ctfe-metadata-decl-capacity decls)))))]))
 
 ;; Result of evaluating a sub-expression: either a value (carrying the remaining
 ;; fuel) or a diagnostic. Fuel is threaded so each evaluation step decrements a

@@ -11196,39 +11196,6 @@
       unit)
     program))
 
-(define (compiler-optimize-debug-verifier-self-test) : i64
-  (let
-    [name : i64 (ir.compiler-ir-test-symbol "debug-invalid")]
-    [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
-          (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-            ir.CompilerIrInstrList.Nil))
-        ir.CompilerIrBlockList.Nil)]
-    [program : ir.CompilerIrProgram
-      (ir.CompilerIrProgram.Program
-        ir.CompilerIrGlobalList.Nil
-        (ir.compiler-ir-function-cons
-          (ir.CompilerIrFunction.Function
-            name
-            ir.CompilerIrParamList.Nil
-            (ast.AstType.I64)
-            1
-            blocks)
-          ir.CompilerIrFunctionList.Nil)
-        ir.CompilerIrExternList.Nil)]
-    (match (opt-verify-program program)
-      [(ResultCompilerOptimizeVerify.Err message)
-        (if (string.eq
-          message
-          "function @debug-invalid: block entry instruction 0: optimizer verify: use before definition")
-          42
-          1)]
-      [(ResultCompilerOptimizeVerify.Ok) 2])))
-
 ;; --- standalone scalar SSA construction / mem2reg --------------------------
 ;;
 ;; This constructor rewrites repeated scalar virtual-register definitions into
@@ -19903,25 +19870,6 @@
                 rest-blocks
                 (or loop-changed rest-changed))])])]))
 
-(define (opt-licm-blocks-with-context-and-direct-call-clean
-  [type-segment-bases : i64]
-  [sources : opt_i64_i64_map.Map]
-  [types : OptSsaVarTypes]
-  [provenance : OptLicmStoreState]
-  [direct-call-clean : opt_i64_i64_map.Map]
-  [late? : bool]
-  [loops : OptNaturalLoopList]
-  [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
-  (opt-licm-apply-loops
-    type-segment-bases
-    sources
-    types
-    provenance
-    direct-call-clean
-    late?
-    loops
-    blocks))
-
 (define (opt-licm-function-with-context-result-and-direct-call-clean
   [type-segment-bases : i64]
   [context : OptCfgContext]
@@ -19956,7 +19904,7 @@
                       params
                       types
                       blocks)]
-                  (match (opt-licm-blocks-with-context-and-direct-call-clean
+                  (match (opt-licm-apply-loops
                     type-segment-bases
                     sources
                     types
@@ -19998,25 +19946,6 @@
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
-(define (opt-licm-function-with-context-result
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (opt-licm-function-with-context-result-and-direct-call-clean
-    type-segment-bases
-    context
-    false
-    (opt_i64_i64_map.with-capacity 1)
-    false
-    func))
-
-(define (opt-licm-function-with-context
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt-licm-function-with-context-result type-segment-bases context func)
-    [(OptFunctionCtxResult.Result next _) next]))
-
 (define (opt-licm-function-with-direct-call-clean
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -20037,10 +19966,14 @@
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-      (opt-licm-function-with-context
+      (match (opt-licm-function-with-context-result-and-direct-call-clean
         type-segment-bases
         (opt-cfg-context-build blocks)
-        func)]))
+        false
+        (opt_i64_i64_map.with-capacity 1)
+        false
+        func)
+        [(OptFunctionCtxResult.Result next _) next])]))
 
 ;; --- invariant nested-loop entry unswitch ------------------------------------
 ;;
@@ -32443,26 +32376,15 @@
       call-memory
       gvn)))
 
-(define (opt-gvn-blocks-with-context
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (opt-gvn-blocks-with-context-and-call-memory
-    type-segment-bases
-    context
-    params
-    (opt_i64_i64_map.with-capacity 1)
-    blocks))
-
 (define (opt-gvn-blocks
   [type-segment-bases : i64]
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (opt-gvn-blocks-with-context
+  (opt-gvn-blocks-with-context-and-call-memory
     type-segment-bases
     (opt-cfg-context-build blocks)
     params
+    (opt_i64_i64_map.with-capacity 1)
     blocks))
 
 ;; --- dominated redundant bounds-check elimination ----------------------------
@@ -39458,8 +39380,8 @@
     blocks))
 
 ;; Whole-function transforms keep a pathological-CFG work cap. Loop transforms
-;; do not use this value: `run-loop?` below is deliberately unconditional and
-;; every loop pass applies its own natural-loop-local admission checks.
+;; do not use this value: every loop pass applies its own natural-loop-local
+;; admission checks.
 (define (opt-heavy-pass-block-limit) : i64
   1026)
 
@@ -60343,39 +60265,28 @@
                       ;; index. Their admission decisions are loop-local, so an
                       ;; unrelated block elsewhere in the enclosing function
                       ;; must not turn the loop pipeline off.
-                      [run-loop? : bool true]
                       [_t-rotation : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [rotation-result : OptBlockCtxResult
-                        (if run-loop?
-                          (opt-loop-rotation-function-result
-                            pools
-                            (ir.CompilerIrFunction.Function
-                              name
-                              params
-                              ret-ty
-                              promoted-frame
-                              sroa-blocks))
-                          (OptBlockCtxResult.Result
-                            sroa-blocks
-                            (opt-cfg-context-empty)
-                            false))]
+                        (opt-loop-rotation-function-result
+                          pools
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            promoted-frame
+                            sroa-blocks))]
                       ;; Literal-edge normalization is speculative: keep it
                       ;; only if the exact mutable SIMD rewrite succeeds.
                       [simd-rotation-result : OptBlockCtxResult
-                        (if run-loop?
-                          (opt-loop-rotation-normalized-function-result
-                            pools
-                            (ir.CompilerIrFunction.Function
-                              name
-                              params
-                              ret-ty
-                              promoted-frame
-                              sroa-blocks))
-                          (OptBlockCtxResult.Result
-                            sroa-blocks
-                            (opt-cfg-context-empty)
-                            false))]
+                        (opt-loop-rotation-normalized-function-result
+                          pools
+                          (ir.CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            promoted-frame
+                            sroa-blocks))]
                       [simd-rotated : ir.CompilerIrFunction
                         (ir.CompilerIrFunction.Function
                           name
@@ -60396,7 +60307,7 @@
                       ;; position remains as a fallback for functions whose SSA
                       ;; construction is intentionally rejected.
                       [simd-result : OptFunctionCtxResult
-                        (if (and run-loop? simd-rotation-context-valid?)
+                        (if simd-rotation-context-valid?
                           (opt-unroll-simd-function-with-context-result
                             type-segment-bases
                             simd-rotation-context
@@ -60452,15 +60363,11 @@
                       ;; original function, so the optimization path remains safe.
                       [_t-ssa : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [ssa-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-ssa-construct-function-from-context-result
-                            type-segment-bases
-                            rotated
-                            rotation-context
-                            rotation-context-valid?)
-                          (OptFunctionCtxResult.Result
-                            rotated
-                            (opt-cfg-context-empty)))]
+                        (opt-ssa-construct-function-from-context-result
+                          type-segment-bases
+                          rotated
+                          rotation-context
+                          rotation-context-valid?)]
                       [ssa : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60553,10 +60460,8 @@
                           params
                           ret-ty
                           ssa-frame
-                          (if (and
-                            run-loop?
-                            (opt-verify-ok?
-                              (opt-verify-function-with-context ssa ssa-context)))
+                          (if (opt-verify-ok?
+                            (opt-verify-function-with-context ssa ssa-context))
                             (opt-bounds-dom-blocks-with-context
                               type-segment-bases
                               ssa-context
@@ -60575,21 +60480,12 @@
                           unit)]
                       [_t-sccp : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [sccp-result : OptBlockCtxResult
-                        (if run-loop?
-                          (opt-sccp-blocks-with-context-result-raw
-                            type-segment-bases
-                            ssa-context
-                            params
-                            bounds-dom
-                            ssa-frame)
-                          (OptBlockCtxResult.Result
-                            (opt-sccp-blocks-with-frame
-                              type-segment-bases
-                              params
-                              bounds-dom
-                              ssa-frame)
-                            (opt-cfg-context-empty)
-                            false))]
+                        (opt-sccp-blocks-with-context-result-raw
+                          type-segment-bases
+                          ssa-context
+                          params
+                          bounds-dom
+                          ssa-frame)]
                       [sccp : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases
@@ -60726,19 +60622,14 @@
                           unit)]
                       [_t-cfg2 : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [cfg-result : OptBlockCtxResult
-                        (if run-loop?
-                          (opt-cfg-simplify-blocks-with-context-result
-                            (OptBlockCtxResult.Result
-                              thread-branch
-                              sccp-context
-                              (and
-                                sccp-context-valid
-                                (not bool-branch-changed)
-                                (not thread-branch-changed))))
+                        (opt-cfg-simplify-blocks-with-context-result
                           (OptBlockCtxResult.Result
-                            (opt-cfg-simplify-blocks thread-branch)
-                            (opt-cfg-context-empty)
-                            false))]
+                            thread-branch
+                            sccp-context
+                            (and
+                              sccp-context-valid
+                              (not bool-branch-changed)
+                              (not thread-branch-changed))))]
                       [cfg : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases
@@ -60785,11 +60676,9 @@
                       [switch-blocks : ir.CompilerIrBlockList
                         (opt-function-blocks switched)]
                       [switch-context : OptCfgContext
-                        (if run-loop?
-                          (if switch-changed
-                            (opt-cfg-context-build switch-blocks)
-                            cfg-context)
-                          (opt-cfg-context-empty))]
+                        (if switch-changed
+                          (opt-cfg-context-build switch-blocks)
+                          cfg-context)]
                       [_p-switch : unit
                         (cfg
                           compile-profile
@@ -60818,39 +60707,28 @@
                       ;; (falling back to its input on rejection), so a verified
                       ;; input stays verified across the chain.
                       [loop-cluster-verified? : bool
-                        (and
-                          run-loop?
-                          (opt-verify-ok?
-                            (opt-verify-function-with-context
-                              (ir.CompilerIrFunction.Function
-                                name
-                                params
-                                ret-ty
-                                ssa-frame
-                                switch-blocks)
-                              switch-context)))]
-                      [preheaders-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (let
-                            [preheaders-input : ir.CompilerIrFunction
-                              (ir.CompilerIrFunction.Function
-                                name
-                                params
-                                ret-ty
-                                ssa-frame
-                                switch-blocks)]
-                            (opt-loop-preheaders-function-with-context-result
-                              switch-context
-                              loop-cluster-verified?
-                              preheaders-input))
-                          (OptFunctionCtxResult.Result
+                        (opt-verify-ok?
+                          (opt-verify-function-with-context
                             (ir.CompilerIrFunction.Function
                               name
                               params
                               ret-ty
                               ssa-frame
                               switch-blocks)
-                            (opt-cfg-context-empty)))]
+                            switch-context))]
+                      [preheaders-result : OptFunctionCtxResult
+                        (let
+                          [preheaders-input : ir.CompilerIrFunction
+                            (ir.CompilerIrFunction.Function
+                              name
+                              params
+                              ret-ty
+                              ssa-frame
+                              switch-blocks)]
+                          (opt-loop-preheaders-function-with-context-result
+                            switch-context
+                            loop-cluster-verified?
+                            preheaders-input))]
                       [preheaders : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60872,12 +60750,10 @@
                       [_t-rotate-ssa : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [rotate-ssa-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-rotate-ssa-function-with-context-result
-                            preheaders-context
-                            loop-cluster-verified?
-                            preheaders)
-                          preheaders-result)]
+                        (opt-rotate-ssa-function-with-context-result
+                          preheaders-context
+                          loop-cluster-verified?
+                          preheaders)]
                       [rotate-ssa : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60899,13 +60775,11 @@
                       [_t-scratch-reset : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [scratch-reset-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-scratch-reset-function-with-context-result
-                            type-segment-bases
-                            rotate-ssa-context
-                            loop-cluster-verified?
-                            rotate-ssa)
-                          rotate-ssa-result)]
+                        (opt-scratch-reset-function-with-context-result
+                          type-segment-bases
+                          rotate-ssa-context
+                          loop-cluster-verified?
+                          rotate-ssa)]
                       [scratch-reset : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60926,15 +60800,13 @@
                           unit)]
                       [_t-licm : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-licm-function-with-context-result-and-direct-call-clean
-                            type-segment-bases
-                            scratch-reset-context
-                            loop-cluster-verified?
-                            (struct-get summaries direct-call-clean)
-                            false
-                            scratch-reset)
-                          scratch-reset-result)]
+                        (opt-licm-function-with-context-result-and-direct-call-clean
+                          type-segment-bases
+                          scratch-reset-context
+                          loop-cluster-verified?
+                          (struct-get summaries direct-call-clean)
+                          false
+                          scratch-reset)]
                       [licm : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60959,12 +60831,10 @@
                       ;; phi, but the fresh arm clone remains an ordinary bounded
                       ;; rematerialization chain.
                       [pre-induction-sink-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-successor-sink-function-with-context-result
-                            type-segment-bases
-                            licm-context
-                            licm)
-                          licm-result)]
+                        (opt-successor-sink-function-with-context-result
+                          type-segment-bases
+                          licm-context
+                          licm)]
                       [pre-induction-sink : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -60977,13 +60847,11 @@
                       [_t-induction : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [induction-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-induction-function-with-context-result
-                            type-segment-bases
-                            pre-induction-sink-context
-                            loop-cluster-verified?
-                            pre-induction-sink)
-                          licm-result)]
+                        (opt-induction-function-with-context-result
+                          type-segment-bases
+                          pre-induction-sink-context
+                          loop-cluster-verified?
+                          pre-induction-sink)]
                       [induction : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61010,12 +60878,10 @@
                       [_t-flag-exit : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [flag-exit-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-flag-exit-function-with-context-result
-                            induction-context
-                            loop-cluster-verified?
-                            induction)
-                          induction-result)]
+                        (opt-flag-exit-function-with-context-result
+                          induction-context
+                          loop-cluster-verified?
+                          induction)]
                       [flag-exit : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61042,13 +60908,11 @@
                       [_t-bce-version : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [bce-version-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-bce-version-function-with-context-result
-                            type-segment-bases
-                            flag-exit-context
-                            loop-cluster-verified?
-                            flag-exit)
-                          flag-exit-result)]
+                        (opt-bce-version-function-with-context-result
+                          type-segment-bases
+                          flag-exit-context
+                          loop-cluster-verified?
+                          flag-exit)]
                       [bce-version : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61078,12 +60942,10 @@
                       [_t-fill-call : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [fill-call-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-fill-call-function-with-context-result
-                            bce-version-context
-                            loop-cluster-verified?
-                            bce-version)
-                          bce-version-result)]
+                        (opt-fill-call-function-with-context-result
+                          bce-version-context
+                          loop-cluster-verified?
+                          bce-version)]
                       [fill-call : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61109,13 +60971,11 @@
                       ;; below keep valid dominance facts.
                       [_t-unroll : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [unroll-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-unroll-function-with-context-result
-                            type-segment-bases
-                            fill-call-context
-                            loop-cluster-verified?
-                            fill-call)
-                          fill-call-result)]
+                        (opt-unroll-function-with-context-result
+                          type-segment-bases
+                          fill-call-context
+                          loop-cluster-verified?
+                          fill-call)]
                       [unrolled : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61146,23 +61006,21 @@
                         (compiler-opt-debug-observe-function
                           type-segment-bases
                           "load_combine"
-                          (if run-loop?
-                            (match unrolled
-                              [(ir.CompilerIrFunction.Function
-                                  _name
-                                  _params
-                                  _ret-ty
+                          (match unrolled
+                            [(ir.CompilerIrFunction.Function
+                                _name
+                                _params
+                                _ret-ty
+                                unrolled-frame
+                                unrolled-blocks)
+                              (ir.CompilerIrFunction.Function
+                                name
+                                params
+                                ret-ty
+                                unrolled-frame
+                                (opt-load-combine-blocks
                                   unrolled-frame
-                                  unrolled-blocks)
-                                (ir.CompilerIrFunction.Function
-                                  name
-                                  params
-                                  ret-ty
-                                  unrolled-frame
-                                  (opt-load-combine-blocks
-                                    unrolled-frame
-                                    unrolled-blocks))])
-                            unrolled))]
+                                  unrolled-blocks))]))]
                       [_p-load-combine : unit
                         (cfg
                           compile-profile
@@ -61179,13 +61037,11 @@
                       ;; form is handed straight to affine-fold/GVN below.
                       [_t-lftr : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [lftr-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-lftr-function-with-context-result
-                            type-segment-bases
-                            unroll-context
-                            loop-cluster-verified?
-                            load-combine)
-                          unroll-result)]
+                        (opt-lftr-function-with-context-result
+                          type-segment-bases
+                          unroll-context
+                          loop-cluster-verified?
+                          load-combine)]
                       [lftr : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61214,15 +61070,13 @@
                       [_t-post-lftr-licm : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [post-lftr-licm-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-licm-function-with-context-result-and-direct-call-clean
-                            type-segment-bases
-                            lftr-context
-                            loop-cluster-verified?
-                            (struct-get summaries direct-call-clean)
-                            true
-                            lftr)
-                          lftr-result)]
+                        (opt-licm-function-with-context-result-and-direct-call-clean
+                          type-segment-bases
+                          lftr-context
+                          loop-cluster-verified?
+                          (struct-get summaries direct-call-clean)
+                          true
+                          lftr)]
                       [post-lftr-licm : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -61254,13 +61108,11 @@
                       [_t-gep-offset : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [gep-offset-result : OptFunctionCtxResult
-                        (if run-loop?
-                          (opt-gep-offset-function-with-context-result
-                            type-segment-bases
-                            post-lftr-licm-context
-                            loop-cluster-verified?
-                            post-lftr-licm)
-                          post-lftr-licm-result)]
+                        (opt-gep-offset-function-with-context-result
+                          type-segment-bases
+                          post-lftr-licm-context
+                          loop-cluster-verified?
+                          post-lftr-licm)]
                       [gep-offset : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases
@@ -64403,6 +64255,17 @@
 ;; structural re-verify and SSA reconstruction have nothing new to check.
 (define opt-inline-caller-site-count : i64
   0)
+
+;; Blocks imported into the current caller by the hot-loop-leaf gate alone.
+;; Kept out of `added-so-far` on purpose: a hot-loop-leaf copy must not spend
+;; the caller's shared block fuel, because that fuel is what the caller's own
+;; banked absorptions draw on -- spending it evicted pl-globl-line?'s
+;; single-reference absorption out of pl-run-chunk when pl-line-end's copy
+;; landed first, +8.4% on peephole_lines. The gate has its own fuel below, and
+;; opt-inline-function adds this back when it decides whether SSA
+;; reconstruction has anything new to rebuild.
+(define opt-inline-caller-hot-loop-blocks : i64
+  0)
 (define opt-inline-pred-renames : (__tl_dyn-array OptInlinePredRenameList)
   (make-array (OptInlinePredRenameList.Nil)))
 
@@ -65774,6 +65637,7 @@
     (set! opt-inline-caller-facts-ready? false)
     (array-set! opt-inline-caller-loop-labels 0 (OptLabelSet.Nil))
     (set! opt-inline-caller-has-bounds? false)
+    (set! opt-inline-caller-hot-loop-blocks 0)
     (set! opt-inline-current-block-label (ir.compiler-ir-label-none))))
 
 (define (opt-inline-caller-facts-ensure!) : unit
@@ -65989,6 +65853,146 @@
     (opt-inline-bounds-loop-site-in-loop?)
     (opt-inline-bounds-loop-cascade-safe?)
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
+
+;; --- hot loop leaves: admission past the duplication ceiling -------------
+;;
+;; The census above stops answering at two references: one is absorbed, two are
+;; duplicated, and past opt-inline-dup-max-refcount a loop-bearing callee kept
+;; its call at every site. The measured occupant of that class is gvn_table's
+;; hashmap probe, `gvn-facts-slot`: 114 instructions in 29 blocks as the inline
+;; stage sees it, call-free, one linear-probe loop, referenced from seven sites
+;; in six callers. C inlines the whole chain into one blob; this compiler kept
+;; the boundary at all seven, and the row prices the callee at 248.6M dynamic
+;; instructions, 18.4% of the benchmark, before any cross-boundary hoisting the
+;; barrier blocks.
+;;
+;; Admission asks, in cost order:
+;;
+;;   1. the census places the callee past the duplication ceiling -- three or
+;;      more references. Absorption and duplication keep their own bands;
+;;      widening THIS class to single- and two-reference callees was measured
+;;      and loses exactly the way the legacy bands document: absorbing the
+;;      53-88 instruction loop leaves into their loop callers (it-slice-eq?
+;;      and it-hash-words into it-intern-slice, the peephole scanner leaves,
+;;      qs-checksum into main) regressed intern_table +22%, peephole_lines
+;;      +14%, opt_quicksort +6%, and cfg_domloops +2% through caller
+;;      allocation churn, so the reference clause stays;
+;;   2. the body is not address-taken;
+;;   3. the caller does not balloon: the copy spends the gate's OWN per-caller
+;;      block fuel (opt-inline-hot-loop-leaf-block-fuel), and the heavy gate
+;;      is asked about total caller growth. The shared block fuel is
+;;      deliberately NOT spent: it is what the caller's banked single-reference
+;;      absorptions draw on, and spending it evicted pl-globl-line?'s
+;;      absorption out of pl-run-chunk when pl-line-end's copy landed first,
+;;      +8.4% on peephole_lines -- an import must never evict a banked inline;
+;;   4. the body is call-free. A clone is bounded by the callee's own size only
+;;      while nothing inside it can bring another body along, and the
+;;      multiblock clone path miscompiles call-carrying clones (#6307). This
+;;      clause is what separates the admitted leaf from #6307's failing
+;;      shapes: ln-live-out-into!, ln-fill-tokens, ln-count-tokens, and
+;;      byte-buf-copy-slots-range-into all carry calls;
+;;   5. the retired boundary is repaid AND the import does not tax a caller
+;;      loop's allocation. Measured, those are not the same thing: an in-loop
+;;      site repays per iteration, but a body this size brings its own working
+;;      set into the caller's loop -- pl-line-end (55 instructions, 20 blocks)
+;;      copied into pl-run-chunk's per-line loop (a 34-block caller) nested the
+;;      line scan inside it and churned the loop's allocation, +8.4% on
+;;      peephole_lines. So the site rule has three tiers: inside the legacy
+;;      32/6 band (whose bodies add no second working set, the same shapes the
+;;      duplicating gate copies at two references) an in-loop site admits;
+;;      above it, an in-loop site admits only into a caller small enough that
+;;      the imported loop effectively replaces the caller's body -- the
+;;      measured pair is gvn-facts-grow, 13 blocks, whose reinsert loop takes
+;;      the probe and wins ~35M, against pl-run-chunk, 34, above; and anywhere
+;;      else only a caller with no loop of its own admits, where the imported
+;;      loop becomes the caller's only one. gvn-facts-slot's five
+;;      straight-line sites are the measured win for the loop-free tier;
+;;   6. the cascade clause, unchanged: an import must not hand a bounds-free
+;;      single-reference caller its first bounds check;
+;;   7. the body is genuinely cyclic: acyclic callees belong to the gates
+;;      above, and the forward-edge scan is the same one they run.
+;;
+;; The big tier's band is set from the measured leaf and the next shapes above
+;; it. 120 and 32 take `gvn-facts-slot` (114 instructions in 29 blocks); the
+;; shapes just refused are `gvn-scan-ints` (148 in 46, a switch-per-byte
+;; scanner whose body is a different working set from its caller's), stdlib
+;; `int->string-negative-digit-count` (92 in 37, over on blocks alone), and
+;; `ln-live-out-into!` (138, the #6307 size class). A callee copied into some
+;; of its sites keeps its own body and stays reachable from the rest: the
+;; census is built before the pass and only read during it, so no absorption
+;; bookkeeping is needed and none is claimed.
+(define (opt-inline-hot-loop-leaf-max-body) : i64
+  120)
+
+(define (opt-inline-hot-loop-leaf-max-blocks) : i64
+  32)
+
+;; Largest caller that may take a big-tier import at an in-loop site. Set from
+;; the measured pair: gvn-facts-grow (13 blocks, the whole caller is the loops
+;; the import joins) wins, pl-run-chunk (34 blocks, the import joins a working
+;; set an order larger) loses. 16 sits above the winner and below the loser.
+(define (opt-inline-hot-loop-leaf-max-caller-blocks) : i64
+  16)
+
+;; The per-caller import budget, spent from the gate's own accumulator
+;; (opt-inline-caller-hot-loop-blocks), not from the shared block fuel: see
+;; that variable's comment for the pl-run-chunk eviction it exists to prevent.
+;; 32 blocks is one copy of the largest admitted shape; a caller holding two
+;; sites of the same leaf takes the first and keeps the second's call. 64 was
+;; measured for root-of-var's second probe copy and loses +0.17% on gvn_table:
+;; the second copy's allocation churn exceeds a cold site's boundary saving.
+(define (opt-inline-hot-loop-leaf-block-fuel) : i64
+  32)
+
+;; The caller has no natural loop of its own. Read off the same lazy caller
+;; facts the site clause forces, so a candidate only pays for them once.
+(define (opt-inline-caller-loop-free?) : bool
+  (begin
+    (opt-inline-caller-facts-ensure!)
+    (= (opt-label-count (opt-inline-caller-loop-labels-shared-view)) 0)))
+
+(define (opt-inline-hot-loop-leaf-ok?
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [callee-name : i64]
+  [refs : i64]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (and
+    (> refs (opt-inline-dup-max-refcount))
+    (not (opt-inline-census-address-taken? index census callee-name))
+    ;; The heavy gate is asked about TOTAL caller growth, shared and
+    ;; gate-specific alike; the block fuel is the gate's own accumulator.
+    (not
+      (opt-inline-cost-crosses-heavy-gate?
+        caller-blocks
+        (+ added-so-far opt-inline-caller-hot-loop-blocks)
+        added-blocks))
+    (<=
+      (+ opt-inline-caller-hot-loop-blocks added-blocks)
+      (opt-inline-hot-loop-leaf-block-fuel))
+    (opt-inline-blocks-call-free? blocks)
+    ;; The three site tiers of clause 5, cheapest first: the legacy-band
+    ;; integer test runs before either lazy caller fact is forced.
+    (or
+      (and
+        (opt-inline-bounds-loop-small? blocks callee-instrs)
+        (opt-inline-bounds-loop-site-in-loop?))
+      (and
+        (<= callee-instrs (opt-inline-hot-loop-leaf-max-body))
+        (<=
+          (ir.compiler-ir-block-list-count blocks)
+          (opt-inline-hot-loop-leaf-max-blocks))
+        (or
+          (opt-inline-caller-loop-free?)
+          (and
+            (<= caller-blocks (opt-inline-hot-loop-leaf-max-caller-blocks))
+            (opt-inline-bounds-loop-site-in-loop?)))))
+    (opt-inline-bounds-loop-cascade-safe?)
+    (not (opt-inline-tiny-predicate-acyclic-reclaiming? blocks))))
 
 (define (opt-inline-bounds-leaf-cost-inline?
   [callee-instrs : i64]
@@ -66455,10 +66459,27 @@
                 ;; measured vm-run leaf selected by the shared gate (#5325).
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
+                [refs : i64
+                  (opt-inline-census-refcount index census callee-name)]
                 ;; A shared acyclic accessor is admitted on its own terms.
                 [shared-accessor? : bool
                   (opt-inline-shared-accessor-ok?
-                    (opt-inline-census-refcount index census callee-name)
+                    refs
+                    callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
+                ;; A call-free cyclic leaf past the duplication ceiling is
+                ;; admitted on its own terms too: it keeps its own body
+                ;; wherever this gate does not take it, so no absorb credit is
+                ;; claimed.
+                [hot-loop-leaf? : bool
+                  (opt-inline-hot-loop-leaf-ok?
+                    index
+                    census
+                    callee-name
+                    refs
                     callee-instrs
                     cblocks
                     added-blocks
@@ -66471,37 +66492,46 @@
                       absorbable-here?
                       const-args
                       np)
-                    shared-accessor?)]
+                    shared-accessor?
+                    hot-loop-leaf?)]
                 [bounds-loop-ok? : bool
-                  (opt-inline-multiblock-bounds-loop-ok?
-                    has-bounds?
-                    absorbable-here?
-                    callee-instrs
-                    callee-name
-                    cblocks)]
+                  (or
+                    (opt-inline-multiblock-bounds-loop-ok?
+                      has-bounds?
+                      absorbable-here?
+                      callee-instrs
+                      callee-name
+                      cblocks)
+                    hot-loop-leaf?)]
+                [legacy-cost-ok? : bool
+                  (or
+                    (opt-inline-cost-inline?
+                      callee-instrs
+                      added-blocks
+                      const-args
+                      (and
+                        absorbable-here?
+                        (not opt-inline-current-phi-predecessor?))
+                      caller-blocks
+                      added-so-far)
+                    (and
+                      tiny-predicate?
+                      (opt-inline-tiny-predicate-cost-inline?
+                        callee-instrs
+                        added-blocks
+                        const-args
+                        caller-blocks
+                        added-so-far))
+                    shared-accessor?)]
                 [inline? : bool
                   (and
                     bounds-ok?
                     bounds-loop-ok?
-                    (or
-                      (opt-inline-cost-inline?
-                        callee-instrs
-                        added-blocks
-                        const-args
-                        (and
-                          absorbable-here?
-                          (not opt-inline-current-phi-predecessor?))
-                        caller-blocks
-                        added-so-far)
-                      (and
-                        tiny-predicate?
-                        (opt-inline-tiny-predicate-cost-inline?
-                          callee-instrs
-                          added-blocks
-                          const-args
-                          caller-blocks
-                          added-so-far))
-                      shared-accessor?))]
+                    (or legacy-cost-ok? hot-loop-leaf?))]
+                ;; True only when the hot-loop-leaf gate is what admits this
+                ;; site: its blocks spend the gate's own fuel, not the shared
+                ;; accumulator the caller's banked absorptions draw on.
+                [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-from
                     instrs
@@ -66543,7 +66573,20 @@
                             (if stage-args?
                               cvars
                               (opt-inline-frame-growth cvars np)))]
-                        [added2 : i64 (+ prefix-added added-blocks)]
+                        [_hot-loop-bump : unit
+                          (if hot-import?
+                            (set!
+                              opt-inline-caller-hot-loop-blocks
+                              (+ opt-inline-caller-hot-loop-blocks added-blocks))
+                            unit)]
+                        ;; A hot-loop import's blocks stay out of the shared
+                        ;; accumulator; the gate charged its own fuel above.
+                        [added2 : i64
+                          (+
+                            prefix-added
+                            (if hot-import?
+                              0
+                              added-blocks))]
                         [stage-instrs : ir.CompilerIrInstrList
                           (if stage-args?
                             (opt-inline-stage-param-instrs
@@ -67097,10 +67140,24 @@
                 ;; Keep the span-aware path on the same exact vm-run decision.
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
+                [refs : i64
+                  (opt-inline-census-refcount index census callee-name)]
                 ;; A shared acyclic accessor is admitted on its own terms.
                 [shared-accessor? : bool
                   (opt-inline-shared-accessor-ok?
-                    (opt-inline-census-refcount index census callee-name)
+                    refs
+                    callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
+                ;; Same hot-loop-leaf decision as the non-span path.
+                [hot-loop-leaf? : bool
+                  (opt-inline-hot-loop-leaf-ok?
+                    index
+                    census
+                    callee-name
+                    refs
                     callee-instrs
                     cblocks
                     added-blocks
@@ -67113,37 +67170,44 @@
                       absorbable-here?
                       const-args
                       np)
-                    shared-accessor?)]
+                    shared-accessor?
+                    hot-loop-leaf?)]
                 [bounds-loop-ok? : bool
-                  (opt-inline-multiblock-bounds-loop-ok?
-                    has-bounds?
-                    absorbable-here?
-                    callee-instrs
-                    callee-name
-                    cblocks)]
+                  (or
+                    (opt-inline-multiblock-bounds-loop-ok?
+                      has-bounds?
+                      absorbable-here?
+                      callee-instrs
+                      callee-name
+                      cblocks)
+                    hot-loop-leaf?)]
+                [legacy-cost-ok? : bool
+                  (or
+                    (opt-inline-cost-inline?
+                      callee-instrs
+                      added-blocks
+                      const-args
+                      (and
+                        absorbable-here?
+                        (not opt-inline-current-phi-predecessor?))
+                      caller-blocks
+                      added-so-far)
+                    (and
+                      tiny-predicate?
+                      (opt-inline-tiny-predicate-cost-inline?
+                        callee-instrs
+                        added-blocks
+                        const-args
+                        caller-blocks
+                        added-so-far))
+                    shared-accessor?)]
                 [inline? : bool
                   (and
                     bounds-ok?
                     bounds-loop-ok?
-                    (or
-                      (opt-inline-cost-inline?
-                        callee-instrs
-                        added-blocks
-                        const-args
-                        (and
-                          absorbable-here?
-                          (not opt-inline-current-phi-predecessor?))
-                        caller-blocks
-                        added-so-far)
-                      (and
-                        tiny-predicate?
-                        (opt-inline-tiny-predicate-cost-inline?
-                          callee-instrs
-                          added-blocks
-                          const-args
-                          caller-blocks
-                          added-so-far))
-                      shared-accessor?))]
+                    (or legacy-cost-ok? hot-loop-leaf?))]
+                ;; Same hot-import accounting as the non-span path.
+                [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-with-spans-from
                     instrs
@@ -67188,7 +67252,19 @@
                             (if stage-args?
                               cvars
                               (opt-inline-frame-growth cvars np)))]
-                        [added2 : i64 (+ prefix-added added-blocks)]
+                        [_hot-loop-bump : unit
+                          (if hot-import?
+                            (set!
+                              opt-inline-caller-hot-loop-blocks
+                              (+ opt-inline-caller-hot-loop-blocks added-blocks))
+                            unit)]
+                        ;; Same hot-import accounting as the non-span path.
+                        [added2 : i64
+                          (+
+                            prefix-added
+                            (if hot-import?
+                              0
+                              added-blocks))]
                         [stage-instrs : ir.CompilerIrInstrList
                           (if stage-args?
                             (opt-inline-stage-param-instrs
@@ -67777,7 +67853,7 @@
                     ret
                     new-vars
                     repaired-blocks)
-                  (> added 0))))]))]))
+                  (> (+ added opt-inline-caller-hot-loop-blocks) 0))))]))]))
 
 (define (opt-inline-function-with-spans
   [type-segment-bases : i64]
@@ -67834,7 +67910,7 @@
                 (if (opt-inline-structure-ok-reclaiming? repaired-blocks)
                   (OptInlineSpanProgram.Program
                     (ir.compiler-ir-function-cons
-                      (if (> added 0)
+                      (if (> (+ added opt-inline-caller-hot-loop-blocks) 0)
                         (opt-ssa-construct-function type-segment-bases next)
                         next)
                       ir.CompilerIrFunctionList.Nil)
@@ -69647,50 +69723,6 @@
                     instrs)])
               false)]
           [(ir.CompilerIrBlockList.Nil) false]))]))
-
-(define (opt-loop-bce-argc-summary-test-function [has-entry : bool]) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
-    (if has-entry
-      0
-      1)
-    (ir.CompilerIrParamList.Nil)
-    (ast.AstType.I64)
-    2
-    (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
-        (ir.compiler-ir-label "entry")
-        (if has-entry
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.EntryArgc 0)
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Mov
-                1
-                (ir.CompilerIrValue.Var 0)
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-                (ir.CompilerIrInstrList.Nil))))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Mov
-              0
-              (ir.CompilerIrValue.I64 7)
-              (ast.AstType.I64))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-              (ir.CompilerIrInstrList.Nil)))))
-      (ir.CompilerIrBlockList.Nil))))
-
-(define (opt-loop-bce-argc-summary-prescan-self-test?) : bool
-  (and
-    (not
-      (opt-loop-bce-function-returns-argc?
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-loop-bce-argc-summary-test-function false)))
-    (opt-loop-bce-function-returns-argc?
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (opt-loop-bce-argc-summary-test-function true))))
 
 (define (opt-loop-bce-argc-return-map
   [type-segment-bases : i64]

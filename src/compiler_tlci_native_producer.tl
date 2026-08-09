@@ -3137,6 +3137,20 @@
                   ops-count)]
               [(and
                   (or
+                    (string.eq head "comptime.expr-struct-set")
+                    (string.eq head "expr-struct-set"))
+                  (= argc 3))
+                (embedded-native-computed-ternary-ops
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 2 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-struct-set-from-value)
+                  ops
+                  ops-count)]
+              [(and
+                  (or
                     (string.eq head "comptime.expr-tuple-ref")
                     (string.eq head "expr-tuple-ref"))
                   (= argc 2))
@@ -6487,6 +6501,7 @@
     "(extern comptime-host-expr-tuple-ref (:symbol \"_tl_comptime_host_expr-tuple-ref\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-struct-get (:symbol \"_tl_comptime_host_expr-struct-get\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-struct-get-from-value (:symbol \"_tl_comptime_host_expr-struct-get-from-value\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-struct-set-from-value (:symbol \"_tl_comptime_host_expr-struct-set-from-value\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-array-set (:symbol \"_tl_comptime_host_expr-array-set\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-struct-set (:symbol \"_tl_comptime_host_expr-struct-set\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-return (:symbol \"_tl_comptime_host_expr-return\") : (-> i64 i64 i64 i64 i64 i64))\n"

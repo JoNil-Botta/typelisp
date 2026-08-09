@@ -9447,15 +9447,20 @@
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
+  [planned-count : String]
+  [planned-index : String]
+  [planned-mask : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
     [count-reg : String
-      (compiler-backend-scavenge-rcx-reg-here
-        (array.make-array String 0)
-        0
-        backend-state)]
+      (if (string.eq planned-count "")
+        (compiler-backend-scavenge-rcx-reg-here
+          (array.make-array String 0)
+          0
+          backend-state)
+        planned-count)]
     [index-home : String
       (compiler-backend-simd-index-home backend-state assignments index)]
     [index-exclude : (__tl_dyn-array String)
@@ -9465,15 +9470,26 @@
         index
         end-value)]
     [index-reg : String
-      (if (and
-        (not (string.eq index-home ""))
-        (not (string.eq index-home count-reg)))
-        index-home
-        (compiler-backend-scavenge-reg-here index-exclude 7 "%r8" backend-state))]
+      (if (string.eq planned-index "")
+        (if (and
+          (not (string.eq index-home ""))
+          (not (string.eq index-home count-reg)))
+          index-home
+          (compiler-backend-scavenge-reg-here
+            index-exclude
+            7
+            "%r8"
+            backend-state))
+        planned-index)]
     [mask-exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-exclude-append index-exclude 7 index-reg)]
     [mask-reg : String
-      (compiler-backend-scavenge-reg-here mask-exclude 8 "%r9" backend-state)]
+      (compiler-backend-planned-or-scavenge-reg-here
+        planned-mask
+        mask-exclude
+        8
+        "%r9"
+        backend-state)]
     [mask-gpr : String (compiler-backend-avx512-mask-gpr-part mask-reg lanes)]
     (match (if (string.eq index-reg index-home)
       (ResultCompilerBackend.Ok "")
@@ -9618,6 +9634,9 @@
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
+  [planned-count : String]
+  [planned-index : String]
+  [planned-mask : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
@@ -9662,6 +9681,9 @@
                   index
                   end-value
                   lanes
+                  planned-count
+                  planned-index
+                  planned-mask
                   instr-diag
                   backend-state)
                   [(ResultCompilerBackend.Ok asm)
@@ -9686,6 +9708,9 @@
               index
               end-value
               lanes
+              planned-count
+              planned-index
+              planned-mask
               instr-diag
               backend-state)
               [(ResultCompilerBackend.Ok asm)
@@ -12204,6 +12229,9 @@
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
+  [planned-count : String]
+  [planned-index : String]
+  [planned-mask : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?
@@ -12228,6 +12256,9 @@
       index
       end-value
       lanes
+      planned-count
+      planned-index
+      planned-mask
       instr-diag
       backend-state)))
 
@@ -45977,6 +46008,9 @@
           index
           len
           lanes
+          planned-scratch0
+          planned-scratch1
+          planned-scratch2
           instr-diag
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.EntryArgc dst)
@@ -65511,9 +65545,10 @@
 (define (compiler-backend-emit-program-for-target
   [program : compiler_ir_types.CompilerIrProgram]
   [target : CompilerBackendTarget]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target
+  (compiler-backend-emit-program-target-with-mode
     program
     target
+    (CompilerBackendMode.Scalar)
     (compiler_ir_types.compiler-source-spans-empty)
     true))
 
@@ -65526,9 +65561,10 @@
 (define (compiler-backend-emit-program-linux-with-spans
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target
+  (compiler-backend-emit-program-target-with-mode
     program
     (CompilerBackendTarget.Linux)
+    (CompilerBackendMode.Scalar)
     spans
     true))
 
@@ -65536,19 +65572,17 @@
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [target : CompilerBackendTarget]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target program target spans true))
+  (compiler-backend-emit-program-target-with-mode
+    program
+    target
+    (CompilerBackendMode.Scalar)
+    spans
+    true))
 
 (define (compiler-backend-emit-program-with-spans-for-target-and-entry
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [target : CompilerBackendTarget]
-  [emit-entry : bool]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target program target spans emit-entry))
-
-(define (compiler-backend-emit-program-target
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [spans : compiler_ir_types.CompilerSourceSpans]
   [emit-entry : bool]) : ResultCompilerBackend
   (compiler-backend-emit-program-target-with-mode
     program
@@ -65563,14 +65597,17 @@
   [mode : CompilerBackendMode]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [emit-entry : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+  (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     program
     target
     mode
     spans
     emit-entry
     false
-    false))
+    false
+    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-backend-emit-program-prefix-buffer
   [target : CompilerBackendTarget]
@@ -66192,66 +66229,6 @@
       (compiler-backend-state-retire-function-state! backend-state)
       (compiler-backend-state-clear-emission-arena! backend-state)
       result)))
-
-(define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state
-  [type-segment-bases : i64]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [pic-emit? : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    type-segment-bases
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    pic-emit?
-    profile-state))
-
-(define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
-  [type-segment-bases : i64]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [pic-emit? : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state
-    type-segment-bases
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    pic-emit?
-    (profile_state.compiler-profile-state-new)))
-
-(define (compiler-backend-emit-program-target-with-mode-buffer-and-crt
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [pic-emit? : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    pic-emit?))
 
 (define (compiler-backend-object-value-ref
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -69621,24 +69598,6 @@
         crt-entry
         profile-state))))
 
-(define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt
-  [type-segment-bases : i64]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendObject
-  (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
-    type-segment-bases
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    (profile_state.compiler-profile-state-new)))
-
 (define (compiler-backend-emit-program-object-image-target-with-mode-and-crt
   [program : compiler_ir_types.CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -69646,14 +69605,15 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendObject
-  (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt
+  (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     program
     target
     mode
     spans
     emit-entry
-    crt-entry))
+    crt-entry
+    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
@@ -69680,31 +69640,18 @@
       crt-entry
       profile-state)))
 
-(define (compiler-backend-emit-program-object-image-target-with-mode
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackendObject
-  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
-    program
-    target
-    mode
-    spans
-    emit-entry
-    false))
-
 (define (compiler-backend-emit-program-object-image-target
   [program : compiler_ir_types.CompilerIrProgram]
   [target : CompilerBackendTarget]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [emit-entry : bool]) : ResultCompilerBackendObject
-  (compiler-backend-emit-program-object-image-target-with-mode
+  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
     program
     target
     (CompilerBackendMode.Scalar)
     spans
-    emit-entry))
+    emit-entry
+    false))
 
 (define (compiler-backend-emit-program-object-image-linux
   [program : compiler_ir_types.CompilerIrProgram]
@@ -74490,44 +74437,6 @@
                         backend-state)
                       (ResultCompilerBackendBuffer.Err message))])))))))))
 
-(define (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state
-  [type-segment-bases : i64]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    type-segment-bases
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    profile-state))
-
-(define (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt
-  [type-segment-bases : i64]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state
-    type-segment-bases
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    (profile_state.compiler-profile-state-new)))
-
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
   [program : compiler_ir_types.CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -74535,14 +74444,16 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt
+  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     program
     target
     mode
     spans
     emit-entry
-    crt-entry))
+    crt-entry
+    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
@@ -75217,60 +75128,6 @@
       [(ResultCompilerBackendBuffer.Err diag)
         (ResultCompilerBackendPic.Err diag)])))
 
-(define (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
-  [type-segment-bases : i64]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendPic
-  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    type-segment-bases
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    profile-state))
-
-(define (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt
-  [type-segment-bases : i64]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendPic
-  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
-    type-segment-bases
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    (profile_state.compiler-profile-state-new)))
-
-(define (compiler-backend-emit-program-pic-target-with-mode-and-crt
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendPic
-  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry))
-
 (define (compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -75298,13 +75155,16 @@
   [mode : CompilerBackendMode]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [emit-entry : bool]) : ResultCompilerBackendPic
-  (compiler-backend-emit-program-pic-target-with-mode-and-crt
+  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     program
     target
     mode
     spans
     emit-entry
-    false))
+    false
+    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-backend-emit-source-pic-for-target
   [src : String]

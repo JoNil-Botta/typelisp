@@ -9,6 +9,7 @@
 (import compiler_load as load)
 (import compiler_parse_core as parse_core)
 (import lint_driver_core)
+(import lint_driver_core_tests)
 (import lint_core)
 
 (define (lint-driver-smoke-write-text [path : String] [contents : String]) : unit
@@ -41,7 +42,8 @@
         "lint_driver_smoke_test.tl"
         (lint-driver-smoke-bare-self-named-import-macro-source)
         (lint_svec.new))]
-    (if (lint_driver_core.selfhost-lint-unused-import-finding-ok? findings)
+    (if (lint_driver_core_tests.selfhost-lint-unused-import-finding-ok?
+      findings)
       42
       39)))
 
@@ -622,25 +624,25 @@
 (define (lint-driver-smoke-source-rule-count-with-name-case
   [source : String]
   [rule : String]) : i64
-  (lint_driver_core.selfhost-lint-findings-rule-count
+  (lint_driver_core_tests.selfhost-lint-findings-rule-count
     (lint-driver-smoke-source-findings-with-name-case source)
     rule))
 
 (define (lint-driver-smoke-name-case-rule-count
   [findings : lint_core.LintFindings]) : i64
   (+
-    (lint_driver_core.selfhost-lint-findings-rule-count
+    (lint_driver_core_tests.selfhost-lint-findings-rule-count
       findings
       (lint_core.lint-rule-global-name-case-id))
     (+
-      (lint_driver_core.selfhost-lint-findings-rule-count
+      (lint_driver_core_tests.selfhost-lint-findings-rule-count
         findings
         (lint_core.lint-rule-function-name-case-id))
       (+
-        (lint_driver_core.selfhost-lint-findings-rule-count
+        (lint_driver_core_tests.selfhost-lint-findings-rule-count
           findings
           (lint_core.lint-rule-local-name-case-id))
-        (lint_driver_core.selfhost-lint-findings-rule-count
+        (lint_driver_core_tests.selfhost-lint-findings-rule-count
           findings
           (lint_core.lint-rule-type-name-case-id))))))
 
@@ -693,14 +695,14 @@
 (define (lint-driver-smoke-source-rule-count-with-redundant-function-name
   [source : String]
   [rule : String]) : i64
-  (lint_driver_core.selfhost-lint-findings-rule-count
+  (lint_driver_core_tests.selfhost-lint-findings-rule-count
     (lint-driver-smoke-source-findings-with-redundant-function-name source)
     rule))
 
 (define (lint-driver-smoke-source-rule-count-with-prefer-dotted-field
   [source : String]
   [rule : String]) : i64
-  (lint_driver_core.selfhost-lint-findings-rule-count
+  (lint_driver_core_tests.selfhost-lint-findings-rule-count
     (lint-driver-smoke-source-findings-with-prefer-dotted-field source)
     rule))
 
@@ -871,14 +873,14 @@
       [(not (= (lint_core.lint-findings-count reported) 7)) 40]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
               reported
               (lint_core.lint-rule-unreachable-code-id))
             5))
         41]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
               reported
               (lint_core.lint-rule-redundant-divergence-padding-id))
             2))
@@ -905,7 +907,7 @@
       [(not (= (lint_core.lint-findings-count reported) 4)) 46]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
               reported
               (lint_core.lint-rule-redundant-divergence-padding-id))
             4))
@@ -1486,34 +1488,36 @@
     (cond
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count reported rule)
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+              reported
+              rule)
             1))
         81]
       [(not (lint-driver-smoke-finding-rule-line-ok? reported 0 rule 6)) 82]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-source-rule-count
+            (lint_driver_core_tests.selfhost-lint-source-rule-count
               (lint-driver-smoke-suppressed-copy-on-update-struct-source)
               rule)
             0))
         83]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-source-rule-count
+            (lint_driver_core_tests.selfhost-lint-source-rule-count
               (lint-driver-smoke-multiple-field-copy-on-update-source)
               rule)
             0))
         84]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-source-rule-count
+            (lint_driver_core_tests.selfhost-lint-source-rule-count
               (lint-driver-smoke-other-value-copy-on-update-source)
               rule)
             0))
         85]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-source-rule-count
+            (lint_driver_core_tests.selfhost-lint-source-rule-count
               (lint-driver-smoke-enum-copy-on-update-source)
               rule)
             0))
@@ -1530,7 +1534,7 @@
         88]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-source-rule-count
+            (lint_driver_core_tests.selfhost-lint-source-rule-count
               (lint-driver-smoke-dot-copy-on-update-struct-source)
               rule)
             1))
@@ -1549,14 +1553,16 @@
     (cond
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count reported rule)
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
+              reported
+              rule)
             1))
         90]
       [(not (lint-driver-smoke-finding-rule-depth-line-ok? reported 0 rule 0 5))
         91]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
               set-reported
               rule)
             1))
@@ -1571,7 +1577,7 @@
         93]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-source-rule-count
+            (lint_driver_core_tests.selfhost-lint-source-rule-count
               (lint-driver-smoke-prefer-dotted-field-source)
               rule)
             0))
@@ -1629,26 +1635,26 @@
     (cond
       [(not
           (=
-            (lint_driver_core.selfhost-lint-source-rule-count
+            (lint_driver_core_tests.selfhost-lint-source-rule-count
               (lint-driver-smoke-redundant-import-alias-source)
               rule)
             1))
         69]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-source-finding-count
+            (lint_driver_core_tests.selfhost-lint-source-finding-count
               (lint-driver-smoke-clean-default-import-alias-source))
             0))
         71]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-source-finding-count
+            (lint_driver_core_tests.selfhost-lint-source-finding-count
               (lint-driver-smoke-renamed-import-alias-source))
             0))
         72]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-source-rule-count
+            (lint_driver_core_tests.selfhost-lint-source-rule-count
               (lint-driver-smoke-suppressed-redundant-import-alias-source)
               rule)
             0))
@@ -1779,35 +1785,35 @@
         85]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
               findings
               (lint_core.lint-rule-global-name-case-id))
             1))
         86]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
               findings
               (lint_core.lint-rule-function-name-case-id))
             4))
         87]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
               findings
               (lint_core.lint-rule-type-name-case-id))
             2))
         88]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
               findings
               (lint_core.lint-rule-local-name-case-id))
             5))
         89]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
               binder-findings
               (lint_core.lint-rule-local-name-case-id))
             6))
@@ -1865,7 +1871,7 @@
       [(not (= (lint-driver-smoke-name-case-rule-count module-findings) 3)) 96]
       [(not
           (=
-            (lint_driver_core.selfhost-lint-findings-rule-count
+            (lint_driver_core_tests.selfhost-lint-findings-rule-count
               module-findings
               (lint_core.lint-rule-unused-variable-id))
             0))
@@ -1888,9 +1894,10 @@
     ;; runtime linked even when this smoke only exercises the pure source path.
     (io.print-string "")
     (let
-      [core-result : i64 (lint_driver_core.compiler-lint-driver-self-test)]
+      [core-result : i64
+        (lint_driver_core_tests.compiler-lint-driver-self-test)]
       [unused-import-result : i64
-        (lint_driver_core.selfhost-lint-unused-imports-self-test)]
+        (lint_driver_core_tests.selfhost-lint-unused-imports-self-test)]
       [bare-import-result : i64
         (lint-driver-smoke-bare-self-named-import-macro-unused-test)]
       [redundant-import-result : i64
@@ -1898,13 +1905,13 @@
       [redundant-name-result : i64
         (lint-driver-smoke-redundant-function-name-self-test)]
       [dead-code-result : i64
-        (lint_driver_core.selfhost-lint-package-dead-code-self-test)]
+        (lint_driver_core_tests.selfhost-lint-package-dead-code-self-test)]
       [unused-assignment-result : i64
-        (lint_driver_core.selfhost-lint-unused-assignment-self-test)]
+        (lint_driver_core_tests.selfhost-lint-unused-assignment-self-test)]
       [single-cell-result : i64
-        (lint_driver_core.selfhost-lint-single-element-array-cell-self-test)]
+        (lint_driver_core_tests.selfhost-lint-single-element-array-cell-self-test)]
       [dynamic-array-literal-result : i64
-        (lint_driver_core.selfhost-lint-dynamic-array-literal-self-test)]
+        (lint_driver_core_tests.selfhost-lint-dynamic-array-literal-self-test)]
       [concat-result : i64
         (lint-driver-smoke-deprecated-string-concat-self-test)]
       [no-effect-result : i64 (lint-driver-smoke-no-effect-self-test)]

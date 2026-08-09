@@ -3935,6 +3935,60 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-string-eq-question)))
 
+;: Bare public helper spellings whose fallback becomes visible only when the
+;: current module imports `stdlib.string`. The typechecker and syntax-only
+;: unused-import classifier share this exact compatibility catalog so ordinary
+;: dotted imports never become general flat imports.
+(define (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+  [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (or
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-string-length
+        compiler-builtin-id-string-ref
+        compiler-builtin-id-char-at
+        compiler-builtin-id-eq)
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-string-eq
+        compiler-builtin-id-string-eq-question
+        compiler-builtin-id-string-append
+        compiler-builtin-id-string-concat))))
+
+(cfg
+  test
+  (test
+    compiler-builtin-stdlib-string-bare-helper-catalog
+    (begin
+      (compiler-builtin-refresh!)
+      (if (and
+        (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+          compiler-builtin-id-string-length)
+        (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+          compiler-builtin-id-string-ref)
+        (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+          compiler-builtin-id-char-at)
+        (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+          compiler-builtin-id-eq)
+        (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+          compiler-builtin-id-string-eq)
+        (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+          compiler-builtin-id-string-eq-question)
+        (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+          compiler-builtin-id-string-append)
+        (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+          compiler-builtin-id-string-concat)
+        (not
+          (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+            compiler-builtin-id-string-to-int))
+        (not
+          (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
+            (ci.intern "trim"))))
+        unit
+        (io.panic "compiler builtin stdlib.string bare helper catalog failed")))))
+
 (define (compiler-builtin-typecheck-string-to-int-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)

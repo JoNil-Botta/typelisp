@@ -1094,6 +1094,19 @@ fi
 # The reconciled #5675/#6173 tree retains 52 segments: the authoritative
 # Windows probe measured 3,357,074 used nodes, 3,407,872 capacity, and
 # 109,051,904 physical payload bytes.
+# #6371's pre-reconciliation relocation of compiler self-test fixtures out of
+# production modules brought ast_expr_pool.macro_expand back to 51 segments:
+# the authoritative Windows probe measured 3,331,983 used nodes. Reconciliation
+# with current main's added compiler features returns the combined tree to 52
+# segments: 3,361,826 used nodes, 3,407,872 capacity, and 109,051,904 physical
+# payload bytes.
+# #6384's loop-carried memory aggregate provenance and regression coverage
+# crossed ast_expr_pool.macro_expand from 52 to 53 segments; the authoritative
+# Windows CI probe measured 3,408,354 used nodes, 3,473,408 capacity, and
+# 111,149,056 physical payload bytes.
+# Reconciled with #6371's fixture relocation, the combined tree remains at 52
+# segments: the authoritative Windows probe measured 3,362,558 used nodes,
+# 3,407,872 capacity, and 109,051,904 physical payload bytes.
 # #5937's persistent typechecker list storage and focused wide/deep tests
 # crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
 # Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload
@@ -1132,6 +1145,10 @@ fi
 # crossed that boundary from 31 to 32 segments: the authoritative Windows probe
 # measured 2,034,470 used nodes, 2,097,152 capacity, and 67,108,864 physical
 # payload bytes.
+# #6371's relocation of compiler self-test fixtures out of production modules
+# brings the combined tree back to 31 segments: the authoritative Windows probe
+# measured 2,008,157 used nodes, 2,031,616 capacity, and 65,011,712 physical
+# payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1168,7 +1185,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 52 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 31 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \
@@ -1605,7 +1622,8 @@ fi
 # Compile one public fixture through the embedded native catalog and through
 # forced source interpretation, require every named macro to execute on the
 # native route, and compare the resulting assembly byte-for-byte. This is the
-# route-level contract for the last string/computed-body residuals (#5606/#5627);
+# route-level contract for the last string/computed-body residuals
+# (#5606/#5627/#5999);
 # the image census alone cannot catch a callback returning the wrong syntax.
 verify_residual_route() {
     _residual_label=$1
@@ -1718,13 +1736,14 @@ if ! cmp -s "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" \
     fail "native and interpreted for diagnostics differ"
 fi
 
-echo "[compile-profile] verify json/serialize residual routing differential (#5606/#5627)"
+echo "[compile-profile] verify json/serialize residual routing differential (#5606/#5627/#5999)"
 verify_residual_route \
     serialize-json-residual \
     "$ROOT/tests/integration/stdlib_serialize_json.tl" \
     "stdlib.json/decode-int" \
     "stdlib.serialize/encode-value" \
     "stdlib.serialize/decode-value" \
+    "stdlib.serialize/decode-field" \
     "stdlib.serialize/enum-source-import" \
     "stdlib.serialize/nested-import-for-type" \
     "stdlib.serialize/encode-tuple-elements" \

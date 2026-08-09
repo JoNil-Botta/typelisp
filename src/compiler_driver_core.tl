@@ -1728,24 +1728,8 @@
   [target : compiler_backend.CompilerBackendTarget]
   [has-target : bool]
   [opt-level : i64]) : ResultCompilerDriver
-  (compiler-driver-emit-lowered-with-level-and-entry
-    input-path
-    program
-    spans
-    target
-    has-target
-    opt-level
-    true))
-
-(define (compiler-driver-emit-lowered-with-level-and-entry
-  [input-path : String]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
-  [has-target : bool]
-  [opt-level : i64]
-  [emit-entry : bool]) : ResultCompilerDriver
-  (compiler-driver-emit-lowered-with-level-mode-and-entry
+  (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+    (compiler_ast_types.ast-node-pool-reader-context-current)
     input-path
     program
     spans
@@ -1753,7 +1737,11 @@
     has-target
     (compiler_backend.CompilerBackendMode.Scalar)
     opt-level
-    emit-entry))
+    true
+    false
+    (profile_state.compiler-profile-state-new)
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active))))
 
 ;; The lowered IR functions live in a dedicated arena
 ;; (lower-ir-arena); at opt levels >= 1 the optimizer deep-clones every
@@ -1782,28 +1770,6 @@
 ;; consumed by the backend and can be dropped at any opt level.
 (define (compiler-driver-release-lower-arenas-after-emit!) : unit
   (compiler_lower.lower-arenas-release!))
-
-(define (compiler-driver-emit-lowered-with-level-mode-and-entry
-  [input-path : String]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
-  [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
-  [opt-level : i64]
-  [emit-entry : bool]) : ResultCompilerDriver
-  (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state
-    (compiler_ast_types.ast-node-pool-reader-context-current)
-    input-path
-    program
-    spans
-    target
-    has-target
-    mode
-    opt-level
-    emit-entry
-    false
-    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -1891,36 +1857,6 @@
                           (compiler_diagnostic.compiler-diagnostic-with-path
                             (box-get diag)
                             input-path))))]))))]))))
-
-(define (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state
-  [pools : compiler_ast_types.AstNodePoolContext]
-  [input-path : String]
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
-  [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
-  [opt-level : i64]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriver
-  (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
-    (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
-      pools
-      input-path
-      program
-      spans
-      target
-      has-target
-      mode
-      opt-level
-      emit-entry
-      crt-entry
-      profile-state
-      backend-state)))
 
 (define (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
   [pools : compiler_ast_types.AstNodePoolContext]

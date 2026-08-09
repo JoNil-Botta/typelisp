@@ -14,17 +14,17 @@
         (ir.CompilerIrSpmdCallArg.Arg
           (ir.CompilerIrSpmdValueClass.Uniform)
           (ir.CompilerIrValue.Var 1)
-          (reg.compiler-reg-i64-ty))
+          (reg_tests.compiler-reg-i64-ty))
         (ir.ir-spmd-call-arg-cons
           (ir.CompilerIrSpmdCallArg.Arg
             (ir.CompilerIrSpmdValueClass.Varying)
             (ir.CompilerIrValue.Var 2)
-            (reg.compiler-reg-i64-ty))
+            (reg_tests.compiler-reg-i64-ty))
           ir.CompilerIrSpmdCallArgList.Nil))]
     (ir.CompilerIrFunction.Function
       (ci.intern-generated-canonical-name "spmd_call")
       ir.CompilerIrParamList.Nil
-      (reg.compiler-reg-i64-ty)
+      (reg_tests.compiler-reg-i64-ty)
       5
       (ir.compiler-ir-block-cons
         (ir.compiler-ir-block
@@ -33,17 +33,17 @@
             (ir.CompilerIrInstr.Mov
               0
               (ir.CompilerIrValue.I64 1)
-              (reg.compiler-reg-i64-ty))
+              (reg_tests.compiler-reg-i64-ty))
             (ir.compiler-ir-instr-cons
               (ir.CompilerIrInstr.Mov
                 1
                 (ir.CompilerIrValue.I64 2)
-                (reg.compiler-reg-i64-ty))
+                (reg_tests.compiler-reg-i64-ty))
               (ir.compiler-ir-instr-cons
                 (ir.CompilerIrInstr.Mov
                   2
                   (ir.CompilerIrValue.I64 3)
-                  (reg.compiler-reg-i64-ty))
+                  (reg_tests.compiler-reg-i64-ty))
                 (ir.compiler-ir-instr-cons
                   (ir.ir-instr-spmd-call
                     (ci.intern-generated-canonical-name "spmd_helper")
@@ -54,12 +54,12 @@
                     (ir.CompilerIrSpmdCallResult.Value
                       3
                       (ir.CompilerIrSpmdValueClass.Varying)
-                      (reg.compiler-reg-i64-ty)))
+                      (reg_tests.compiler-reg-i64-ty)))
                   (ir.compiler-ir-instr-cons
                     (ir.CompilerIrInstr.Mov
                       4
                       (ir.CompilerIrValue.Var 3)
-                      (reg.compiler-reg-i64-ty))
+                      (reg_tests.compiler-reg-i64-ty))
                     (ir.compiler-ir-instr-cons
                       (ir.CompilerIrInstr.Return
                         (ir.CompilerIrMaybeValue.Some

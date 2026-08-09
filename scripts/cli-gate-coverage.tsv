@@ -1,12 +1,12 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	493
-# count	total	all	annotations	493
+# count	total	all	rows	495
+# count	total	all	annotations	495
 # count	total	all	sources	3
-# count	total	all	source-sites	367
+# count	total	all	source-sites	369
 # count	total	all	expanded-cases	159
-# count	gate	public-tools	rows	312
-# count	gate	public-tools	source-sites	203
+# count	gate	public-tools	rows	314
+# count	gate	public-tools	source-sites	205
 # count	gate	public-tools	expanded-cases	125
 # count	gate	selfhost-cli	rows	79
 # count	gate	selfhost-cli	source-sites	78
@@ -14,15 +14,15 @@
 # count	gate	stage1-wrapper	rows	102
 # count	gate	stage1-wrapper	source-sites	86
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	370
+# count	host	all	rows	372
 # count	host	linux	rows	120
 # count	host	windows	rows	3
-# count	platform	linux	rows	490
-# count	platform	windows	rows	373
+# count	platform	linux	rows	492
+# count	platform	windows	rows	375
 # count	kind	delegated	rows	9
 # count	kind	direct	rows	53
-# count	kind	wrapper	rows	431
-# count	process	compiler	rows	320
+# count	kind	wrapper	rows	433
+# count	process	compiler	rows	322
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -337,6 +337,8 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	lint-format-missing	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl --format	<workdir>/lint_bad.tl	inherited	repository	compiler	none	nonzero	empty	assert_contains stderr format-requires-value	none	lint-format-missing	-
 1	lint-clean	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_clean.tl	<workdir>/lint_clean.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-clean	-
 1	lint-clean-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_clean.tl --check	<workdir>/lint_clean.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-clean-check	-
+1	lint-stdlib-string-bare-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_stdlib_string_bare.tl --check --stdlib-root <repo>/stdlib	<workdir>/lint_stdlib_string_bare.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s);assert_not_contains stdout unused-import	empty	none	lint-stdlib-string-bare-check	-
+1	lint-stdlib-string-bare-shadow-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_stdlib_string_bare_shadow.tl --check --stdlib-root <repo>/stdlib	<workdir>/lint_stdlib_string_bare_shadow.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	assert_contains stdout unused-import;assert_contains stdout lint: 1 finding(s)	empty	none	lint-stdlib-string-bare-shadow-check	-
 1	lint-cfg-windows-target	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <check-cfg-src> --target windows-x86_64 --cfg tooling-feature --check	<check-cfg-src>	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-cfg-windows-target	-
 1	lint-name-case-default	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_name_case.tl --check	<workdir>/lint_name_case.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-name-case-default	-
 1	lint-name-case	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_name_case.tl --name-case	<workdir>/lint_name_case.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout global name case;assert_contains stdout function name case;assert_contains stdout local name case;assert_contains stdout type name case;assert_contains stdout 'consider `bad-global`';assert_contains stdout 'consider `bad-function`';assert_contains stdout 'consider `bad-param`';assert_contains stdout 'consider `BadType`';assert_contains stdout lint: 4 finding(s);assert_not_contains stdout :0:0:	empty	none	lint-name-case	-
@@ -402,8 +404,8 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	inline-test-crash	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp test <workdir>/inline_test_crash.tl --target <host-target> --stdlib-root <repo>/stdlib	<workdir>/inline_test_crash.tl	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	2	empty	assert_contains stderr announced-test,panic-message,and-child-exited;assert_not_contains stderr later-test	no-scratch-assembly	inline-test-crash	-
 1	inline-test-no-tests-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp test --check <workdir>/inline_test_no_tests.tl --target <host-target> --stdlib-root <repo>/stdlib	<workdir>/inline_test_no_tests.tl	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout TypeLisp test typecheck passed: 0 test(s)	empty	none	inline-test-no-tests-check	-
 1	inline-test-no-tests-run	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp test <workdir>/inline_test_no_tests.tl --target <host-target> --stdlib-root <repo>/stdlib	<workdir>/inline_test_no_tests.tl	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr TypeLisp tests: 0 passed; 0 failed; 0 total	[ ! -f <workdir>/inline_test_no_tests.tl.test.s ] || fail no-test typelisp test left scratch assembly behind	inline-test-no-tests-run	-
-1	package-test-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd_cwd	typelisp test --check --target <host-target> --stdlib-root <repo>/stdlib	prepared-by-gate	inherited	<test-pkg>/src	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout TypeLisp test file:;assert_contains stdout TypeLisp integration test file:;assert_contains stdout TypeLisp package test typecheck passed: 3 test(s) in 3 file(s)	empty	none	package-test-check	-
-1	package-test-run	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd_cwd	typelisp test --target <host-target> --stdlib-root <repo>/stdlib	prepared-by-gate	inherited	<test-pkg>/src	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout TypeLisp integration test file:;assert_contains stdout TypeLisp package tests passed: 3 test(s) in 3 file(s)	assert_contains stderr test pkg-inline;assert_contains stderr ok pkg-inline	none	package-test-run	-
+1	package-test-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd_cwd	typelisp test --check --target <host-target> --manifest-path <test-pkg>/typelisp.pkg --stdlib-root <repo>/stdlib --stdlib-root <second-root>	prepared-by-gate	inherited	<test-pkg>/src	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout TypeLisp test file:;assert_contains stdout TypeLisp integration test file:;assert_contains stdout TypeLisp package test typecheck passed: 3 test(s) in 3 file(s)	empty	second-root-only-import	package-test-check	-
+1	package-test-run	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd_cwd	typelisp test --target <host-target> --stdlib-root <repo>/stdlib --stdlib-root <second-root>	prepared-by-gate	inherited	<test-pkg>/src	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout TypeLisp integration test file:;assert_contains stdout TypeLisp package tests passed: 3 test(s) in 3 file(s)	assert_contains stderr test pkg-inline;assert_contains stderr ok pkg-inline	second-root-only-import	package-test-run	-
 1	package-test-inline-fail-continues	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp test --target <host-target> --manifest-path <inline-fail-pkg>/typelisp.pkg --stdlib-root <repo>/stdlib	<inline-fail-pkg>/typelisp.pkg	inherited	repository	compiler+native-tools+programs	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	1	assert_contains stdout integration-file-and-package-failed-1-of-2	assert_contains stderr FAILED-package-fails,ok-package-passes-after,and-1-passed-1-failed;assert_not_contains stderr child-exited	continues-to-integration-after-inline-assertion-failure	package-test-inline-fail-continues	-
 1	package-test-empty	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd_cwd	typelisp test --check --target <host-target> --stdlib-root <repo>/stdlib	prepared-by-gate	inherited	<test-empty-pkg>	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains_any stdout \	empty	none	package-test-empty	-
 1	package-test-fail	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp test --target <host-target> --manifest-path <test-fail-pkg>/typelisp.pkg	<test-fail-pkg>/typelisp.pkg	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	1	assert_contains stdout TypeLisp integration test file:	assert_contains stderr typelisp test: test executable exited with exit status: 7	none	package-test-fail	-

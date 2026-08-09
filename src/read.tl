@@ -427,8 +427,17 @@
       [retire-arena : i64 sexpr-node-pool-base-arena]
       [retained-arena : i64 (arena.tl_arena_current)]
       (begin
-        (set! sexpr-node-pool-slots sexpr-node-pool-released-slots)
-        (set! sexpr-builder-slots sexpr-builder-released-slots)
+        ;; The sentinels remain owned by their permanent globals. Reinstall
+        ;; shared representation views; direct RHS reads would move non-Copy
+        ;; dynamic arrays out of those globals.
+        (set!
+          sexpr-node-pool-slots
+          (unsafe
+            (ptr-read (ptr-addr-of sexpr-node-pool-released-slots))))
+        (set!
+          sexpr-builder-slots
+          (unsafe
+            (ptr-read (ptr-addr-of sexpr-builder-released-slots))))
         (set! sexpr-node-pool-count 0)
         (set! sexpr-builder-count 0)
         (set! sexpr-node-pool-base-arena 0)
@@ -436,6 +445,54 @@
           (begin
             (arena.tl_arena_destroy retire-arena)
             (arena.tl_arena_set retained-arena)))))))
+
+(define (sexpr-node-pool-release-regrow-ok?) : bool
+  (begin
+    (sexpr-node-pool-release!)
+    (if (and
+      (= (array-length sexpr-node-pool-slots) 0)
+      (= (array-length sexpr-builder-slots) 0)
+      (= sexpr-node-pool-count 0)
+      (= sexpr-builder-count 0)
+      (= sexpr-node-pool-base-arena 0))
+      (let
+        [builder : SexprBuilder (sexpr-builder-new)]
+        [_pushed : SexprBuilder (sexpr-builder-push builder (Sexpr.Sym 13))]
+        [list : Sexpr (sexpr-list-from-builder builder)]
+        [regrown-ok : bool
+          (match list
+            [(Sexpr.List start length)
+              (and
+                (= length 1)
+                (!= sexpr-node-pool-base-arena 0)
+                (> (array-length sexpr-node-pool-slots) 0)
+                (> (array-length sexpr-builder-slots) 0)
+                (match (sexpr-node-get start)
+                  [(Sexpr.Sym value) (= value 13)]
+                  [_ false]))]
+            [_ false])]
+        (begin
+          (sexpr-node-pool-release!)
+          (let
+            [released-again-ok : bool
+              (and
+                (= (array-length sexpr-node-pool-slots) 0)
+                (= (array-length sexpr-builder-slots) 0)
+                (= sexpr-node-pool-count 0)
+                (= sexpr-builder-count 0)
+                (= sexpr-node-pool-base-arena 0))]
+            (begin
+              ;; A release without a backing arena is idempotent.
+              (sexpr-node-pool-release!)
+              (and
+                regrown-ok
+                released-again-ok
+                (= (array-length sexpr-node-pool-slots) 0)
+                (= (array-length sexpr-builder-slots) 0)
+                (= sexpr-node-pool-count 0)
+                (= sexpr-builder-count 0)
+                (= sexpr-node-pool-base-arena 0))))))
+      false)))
 
 (define (sp-node-pool-arena-ownership-self-test) : i64
   (let
@@ -476,7 +533,9 @@
                       (match (sexpr-node-get sexpr-start)
                         [(Sexpr.Sym sexpr-value)
                           (if (and (= sp-value 7) (= sexpr-value 9))
-                            42
+                            (if (sexpr-node-pool-release-regrow-ok?)
+                              42
+                              3)
                             1)]
                         [_ 1])]
                     [_ 1])

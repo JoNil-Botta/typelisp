@@ -13239,6 +13239,17 @@
             (ir.CompilerIrInstrList.Nil)))
         blocks))))
 
+(define (opt-ssa-explicit-entry-available? [blocks : ir.CompilerIrBlockList]) : bool
+  (let
+    [entry : i64 (opt-cfg-entry-label blocks)]
+    (and
+      (ir.compiler-ir-label-some? entry)
+      (not
+        (opt-cfg-block-exists?
+          blocks
+          (ir.compiler-ir-label
+            (string.append (ir.compiler-ir-label-text entry) "__ssa_entry")))))))
+
 (define (opt-ssa-construct-function
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
@@ -39405,15 +39416,14 @@
 ;;   * copy each temp into the matching parameter slot,
 ;;   * jump to the entry block.
 ;;
-;; Reassigning a parameter slot via `CompilerIrInstr.Mov` is exactly what a source-level
-;; `(set! param ...)` lowers to, so this stays inside the IR's existing
-;; "reassignment is allowed; redundancy passes invalidate on (re)definition"
-;; model. Re-running the whole entry block per iteration is precisely the
-;; tail-recursion semantics (a real recursive call re-executes the entire body),
-;; so no loop pre-header is required. The reassignments make the function
-;; non-SSA, so the SSA-gated passes (LICM, induction) simply skip it; the
-;; unconditional passes (GVN/SCCP/copy-prop/CFG/DCE) handle the reassignments
-;; the same way they handle ordinary loops built from `while`/`set!`.
+;; Reassigning a parameter slot via `CompilerIrInstr.Mov` is exactly what a
+;; source-level `(set! param ...)` lowers to. Every successful conversion also
+;; adds an explicit entry preheader: initial parameter definitions belong to
+;; that predecessor, while the rewritten tail calls become ordinary backedges
+;; to the old entry. The following SSA construction can therefore insert typed
+;; loop phis instead of rejecting duplicate parameter definitions. Re-running
+;; the old entry block per iteration remains precisely the tail-recursion
+;; semantics (a real recursive call re-executes the entire body).
 (define (opt-tailrec-param-count [params : ir.CompilerIrParamList]) : i64
   (match (ir.compiler-ir-param-list-force-cons params)
     [(ir.CompilerIrParamList.Nil) 0]
@@ -39834,7 +39844,9 @@
     [(ir.CompilerIrFunction.Function name params ret vars blocks)
       (let
         [n : i64 (opt-tailrec-param-count params)]
-        (if (opt-tailrec-blocks-have-convertible? blocks name n)
+        (if (and
+          (opt-tailrec-blocks-have-convertible? blocks name n)
+          (opt-ssa-explicit-entry-available? blocks))
           (let
             [hybrid? : bool
               (and
@@ -39854,9 +39866,7 @@
               params
               ret
               (+ vars n)
-              (if hybrid?
-                (opt-ssa-explicit-entry-blocks rewritten)
-                rewritten)))
+              (opt-ssa-explicit-entry-blocks rewritten)))
           func))]))
 
 ;; --- canonical counted-loop unrolling (x16 straight-line / x2 diamond) -------

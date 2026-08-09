@@ -15791,6 +15791,43 @@
               (compiler_ir_types.compiler-ir-label "entry"))
             (compiler_ir_types.CompilerIrInstrList.Nil)))))))
 
+(define (opt-tailrec-entry-instrs
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrInstrList
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label "entry"))
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.CompilerIrInstrList.Nil)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (compiler_ir_types.compiler-ir-instr-seq-to-list instrs)])]))
+
+(define (opt-tailrec-entry-collision-function) : compiler_ir_types.CompilerIrFunction
+  (match (opt-tailrec-test-function)
+    [(compiler_ir_types.CompilerIrFunction.Function
+        name
+        params
+        ret
+        frame
+        blocks)
+      (compiler_ir_types.CompilerIrFunction.Function
+        name
+        params
+        ret
+        frame
+        (compiler_optimize.opt-inline-block-append
+          blocks
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "entry__ssa_entry")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 0)))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.CompilerIrBlockList.Nil))))]))
+
 (define (compiler-optimize-tailrec-self-test) : i64
   (let
     [rewritten : compiler_ir_types.CompilerIrFunction
@@ -15805,7 +15842,11 @@
     [once-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks once)]
     [rewritten-instrs : compiler_ir_types.CompilerIrInstrList
-      (opt-function-first-instrs rewritten)]
+      (opt-tailrec-entry-instrs rewritten-blocks)]
+    [collision : compiler_ir_types.CompilerIrFunction
+      (opt-tailrec-entry-collision-function)]
+    [collision-out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-tailrec-function collision)]
     (cond
       [(not (= (compiler_optimize.opt-function-frame rewritten) 4)) 1]
       [(not
@@ -15816,20 +15857,41 @@
         2]
       [(not (= (opt-count-tail-call-blocks rewritten-blocks) 0)) 3]
       [(not
+          (opt-rotate-ssa-test-single-jump-to?
+            rewritten-blocks
+            (compiler_ir_types.compiler-ir-label "entry__ssa_entry")
+            (compiler_ir_types.compiler-ir-label "entry")))
+        7]
+      [(not
           (=
             (opt-count-jump-to-blocks
               rewritten-blocks
               (compiler_ir_types.compiler-ir-label "entry"))
-            1))
+            2))
         4]
       [(not (= (opt-count-tail-call-blocks once-blocks) 0)) 5]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function once)))
+        8]
+      [(not
+          (opt-block-list-has-label?
+            once-blocks
+            (compiler_ir_types.compiler-ir-label "entry__ssa_entry")))
+        9]
       [(not
           (=
             (opt-count-jump-to-blocks
               once-blocks
               (compiler_ir_types.compiler-ir-label "entry"))
-            1))
+            2))
         6]
+      [(not
+          (compiler_optimize.opt-function-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            collision
+            collision-out))
+        10]
       [else 42])))
 
 (define (opt-count-phi-instr-seq-from
@@ -19984,10 +20046,11 @@
     3
     (opt-ssa-construct-address-taken-blocks)))
 
-;; The tail-recursion-to-loop shape: the back edge targets the function ENTRY
-;; block and the latch reassigns the parameters. SSA construction must decline
-;; this function (a phi at the entry block cannot see the implicit
-;; function-entry edge that carries the initial parameter values).
+;; The raw tail-recursion-to-loop shape targets the function ENTRY block and its
+;; latch reassigns a parameter. SSA construction must decline that raw form (a
+;; phi cannot see the implicit function-entry edge). Tailrec production first
+;; adds an explicit entry preheader; the paired fixture below must then construct
+;; a valid typed loop phi.
 (define (opt-ssa-entry-backedge-params) : compiler_ir_types.CompilerIrParamList
   (compiler_ir_types.compiler-ir-param-cons
     (compiler_ir_types.CompilerIrParam.Param
@@ -20054,6 +20117,15 @@
     (compiler_ast_types.AstType.I64)
     4
     (opt-ssa-entry-backedge-blocks)))
+
+(define (opt-ssa-entry-backedge-preheader-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "ssa_entry_backedge_preheader")
+    (opt-ssa-entry-backedge-params)
+    (compiler_ast_types.AstType.I64)
+    4
+    (compiler_optimize.opt-ssa-explicit-entry-blocks
+      (opt-ssa-entry-backedge-blocks))))
 
 (define (opt-natural-loop-nested-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -33300,6 +33372,10 @@
       (compiler_optimize.opt-ssa-construct-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         entry-backedge)]
+    [entry-backedge-preheader-out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ssa-construct-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-ssa-entry-backedge-preheader-function))]
     [constructed-nested : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-ssa-construct-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -33525,6 +33601,17 @@
             entry-backedge
             entry-backedge-out))
         53]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function entry-backedge-preheader-out)))
+        61]
+      [(not
+          (=
+            (opt-count-phi-blocks
+              (compiler_optimize.opt-function-blocks
+                entry-backedge-preheader-out))
+            1))
+        62]
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function constructed-nested)))

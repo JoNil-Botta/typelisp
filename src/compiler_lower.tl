@@ -14093,6 +14093,25 @@
       (lower-state-emit state (ir.CompilerIrInstr.CopyBytes dst src size))
       (lower-copy-bytes state dst dst-offset src src-offset size))))
 
+;; Return-slot copies are paid on every aggregate-returning wrapper edge. The
+;; measured opt1 self-compile has 1.67M 216-byte and 0.91M 208-byte copies in
+;; the move checker alone. Let final sret copies use fourteen 16-byte memory
+;; operations, matching the target-style operation budget, without globally
+;; expanding cold field/list copies in the same size band.
+(define lower-inline-return-copy-threshold : i64
+  216)
+
+(define (lower-copy-return-bytes
+  [state : LowerState]
+  [dst : ir.CompilerIrValue]
+  [src : ir.CompilerIrValue]
+  [size : i64]) : LowerState
+  (if (and
+    (> size lower-inline-copy-threshold)
+    (<= size lower-inline-return-copy-threshold))
+    (lower-state-emit state (ir.CompilerIrInstr.CopyBytes dst src size))
+    (lower-copy-bytes state dst 0 src 0 size)))
+
 (define (lower-inline-aggregate-copy-size
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : ResultLowerSize
@@ -14276,12 +14295,10 @@
         [(ResultLowerSize.Ok size)
           (ResultLowerExpr.Ok
             (LowerExpr.Expr
-              (lower-copy-bytes
+              (lower-copy-return-bytes
                 state
                 (ir.CompilerIrValue.Var sret-var)
-                0
                 value
-                0
                 size)
               (ir.CompilerIrValue.Var sret-var)
               ret-ty))]
@@ -58977,12 +58994,10 @@
     [(ResultLowerSize.Ok size)
       (ResultLowerState.Ok
         (lower-state-emit
-          (lower-copy-bytes
+          (lower-copy-return-bytes
             state
             (ir.CompilerIrValue.Var sret-var)
-            0
             value
-            0
             size)
           (ir.CompilerIrInstr.Return
             (lower-return-maybe (ir.CompilerIrValue.Var sret-var) ret-ty))))]

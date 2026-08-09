@@ -72700,6 +72700,10 @@
         [operand-start : i64 (+ ms mlen)]
         [has-operands : bool false]
         [comma : i64 -1]
+        [mnemonic-first : i64
+          (if (< ms end)
+            (compiler-backend-peephole-byte-at data ms)
+            0)]
         [movq-prefix?
           : bool
           ;; Derive from facts already in hand: ms is the first non-space
@@ -72710,11 +72714,15 @@
             (= mlen 4)
             (= ms (+ start 4))
             (< (+ ms 4) end)
-            (= (compiler-backend-peephole-byte-at data ms) 109)
+            (= mnemonic-first 109)
             (= (compiler-backend-peephole-byte-at data (+ ms 1)) 111)
             (= (compiler-backend-peephole-byte-at data (+ ms 2)) 118)
             (= (compiler-backend-peephole-byte-at data (+ ms 3)) 113))]
-        [zext? : bool (compiler-backend-peephole-mnemonic-zext? data ms mlen)]
+        [zext? : bool
+          (and
+            (= mlen 6)
+            (= mnemonic-first 109)
+            (compiler-backend-peephole-mnemonic-zext? data ms mlen))]
         (begin
           ;; Only move/zext pair rules consume split operands. Most assembly
           ;; lines need just their mnemonic classification, so do not rescan
@@ -72757,27 +72765,33 @@
                 (< ms end)
                 (= (compiler-backend-peephole-byte-at data (- end 1)) 58))]
             [cmp-or-test? : bool
-              (compiler-backend-peephole-cmp-or-test-token? data ms mlen)]
+              (and
+                (or (= mnemonic-first 99) (= mnemonic-first 116))
+                (compiler-backend-peephole-cmp-or-test-token? data ms mlen))]
             [clears : bool
               (cond
                 [(>= ms end) false]
                 [is-label true]
-                [(= (compiler-backend-peephole-byte-at data ms) 46) false]
-                [(= (compiler-backend-peephole-byte-at data ms) 106) false]
+                [(= mnemonic-first 46) false]
+                [(= mnemonic-first 106) false]
                 ;; A movq line fails cmp-or-test ('m' is not 'c'/'t') and
                 ;; vector-preserves ('m' is not 'v'), so it clears.
                 [movq-prefix? true]
                 [cmp-or-test? false]
-                [(compiler-backend-peephole-vector-preserves-gp-owners?
-                    data
-                    ms
-                    mlen
-                    start
-                    end)
+                [(and
+                    (= mnemonic-first 118)
+                    (compiler-backend-peephole-vector-preserves-gp-owners?
+                      data
+                      ms
+                      mlen
+                      start
+                      end))
                   false]
                 [else true])]
             [call? : bool
-              (compiler-backend-peephole-mnemonic-call? data ms mlen)]
+              (and
+                (= mnemonic-first 99)
+                (compiler-backend-peephole-mnemonic-call? data ms mlen))]
             [single-dest?
               : bool
               ;; The clobber transfer handles moves, labels, non-clobbering

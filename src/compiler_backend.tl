@@ -73200,42 +73200,146 @@
         (let
           [src-flags : i64 (compiler-backend-peephole-desc-op-src-flags line)]
           [dst-flags : i64 (compiler-backend-peephole-desc-op-dst-flags line)]
-          (when
-            (and
-              (not
-                (compiler-backend-peephole-op-flag?
-                  src-flags
-                  compiler-backend-peephole-op-stack-flag))
-              (or
-                (not
-                  (compiler-backend-peephole-op-flag?
-                    src-flags
-                    compiler-backend-peephole-op-register-flag))
-                (>= (compiler-backend-peephole-desc-op-src-reg line) 0))
-              (not
-                (compiler-backend-peephole-op-flag?
-                  dst-flags
-                  compiler-backend-peephole-op-stack-flag))
-              (or
-                (not
-                  (compiler-backend-peephole-op-flag?
-                    dst-flags
-                    compiler-backend-peephole-op-register-flag))
-                (>= (compiler-backend-peephole-desc-op-dst-reg line) 0)))
-            (return
-              (CompilerBackendPeepholeLineRecord
-                (struct-get line src)
-                span
-                (bit-or
-                  compiler-backend-sweep-line-kind-instruction
+          [src-stack? : bool
+            (compiler-backend-peephole-op-flag?
+              src-flags
+              compiler-backend-peephole-op-stack-flag)]
+          [dst-stack? : bool
+            (compiler-backend-peephole-op-flag?
+              dst-flags
+              compiler-backend-peephole-op-stack-flag)]
+          [src-register? : bool
+            (compiler-backend-peephole-op-flag?
+              src-flags
+              compiler-backend-peephole-op-register-flag)]
+          [dst-register? : bool
+            (compiler-backend-peephole-op-flag?
+              dst-flags
+              compiler-backend-peephole-op-register-flag)]
+          [src-reg : i64 (compiler-backend-peephole-desc-op-src-reg line)]
+          [dst-reg : i64 (compiler-backend-peephole-desc-op-dst-reg line)]
+          (begin
+            (when
+              (and
+                (not src-stack?)
+                (or (not src-register?) (>= src-reg 0))
+                (not dst-stack?)
+                (or (not dst-register?) (>= dst-reg 0)))
+              (return
+                (CompilerBackendPeepholeLineRecord
+                  (struct-get line src)
+                  span
                   (bit-or
-                    base-meta
+                    compiler-backend-sweep-line-kind-instruction
                     (bit-or
-                      compiler-backend-peephole-record-sweep-inert-bit
-                      (shl 8 compiler-backend-peephole-record-width-shift))))
-                none
-                none
-                0)))))
+                      base-meta
+                      (bit-or
+                        compiler-backend-peephole-record-sweep-inert-bit
+                        (shl 8 compiler-backend-peephole-record-width-shift))))
+                  none
+                  none
+                  0)))
+            ;; A positive owner key proves the whole operand is one canonical
+            ;; rbp/rsp spelling and encodes its base, displacement and explicit
+            ;; displacement bit. Decode that summary instead of finding `%rsp`
+            ;; again. Indexed/odd stack spellings and untracked registers retain
+            ;; the general byte audit below.
+            (let
+              [src-key : i64 (struct-get line op-src-key)]
+              [dst-key : i64 (struct-get line op-dst-key)]
+              (when
+                (and
+                  (=
+                    (compiler-backend-peephole-desc-op-src-start line)
+                    (+ ms mlen 1))
+                  (or (not src-register?) (>= src-reg 0))
+                  (or (not dst-register?) (>= dst-reg 0))
+                  (or
+                    (not src-stack?)
+                    (compiler-backend-peephole-owner-key-stack? src-key))
+                  (or
+                    (not dst-stack?)
+                    (compiler-backend-peephole-owner-key-stack? dst-key)))
+                (let
+                  [src-bits : i64 (- src-key 1)]
+                  [dst-bits : i64 (- dst-key 1)]
+                  [src-rsp? : bool
+                    (and src-stack? (not (= (bit-and src-bits 2) 0)))]
+                  [dst-rsp? : bool
+                    (and dst-stack? (not (= (bit-and dst-bits 2) 0)))]
+                  [src-off : i64
+                    (-
+                      (shr src-bits 2)
+                      compiler-backend-peephole-owner-key-stack-bias)]
+                  [dst-off : i64
+                    (-
+                      (shr dst-bits 2)
+                      compiler-backend-peephole-owner-key-stack-bias)]
+                  [immediate-source? : bool
+                    (and
+                      (not src-register?)
+                      (not src-stack?)
+                      (=
+                        (compiler-backend-peephole-byte-at
+                          data
+                          (compiler-backend-peephole-desc-op-src-start line))
+                        36)
+                      (=
+                        (compiler-backend-peephole-scan-byte-range
+                          data
+                          (compiler-backend-peephole-desc-op-src-start line)
+                          (compiler-backend-peephole-desc-op-src-end line)
+                          40)
+                        (compiler-backend-peephole-desc-op-src-end line)))]
+                  [cand : i64
+                    (if (and
+                      dst-rsp?
+                      (not (= (bit-and dst-bits 1) 0))
+                      (or (>= src-reg 0) immediate-source?))
+                      dst-off
+                      none)]
+                  [raw-mem-count : i64
+                    (+
+                      (if src-rsp?
+                        1
+                        0)
+                      (if dst-rsp?
+                        1
+                        0))]
+                  [mem-count : i64
+                    (if (= cand none)
+                      raw-mem-count
+                      0)]
+                  [mem-off : i64
+                    (if src-rsp?
+                      src-off
+                      (if dst-rsp?
+                        dst-off
+                        0))]
+                  (return
+                    (CompilerBackendPeepholeLineRecord
+                      (struct-get line src)
+                      span
+                      (bit-or
+                        compiler-backend-sweep-line-kind-instruction
+                        (bit-or
+                          base-meta
+                          (bit-or
+                            (if (and (= cand none) (= mem-count 0))
+                              compiler-backend-peephole-record-sweep-inert-bit
+                              0)
+                            (bit-or
+                              (shl
+                                8
+                                compiler-backend-peephole-record-width-shift)
+                              (shl
+                                mem-count
+                                compiler-backend-peephole-record-mem-count-shift)))))
+                      cand
+                      none
+                      (if (= cand none)
+                        mem-off
+                        0)))))))))
       (let
         [b0 : i64 (compiler-backend-peephole-byte-at data ms)]
         (begin

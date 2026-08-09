@@ -90,9 +90,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   one-pass result helper.
 - `thread_api.tl` keeps the standalone native thread runtime coverage: two
   native worker threads, semaphore signaling, join return values, and the
-  checked `String`/array/box join wrappers. Worker-count shape, deterministic
-  affinity helper math, and invalid semaphore creation now live inline in
-  `stdlib/thread.tl`.
+  checked `String`/array/box join wrappers. A zero-count semaphore also holds a
+  worker behind a deterministic barrier while non-consuming zero/finite waits
+  time out, then proves repeated readiness observations and the later join.
+  Worker-count shape, deterministic affinity helper math, and invalid semaphore
+  creation live inline in `stdlib/thread.tl`.
 - The borrowed text buffer escape fixture verifies the checker rejects a
   borrowed buffer that would outlive its chunk owner.
 - The `string_caller_result.tl` escape fixture verifies the checker rejects a

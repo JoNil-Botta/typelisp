@@ -1,10 +1,10 @@
 ;# stdlib/thread.tl - Native thread primitives and checked task wrappers.
 ;#
 ;# Provides a narrow cross-target raw thread surface: spawn a `(-> i64 i64)`
-;# entry with one raw integer context, join it, use a counting semaphore, and
-;# query a default worker count. Linux uses raw `clone`/`futex`/`eventfd2`
-;# syscalls. Windows uses kernel32 `CreateThread`, `WaitForSingleObject`, and
-;# semaphores.
+;# entry with one raw integer context, observe completion with a bounded
+;# non-consuming wait, join it, use a counting semaphore, and query a default
+;# worker count. Linux uses raw `clone`/`futex`/`eventfd2` syscalls. Windows
+;# uses kernel32 `CreateThread`, `WaitForSingleObject`, and semaphores.
 ;#
 ;# Each thread has its own default arena. The raw `i64` context/result surface
 ;# does not transfer ownership; callers that smuggle addresses through those
@@ -29,6 +29,7 @@
 (import stdlib.arena)
 (import stdlib.comptime)
 (import stdlib.string)
+(import stdlib.time)
 (import stdlib.vector)
 (import (vector.vector i64) as thread-i64-vec)
 
@@ -47,6 +48,12 @@
 (defenum ThreadJoinResult
   (ThreadJoinOk i64)
   (ThreadJoinErr String))
+
+;: Result returned by the non-consuming `wait-for` completion observer.
+(defenum ThreadWaitResult
+  (ThreadWaitReady)
+  (ThreadWaitTimedOut)
+  (ThreadWaitErr String))
 
 ;: Emit a generated typed handle module for scalar task result type `T`.
 ;:
@@ -83,6 +90,8 @@
                         raw-result
                         (thread.Thread 0 0 0))))]
                 [(thread.ThreadSpawnErr message) (I64SpawnErr message)])))
+          (define (wait-for [worker : (& worker Handle)] [timeout-ms : i64]) : thread.ThreadWaitResult
+            (thread.wait-for (& (struct-get worker raw)) timeout-ms))
           (define (join [worker : Handle]) : JoinResult
             (match (thread.join (struct-get worker raw))
               [(thread.ThreadJoinOk value) (I64JoinOk value)]
@@ -115,6 +124,8 @@
                         raw-result
                         (thread.Thread 0 0 0))))]
                 [(thread.ThreadSpawnErr message) (BoolSpawnErr message)])))
+          (define (wait-for [worker : (& worker Handle)] [timeout-ms : i64]) : thread.ThreadWaitResult
+            (thread.wait-for (& (struct-get worker raw)) timeout-ms))
           (define (join [worker : Handle]) : JoinResult
             (match (thread.join (struct-get worker raw))
               [(thread.ThreadJoinOk value) (BoolJoinOk (not (= value 0)))]
@@ -143,6 +154,8 @@
                         raw-result
                         (thread.Thread 0 0 0))))]
                 [(thread.ThreadSpawnErr message) (UnitSpawnErr message)])))
+          (define (wait-for [worker : (& worker Handle)] [timeout-ms : i64]) : thread.ThreadWaitResult
+            (thread.wait-for (& (struct-get worker raw)) timeout-ms))
           (define (join [worker : Handle]) : JoinResult
             (match (thread.join (struct-get worker raw))
               [(thread.ThreadJoinOk _) (UnitJoinOk)]
@@ -272,7 +285,7 @@
 ;: Windows kernel32 `WaitForSingleObject`.
 (cfg
   windows
-  (extern (thread-windows-wait-single [handle : i64] [ms : i32]) : i32 (:symbol "WaitForSingleObject")))
+  (extern (thread-windows-wait-single [handle : i64] [ms : u32]) : u32 (:symbol "WaitForSingleObject")))
 
 ;: Windows kernel32 `CloseHandle`.
 (cfg
@@ -313,6 +326,22 @@
 ;: Maximum semaphore count used by the Windows wrapper.
 (define semaphore-max-count : i32
   (cast 2147483647 : i32))
+
+;: Windows wait status and timeout constants.
+(define windows-wait-object-0 : u32
+  (cast 0 : u32))
+
+;: Windows status returned when a finite wait reaches its deadline.
+(define windows-wait-timeout : u32
+  (cast 258 : u32))
+
+;: Windows sentinel used only by the consuming blocking operations.
+(define windows-wait-infinite : u32
+  (cast 4294967295 : u32))
+
+;: Largest finite timeout accepted by one Windows wait call.
+(define windows-wait-max-finite-ms : i64
+  4294967294)
 
 ;: Return the integer address of an `Array u8` backing buffer.
 (define (array-u8-addr [buf : (Array u8)]) : i64
@@ -425,6 +454,24 @@
 (define (linux-futex-wait [addr : i64] [expected : i64]) : i64
   (unsafe
     (syscall 202 addr 0 expected 0 0 0)))
+
+;: Linux futex wait with a bounded relative timespec.
+(define (linux-futex-wait-for
+  [addr : i64]
+  [expected : i64]
+  [timeout-addr : i64]) : i64
+  (unsafe
+    (syscall 202 addr 0 expected timeout-addr 0 0)))
+
+;: Read Linux CLOCK_MONOTONIC into caller-owned reusable timespec storage.
+(define (linux-monotonic-ms [timespec : (__tl_dyn-array i64)]) : i64
+  (let
+    [status : i64
+      (unsafe
+        (syscall 228 1 (array-i64-addr timespec)))]
+    (if (< status 0)
+      -1
+      (time.timespec-ms timespec))))
 
 ;: Linux futex wake operation.
 (define (linux-futex-wake [addr : i64]) : i64
@@ -628,6 +675,119 @@
         (ThreadBoxI64SpawnOk (ThreadBoxI64 raw result-addr owner))]
       [(ThreadSpawnErr message) (ThreadBoxI64SpawnErr message)])))
 
+;: True when a Linux futex result should be followed by another state/deadline check.
+(define (linux-wait-retry? [status : i64]) : bool
+  (or (= status 0) (= status -4) (= status -11) (= status -110)))
+
+;: Linux non-consuming bounded wait over the kernel-owned clear-TID cell.
+(define (linux-wait-for [thread : (& thread Thread)] [timeout-ms : i64]) : ThreadWaitResult
+  (let
+    [clear-addr : i64 (struct-get thread clear-tid-addr)]
+    (if (= (read-i32 clear-addr) (cast 0 : i32))
+      (ThreadWaitReady)
+      (if (= timeout-ms 0)
+        (ThreadWaitTimedOut)
+        (let
+          [clock : (__tl_dyn-array i64) (array.make-array i64 2)]
+          [timeout : (__tl_dyn-array i64) (array.make-array i64 2)]
+          [start-ms : i64 (linux-monotonic-ms clock)]
+          (if (< start-ms 0)
+            (ThreadWaitErr "thread: wait monotonic clock unavailable")
+            (let
+              [done : bool false]
+              [result : ThreadWaitResult (ThreadWaitTimedOut)]
+              (begin
+                (while (not done)
+                  (if (= (read-i32 clear-addr) (cast 0 : i32))
+                    (begin
+                      (set! result (ThreadWaitReady))
+                      (set! done true))
+                    (let
+                      [now-ms : i64 (linux-monotonic-ms clock)]
+                      (if (< now-ms start-ms)
+                        (begin
+                          (set!
+                            result
+                            (ThreadWaitErr
+                              "thread: wait monotonic clock unavailable"))
+                          (set! done true))
+                        (let
+                          [elapsed-ms : i64 (- now-ms start-ms)]
+                          (if (>= elapsed-ms timeout-ms)
+                            (begin
+                              (if (= (read-i32 clear-addr) (cast 0 : i32))
+                                (set! result (ThreadWaitReady))
+                                (set! result (ThreadWaitTimedOut)))
+                              (set! done true))
+                            (let
+                              [remaining-ms : i64 (- timeout-ms elapsed-ms)]
+                              (begin
+                                (time.timespec-from-ms! timeout remaining-ms)
+                                (let
+                                  [status : i64
+                                    (linux-futex-wait-for
+                                      clear-addr
+                                      1
+                                      (array-i64-addr timeout))]
+                                  (if (linux-wait-retry? status)
+                                    unit
+                                    (begin
+                                      (set!
+                                        result
+                                        (ThreadWaitErr "thread: wait failed"))
+                                      (set! done true))))))))))))
+                result))))))))
+
+;: Windows non-consuming bounded wait, split to avoid the `INFINITE` sentinel.
+(cfg
+  windows
+  (define (thread-windows-wait-for
+    [thread : (& thread Thread)]
+    [timeout-ms : i64]) : ThreadWaitResult
+    (let
+      [remaining-ms : i64 timeout-ms]
+      [done : bool false]
+      [result : ThreadWaitResult (ThreadWaitTimedOut)]
+      (begin
+        (while (not done)
+          (let
+            [chunk-ms : i64
+              (if (> remaining-ms windows-wait-max-finite-ms)
+                windows-wait-max-finite-ms
+                remaining-ms)]
+            [waited : u32
+              (thread-windows-wait-single
+                (struct-get thread handle)
+                (cast chunk-ms : u32))]
+            (cond
+              [(= waited windows-wait-object-0)
+                (begin
+                  (set! result (ThreadWaitReady))
+                  (set! done true))]
+              [(= waited windows-wait-timeout)
+                (if (<= remaining-ms chunk-ms)
+                  (begin
+                    (set! result (ThreadWaitTimedOut))
+                    (set! done true))
+                  (set! remaining-ms (- remaining-ms chunk-ms)))]
+              [else
+                (begin
+                  (set! result (ThreadWaitErr "thread: wait failed"))
+                  (set! done true))])))
+        result))))
+
+;: Observe thread completion for at most `timeout-ms` without consuming the handle.
+;:
+;: A timeout of zero is a nonblocking poll. Ready, timeout, and wait failure all
+;: leave the handle valid for another wait and for exactly one later `join`.
+(define (wait-for [thread : (& thread Thread)] [timeout-ms : i64]) : ThreadWaitResult
+  (if (< timeout-ms 0)
+    (ThreadWaitErr "thread: wait timeout must be nonnegative")
+    (cfg
+      windows
+      (thread-windows-wait-for thread timeout-ms)
+      (linux-wait-for thread timeout-ms))))
+
 ;: Wait for a Linux raw-clone thread to clear its join cell.
 (define (linux-join [thread : Thread]) : ThreadJoinResult
   (let
@@ -644,9 +804,11 @@
   windows
   (define (thread-windows-join [thread : Thread]) : ThreadJoinResult
     (let
-      [waited : i32
-        (thread-windows-wait-single (struct-get thread handle) (cast -1 : i32))]
-      (if (not (= waited (cast 0 : i32)))
+      [waited : u32
+        (thread-windows-wait-single
+          (struct-get thread handle)
+          windows-wait-infinite)]
+      (if (not (= waited windows-wait-object-0))
         (ThreadJoinErr "thread: join failed")
         (begin
           (thread-windows-close-handle (struct-get thread handle))
@@ -784,8 +946,8 @@
   (cfg
     windows
     (=
-      (thread-windows-wait-single (struct-get sem handle) (cast -1 : i32))
-      (cast 0 : i32))
+      (thread-windows-wait-single (struct-get sem handle) windows-wait-infinite)
+      windows-wait-object-0)
     (let
       [buf : (Array u64) (array.make-array u64 1)]
       [done : bool false]

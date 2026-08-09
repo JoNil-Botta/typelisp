@@ -1427,6 +1427,20 @@ tl_memcpy:
     movq %rax, %rdi
     movq %r10, %rsi
     ret
+    .globl tl_memcpy_fresh
+tl_memcpy_fresh:
+    cmpq $1, %r8
+    jne .Ltl_memcpy_fresh_setup
+    movzbl (%rdx), %eax
+    movb %al, (%rcx)
+    ret
+.Ltl_memcpy_fresh_setup:
+    movq %rdi, %rax
+    movq %rsi, %r10
+    movq %rcx, %rdi
+    movq %rdx, %rsi
+    movq %r8, %rcx
+    jmp .Ltl_memcpy_fwd
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String

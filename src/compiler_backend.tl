@@ -16182,6 +16182,7 @@
       [name : String (compiler-backend-symbol-text-state backend-state name-id)]
       (or
         (string.eq name "tl_memcpy")
+        (string.eq name "tl_memcpy_fresh")
         (string.eq name "tl_memchr")
         (string.eq name "tl_array_zero")
         (string.eq name "tl_mem_fill8")
@@ -59937,7 +59938,10 @@
                       end
                       nl)))
                 (let
-                  [tok : i64 (compiler-backend-peephole-token-len data m end)]
+                  [tok : i64
+                    (-
+                      (compiler-backend-peephole-scan-byte-range data m end 32)
+                      m)]
                   [te : i64 (+ m tok)]
                   [mnemonic-kind : i64
                     (compiler-backend-control-mnemonic-kind data m tok)]
@@ -59966,11 +59970,12 @@
                   [rsp-dst? : bool
                     (and
                       (>= (- end i) 6)
-                      (compiler-backend-peephole-range-eq?
-                        data
-                        (- end 6)
-                        end
-                        ", %rsp"))]
+                      (= (compiler-backend-peephole-byte-at data (- end 1)) 112)
+                      (= (compiler-backend-peephole-byte-at data (- end 6)) 44)
+                      (= (compiler-backend-peephole-byte-at data (- end 5)) 32)
+                      (= (compiler-backend-peephole-byte-at data (- end 4)) 37)
+                      (= (compiler-backend-peephole-byte-at data (- end 3)) 114)
+                      (= (compiler-backend-peephole-byte-at data (- end 2)) 115))]
                   ;; GAP1 push mode: classify saved-CSR-slot lines FIRST --
                   ;; the save/restore movs are deleted (the prologue pushes /
                   ;; epilogue pops replace them) and the pop-run leaq is
@@ -60113,11 +60118,44 @@
                               (begin
                                 ;; frame-reference rewrite
                                 (let
+                                  [rbp-stop : i64 (- end 4)]
+                                  [first-paren : i64
+                                    (if (<= (+ m 5) end)
+                                      (compiler-backend-peephole-scan-byte-range
+                                        data
+                                        m
+                                        rbp-stop
+                                        40)
+                                      rbp-stop)]
                                   [p : i64
-                                    (compiler-backend-rsp-rebase-find-rbp
-                                      data
-                                      m
-                                      end)]
+                                    (if (>= first-paren rbp-stop)
+                                      -1
+                                      (if (and
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ first-paren 1))
+                                          37)
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ first-paren 2))
+                                          114)
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ first-paren 3))
+                                          98)
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ first-paren 4))
+                                          112))
+                                        first-paren
+                                        (compiler-backend-rsp-rebase-find-rbp
+                                          data
+                                          (+ first-paren 1)
+                                          end)))]
                                   (if (< p 0)
                                     (set!
                                       buf
@@ -60219,10 +60257,46 @@
                                               (set!
                                                 p
                                                 (if ok
-                                                  (compiler-backend-rsp-rebase-find-rbp
-                                                    data
-                                                    (+ p 6)
-                                                    end)
+                                                  (let
+                                                    [next-start : i64 (+ p 6)]
+                                                    [next-paren : i64
+                                                      (if (<=
+                                                        (+ next-start 5)
+                                                        end)
+                                                        (compiler-backend-peephole-scan-byte-range
+                                                          data
+                                                          next-start
+                                                          rbp-stop
+                                                          40)
+                                                        rbp-stop)]
+                                                    (if (>= next-paren rbp-stop)
+                                                      -1
+                                                      (if (and
+                                                        (=
+                                                          (compiler-backend-peephole-byte-at
+                                                            data
+                                                            (+ next-paren 1))
+                                                          37)
+                                                        (=
+                                                          (compiler-backend-peephole-byte-at
+                                                            data
+                                                            (+ next-paren 2))
+                                                          114)
+                                                        (=
+                                                          (compiler-backend-peephole-byte-at
+                                                            data
+                                                            (+ next-paren 3))
+                                                          98)
+                                                        (=
+                                                          (compiler-backend-peephole-byte-at
+                                                            data
+                                                            (+ next-paren 4))
+                                                          112))
+                                                        next-paren
+                                                        (compiler-backend-rsp-rebase-find-rbp
+                                                          data
+                                                          (+ next-paren 1)
+                                                          end))))
                                                   -1))))
                                           (if ok
                                             (set!
@@ -71098,7 +71172,7 @@
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringSeq
   (let
     [symbols : BackendStringSeq
-      (BackendStringSeq (array.make-array String 15) 0)]
+      (BackendStringSeq (array.make-array String 16) 0)]
     (begin
       (compiler-backend-string-push! (&mut symbols) "tl_alloc")
       (compiler-backend-string-push! (&mut symbols) "tl_arena_current")
@@ -71110,6 +71184,7 @@
       (compiler-backend-string-push! (&mut symbols) "tl_div_abort")
       (compiler-backend-string-push! (&mut symbols) "tl_shift_abort")
       (compiler-backend-string-push! (&mut symbols) "tl_memcpy")
+      (compiler-backend-string-push! (&mut symbols) "tl_memcpy_fresh")
       (compiler-backend-string-push! (&mut symbols) "tl_memchr")
       (compiler-backend-string-push! (&mut symbols) "tl_tlci_call_macro_entry")
       (compiler-backend-string-push! (&mut symbols) "tl_tlci_call_image_entry")
@@ -71129,6 +71204,7 @@
     (cond
       [(string.eq name "tl_alloc") true]
       [(string.eq name "tl_memcpy") true]
+      [(string.eq name "tl_memcpy_fresh") true]
       [(string.eq name "tl_memchr") true]
       [(string.eq name "tl_tlci_call_image_entry") true]
       [(string.eq name "tl_tlci_call_macro_entry")
@@ -72111,55 +72187,6 @@
               1
               0)))))))
 
-;; Range forms used by the streaming descriptor path. They preserve operand
-;; identity without allocating a substring for each side of every movq.
-(define (compiler-backend-peephole-decimal-range-valid?
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : bool
-  (let
-    [i : i64 start]
-    [ok : bool (< start end)]
-    (begin
-      (if (and ok (= (compiler-backend-peephole-byte-at data i) 45))
-        (begin
-          (set! i (+ i 1))
-          (if (= i end)
-            (set! ok false)
-            unit))
-        unit)
-      (while (and ok (< i end))
-        (let
-          [b : i64 (compiler-backend-peephole-byte-at data i)]
-          (begin
-            (if (and (>= b 48) (<= b 57))
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ok)))
-
-(define (compiler-backend-peephole-decimal-range-value
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : i64
-  (let
-    [neg : bool (= (compiler-backend-peephole-byte-at data start) 45)]
-    [i : i64
-      (if neg
-        (+ start 1)
-        start)]
-    [value : i64 0]
-    (begin
-      (while (< i end)
-        (begin
-          (set!
-            value
-            (+ (* value 10) (- (compiler-backend-peephole-byte-at data i) 48)))
-          (set! i (+ i 1))))
-      (if neg
-        (- 0 value)
-        value))))
-
 (define compiler-backend-peephole-memory-base-none : i64
   0)
 (define compiler-backend-peephole-memory-base-rbp : i64
@@ -72225,18 +72252,36 @@
                 base
                 0
                 false)]
-            [(compiler-backend-peephole-decimal-range-valid?
-                data
-                start
-                prefix-end)
-              (compiler-backend-peephole-stack-owner-key-from-parts
-                base
-                (compiler-backend-peephole-decimal-range-value
-                  data
-                  start
-                  prefix-end)
-                true)]
-            [else (compiler-backend-peephole-owner-key-unknown)]))]
+            [else
+              ;; Validate and accumulate the displacement together. The former
+              ;; valid?/value pair walked every digit twice on the overwhelmingly
+              ;; common explicit stack-slot spelling.
+              (let
+                [neg : bool
+                  (= (compiler-backend-peephole-byte-at data start) 45)]
+                [i : i64
+                  (if neg
+                    (+ start 1)
+                    start)]
+                [valid : bool (< i prefix-end)]
+                [value : i64 0]
+                (begin
+                  (while (and valid (< i prefix-end))
+                    (let
+                      [b : i64 (compiler-backend-peephole-byte-at data i)]
+                      (begin
+                        (if (and (>= b 48) (<= b 57))
+                          (set! value (+ (* value 10) (- b 48)))
+                          (set! valid false))
+                        (set! i (+ i 1)))))
+                  (if valid
+                    (compiler-backend-peephole-stack-owner-key-from-parts
+                      base
+                      (if neg
+                        (- 0 value)
+                        value)
+                      true)
+                    (compiler-backend-peephole-owner-key-unknown))))]))]
       [(and
           (= memory-base compiler-backend-peephole-memory-base-rip)
           (> prefix-end start))
@@ -72777,17 +72822,6 @@
       (compiler-backend-peephole-owners-set-reg-index owners dst-reg src-key)]
     [else (compiler-backend-peephole-owners-empty)]))
 
-;; Length of the leading token at `i`: bytes up to the next space or `end`.
-;; Jumps straight to the next space byte a word at a time instead of stepping
-;; every byte. Callers scan from the mnemonic start, which never runs past `end`, so the
-;; not-found answer `end` is exactly the "token runs to the line end" length and
-;; an empty range answers 0 without a separate guard.
-(define (compiler-backend-peephole-token-len
-  [data : (Ptr u8)]
-  [i : i64]
-  [end : i64]) : i64
-  (- (compiler-backend-peephole-scan-byte-range data i end 32) i))
-
 ;; True iff byte `b` is a movq-style size suffix: q, l, w, or b.
 (define (compiler-backend-peephole-size-suffix-byte? [b : i64]) : bool
   (or (= b 113) (= b 108) (= b 119) (= b 98)))
@@ -73066,53 +73100,59 @@
   [end : i64]
   [key : i64]
   [memory-base : i64]) : i64
-  (let
-    [register? : bool
-      (compiler-backend-peephole-register-range? data start end)]
-    [packed-stack? : bool (compiler-backend-peephole-owner-key-stack? key)]
-    [base-rbp? : bool (= memory-base compiler-backend-peephole-memory-base-rbp)]
-    [base-rsp? : bool (= memory-base compiler-backend-peephole-memory-base-rsp)]
-    [leading-minus? : bool
-      (and (< start end) (= (compiler-backend-peephole-byte-at data start) 45))]
-    ;; The single parenthetical scan is needed exactly where the replaced
-    ;; substring searches ran: the general stack probe (no packed key, no
-    ;; end-anchored rbp/rsp base) and the rbp-base local-frame arm's
-    ;; "(%rsp)" search.
-    [parens : i64
-      (if (and
-        (not packed-stack?)
-        (or base-rbp? (and (not base-rsp?) (>= (- end start) 6))))
-        (compiler-backend-peephole-stack-parens-range data start end)
-        0)]
-    [stack? : bool (or packed-stack? base-rbp? base-rsp? (not (= parens 0)))]
-    [local-frame? : bool
-      (if packed-stack?
-        (or (not (= (bit-and (- key 1) 2) 0)) leading-minus?)
-        (cond
-          [base-rsp? true]
-          [base-rbp? (or leading-minus? (not (= (bit-and parens 2) 0)))]
-          [else
+  ;; Treat the already classified operand kind as a dispatch. Registers and
+  ;; canonical stack keys dominate generated movq operands; neither needs the
+  ;; general parenthetical scan or the predicates for unrelated kinds.
+  (cond
+    [(compiler-backend-peephole-register-range? data start end)
+      compiler-backend-peephole-op-register-flag]
+    [(compiler-backend-peephole-owner-key-stack? key)
+      (bit-or
+        compiler-backend-peephole-op-stack-flag
+        (if (or
+          (not (= (bit-and (- key 1) 2) 0))
+          (= (compiler-backend-peephole-byte-at data start) 45))
+          compiler-backend-peephole-op-local-frame-flag
+          0))]
+    [(= memory-base compiler-backend-peephole-memory-base-rsp)
+      (bit-or
+        compiler-backend-peephole-op-stack-flag
+        compiler-backend-peephole-op-local-frame-flag)]
+    [else
+      (let
+        [base-rbp? : bool
+          (= memory-base compiler-backend-peephole-memory-base-rbp)]
+        [leading-minus? : bool
+          (and
+            (< start end)
+            (= (compiler-backend-peephole-byte-at data start) 45))]
+        ;; This is the former general stack probe plus the rbp-base arm's
+        ;; additional "(%rsp)" check. Earlier arms proved there is no packed
+        ;; key and no end-anchored rsp base.
+        [parens : i64
+          (if (or base-rbp? (>= (- end start) 6))
+            (compiler-backend-peephole-stack-parens-range data start end)
+            0)]
+        [stack? : bool (or base-rbp? (not (= parens 0)))]
+        [local-frame? : bool
+          (if base-rbp?
+            (or leading-minus? (not (= (bit-and parens 2) 0)))
             (and
               stack?
               (or
                 (not (= (bit-and parens 2) 0))
-                (and leading-minus? (not (= (bit-and parens 1) 0)))))]))]
-    [r10-base? : bool (= memory-base compiler-backend-peephole-memory-base-r10)]
-    (+
-      (if register?
-        compiler-backend-peephole-op-register-flag
-        0)
-      (+
-        (if stack?
-          compiler-backend-peephole-op-stack-flag
-          0)
-        (+
-          (if local-frame?
-            compiler-backend-peephole-op-local-frame-flag
+                (and leading-minus? (not (= (bit-and parens 1) 0))))))]
+        (bit-or
+          (if stack?
+            compiler-backend-peephole-op-stack-flag
             0)
-          (if r10-base?
-            compiler-backend-peephole-op-r10-base-flag
-            0))))))
+          (bit-or
+            (if local-frame?
+              compiler-backend-peephole-op-local-frame-flag
+              0)
+            (if (= memory-base compiler-backend-peephole-memory-base-r10)
+              compiler-backend-peephole-op-r10-base-flag
+              0))))]))
 
 (define (compiler-backend-peephole-op-flag? [flags : i64] [flag : i64]) : bool
   (not (= (bit-and flags flag) 0)))
@@ -73788,13 +73828,32 @@
     [data : (Ptr u8) (struct-get context data)]
     [ms : i64 start]
     (begin
-      (while (and (< ms end) (= (compiler-backend-peephole-byte-at data ms) 32))
-        (set! ms (+ ms 1)))
+      (if (and
+        (< (+ start 4) end)
+        (= (compiler-backend-peephole-byte-at data start) 32)
+        (= (compiler-backend-peephole-byte-at data (+ start 1)) 32)
+        (= (compiler-backend-peephole-byte-at data (+ start 2)) 32)
+        (= (compiler-backend-peephole-byte-at data (+ start 3)) 32)
+        (not (= (compiler-backend-peephole-byte-at data (+ start 4)) 32)))
+        (set! ms (+ start 4))
+        (while (and
+          (< ms end)
+          (= (compiler-backend-peephole-byte-at data ms) 32))
+          (set! ms (+ ms 1))))
       (let
-        [mlen : i64 (compiler-backend-peephole-token-len data ms end)]
+        [mlen : i64
+          (if (and
+            (< (+ ms 4) end)
+            (= (compiler-backend-peephole-byte-at data (+ ms 4)) 32))
+            4
+            (- (compiler-backend-peephole-scan-byte-range data ms end 32) ms))]
         [operand-start : i64 (+ ms mlen)]
         [has-operands : bool false]
         [comma : i64 -1]
+        [mnemonic-first : i64
+          (if (< ms end)
+            (compiler-backend-peephole-byte-at data ms)
+            0)]
         [movq-prefix?
           : bool
           ;; Derive from facts already in hand: ms is the first non-space
@@ -73805,11 +73864,15 @@
             (= mlen 4)
             (= ms (+ start 4))
             (< (+ ms 4) end)
-            (= (compiler-backend-peephole-byte-at data ms) 109)
+            (= mnemonic-first 109)
             (= (compiler-backend-peephole-byte-at data (+ ms 1)) 111)
             (= (compiler-backend-peephole-byte-at data (+ ms 2)) 118)
             (= (compiler-backend-peephole-byte-at data (+ ms 3)) 113))]
-        [zext? : bool (compiler-backend-peephole-mnemonic-zext? data ms mlen)]
+        [zext? : bool
+          (and
+            (= mlen 6)
+            (= mnemonic-first 109)
+            (compiler-backend-peephole-mnemonic-zext? data ms mlen))]
         (begin
           ;; Only move/zext pair rules consume split operands. Most assembly
           ;; lines need just their mnemonic classification, so do not rescan
@@ -73852,27 +73915,33 @@
                 (< ms end)
                 (= (compiler-backend-peephole-byte-at data (- end 1)) 58))]
             [cmp-or-test? : bool
-              (compiler-backend-peephole-cmp-or-test-token? data ms mlen)]
+              (and
+                (or (= mnemonic-first 99) (= mnemonic-first 116))
+                (compiler-backend-peephole-cmp-or-test-token? data ms mlen))]
             [clears : bool
               (cond
                 [(>= ms end) false]
                 [is-label true]
-                [(= (compiler-backend-peephole-byte-at data ms) 46) false]
-                [(= (compiler-backend-peephole-byte-at data ms) 106) false]
+                [(= mnemonic-first 46) false]
+                [(= mnemonic-first 106) false]
                 ;; A movq line fails cmp-or-test ('m' is not 'c'/'t') and
                 ;; vector-preserves ('m' is not 'v'), so it clears.
                 [movq-prefix? true]
                 [cmp-or-test? false]
-                [(compiler-backend-peephole-vector-preserves-gp-owners?
-                    data
-                    ms
-                    mlen
-                    start
-                    end)
+                [(and
+                    (= mnemonic-first 118)
+                    (compiler-backend-peephole-vector-preserves-gp-owners?
+                      data
+                      ms
+                      mlen
+                      start
+                      end))
                   false]
                 [else true])]
             [call? : bool
-              (compiler-backend-peephole-mnemonic-call? data ms mlen)]
+              (and
+                (= mnemonic-first 99)
+                (compiler-backend-peephole-mnemonic-call? data ms mlen))]
             [single-dest?
               : bool
               ;; The clobber transfer handles moves, labels, non-clobbering
@@ -73890,22 +73959,43 @@
                   start
                   end)
                 -1)]
+            ;; A pure register token cannot produce a memory owner key. Keep a
+            ;; trailing-')' spelling on the general path so even unusual input
+            ;; that begins with '%' retains the old memory-suffix behavior.
+            [src-register? : bool
+              (and
+                is-movq
+                (< op-src-start op-src-end)
+                (= (compiler-backend-peephole-byte-at data op-src-start) 37)
+                (not
+                  (=
+                    (compiler-backend-peephole-byte-at data (- op-src-end 1))
+                    41)))]
+            [dst-register? : bool
+              (and
+                is-movq
+                (< op-dst-start op-dst-end)
+                (= (compiler-backend-peephole-byte-at data op-dst-start) 37)
+                (not
+                  (=
+                    (compiler-backend-peephole-byte-at data (- op-dst-end 1))
+                    41)))]
             [src-memory-base : i64
-              (if is-movq
+              (if (and is-movq (not src-register?))
                 (compiler-backend-peephole-memory-base-range
                   data
                   op-src-start
                   op-src-end)
                 compiler-backend-peephole-memory-base-none)]
             [dst-memory-base : i64
-              (if is-movq
+              (if (and is-movq (not dst-register?))
                 (compiler-backend-peephole-memory-base-range
                   data
                   op-dst-start
                   op-dst-end)
                 compiler-backend-peephole-memory-base-none)]
             [src-key : i64
-              (if is-movq
+              (if (and is-movq (not src-register?))
                 (compiler-backend-peephole-owner-key-from-range
                   context
                   op-src-start
@@ -73913,7 +74003,7 @@
                   src-memory-base)
                 (compiler-backend-peephole-owner-key-unknown))]
             [dst-key : i64
-              (if is-movq
+              (if (and is-movq (not dst-register?))
                 (compiler-backend-peephole-owner-key-from-range
                   context
                   op-dst-start
@@ -73921,37 +74011,41 @@
                   dst-memory-base)
                 (compiler-backend-peephole-owner-key-unknown))]
             [src-reg : i64
-              (if is-movq
+              (if src-register?
                 (compiler-backend-peephole-reg-index-range
                   data
                   op-src-start
                   op-src-end)
                 -1)]
             [dst-reg : i64
-              (if is-movq
+              (if dst-register?
                 (compiler-backend-peephole-reg-index-range
                   data
                   op-dst-start
                   op-dst-end)
                 -1)]
             [src-flags : i64
-              (if is-movq
-                (compiler-backend-peephole-operand-flags
-                  data
-                  op-src-start
-                  op-src-end
-                  src-key
-                  src-memory-base)
-                0)]
+              (cond
+                [src-register? compiler-backend-peephole-op-register-flag]
+                [is-movq
+                  (compiler-backend-peephole-operand-flags
+                    data
+                    op-src-start
+                    op-src-end
+                    src-key
+                    src-memory-base)]
+                [else 0])]
             [dst-flags : i64
-              (if is-movq
-                (compiler-backend-peephole-operand-flags
-                  data
-                  op-dst-start
-                  op-dst-end
-                  dst-key
-                  dst-memory-base)
-                0)]
+              (cond
+                [dst-register? compiler-backend-peephole-op-register-flag]
+                [is-movq
+                  (compiler-backend-peephole-operand-flags
+                    data
+                    op-dst-start
+                    op-dst-end
+                    dst-key
+                    dst-memory-base)]
+                [else 0])]
             (CompilerBackendPeepholeLine
               src
               data
@@ -74260,6 +74354,156 @@
             none
             none
             0)))
+      ;; The streaming descriptor has already walked both movq operands. When
+      ;; neither can mention rsp, the dead-frame sweep has no fact to extract:
+      ;; this is an ordinary 8-byte instruction with no candidate, rsp effect,
+      ;; or memory reference. Tracked registers prove they are not rsp; an
+      ;; untracked register stays on the byte-audit path because it may be rsp.
+      (when
+        (compiler-backend-peephole-desc-movq? line)
+        (let
+          [src-flags : i64 (compiler-backend-peephole-desc-op-src-flags line)]
+          [dst-flags : i64 (compiler-backend-peephole-desc-op-dst-flags line)]
+          [src-stack? : bool
+            (compiler-backend-peephole-op-flag?
+              src-flags
+              compiler-backend-peephole-op-stack-flag)]
+          [dst-stack? : bool
+            (compiler-backend-peephole-op-flag?
+              dst-flags
+              compiler-backend-peephole-op-stack-flag)]
+          [src-register? : bool
+            (compiler-backend-peephole-op-flag?
+              src-flags
+              compiler-backend-peephole-op-register-flag)]
+          [dst-register? : bool
+            (compiler-backend-peephole-op-flag?
+              dst-flags
+              compiler-backend-peephole-op-register-flag)]
+          [src-reg : i64 (compiler-backend-peephole-desc-op-src-reg line)]
+          [dst-reg : i64 (compiler-backend-peephole-desc-op-dst-reg line)]
+          (begin
+            (when
+              (and
+                (not src-stack?)
+                (or (not src-register?) (>= src-reg 0))
+                (not dst-stack?)
+                (or (not dst-register?) (>= dst-reg 0)))
+              (return
+                (CompilerBackendPeepholeLineRecord
+                  (struct-get line src)
+                  span
+                  (bit-or
+                    compiler-backend-sweep-line-kind-instruction
+                    (bit-or
+                      base-meta
+                      (bit-or
+                        compiler-backend-peephole-record-sweep-inert-bit
+                        (shl 8 compiler-backend-peephole-record-width-shift))))
+                  none
+                  none
+                  0)))
+            ;; A positive owner key proves the whole operand is one canonical
+            ;; rbp/rsp spelling and encodes its base, displacement and explicit
+            ;; displacement bit. Decode that summary instead of finding `%rsp`
+            ;; again. Indexed/odd stack spellings and untracked registers retain
+            ;; the general byte audit below.
+            (let
+              [src-key : i64 (struct-get line op-src-key)]
+              [dst-key : i64 (struct-get line op-dst-key)]
+              (when
+                (and
+                  (=
+                    (compiler-backend-peephole-desc-op-src-start line)
+                    (+ ms mlen 1))
+                  (or (not src-register?) (>= src-reg 0))
+                  (or (not dst-register?) (>= dst-reg 0))
+                  (or
+                    (not src-stack?)
+                    (compiler-backend-peephole-owner-key-stack? src-key))
+                  (or
+                    (not dst-stack?)
+                    (compiler-backend-peephole-owner-key-stack? dst-key)))
+                (let
+                  [src-bits : i64 (- src-key 1)]
+                  [dst-bits : i64 (- dst-key 1)]
+                  [src-rsp? : bool
+                    (and src-stack? (not (= (bit-and src-bits 2) 0)))]
+                  [dst-rsp? : bool
+                    (and dst-stack? (not (= (bit-and dst-bits 2) 0)))]
+                  [src-off : i64
+                    (-
+                      (shr src-bits 2)
+                      compiler-backend-peephole-owner-key-stack-bias)]
+                  [dst-off : i64
+                    (-
+                      (shr dst-bits 2)
+                      compiler-backend-peephole-owner-key-stack-bias)]
+                  [immediate-source? : bool
+                    (and
+                      (not src-register?)
+                      (not src-stack?)
+                      (=
+                        (compiler-backend-peephole-byte-at
+                          data
+                          (compiler-backend-peephole-desc-op-src-start line))
+                        36)
+                      (=
+                        (compiler-backend-peephole-scan-byte-range
+                          data
+                          (compiler-backend-peephole-desc-op-src-start line)
+                          (compiler-backend-peephole-desc-op-src-end line)
+                          40)
+                        (compiler-backend-peephole-desc-op-src-end line)))]
+                  [cand : i64
+                    (if (and
+                      dst-rsp?
+                      (not (= (bit-and dst-bits 1) 0))
+                      (or (>= src-reg 0) immediate-source?))
+                      dst-off
+                      none)]
+                  [raw-mem-count : i64
+                    (+
+                      (if src-rsp?
+                        1
+                        0)
+                      (if dst-rsp?
+                        1
+                        0))]
+                  [mem-count : i64
+                    (if (= cand none)
+                      raw-mem-count
+                      0)]
+                  [mem-off : i64
+                    (if src-rsp?
+                      src-off
+                      (if dst-rsp?
+                        dst-off
+                        0))]
+                  (return
+                    (CompilerBackendPeepholeLineRecord
+                      (struct-get line src)
+                      span
+                      (bit-or
+                        compiler-backend-sweep-line-kind-instruction
+                        (bit-or
+                          base-meta
+                          (bit-or
+                            (if (and (= cand none) (= mem-count 0))
+                              compiler-backend-peephole-record-sweep-inert-bit
+                              0)
+                            (bit-or
+                              (shl
+                                8
+                                compiler-backend-peephole-record-width-shift)
+                              (shl
+                                mem-count
+                                compiler-backend-peephole-record-mem-count-shift)))))
+                      cand
+                      none
+                      (if (= cand none)
+                        mem-off
+                        0)))))))))
       (let
         [b0 : i64 (compiler-backend-peephole-byte-at data ms)]
         (begin
@@ -76141,6 +76385,13 @@
     [held-labels : (__tl_dyn-array CompilerBackendPeepholeLine)
       (array.make-array CompilerBackendPeepholeLine 8)]
     [held-label-count : i64 0]
+    ;; The parser returns its memory-class descriptor through a callsite-owned
+    ;; result slot. Alternate between two distinct callsites only when pending
+    ;; takes the current descriptor: if a pair rule drops the current line,
+    ;; reuse that now-dead slot while pending remains in the other one. This is
+    ;; the two-slot streaming discipline used by production parser pipelines;
+    ;; it keeps pending stable without materializing another 96-byte copy.
+    [parse-slot-b? : bool false]
     [c : i64 0]
     (begin
       (compiler-backend-peephole-owner-global-reset-with-backend-state!
@@ -76171,13 +76422,21 @@
                     end)]
                 [line-newline : bool (< end n)]
                 [line : CompilerBackendPeepholeLine
-                  (compiler-backend-peephole-parse-line
-                    (& context)
-                    asm
-                    i
-                    end
-                    line-newline
-                    false)]
+                  (if parse-slot-b?
+                    (compiler-backend-peephole-parse-line
+                      (& context)
+                      asm
+                      i
+                      end
+                      line-newline
+                      false)
+                    (compiler-backend-peephole-parse-line
+                      (& context)
+                      asm
+                      i
+                      end
+                      line-newline
+                      false))]
                 [consumed? : bool false]
                 (begin
                   (if held-jmp?
@@ -76283,9 +76542,9 @@
                               line)]
                           (cond
                             [(= action 1)
-                              (set!
-                                pending
-                                (compiler-backend-peephole-line-copy line))]
+                              (begin
+                                (set! pending line)
+                                (set! parse-slot-b? (not parse-slot-b?)))]
                             [(= action 2) unit]
                             [(= action 3)
                               (let
@@ -76362,14 +76621,12 @@
                                     prev-abort?
                                     (compiler-backend-peephole-desc-noreturn-abort?
                                       pending))
-                                  (set!
-                                    pending
-                                    (compiler-backend-peephole-line-copy line))))]))
+                                  (set! pending line)
+                                  (set! parse-slot-b? (not parse-slot-b?))))]))
                         (begin
                           (set! has-pending true)
-                          (set!
-                            pending
-                            (compiler-backend-peephole-line-copy line))))
+                          (set! pending line)
+                          (set! parse-slot-b? (not parse-slot-b?))))
                       (if (and
                         drop-fallthrough?
                         (=

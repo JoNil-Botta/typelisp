@@ -135,7 +135,7 @@
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
     (begin
-      (process.env-vec-append
+      (process.env-vec-append!
         (&mut env)
         "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
         "process-env-vec-value")
@@ -197,7 +197,7 @@
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
     (begin
-      (process.env-vec-append
+      (process.env-vec-append!
         (&mut env)
         "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
         "process-env-vec-value")

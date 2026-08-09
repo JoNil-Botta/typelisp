@@ -1314,12 +1314,52 @@
       [retire-arena : i64 lex-spanned-token-buffer-arena]
       [retained-arena : i64 (arena.tl_arena_current)]
       (begin
-        (set! lex-spanned-token-buffer lex-spanned-token-buffer-released)
+        ;; The sentinel remains owned by its permanent global. Reinstall only
+        ;; a shared representation view; a direct RHS would move a non-Copy
+        ;; dynamic array out of that global.
+        (set!
+          lex-spanned-token-buffer
+          (unsafe
+            (ptr-read (ptr-addr-of lex-spanned-token-buffer-released))))
         (set! lex-spanned-token-buffer-arena 0)
         (unsafe
           (begin
             (arena.tl_arena_destroy retire-arena)
             (arena.tl_arena_set retained-arena)))))))
+
+(define (spanned-token-buffer-release-regrow-ok?) : bool
+  (begin
+    (spanned-token-buffer-release!)
+    (if (and
+      (= (array-length lex-spanned-token-buffer) 0)
+      (= lex-spanned-token-buffer-arena 0))
+      (match (spanned-result "(release-regrow)")
+        [(ResultSpannedTokens.Ok tokens)
+          (let
+            [regrown-ok : bool
+              (and
+                (> (array-length tokens) 0)
+                (!= lex-spanned-token-buffer-arena 0)
+                (=
+                  (token.tag (token.spanned-token-tok (array-ref tokens 0)))
+                  (token.tag-lparen)))]
+            (begin
+              (spanned-token-buffer-release!)
+              (let
+                [released-again-ok : bool
+                  (and
+                    (= (array-length lex-spanned-token-buffer) 0)
+                    (= lex-spanned-token-buffer-arena 0))]
+                (begin
+                  ;; A release without a backing arena is idempotent.
+                  (spanned-token-buffer-release!)
+                  (and
+                    regrown-ok
+                    released-again-ok
+                    (= (array-length lex-spanned-token-buffer) 0)
+                    (= lex-spanned-token-buffer-arena 0))))))]
+        [(ResultSpannedTokens.Err _) false])
+      false)))
 
 (define (spanned-token-buffer-arena-ownership-ok?) : bool
   (let
@@ -1812,6 +1852,9 @@
             unit
             (set! ok false))
           (if (spanned-token-buffer-arena-ownership-ok?)
+            unit
+            (set! ok false))
+          (if (spanned-token-buffer-release-regrow-ok?)
             unit
             (set! ok false))
           (if ok

@@ -5,10 +5,8 @@
 
 (defmacro (reflection-score [T : type]) : i64
   (match (type-info T)
-    [(comptime.TypeInfo.Struct _ _)
-      (comptime.expr-int 10)]
-    [_
-      (comptime.expr-int 0)]))
+    [(comptime.TypeInfo.Struct _ _) (comptime.expr-int 10)]
+    [_ (comptime.expr-int 0)]))
 
 (defmacro (emit-ordinary-delta) : Decls
   `(defstruct OrdinaryDelta
@@ -54,10 +52,7 @@
       (reflection-score Collision))))
 
 (define (main) : i64
-  (+
-    12
-    (+ ordinary-delta-score
-      (+ module-delta-score file-delta-score))))
+  (+ 12 (+ ordinary-delta-score (+ module-delta-score file-delta-score))))
 
 (emit-collision-delta)
 

@@ -149,7 +149,7 @@
 
 ;: Both canaries intact. Extracted so each tier's guard chain stays a flat
 ;: `cond` rather than a nested if-ladder.
-(define (stress-canaries-ok? [canaries : (Array i64)]) : bool
+(define (stress-canaries-ok? [canaries : (__tl_dyn-array i64)]) : bool
   (and
     (= (array-ref canaries 0) stress-canary-a)
     (= (array-ref canaries 1) stress-canary-b)))
@@ -177,9 +177,9 @@
   [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [iterations : i64]
   [progress-path : String]
-  [failed-at : (Array i64)]) : i64
+  [failed-at : (__tl_dyn-array i64)]) : i64
   (let
-    [canaries : (Array i64) (array.make-array i64 2)]
+    [canaries : (__tl_dyn-array i64) (array.make-array i64 2)]
     [i : i64 0]
     [outcome : i64 stress-status-ok]
     (begin
@@ -277,7 +277,7 @@
 ;: acting. A drained stack proves the entry balanced its pushes and pops.
 (define (stress-tier2-session-ok?
   [expected-operand-node : i64]
-  [outcome : (Array i64)]) : bool
+  [outcome : (__tl_dyn-array i64)]) : bool
   (cond
     [(not
         (= compiler_embedded_stdlib_tlci.compiler-comptime-host-operand-count 1))
@@ -329,18 +329,18 @@
   [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [iterations : i64]
   [progress-path : String]
-  [failed-at : (Array i64)]) : i64
+  [failed-at : (__tl_dyn-array i64)]) : i64
   (let
-    [canaries : (Array i64) (array.make-array i64 2)]
+    [canaries : (__tl_dyn-array i64) (array.make-array i64 2)]
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operand-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
         pools
         (compiler_ast_types.AstExpr.Var (ci.intern "xs")))]
-    [operands : (Array compiler_ctfe.CompilerCtfeValue)
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
-    [detail : (Array i64) (make-array stress-status-ok)]
+    [detail : (__tl_dyn-array i64) (make-array stress-status-ok)]
     [i : i64 0]
     [outcome : i64 stress-status-ok]
     (begin
@@ -425,9 +425,9 @@
   [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [iterations : i64]
   [progress-path : String]
-  [failed-at : (Array i64)]) : i64
+  [failed-at : (__tl_dyn-array i64)]) : i64
   (let
-    [canaries : (Array i64) (array.make-array i64 2)]
+    [canaries : (__tl_dyn-array i64) (array.make-array i64 2)]
     [i : i64 0]
     [outcome : i64 stress-status-ok]
     (begin
@@ -441,7 +441,7 @@
             (compiler_ast_types.ast-node-pool-context-expr-push
               pools
               (compiler_ast_types.AstExpr.Var (ci.intern "xs")))]
-          [operands : (Array compiler_ctfe.CompilerCtfeValue)
+          [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
             (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
           (begin
             (when
@@ -518,7 +518,7 @@
       [tier : i64 (string.>int (io.arg 1))]
       [iterations : i64 (string.>int (io.arg 2))]
       [progress-path : String (io.arg 3)]
-      [failed-at : (Array i64) (make-array -1)]
+      [failed-at : (__tl_dyn-array i64) (make-array -1)]
       (match (tlci_loader.tlci-loader-load-from-bytes-with-host
         (arena.tl_arena_current)
         (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)
@@ -531,7 +531,7 @@
           (let
             [pools : compiler_ast_types.AstNodePoolContext
               (compiler_ast_types.ast-node-pool-context-capture-active)]
-            [operands : (Array compiler_ctfe.CompilerCtfeValue)
+            [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
               (array.make-array compiler_ctfe.CompilerCtfeValue 0)]
             (begin
               ;; One session and one mapped-image lifetime for the whole run,

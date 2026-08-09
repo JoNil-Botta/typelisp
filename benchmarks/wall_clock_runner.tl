@@ -23,15 +23,15 @@
   ;; O_CLOEXEC.
   524288)
 
-(define (array-i32-addr [items : (Array i32)]) : i64
+(define (array-i32-addr [items : (__tl_dyn-array i32)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
 
-(define (array-i64-addr [items : (Array i64)]) : i64
+(define (array-i64-addr [items : (__tl_dyn-array i64)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
 
-(define (array-u8-addr [items : (Array u8)]) : i64
+(define (array-u8-addr [items : (__tl_dyn-array u8)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
 
@@ -63,7 +63,7 @@
 
 (define (child-fail
   [exec-write : i64]
-  [error-buffer : (Array i64)]
+  [error-buffer : (__tl_dyn-array i64)]
   [status : i64]) : never
   (begin
     (array-set! error-buffer 0 (positive-errno status))
@@ -81,7 +81,7 @@
 (define (child-run
   [exec-read : i64]
   [exec-write : i64]
-  [error-buffer : (Array i64)]
+  [error-buffer : (__tl_dyn-array i64)]
   [stdout-path-addr : i64]
   [stderr-path-addr : i64]
   [exec-addr : i64]
@@ -131,7 +131,7 @@
                         (child-fail exec-write error-buffer exec-status)))))))))))
     (child-fail exec-write error-buffer -1)))
 
-(define (read-launch-error [fd : i64] [error-buffer : (Array i64)]) : i64
+(define (read-launch-error [fd : i64] [error-buffer : (__tl_dyn-array i64)]) : i64
   (let
     [total : i64 0]
     [done : bool false]
@@ -151,7 +151,7 @@
             [else (set! total (+ total count))])))
       total)))
 
-(define (wait-child [pid : i64] [status-buffer : (Array i32)]) : i64
+(define (wait-child [pid : i64] [status-buffer : (__tl_dyn-array i32)]) : i64
   (let
     [waited : i64 -4]
     (begin
@@ -197,11 +197,11 @@
 
 (define (run-child) : i64
   (let
-    [stdout-path : (Array u8) (io.c-string (io.arg 1))]
-    [stderr-path : (Array u8) (io.c-string (io.arg 2))]
-    [exec-pipe : (Array i32) (array.make-array i32 2)]
-    [error-buffer : (Array i64) (array.make-array i64 1)]
-    [status-buffer : (Array i32) (array.make-array i32 1)]
+    [stdout-path : (__tl_dyn-array u8) (io.c-string (io.arg 1))]
+    [stderr-path : (__tl_dyn-array u8) (io.c-string (io.arg 2))]
+    [exec-pipe : (__tl_dyn-array i32) (array.make-array i32 2)]
+    [error-buffer : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [status-buffer : (__tl_dyn-array i32) (array.make-array i32 1)]
     [pipe-status : i64
       (unsafe
         (syscall 293 (array-i32-addr exec-pipe) pipe-close-on-exec))]

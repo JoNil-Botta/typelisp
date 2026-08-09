@@ -5691,6 +5691,9 @@
       (compiler-typecheck-smoke-body-state-diagnostic-reuse-ok?)
       (io.panic "typecheck: body state diagnostic reuse smoke failed"))
     (unless
+      (tc_core.tc-scratch-arena-state-isolation-self-test)
+      (io.panic "typecheck: scratch arena state isolation smoke failed"))
+    (unless
       (and
         (compiler-typecheck-smoke-registry-member-diagnostic-ok?
           "(define support : i64 0)

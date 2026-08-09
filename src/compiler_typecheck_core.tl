@@ -186,6 +186,19 @@
 (defstruct TcMacroCallSiteState
   (address i64))
 
+(defstruct TcScratchArenaStateData
+  ;; Reusable arenas are isolated per typecheck job. Each entry records the
+  ;; caller arena it must restore if teardown is requested while scratch is
+  ;; active; this avoids consulting an unrelated active pool or global owner.
+  (fn-arena i64)
+  (fn-return-arena i64)
+  (decl-arena i64)
+  (decl-return-arena i64)
+  (decl-depth i64))
+
+(defstruct TcScratchArenaState
+  (address i64))
+
 (defstruct TcMacroCallSiteActiveDecl
   (path-id i64)
   (editable bool)
@@ -373,7 +386,8 @@
   (topenv-membership TcTopEnvMembershipState)
   (thread-name-kind TcThreadNameKindState)
   (inlay-hints TcInlayHintState)
-  (macro-call-sites TcMacroCallSiteState))
+  (macro-call-sites TcMacroCallSiteState)
+  (scratch-arenas TcScratchArenaState))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
@@ -495,6 +509,19 @@
     (array.make-array i64 8192)
     (array.make-array i64 10)))
 
+(define (tc-scratch-arena-state-new) : TcScratchArenaState
+  (let
+    [cell : (__tl_dyn-array TcScratchArenaStateData)
+      (array.make-array TcScratchArenaStateData 1)]
+    (begin
+      (array-set! cell 0 (TcScratchArenaStateData 0 0 0 0 0))
+      (TcScratchArenaState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (array-data cell) : (Ptr TcScratchArenaStateData))))
+          : i64)))))
+
 (define (tc-job-state-new) : TcJobState
   (let
     [cell : (__tl_dyn-array TcJobStateData) (array.make-array TcJobStateData 1)]
@@ -507,7 +534,8 @@
           (tc-topenv-membership-state-new)
           (tc-thread-name-kind-state-new)
           (tc-inlay-hint-state-new)
-          (tc-macro-call-site-state-new)))
+          (tc-macro-call-site-state-new)
+          (tc-scratch-arena-state-new)))
       (TcJobState
         (cast
           (unsafe
@@ -533,6 +561,26 @@
 
 (define (tc-job-state-macro-call-sites [state : TcJobState]) : TcMacroCallSiteState
   (struct-get (tc-job-state-data state) macro-call-sites))
+
+(define (tc-job-state-scratch-arenas [state : TcJobState]) : TcScratchArenaState
+  (struct-get (tc-job-state-data state) scratch-arenas))
+
+(define (tc-scratch-arena-state-data [state : TcScratchArenaState]) : TcScratchArenaStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (Ptr TcScratchArenaStateData)))))
+
+(define (tc-scratch-arena-state-data-set!
+  [state : TcScratchArenaState]
+  [data : TcScratchArenaStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (MutPtr TcScratchArenaStateData))
+      data)))
 
 (define (tc-inlay-hint-state-data [state : TcInlayHintState]) : TcInlayHintStateData
   (unsafe
@@ -1041,6 +1089,12 @@
     (tc-job-state-reset-derived-caches! state)
     (tc-inlay-hints-reset-for-state! (tc-job-state-inlay-hints state))))
 
+;; Scratch destruction is a lifetime boundary, not a generic cache reset.
+;; Lowering performs internal file-state resets while a caller still owns an
+;; outer region mark, so result boundaries invoke this operation explicitly.
+(define (tc-job-state-release-scratch-arenas! [state : TcJobState]) : unit
+  (tc-scratch-arena-state-release! (tc-job-state-scratch-arenas state)))
+
 ;; Standalone source APIs and direct tests are serial compatibility surfaces.
 ;; Allocate their state only when one of those adapters is called; production
 ;; compiler jobs always pass their CompilerDriverState-owned TcJobState.
@@ -1075,6 +1129,15 @@
 (define (tc-serial-job-state-reset-if-ready!) : unit
   (if tc-serial-job-state-ready
     (tc-job-state-reset-file-state! (array-ref tc-serial-job-state-cell 0))
+    unit))
+
+;; The legacy reset surface historically released only typecheck scratch.
+;; Keep that boundary distinct from a full job reset: standalone callers can
+;; own an inlay generation across internal compiler reset points.
+(define (tc-serial-scratch-arenas-release-if-ready!) : unit
+  (if tc-serial-job-state-ready
+    (tc-job-state-release-scratch-arenas!
+      (array-ref tc-serial-job-state-cell 0))
     unit))
 
 (defstruct TcBodyStateData
@@ -3329,10 +3392,11 @@
 (define (tc-ty-node-pool-exhausted-diagnostic) : cdiag.CompilerDiagnostic
   (tc-diag-at-start (ast.ty-node-pool-exhausted-message)))
 
-(define (tc-typecheck-result-with-pool-check [result : ResultCompilerTypecheck]) : ResultCompilerTypecheck
+(define (tc-typecheck-result-with-pool-check
+  [job-state : TcJobState]
+  [result : ResultCompilerTypecheck]) : ResultCompilerTypecheck
   (begin
-    (tc-fn-scratch-arena-release!)
-    (tc-decl-scratch-arena-release!)
+    (tc-job-state-release-scratch-arenas! job-state)
     (if (ast.ty-node-pool-exhausted?)
       (ResultCompilerTypecheck.Err
         (box
@@ -3341,10 +3405,10 @@
       result)))
 
 (define (tc-typecheck-checked-result-with-pool-check
+  [job-state : TcJobState]
   [result : ResultCompilerTypecheckChecked]) : ResultCompilerTypecheckChecked
   (begin
-    (tc-fn-scratch-arena-release!)
-    (tc-decl-scratch-arena-release!)
+    (tc-job-state-release-scratch-arenas! job-state)
     (if (ast.ty-node-pool-exhausted?)
       (ResultCompilerTypecheckChecked.Err
         (box
@@ -77319,7 +77383,9 @@
         2
         "typecheck.macro.peak"
         "typecheck-function-scratch"
-        tc-fn-scratch-arena)
+        ;; Macro expansion runs before the job-owned typecheck scratch state is
+        ;; active, so no function scratch arena is attributable here.
+        0)
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
@@ -97763,34 +97829,47 @@
     result))
 
 ;; Reusable scratch arena for per-function-body typechecks. Mirrors
-;; lower-scratch-arena: created lazily, shared by every check (the body walk
-;; is never re-entrant into another function-decl check), reclaimed by
-;; mark/rewind per check.
-(define tc-fn-scratch-arena : i64
-  0)
-
-(define (tc-fn-scratch-arena-get) : i64
-  (if (= tc-fn-scratch-arena 0)
-    (let
-      [scratch : i64 (arena.tl_arena_make_small)]
+;; lower-scratch-arena: created lazily, shared by every check in one job (the
+;; body walk is never re-entrant into another function-decl check), reclaimed
+;; by mark/rewind per check.
+(define (tc-fn-scratch-arena-get [state : TcScratchArenaState]) : i64
+  (let
+    [data : TcScratchArenaStateData (tc-scratch-arena-state-data state)]
+    [return-arena : i64 (arena.tl_arena_current)]
+    (if (= (struct-get data fn-arena) 0)
+      (let
+        [scratch : i64 (arena.tl_arena_make_small)]
+        (begin
+          (set! (struct-get data fn-arena) scratch)
+          (set! (struct-get data fn-return-arena) return-arena)
+          (tc-scratch-arena-state-data-set! state data)
+          (unsafe
+            (arena.tl_arena_set return-arena))
+          scratch))
       (begin
-        (set! tc-fn-scratch-arena scratch)
-        scratch))
-    tc-fn-scratch-arena))
+        (set! (struct-get data fn-return-arena) return-arena)
+        (tc-scratch-arena-state-data-set! state data)
+        (struct-get data fn-arena)))))
 
-(define (tc-fn-scratch-arena-release!) : unit
-  (if (= tc-fn-scratch-arena 0)
-    unit
-    (begin
-      (if (= (arena.tl_arena_current) tc-fn-scratch-arena)
+(define (tc-fn-scratch-arena-release! [state : TcScratchArenaState]) : unit
+  (let
+    [data : TcScratchArenaStateData (tc-scratch-arena-state-data state)]
+    [scratch : i64 (struct-get data fn-arena)]
+    (if (= scratch 0)
+      unit
+      (begin
+        (if (= (arena.tl_arena_current) scratch)
+          (unsafe
+            (arena.tl_arena_set (struct-get data fn-return-arena)))
+          unit)
         (unsafe
-          (arena.tl_arena_set ast.node-pool-base-arena))
-        unit)
-      (unsafe
-        (arena.tl_arena_destroy tc-fn-scratch-arena))
-      (set! tc-fn-scratch-arena 0))))
+          (arena.tl_arena_destroy scratch))
+        (set! (struct-get data fn-arena) 0)
+        (set! (struct-get data fn-return-arena) 0)
+        (tc-scratch-arena-state-data-set! state data)))))
 
 (define (tc-fn-scratch-arena-release-after-overflow!
+  [state : TcScratchArenaState]
   [scratch : i64]
   [scratch-head : i64]) : unit
   ;; A nonzero region reset deliberately retires overflow segments so stale
@@ -97800,7 +97879,7 @@
   ;; mapping apiece until the end of the compile.
   (if (= scratch scratch-head)
     unit
-    (tc-fn-scratch-arena-release!)))
+    (tc-fn-scratch-arena-release! state)))
 
 ;; Function bodies dominate typecheck allocation (~96% of the phase's live
 ;; delta) and the check returns only unit -- everything it allocates
@@ -97820,8 +97899,10 @@
   [ret : ast.AstType]
   [body-box : i64]) : ResultTcUnit
   (let
+    [scratch-state : TcScratchArenaState
+      (tc-job-state-scratch-arenas (tc-context-job-state ctx))]
     [enclosing : i64 (arena.tl_arena_current)]
-    [scratch : i64 (tc-fn-scratch-arena-get)]
+    [scratch : i64 (tc-fn-scratch-arena-get scratch-state)]
     (begin
       (unsafe
         (arena.tl_arena_set scratch))
@@ -97846,7 +97927,10 @@
                 (arena.tl_arena_set scratch-head)
                 (arena.tl_region_reset mark)
                 (arena.tl_arena_set new-enclosing))
-              (tc-fn-scratch-arena-release-after-overflow! scratch scratch-head)
+              (tc-fn-scratch-arena-release-after-overflow!
+                scratch-state
+                scratch
+                scratch-head)
               ;; Single-entry name caches may hold strings allocated in the
               ;; scratch that was just rewound; invalidate them before
               ;; anything can compare against freed memory.
@@ -97856,40 +97940,60 @@
 ;; Reusable scratch arena for per-declaration checks that are not function
 ;; bodies (Def values, macros, externs, dispatches, enum/struct declarations).
 ;; Same mark/rewind/clone-out shape as the function-body scratch above, but a
-;; SEPARATE arena so a function-body scope nested inside a declaration scope
-;; (a comptime/unsafe template containing a DefFn) never invalidates a live
-;; declaration mark. Released with the function-body scratch at each typecheck
-;; boundary.
-(define tc-decl-scratch-arena : i64
-  0)
-
-;; Open outer declaration scopes in the declaration scratch arena.
-;; Compile-time metadata and Unsafe recurse into the declaration dispatcher;
-;; nested checks stay inside the outer scope so only that scope rewinds or
-;; destroys the arena.
-(define tc-decl-scratch-depth : i64
-  0)
-
-(define (tc-decl-scratch-arena-get) : i64
-  (if (= tc-decl-scratch-arena 0)
-    (let
-      [scratch : i64 (arena.tl_arena_make_small)]
+;; SEPARATE job-owned arena so a function-body scope nested inside a
+;; declaration scope (a comptime/unsafe template containing a DefFn) never
+;; invalidates a live declaration mark.
+(define (tc-decl-scratch-arena-get [state : TcScratchArenaState]) : i64
+  (let
+    [data : TcScratchArenaStateData (tc-scratch-arena-state-data state)]
+    [return-arena : i64 (arena.tl_arena_current)]
+    (if (= (struct-get data decl-arena) 0)
+      (let
+        [scratch : i64 (arena.tl_arena_make_small)]
+        (begin
+          (set! (struct-get data decl-arena) scratch)
+          (set! (struct-get data decl-return-arena) return-arena)
+          (tc-scratch-arena-state-data-set! state data)
+          (unsafe
+            (arena.tl_arena_set return-arena))
+          scratch))
       (begin
-        (set! tc-decl-scratch-arena scratch)
-        scratch))
-    tc-decl-scratch-arena))
+        (set! (struct-get data decl-return-arena) return-arena)
+        (tc-scratch-arena-state-data-set! state data)
+        (struct-get data decl-arena)))))
 
-(define (tc-decl-scratch-arena-release!) : unit
-  (if (= tc-decl-scratch-arena 0)
-    unit
-    (begin
-      (if (= (arena.tl_arena_current) tc-decl-scratch-arena)
+(define (tc-decl-scratch-arena-release! [state : TcScratchArenaState]) : unit
+  (let
+    [data : TcScratchArenaStateData (tc-scratch-arena-state-data state)]
+    [scratch : i64 (struct-get data decl-arena)]
+    (if (= scratch 0)
+      unit
+      (begin
+        (if (= (arena.tl_arena_current) scratch)
+          (unsafe
+            (arena.tl_arena_set (struct-get data decl-return-arena)))
+          unit)
         (unsafe
-          (arena.tl_arena_set ast.node-pool-base-arena))
-        unit)
-      (unsafe
-        (arena.tl_arena_destroy tc-decl-scratch-arena))
-      (set! tc-decl-scratch-arena 0))))
+          (arena.tl_arena_destroy scratch))
+        (set! (struct-get data decl-arena) 0)
+        (set! (struct-get data decl-return-arena) 0)
+        (set! (struct-get data decl-depth) 0)
+        (tc-scratch-arena-state-data-set! state data)))))
+
+(define (tc-decl-scratch-depth [state : TcScratchArenaState]) : i64
+  (struct-get (tc-scratch-arena-state-data state) decl-depth))
+
+(define (tc-decl-scratch-depth-set! [state : TcScratchArenaState] [depth : i64]) : unit
+  (let
+    [data : TcScratchArenaStateData (tc-scratch-arena-state-data state)]
+    (begin
+      (set! (struct-get data decl-depth) depth)
+      (tc-scratch-arena-state-data-set! state data))))
+
+(define (tc-scratch-arena-state-release! [state : TcScratchArenaState]) : unit
+  (begin
+    (tc-fn-scratch-arena-release! state)
+    (tc-decl-scratch-arena-release! state)))
 
 ;; Non-function declaration checks pin their transient env layers, CTFE eval
 ;; trees, and partial caches in the persistent arena for the rest of the
@@ -97907,58 +98011,146 @@
   [top-env : TcTypeEnv]
   [global-env : TcTypeEnv]
   [decl : ast.AstDecl]) : ResultTcUnit
-  (if (> tc-decl-scratch-depth 0)
-    ;; Compile-time metadata and Unsafe recursively dispatch their template.
-    ;; Keep nested checks in the outer declaration scope: an inner rewind would
-    ;; also free an error cloned into that same scratch arena, while the outer
-    ;; scope already provides the required reclamation boundary.
-    (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 (tc-decl-scratch-arena-get)]
-      (begin
-        (set! tc-decl-scratch-depth (+ tc-decl-scratch-depth 1))
-        (unsafe
-          (arena.tl_arena_set scratch))
-        (let
-          [mark : i64 (arena.tl_region_mark)]
-          [raw : ResultTcUnit
-            (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)]
-          [scratch-head : i64 (arena.tl_arena_current)]
-          (begin
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            (let
-              [escaped : ResultTcUnit
-                (match raw
-                  [(ResultTcUnit.Ok) ResultTcUnit.Ok]
-                  [(ResultTcUnit.Err message)
-                    (ResultTcUnit.Err
-                      (clone (tc-unbound-finalize-located-error message)))])]
-              [new-enclosing : i64 (arena.tl_arena_current)]
-              (begin
-                (unsafe
-                  (arena.tl_arena_set scratch-head)
-                  (arena.tl_region_reset mark)
-                  (arena.tl_arena_set new-enclosing))
-                (set! tc-decl-scratch-depth (- tc-decl-scratch-depth 1))
-                (if (and
-                  (= tc-decl-scratch-depth 0)
-                  (not (= scratch scratch-head)))
-                  (tc-decl-scratch-arena-release!)
-                  unit)
-                ;; Single-entry name caches may hold strings allocated in the
-                ;; scratch that was just rewound; invalidate them before
-                ;; anything can compare against freed memory.
-                (tc-nominal-owner-cache-reset!)
-                ;; The macro helper env cache persists across declarations, but
-                ;; its spine is extended with per-check partial cache layers
-                ;; while a DefMacro body is checked; those layers (and any
-                ;; rewind-sensitive content reached through them) must not
-                ;; outlive this declaration, so rebuild the cache per
-                ;; declaration inside the scratch scope.
-                (tc-macro-helper-env-cache-reset!)
-                escaped))))))))
+  (let
+    [scratch-state : TcScratchArenaState
+      (tc-job-state-scratch-arenas (tc-context-job-state ctx))]
+    (if (> (tc-decl-scratch-depth scratch-state) 0)
+      ;; Compile-time metadata and Unsafe recursively dispatch their template.
+      ;; Keep nested checks in the outer declaration scope: an inner rewind
+      ;; would also free an error cloned into that same scratch arena, while the
+      ;; outer scope already provides the required reclamation boundary.
+      (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)
+      (let
+        [enclosing : i64 (arena.tl_arena_current)]
+        [scratch : i64 (tc-decl-scratch-arena-get scratch-state)]
+        (begin
+          (tc-decl-scratch-depth-set! scratch-state 1)
+          (unsafe
+            (arena.tl_arena_set scratch))
+          (let
+            [mark : i64 (arena.tl_region_mark)]
+            [raw : ResultTcUnit
+              (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)]
+            [scratch-head : i64 (arena.tl_arena_current)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set enclosing))
+              (let
+                [escaped : ResultTcUnit
+                  (match raw
+                    [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+                    [(ResultTcUnit.Err message)
+                      (ResultTcUnit.Err
+                        (clone (tc-unbound-finalize-located-error message)))])]
+                [new-enclosing : i64 (arena.tl_arena_current)]
+                (begin
+                  (unsafe
+                    (arena.tl_arena_set scratch-head)
+                    (arena.tl_region_reset mark)
+                    (arena.tl_arena_set new-enclosing))
+                  (tc-decl-scratch-depth-set!
+                    scratch-state
+                    (- (tc-decl-scratch-depth scratch-state) 1))
+                  (if (and
+                    (= (tc-decl-scratch-depth scratch-state) 0)
+                    (not (= scratch scratch-head)))
+                    (tc-decl-scratch-arena-release! scratch-state)
+                    unit)
+                  ;; Single-entry name caches may hold strings allocated in the
+                  ;; scratch that was just rewound; invalidate them before
+                  ;; anything can compare against freed memory.
+                  (tc-nominal-owner-cache-reset!)
+                  ;; The macro helper env cache persists across declarations, but
+                  ;; its spine is extended with per-check partial cache layers
+                  ;; while a DefMacro body is checked; those layers (and any
+                  ;; rewind-sensitive content reached through them) must not
+                  ;; outlive this declaration, so rebuild the cache per
+                  ;; declaration inside the scratch scope.
+                  (tc-macro-helper-env-cache-reset!)
+                  escaped)))))))))
+
+(define (tc-scratch-arena-state-isolation-self-test) : bool
+  (let
+    [job-a : TcJobState (tc-job-state-new)]
+    [job-b : TcJobState (tc-job-state-new)]
+    [state-a : TcScratchArenaState (tc-job-state-scratch-arenas job-a)]
+    [state-b : TcScratchArenaState (tc-job-state-scratch-arenas job-b)]
+    [fn-a : i64 (tc-fn-scratch-arena-get state-a)]
+    [decl-a : i64 (tc-decl-scratch-arena-get state-a)]
+    [fn-b : i64 (tc-fn-scratch-arena-get state-b)]
+    [decl-b : i64 (tc-decl-scratch-arena-get state-b)]
+    (begin
+      (tc-decl-scratch-depth-set! state-a 2)
+      (tc-decl-scratch-depth-set! state-b 1)
+      ;; Exercise both active-arena teardown paths: a direct function release
+      ;; and a full reset while A's declaration scratch is current.
+      (unsafe
+        (arena.tl_arena_set fn-a))
+      (tc-fn-scratch-arena-release! state-a)
+      (unsafe
+        (arena.tl_arena_set decl-a))
+      (tc-job-state-release-scratch-arenas! job-a)
+      (tc-job-state-reset-file-state! job-a)
+      (let
+        [after-a-reset : TcScratchArenaStateData
+          (tc-scratch-arena-state-data state-a)]
+        [b-live : TcScratchArenaStateData (tc-scratch-arena-state-data state-b)]
+        [isolated : bool
+          (and
+            (not (= fn-a 0))
+            (not (= decl-a 0))
+            (not (= fn-b 0))
+            (not (= decl-b 0))
+            (not (= fn-a fn-b))
+            (not (= decl-a decl-b))
+            (= (struct-get after-a-reset fn-arena) 0)
+            (= (struct-get after-a-reset decl-arena) 0)
+            (= (struct-get after-a-reset decl-depth) 0)
+            (= (struct-get b-live fn-arena) fn-b)
+            (= (struct-get b-live decl-arena) decl-b)
+            (= (struct-get b-live decl-depth) 1))]
+        [fn-a-reused : i64 (tc-fn-scratch-arena-get state-a)]
+        [decl-a-reused : i64 (tc-decl-scratch-arena-get state-a)]
+        (begin
+          (tc-decl-scratch-depth-set! state-a 3)
+          (let
+            [b-after-a-reuse : TcScratchArenaStateData
+              (tc-scratch-arena-state-data state-b)]
+            [reused : bool
+              (and
+                (not (= fn-a-reused 0))
+                (not (= decl-a-reused 0))
+                (= (tc-decl-scratch-depth state-a) 3)
+                (= (struct-get b-after-a-reuse fn-arena) fn-b)
+                (= (struct-get b-after-a-reuse decl-arena) decl-b)
+                (= (struct-get b-after-a-reuse decl-depth) 1))]
+            (begin
+              (tc-job-state-release-scratch-arenas! job-a)
+              (tc-job-state-reset-file-state! job-a)
+              (tc-job-state-release-scratch-arenas! job-b)
+              (tc-job-state-reset-file-state! job-b)
+              (let
+                [after-a-reuse-reset : TcScratchArenaStateData
+                  (tc-scratch-arena-state-data state-a)]
+                [after-b-reset : TcScratchArenaStateData
+                  (tc-scratch-arena-state-data state-b)]
+                (and
+                  isolated
+                  reused
+                  (= (struct-get after-a-reuse-reset fn-arena) 0)
+                  (= (struct-get after-a-reuse-reset decl-arena) 0)
+                  (= (struct-get after-a-reuse-reset decl-depth) 0)
+                  (= (struct-get after-b-reset fn-arena) 0)
+                  (= (struct-get after-b-reset decl-arena) 0)
+                  (= (struct-get after-b-reset decl-depth) 0))))))))))
+
+(cfg
+  test
+  (test
+    tc-scratch-arena-job-owned-reset-reuse
+    (if (tc-scratch-arena-state-isolation-self-test)
+      unit
+      (io.panic "typecheck: job-owned scratch arena isolation failed"))))
 
 (define (tc-check-decl-with-global-env-inner
   [ctx : TcContext]
@@ -99486,6 +99678,7 @@
       (tc-body-early-exit-facts-start! body-state pools)]
     [checked : ResultCompilerTypecheckChecked
       (tc-typecheck-checked-result-with-pool-check
+        job-state
         (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
           load-state
           prefix-cache
@@ -99604,8 +99797,7 @@
       (surface_facts.surface-typecheck-facts-recording-abort!)
       unit)
     (tc-unbound-suggestion-snapshot-reset!)
-    (tc-fn-scratch-arena-release!)
-    (tc-decl-scratch-arena-release!)
+    (tc-serial-scratch-arenas-release-if-ready!)
     (ctfe_support.ctfe-builtin-reset!)
     (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
     (tc-clone-able-cache-reset!)

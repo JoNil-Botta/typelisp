@@ -12930,13 +12930,14 @@
 ;; AstTypeList/AstType, ResultTcType/ResultTcType.Ok, and CompilerIrInstr copies,
 ;; dynamically dominant, but the 16 B ceiling pushed every one of them onto a
 ;; `tl_memcpy` CALL (~88 dynamic instructions each). Inline they lower to
-;; at most ten 16-byte XMM load+store pairs. Capping the expansion by that
+;; at most eleven load+store pairs (ten 16-byte XMM chunks and one word).
+;; Capping the expansion by that
 ;; operation count, as production compiler memcpy lowering does, admits the hot
-;; 120-160 B band while still routing genuinely large copies through tl_memcpy
+;; 120-168 B band while still routing genuinely large copies through tl_memcpy
 ;; so the emitted code does not blow up. Must stay a multiple of 8 so the inline
 ;; chunk loop (lower-copy-chunk-size: 8/4/2/1) terminates cleanly for any size.
 (define lower-inline-copy-threshold : i64
-  160)
+  168)
 
 ;; Copy `size` bytes dst<-src via a single tl_memcpy runtime call instead
 ;; of `size/8` separate gep+load+gep+store chunks. The flip from heap-handle

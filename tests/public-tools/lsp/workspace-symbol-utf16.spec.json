@@ -3,7 +3,7 @@
   "stderr_exact": "",
   "message_checks": [
     {"jsonpath_id": 1, "raw_contains": "\"positionEncoding\":\"utf-16\"", "raw_contains": "\"workspaceSymbolProvider\":true"},
-    {"jsonpath_id": 2, "raw_contains": "\"name\":\"foo\"", "raw_contains": "\"containerName\":\"unicode\"", "raw_contains": "\"start\":{\"line\":1,\"character\":9},\"end\":{\"line\":1,\"character\":12}"},
+    {"jsonpath_id": 2, "raw_contains": "\"name\":\"foo\"", "raw_contains": "\"containerName\":\"unicode\"", "raw_contains": "\"start\":{\"line\":1,\"character\":38},\"end\":{\"line\":1,\"character\":41}"},
     {"jsonpath_id": 3, "raw_contains": "\"code\":-32602", "raw_contains": "workspace/symbol requires a string query"},
     {"jsonpath_id": 4, "json_contains": "\"result\":[]"},
     {"jsonpath_id": 5, "json_contains": "\"result\":null", "jsonpath_result": null}

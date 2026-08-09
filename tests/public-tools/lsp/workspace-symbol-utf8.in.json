@@ -1,6 +1,6 @@
 [
   {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"general":{"positionEncodings":["utf-8"]}}}},
-  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/unicode.tl","languageId":"typelisp","version":1,"text":"(module unicode)\n(define (foo) : i64 1)\n"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/unicode.tl","languageId":"typelisp","version":1,"text":"(module unicode)\n(define prefix : String \"ö\") (define (foo) : i64 1)\n"}}},
   {"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"fo"}},
   {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}

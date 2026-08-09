@@ -15659,6 +15659,7 @@
       [name : String (compiler-backend-symbol-text-state backend-state name-id)]
       (or
         (string.eq name "tl_memcpy")
+        (string.eq name "tl_memcpy_fresh")
         (string.eq name "tl_memchr")
         (string.eq name "tl_array_zero")
         (string.eq name "tl_mem_fill8")
@@ -70101,7 +70102,7 @@
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringSeq
   (let
     [symbols : BackendStringSeq
-      (BackendStringSeq (array.make-array String 15) 0)]
+      (BackendStringSeq (array.make-array String 16) 0)]
     (begin
       (compiler-backend-string-push! (&mut symbols) "tl_alloc")
       (compiler-backend-string-push! (&mut symbols) "tl_arena_current")
@@ -70113,6 +70114,7 @@
       (compiler-backend-string-push! (&mut symbols) "tl_div_abort")
       (compiler-backend-string-push! (&mut symbols) "tl_shift_abort")
       (compiler-backend-string-push! (&mut symbols) "tl_memcpy")
+      (compiler-backend-string-push! (&mut symbols) "tl_memcpy_fresh")
       (compiler-backend-string-push! (&mut symbols) "tl_memchr")
       (compiler-backend-string-push! (&mut symbols) "tl_tlci_call_macro_entry")
       (compiler-backend-string-push! (&mut symbols) "tl_tlci_call_image_entry")
@@ -70132,6 +70134,7 @@
     (cond
       [(string.eq name "tl_alloc") true]
       [(string.eq name "tl_memcpy") true]
+      [(string.eq name "tl_memcpy_fresh") true]
       [(string.eq name "tl_memchr") true]
       [(string.eq name "tl_tlci_call_image_entry") true]
       [(string.eq name "tl_tlci_call_macro_entry")

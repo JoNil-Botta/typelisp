@@ -28,17 +28,26 @@
 ;: Runtime active-arena allocator used by integer rendering.
 (extern (string-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
 
-;; Internal raw byte copy primitive backed by the always-emitted runtime helper.
-;;
 ;; Caller contract: `n >= 0`; `src` points at at least `n` initialized readable
 ;; bytes; `dst` points at at least `n` writable bytes; and both ranges remain
-;; live for the call. Overlap is allowed because `tl_memcpy` has memmove
-;; semantics for the `dst > src` case.
-(unsafe
-  (extern (string-runtime-copy-bytes!
-    [dst : (MutPtr u8)]
-    [src : (Ptr u8)]
-    [n : i64]) : unit (:symbol "tl_memcpy")))
+;; live for the call.
+;; Stage2+ compiler builds use the backend's forward-only entry. All callers of
+;; `str-copy-bytes-into` below write a fresh allocation or growth buffer.
+(cfg
+  (all compiler-build-identity embedded-stdlib-tlci)
+  (unsafe
+    (extern (string-runtime-copy-bytes!
+      [dst : (MutPtr u8)]
+      [src : (Ptr u8)]
+      [n : i64]) : unit (:symbol "tl_memcpy_fresh"))))
+
+(cfg
+  (not (all compiler-build-identity embedded-stdlib-tlci))
+  (unsafe
+    (extern (string-runtime-copy-bytes!
+      [dst : (MutPtr u8)]
+      [src : (Ptr u8)]
+      [n : i64]) : unit (:symbol "tl_memcpy"))))
 
 ;; Internal raw byte-search primitive backed by the always-emitted runtime
 ;; helper. Returns the zero-based offset in `ptr[0..len)` or -1 when absent.

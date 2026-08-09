@@ -116,6 +116,21 @@
       (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& windows-min-functions)
+          ".globl tl_memcpy_fresh")
+        "minimal Windows functions keep fresh-copy helper")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& linux-min-functions)
+          "tl_memcpy_fresh:\n    movq %rdx, %rcx\n    jmp .Ltl_memcpy_fwd")
+        "Linux fresh-copy entry shares the forward copy core")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& windows-min-functions)
+          ".Ltl_memcpy_fresh_setup:\n    movq %rdi, %rax\n    movq %rsi, %r10")
+        "Windows fresh-copy entry preserves nonvolatile copy registers")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& windows-min-functions)
           ".globl tl_memchr")
         "minimal Windows functions keep memchr")
       (test.assert-true

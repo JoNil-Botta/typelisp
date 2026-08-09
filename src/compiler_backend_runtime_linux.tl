@@ -905,6 +905,12 @@ tl_memcpy:
     rep movsb
     ret
     .size tl_memcpy, . - tl_memcpy
+    .globl tl_memcpy_fresh
+    .type tl_memcpy_fresh,@function
+tl_memcpy_fresh:
+    movq %rdx, %rcx
+    jmp .Ltl_memcpy_fwd
+    .size tl_memcpy_fresh, . - tl_memcpy_fresh
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String

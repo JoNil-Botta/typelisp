@@ -74609,7 +74609,7 @@
             (compiler-backend-stream-state-data-set! stream data)))))))
 
 (define (compiler-backend-assembly-stream-rewind-raw!
-  [stream : CompilerBackendStreamState]) : unit
+  [_stream : CompilerBackendStreamState]) : unit
   ;; Raw function text stays until a bounded batch has passed peephole/sweep.
   unit)
 

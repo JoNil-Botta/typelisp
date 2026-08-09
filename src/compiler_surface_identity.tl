@@ -564,7 +564,7 @@
     (Err String)))
 
 (cfg
-  compiler-surface-producer
+  (any compiler-surface-producer compiler-surface-selftest)
   (define (surface-identity-push-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [text : String]) : unit
@@ -651,7 +651,7 @@
         (SurfaceIdentityPayload key source-names generated)))))
 
 (cfg
-  compiler-surface-producer
+  (any compiler-surface-producer compiler-surface-selftest)
   (define (surface-identity-encode [payload : SurfaceIdentityPayload]) : ResultSurfaceIdentityBytes
     (if (not (surface-identity-payload-valid? payload))
       (ResultSurfaceIdentityBytes.Err

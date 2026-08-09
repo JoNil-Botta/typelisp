@@ -74582,6 +74582,12 @@
   [src : String]
   [target : CompilerBackendTarget]) : compiler_lower.ResultCompilerLower
   (begin
+    (when
+      (compiler_lower.lower-resetting-entry-in-live-session?)
+      (return
+        (compiler_lower.lower-resetting-entry-live-session-error
+          "compiler-backend-lower-source-for-target"
+          "<source>")))
     (ci.intern-reset!)
     (compiler_lower.lower-reset-intern-owned-state!)
     (cbi.compiler-builtin-reset!)

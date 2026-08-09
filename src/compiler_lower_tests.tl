@@ -615,6 +615,37 @@
         want)]
     [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
 
+(define (compiler-lower-resetting-entry-live-session-guard-ok?) : bool
+  (let
+    [previous-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-active-session-state-shared-view)]
+    [live-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-session-state-new)]
+    [generation-before : i64 (ci.intern-generation)]
+    [_select-live : unit
+      (compiler_load.compiler-load-session-state-use! live-state)]
+    [result : compiler_lower.ResultCompilerLower
+      (compiler_lower.lower-compiler-source "(define (main) : i64 0)")]
+    [generation-after : i64 (ci.intern-generation)]
+    [_restore : unit
+      (compiler_load.compiler-load-session-state-use! previous-state)]
+    (and
+      (compiler_load.compiler-load-session-state-standalone-reset-safe?
+        previous-state)
+      (= generation-before generation-after)
+      (match result
+        [(compiler_lower.ResultCompilerLower.Err diag)
+          (string.eq
+            (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+            "lower-compiler-source-with-path-mode: standalone resetting compiler entry cannot run inside an active compiler load session")]
+        [(compiler_lower.ResultCompilerLower.Ok _ _) false]))))
+
+(test
+  compiler-lower-resetting-entry-live-session-guard
+  (test.assert-true
+    (compiler-lower-resetting-entry-live-session-guard-ok?)
+    "lower standalone entry rejects a live compiler session before reset"))
+
 (define (compiler-lower-pool-copy-arena-restoration-ok?) : bool
   (let
     [home : arena.Arena (arena.current)]

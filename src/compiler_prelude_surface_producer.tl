@@ -385,6 +385,12 @@
   [build-hash : String]
   [windows-target : bool]) : ResultPreludeSurface
   (let
+    [_guard-live-session : unit
+      (when
+        (load.compiler-load-active-session-live?)
+        (return
+          (ResultPreludeSurface.Err
+            "prelude-surface-build: standalone resetting compiler entry cannot run inside an active compiler load session")))]
     [previous-arena : i64 (arena.tl_arena_current)]
     [surface-arena : i64 (arena.tl_arena_make)]
     [_set-surface-arena : unit

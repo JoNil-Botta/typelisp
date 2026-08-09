@@ -105,8 +105,7 @@
 
 ;; The symbol-char set as two 64-bit ASCII masks: bit k of `...-mask-lo` is
 ;; code k, bit k of `...-mask-hi` is code 64+k. This is a static function of
-;; the byte value, not a cache, and it replaces a 13-arm range-compare chain
-;; that cost 204M Ir per self-compile (target/e1-notes.md, step 1.2).
+;; the byte value, not a cache.
 ;;
 ;; lo = {33 ! } {37 % } {38 & } {42 * } {43 + } {45 - } {46 . } {47 / }
 ;;      {48-57 digits} {58 : } {60 < } {61 = } {62 > } {63 ? }
@@ -391,12 +390,11 @@
 ;; Return the end index (exclusive) of the symbol run that starts at `start` in
 ;; `src`. Same bounds-check discipline as `scan-int-end`.
 ;;
-;; This is the lexer's hottest per-byte loop (259M Ir of its own plus 204M in
-;; `is-symbol-char` and a `string-ref` wrapper call per byte). The membership
-;; test is open-coded from the masks above and the byte comes from the
+;; This is the lexer's hottest per-byte loop. The byte comes from the
 ;; `__tl_string_ref` intrinsic, which lowers to the same bounds-checked String
-;; index that `string.string-ref` wraps - so this is the identical operation
-;; with two calls per byte removed.
+;; index that `string.string-ref` wraps. Keep its common letter path free of a
+;; dynamic shift: safe scalar shifts retain their language-level count guards,
+;; while ASCII case-folding and range tests need no second safety check.
 ;;
 ;; `:` is itself a symbol char, so testing membership first and the `:` rule
 ;; second is equivalent to the original order: a non-`:` byte was decided by
@@ -410,17 +408,16 @@
         (if (< j n)
           (let
             [code : i64 (bit-and (cast (__tl_string_ref src j) : i64) 255)]
-            [member : i64
-              (if (< code 128)
-                (bit-and
-                  (shr
-                    (if (< code 64)
-                      lex-symbol-char-mask-lo
-                      lex-symbol-char-mask-hi)
-                    (bit-and code 63))
-                  1)
-                0)]
-            (if (= member 1)
+            [folded : i64 (bit-or code 32)]
+            [member : bool
+              (cond
+                [(and (>= folded 97) (<= folded 122)) true]
+                [(and (>= code 48) (<= code 57)) true]
+                [(and (>= code 42) (<= code 63))
+                  (and (!= code 44) (!= code 59))]
+                [else
+                  (or (= code 33) (and (>= code 37) (<= code 38)) (= code 95))])]
+            (if member
               (if (and
                 (= code 58)
                 (> j start)

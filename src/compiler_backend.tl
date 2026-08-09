@@ -58956,7 +58956,10 @@
                       end
                       nl)))
                 (let
-                  [tok : i64 (compiler-backend-peephole-token-len data m end)]
+                  [tok : i64
+                    (-
+                      (compiler-backend-peephole-scan-byte-range data m end 32)
+                      m)]
                   [te : i64 (+ m tok)]
                   [mnemonic-kind : i64
                     (compiler-backend-control-mnemonic-kind data m tok)]
@@ -71676,17 +71679,6 @@
       (compiler-backend-peephole-owners-set-reg-index owners dst-reg src-key)]
     [else (compiler-backend-peephole-owners-empty)]))
 
-;; Length of the leading token at `i`: bytes up to the next space or `end`.
-;; Jumps straight to the next space byte a word at a time instead of stepping
-;; every byte. Callers scan from the mnemonic start, which never runs past `end`, so the
-;; not-found answer `end` is exactly the "token runs to the line end" length and
-;; an empty range answers 0 without a separate guard.
-(define (compiler-backend-peephole-token-len
-  [data : (Ptr u8)]
-  [i : i64]
-  [end : i64]) : i64
-  (- (compiler-backend-peephole-scan-byte-range data i end 32) i))
-
 ;; True iff byte `b` is a movq-style size suffix: q, l, w, or b.
 (define (compiler-backend-peephole-size-suffix-byte? [b : i64]) : bool
   (or (= b 113) (= b 108) (= b 119) (= b 98)))
@@ -72696,7 +72688,8 @@
       (while (and (< ms end) (= (compiler-backend-peephole-byte-at data ms) 32))
         (set! ms (+ ms 1)))
       (let
-        [mlen : i64 (compiler-backend-peephole-token-len data ms end)]
+        [mlen : i64
+          (- (compiler-backend-peephole-scan-byte-range data ms end 32) ms)]
         [operand-start : i64 (+ ms mlen)]
         [has-operands : bool false]
         [comma : i64 -1]

@@ -14,8 +14,11 @@
 
 (emit-ordinary-delta)
 
+(define (ordinary-delta-read [item : OrdinaryDelta]) : i64
+  (struct-get item value))
+
 (define ordinary-delta-score : i64
-  (reflection-score OrdinaryDelta))
+  (+ (reflection-score OrdinaryDelta) (ordinary-delta-read (OrdinaryDelta 0))))
 
 (defmacro (emit-module-delta) : Module
   `(begin
@@ -25,15 +28,22 @@
 
 (import (emit-module-delta) as module_delta)
 
+(define (module-delta-read [item : module_delta.ModuleDelta]) : i64
+  (struct-get item value))
+
 (define module-delta-score : i64
-  (reflection-score module_delta.ModuleDelta))
+  (+
+    (reflection-score module_delta.ModuleDelta)
+    (module-delta-read (module_delta.ModuleDelta 0))))
 
 (defmacro (emit-file-delta) : Module
   `(begin
     (module generated.ctfe_file_delta)
     (import compile_profile_ctfe_splice_delta_dep as dep)
+    (define (file-read [item : dep.FileDelta]) : i64
+      (struct-get item value))
     (define (file-score) : i64
-      (reflection-score dep.FileDelta))))
+      (+ (reflection-score dep.FileDelta) (file-read (dep.FileDelta 0))))))
 
 (import (emit-file-delta) as file_delta)
 

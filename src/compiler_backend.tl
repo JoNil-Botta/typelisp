@@ -58672,8 +58672,6 @@
       (compiler-backend-state-function-state backend-state)]
     [point : i64
       (compiler-backend-function-state-emission-point function-state)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler-backend-function-scratch-assignment-index function-state)]
     [reg : String
       (compiler-backend-scavenge-pick-with-mask
         function-state
@@ -58693,6 +58691,8 @@
             (compiler-backend-function-scratch-i64-array
               function-state
               compiler-backend-scratch-i64-array-scavenge-ends)]
+          [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+            (compiler-backend-function-scratch-assignment-index function-state)]
           (compiler-backend-scavenge-freeness-check!
             function-state
             check-starts
@@ -58715,8 +58715,6 @@
       (compiler-backend-state-function-state backend-state)]
     [point : i64
       (compiler-backend-function-state-emission-point function-state)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler-backend-function-scratch-assignment-index function-state)]
     [reg : String
       (compiler-backend-scavenge-pick-from-mask
         function-state
@@ -58737,6 +58735,8 @@
             (compiler-backend-function-scratch-i64-array
               function-state
               compiler-backend-scratch-i64-array-scavenge-ends)]
+          [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+            (compiler-backend-function-scratch-assignment-index function-state)]
           (compiler-backend-scavenge-freeness-check!
             function-state
             check-starts

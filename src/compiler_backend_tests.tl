@@ -19,6 +19,7 @@
 (import compiler_liveness)
 (import compiler_optimize)
 (import compiler_lower_tests)
+(import compiler_load)
 (import compiler_regalloc_tests)
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
@@ -34,6 +35,31 @@
 (import stdlib.arena)
 
 (extern (compiler-backend-test-runtime-alloc [bytes : i64]) : i64 (:symbol "tl_alloc"))
+
+(define (compiler-backend-resetting-entry-live-session-guard-ok?) : bool
+  (let
+    [previous-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-active-session-state-shared-view)]
+    [live-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-session-state-new)]
+    [generation-before : i64 (ci.intern-generation)]
+    [_select-live : unit
+      (compiler_load.compiler-load-session-state-use! live-state)]
+    [result : compiler_lower.ResultCompilerLower
+      (compiler_backend.compiler-backend-lower-source-for-target
+        "(define (main) : i64 0)"
+        (compiler_backend.CompilerBackendTarget.Linux))]
+    [generation-after : i64 (ci.intern-generation)]
+    [_restore : unit
+      (compiler_load.compiler-load-session-state-use! previous-state)]
+    (and
+      (= generation-before generation-after)
+      (match result
+        [(compiler_lower.ResultCompilerLower.Err diag)
+          (string.eq
+            (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+            "compiler-backend-lower-source-for-target: standalone resetting compiler entry cannot run inside an active compiler load session")]
+        [(compiler_lower.ResultCompilerLower.Ok _ _) false]))))
 
 ;; The large fixed-capacity peephole tables must start empty, allocate in their
 ;; own arena on first use, and remain valid after the caller's active arena is
@@ -41644,6 +41670,7 @@
 (define (compiler-backend-self-test) : i64
   (if (and
     (compiler-backend-lazy-table-storage-ok?)
+    (compiler-backend-resetting-entry-live-session-guard-ok?)
     (compiler_backend.backend-and8
       (and
         (compiler_backend.compiler-backend-global-type-table-ok?)

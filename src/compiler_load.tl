@@ -484,7 +484,11 @@
   ;; `compiler-load-session-state-use-with-intern-state!` installs it; the
   ;; ready flag keeps legacy sessions on the compatibility-global floor path.
   (intern-state (__tl_dyn-array ci.InternCompatState))
-  (intern-state-ready (__tl_dyn-array bool)))
+  (intern-state-ready (__tl_dyn-array bool))
+  ;; Standalone tools own the compatibility default session and may retire all
+  ;; of its process-global state before compiling. Driver-owned sessions must
+  ;; instead keep every id-keyed cache valid until the driver retires them.
+  (standalone-reset-safe (__tl_dyn-array bool)))
 
 ;; Per-source traversal data stays explicit without widening the hot recursive
 ;; declaration-loader call for each independently owned field.
@@ -570,7 +574,8 @@
   [value : bool]) : unit
   (array-set! cell 0 value))
 
-(define (compiler-load-session-state-new) : CompilerLoadSessionState
+(define (compiler-load-session-state-new-with-standalone-reset-safety
+  [standalone-reset-safe : bool]) : CompilerLoadSessionState
   (let
     [surface-summaries : (__tl_dyn-array CompilerLoadSurfaceSummaryList)
       (make-array (compiler-load-surface-summary-list-empty))]
@@ -604,16 +609,23 @@
       lazy-import-skip-record-count
       lazy-qualified-observer
       (array.make-array ci.InternCompatState 1)
-      (compiler-load-session-state-bool-cell false))))
+      (compiler-load-session-state-bool-cell false)
+      (compiler-load-session-state-bool-cell standalone-reset-safe))))
+
+(define (compiler-load-session-state-new) : CompilerLoadSessionState
+  (compiler-load-session-state-new-with-standalone-reset-safety false))
+
+(define (compiler-load-standalone-session-state-new) : CompilerLoadSessionState
+  (compiler-load-session-state-new-with-standalone-reset-safety true))
 
 (define compiler-load-default-session-state : (__tl_dyn-array
     CompilerLoadSessionState)
-  (make-array (compiler-load-session-state-new)))
+  (make-array (compiler-load-standalone-session-state-new)))
 
 ;; Serial/test compatibility selector. Production call sites are migrated to
 ;; explicit state APIs incrementally; do not add new compile-job dependencies.
 (define compiler-load-active-session-state : CompilerLoadSessionState
-  (compiler-load-session-state-new))
+  (compiler-load-standalone-session-state-new))
 
 ;; Serial compatibility adapters intentionally share this process-lifetime
 ;; state. Stage0 keeps its historical shallow read while the current compiler
@@ -630,6 +642,19 @@
 ;; stateful compiler modules do not depend on the selector variable itself.
 (define (compiler-load-serial-test-session-state) : CompilerLoadSessionState
   (compiler-load-active-session-state-shared-view))
+
+(define (compiler-load-session-state-standalone-reset-safe?
+  [state : CompilerLoadSessionState]) : bool
+  (compiler-load-session-state-bool-cell-get
+    (struct-get state standalone-reset-safe)))
+
+;; Resetting compiler entries own the compatibility default session. Running
+;; one while a driver-owned session is selected would invalidate the driver's
+;; intern-id keyed caches and floors behind its back.
+(define (compiler-load-active-session-live?) : bool
+  (not
+    (compiler-load-session-state-standalone-reset-safe?
+      (compiler-load-active-session-state-shared-view))))
 
 ;; Global compatibility entry points must not retain a state-owned session
 ;; after its driver arena is retired. Stateful driver paths install their own
@@ -1190,7 +1215,9 @@
 
 (define (compiler-load-session-cache-disable-for-test!) : unit
   (begin
-    (set! compiler-load-active-session-state (compiler-load-session-state-new))
+    (set!
+      compiler-load-active-session-state
+      (compiler-load-standalone-session-state-new))
     (array-set!
       (struct-get compiler-load-active-session-state cache-enabled)
       0
@@ -1209,7 +1236,9 @@
 ;; this while allocating in the arena that will outlive the retired session.
 (define (compiler-load-session-fresh-reset!) : unit
   (begin
-    (set! compiler-load-active-session-state (compiler-load-session-state-new))
+    (set!
+      compiler-load-active-session-state
+      (compiler-load-standalone-session-state-new))
     (compiler-load-session-reset-pools!)
     (compiler-load-session-reset-interns!)
     (ci.intern-persistent-arena-reset!)

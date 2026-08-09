@@ -2022,6 +2022,21 @@
   [path : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-path diag path))
 
+(define (lower-resetting-entry-in-live-session?) : bool
+  (load.compiler-load-active-session-live?))
+
+(define (lower-resetting-entry-live-session-error
+  [entry : String]
+  [path : String]) : ResultCompilerLower
+  (ResultCompilerLower.Err
+    (box
+      (lower-diagnostic-with-path
+        (lower-diagnostic
+          (str_cat.str-cat
+            entry
+            ": standalone resetting compiler entry cannot run inside an active compiler load session"))
+        path))))
+
 (define (lower-reference-support-message) : String
   "lower: reference-typed programs require borrow/reference lowering support")
 
@@ -65936,6 +65951,12 @@
   [src : String]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
+    (when
+      (lower-resetting-entry-in-live-session?)
+      (return
+        (lower-resetting-entry-live-session-error
+          "lower-compiler-source-with-path-mode"
+          path)))
     ;; Each standalone single-source compile (smoke self-tests, emit-source,
     ;; check tools) runs in a fresh arena, so interned name strings from a
     ;; previous compile are freed. Reset the persistent intern table here so a

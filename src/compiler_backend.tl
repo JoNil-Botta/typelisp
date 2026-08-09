@@ -489,36 +489,56 @@
   (group text_buf.TextBuf)
   (sweep-cursor i64))
 
-;; Final-buffer emission uses these scoped stream fields only while the final
-;; backend wrapper is active. Primitive inactive defaults avoid relying on a
-;; module-global heap value before compiler global initialization runs.
-(define compiler-backend-assembly-stream-active : bool
-  false)
-(define compiler-backend-assembly-stream-raw-arena : arena.Arena
-  (arena.Arena 0))
-(define compiler-backend-assembly-stream-raw-mark : arena.ArenaMark
-  (arena.ArenaMark 0))
-(define compiler-backend-assembly-stream-peephole-arena : arena.Arena
-  (arena.Arena 0))
-(define compiler-backend-assembly-stream-peephole-mark : arena.ArenaMark
-  (arena.ArenaMark 0))
-(define compiler-backend-assembly-stream-home-arena : arena.Arena
-  (arena.Arena 0))
-(define compiler-backend-assembly-stream-out : text_buf.TextBuf
-  (text_buf.empty))
-(define compiler-backend-assembly-stream-sweep-cursor : i64
-  0)
-(define compiler-backend-assembly-stream-batch : text_buf.TextBuf
-  (text_buf.empty))
-(define compiler-backend-assembly-stream-batch-count : i64
-  0)
-(define compiler-backend-assembly-stream-raw-ready : bool
-  false)
+;; All mutable state that belongs to one assembly emission stream.  The opaque
+;; one-word carrier below is passed explicitly through assembly, peephole and
+;; sweep helpers; the backing cell is owned by its CompilerBackendState.
+(defstruct CompilerBackendStreamStateData
+  ;; Assembly stream (11 fields).
+  (assembly-active bool)
+  (assembly-raw-arena arena.Arena)
+  (assembly-raw-mark arena.ArenaMark)
+  (assembly-peephole-arena arena.Arena)
+  (assembly-peephole-mark arena.ArenaMark)
+  (assembly-home-arena arena.Arena)
+  (assembly-out text_buf.TextBuf)
+  (assembly-sweep-cursor i64)
+  (assembly-batch text_buf.TextBuf)
+  (assembly-batch-count i64)
+  (assembly-raw-ready bool)
+  ;; Carry-safe label table (4 fields).
+  (carry-safe-offsets (__tl_dyn-array i64))
+  (carry-safe-lengths (__tl_dyn-array i64))
+  (carry-safe-bytes (__tl_dyn-array u8))
+  (carry-safe-bytes-count i64)
+  ;; Dead-store sweep metadata (12 fields).
+  (sweep-sym-off (__tl_dyn-array i64))
+  (sweep-sym-len (__tl_dyn-array i64))
+  (sweep-lo-arr (__tl_dyn-array i64))
+  (sweep-hi-arr (__tl_dyn-array i64))
+  (sweep-disp-arr (__tl_dyn-array i64))
+  (sweep-win64-arr (__tl_dyn-array i64))
+  (sweep-em-lo-arr (__tl_dyn-array i64))
+  (sweep-em-hi-arr (__tl_dyn-array i64))
+  (sweep-sym-bytes (__tl_dyn-array u8))
+  (sweep-sym-bytes-count i64)
+  (sweep-count i64)
+  (sweep-coverage-bits (__tl_dyn-array i64))
+  ;; Peephole owner table (5 fields).
+  (owner-global-offsets (__tl_dyn-array i64))
+  (owner-global-lengths (__tl_dyn-array i64))
+  (owner-global-bytes (__tl_dyn-array u8))
+  (owner-global-bytes-count i64)
+  (owner-global-generation i64)
+  ;; Dense line-record sink (3 fields).
+  (records-lines (__tl_dyn-array CompilerBackendPeepholeLineRecord))
+  (records-live (__tl_dyn-array i64))
+  (records-len i64))
+
+(defstruct CompilerBackendStreamState
+  (address i64))
+
 (define compiler-backend-assembly-stream-batch-function-limit : i64
   64)
-
-(define (compiler-backend-assembly-stream-home-arena-handle-value) : i64
-  (arena.raw-handle compiler-backend-assembly-stream-home-arena))
 
 (defenum CompilerBackendUnsignedDivMagic
   (No)
@@ -924,6 +944,9 @@
   ;; address here so the job owner stays independent of the function-state
   ;; types declared beside CompilerBackendEmissionContext below.
   (function-state-address i64)
+  ;; Lazily allocated stream owner.  The backing cell contains every mutable
+  ;; assembly/peephole/sweep field and is never selected through global state.
+  (stream-state-address i64)
   ;; Retained operand render storage is owned by this state's lazy arena.
   ;; Keep all eight lanes empty until their first relevant use.
   (lazy-table-arena i64)
@@ -943,6 +966,14 @@
 ;; helpers and CompilerBackendEmissionContext before then.
 (defstruct CompilerBackendFunctionState
   (address i64))
+
+;; One borrowed register-sized argument carries the state and source facts used
+;; while parsing a group.  Keeping the hot parser below six machine arguments
+;; avoids spilling every line's newline/ownership flags through the stack.
+(defstruct CompilerBackendPeepholeParseContext
+  (backend-state-address i64)
+  (stream-address i64)
+  (data (Ptr u8)))
 
 (define (compiler-backend-state-size) : i64
   (comptime (size-of (type CompilerBackendState))))
@@ -972,6 +1003,7 @@
           (ci.intern-compat-state-generation intern-state)
           (ci.intern-compat-state-table-id intern-state)
           false
+          0
           0
           0
           0
@@ -1037,6 +1069,183 @@
           : u64)
         : (MutPtr i64))
       address)))
+
+(define (compiler-backend-stream-state-data
+  [state : CompilerBackendStreamState]) : CompilerBackendStreamStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (Ptr CompilerBackendStreamStateData)))))
+
+(define (compiler-backend-stream-state-data-set!
+  [state : CompilerBackendStreamState]
+  [data : CompilerBackendStreamStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (MutPtr CompilerBackendStreamStateData))
+      data)))
+
+(define (compiler-backend-stream-state-new) : CompilerBackendStreamState
+  (let
+    [cell : (__tl_dyn-array CompilerBackendStreamStateData)
+      (array.make-array CompilerBackendStreamStateData 1)]
+    (begin
+      (array-set!
+        cell
+        0
+        (CompilerBackendStreamStateData
+          false
+          (arena.Arena 0)
+          (arena.ArenaMark 0)
+          (arena.Arena 0)
+          (arena.ArenaMark 0)
+          (arena.Arena 0)
+          (text_buf.empty)
+          0
+          (text_buf.empty)
+          0
+          false
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array u8 0)
+          0
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array u8 0)
+          0
+          0
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array i64 0)
+          (array.make-array u8 0)
+          0
+          1
+          (array.make-array CompilerBackendPeepholeLineRecord 0)
+          (array.make-array i64 0)
+          0))
+      (CompilerBackendStreamState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast
+                (array-data cell)
+                : (Ptr CompilerBackendStreamStateData))))
+          : i64)))))
+
+(define (compiler-backend-state-stream-state
+  [backend-state : CompilerBackendState]) : CompilerBackendStreamState
+  (let
+    [data : CompilerBackendStateData
+      (compiler-backend-state-data backend-state)]
+    [address : i64 (struct-get data stream-state-address)]
+    (if (= address 0)
+      (let
+        [owner : arena.Arena
+          (arena.Arena (compiler-backend-state-owner-arena backend-state))]
+        [stream-state : CompilerBackendStreamState
+          (in-arena owner (compiler-backend-stream-state-new))]
+        (begin
+          (set!
+            (struct-get data stream-state-address)
+            (struct-get stream-state address))
+          (compiler-backend-state-data-set! backend-state data)
+          stream-state))
+      (CompilerBackendStreamState address))))
+
+(define (compiler-backend-assembly-stream-home-arena-handle-value
+  [stream : CompilerBackendStreamState]) : i64
+  (arena.raw-handle
+    (struct-get (compiler-backend-stream-state-data stream) assembly-home-arena)))
+
+(define (compiler-backend-stream-state-carry-capacity
+  [stream : CompilerBackendStreamState]) : i64
+  (array-length
+    (struct-get (compiler-backend-stream-state-data stream) carry-safe-offsets)))
+
+(define (compiler-backend-stream-state-carry-bytes-capacity
+  [stream : CompilerBackendStreamState]) : i64
+  (array-length
+    (struct-get (compiler-backend-stream-state-data stream) carry-safe-bytes)))
+
+(define (compiler-backend-stream-state-owner-capacity
+  [stream : CompilerBackendStreamState]) : i64
+  (array-length
+    (struct-get
+      (compiler-backend-stream-state-data stream)
+      owner-global-offsets)))
+
+(define (compiler-backend-stream-state-owner-bytes-capacity
+  [stream : CompilerBackendStreamState]) : i64
+  (array-length
+    (struct-get (compiler-backend-stream-state-data stream) owner-global-bytes)))
+
+(define (compiler-backend-stream-state-sweep-capacity
+  [stream : CompilerBackendStreamState]) : i64
+  (array-length
+    (struct-get (compiler-backend-stream-state-data stream) sweep-sym-off)))
+
+(define (compiler-backend-stream-state-sweep-bytes-capacity
+  [stream : CompilerBackendStreamState]) : i64
+  (array-length
+    (struct-get (compiler-backend-stream-state-data stream) sweep-sym-bytes)))
+
+(define (compiler-backend-stream-state-coverage-capacity
+  [stream : CompilerBackendStreamState]) : i64
+  (array-length
+    (struct-get (compiler-backend-stream-state-data stream) sweep-coverage-bits)))
+
+(define (compiler-backend-stream-state-record-capacity
+  [stream : CompilerBackendStreamState]) : i64
+  (array-length
+    (struct-get (compiler-backend-stream-state-data stream) records-lines)))
+
+(define (compiler-backend-stream-state-retained-table-bytes
+  [stream : CompilerBackendStreamState]) : i64
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (+
+      (*
+        8
+        (+
+          (+
+            (array-length (struct-get data carry-safe-offsets))
+            (array-length (struct-get data carry-safe-lengths)))
+          (+
+            (+
+              (+
+                (+
+                  (array-length (struct-get data sweep-sym-off))
+                  (array-length (struct-get data sweep-sym-len)))
+                (+
+                  (array-length (struct-get data sweep-lo-arr))
+                  (array-length (struct-get data sweep-hi-arr))))
+              (+
+                (array-length (struct-get data sweep-disp-arr))
+                (array-length (struct-get data sweep-win64-arr))))
+            (+
+              (+
+                (array-length (struct-get data sweep-em-lo-arr))
+                (array-length (struct-get data sweep-em-hi-arr)))
+              (+
+                (array-length (struct-get data sweep-coverage-bits))
+                (+
+                  (array-length (struct-get data owner-global-offsets))
+                  (array-length (struct-get data owner-global-lengths))))))))
+      (+
+        (+
+          (array-length (struct-get data carry-safe-bytes))
+          (array-length (struct-get data sweep-sym-bytes)))
+        (array-length (struct-get data owner-global-bytes))))))
 
 (define (compiler-backend-state-intern [state : CompilerBackendState]) : ci.InternCompatState
   (struct-get (compiler-backend-state-data state) intern-state))
@@ -2682,106 +2891,236 @@
 ;; program emit. Read by the peephole. An empty set reproduces the old
 ;; reset-at-every-label behavior, so any not-proven-safe label stays sound.
 ;;
-;; Backed ENTIRELY by pointer-free globals: an open-addressing table of byte
-;; offsets/lengths (`(Array i64)`) into one flat `(Array u8)` key-byte arena.
-;; Pointer-free Array globals are the only globals that reliably survive a full
-;; program emission -- an `(Array String)`/string map/struct/box global has
-;; its element/slots pointers dropped by the GC root scan and dangles mid-
-;; peephole (observed SIGSEGV: contains? on a collected String cell). The intern
-;; TABLE is likewise torn down before the peephole runs, so interning is NOT used
-;; as the key: the bucket is `intern-hash` / `intern-hash-slice` (pure byte
-;; hashes, no table) and membership is confirmed by an EXACT byte compare against
-;; the arena, so a hash collision can never cause a wrong carry (it just probes
-;; on) -- soundness does not rely on hash uniqueness. offset -1 = empty slot.
+;; The stream owns an open-addressing table of byte offsets/lengths into one
+;; flat byte arena.  The storage starts small and grows geometrically in the
+;; backend state's retained lazy arena; reaching either conservative ceiling
+;; merely drops a carry hint, which can only forgo an optimization.
+(define compiler-backend-peephole-carry-safe-initial-capacity : i64
+  256)
 (define compiler-backend-peephole-carry-safe-capacity : i64
   262144)
+(define compiler-backend-peephole-carry-safe-initial-bytes-capacity : i64
+  4096)
 (define compiler-backend-peephole-carry-safe-bytes-capacity : i64
   16777216)
-(define compiler-backend-peephole-carry-safe-offsets : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define compiler-backend-peephole-carry-safe-lengths : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define compiler-backend-peephole-carry-safe-bytes : (__tl_dyn-array u8)
-  (array.make-array u8 0))
-(define compiler-backend-peephole-carry-safe-bytes-count : i64
-  0)
+
+;; A narrow borrowed lookup view keeps the hot label path independent of the
+;; 35-field owning stream aggregate. The arrays remain owned by the stream.
+(defstruct CompilerBackendPeepholeCarrySafeView
+  (offsets (__tl_dyn-array i64))
+  (lengths (__tl_dyn-array i64))
+  (bytes (__tl_dyn-array u8)))
+
+;; The existing count cell packs both counters so the 35-field stream surface
+;; stays unchanged: byte positions need 25 bits for the inclusive 16 MiB limit,
+;; and the remaining high bits hold the table entry count. The latter drives a
+;; 50% load-factor grow policy; waiting until a table was completely full made
+;; open-addressing probes dominate self-compile execution.
+(define compiler-backend-peephole-carry-safe-count-entry-shift : i64
+  25)
+(define compiler-backend-peephole-carry-safe-count-bytes-mask : i64
+  33554431)
+
+(define (compiler-backend-peephole-carry-safe-byte-count [packed : i64]) : i64
+  (bit-and packed compiler-backend-peephole-carry-safe-count-bytes-mask))
+
+(define (compiler-backend-peephole-carry-safe-entry-count [packed : i64]) : i64
+  (shr packed compiler-backend-peephole-carry-safe-count-entry-shift))
+
+(define (compiler-backend-peephole-carry-safe-counts-pack
+  [bytes : i64]
+  [entries : i64]) : i64
+  (bit-or
+    bytes
+    (shl entries compiler-backend-peephole-carry-safe-count-entry-shift)))
 
 (define (compiler-backend-peephole-carry-safe-storage-ensure-with-backend-state!
-  [backend-state : CompilerBackendState]) : unit
-  (if (=
-    (array-length compiler-backend-peephole-carry-safe-offsets)
-    compiler-backend-peephole-carry-safe-capacity)
-    unit
-    (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64
-        (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (set!
-          compiler-backend-peephole-carry-safe-offsets
-          (array.make-array i64 compiler-backend-peephole-carry-safe-capacity))
-        (set!
-          compiler-backend-peephole-carry-safe-lengths
-          (array.make-array i64 compiler-backend-peephole-carry-safe-capacity))
-        (set!
-          compiler-backend-peephole-carry-safe-bytes
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (if (> (array-length (struct-get data carry-safe-offsets)) 0)
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64
+          (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+        [_set-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        [offsets : (__tl_dyn-array i64)
+          (array.make-array
+            i64
+            compiler-backend-peephole-carry-safe-initial-capacity)]
+        [lengths : (__tl_dyn-array i64)
+          (array.make-array
+            i64
+            compiler-backend-peephole-carry-safe-initial-capacity)]
+        [bytes : (__tl_dyn-array u8)
           (array.make-array
             u8
-            compiler-backend-peephole-carry-safe-bytes-capacity))
-        (compiler-backend-state-lazy-table-arena-finish!
-          backend-state
-          previous
-          owner)))))
+            compiler-backend-peephole-carry-safe-initial-bytes-capacity)]
+        [i : i64 0]
+        (begin
+          (while (< i (array-length offsets))
+            (begin
+              (array-set! offsets i -1)
+              (set! i (+ i 1))))
+          (set! (struct-get data carry-safe-offsets) offsets)
+          (set! (struct-get data carry-safe-lengths) lengths)
+          (set! (struct-get data carry-safe-bytes) bytes)
+          (set! (struct-get data carry-safe-bytes-count) 0)
+          (compiler-backend-stream-state-data-set! stream data)
+          (compiler-backend-state-lazy-table-arena-finish!
+            backend-state
+            previous
+            owner))))))
+
+(define (compiler-backend-peephole-carry-safe-table-grow!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : bool
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [old-offsets : (__tl_dyn-array i64) (struct-get data carry-safe-offsets)]
+    [old-lengths : (__tl_dyn-array i64) (struct-get data carry-safe-lengths)]
+    [old-cap : i64 (array-length old-offsets)]
+    [new-cap : i64
+      (if (> (* old-cap 4) compiler-backend-peephole-carry-safe-capacity)
+        compiler-backend-peephole-carry-safe-capacity
+        (* old-cap 4))]
+    (if (<= new-cap old-cap)
+      false
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64
+          (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+        [_set-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        [offsets : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [lengths : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [bytes : (__tl_dyn-array u8) (struct-get data carry-safe-bytes)]
+        [i : i64 0]
+        (begin
+          (while (< i new-cap)
+            (begin
+              (array-set! offsets i -1)
+              (set! i (+ i 1))))
+          (set! i 0)
+          (while (< i old-cap)
+            (let
+              [off : i64 (array-ref old-offsets i)]
+              (begin
+                (when
+                  (>= off 0)
+                  (let
+                    [len : i64 (array-ref old-lengths i)]
+                    [hash : i64
+                      (ci.intern-hash-words
+                        (unsafe
+                          (ptr-cast (array-data bytes) : (Ptr u8)))
+                        off
+                        len)]
+                    [slot : i64 (bit-and hash (- new-cap 1))]
+                    (begin
+                      (while (>= (array-ref offsets slot) 0)
+                        (set!
+                          slot
+                          (if (= (+ slot 1) new-cap)
+                            0
+                            (+ slot 1))))
+                      (array-set! offsets slot off)
+                      (array-set! lengths slot len))))
+                (set! i (+ i 1)))))
+          (set! (struct-get data carry-safe-offsets) offsets)
+          (set! (struct-get data carry-safe-lengths) lengths)
+          (compiler-backend-stream-state-data-set! stream data)
+          (compiler-backend-state-lazy-table-arena-finish!
+            backend-state
+            previous
+            owner)
+          true)))))
+
+(define (compiler-backend-peephole-carry-safe-bytes-grow!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
+  [required : i64]) : bool
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [old : (__tl_dyn-array u8) (struct-get data carry-safe-bytes)]
+    [old-cap : i64 (array-length old)]
+    [new-cap : i64 old-cap]
+    (begin
+      (while (and
+        (< new-cap required)
+        (< new-cap compiler-backend-peephole-carry-safe-bytes-capacity))
+        (set!
+          new-cap
+          (if (>
+            (* new-cap 4)
+            compiler-backend-peephole-carry-safe-bytes-capacity)
+            compiler-backend-peephole-carry-safe-bytes-capacity
+            (* new-cap 4))))
+      (if (< new-cap required)
+        false
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [owner : i64
+            (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+          [_set-owner : unit
+            (unsafe
+              (arena.tl_arena_set owner))]
+          [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
+          [i : i64 0]
+          (begin
+            (while (<
+              i
+              (compiler-backend-peephole-carry-safe-byte-count
+                (struct-get data carry-safe-bytes-count)))
+              (begin
+                (array-set! bytes i (array-ref old i))
+                (set! i (+ i 1))))
+            (set! (struct-get data carry-safe-bytes) bytes)
+            (compiler-backend-stream-state-data-set! stream data)
+            (compiler-backend-state-lazy-table-arena-finish!
+              backend-state
+              previous
+              owner)
+            true))))))
 
 ;; Clear the table: mark every slot empty (offset -1) and rewind the arena.
 (define (compiler-backend-peephole-carry-safe-reset-with-backend-state!
-  [backend-state : CompilerBackendState]) : unit
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
   (let
     [_storage : unit
       (compiler-backend-peephole-carry-safe-storage-ensure-with-backend-state!
-        backend-state)]
-    [cap : i64 compiler-backend-peephole-carry-safe-capacity]
+        backend-state
+        stream)]
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [offsets : (__tl_dyn-array i64) (struct-get data carry-safe-offsets)]
+    [cap : i64 (array-length offsets)]
     [i : i64 0]
     (begin
       (while (< i cap)
         (begin
-          (array-set! compiler-backend-peephole-carry-safe-offsets i -1)
+          (array-set! offsets i -1)
           (set! i (+ i 1))))
-      (set! compiler-backend-peephole-carry-safe-bytes-count 0)
+      (set! (struct-get data carry-safe-bytes-count) 0)
+      (compiler-backend-stream-state-data-set! stream data)
       unit)))
-
-;; Compatibility boundary for older tests and legacy streams.  Once the
-;; pointer-free table is allocated this branch does not construct any state;
-;; only first allocation uses a temporary state for the duration of the call.
-(define (compiler-backend-peephole-carry-safe-reset!) : unit
-  (if (=
-    (array-length compiler-backend-peephole-carry-safe-offsets)
-    compiler-backend-peephole-carry-safe-capacity)
-    (let
-      [cap : i64 compiler-backend-peephole-carry-safe-capacity]
-      [i : i64 0]
-      (begin
-        (while (< i cap)
-          (begin
-            (array-set! compiler-backend-peephole-carry-safe-offsets i -1)
-            (set! i (+ i 1))))
-        (set! compiler-backend-peephole-carry-safe-bytes-count 0)
-        unit))
-    (let
-      [backend-state : CompilerBackendState
-        (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
-      (compiler-backend-peephole-carry-safe-reset-with-backend-state!
-        backend-state))))
 
 ;; True iff arena bytes [off,off+len) equal `klen` bytes read from `data` at
 ;; `kstart` (byte-exact key comparison).
 (define (compiler-backend-peephole-carry-safe-bytes-eq?
+  [bytes : (& bytes (__tl_dyn-array u8))]
   [off : i64]
   [len : i64]
-  [data : (Ptr u8)]
+  [key-data : (Ptr u8)]
   [kstart : i64]
   [klen : i64]) : bool
   (if (not (= len klen))
@@ -2793,10 +3132,8 @@
         (while (and ok (< j len))
           (begin
             (if (=
-              (cast
-                (array-ref compiler-backend-peephole-carry-safe-bytes (+ off j))
-                : i64)
-              (compiler-backend-peephole-byte-at data (+ kstart j)))
+              (cast (array-ref bytes (+ off j)) : i64)
+              (compiler-backend-peephole-byte-at key-data (+ kstart j)))
               unit
               (set! ok false))
             (set! j (+ j 1))))
@@ -2807,56 +3144,88 @@
 ;; or arena silently drops the key (sound: a missed carry-safe label only forgoes
 ;; one elision).
 (define (compiler-backend-peephole-carry-safe-insert-bytes!
-  [data : (Ptr u8)]
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
+  [key-data : (Ptr u8)]
   [kstart : i64]
   [klen : i64]
   [hash : i64]) : unit
   (let
-    [cap : i64 compiler-backend-peephole-carry-safe-capacity]
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [offsets : (__tl_dyn-array i64) (struct-get data carry-safe-offsets)]
+    [lengths : (__tl_dyn-array i64) (struct-get data carry-safe-lengths)]
+    [bytes : (__tl_dyn-array u8) (struct-get data carry-safe-bytes)]
+    [packed-count : i64 (struct-get data carry-safe-bytes-count)]
+    [entry-count : i64
+      (compiler-backend-peephole-carry-safe-entry-count packed-count)]
+    [cap : i64 (array-length offsets)]
     [slot : i64 (bit-and hash (- cap 1))]
     [walked : i64 0]
     (begin
+      (when
+        (and
+          (< cap compiler-backend-peephole-carry-safe-capacity)
+          (>= (* (+ entry-count 1) 2) cap))
+        (when
+          (compiler-backend-peephole-carry-safe-table-grow!
+            backend-state
+            stream)
+          (begin
+            (compiler-backend-peephole-carry-safe-insert-bytes!
+              backend-state
+              stream
+              key-data
+              kstart
+              klen
+              hash)
+            (return unit))))
       (while (< walked cap)
         (let
-          [off : i64
-            (array-ref compiler-backend-peephole-carry-safe-offsets slot)]
+          [off : i64 (array-ref offsets slot)]
           (if (< off 0)
             (let
-              [start : i64 compiler-backend-peephole-carry-safe-bytes-count]
-              (if (<=
-                (+ start klen)
-                compiler-backend-peephole-carry-safe-bytes-capacity)
+              [start : i64
+                (compiler-backend-peephole-carry-safe-byte-count packed-count)]
+              (if (or
+                (<= (+ start klen) (array-length bytes))
+                (compiler-backend-peephole-carry-safe-bytes-grow!
+                  backend-state
+                  stream
+                  (+ start klen)))
                 (let
+                  [current : CompilerBackendStreamStateData
+                    (compiler-backend-stream-state-data stream)]
+                  [current-bytes : (__tl_dyn-array u8)
+                    (struct-get current carry-safe-bytes)]
                   [j : i64 0]
                   (begin
                     (while (< j klen)
                       (begin
                         (array-set!
-                          compiler-backend-peephole-carry-safe-bytes
+                          current-bytes
                           (+ start j)
                           (cast
                             (compiler-backend-peephole-byte-at
-                              data
+                              key-data
                               (+ kstart j))
                             : u8))
                         (set! j (+ j 1))))
-                    (array-set!
-                      compiler-backend-peephole-carry-safe-offsets
-                      slot
-                      start)
-                    (array-set!
-                      compiler-backend-peephole-carry-safe-lengths
-                      slot
-                      klen)
+                    (array-set! offsets slot start)
+                    (array-set! lengths slot klen)
                     (set!
-                      compiler-backend-peephole-carry-safe-bytes-count
-                      (+ start klen))
+                      (struct-get current carry-safe-bytes-count)
+                      (compiler-backend-peephole-carry-safe-counts-pack
+                        (+ start klen)
+                        (+ entry-count 1)))
+                    (compiler-backend-stream-state-data-set! stream current)
                     (return unit)))
                 (return unit)))
             (if (compiler-backend-peephole-carry-safe-bytes-eq?
+              (& bytes)
               off
-              (array-ref compiler-backend-peephole-carry-safe-lengths slot)
-              data
+              (array-ref lengths slot)
+              key-data
               kstart
               klen)
               (return unit)
@@ -2867,11 +3236,25 @@
                     0
                     (+ slot 1)))
                 (set! walked (+ walked 1)))))))
+      (when
+        (compiler-backend-peephole-carry-safe-table-grow! backend-state stream)
+        (compiler-backend-peephole-carry-safe-insert-bytes!
+          backend-state
+          stream
+          key-data
+          kstart
+          klen
+          hash))
       unit)))
 
 ;; Insert a key String (used by the collector, which holds owned label Strings).
-(define (compiler-backend-peephole-carry-safe-insert! [key : String]) : unit
+(define (compiler-backend-peephole-carry-safe-insert!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
+  [key : String]) : unit
   (compiler-backend-peephole-carry-safe-insert-bytes!
+    backend-state
+    stream
     (unsafe
       (string-data key))
     0
@@ -2880,26 +3263,30 @@
 
 ;; True iff the key given by `klen` bytes at `data`+`kstart` (byte hash `hash`)
 ;; is in the set (exact byte match; an empty slot terminates the probe).
-(define (compiler-backend-peephole-carry-safe-contains-bytes?
-  [data : (Ptr u8)]
+(define (compiler-backend-peephole-carry-safe-contains-view?
+  [view : (& view CompilerBackendPeepholeCarrySafeView)]
+  [key-data : (Ptr u8)]
   [kstart : i64]
   [klen : i64]
   [hash : i64]) : bool
   (let
-    [cap : i64 compiler-backend-peephole-carry-safe-capacity]
+    [offsets : (__tl_dyn-array i64) (struct-get view offsets)]
+    [lengths : (__tl_dyn-array i64) (struct-get view lengths)]
+    [bytes : (__tl_dyn-array u8) (struct-get view bytes)]
+    [cap : i64 (array-length offsets)]
     [slot : i64 (bit-and hash (- cap 1))]
     [walked : i64 0]
     (begin
       (while (< walked cap)
         (let
-          [off : i64
-            (array-ref compiler-backend-peephole-carry-safe-offsets slot)]
+          [off : i64 (array-ref offsets slot)]
           (if (< off 0)
             (return false)
             (if (compiler-backend-peephole-carry-safe-bytes-eq?
+              (& bytes)
               off
-              (array-ref compiler-backend-peephole-carry-safe-lengths slot)
-              data
+              (array-ref lengths slot)
+              key-data
               kstart
               klen)
               (return true)
@@ -2911,6 +3298,27 @@
                     (+ slot 1)))
                 (set! walked (+ walked 1)))))))
       false)))
+
+(define (compiler-backend-peephole-carry-safe-contains-bytes?
+  [stream : CompilerBackendStreamState]
+  [key-data : (Ptr u8)]
+  [kstart : i64]
+  [klen : i64]
+  [hash : i64]) : bool
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [view : CompilerBackendPeepholeCarrySafeView
+      (CompilerBackendPeepholeCarrySafeView
+        (struct-get data carry-safe-offsets)
+        (struct-get data carry-safe-lengths)
+        (struct-get data carry-safe-bytes))]
+    (compiler-backend-peephole-carry-safe-contains-view?
+      (& view)
+      key-data
+      kstart
+      klen
+      hash)))
 
 (define (compiler-backend-string-list-contains?
   [items : BackendStringSeq]
@@ -57713,6 +58121,8 @@
 ;;       prev and B and reach B via an explicit jcc rather than fall-through --
 ;;       so B's running map would be the OTHER edge's, not prev's exit.
 (define (compiler-backend-peephole-carry-safe-scan
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [function-state : CompilerBackendFunctionState]
   [label-scope : String]
   [entry-label : i64]
@@ -57723,6 +58133,8 @@
     [(compiler_ir_types.CompilerIrBlockList.Nil) unit]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-peephole-carry-safe-scan-seq
+        backend-state
+        stream
         function-state
         label-scope
         entry-label
@@ -57749,9 +58161,13 @@
                   cur-label)
                 cur-label))
               (compiler-backend-peephole-carry-safe-insert!
+                backend-state
+                stream
                 (compiler-backend-asm-label label-scope cur-label))
               unit)
             (compiler-backend-peephole-carry-safe-scan
+              backend-state
+              stream
               function-state
               label-scope
               entry-label
@@ -57760,6 +58176,8 @@
               (box-get rest)))])]))
 
 (define (compiler-backend-peephole-carry-safe-scan-seq
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [function-state : CompilerBackendFunctionState]
   [label-scope : String]
   [entry-label : i64]
@@ -57790,9 +58208,13 @@
                   cur-label)
                 cur-label))
               (compiler-backend-peephole-carry-safe-insert!
+                backend-state
+                stream
                 (compiler-backend-asm-label label-scope cur-label))
               unit)
             (compiler-backend-peephole-carry-safe-scan-seq
+              backend-state
+              stream
               function-state
               label-scope
               entry-label
@@ -57807,6 +58229,8 @@
 ;; emitted label lines exactly. Computed from the post-transform emit-blocks so
 ;; the CFG it analyzes is the one actually emitted.
 (define (compiler-backend-peephole-collect-carry-safe!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [function-state : CompilerBackendFunctionState]
   [label-scope : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
@@ -57821,6 +58245,8 @@
           (match entry
             [(compiler_ir_types.CompilerIrBlock.Block entry-label _)
               (compiler-backend-peephole-carry-safe-scan-seq
+                backend-state
+                stream
                 function-state
                 label-scope
                 entry-label
@@ -57835,6 +58261,8 @@
       (match entry
         [(compiler_ir_types.CompilerIrBlock.Block entry-label _)
           (compiler-backend-peephole-carry-safe-scan
+            backend-state
+            stream
             function-state
             label-scope
             entry-label
@@ -58920,37 +59348,19 @@
 ;; Driven from compiler-backend-peephole-asm (all text-emission paths); with
 ;; an empty metadata table (hand-written text or raw peephole callers) the
 ;; pass returns its input unchanged.
+(define compiler-backend-sweep-initial-capacity : i64
+  128)
 (define compiler-backend-sweep-capacity : i64
   131072)
+(define compiler-backend-sweep-initial-bytes-capacity : i64
+  4096)
 (define compiler-backend-sweep-bytes-capacity : i64
   8388608)
-(define compiler-backend-sweep-sym-off : (__tl_dyn-array i64)
-  (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-sym-len : (__tl_dyn-array i64)
-  (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-lo-arr : (__tl_dyn-array i64)
-  (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-hi-arr : (__tl_dyn-array i64)
-  (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-disp-arr : (__tl_dyn-array i64)
-  (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-win64-arr : (__tl_dyn-array i64)
-  (array.make-array i64 compiler-backend-sweep-capacity))
 
 ;; Emergency-slot window [em-lo, em-hi] in the same canonical delta-0
 ;; rsp-relative bytes as [lo, hi]. Empty (em-lo > em-hi) when the function used
 ;; no emergency scavenge slots or has outgoing stack-arg space (whose callee
 ;; reads are invisible to the text scan and may alias the emergency window).
-(define compiler-backend-sweep-em-lo-arr : (__tl_dyn-array i64)
-  (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-em-hi-arr : (__tl_dyn-array i64)
-  (array.make-array i64 compiler-backend-sweep-capacity))
-(define compiler-backend-sweep-sym-bytes : (__tl_dyn-array u8)
-  (array.make-array u8 compiler-backend-sweep-bytes-capacity))
-(define compiler-backend-sweep-sym-bytes-count : i64
-  0)
-(define compiler-backend-sweep-count : i64
-  0)
 (define compiler-backend-sweep-swept-stores : i64
   0)
 (define compiler-backend-sweep-swept-funcs : i64
@@ -59028,19 +59438,175 @@
 (define (compiler-backend-sweep-line-flag? [flags : i64] [flag : i64]) : bool
   (not (= (bit-and flags flag) 0)))
 
-(define (compiler-backend-sweep-reset!) : unit
-  (begin
-    (set! compiler-backend-sweep-count 0)
-    (set! compiler-backend-sweep-sym-bytes-count 0)
-    (set! compiler-backend-sweep-swept-stores 0)
-    (set! compiler-backend-sweep-swept-funcs 0)
-    (set! compiler-backend-sweep-dropped-funcs 0)
-    (set! compiler-backend-sweep-dropped-table-cap 0)
-    (set! compiler-backend-sweep-dropped-bytes-cap 0)))
+(define (compiler-backend-sweep-storage-ensure!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (if (> (array-length (struct-get data sweep-sym-off)) 0)
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64
+          (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+        [_set-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        [cap : i64 compiler-backend-sweep-initial-capacity]
+        (begin
+          (set! (struct-get data sweep-sym-off) (array.make-array i64 cap))
+          (set! (struct-get data sweep-sym-len) (array.make-array i64 cap))
+          (set! (struct-get data sweep-lo-arr) (array.make-array i64 cap))
+          (set! (struct-get data sweep-hi-arr) (array.make-array i64 cap))
+          (set! (struct-get data sweep-disp-arr) (array.make-array i64 cap))
+          (set! (struct-get data sweep-win64-arr) (array.make-array i64 cap))
+          (set! (struct-get data sweep-em-lo-arr) (array.make-array i64 cap))
+          (set! (struct-get data sweep-em-hi-arr) (array.make-array i64 cap))
+          (set!
+            (struct-get data sweep-sym-bytes)
+            (array.make-array u8 compiler-backend-sweep-initial-bytes-capacity))
+          (compiler-backend-stream-state-data-set! stream data)
+          (compiler-backend-state-lazy-table-arena-finish!
+            backend-state
+            previous
+            owner))))))
+
+(define (compiler-backend-sweep-table-grow!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : bool
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [old-cap : i64 (array-length (struct-get data sweep-sym-off))]
+    [new-cap : i64
+      (if (> (* old-cap 4) compiler-backend-sweep-capacity)
+        compiler-backend-sweep-capacity
+        (* old-cap 4))]
+    (if (<= new-cap old-cap)
+      false
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64
+          (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+        [_set-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        [sym-off : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [sym-len : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [lo-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [hi-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [disp-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [win64-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [em-lo-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [em-hi-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [i : i64 0]
+        (begin
+          (while (< i (struct-get data sweep-count))
+            (begin
+              (array-set!
+                sym-off
+                i
+                (array-ref (struct-get data sweep-sym-off) i))
+              (array-set!
+                sym-len
+                i
+                (array-ref (struct-get data sweep-sym-len) i))
+              (array-set! lo-arr i (array-ref (struct-get data sweep-lo-arr) i))
+              (array-set! hi-arr i (array-ref (struct-get data sweep-hi-arr) i))
+              (array-set!
+                disp-arr
+                i
+                (array-ref (struct-get data sweep-disp-arr) i))
+              (array-set!
+                win64-arr
+                i
+                (array-ref (struct-get data sweep-win64-arr) i))
+              (array-set!
+                em-lo-arr
+                i
+                (array-ref (struct-get data sweep-em-lo-arr) i))
+              (array-set!
+                em-hi-arr
+                i
+                (array-ref (struct-get data sweep-em-hi-arr) i))
+              (set! i (+ i 1))))
+          (set! (struct-get data sweep-sym-off) sym-off)
+          (set! (struct-get data sweep-sym-len) sym-len)
+          (set! (struct-get data sweep-lo-arr) lo-arr)
+          (set! (struct-get data sweep-hi-arr) hi-arr)
+          (set! (struct-get data sweep-disp-arr) disp-arr)
+          (set! (struct-get data sweep-win64-arr) win64-arr)
+          (set! (struct-get data sweep-em-lo-arr) em-lo-arr)
+          (set! (struct-get data sweep-em-hi-arr) em-hi-arr)
+          (compiler-backend-stream-state-data-set! stream data)
+          (compiler-backend-state-lazy-table-arena-finish!
+            backend-state
+            previous
+            owner)
+          true)))))
+
+(define (compiler-backend-sweep-bytes-grow!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
+  [required : i64]) : bool
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [old : (__tl_dyn-array u8) (struct-get data sweep-sym-bytes)]
+    [new-cap : i64 (array-length old)]
+    (begin
+      (while (and
+        (< new-cap required)
+        (< new-cap compiler-backend-sweep-bytes-capacity))
+        (set!
+          new-cap
+          (if (> (* new-cap 4) compiler-backend-sweep-bytes-capacity)
+            compiler-backend-sweep-bytes-capacity
+            (* new-cap 4))))
+      (if (< new-cap required)
+        false
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [owner : i64
+            (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+          [_set-owner : unit
+            (unsafe
+              (arena.tl_arena_set owner))]
+          [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
+          [i : i64 0]
+          (begin
+            (while (< i (struct-get data sweep-sym-bytes-count))
+              (begin
+                (array-set! bytes i (array-ref old i))
+                (set! i (+ i 1))))
+            (set! (struct-get data sweep-sym-bytes) bytes)
+            (compiler-backend-stream-state-data-set! stream data)
+            (compiler-backend-state-lazy-table-arena-finish!
+              backend-state
+              previous
+              owner)
+            true))))))
+
+(define (compiler-backend-sweep-reset! [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (begin
+      (set! (struct-get data sweep-count) 0)
+      (set! (struct-get data sweep-sym-bytes-count) 0)
+      (compiler-backend-stream-state-data-set! stream data)
+      (set! compiler-backend-sweep-swept-stores 0)
+      (set! compiler-backend-sweep-swept-funcs 0)
+      (set! compiler-backend-sweep-dropped-funcs 0)
+      (set! compiler-backend-sweep-dropped-table-cap 0)
+      (set! compiler-backend-sweep-dropped-bytes-cap 0))))
 
 ;; Record one FPO-audited function's sweep metadata. A full table silently
 ;; drops the entry (the function is simply not swept -- sound).
 (define (compiler-backend-sweep-record!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [symbol : String]
   [lo : i64]
   [hi : i64]
@@ -59049,54 +59615,69 @@
   [em-hi : i64]
   [win64 : bool]) : unit
   (let
+    [_storage : unit
+      (compiler-backend-sweep-storage-ensure! backend-state stream)]
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
     [len : i64 (string.string-length symbol)]
     [sdata : (Ptr u8)
       (unsafe
         (string-data symbol))]
-    [start : i64 compiler-backend-sweep-sym-bytes-count]
-    (if (or
-      (>= compiler-backend-sweep-count compiler-backend-sweep-capacity)
-      (> (+ start len) compiler-backend-sweep-bytes-capacity))
+    [start : i64 (struct-get data sweep-sym-bytes-count)]
+    [table-ok : bool
+      (or
+        (<
+          (struct-get data sweep-count)
+          (array-length (struct-get data sweep-sym-off)))
+        (compiler-backend-sweep-table-grow! backend-state stream))]
+    [bytes-ok : bool
+      (or
+        (<= (+ start len) (array-length (struct-get data sweep-sym-bytes)))
+        (compiler-backend-sweep-bytes-grow! backend-state stream (+ start len)))]
+    (if (or (not table-ok) (not bytes-ok))
       (begin
         (set!
           compiler-backend-sweep-dropped-funcs
           (+ compiler-backend-sweep-dropped-funcs 1))
-        (if (>= compiler-backend-sweep-count compiler-backend-sweep-capacity)
+        (if (not table-ok)
           (set!
             compiler-backend-sweep-dropped-table-cap
             (+ compiler-backend-sweep-dropped-table-cap 1))
           unit)
-        (if (> (+ start len) compiler-backend-sweep-bytes-capacity)
+        (if (not bytes-ok)
           (set!
             compiler-backend-sweep-dropped-bytes-cap
             (+ compiler-backend-sweep-dropped-bytes-cap 1))
           unit))
       (let
+        [current : CompilerBackendStreamStateData
+          (compiler-backend-stream-state-data stream)]
         [j : i64 0]
-        [idx : i64 compiler-backend-sweep-count]
+        [idx : i64 (struct-get current sweep-count)]
         (begin
           (while (< j len)
             (begin
               (array-set!
-                compiler-backend-sweep-sym-bytes
+                (struct-get current sweep-sym-bytes)
                 (+ start j)
                 (cast (compiler-backend-peephole-byte-at sdata j) : u8))
               (set! j (+ j 1))))
-          (array-set! compiler-backend-sweep-sym-off idx start)
-          (array-set! compiler-backend-sweep-sym-len idx len)
-          (array-set! compiler-backend-sweep-lo-arr idx lo)
-          (array-set! compiler-backend-sweep-hi-arr idx hi)
-          (array-set! compiler-backend-sweep-disp-arr idx disp)
+          (array-set! (struct-get current sweep-sym-off) idx start)
+          (array-set! (struct-get current sweep-sym-len) idx len)
+          (array-set! (struct-get current sweep-lo-arr) idx lo)
+          (array-set! (struct-get current sweep-hi-arr) idx hi)
+          (array-set! (struct-get current sweep-disp-arr) idx disp)
           (array-set!
-            compiler-backend-sweep-win64-arr
+            (struct-get current sweep-win64-arr)
             idx
             (if win64
               1
               0))
-          (array-set! compiler-backend-sweep-em-lo-arr idx em-lo)
-          (array-set! compiler-backend-sweep-em-hi-arr idx em-hi)
-          (set! compiler-backend-sweep-sym-bytes-count (+ start len))
-          (set! compiler-backend-sweep-count (+ idx 1)))))))
+          (array-set! (struct-get current sweep-em-lo-arr) idx em-lo)
+          (array-set! (struct-get current sweep-em-hi-arr) idx em-hi)
+          (set! (struct-get current sweep-sym-bytes-count) (+ start len))
+          (set! (struct-get current sweep-count) (+ idx 1))
+          (compiler-backend-stream-state-data-set! stream current))))))
 
 ;; Compute [lo, hi] (the VAR-REGION slot-start span in canonical delta-0
 ;; rsp-relative bytes) and disp (total prologue rsp displacement) for one
@@ -59107,6 +59688,7 @@
 ;; Every protected slot class sits at canonical < lo (CSR/group-word1/
 ;; emergency/outgoing) or > hi (positive incoming/tail stack args).
 (define (compiler-backend-sweep-record-fpo!
+  [stream : CompilerBackendStreamState]
   [symbol : String]
   [frame : i64]
   [push-count : i64]
@@ -59145,6 +59727,8 @@
           (* (compiler-backend-emergency-slot-size) (- em-used-count 1)))
         8)]
     (compiler-backend-sweep-record!
+      backend-state
+      stream
       symbol
       (- bias-neg (* 8 slot-vars))
       (- bias-neg 8)
@@ -59158,6 +59742,8 @@
 ;; rsp at rbp-frame, while the scanner starts before the prologue:
 ;; pushq %rbp (+8) plus subq $frame means disp = frame + 8.
 (define (compiler-backend-sweep-record-win64!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [symbol : String]
   [frame : i64]
   [slot-vars : i64]
@@ -59178,6 +59764,8 @@
           (* (compiler-backend-emergency-slot-size) (- em-used-count 1)))
         8)]
     (compiler-backend-sweep-record!
+      backend-state
+      stream
       symbol
       (- frame (* 8 slot-vars))
       (- frame 8)
@@ -59226,6 +59814,7 @@
       [shrinkwrap-active? unit]
       [fpo-ok
         (compiler-backend-sweep-record-fpo!
+          (compiler-backend-state-stream-state backend-state)
           symbol
           frame
           push-count
@@ -59236,6 +59825,8 @@
           backend-state)]
       [(and (compiler-backend-target-windows? target) rebase-ok)
         (compiler-backend-sweep-record-win64!
+          backend-state
+          (compiler-backend-state-stream-state backend-state)
           symbol
           frame
           slot-vars
@@ -59272,13 +59863,16 @@
 
 ;; True iff the line [ls,le) is exactly "<sym>:" for metadata entry `idx`.
 (define (compiler-backend-sweep-label-matches?
+  [stream : CompilerBackendStreamState]
   [data : (Ptr u8)]
   [ls : i64]
   [le : i64]
   [idx : i64]) : bool
   (let
-    [off : i64 (array-ref compiler-backend-sweep-sym-off idx)]
-    [len : i64 (array-ref compiler-backend-sweep-sym-len idx)]
+    [state-data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [off : i64 (array-ref (struct-get state-data sweep-sym-off) idx)]
+    [len : i64 (array-ref (struct-get state-data sweep-sym-len) idx)]
     (if (not (= (- le ls) (+ len 1)))
       false
       (if (not (= (compiler-backend-peephole-byte-at data (- le 1)) 58))
@@ -59292,7 +59886,9 @@
                 (if (=
                   (compiler-backend-peephole-byte-at data (+ ls j))
                   (cast
-                    (array-ref compiler-backend-sweep-sym-bytes (+ off j))
+                    (array-ref
+                      (struct-get state-data sweep-sym-bytes)
+                      (+ off j))
                     : i64))
                   unit
                   (set! ok false))
@@ -59551,21 +60147,57 @@
 ;; lo_r < c+8 and hi_r > c. Byte granularity keeps unaligned reads and
 ;; 16/32/64-byte widths exact.
 ;;
-;; The array is allocated once at module init, in the process arena, at the
-;; full cap size: pass 2 runs inside emission's scratch/raw arenas, so a
-;; grow-on-demand array reallocated there would dangle after the next arena
-;; rewind (the arena-transient rule of the operand-string caches applies to
-;; every module-level array).
-(define compiler-backend-sweep-coverage-bits : (__tl_dyn-array i64)
-  (array.make-array i64 4096))
-
 ;; Largest coverage window served by the bitmap, in i64 words (64 bytes per
 ;; word). Wider frames keep the exact per-candidate read scan; the choice
 ;; depends only on region metadata, never on results.
 (define compiler-backend-sweep-coverage-max-words : i64
   4096)
 
+(define (compiler-backend-sweep-coverage-ensure!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
+  [required : i64]) : bool
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [old : (__tl_dyn-array i64) (struct-get data sweep-coverage-bits)]
+    [new-cap : i64
+      (if (= (array-length old) 0)
+        64
+        (array-length old))]
+    (begin
+      (while (and
+        (< new-cap required)
+        (< new-cap compiler-backend-sweep-coverage-max-words))
+        (set!
+          new-cap
+          (if (> (* new-cap 2) compiler-backend-sweep-coverage-max-words)
+            compiler-backend-sweep-coverage-max-words
+            (* new-cap 2))))
+      (if (< new-cap required)
+        false
+        (if (= new-cap (array-length old))
+          true
+          (let
+            [previous : i64 (arena.tl_arena_current)]
+            [owner : i64
+              (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+            [_set-owner : unit
+              (unsafe
+                (arena.tl_arena_set owner))]
+            [bits : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+            (begin
+              (set! (struct-get data sweep-coverage-bits) bits)
+              (compiler-backend-stream-state-data-set! stream data)
+              (compiler-backend-state-lazy-table-arena-finish!
+                backend-state
+                previous
+                owner)
+              true)))))))
+
 (define (compiler-backend-sweep-region-records!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)]
   [live : (__tl_dyn-array i64)]
   [rstart : i64]
@@ -59861,7 +60493,15 @@
           [use-bitmap? : bool
             (and
               (or em-nonempty? var-nonempty?)
-              (<= words compiler-backend-sweep-coverage-max-words))]
+              (<= words compiler-backend-sweep-coverage-max-words)
+              (compiler-backend-sweep-coverage-ensure!
+                backend-state
+                stream
+                words))]
+          [coverage-bits : (__tl_dyn-array i64)
+            (struct-get
+              (compiler-backend-stream-state-data stream)
+              sweep-coverage-bits)]
           (begin
             (if use-bitmap?
               (begin
@@ -59869,7 +60509,7 @@
                   [w : i64 0]
                   (while (< w words)
                     (begin
-                      (array-set! compiler-backend-sweep-coverage-bits w 0)
+                      (array-set! coverage-bits w 0)
                       (set! w (+ w 1)))))
                 (let
                   [r : i64 0]
@@ -59910,13 +60550,9 @@
                                     (shl (- (shl 1 width) 1) lo-bit))]
                                 (begin
                                   (array-set!
-                                    compiler-backend-sweep-coverage-bits
+                                    coverage-bits
                                     w
-                                    (bit-or
-                                      (array-ref
-                                        compiler-backend-sweep-coverage-bits
-                                        w)
-                                      mask))
+                                    (bit-or (array-ref coverage-bits w) mask))
                                   (set! w (+ w 1))))))
                           unit)
                         (set! r (+ r 1)))))))
@@ -59967,9 +60603,7 @@
                                         (if (not
                                           (=
                                             (bit-and
-                                              (array-ref
-                                                compiler-backend-sweep-coverage-bits
-                                                w)
+                                              (array-ref coverage-bits w)
                                               mask)
                                             0))
                                           (set! hit true)
@@ -60017,48 +60651,60 @@
 ;; only after the final group. Dead stores are marked in the record array's
 ;; `live` mask; nothing is copied or rebuilt.
 (define (compiler-backend-deadstore-sweep-records!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [v : CompilerBackendPeepholeLineVec]
   [start-cursor : i64]) : i64
-  (if (>= start-cursor compiler-backend-sweep-count)
-    start-cursor
-    (let
-      [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
-        (struct-get v lines)]
-      [live : (__tl_dyn-array i64) (struct-get v live)]
-      [count : i64 (struct-get v len)]
-      [cursor : i64 start-cursor]
-      [i : i64 0]
-      (begin
-        (while (and (< i count) (< cursor compiler-backend-sweep-count))
-          (let
-            [line : CompilerBackendPeepholeLineRecord (array-ref recs i)]
-            (if (compiler-backend-sweep-label-matches?
-              (compiler-backend-peephole-record-data line)
-              (compiler-backend-peephole-record-start line)
-              (compiler-backend-peephole-record-end line)
-              cursor)
-              (let
-                [rstart : i64 (+ i 1)]
-                [rend : i64
-                  (compiler-backend-sweep-region-end-records recs rstart count)]
-                (begin
-                  (compiler-backend-sweep-region-records!
-                    recs
-                    live
-                    rstart
-                    rend
-                    (array-ref compiler-backend-sweep-lo-arr cursor)
-                    (array-ref compiler-backend-sweep-hi-arr cursor)
-                    (array-ref compiler-backend-sweep-disp-arr cursor)
-                    (array-ref compiler-backend-sweep-em-lo-arr cursor)
-                    (array-ref compiler-backend-sweep-em-hi-arr cursor)
-                    (= (array-ref compiler-backend-sweep-win64-arr cursor) 1))
-                  (set! cursor (+ cursor 1))
-                  (set! i rend)))
-              (set! i (+ i 1)))))
-        cursor))))
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (if (>= start-cursor (struct-get data sweep-count))
+      start-cursor
+      (let
+        [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+          (struct-get v lines)]
+        [live : (__tl_dyn-array i64) (struct-get v live)]
+        [count : i64 (struct-get v len)]
+        [cursor : i64 start-cursor]
+        [i : i64 0]
+        (begin
+          (while (and (< i count) (< cursor (struct-get data sweep-count)))
+            (let
+              [line : CompilerBackendPeepholeLineRecord (array-ref recs i)]
+              (if (compiler-backend-sweep-label-matches?
+                stream
+                (compiler-backend-peephole-record-data line)
+                (compiler-backend-peephole-record-start line)
+                (compiler-backend-peephole-record-end line)
+                cursor)
+                (let
+                  [rstart : i64 (+ i 1)]
+                  [rend : i64
+                    (compiler-backend-sweep-region-end-records
+                      recs
+                      rstart
+                      count)]
+                  (begin
+                    (compiler-backend-sweep-region-records!
+                      backend-state
+                      stream
+                      recs
+                      live
+                      rstart
+                      rend
+                      (array-ref (struct-get data sweep-lo-arr) cursor)
+                      (array-ref (struct-get data sweep-hi-arr) cursor)
+                      (array-ref (struct-get data sweep-disp-arr) cursor)
+                      (array-ref (struct-get data sweep-em-lo-arr) cursor)
+                      (array-ref (struct-get data sweep-em-hi-arr) cursor)
+                      (= (array-ref (struct-get data sweep-win64-arr) cursor) 1))
+                    (set! cursor (+ cursor 1))
+                    (set! i rend)))
+                (set! i (+ i 1)))))
+          cursor)))))
 
-(define (compiler-backend-deadstore-sweep-report-and-reset!) : unit
+(define (compiler-backend-deadstore-sweep-report-and-reset!
+  [stream : CompilerBackendStreamState]) : unit
   (begin
     (cfg
       regalloc-census
@@ -60074,9 +60720,33 @@
           (string.int->string compiler-backend-sweep-dropped-table-cap)
           "|bytes-cap-drops="
           (string.int->string compiler-backend-sweep-dropped-bytes-cap)
+          "|carry-cap="
+          (string.int->string
+            (compiler-backend-stream-state-carry-capacity stream))
+          "|carry-bytes-cap="
+          (string.int->string
+            (compiler-backend-stream-state-carry-bytes-capacity stream))
+          "|owner-cap="
+          (string.int->string
+            (compiler-backend-stream-state-owner-capacity stream))
+          "|owner-bytes-cap="
+          (string.int->string
+            (compiler-backend-stream-state-owner-bytes-capacity stream))
+          "|sweep-cap="
+          (string.int->string
+            (compiler-backend-stream-state-sweep-capacity stream))
+          "|sweep-bytes-cap="
+          (string.int->string
+            (compiler-backend-stream-state-sweep-bytes-capacity stream))
+          "|coverage-cap="
+          (string.int->string
+            (compiler-backend-stream-state-coverage-capacity stream))
+          "|retained-table-bytes="
+          (string.int->string
+            (compiler-backend-stream-state-retained-table-bytes stream))
           "\n"
           "")))
-    (compiler-backend-sweep-reset!)))
+    (compiler-backend-sweep-reset! stream)))
 
 ;; ============================================================================
 ;; GAP9: gep displacement folding (codegen phase 9 / P7a).
@@ -61786,6 +62456,9 @@
                 (let
                   [_carry-safe : unit
                     (compiler-backend-peephole-collect-carry-safe!
+                      (struct-get program-index backend-state)
+                      (compiler-backend-state-stream-state
+                        (struct-get program-index backend-state))
                       (compiler-backend-state-function-state
                         (struct-get program-index backend-state))
                       label-scope
@@ -62768,7 +63441,9 @@
         [caller-arena : arena.Arena (arena.current)]
         (begin
           (compiler-backend-assembly-stream-begin-raw!
-            (struct-get program-index backend-state))
+            (struct-get program-index backend-state)
+            (compiler-backend-state-stream-state
+              (struct-get program-index backend-state)))
           (cfg
             compile-profile
             (compiler-backend-profile-detail-start
@@ -62806,8 +63481,12 @@
                   (compiler-backend-emergency-wrap
                     head
                     (struct-get program-index backend-state))
-                  (struct-get program-index backend-state))
-                (compiler-backend-assembly-stream-rewind-raw!)
+                  (struct-get program-index backend-state)
+                  (compiler-backend-state-stream-state
+                    (struct-get program-index backend-state)))
+                (compiler-backend-assembly-stream-rewind-raw!
+                  (compiler-backend-state-stream-state
+                    (struct-get program-index backend-state)))
                 (unsafe
                   (arena.set! caller-arena))
                 (compiler-backend-emit-functions-stream-into
@@ -62886,7 +63565,9 @@
       [caller-arena : arena.Arena (arena.current)]
       (begin
         (compiler-backend-assembly-stream-begin-raw!
-          (struct-get program-index backend-state))
+          (struct-get program-index backend-state)
+          (compiler-backend-state-stream-state
+            (struct-get program-index backend-state)))
         (cfg
           compile-profile
           (compiler-backend-profile-detail-start
@@ -62924,8 +63605,12 @@
                 (compiler-backend-emergency-wrap
                   head
                   (struct-get program-index backend-state))
-                (struct-get program-index backend-state))
-              (compiler-backend-assembly-stream-rewind-raw!)
+                (struct-get program-index backend-state)
+                (compiler-backend-state-stream-state
+                  (struct-get program-index backend-state)))
+              (compiler-backend-assembly-stream-rewind-raw!
+                (compiler-backend-state-stream-state
+                  (struct-get program-index backend-state)))
               (unsafe
                 (arena.set! caller-arena))
               (compiler-backend-emit-function-seq-stream-into
@@ -62979,7 +63664,9 @@
   (let
     [scratch : i64 (arena.tl_arena_make)]
     [result : ResultCompilerBackendBuffer
-      (if (compiler-backend-assembly-stream-active?)
+      (if (compiler-backend-assembly-stream-active?
+        (compiler-backend-state-stream-state
+          (struct-get program-index backend-state)))
         (compiler-backend-emit-functions-stream-into
           type-segment-bases
           target
@@ -63324,7 +64011,9 @@
             [caller-arena : arena.Arena (arena.current)]
             (begin
               (compiler-backend-assembly-stream-begin-raw!
-                (struct-get program-index backend-state))
+                (struct-get program-index backend-state)
+                (compiler-backend-state-stream-state
+                  (struct-get program-index backend-state)))
               (match (compiler-backend-emit-closure-entry-adapter
                 type-segment-bases
                 target
@@ -63341,8 +64030,12 @@
                       (compiler-backend-emergency-wrap
                         head
                         (struct-get program-index backend-state))
-                      (struct-get program-index backend-state))
-                    (compiler-backend-assembly-stream-rewind-raw!)
+                      (struct-get program-index backend-state)
+                      (compiler-backend-state-stream-state
+                        (struct-get program-index backend-state)))
+                    (compiler-backend-assembly-stream-rewind-raw!
+                      (compiler-backend-state-stream-state
+                        (struct-get program-index backend-state)))
                     (unsafe
                       (arena.set! caller-arena))
                     (compiler-backend-emit-closure-entry-adapters-stream-into
@@ -63381,7 +64074,9 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
-  (if (compiler-backend-assembly-stream-active?)
+  (if (compiler-backend-assembly-stream-active?
+    (compiler-backend-state-stream-state
+      (struct-get program-index backend-state)))
     (compiler-backend-emit-closure-entry-adapters-stream-into
       type-segment-bases
       target
@@ -65865,11 +66560,15 @@
               program-index
               span-index))]
         [function-input : text_buf.TextBuf
-          (if (compiler-backend-assembly-stream-active?)
+          (if (compiler-backend-assembly-stream-active?
+            (compiler-backend-state-stream-state
+              (struct-get program-index backend-state)))
             (begin
               (compiler-backend-assembly-stream-process-buffer!
                 prefix-buf
-                (struct-get program-index backend-state))
+                (struct-get program-index backend-state)
+                (compiler-backend-state-stream-state
+                  (struct-get program-index backend-state)))
               ;; The prefix bytes now live in the flushed output stream, and the
               ;; per-function caches that could still name region-owned strings
               ;; are cleared before the region goes away.
@@ -66027,12 +66726,18 @@
                             scavenge-census
                             (compiler-backend-scavenge-census-print!))
                           (ResultCompilerBackendBuffer.Ok
-                            (if (compiler-backend-assembly-stream-active?)
+                            (if (compiler-backend-assembly-stream-active?
+                              (compiler-backend-state-stream-state
+                                (struct-get program-index backend-state)))
                               (begin
                                 (compiler-backend-assembly-stream-process-buffer!
                                   buf
-                                  (struct-get program-index backend-state))
-                                (compiler-backend-assembly-stream-output))
+                                  (struct-get program-index backend-state)
+                                  (compiler-backend-state-stream-state
+                                    (struct-get program-index backend-state)))
+                                (compiler-backend-assembly-stream-output
+                                  (compiler-backend-state-stream-state
+                                    (struct-get program-index backend-state))))
                               buf)))))]
                   [(ResultCompilerBackendBuffer.Err message)
                     (begin
@@ -66070,9 +66775,11 @@
     (compiler-backend-state-user-symbol-cache-reset! backend-state)
     (compiler-backend-state-slot-cache-reset! backend-state)
     (compiler-backend-peephole-carry-safe-reset-with-backend-state!
-      backend-state)
+      backend-state
+      (compiler-backend-state-stream-state backend-state))
     (compiler-backend-peephole-owner-global-storage-ensure-with-backend-state!
-      backend-state)
+      backend-state
+      (compiler-backend-state-stream-state backend-state))
     (compiler-backend-state-set-abort-site-counter! backend-state 0)
     (compiler-backend-state-set-absolute-switch-ok!
       backend-state
@@ -66089,7 +66796,8 @@
     ;; GAP5: clear the post-emission dead-frame-store sweep metadata before
     ;; recording this program's FPO functions (a stale entry from a prior
     ;; program emit in the same process must not leak into the sweep).
-    (compiler-backend-sweep-reset!)
+    (compiler-backend-sweep-reset!
+      (compiler-backend-state-stream-state backend-state))
     (cfg
       regalloc-census
       (begin
@@ -69912,18 +70620,14 @@
 (define (compiler-backend-peephole-owner-key-eq? [left : i64] [right : i64]) : bool
   (= left right))
 
+(define compiler-backend-peephole-owner-global-initial-capacity : i64
+  64)
 (define compiler-backend-peephole-owner-global-capacity : i64
   16384)
+(define compiler-backend-peephole-owner-global-initial-bytes-capacity : i64
+  1024)
 (define compiler-backend-peephole-owner-global-bytes-capacity : i64
   1048576)
-(define compiler-backend-peephole-owner-global-offsets : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define compiler-backend-peephole-owner-global-lengths : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define compiler-backend-peephole-owner-global-bytes : (__tl_dyn-array u8)
-  (array.make-array u8 0))
-(define compiler-backend-peephole-owner-global-bytes-count : i64
-  0)
 
 ;; The offsets table is generation-stamped instead of cleared: an entry packs
 ;; the generation that wrote it above the byte offset it holds, so a reset is a
@@ -69940,87 +70644,202 @@
   20)
 (define compiler-backend-peephole-owner-global-offset-mask : i64
   1048575)
-(define compiler-backend-peephole-owner-global-generation : i64
-  0)
 
-(define (compiler-backend-peephole-owner-global-entry-live? [entry : i64]) : bool
+(define (compiler-backend-peephole-owner-global-entry-live?
+  [generation : i64]
+  [entry : i64]) : bool
   (=
     (shr entry compiler-backend-peephole-owner-global-generation-shift)
-    compiler-backend-peephole-owner-global-generation))
+    generation))
 
 (define (compiler-backend-peephole-owner-global-entry-offset [entry : i64]) : i64
   (bit-and entry compiler-backend-peephole-owner-global-offset-mask))
 
-(define (compiler-backend-peephole-owner-global-entry-pack [offset : i64]) : i64
+(define (compiler-backend-peephole-owner-global-entry-pack
+  [generation : i64]
+  [offset : i64]) : i64
   (bit-or
     offset
-    (shl
-      compiler-backend-peephole-owner-global-generation
-      compiler-backend-peephole-owner-global-generation-shift)))
+    (shl generation compiler-backend-peephole-owner-global-generation-shift)))
 
 (define (compiler-backend-peephole-owner-global-storage-ensure-with-backend-state!
-  [backend-state : CompilerBackendState]) : unit
-  (if (=
-    (array-length compiler-backend-peephole-owner-global-offsets)
-    compiler-backend-peephole-owner-global-capacity)
-    unit
-    (let
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64
-        (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (set!
-          compiler-backend-peephole-owner-global-offsets
-          (array.make-array i64 compiler-backend-peephole-owner-global-capacity))
-        (set!
-          compiler-backend-peephole-owner-global-lengths
-          (array.make-array i64 compiler-backend-peephole-owner-global-capacity))
-        (set!
-          compiler-backend-peephole-owner-global-bytes
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (if (> (array-length (struct-get data owner-global-offsets)) 0)
+      unit
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64
+          (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+        [_set-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        [offsets : (__tl_dyn-array i64)
+          (array.make-array
+            i64
+            compiler-backend-peephole-owner-global-initial-capacity)]
+        [lengths : (__tl_dyn-array i64)
+          (array.make-array
+            i64
+            compiler-backend-peephole-owner-global-initial-capacity)]
+        [bytes : (__tl_dyn-array u8)
           (array.make-array
             u8
-            compiler-backend-peephole-owner-global-bytes-capacity))
-        (compiler-backend-state-lazy-table-arena-finish!
-          backend-state
-          previous
-          owner)))))
+            compiler-backend-peephole-owner-global-initial-bytes-capacity)]
+        (begin
+          (set! (struct-get data owner-global-offsets) offsets)
+          (set! (struct-get data owner-global-lengths) lengths)
+          (set! (struct-get data owner-global-bytes) bytes)
+          (set! (struct-get data owner-global-bytes-count) 0)
+          (set! (struct-get data owner-global-generation) 1)
+          (compiler-backend-stream-state-data-set! stream data)
+          (compiler-backend-state-lazy-table-arena-finish!
+            backend-state
+            previous
+            owner))))))
+
+(define (compiler-backend-peephole-owner-global-table-grow!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : bool
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [old-offsets : (__tl_dyn-array i64) (struct-get data owner-global-offsets)]
+    [old-lengths : (__tl_dyn-array i64) (struct-get data owner-global-lengths)]
+    [old-cap : i64 (array-length old-offsets)]
+    [new-cap : i64
+      (if (> (* old-cap 2) compiler-backend-peephole-owner-global-capacity)
+        compiler-backend-peephole-owner-global-capacity
+        (* old-cap 2))]
+    (if (<= new-cap old-cap)
+      false
+      (let
+        [previous : i64 (arena.tl_arena_current)]
+        [owner : i64
+          (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+        [_set-owner : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        [offsets : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [lengths : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [bytes : (__tl_dyn-array u8) (struct-get data owner-global-bytes)]
+        [generation : i64 (struct-get data owner-global-generation)]
+        [i : i64 0]
+        (begin
+          (while (< i old-cap)
+            (let
+              [entry : i64 (array-ref old-offsets i)]
+              (begin
+                (when
+                  (compiler-backend-peephole-owner-global-entry-live?
+                    generation
+                    entry)
+                  (let
+                    [off : i64
+                      (compiler-backend-peephole-owner-global-entry-offset
+                        entry)]
+                    [len : i64 (array-ref old-lengths i)]
+                    [hash : i64
+                      (ci.intern-hash-words
+                        (unsafe
+                          (ptr-cast (array-data bytes) : (Ptr u8)))
+                        off
+                        len)]
+                    [slot : i64 (bit-and hash (- new-cap 1))]
+                    (begin
+                      (while (compiler-backend-peephole-owner-global-entry-live?
+                        generation
+                        (array-ref offsets slot))
+                        (set!
+                          slot
+                          (if (= (+ slot 1) new-cap)
+                            0
+                            (+ slot 1))))
+                      (array-set!
+                        offsets
+                        slot
+                        (compiler-backend-peephole-owner-global-entry-pack
+                          generation
+                          off))
+                      (array-set! lengths slot len))))
+                (set! i (+ i 1)))))
+          (set! (struct-get data owner-global-offsets) offsets)
+          (set! (struct-get data owner-global-lengths) lengths)
+          (compiler-backend-stream-state-data-set! stream data)
+          (compiler-backend-state-lazy-table-arena-finish!
+            backend-state
+            previous
+            owner)
+          true)))))
+
+(define (compiler-backend-peephole-owner-global-bytes-grow!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
+  [required : i64]) : bool
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [old : (__tl_dyn-array u8) (struct-get data owner-global-bytes)]
+    [old-cap : i64 (array-length old)]
+    [new-cap : i64 old-cap]
+    (begin
+      (while (and
+        (< new-cap required)
+        (< new-cap compiler-backend-peephole-owner-global-bytes-capacity))
+        (set!
+          new-cap
+          (if (>
+            (* new-cap 2)
+            compiler-backend-peephole-owner-global-bytes-capacity)
+            compiler-backend-peephole-owner-global-bytes-capacity
+            (* new-cap 2))))
+      (if (< new-cap required)
+        false
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [owner : i64
+            (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+          [_set-owner : unit
+            (unsafe
+              (arena.tl_arena_set owner))]
+          [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
+          [i : i64 0]
+          (begin
+            (while (< i (struct-get data owner-global-bytes-count))
+              (begin
+                (array-set! bytes i (array-ref old i))
+                (set! i (+ i 1))))
+            (set! (struct-get data owner-global-bytes) bytes)
+            (compiler-backend-stream-state-data-set! stream data)
+            (compiler-backend-state-lazy-table-arena-finish!
+              backend-state
+              previous
+              owner)
+            true))))))
 
 (define (compiler-backend-peephole-owner-global-reset-with-backend-state!
-  [backend-state : CompilerBackendState]) : unit
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
   (let
     [_storage : unit
       (compiler-backend-peephole-owner-global-storage-ensure-with-backend-state!
-        backend-state)]
+        backend-state
+        stream)]
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
     (begin
       (set!
-        compiler-backend-peephole-owner-global-generation
-        (+ compiler-backend-peephole-owner-global-generation 1))
-      (set! compiler-backend-peephole-owner-global-bytes-count 0)
+        (struct-get data owner-global-generation)
+        (+ (struct-get data owner-global-generation) 1))
+      (set! (struct-get data owner-global-bytes-count) 0)
+      (compiler-backend-stream-state-data-set! stream data)
       unit)))
 
-;; Compatibility boundary for the stream's existing no-state reset path.
-;; Once allocated, reset directly; only first allocation uses a temporary
-;; backend state and never installs it globally.
-(define (compiler-backend-peephole-owner-global-reset!) : unit
-  (if (=
-    (array-length compiler-backend-peephole-owner-global-offsets)
-    compiler-backend-peephole-owner-global-capacity)
-    (begin
-      (set!
-        compiler-backend-peephole-owner-global-generation
-        (+ compiler-backend-peephole-owner-global-generation 1))
-      (set! compiler-backend-peephole-owner-global-bytes-count 0)
-      unit)
-    (let
-      [backend-state : CompilerBackendState
-        (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
-      (compiler-backend-peephole-owner-global-reset-with-backend-state!
-        backend-state))))
-
 (define (compiler-backend-peephole-owner-global-bytes-eq?
+  [bytes : (__tl_dyn-array u8)]
   [off : i64]
   [len : i64]
   [data : (Ptr u8)]
@@ -70035,11 +70854,7 @@
         (while (and ok (< j len))
           (begin
             (if (=
-              (cast
-                (array-ref
-                  compiler-backend-peephole-owner-global-bytes
-                  (+ off j))
-                : i64)
+              (cast (array-ref bytes (+ off j)) : i64)
               (compiler-backend-peephole-byte-at data (+ data-start j)))
               unit
               (set! ok false))
@@ -70047,60 +70862,89 @@
         ok))))
 
 (define (compiler-backend-peephole-owner-global-key-range
-  [operand : String]
-  [data : (Ptr u8)]
+  [context : (& context CompilerBackendPeepholeParseContext)]
   [operand-start : i64]
   [symbol-len : i64]) : i64
   (let
-    [hash : i64 (ci.intern-hash-slice operand operand-start symbol-len)]
-    [cap : i64 compiler-backend-peephole-owner-global-capacity]
+    [backend-state : CompilerBackendState
+      (CompilerBackendState (struct-get context backend-state-address))]
+    [stream : CompilerBackendStreamState
+      (CompilerBackendStreamState (struct-get context stream-address))]
+    [key-data : (Ptr u8) (struct-get context data)]
+    [hash : i64 (ci.intern-hash-words key-data operand-start symbol-len)]
+    [state-data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [offsets : (__tl_dyn-array i64)
+      (struct-get state-data owner-global-offsets)]
+    [lengths : (__tl_dyn-array i64)
+      (struct-get state-data owner-global-lengths)]
+    [bytes : (__tl_dyn-array u8) (struct-get state-data owner-global-bytes)]
+    [generation : i64 (struct-get state-data owner-global-generation)]
+    [cap : i64 (array-length offsets)]
     [slot : i64 (bit-and hash (- cap 1))]
     [walked : i64 0]
     (begin
       (while (< walked cap)
         (let
-          [entry : i64
-            (array-ref compiler-backend-peephole-owner-global-offsets slot)]
-          (if (not (compiler-backend-peephole-owner-global-entry-live? entry))
+          [entry : i64 (array-ref offsets slot)]
+          (if (not
+            (compiler-backend-peephole-owner-global-entry-live?
+              generation
+              entry))
             (let
-              [start : i64 compiler-backend-peephole-owner-global-bytes-count]
-              (if (<=
-                (+ start symbol-len)
-                compiler-backend-peephole-owner-global-bytes-capacity)
+              [start : i64 (struct-get state-data owner-global-bytes-count)]
+              (if (or
+                (<=
+                  (+ start symbol-len)
+                  (array-length (struct-get state-data owner-global-bytes)))
+                (compiler-backend-peephole-owner-global-bytes-grow!
+                  backend-state
+                  stream
+                  (+ start symbol-len)))
                 (let
+                  [current : CompilerBackendStreamStateData
+                    (compiler-backend-stream-state-data stream)]
+                  [bytes : (__tl_dyn-array u8)
+                    (struct-get current owner-global-bytes)]
                   [j : i64 0]
                   (begin
                     (while (< j symbol-len)
                       (begin
                         (array-set!
-                          compiler-backend-peephole-owner-global-bytes
+                          bytes
                           (+ start j)
                           (cast
                             (compiler-backend-peephole-byte-at
-                              data
+                              key-data
                               (+ operand-start j))
                             : u8))
                         (set! j (+ j 1))))
                     (array-set!
-                      compiler-backend-peephole-owner-global-offsets
+                      offsets
                       slot
-                      (compiler-backend-peephole-owner-global-entry-pack start))
-                    (array-set!
-                      compiler-backend-peephole-owner-global-lengths
-                      slot
-                      symbol-len)
+                      (compiler-backend-peephole-owner-global-entry-pack
+                        generation
+                        start))
+                    (array-set! lengths slot symbol-len)
                     (set!
-                      compiler-backend-peephole-owner-global-bytes-count
+                      (struct-get current owner-global-bytes-count)
                       (+ start symbol-len))
-                    (return (- 0 (+ slot 1)))))
+                    (compiler-backend-stream-state-data-set! stream current)
+                    (return (- 0 (+ start 1)))))
                 (return (compiler-backend-peephole-owner-key-unknown))))
             (if (compiler-backend-peephole-owner-global-bytes-eq?
+              bytes
               (compiler-backend-peephole-owner-global-entry-offset entry)
-              (array-ref compiler-backend-peephole-owner-global-lengths slot)
-              data
+              (array-ref lengths slot)
+              key-data
               operand-start
               symbol-len)
-              (return (- 0 (+ slot 1)))
+              (return
+                (-
+                  0
+                  (+
+                    (compiler-backend-peephole-owner-global-entry-offset entry)
+                    1)))
               (begin
                 (set!
                   slot
@@ -70108,7 +70952,14 @@
                     0
                     (+ slot 1)))
                 (set! walked (+ walked 1)))))))
-      (compiler-backend-peephole-owner-key-unknown))))
+      (if (compiler-backend-peephole-owner-global-table-grow!
+        backend-state
+        stream)
+        (compiler-backend-peephole-owner-global-key-range
+          context
+          operand-start
+          symbol-len)
+        (compiler-backend-peephole-owner-key-unknown)))))
 
 (define (compiler-backend-peephole-stack-owner-key-from-parts
   [base : i64]
@@ -70220,12 +71071,12 @@
         compiler-backend-peephole-memory-base-none))))
 
 (define (compiler-backend-peephole-owner-key-from-range
-  [operand : String]
-  [data : (Ptr u8)]
+  [context : (& context CompilerBackendPeepholeParseContext)]
   [start : i64]
   [end : i64]
   [memory-base : i64]) : i64
   (let
+    [data : (Ptr u8) (struct-get context data)]
     [prefix-end : i64 (- end 6)]
     (cond
       [(or
@@ -70258,8 +71109,7 @@
           (= memory-base compiler-backend-peephole-memory-base-rip)
           (> prefix-end start))
         (compiler-backend-peephole-owner-global-key-range
-          operand
-          data
+          context
           start
           (- prefix-end start))]
       [else (compiler-backend-peephole-owner-key-unknown)])))
@@ -71796,13 +72646,14 @@
       (or (= suffix 113) (= suffix 108)))))
 
 (define (compiler-backend-peephole-parse-line
+  [context : (& context CompilerBackendPeepholeParseContext)]
   [src : String]
-  [data : (Ptr u8)]
   [start : i64]
   [end : i64]
   [newline : bool]
   [owned : bool]) : CompilerBackendPeepholeLine
   (let
+    [data : (Ptr u8) (struct-get context data)]
     [ms : i64 start]
     (begin
       (while (and (< ms end) (= (compiler-backend-peephole-byte-at data ms) 32))
@@ -71924,8 +72775,7 @@
             [src-key : i64
               (if is-movq
                 (compiler-backend-peephole-owner-key-from-range
-                  src
-                  data
+                  context
                   op-src-start
                   op-src-end
                   src-memory-base)
@@ -71933,8 +72783,7 @@
             [dst-key : i64
               (if is-movq
                 (compiler-backend-peephole-owner-key-from-range
-                  src
-                  data
+                  context
                   op-dst-start
                   op-dst-end
                   dst-memory-base)
@@ -72040,18 +72889,41 @@
                     (+ last-reg 1)
                     compiler-backend-peephole-desc-reg-last-shift))))))))))
 
-(define (compiler-backend-peephole-owned-line [line : String] [newline : bool]) : CompilerBackendPeepholeLine
-  (compiler-backend-peephole-parse-line
-    line
-    (unsafe
-      (string-data line))
-    0
-    (string.string-length line)
-    newline
-    true))
+(define (compiler-backend-peephole-owned-line
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
+  [line : String]
+  [newline : bool]) : CompilerBackendPeepholeLine
+  (let
+    [context : CompilerBackendPeepholeParseContext
+      (CompilerBackendPeepholeParseContext
+        (struct-get backend-state address)
+        (struct-get stream address)
+        (unsafe
+          (string-data line)))]
+    (compiler-backend-peephole-parse-line
+      (& context)
+      line
+      0
+      (string.string-length line)
+      newline
+      true)))
 
 (define (compiler-backend-peephole-empty-line) : CompilerBackendPeepholeLine
-  (compiler-backend-peephole-owned-line "" false))
+  (CompilerBackendPeepholeLine
+    ""
+    (unsafe
+      (string-data ""))
+    0
+    0
+    0
+    0
+    0
+    0
+    0
+    0
+    0
+    0))
 
 (define (compiler-backend-peephole-line-copy
   [line : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLine
@@ -72621,9 +73493,9 @@
                       (- end 6))
                     mem-off))))))))))
 
-;; Records-per-line capacity estimate for a raw group of `n` bytes. Emitted
-;; assembly averages ~27 bytes per line, so a 20-byte divisor sizes the dense
-;; record array once and the geometric grow below stays unused in practice.
+;; Emitted assembly averages ~27 bytes per line. This estimate avoids a second
+;; byte scan in the common path; adversarial short-line input grows the active
+;; group's borrowed view geometrically before the final view is published.
 (define (compiler-backend-peephole-line-vec-capacity-for [n : i64]) : i64
   (+ (/ n 20) 16))
 
@@ -72636,44 +73508,76 @@
 ;; so the dense-array idiom now covers the cursor as well as the records.
 ;;
 ;; The arrays are ordinary group-arena storage, exactly as the LineVec's were.
-;; The sink is re-OPENED at the head of every walk and is never read outside
-;; one, so a rewind between groups leaves nothing live behind it.
-(define compiler-backend-peephole-records-lines : (__tl_dyn-array
-    CompilerBackendPeepholeLineRecord)
-  (array.make-array CompilerBackendPeepholeLineRecord 0))
-(define compiler-backend-peephole-records-live : (__tl_dyn-array i64)
-  (array.make-array i64 0))
-(define compiler-backend-peephole-records-len : i64
-  0)
+;; Publish them to the owning stream at open/close, but keep the hot fill cursor
+;; in a small borrowed view while walking lines. Copying and writing the entire
+;; 35-field stream aggregate for every line is prohibitively expensive in the
+;; self-hosted compiler.
+(defstruct CompilerBackendPeepholeWalkState
+  (backend-state-address i64)
+  (stream-address i64)
+  (carry-safe CompilerBackendPeepholeCarrySafeView)
+  (lines (__tl_dyn-array CompilerBackendPeepholeLineRecord))
+  (live (__tl_dyn-array i64))
+  (len i64))
 
-(define (compiler-backend-peephole-records-open! [capacity : i64]) : unit
+(define (compiler-backend-peephole-records-publish!
+  [walk : CompilerBackendPeepholeWalkState]) : unit
   (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
+    [stream : CompilerBackendStreamState
+      (CompilerBackendStreamState (struct-get walk stream-address))]
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (begin
+      (set! (struct-get data records-lines) (struct-get walk lines))
+      (set! (struct-get data records-live) (struct-get walk live))
+      (set! (struct-get data records-len) (struct-get walk len))
+      (compiler-backend-stream-state-data-set! stream data))))
+
+(define (compiler-backend-peephole-records-publish-len!
+  [stream : CompilerBackendStreamState]
+  [len : i64]) : unit
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (begin
+      (set! (struct-get data records-len) len)
+      (compiler-backend-stream-state-data-set! stream data))))
+
+(define (compiler-backend-peephole-records-close
+  [walk : CompilerBackendPeepholeWalkState]) : CompilerBackendPeepholeLineVec
+  (begin
+    (compiler-backend-peephole-records-publish! walk)
+    (CompilerBackendPeepholeLineVec
+      (struct-get walk lines)
+      (struct-get walk live)
+      (struct-get walk len))))
+
+(define (compiler-backend-peephole-records-retire!
+  [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
     (begin
       (set!
-        compiler-backend-peephole-records-lines
-        (array.make-array CompilerBackendPeepholeLineRecord cap))
-      (set! compiler-backend-peephole-records-live (array.make-array i64 cap))
-      (set! compiler-backend-peephole-records-len 0)
-      unit)))
+        (struct-get data records-lines)
+        (array.make-array CompilerBackendPeepholeLineRecord 0))
+      (set! (struct-get data records-live) (array.make-array i64 0))
+      (set! (struct-get data records-len) 0)
+      (compiler-backend-stream-state-data-set! stream data))))
 
-(define (compiler-backend-peephole-records-close) : CompilerBackendPeepholeLineVec
-  (CompilerBackendPeepholeLineVec
-    (compiler-backend-global-shared-view
-      compiler-backend-peephole-records-lines)
-    (compiler-backend-global-shared-view compiler-backend-peephole-records-live)
-    compiler-backend-peephole-records-len))
-
-(define (compiler-backend-peephole-records-grow!) : unit
+(define (compiler-backend-peephole-records-state-grow!
+  [stream : CompilerBackendStreamState]) : unit
   (let
-    [len : i64 compiler-backend-peephole-records-len]
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [old-lines : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+      (struct-get data records-lines)]
+    [old-live : (__tl_dyn-array i64) (struct-get data records-live)]
+    [len : i64 (struct-get data records-len)]
     [new-cap : i64
-      (if (< (array-length compiler-backend-peephole-records-lines) 1)
+      (if (< (array-length old-lines) 1)
         1
-        (* (array-length compiler-backend-peephole-records-lines) 2))]
+        (* (array-length old-lines) 2))]
     [lines : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
       (array.make-array CompilerBackendPeepholeLineRecord new-cap)]
     [live : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
@@ -72681,39 +73585,46 @@
     (begin
       (while (< k len)
         (begin
-          (array-set!
-            lines
-            k
-            (array-ref compiler-backend-peephole-records-lines k))
-          (array-set!
-            live
-            k
-            (array-ref compiler-backend-peephole-records-live k))
+          (array-set! lines k (array-ref old-lines k))
+          (array-set! live k (array-ref old-live k))
           (set! k (+ k 1))))
-      (set! compiler-backend-peephole-records-lines lines)
-      (set! compiler-backend-peephole-records-live live)
-      unit)))
+      (set! (struct-get data records-lines) lines)
+      (set! (struct-get data records-live) live)
+      (compiler-backend-stream-state-data-set! stream data))))
+
+(define (compiler-backend-peephole-records-grow!
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]) : unit
+  (let
+    [stream : CompilerBackendStreamState
+      (CompilerBackendStreamState (struct-get walk stream-address))]
+    [_publish : unit
+      (compiler-backend-peephole-records-publish-len!
+        stream
+        (struct-get walk len))]
+    [_grow : unit (compiler-backend-peephole-records-state-grow! stream)]
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (begin
+      (set! (struct-get walk lines) (struct-get data records-lines))
+      (set! (struct-get walk live) (struct-get data records-live)))))
 
 ;; Append one surviving line, compacted. Records are live until the sweep marks
 ;; them dead, and the arrays are never rebuilt.
 (define (compiler-backend-peephole-records-push!
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : CompilerBackendPeepholeLine]) : unit
-  (begin
-    (unless
-      (<
-        compiler-backend-peephole-records-len
-        (array-length compiler-backend-peephole-records-lines))
-      (compiler-backend-peephole-records-grow!))
-    (let
-      [index : i64 compiler-backend-peephole-records-len]
-      (begin
-        (array-set!
-          compiler-backend-peephole-records-lines
-          index
-          (compiler-backend-peephole-line-record line))
-        (array-set! compiler-backend-peephole-records-live index 1)
-        (set! compiler-backend-peephole-records-len (+ index 1))
-        unit))))
+  (let
+    [index : i64 (struct-get walk len)]
+    (begin
+      (unless
+        (< index (array-length (struct-get walk lines)))
+        (compiler-backend-peephole-records-grow! walk))
+      (array-set!
+        (struct-get walk lines)
+        index
+        (compiler-backend-peephole-line-record line))
+      (array-set! (struct-get walk live) index 1)
+      (set! (struct-get walk len) (+ index 1)))))
 
 ;; True iff the line [start,end) is a label (non-blank after leading spaces and
 ;; ends in ':'). Mirrors the label arm of line-clears-owners?.
@@ -72726,7 +73637,7 @@
 ;; byte offsets index into (the asm buffer or a rewritten pending line). The
 ;; label name is interned and looked up in the i64-id carry-safe set.
 (define (compiler-backend-peephole-label-carry-safe?
-  [src : String]
+  [view : (& view CompilerBackendPeepholeCarrySafeView)]
   [data : (Ptr u8)]
   [start : i64]
   [end : i64]) : bool
@@ -72739,11 +73650,12 @@
         false
         (let
           [klen : i64 (- (- end 1) i)]
-          (compiler-backend-peephole-carry-safe-contains-bytes?
+          (compiler-backend-peephole-carry-safe-contains-view?
+            view
             data
             i
             klen
-            (ci.intern-hash-slice src i klen)))))))
+            (ci.intern-hash-words data i klen)))))))
 
 ;; Per-destination owner invalidation for a non-movq line.
 ;;  * A NORETURN abort call (SCAV2): keep the map unchanged -- the fall-through is
@@ -72760,6 +73672,7 @@
 ;;    survives).
 ;;  * Otherwise fall back to the conservative whole-map clear.
 (define (compiler-backend-peephole-line-clobber-owners-desc
+  [carry-safe : (& carry-safe CompilerBackendPeepholeCarrySafeView)]
   [owners : CompilerBackendPeepholeOwners]
   [line : CompilerBackendPeepholeLine]
   [prev-abort? : bool]) : CompilerBackendPeepholeOwners
@@ -72768,7 +73681,7 @@
     [(compiler-backend-peephole-desc-label? line)
       (if (or
         (compiler-backend-peephole-label-carry-safe?
-          (struct-get line src)
+          carry-safe
           (struct-get line data)
           (compiler-backend-peephole-desc-start line)
           (compiler-backend-peephole-desc-end line))
@@ -72955,6 +73868,8 @@
 ;; Scan forward from chunk `chunk` offset `start`, across chunk boundaries
 ;; exactly as the former contiguous group render did.
 (define (compiler-backend-peephole-r10-dead-after-desc?
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [chunks : CompilerBackendPeepholeChunkArray]
   [chunk : i64]
   [start : i64]) : bool
@@ -72981,6 +73896,11 @@
               [asm-data : (Ptr u8)
                 (unsafe
                   (string-data asm))]
+              [context : CompilerBackendPeepholeParseContext
+                (CompilerBackendPeepholeParseContext
+                  (struct-get backend-state address)
+                  (struct-get stream address)
+                  asm-data)]
               ;; The line ends at its newline, or at the chunk end.
               [end : i64
                 (compiler-backend-peephole-scan-byte-range asm-data i n 10)]
@@ -72990,8 +73910,8 @@
                   end)]
               [line : CompilerBackendPeepholeLine
                 (compiler-backend-peephole-parse-line
+                  (& context)
                   asm
-                  asm-data
                   i
                   end
                   (< end n)
@@ -73030,6 +73950,7 @@
       (= result 1))))
 
 (define (compiler-backend-peephole-pair-action-desc
+  [walk : (& walk CompilerBackendPeepholeWalkState)]
   [chunks : CompilerBackendPeepholeChunkArray]
   [chunk : i64]
   [pending : CompilerBackendPeepholeLine]
@@ -73147,6 +74068,10 @@
                         (string.string-length
                           (array-ref (struct-get chunks items) chunk))]
                       (compiler-backend-peephole-r10-dead-after-desc?
+                        (CompilerBackendState
+                          (struct-get walk backend-state-address))
+                        (CompilerBackendStreamState
+                          (struct-get walk stream-address))
                         chunks
                         chunk
                         (if (< nend nlen)
@@ -73214,76 +74139,93 @@
 ;; that already owns the slot pushes the synthesized `movq %rY, DST` line (whose
 ;; own sweep summary is extracted by the owned-line builder), everything else
 ;; pushes the parsed record unchanged.
-(define (compiler-backend-peephole-emit-line-desc-record
+(define (compiler-backend-peephole-emit-movq-line-desc-record
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : CompilerBackendPeepholeLine]
-  [owners : CompilerBackendPeepholeOwners]
-  [prev-abort? : bool]) : CompilerBackendPeepholeOwners
-  (if (compiler-backend-peephole-desc-movq? line)
-    (let
-      [src-reg : i64 (compiler-backend-peephole-desc-op-src-reg line)]
-      [dst-reg : i64 (compiler-backend-peephole-desc-op-dst-reg line)]
-      [src-key : i64 (struct-get line op-src-key)]
-      [dst-key : i64 (struct-get line op-dst-key)]
-      [is-slot : bool (compiler-backend-peephole-owner-key-known? src-key)]
-      [dst-owns : bool
-        (and
-          is-slot
-          (compiler-backend-peephole-owner-key-eq?
-            (compiler-backend-peephole-owners-get-index owners dst-reg)
-            src-key))]
-      ;; P22-A1: dead spill store. `movq %rX, SLOT` where the owner map already
-      ;; records %rX as mirroring SLOT writes back the value SLOT already holds,
-      ;; so the store is a no-op. The invariant is exactly the one the reload
-      ;; elision above relies on: an owner entry survives only while neither the
-      ;; register nor the location has been written since the mirror was
-      ;; established (a location write runs `owners-clear-slot`, a register write
-      ;; clears that register, a call keeps only stack owners in callee-saved
-      ;; registers), so `owners[%rX] == SLOT` means memory at SLOT equals %rX.
-      ;; Restricted to packed stack keys, matching the store arm of the owner
-      ;; transfer: a global (SYM(%rip)) destination clears the whole map there
-      ;; and is deliberately not elided here either. This is what removes the
-      ;; emergency-scavenge `restore ... resave` pairs, which are separated by
-      ;; carry-safe block labels and so are invisible to the adjacent pair rules.
-      [src-mirrors-dst : bool
-        (and
-          (>= src-reg 0)
-          (compiler-backend-peephole-owner-key-stack? dst-key)
-          (compiler-backend-peephole-owner-key-eq?
-            (compiler-backend-peephole-owners-get-index owners src-reg)
-            dst-key))]
-      [ry : String
-        (if (and is-slot (not dst-owns) (>= dst-reg 0))
-          (compiler-backend-peephole-owners-find-reg-for-slot-index
-            owners
-            src-key
-            dst-reg)
-          "")]
-      [_pushed : unit
-        (cond
-          [dst-owns unit]
-          [src-mirrors-dst unit]
-          [(not (string.eq ry ""))
-            (compiler-backend-peephole-records-push!
-              (compiler-backend-peephole-owned-line
-                (str_cat.str-cat
-                  "    movq "
-                  ry
-                  ", "
-                  (compiler-backend-peephole-line-op-dst-text line))
-                (compiler-backend-peephole-desc-newline? line)))]
-          [else (compiler-backend-peephole-records-push! line)])]
-      (compiler-backend-peephole-movq-owners-transfer-keyed-index
-        owners
-        src-reg
-        dst-reg
-        src-key
-        dst-key))
+  [owners : CompilerBackendPeepholeOwners]) : CompilerBackendPeepholeOwners
+  (let
+    [src-reg : i64 (compiler-backend-peephole-desc-op-src-reg line)]
+    [dst-reg : i64 (compiler-backend-peephole-desc-op-dst-reg line)]
+    [src-key : i64 (struct-get line op-src-key)]
+    [dst-key : i64 (struct-get line op-dst-key)]
+    [is-slot : bool (compiler-backend-peephole-owner-key-known? src-key)]
+    [dst-owns : bool
+      (and
+        is-slot
+        (compiler-backend-peephole-owner-key-eq?
+          (compiler-backend-peephole-owners-get-index owners dst-reg)
+          src-key))]
+    ;; P22-A1: dead spill store. `movq %rX, SLOT` where the owner map already
+    ;; records %rX as mirroring SLOT writes back the value SLOT already holds,
+    ;; so the store is a no-op. The invariant is exactly the one the reload
+    ;; elision above relies on: an owner entry survives only while neither the
+    ;; register nor the location has been written since the mirror was
+    ;; established (a location write runs `owners-clear-slot`, a register write
+    ;; clears that register, a call keeps only stack owners in callee-saved
+    ;; registers), so `owners[%rX] == SLOT` means memory at SLOT equals %rX.
+    ;; Restricted to packed stack keys, matching the store arm of the owner
+    ;; transfer: a global (SYM(%rip)) destination clears the whole map there
+    ;; and is deliberately not elided here either. This is what removes the
+    ;; emergency-scavenge `restore ... resave` pairs, which are separated by
+    ;; carry-safe block labels and so are invisible to the adjacent pair rules.
+    [src-mirrors-dst : bool
+      (and
+        (>= src-reg 0)
+        (compiler-backend-peephole-owner-key-stack? dst-key)
+        (compiler-backend-peephole-owner-key-eq?
+          (compiler-backend-peephole-owners-get-index owners src-reg)
+          dst-key))]
+    [ry : String
+      (if (and is-slot (not dst-owns) (>= dst-reg 0))
+        (compiler-backend-peephole-owners-find-reg-for-slot-index
+          owners
+          src-key
+          dst-reg)
+        "")]
+    [_pushed : unit
+      (cond
+        [dst-owns unit]
+        [src-mirrors-dst unit]
+        [(not (string.eq ry ""))
+          (compiler-backend-peephole-records-push!
+            walk
+            (compiler-backend-peephole-owned-line
+              (CompilerBackendState (struct-get walk backend-state-address))
+              (CompilerBackendStreamState (struct-get walk stream-address))
+              (str_cat.str-cat
+                "    movq "
+                ry
+                ", "
+                (compiler-backend-peephole-line-op-dst-text line))
+              (compiler-backend-peephole-desc-newline? line)))]
+        [else (compiler-backend-peephole-records-push! walk line)])]
+    (compiler-backend-peephole-movq-owners-transfer-keyed-index
+      owners
+      src-reg
+      dst-reg
+      src-key
+      dst-key)))
+
+;; Keep the common non-move path in its caller: it only appends the parsed
+;; record and applies the owner transition. Move rewrites stay in the helper
+;; above so their larger rule body is emitted once.
+(defmacro (compiler-backend-peephole-emit-line-desc-record
+  [walk : Expr]
+  [line : Expr]
+  [owners : Expr]
+  [prev-abort : Expr]) : Expr
+  `(if (compiler-backend-peephole-desc-movq? ,line)
+    (compiler-backend-peephole-emit-movq-line-desc-record
+      (&mut ,walk)
+      ,line
+      ,owners)
     (begin
-      (compiler-backend-peephole-records-push! line)
+      (compiler-backend-peephole-records-push! (&mut ,walk) ,line)
       (compiler-backend-peephole-line-clobber-owners-desc
-        owners
-        line
-        prev-abort?))))
+        (& (struct-get ,walk carry-safe))
+        ,owners
+        ,line
+        ,prev-abort))))
 
 ;; SCAV2: true iff the pending line (owned String or asm byte range) is a
 ;; noreturn abort call. Threaded as `prev-abort?` so the guard-ok label emitted
@@ -73538,6 +74480,8 @@
 ;; in place; the complete peephole result is allocated in the caller arena
 ;; before the scoped record arena is released.
 (define (compiler-backend-peephole-chunk-state-flush
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [state : CompilerBackendPeepholeChunkState]) : CompilerBackendPeepholeChunkState
   (if (text_buf.empty? (struct-get state group))
     state
@@ -73551,7 +74495,11 @@
           [chunks : CompilerBackendPeepholeChunkArray
             (compiler-backend-peephole-chunk-array (struct-get state group))]
           [records : CompilerBackendPeepholeLineVec
-            (compiler-backend-peephole-asm-once-records-chunks chunks false)]
+            (compiler-backend-peephole-asm-once-records-chunks
+              backend-state
+              stream
+              chunks
+              false)]
           (begin
             (unsafe
               (arena.set! output-arena))
@@ -73559,6 +74507,7 @@
               [peepholed-asm : String
                 (compiler-backend-peephole-records-render records)]
               (begin
+                (compiler-backend-peephole-records-retire! stream)
                 (unsafe
                   (arena.destroy render-arena))
                 (CompilerBackendPeepholeChunkState
@@ -73566,6 +74515,8 @@
                   (text_buf.empty))))))))))
 
 (define (compiler-backend-peephole-text-buf-once-in-arena
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [buf : text_buf.TextBuf]
   [group-arena : arena.Arena]) : text_buf.TextBuf
   (let
@@ -73587,7 +74538,10 @@
                 (if (and
                   (compiler-backend-peephole-chunk-starts-global? chunk)
                   (not (text_buf.empty? (struct-get state group))))
-                  (compiler-backend-peephole-chunk-state-flush state)
+                  (compiler-backend-peephole-chunk-state-flush
+                    backend-state
+                    stream
+                    state)
                   state)]
               [group : text_buf.TextBuf
                 (in-arena
@@ -73602,20 +74556,38 @@
                 (set! i (+ i 1)))))
           (let
             [flushed : CompilerBackendPeepholeChunkState
-              (compiler-backend-peephole-chunk-state-flush state)]
+              (compiler-backend-peephole-chunk-state-flush
+                backend-state
+                stream
+                state)]
             (struct-get flushed out)))))))
 
 (define (compiler-backend-peephole-text-buf-once [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (compiler-backend-peephole-text-buf-once-in-arena buf (arena.current)))
+  (let
+    [backend-state : CompilerBackendState
+      (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
+    [stream : CompilerBackendStreamState
+      (compiler-backend-state-stream-state backend-state)]
+    (compiler-backend-peephole-text-buf-once-in-arena
+      backend-state
+      stream
+      buf
+      (arena.current))))
 
 (define (compiler-backend-assembly-stream-carry-home-current!
+  [stream : CompilerBackendStreamState]
   [home-arena : arena.Arena]) : unit
   ;; Rendering/appending the retained group can grow `home-arena`. Carry its
   ;; root-tracked current head into the next flush instead of re-entering the
   ;; old segment and creating a detached sibling overflow chain.
-  (set!
-    compiler-backend-assembly-stream-home-arena
-    (compiler-backend-arena-owner-current-head home-arena)))
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (begin
+      (set!
+        (struct-get data assembly-home-arena)
+        (compiler-backend-arena-owner-current-head home-arena))
+      (compiler-backend-stream-state-data-set! stream data))))
 
 ;; Flush one raw function group through the record pipeline. `scratch` is active
 ;; on entry and rewound before return: the chunk index, the line records and
@@ -73624,6 +74596,8 @@
 ;; them, so the flush neither flattens nor copies them -- one write per surviving
 ;; byte, into the final group string.
 (define (compiler-backend-peephole-sweep-chunk-state-flush
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [state : CompilerBackendPeepholeSweepChunkState]
   [scratch-mark : arena.ArenaMark]
   [home-arena : arena.Arena]) : CompilerBackendPeepholeSweepChunkState
@@ -73633,9 +74607,15 @@
       [chunks : CompilerBackendPeepholeChunkArray
         (compiler-backend-peephole-chunk-array (struct-get state group))]
       [records : CompilerBackendPeepholeLineVec
-        (compiler-backend-peephole-asm-once-records-chunks chunks true)]
+        (compiler-backend-peephole-asm-once-records-chunks
+          backend-state
+          stream
+          chunks
+          true)]
       [cursor : i64
         (compiler-backend-deadstore-sweep-records!
+          backend-state
+          stream
           records
           (struct-get state sweep-cursor))]
       [finished : CompilerBackendPeepholeSweepChunkState
@@ -73648,16 +74628,19 @@
               (text_buf.empty)
               cursor)))]
       [_carry-home : unit
-        (compiler-backend-assembly-stream-carry-home-current! home-arena)]
+        (compiler-backend-assembly-stream-carry-home-current! stream home-arena)]
       (begin
+        (compiler-backend-peephole-records-retire! stream)
         (unsafe
           (arena.rewind scratch-mark))
         finished))))
 
-(define (compiler-backend-assembly-stream-active?) : bool
-  compiler-backend-assembly-stream-active)
+(define (compiler-backend-assembly-stream-active?
+  [stream : CompilerBackendStreamState]) : bool
+  (struct-get (compiler-backend-stream-state-data stream) assembly-active))
 
 (define (compiler-backend-assembly-stream-start!
+  [stream : CompilerBackendStreamState]
   [raw-arena : arena.Arena]
   [raw-mark : arena.ArenaMark]
   [peephole-arena : arena.Arena]
@@ -73665,37 +74648,46 @@
   [home-arena : arena.Arena]) : unit
   (let
     [batch : text_buf.TextBuf (in-arena raw-arena (text_buf.empty))]
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
     (begin
-      (set! compiler-backend-assembly-stream-raw-arena raw-arena)
-      (set! compiler-backend-assembly-stream-raw-mark raw-mark)
-      (set! compiler-backend-assembly-stream-peephole-arena peephole-arena)
-      (set! compiler-backend-assembly-stream-peephole-mark peephole-mark)
+      (set! (struct-get data assembly-raw-arena) raw-arena)
+      (set! (struct-get data assembly-raw-mark) raw-mark)
+      (set! (struct-get data assembly-peephole-arena) peephole-arena)
+      (set! (struct-get data assembly-peephole-mark) peephole-mark)
       (set!
-        compiler-backend-assembly-stream-out
+        (struct-get data assembly-out)
         (in-arena home-arena (text_buf.empty)))
-      (set! compiler-backend-assembly-stream-home-arena home-arena)
-      (set! compiler-backend-assembly-stream-sweep-cursor 0)
-      (set! compiler-backend-assembly-stream-batch batch)
-      (set! compiler-backend-assembly-stream-batch-count 0)
-      (set! compiler-backend-assembly-stream-raw-ready false)
-      (set! compiler-backend-assembly-stream-active true))))
+      (set! (struct-get data assembly-home-arena) home-arena)
+      (set! (struct-get data assembly-sweep-cursor) 0)
+      (set! (struct-get data assembly-batch) batch)
+      (set! (struct-get data assembly-batch-count) 0)
+      (set! (struct-get data assembly-raw-ready) false)
+      (set! (struct-get data assembly-active) true)
+      (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-assembly-stream-begin-raw!
-  [backend-state : CompilerBackendState]) : unit
-  (when
-    compiler-backend-assembly-stream-active
-    (begin
-      (unsafe
-        (arena.set! compiler-backend-assembly-stream-raw-arena))
-      (unless
-        compiler-backend-assembly-stream-raw-ready
-        (begin
-          (unsafe
-            (arena.rewind compiler-backend-assembly-stream-raw-mark))
-          (compiler-backend-clear-function-emit-state! backend-state)
-          (set! compiler-backend-assembly-stream-raw-ready true))))))
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (when
+      (struct-get data assembly-active)
+      (begin
+        (unsafe
+          (arena.set! (struct-get data assembly-raw-arena)))
+        (unless
+          (struct-get data assembly-raw-ready)
+          (begin
+            (unsafe
+              (arena.rewind (struct-get data assembly-raw-mark)))
+            (compiler-backend-clear-function-emit-state! backend-state)
+            (set! (struct-get data assembly-raw-ready) true)
+            (compiler-backend-stream-state-data-set! stream data)))))))
 
-(define (compiler-backend-assembly-stream-rewind-raw!) : unit
+(define (compiler-backend-assembly-stream-rewind-raw!
+  [_stream : CompilerBackendStreamState]) : unit
   ;; Raw function text stays until a bounded batch has passed peephole/sweep.
   unit)
 
@@ -73703,99 +74695,147 @@
 ;; batch. The emitted output and sweep cursor are copied into the home-owned
 ;; stream state, so no references into the rewound raw arena remain.
 (define (compiler-backend-assembly-stream-flush-batch!
-  [backend-state : CompilerBackendState]) : unit
-  (unless
-    (or
-      (not compiler-backend-assembly-stream-active)
-      (text_buf.empty?
-        (compiler-backend-global-shared-view
-          compiler-backend-assembly-stream-batch)))
-    (let
-      [source-arena : arena.Arena (arena.current)]
-      [state : CompilerBackendPeepholeSweepChunkState
-        (CompilerBackendPeepholeSweepChunkState
-          (compiler-backend-global-shared-view
-            compiler-backend-assembly-stream-out)
-          (compiler-backend-global-shared-view
-            compiler-backend-assembly-stream-batch)
-          compiler-backend-assembly-stream-sweep-cursor)]
-      (begin
-        (unsafe
-          (arena.set! compiler-backend-assembly-stream-peephole-arena))
-        (let
-          [flushed : CompilerBackendPeepholeSweepChunkState
-            (compiler-backend-peephole-sweep-chunk-state-flush
-              state
-              compiler-backend-assembly-stream-peephole-mark
-              compiler-backend-assembly-stream-home-arena)]
-          (begin
-            (set! compiler-backend-assembly-stream-out (struct-get flushed out))
-            (set!
-              compiler-backend-assembly-stream-sweep-cursor
-              (struct-get flushed sweep-cursor))
-            (set! compiler-backend-assembly-stream-batch-count 0)
-            (unsafe
-              (arena.set! compiler-backend-assembly-stream-raw-arena))
-            (unsafe
-              (arena.rewind compiler-backend-assembly-stream-raw-mark))
-            (set! compiler-backend-assembly-stream-batch (text_buf.empty))
-            (compiler-backend-clear-function-emit-state! backend-state)
-            (set! compiler-backend-assembly-stream-raw-ready true)
-            (unsafe
-              (arena.set! source-arena))))))))
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (unless
+      (or
+        (not (struct-get data assembly-active))
+        (text_buf.empty? (struct-get data assembly-batch)))
+      (let
+        [source-arena : arena.Arena (arena.current)]
+        [state : CompilerBackendPeepholeSweepChunkState
+          (CompilerBackendPeepholeSweepChunkState
+            (struct-get data assembly-out)
+            (struct-get data assembly-batch)
+            (struct-get data assembly-sweep-cursor))]
+        (begin
+          (unsafe
+            (arena.set! (struct-get data assembly-peephole-arena)))
+          (let
+            [flushed : CompilerBackendPeepholeSweepChunkState
+              (compiler-backend-peephole-sweep-chunk-state-flush
+                backend-state
+                stream
+                state
+                (struct-get data assembly-peephole-mark)
+                (struct-get data assembly-home-arena))]
+            ;; The nested pass grows owner/sweep tables, retires its record
+            ;; sink, and may carry a grown home-arena head. Reload every field
+            ;; it published before updating the assembly half of the same
+            ;; aggregate; writing the pre-pass snapshot here would resurrect
+            ;; stale table handles/counts while leaving their in-place hash
+            ;; entries live.
+            [current : CompilerBackendStreamStateData
+              (compiler-backend-stream-state-data stream)]
+            (begin
+              (set! (struct-get current assembly-out) (struct-get flushed out))
+              (set!
+                (struct-get current assembly-sweep-cursor)
+                (struct-get flushed sweep-cursor))
+              (set! (struct-get current assembly-batch-count) 0)
+              (unsafe
+                (arena.set! (struct-get current assembly-raw-arena)))
+              (unsafe
+                (arena.rewind (struct-get current assembly-raw-mark)))
+              (set! (struct-get current assembly-batch) (text_buf.empty))
+              (compiler-backend-clear-function-emit-state! backend-state)
+              (set! (struct-get current assembly-raw-ready) true)
+              (compiler-backend-stream-state-data-set! stream current)
+              (unsafe
+                (arena.set! source-arena)))))))))
 
 ;; Append one function/adapter emission. A batch boundary is also a `.globl`
 ;; boundary, so flushing it preserves the legacy whole-stream peephole output.
 (define (compiler-backend-assembly-stream-process-string!
   [raw-asm : String]
-  [backend-state : CompilerBackendState]) : unit
-  (when
-    compiler-backend-assembly-stream-active
-    (begin
-      (set!
-        compiler-backend-assembly-stream-batch
-        (text_buf.append
-          (compiler-backend-global-shared-view
-            compiler-backend-assembly-stream-batch)
-          raw-asm))
-      (set!
-        compiler-backend-assembly-stream-batch-count
-        (+ compiler-backend-assembly-stream-batch-count 1))
-      (when
-        (>=
-          compiler-backend-assembly-stream-batch-count
-          compiler-backend-assembly-stream-batch-function-limit)
-        (compiler-backend-assembly-stream-flush-batch! backend-state)))))
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (when
+      (struct-get data assembly-active)
+      (begin
+        (set!
+          (struct-get data assembly-batch)
+          (text_buf.append (struct-get data assembly-batch) raw-asm))
+        (set!
+          (struct-get data assembly-batch-count)
+          (+ (struct-get data assembly-batch-count) 1))
+        (compiler-backend-stream-state-data-set! stream data)
+        (when
+          (>=
+            (struct-get data assembly-batch-count)
+            compiler-backend-assembly-stream-batch-function-limit)
+          (compiler-backend-assembly-stream-flush-batch! backend-state stream))))))
 
 (define (compiler-backend-assembly-stream-process-buffer!
   [raw : text_buf.TextBuf]
-  [backend-state : CompilerBackendState]) : unit
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
   (unless
-    (or (not compiler-backend-assembly-stream-active) (text_buf.empty? raw))
+    (or
+      (not (compiler-backend-assembly-stream-active? stream))
+      (text_buf.empty? raw))
     (begin
-      (compiler-backend-assembly-stream-flush-batch! backend-state)
+      (compiler-backend-assembly-stream-flush-batch! backend-state stream)
       (compiler-backend-assembly-stream-process-string!
         (text_buf.render raw)
-        backend-state)
-      (compiler-backend-assembly-stream-flush-batch! backend-state))))
+        backend-state
+        stream)
+      (compiler-backend-assembly-stream-flush-batch! backend-state stream))))
 
-(define (compiler-backend-assembly-stream-output) : text_buf.TextBuf
-  (if compiler-backend-assembly-stream-active
-    (compiler-backend-global-shared-view compiler-backend-assembly-stream-out)
-    (text_buf.empty)))
+(define (compiler-backend-assembly-stream-output
+  [stream : CompilerBackendStreamState]) : text_buf.TextBuf
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (if (struct-get data assembly-active)
+      (struct-get data assembly-out)
+      (text_buf.empty))))
 
 (define (compiler-backend-assembly-stream-finish!
-  [backend-state : CompilerBackendState]) : text_buf.TextBuf
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : text_buf.TextBuf
   (begin
-    (compiler-backend-assembly-stream-flush-batch! backend-state)
+    (compiler-backend-assembly-stream-flush-batch! backend-state stream)
     (let
-      [out : text_buf.TextBuf (compiler-backend-assembly-stream-output)]
+      [out : text_buf.TextBuf (compiler-backend-assembly-stream-output stream)]
+      [data : CompilerBackendStreamStateData
+        (compiler-backend-stream-state-data stream)]
       (begin
-        (set! compiler-backend-assembly-stream-active false)
+        (set! (struct-get data assembly-active) false)
+        (set! (struct-get data assembly-raw-arena) (arena.Arena 0))
+        (set! (struct-get data assembly-raw-mark) (arena.ArenaMark 0))
+        (set! (struct-get data assembly-peephole-arena) (arena.Arena 0))
+        (set! (struct-get data assembly-peephole-mark) (arena.ArenaMark 0))
+        (set! (struct-get data assembly-batch) (text_buf.empty))
+        (set! (struct-get data assembly-batch-count) 0)
+        (set! (struct-get data assembly-raw-ready) false)
+        (compiler-backend-stream-state-data-set! stream data)
         out))))
 
-(define (compiler-backend-assembly-stream-abort!) : unit
-  (set! compiler-backend-assembly-stream-active false))
+(define (compiler-backend-assembly-stream-abort!
+  [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (begin
+      (set! (struct-get data assembly-active) false)
+      (set! (struct-get data assembly-raw-arena) (arena.Arena 0))
+      (set! (struct-get data assembly-raw-mark) (arena.ArenaMark 0))
+      (set! (struct-get data assembly-peephole-arena) (arena.Arena 0))
+      (set! (struct-get data assembly-peephole-mark) (arena.ArenaMark 0))
+      (set! (struct-get data assembly-home-arena) (arena.Arena 0))
+      (set! (struct-get data assembly-out) (text_buf.empty))
+      (set! (struct-get data assembly-sweep-cursor) 0)
+      (set! (struct-get data assembly-batch) (text_buf.empty))
+      (set! (struct-get data assembly-batch-count) 0)
+      (set! (struct-get data assembly-raw-ready) false)
+      (compiler-backend-stream-state-data-set! stream data))))
 
 ;; Byte length of the emitted direct-jump prefix `"    jmp "`, shared by the
 ;; fallthrough-chain recognizer below and its operand-range computation so the
@@ -73925,15 +74965,32 @@
         bigger))))
 
 (define (compiler-backend-peephole-asm-once-records-chunks
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [chunks : CompilerBackendPeepholeChunkArray]
   [drop-fallthrough? : bool]) : CompilerBackendPeepholeLineVec
   (let
     [items : (__tl_dyn-array String) (struct-get chunks items)]
     [chunk-count : i64 (struct-get chunks count)]
-    [_sink : unit
-      (compiler-backend-peephole-records-open!
-        (compiler-backend-peephole-line-vec-capacity-for
-          (struct-get chunks total)))]
+    [sink-capacity : i64
+      (compiler-backend-peephole-line-vec-capacity-for
+        (struct-get chunks total))]
+    [stream-data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [carry-safe : CompilerBackendPeepholeCarrySafeView
+      (CompilerBackendPeepholeCarrySafeView
+        (struct-get stream-data carry-safe-offsets)
+        (struct-get stream-data carry-safe-lengths)
+        (struct-get stream-data carry-safe-bytes))]
+    [walk : CompilerBackendPeepholeWalkState
+      (CompilerBackendPeepholeWalkState
+        (struct-get backend-state address)
+        (struct-get stream address)
+        carry-safe
+        (array.make-array CompilerBackendPeepholeLineRecord sink-capacity)
+        (array.make-array i64 sink-capacity)
+        0)]
+    [_walk-open : unit (compiler-backend-peephole-records-publish! walk)]
     [has-pending : bool false]
     [pending : CompilerBackendPeepholeLine
       (compiler-backend-peephole-empty-line)]
@@ -73954,7 +75011,9 @@
     [held-label-count : i64 0]
     [c : i64 0]
     (begin
-      (compiler-backend-peephole-owner-global-reset!)
+      (compiler-backend-peephole-owner-global-reset-with-backend-state!
+        backend-state
+        stream)
       (while (< c chunk-count)
         (let
           [asm : String (array-ref items c)]
@@ -73962,6 +75021,11 @@
           [asm-data : (Ptr u8)
             (unsafe
               (string-data asm))]
+          [context : CompilerBackendPeepholeParseContext
+            (CompilerBackendPeepholeParseContext
+              (struct-get backend-state address)
+              (struct-get stream address)
+              asm-data)]
           [i : i64 0]
           (begin
             (while (< i n)
@@ -73976,8 +75040,8 @@
                 [line-newline : bool (< end n)]
                 [line : CompilerBackendPeepholeLine
                   (compiler-backend-peephole-parse-line
+                    (& context)
                     asm
-                    asm-data
                     i
                     end
                     line-newline
@@ -74018,6 +75082,7 @@
                         (set!
                           owners
                           (compiler-backend-peephole-emit-line-desc-record
+                            walk
                             held-line
                             owners
                             prev-abort?))
@@ -74049,6 +75114,7 @@
                                   pending))]
                             [emit : CompilerBackendPeepholeOwners
                               (compiler-backend-peephole-emit-line-desc-record
+                                walk
                                 pending
                                 (if restore-guard-owners?
                                   (compiler-backend-peephole-owners-copy
@@ -74078,6 +75144,7 @@
                         (let
                           [action : i64
                             (compiler-backend-peephole-pair-action-desc
+                              (& walk)
                               chunks
                               c
                               pending
@@ -74098,6 +75165,7 @@
                                   (set!
                                     owners
                                     (compiler-backend-peephole-emit-line-desc-record
+                                      walk
                                       pending
                                       owners
                                       prev-abort?))
@@ -74108,6 +75176,8 @@
                                   (set!
                                     pending
                                     (compiler-backend-peephole-owned-line
+                                      backend-state
+                                      stream
                                       forwarded-line
                                       line-newline))))]
                             [(= action 4)
@@ -74119,6 +75189,8 @@
                                 (set!
                                   pending
                                   (compiler-backend-peephole-owned-line
+                                    backend-state
+                                    stream
                                     folded-line
                                     line-newline)))]
                             [else
@@ -74130,6 +75202,7 @@
                                       pending))]
                                 [emit : CompilerBackendPeepholeOwners
                                   (compiler-backend-peephole-emit-line-desc-record
+                                    walk
                                     pending
                                     (if restore-guard-owners?
                                       (compiler-backend-peephole-owners-copy
@@ -74197,6 +75270,7 @@
           (set!
             owners
             (compiler-backend-peephole-emit-line-desc-record
+              walk
               held-line
               owners
               prev-abort?))
@@ -74223,6 +75297,7 @@
                             pending))]
                       [emit : CompilerBackendPeepholeOwners
                         (compiler-backend-peephole-emit-line-desc-record
+                          walk
                           pending
                           (if restore-guard-owners?
                             (compiler-backend-peephole-owners-copy guard-owners)
@@ -74250,16 +75325,21 @@
         (set!
           owners
           (compiler-backend-peephole-emit-line-desc-record
+            walk
             pending
             owners
             prev-abort?))
         unit)
-      (compiler-backend-peephole-records-close))))
+      (compiler-backend-peephole-records-close walk))))
 
 (define (compiler-backend-peephole-asm-once-records
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [asm : String]
   [drop-fallthrough? : bool]) : CompilerBackendPeepholeLineVec
   (compiler-backend-peephole-asm-once-records-chunks
+    backend-state
+    stream
     (compiler-backend-peephole-single-chunk-array asm)
     drop-fallthrough?))
 
@@ -74302,13 +75382,30 @@
       buf)))
 
 (define (compiler-backend-peephole-asm-once [asm : String]) : String
-  (text_buf_borrowed.render
-    (compiler-backend-peephole-records-buffer
-      (text_buf_borrowed.empty-like (& asm))
-      (compiler-backend-peephole-asm-once-records asm false)
-      asm)))
+  (let
+    [backend-state : CompilerBackendState
+      (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
+    [stream : CompilerBackendStreamState
+      (compiler-backend-state-stream-state backend-state)]
+    [records : CompilerBackendPeepholeLineVec
+      (compiler-backend-peephole-asm-once-records
+        backend-state
+        stream
+        asm
+        false)]
+    [result : String
+      (text_buf_borrowed.render
+        (compiler-backend-peephole-records-buffer
+          (text_buf_borrowed.empty-like (& asm))
+          records
+          asm))]
+    (begin
+      (compiler-backend-peephole-records-retire! stream)
+      result)))
 
-(define (compiler-backend-peephole-asm-buffer
+(define (compiler-backend-peephole-asm-buffer-with-state
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
   [asm : String]
   [drop-fallthrough? : bool]) : text_buf.TextBuf
   ;; The streaming pass runs the complete rule set while each line pair and its
@@ -74320,8 +75417,13 @@
   ;; over the same records, so the text is rendered exactly once.
   (let
     [records : CompilerBackendPeepholeLineVec
-      (compiler-backend-peephole-asm-once-records asm drop-fallthrough?)]
-    [_swept : i64 (compiler-backend-deadstore-sweep-records! records 0)]
+      (compiler-backend-peephole-asm-once-records
+        backend-state
+        stream
+        asm
+        drop-fallthrough?)]
+    [_swept : i64
+      (compiler-backend-deadstore-sweep-records! backend-state stream records 0)]
     [buf : text_buf.TextBuf
       (compiler-backend-borrowed-copy-to-owned
         (compiler-backend-peephole-records-buffer
@@ -74329,8 +75431,25 @@
           records
           asm))]
     (begin
-      (compiler-backend-deadstore-sweep-report-and-reset!)
+      (compiler-backend-peephole-records-retire! stream)
+      (compiler-backend-deadstore-sweep-report-and-reset! stream)
       buf)))
+
+(define (compiler-backend-peephole-asm-buffer
+  [asm : String]
+  [drop-fallthrough? : bool]) : text_buf.TextBuf
+  (let
+    [backend-state : CompilerBackendState
+      (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
+    [stream : CompilerBackendStreamState
+      (compiler-backend-state-stream-state backend-state)]
+    (begin
+      (compiler-backend-sweep-reset! stream)
+      (compiler-backend-peephole-asm-buffer-with-state
+        backend-state
+        stream
+        asm
+        drop-fallthrough?))))
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
   (text_buf.render (compiler-backend-peephole-asm-buffer asm false)))
@@ -74355,6 +75474,8 @@
   ;; copied home, so the backend never retains the program's raw function text.
   (let
     [home-arena : arena.Arena (arena.current)]
+    [stream : CompilerBackendStreamState
+      (compiler-backend-state-stream-state backend-state)]
     [_set-emission-arena : unit
       (compiler-backend-state-set-emission-arena! backend-state home-arena)]
     [emit-arena : arena.Arena (arena.make)]
@@ -74374,6 +75495,7 @@
               (unsafe
                 (arena.set! emit-arena))
               (compiler-backend-assembly-stream-start!
+                stream
                 raw-arena
                 raw-mark
                 peephole-arena
@@ -74407,10 +75529,14 @@
                 (match emitted
                   [(ResultCompilerBackendBuffer.Ok _)
                     (let
-                      [final : text_buf.TextBuf
-                        (compiler-backend-assembly-stream-finish! backend-state)]
                       [final-home-arena : arena.Arena
-                        compiler-backend-assembly-stream-home-arena]
+                        (struct-get
+                          (compiler-backend-stream-state-data stream)
+                          assembly-home-arena)]
+                      [final : text_buf.TextBuf
+                        (compiler-backend-assembly-stream-finish!
+                          backend-state
+                          stream)]
                       (begin
                         (unsafe
                           (arena.destroy emit-arena))
@@ -74418,24 +75544,35 @@
                           (arena.destroy raw-arena))
                         (unsafe
                           (arena.set! final-home-arena))
-                        (compiler-backend-deadstore-sweep-report-and-reset!)
+                        (compiler-backend-deadstore-sweep-report-and-reset!
+                          stream)
                         (unsafe
                           (arena.destroy peephole-arena))
                         (compiler-backend-clear-scratch-escaped-emit-state!
                           backend-state)
                         (ResultCompilerBackendBuffer.Ok final)))]
                   [(ResultCompilerBackendBuffer.Err message)
-                    (begin
-                      ;; Preserve arenas that may own the diagnostic, matching
-                      ;; the legacy error lifetime contract.
-                      (compiler-backend-assembly-stream-abort!)
-                      (unsafe
-                        (arena.set! compiler-backend-assembly-stream-home-arena))
-                      (unsafe
-                        (arena.destroy peephole-arena))
-                      (compiler-backend-clear-scratch-escaped-emit-state!
-                        backend-state)
-                      (ResultCompilerBackendBuffer.Err message))])))))))))
+                    (let
+                      [owned-message : (Box
+                        compiler_diagnostic.CompilerDiagnostic)
+                        (in-arena
+                          home-arena
+                          (box
+                            (compiler_diagnostic.compiler-diagnostic-copy
+                              (box-get message))))]
+                      (begin
+                        (compiler-backend-assembly-stream-abort! stream)
+                        (unsafe
+                          (arena.destroy emit-arena))
+                        (unsafe
+                          (arena.destroy raw-arena))
+                        (unsafe
+                          (arena.set! home-arena))
+                        (unsafe
+                          (arena.destroy peephole-arena))
+                        (compiler-backend-clear-scratch-escaped-emit-state!
+                          backend-state)
+                        (ResultCompilerBackendBuffer.Err owned-message)))])))))))))
 
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
   [program : compiler_ir_types.CompilerIrProgram]
@@ -76415,8 +77552,14 @@
     value))
 
 (define (compiler-backend-test-set-compiler-backend-assembly-stream-home-arena!
+  [stream : CompilerBackendStreamState]
   [value : arena.Arena]) : unit
-  (set! compiler-backend-assembly-stream-home-arena value))
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    (begin
+      (set! (struct-get data assembly-home-arena) value)
+      (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-test-set-compiler-backend-const-hoist-frame-count!
   [value : i64]) : unit
@@ -76654,9 +77797,9 @@
   (compiler-backend-global-shared-view
     compiler-backend-scavenge-ctx-occupied-masks))
 
-(define (compiler-backend-test-get-compiler-backend-assembly-stream-home-arena) : arena.Arena
-  (compiler-backend-global-shared-view
-    compiler-backend-assembly-stream-home-arena))
+(define (compiler-backend-test-get-compiler-backend-assembly-stream-home-arena
+  [stream : CompilerBackendStreamState]) : arena.Arena
+  (struct-get (compiler-backend-stream-state-data stream) assembly-home-arena))
 
 (define (compiler-backend-test-get-compiler-backend-addr-of-forwarding-enabled
   [backend-state : CompilerBackendState]) : bool
@@ -76842,15 +77985,29 @@
     [scratch : arena.Arena (arena.make)]
     [backend-state : CompilerBackendState
       (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
+    [stream : CompilerBackendStreamState
+      (compiler-backend-state-stream-state backend-state)]
     [initially-lazy? : bool
       (and
         (= (compiler-backend-state-lazy-table-arena backend-state) 0)
-        (= (array-length compiler-backend-peephole-carry-safe-offsets) 0)
-        (= (array-length compiler-backend-peephole-carry-safe-lengths) 0)
-        (= (array-length compiler-backend-peephole-carry-safe-bytes) 0)
-        (= (array-length compiler-backend-peephole-owner-global-offsets) 0)
-        (= (array-length compiler-backend-peephole-owner-global-lengths) 0)
-        (= (array-length compiler-backend-peephole-owner-global-bytes) 0)
+        (=
+          (array-length
+            (struct-get
+              (compiler-backend-stream-state-data stream)
+              carry-safe-offsets))
+          0)
+        (=
+          (array-length
+            (struct-get
+              (compiler-backend-stream-state-data stream)
+              owner-global-offsets))
+          0)
+        (=
+          (array-length
+            (struct-get
+              (compiler-backend-stream-state-data stream)
+              sweep-sym-off))
+          0)
         (= (compiler-backend-state-slot-cache-capacity backend-state) 0)
         (= (compiler-backend-state-frame-offset-cache-capacity backend-state) 0)
         (= (compiler-backend-state-immediate-cache-capacity backend-state) 0)
@@ -76862,11 +78019,13 @@
         (arena.set! scratch))]
     [_carry : unit
       (compiler-backend-peephole-carry-safe-reset-with-backend-state!
-        backend-state)]
+        backend-state
+        stream)]
     [carry-restored-caller? : bool (arena.eq? (arena.current) scratch)]
     [_owner : unit
       (compiler-backend-peephole-owner-global-reset-with-backend-state!
-        backend-state)]
+        backend-state
+        stream)]
     [owner-restored-caller? : bool (arena.eq? (arena.current) scratch)]
     [slot-render : String
       (compiler-backend-slot-with-backend-state backend-state 0)]
@@ -76877,26 +78036,44 @@
     [immediate-render : String
       (compiler-backend-state-immediate-render backend-state 17)]
     [immediate-restored-caller? : bool (arena.eq? (arena.current) scratch)]
-    [exact-capacities? : bool
+    [initial-capacities? : bool
       (and
         (=
-          (array-length compiler-backend-peephole-carry-safe-offsets)
-          compiler-backend-peephole-carry-safe-capacity)
+          (array-length
+            (struct-get
+              (compiler-backend-stream-state-data stream)
+              carry-safe-offsets))
+          compiler-backend-peephole-carry-safe-initial-capacity)
         (=
-          (array-length compiler-backend-peephole-carry-safe-lengths)
-          compiler-backend-peephole-carry-safe-capacity)
+          (array-length
+            (struct-get
+              (compiler-backend-stream-state-data stream)
+              carry-safe-lengths))
+          compiler-backend-peephole-carry-safe-initial-capacity)
         (=
-          (array-length compiler-backend-peephole-carry-safe-bytes)
-          compiler-backend-peephole-carry-safe-bytes-capacity)
+          (array-length
+            (struct-get
+              (compiler-backend-stream-state-data stream)
+              carry-safe-bytes))
+          compiler-backend-peephole-carry-safe-initial-bytes-capacity)
         (=
-          (array-length compiler-backend-peephole-owner-global-offsets)
-          compiler-backend-peephole-owner-global-capacity)
+          (array-length
+            (struct-get
+              (compiler-backend-stream-state-data stream)
+              owner-global-offsets))
+          compiler-backend-peephole-owner-global-initial-capacity)
         (=
-          (array-length compiler-backend-peephole-owner-global-lengths)
-          compiler-backend-peephole-owner-global-capacity)
+          (array-length
+            (struct-get
+              (compiler-backend-stream-state-data stream)
+              owner-global-lengths))
+          compiler-backend-peephole-owner-global-initial-capacity)
         (=
-          (array-length compiler-backend-peephole-owner-global-bytes)
-          compiler-backend-peephole-owner-global-bytes-capacity)
+          (array-length
+            (struct-get
+              (compiler-backend-stream-state-data stream)
+              owner-global-bytes))
+          compiler-backend-peephole-owner-global-initial-bytes-capacity)
         (=
           (compiler-backend-state-slot-cache-capacity backend-state)
           compiler-backend-slot-cache-capacity)
@@ -76912,8 +78089,18 @@
         (arena.set! caller))
       (unsafe
         (arena.destroy scratch))
-      (array-set! compiler-backend-peephole-carry-safe-offsets 0 17)
-      (array-set! compiler-backend-peephole-owner-global-bytes 0 3)
+      (array-set!
+        (struct-get
+          (compiler-backend-stream-state-data stream)
+          carry-safe-offsets)
+        0
+        17)
+      (array-set!
+        (struct-get
+          (compiler-backend-stream-state-data stream)
+          owner-global-bytes)
+        0
+        3)
       (array-set!
         (struct-get
           (compiler-backend-state-data backend-state)
@@ -76935,8 +78122,20 @@
       (let
         [survived? : bool
           (and
-            (= (array-ref compiler-backend-peephole-carry-safe-offsets 0) 17)
-            (= (array-ref compiler-backend-peephole-owner-global-bytes 0) 3)
+            (=
+              (array-ref
+                (struct-get
+                  (compiler-backend-stream-state-data stream)
+                  carry-safe-offsets)
+                0)
+              17)
+            (=
+              (array-ref
+                (struct-get
+                  (compiler-backend-stream-state-data stream)
+                  owner-global-bytes)
+                0)
+              3)
             (string.eq slot-render "-8(%rbp)")
             (string.eq frame-render "-16(%rbp)")
             (string.eq immediate-render "$17")
@@ -76963,9 +78162,11 @@
               59))]
         (begin
           (compiler-backend-peephole-carry-safe-reset-with-backend-state!
-            backend-state)
+            backend-state
+            stream)
           (compiler-backend-peephole-owner-global-reset-with-backend-state!
-            backend-state)
+            backend-state
+            stream)
           (and
             initially-lazy?
             carry-restored-caller?
@@ -76973,7 +78174,7 @@
             slot-restored-caller?
             frame-restored-caller?
             immediate-restored-caller?
-            exact-capacities?
+            initial-capacities?
             survived?))))))
 
 (define (compiler-backend-forwarded-addr-of-register-home-refused-ok?) : bool

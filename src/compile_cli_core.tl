@@ -1980,9 +1980,11 @@
       (compiler_driver_core.compiler-driver-state-backend state)]
     (begin
       (backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
-        backend-state)
+        backend-state
+        (backend.compiler-backend-state-stream-state backend-state))
       (backend.compiler-backend-peephole-owner-global-reset-with-backend-state!
-        backend-state)
+        backend-state
+        (backend.compiler-backend-state-stream-state backend-state))
       (backend.compiler-backend-state-slot-frame-cache-storage-ensure!
         backend-state)
       (backend.compiler-backend-state-immediate-cache-storage-ensure!

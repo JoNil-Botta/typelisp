@@ -19164,7 +19164,11 @@
       (TcMaybeString.Some (tc-env-key-display key-id))]
     [(TcMaybeNameId.No) (TcMaybeString.No)]))
 
-(define (tc-source-leading-segment-wins-over-exact-id?
+;; Dotted-local disambiguation compares binding ORDER in the raw source/local
+;; key domain. Its callers deliberately pass the unnormalized `a.b` and `a`
+;; ids: canonical top-env lookup happens only after this ordering decision.
+;; Normalizing either key here would skip a raw local exact binding.
+(define (tc-source-leading-segment-wins-over-exact-persistent-id?
   [env : TcTypeEnv]
   [name-id : i64]
   [prefix-id : i64]) : bool
@@ -19215,7 +19219,7 @@
                 (if (struct-get cache partial)
                   (if (>= (tc_i64_i64_map.get-value-or (& ids) name-id -1) 0)
                     false
-                    (tc-source-leading-segment-wins-over-exact-id?
+                    (tc-source-leading-segment-wins-over-exact-persistent-id?
                       (TcTypeEnv store-handle (struct-get cache below) 0)
                       name-id
                       prefix-id))
@@ -19229,13 +19233,61 @@
             false
             (if (= key prefix-id)
               true
-              (tc-source-leading-segment-wins-over-exact-id?
+              (tc-source-leading-segment-wins-over-exact-persistent-id?
                 (TcTypeEnv
                   store-handle
                   (tc-type-env-binding-parent-at binding-ptr)
                   0)
                 name-id
                 prefix-id))))])))
+
+;; The scoped stack already indexes the newest raw binding for each key. When
+;; either candidate is present, its monotonically increasing slot index answers
+;; the ordering question without rebuilding the persistent chain walk. If both
+;; miss, only the immutable persistent tail can contain either key.
+(define (tc-source-leading-segment-wins-over-exact-id?
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [prefix-id : i64]) : bool
+  (if tc-type-env-scoped-runtime-active
+    (let
+      [name-index : i64 (tc-type-env-scoped-runtime-lookup-index name-id)]
+      [prefix-index : i64 (tc-type-env-scoped-runtime-lookup-index prefix-id)]
+      [scoped : bool
+        (cond
+          [(>= prefix-index 0)
+            (if (>= name-index 0)
+              (> prefix-index name-index)
+              true)]
+          [(>= name-index 0) false]
+          [else
+            (begin
+              (cfg
+                compile-profile
+                (compiler-tc-env-profile-note-scoped-tail-fallback))
+              (tc-source-leading-segment-wins-over-exact-persistent-id?
+                (struct-get
+                  (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                  persistent)
+                name-id
+                prefix-id))])]
+      (begin
+        (cfg
+          tc-env-scoped-dual-verify
+          (if (=
+            scoped
+            (tc-source-leading-segment-wins-over-exact-persistent-id?
+              env
+              name-id
+              prefix-id))
+            unit
+            (io.panic
+              "typecheck: scoped dotted-name ordering diverged from persistent env")))
+        scoped))
+    (tc-source-leading-segment-wins-over-exact-persistent-id?
+      env
+      name-id
+      prefix-id)))
 
 (define (tc-source-leading-segment-wins-over-exact-id-from-dot?
   [env : TcTypeEnv]

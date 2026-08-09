@@ -1124,68 +1124,62 @@
   [text : String]
   [pools : ast.AstNodePoolContext]) : String
   (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
-    [_set-arena : unit
-      (unsafe
-        (arena.tl_arena_set base-arena))]
-    [out : String (string.copy (& text))]
-    (begin
-      (ast.ast-node-pool-context-sync-base-arena!
-        pools
-        (arena.tl_arena_current))
-      (unsafe
-        (arena.tl_arena_set prev-arena))
-      out)))
+    [base-arena : arena.Arena
+      (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
+    (in-arena
+      base-arena
+      (let
+        [out : String (string.copy (& text))]
+        (begin
+          (ast.ast-node-pool-context-sync-base-arena!
+            pools
+            (arena.tl_arena_current))
+          out)))))
 
 (define (lower-copy-paths-into-pools
   [paths : ast.AstDeclPathList]
   [pools : ast.AstNodePoolContext]) : ast.AstDeclPathList
   (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
-    [_set-arena : unit
-      (unsafe
-        (arena.tl_arena_set base-arena))]
-    [count : i64 (ast.ast-decl-path-list-len (& paths))]
-    [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [path : String (ast.ast-decl-path-list-get (& paths) index "")]
-          [owned-path : String (string.copy (& path))]
-          (begin
-            (ast.ast-decl-path-list-push-with-owner-id
-              (&mut out)
-              owned-path
-              (ast.ast-decl-path-list-owner-id
-                (& paths)
-                index
-                cbi.compiler-builtin-id-fix-empty))
-            (set! index (+ index 1)))))
-      (ast.ast-node-pool-context-sync-base-arena!
-        pools
-        (arena.tl_arena_current))
-      (unsafe
-        (arena.tl_arena_set prev-arena))
-      out)))
+    [base-arena : arena.Arena
+      (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
+    (in-arena
+      base-arena
+      (let
+        [count : i64 (ast.ast-decl-path-list-len (& paths))]
+        [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (let
+              [path : String (ast.ast-decl-path-list-get (& paths) index "")]
+              [owned-path : String (string.copy (& path))]
+              (begin
+                (ast.ast-decl-path-list-push-with-owner-id
+                  (&mut out)
+                  owned-path
+                  (ast.ast-decl-path-list-owner-id
+                    (& paths)
+                    index
+                    cbi.compiler-builtin-id-fix-empty))
+                (set! index (+ index 1)))))
+          (ast.ast-node-pool-context-sync-base-arena!
+            pools
+            (arena.tl_arena_current))
+          out)))))
 
 (define (lower-clear-macro-expanded-source-caches-into-pools!
   [pools : ast.AstNodePoolContext]) : unit
   (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set base-arena))
-      (load.compiler-load-dotted-path-cache-reset!)
-      (tc_core.compiler-typecheck-clear-macro-expanded-source-caches!)
-      (ast.ast-node-pool-context-sync-base-arena!
-        pools
-        (arena.tl_arena_current))
-      (unsafe
-        (arena.tl_arena_set prev-arena)))))
+    [base-arena : arena.Arena
+      (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
+    (in-arena
+      base-arena
+      (begin
+        (load.compiler-load-dotted-path-cache-reset!)
+        (tc_core.compiler-typecheck-clear-macro-expanded-source-caches!)
+        (ast.ast-node-pool-context-sync-base-arena!
+          pools
+          (arena.tl_arena_current))))))
 
 (define (lower-name-env-copy-active [names : LowerNameEnv]) : LowerNameEnv
   (match names
@@ -1198,19 +1192,17 @@
   [names : LowerNameEnv]
   [pools : ast.AstNodePoolContext]) : LowerNameEnv
   (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
-    [_set-arena : unit
-      (unsafe
-        (arena.tl_arena_set base-arena))]
-    [out : LowerNameEnv (lower-name-env-copy-active names)]
-    (begin
-      (ast.ast-node-pool-context-sync-base-arena!
-        pools
-        (arena.tl_arena_current))
-      (unsafe
-        (arena.tl_arena_set prev-arena))
-      out)))
+    [base-arena : arena.Arena
+      (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
+    (in-arena
+      base-arena
+      (let
+        [out : LowerNameEnv (lower-name-env-copy-active names)]
+        (begin
+          (ast.ast-node-pool-context-sync-base-arena!
+            pools
+            (arena.tl_arena_current))
+          out)))))
 
 (define (lower-checked-dest-pools-commit! [pools : ast.AstNodePoolContext]) : unit
   (if lower-checked-dest-pools-active
@@ -11513,26 +11505,24 @@
   [plan : LowerDeclKeepPlan]
   [pools : ast.AstNodePoolContext]) : LowerDeclKeepPlan
   (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
-    [_set-arena : unit
-      (unsafe
-        (arena.tl_arena_set base-arena))]
-    [source : (__tl_dyn-array i64) (struct-get plan keep)]
-    [count : i64 (struct-get plan source-count)]
-    [keep : (__tl_dyn-array i64) (make-array i64 count)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
+    [base-arena : arena.Arena
+      (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
+    (in-arena
+      base-arena
+      (let
+        [source : (__tl_dyn-array i64) (struct-get plan keep)]
+        [count : i64 (struct-get plan source-count)]
+        [keep : (__tl_dyn-array i64) (make-array i64 count)]
+        [index : i64 0]
         (begin
-          (array-set! keep index (array-ref source index))
-          (set! index (+ index 1))))
-      (ast.ast-node-pool-context-sync-base-arena!
-        pools
-        (arena.tl_arena_current))
-      (unsafe
-        (arena.tl_arena_set prev-arena))
-      (LowerDeclKeepPlan keep count))))
+          (while (< index count)
+            (begin
+              (array-set! keep index (array-ref source index))
+              (set! index (+ index 1))))
+          (ast.ast-node-pool-context-sync-base-arena!
+            pools
+            (arena.tl_arena_current))
+          (LowerDeclKeepPlan keep count))))))
 
 (define (lower-decl-keep-plan-apply
   [plan : LowerDeclKeepPlan]

@@ -28931,17 +28931,17 @@
       0
       (compiler_ast_types.AstType.I64))
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     op
     (compiler_ir_types.CompilerIrValue.Var 0)

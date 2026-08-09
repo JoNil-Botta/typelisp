@@ -2,11 +2,11 @@
 (import stdlib.array)
 
 (define (fill-recurrence
-  [remaining : (Array i32)]
-  [x-values : (Array f32)]
-  [y-values : (Array f32)]
-  [z-re : (Array f32)]
-  [z-im : (Array f32)]
+  [remaining : (__tl_dyn-array i32)]
+  [x-values : (__tl_dyn-array f32)]
+  [y-values : (__tl_dyn-array f32)]
+  [z-re : (__tl_dyn-array f32)]
+  [z-im : (__tl_dyn-array f32)]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -37,11 +37,11 @@
 (define (main) : i64
   (let
     [n : i64 19]
-    [remaining : (Array i32) (array.make-array i32 n)]
-    [x-values : (Array f32) (array.make-array f32 n)]
-    [y-values : (Array f32) (array.make-array f32 n)]
-    [z-re : (Array f32) (array.make-array f32 n)]
-    [z-im : (Array f32) (array.make-array f32 n)]
+    [remaining : (__tl_dyn-array i32) (array.make-array i32 n)]
+    [x-values : (__tl_dyn-array f32) (array.make-array f32 n)]
+    [y-values : (__tl_dyn-array f32) (array.make-array f32 n)]
+    [z-re : (__tl_dyn-array f32) (array.make-array f32 n)]
+    [z-im : (__tl_dyn-array f32) (array.make-array f32 n)]
     [i : i64 0]
     [ok : bool true]
     (begin

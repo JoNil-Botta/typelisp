@@ -1,7 +1,7 @@
 ;; SPMD varying-match corpus (#3753): a match inside a masked-if branch.
 (import stdlib.array)
 
-(define (init-xs [xs : (Array i64)] [n : i64]) : unit
+(define (init-xs [xs : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -9,7 +9,10 @@
         (array-set! xs i (- i 5))
         (set! i (+ i 1))))))
 
-(define (fill-match [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (fill-match
+  [xs : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
+  [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (> (array-ref xs i) 0)
@@ -18,7 +21,10 @@
         [false (array-set! out i 2)])
       (array-set! out i 0))))
 
-(define (fill-scalar [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (fill-scalar
+  [xs : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
+  [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -30,7 +36,10 @@
           (array-set! out i 0))
         (set! i (+ i 1))))))
 
-(define (arrays-eq [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
+(define (arrays-eq
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [n : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
@@ -46,9 +55,9 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (Array i64) (array.make-array i64 n)]
-    [got : (Array i64) (array.make-array i64 n)]
-    [want : (Array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [got : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [want : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
       (init-xs xs n)
       (fill-match xs got n)

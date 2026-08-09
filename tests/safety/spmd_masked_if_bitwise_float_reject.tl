@@ -1,7 +1,10 @@
 ;; SPMD masked bit-or/bit-xor remain integer-only at the source boundary.
 (import stdlib.array)
 
-(define (fill [xs : (Array f32)] [out : (Array f32)] [n : i64]) : unit
+(define (fill
+  [xs : (__tl_dyn-array f32)]
+  [out : (__tl_dyn-array f32)]
+  [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (let

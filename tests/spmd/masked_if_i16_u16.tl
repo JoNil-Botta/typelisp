@@ -1,6 +1,6 @@
 (import stdlib.array)
 
-(define (init-i16 [xs : (Array i16)] [n : i64]) : unit
+(define (init-i16 [xs : (__tl_dyn-array i16)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -9,8 +9,8 @@
         (set! i (+ i 1))))))
 
 (define (fill-i16-foreach
-  [xs : (Array i16)]
-  [out : (Array i16)]
+  [xs : (__tl_dyn-array i16)]
+  [out : (__tl_dyn-array i16)]
   [n : i64]
   [pivot : i16]
   [one : i16]) : unit
@@ -21,8 +21,8 @@
       (array-set! out i (+ (array-ref xs i) one)))))
 
 (define (fill-i16-scalar
-  [xs : (Array i16)]
-  [out : (Array i16)]
+  [xs : (__tl_dyn-array i16)]
+  [out : (__tl_dyn-array i16)]
   [n : i64]
   [pivot : i16]
   [one : i16]) : unit
@@ -35,7 +35,7 @@
           (array-set! out i (+ (array-ref xs i) one)))
         (set! i (+ i 1))))))
 
-(define (eq-i16 [a : (Array i16)] [b : (Array i16)] [n : i64]) : bool
+(define (eq-i16 [a : (__tl_dyn-array i16)] [b : (__tl_dyn-array i16)] [n : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
@@ -50,9 +50,9 @@
 
 (define (case-i16 [n : i64]) : bool
   (let
-    [xs : (Array i16) (array.make-array i16 n)]
-    [got : (Array i16) (array.make-array i16 n)]
-    [want : (Array i16) (array.make-array i16 n)]
+    [xs : (__tl_dyn-array i16) (array.make-array i16 n)]
+    [got : (__tl_dyn-array i16) (array.make-array i16 n)]
+    [want : (__tl_dyn-array i16) (array.make-array i16 n)]
     [pivot : i16 (cast 0 : i16)]
     [one : i16 (cast 1 : i16)]
     (begin
@@ -61,7 +61,7 @@
       (fill-i16-scalar xs want n pivot one)
       (eq-i16 got want n))))
 
-(define (init-u16 [xs : (Array u16)] [n : i64]) : unit
+(define (init-u16 [xs : (__tl_dyn-array u16)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -70,8 +70,8 @@
         (set! i (+ i 1))))))
 
 (define (fill-u16-foreach
-  [xs : (Array u16)]
-  [out : (Array u16)]
+  [xs : (__tl_dyn-array u16)]
+  [out : (__tl_dyn-array u16)]
   [n : i64]
   [limit : u16]
   [one : u16]) : unit
@@ -82,8 +82,8 @@
       (array-set! out i (+ (array-ref xs i) one)))))
 
 (define (fill-u16-scalar
-  [xs : (Array u16)]
-  [out : (Array u16)]
+  [xs : (__tl_dyn-array u16)]
+  [out : (__tl_dyn-array u16)]
   [n : i64]
   [limit : u16]
   [one : u16]) : unit
@@ -96,7 +96,7 @@
           (array-set! out i (+ (array-ref xs i) one)))
         (set! i (+ i 1))))))
 
-(define (eq-u16 [a : (Array u16)] [b : (Array u16)] [n : i64]) : bool
+(define (eq-u16 [a : (__tl_dyn-array u16)] [b : (__tl_dyn-array u16)] [n : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
@@ -111,9 +111,9 @@
 
 (define (case-u16 [n : i64]) : bool
   (let
-    [xs : (Array u16) (array.make-array u16 n)]
-    [got : (Array u16) (array.make-array u16 n)]
-    [want : (Array u16) (array.make-array u16 n)]
+    [xs : (__tl_dyn-array u16) (array.make-array u16 n)]
+    [got : (__tl_dyn-array u16) (array.make-array u16 n)]
+    [want : (__tl_dyn-array u16) (array.make-array u16 n)]
     [limit : u16 (cast 500 : u16)]
     [one : u16 (cast 1 : u16)]
     (begin

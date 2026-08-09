@@ -3,7 +3,7 @@
 ; array-ref so the checker sees the compiler array-read AST.
 (import stdlib.array)
 
-(define (bad [xs : (Array f32)] [n : i64]) : unit
+(define (bad [xs : (__tl_dyn-array f32)] [n : i64]) : unit
   (spmd-scan
     sum
     ([i : i64 0 n] [prefix : f32 (cast 0.0 : f32)])

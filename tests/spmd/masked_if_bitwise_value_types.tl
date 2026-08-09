@@ -7,8 +7,8 @@
 (define (case-i8) : bool
   (let
     [n : i64 67]
-    [xs : (Array i8) (array.make-array i8 n)]
-    [out : (Array i8) (array.make-array i8 n)]
+    [xs : (__tl_dyn-array i8) (array.make-array i8 n)]
+    [out : (__tl_dyn-array i8) (array.make-array i8 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -48,8 +48,8 @@
 (define (case-u8) : bool
   (let
     [n : i64 67]
-    [xs : (Array u8) (array.make-array u8 n)]
-    [out : (Array u8) (array.make-array u8 n)]
+    [xs : (__tl_dyn-array u8) (array.make-array u8 n)]
+    [out : (__tl_dyn-array u8) (array.make-array u8 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -89,8 +89,8 @@
 (define (case-i16) : bool
   (let
     [n : i64 35]
-    [xs : (Array i16) (array.make-array i16 n)]
-    [out : (Array i16) (array.make-array i16 n)]
+    [xs : (__tl_dyn-array i16) (array.make-array i16 n)]
+    [out : (__tl_dyn-array i16) (array.make-array i16 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -130,8 +130,8 @@
 (define (case-u16) : bool
   (let
     [n : i64 35]
-    [xs : (Array u16) (array.make-array u16 n)]
-    [out : (Array u16) (array.make-array u16 n)]
+    [xs : (__tl_dyn-array u16) (array.make-array u16 n)]
+    [out : (__tl_dyn-array u16) (array.make-array u16 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -171,8 +171,8 @@
 (define (case-i32) : bool
   (let
     [n : i64 19]
-    [xs : (Array i32) (array.make-array i32 n)]
-    [out : (Array i32) (array.make-array i32 n)]
+    [xs : (__tl_dyn-array i32) (array.make-array i32 n)]
+    [out : (__tl_dyn-array i32) (array.make-array i32 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -212,8 +212,8 @@
 (define (case-u32) : bool
   (let
     [n : i64 19]
-    [xs : (Array u32) (array.make-array u32 n)]
-    [out : (Array u32) (array.make-array u32 n)]
+    [xs : (__tl_dyn-array u32) (array.make-array u32 n)]
+    [out : (__tl_dyn-array u32) (array.make-array u32 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -253,8 +253,8 @@
 (define (case-i64) : bool
   (let
     [n : i64 13]
-    [xs : (Array i64) (array.make-array i64 n)]
-    [out : (Array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -294,8 +294,8 @@
 (define (case-u64) : bool
   (let
     [n : i64 13]
-    [xs : (Array u64) (array.make-array u64 n)]
-    [out : (Array u64) (array.make-array u64 n)]
+    [xs : (__tl_dyn-array u64) (array.make-array u64 n)]
+    [out : (__tl_dyn-array u64) (array.make-array u64 n)]
     [i : i64 0]
     [ok : bool true]
     (begin

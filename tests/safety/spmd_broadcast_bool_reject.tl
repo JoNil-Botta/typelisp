@@ -3,7 +3,10 @@
 ; array-ref so the checker sees the compiler array-read AST.
 (import stdlib.array)
 
-(define (main [xs : (Array bool)] [out : (Array bool)] [n : i64]) : unit
+(define (main
+  [xs : (__tl_dyn-array bool)]
+  [out : (__tl_dyn-array bool)]
+  [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set! out i (spmd-broadcast (array-ref xs i) 0))))

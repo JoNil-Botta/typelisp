@@ -2,9 +2,9 @@
 (import stdlib.array)
 
 (define (main
-  [xs : (Array i64)]
-  [ix : (Array i64)]
-  [out : (Array i64)]
+  [xs : (__tl_dyn-array i64)]
+  [ix : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])

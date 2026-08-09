@@ -3,7 +3,7 @@
 ;; comparison runs.
 (import stdlib.array)
 
-(define (fill-match [out : (Array i64)] [n : i64]) : unit
+(define (fill-match [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set!
@@ -15,7 +15,7 @@
         [2 30]
         [x (+ x 40)]))))
 
-(define (fill-scalar [out : (Array i64)] [n : i64]) : unit
+(define (fill-scalar [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -30,7 +30,10 @@
             [x (+ x 40)]))
         (set! i (+ i 1))))))
 
-(define (arrays-eq [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
+(define (arrays-eq
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [n : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
@@ -46,8 +49,8 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [got : (Array i64) (array.make-array i64 n)]
-    [want : (Array i64) (array.make-array i64 n)]
+    [got : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [want : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
       (fill-match got n)
       (fill-scalar want n)

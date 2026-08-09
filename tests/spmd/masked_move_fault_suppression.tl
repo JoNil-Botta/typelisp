@@ -17,7 +17,7 @@
 
 (cfg
   linux
-  (define (array-i64-from-raw [data : i64] [len : i64]) : (Array i64)
+  (define (array-i64-from-raw [data : i64] [len : i64]) : (__tl_dyn-array i64)
     (let
       [descriptor : i64 (cast (tl_alloc (cast 16 : u64)) : i64)]
       [handle : i64 (cast (tl_alloc (cast 8 : u64)) : i64)]
@@ -26,11 +26,13 @@
         (write-i64! (+ descriptor 8) len)
         (write-i64! handle descriptor)
         (unsafe
-          (ptr-read (int->ptr (cast handle : u64) : (Ptr (Array i64)))))))))
+          (ptr-read (int->ptr (cast handle : u64) : (Ptr (__tl_dyn-array i64)))))))))
 
 (cfg
   linux
-  (define (masked-copy [source : (Array i64)] [destination : (Array i64)]) : unit
+  (define (masked-copy
+    [source : (__tl_dyn-array i64)]
+    [destination : (__tl_dyn-array i64)]) : unit
     (foreach
       ([i : i64 0 4])
       (if (< i 2)
@@ -63,8 +65,8 @@
             (not (= destination-guard-status 0)))
             3
             (let
-              [source : (Array i64) (array-i64-from-raw source-data 4)]
-              [destination : (Array i64)
+              [source : (__tl_dyn-array i64) (array-i64-from-raw source-data 4)]
+              [destination : (__tl_dyn-array i64)
                 (array-i64-from-raw destination-data 4)]
               (begin
                 (write-i64! source-data 17)

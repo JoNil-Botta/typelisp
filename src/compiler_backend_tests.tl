@@ -101,7 +101,7 @@
 (define (compiler-backend-test-emit-scalar-stack-call-arg-text
   [type-segment-bases : i64]
   [target : compiler_backend.CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [arg-ty : compiler_ast_types.AstType]
   [is-float : bool]
@@ -169,7 +169,7 @@
 ;; helper only -- adding the wrapper back to compiler_backend.tl would put a
 ;; production-dead function in every compiler binary.
 (define (compiler-backend-test-emit-load-var-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]) : String
   (let
@@ -248,7 +248,7 @@
   [ret-ty : compiler_ast_types.AstType]
   [slot-vars : i64]
   [emit-blocks : compiler_ir_types.CompilerIrBlockList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [backend-state : compiler_backend.CompilerBackendState]) : unit
   (begin
     (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
@@ -272,10 +272,10 @@
           (compiler_liveness.compiler-live-analyze-function func)]
         [starts : (__tl_dyn-array i64) (make-array i64 slot-vars)]
         [ends : (__tl_dyn-array i64) (make-array i64 slot-vars)]
-        (match (compiler_backend.compiler-backend-scavenge-assignment-index-build
+        (match (compiler_backend.compiler-backend-scavenge-assignments-build
           assignments
           slot-vars)
-          [(compiler_backend.CompilerBackendScavengeAssignmentIndex
+          [(compiler_backend.CompilerBackendScavengeAssignments
               assignment-index
               plan-mask)
             (begin
@@ -308,7 +308,7 @@
 (define (compiler-backend-scavenge-occupied-mask-for-instr
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
-  [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
+  [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [point : i64]) : i64
   (let
@@ -340,7 +340,7 @@
 (define (compiler-backend-scavenge-pick
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
-  [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
+  [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [point : i64]
   [exclude : (__tl_dyn-array String)]
@@ -3286,13 +3286,13 @@
           true)]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
-(define (compiler-backend-call-result-store-bool-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-call-result-store-bool-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    compiler_regalloc.CompilerRegAssignmentList.Nil))
+    (compiler_regalloc.compiler-reg-assignment-table-empty)))
 
 (define (compiler-backend-c-abi-call-result-store-bool-asm-ok? [asm : String]) : bool
   (and
@@ -3346,7 +3346,7 @@
 
 (define (compiler-backend-c-abi-call-result-store-reg-bool-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-call-result-store-bool-assignments)]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
@@ -3362,7 +3362,7 @@
 
 (define (compiler-backend-typelisp-call-result-store-reg-bool-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-call-result-store-bool-assignments)]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
@@ -3457,7 +3457,7 @@
 (define (compiler-backend-indirect-c-call-shape-asm
   [target : compiler_backend.CompilerBackendTarget]
   [func : compiler_ir_types.CompilerIrValue]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_backend.ResultCompilerBackend
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_backend.ResultCompilerBackend
   (let
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
@@ -3470,8 +3470,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -3549,17 +3549,17 @@
           prev-current-count))]
     result))
 
-(define (compiler-backend-indirect-c-call-reg-assignments [home : i64]) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-indirect-c-call-reg-assignments [home : i64]) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       1
       (compiler_regalloc.CompilerRegLocation.Register home))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         2
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-indirect-c-call-callee-home-target-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -3633,16 +3633,16 @@
   (match (compiler-backend-indirect-c-call-shape-asm
     target
     (compiler_ir_types.CompilerIrValue.Var 1)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill 16))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)))
+        (compiler_regalloc.compiler-reg-assignment-table-empty))))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
@@ -3702,8 +3702,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -3722,23 +3722,23 @@
           (compiler_ast_types.AstType.I64)
           0)
         compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rcx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r13))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.ir-instr-call-indirect-cabi-store-result
@@ -3857,8 +3857,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -3873,13 +3873,13 @@
         backend-state)]
     [slots : compiler_ir_types.CompilerIrCAbiReturnSlotList
       (compiler-backend-c-abi-return-store-two-int-slots)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r11))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.ir-instr-call-cabi-store-result
@@ -4206,7 +4206,7 @@
 (define (compiler-backend-pack-immediate-word-shape-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-pack-words
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     (compiler_ir_types.CompilerIrValue.I64 7)
     (compiler_ir_types.CompilerIrValue.Bool true)
     "-16(%rbp)"
@@ -4221,7 +4221,7 @@
     [(compiler_backend.ResultCompilerBackend.Ok stack-asm)
       (match (compiler_backend.compiler-backend-emit-pack-words
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         (compiler_ir_types.CompilerIrValue.I64 9)
         (compiler_ir_types.CompilerIrValue.Char 'A')
         "%r12"
@@ -4268,30 +4268,30 @@
 
 (define (compiler-backend-pack-scavenged-word-shape-ok?) : bool
   (let
-    [gp-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [gp-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r13))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
-    [xmm-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    [xmm-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-xmm-register-id 4)))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     (match (compiler_backend.compiler-backend-emit-pack-words
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       gp-assignments
@@ -5267,13 +5267,13 @@
         (ci.intern-compat-state-capture-active))]
     [_win : unit
       (compiler_backend.compiler-backend-set-current-fn-win64! backend-state)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [ok : bool
       (match (compiler_backend.compiler-backend-emit-compare-branch
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -5463,40 +5463,40 @@
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     ok))
 
-(define (compiler-backend-peephole-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-peephole-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 2)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
-(define (compiler-backend-expanded-scalar-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-expanded-scalar-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r9))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-expanded-scalar-regs-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-expanded-scalar-assignments)]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
@@ -5529,174 +5529,174 @@
           backend-state)
         2))))
 
-(define (compiler-backend-callee-save-assignments1) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-callee-save-assignments1) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    compiler_regalloc.CompilerRegAssignmentList.Nil))
+    (compiler_regalloc.compiler-reg-assignment-table-empty)))
 
-(define (compiler-backend-callee-save-assignments2) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-callee-save-assignments2) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-callee-save-assignments3) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-callee-save-assignments3) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r14))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
-(define (compiler-backend-callee-save-assignments4) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-callee-save-assignments4) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r14))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r15))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
 
-(define (compiler-backend-callee-save-assignments5) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-callee-save-assignments5) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r14))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r15))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rbx))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))))))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
 
-(define (compiler-backend-win64-callee-save-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-win64-callee-save-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-rsi))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rdi))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
-(define (compiler-backend-win64-callee-save-full-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-win64-callee-save-full-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       5
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-rsi))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         6
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-rdi))
       (compiler-backend-callee-save-assignments5))))
 
-(define (compiler-backend-win64-callee-save-rbp-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-win64-callee-save-rbp-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       7
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-rbp))
     (compiler-backend-win64-callee-save-full-assignments)))
 
-(define (compiler-backend-win64-xmm-full-assignments-at [idx : i64]) : compiler_regalloc.CompilerRegAssignmentList
+(define (compiler-backend-win64-xmm-full-assignments-at [idx : i64]) : compiler_regalloc.CompilerRegAssignmentTable
   (if (>= idx 10)
-    compiler_regalloc.CompilerRegAssignmentList.Nil
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         idx
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id (+ idx 6))))
       (compiler-backend-win64-xmm-full-assignments-at (+ idx 1)))))
 
-(define (compiler-backend-win64-xmm-full-assignments) : compiler_regalloc.CompilerRegAssignmentList
+(define (compiler-backend-win64-xmm-full-assignments) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler-backend-win64-xmm-full-assignments-at 0))
 
-(define (compiler-backend-win64-xmm-sparse-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-win64-xmm-sparse-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       ;; The canonical ownership lookup must recognize vector-width aliases.
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-vector-register-id 6)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-vector-register-id 15)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
-(define (compiler-backend-win64-xmm15-only-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-win64-xmm15-only-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-xmm-register-id 15)))
-    compiler_regalloc.CompilerRegAssignmentList.Nil))
+    (compiler_regalloc.compiler-reg-assignment-table-empty)))
 
 (define (compiler-backend-callee-save-double-return-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -5722,15 +5722,15 @@
         (ci.intern-compat-state-capture-active))]
     [_abi : unit
       (compiler_backend.compiler-backend-set-current-fn-linux! shared-state)]
-    [one : compiler_regalloc.CompilerRegAssignmentList
+    [one : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments1)]
-    [two : compiler_regalloc.CompilerRegAssignmentList
+    [two : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments2)]
-    [three : compiler_regalloc.CompilerRegAssignmentList
+    [three : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments3)]
-    [four : compiler_regalloc.CompilerRegAssignmentList
+    [four : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments4)]
-    [five : compiler_regalloc.CompilerRegAssignmentList
+    [five : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments5)]
     [shared-name : i64 (ci.intern "pop_shared")]
     [shared : String
@@ -5800,7 +5800,7 @@
         (ci.intern-compat-state-capture-active))]
     [_abi : unit
       (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments3)]
     [push-regs : (__tl_dyn-array String)
       (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
@@ -5875,9 +5875,9 @@
         (ci.intern-compat-state-capture-active))]
     [_win : unit
       (compiler_backend.compiler-backend-set-current-fn-win64! backend-state)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-callee-save-assignments)]
-    [full : compiler_regalloc.CompilerRegAssignmentList
+    [full : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-callee-save-full-assignments)]
     [save : String
       (compiler_backend.compiler-backend-emit-save-callee-regs
@@ -5940,7 +5940,7 @@
         (ci.intern-compat-state-capture-active))]
     [_win : unit
       (compiler_backend.compiler-backend-set-current-fn-win64! backend-state)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-callee-save-rbp-assignments)]
     [push-regs : (__tl_dyn-array String)
       (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
@@ -6072,13 +6072,13 @@
         (ci.intern-compat-state-capture-active))]
     [_win : unit
       (compiler_backend.compiler-backend-set-current-fn-win64! backend-state)]
-    [sparse : compiler_regalloc.CompilerRegAssignmentList
+    [sparse : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-xmm-sparse-assignments)]
-    [full : compiler_regalloc.CompilerRegAssignmentList
+    [full : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-xmm-full-assignments)]
-    [xmm15 : compiler_regalloc.CompilerRegAssignmentList
+    [xmm15 : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-xmm15-only-assignments)]
-    [planned : compiler_regalloc.CompilerRegAssignmentList
+    [planned : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-plan-assignments
         (compiler_regalloc.compiler-reg-plan-function-scalar-for-abi
           compiler_abi.CompilerRegTargetAbi.Windows
@@ -6147,7 +6147,7 @@
         (compiler_backend.CompilerBackendTarget.Windows)
         "_tl_xmm_empty"
         32
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         3
         backend-state)]
     [inline-tail : String
@@ -6260,7 +6260,7 @@
         (=
           (compiler_backend.compiler-backend-frame-slots
             3
-            compiler_regalloc.CompilerRegAssignmentList.Nil
+            (compiler_regalloc.compiler-reg-assignment-table-empty)
             backend-state)
           3)
         (not
@@ -6331,35 +6331,35 @@
 
 (define (compiler-backend-peephole-register-moves-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-peephole-assignments)]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [coalesced : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [coalesced : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
-    [casted : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    [casted : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r13))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     (and
       (string.eq
         (compiler-backend-test-emit-load-var-with-plan assignments 0 "%r12")
@@ -6469,13 +6469,13 @@
 
 (define (compiler-backend-direct-immediate-mov-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -6499,7 +6499,7 @@
         [(compiler_backend.ResultCompilerBackend.Err _) false])
       (match (compiler_backend.compiler-backend-emit-mov
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         1
         (compiler_ir_types.CompilerIrValue.I64 7)
         (compiler_ast_types.AstType.I64)
@@ -6518,20 +6518,20 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
-    [int-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [int-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
-    [float-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    [float-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     (and
       (match (compiler_backend.compiler-backend-emit-mov
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -6926,13 +6926,13 @@
       (compiler_ast_types.ast-type-cons
         memory11
         (compiler_ast_types.ast-type-list-new))]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [diag : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
     [index : compiler_backend.CompilerBackendProgramIndex
@@ -7116,18 +7116,18 @@
             (compiler_ast_types.AstType.I64)
             1)
           compiler_ir_types.CompilerIrParamList.Nil))]
-    [param-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [param-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r13))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [params-asm : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-param-spills
         bases
@@ -7273,7 +7273,7 @@
         (compiler_regalloc.compiler-reg-scratch-vreg-slots
           bases
           compiler_abi.CompilerRegTargetAbi.Linux
-          compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-empty)
           types
           (compiler_ir_types.CompilerIrInstr.CallIndirect
             1
@@ -7287,7 +7287,7 @@
         (compiler_regalloc.compiler-reg-scratch-vreg-slots
           bases
           compiler_abi.CompilerRegTargetAbi.Linux
-          compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-empty)
           types
           (compiler_ir_types.CompilerIrInstr.Call
             1
@@ -7301,7 +7301,7 @@
         (compiler_regalloc.compiler-reg-scratch-vreg-slots
           bases
           compiler_abi.CompilerRegTargetAbi.Linux
-          compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-empty)
           types
           (compiler_ir_types.CompilerIrInstr.TailCall
             name
@@ -7573,7 +7573,7 @@
       compiler_ir_types.CompilerIrExternList.Nil)))
 
 (define (compiler-backend-register-group-mov-error-ok?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [src : compiler_ir_types.CompilerIrValue]
   [want : String]) : bool
   (let
@@ -7606,7 +7606,7 @@
     (match (compiler_backend.compiler-backend-emit-call-args
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_backend.CompilerBackendTarget.Linux)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       (compiler_ir_types.CompilerIrCallArgs.One
         (compiler_ir_types.CompilerIrValue.I64 7))
       (compiler_ast_types.ast-type-cons
@@ -7632,24 +7632,24 @@
 (define (compiler-backend-register-group-fail-closed-ok?) : bool
   (and
     (compiler-backend-register-group-mov-error-ok?
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)
+        (compiler_regalloc.compiler-reg-assignment-table-empty))
       (compiler_ir_types.CompilerIrValue.Var 0)
       "backend: register-group var assigned scalar register home")
     (compiler-backend-register-group-mov-error-ok?
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Spill 16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)
+        (compiler_regalloc.compiler-reg-assignment-table-empty))
       (compiler_ir_types.CompilerIrValue.Var 0)
       "backend: register-group var assigned spill slot")
     (compiler-backend-register-group-mov-error-ok?
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       (compiler_ir_types.CompilerIrValue.I64 7)
       "backend: register-group load requires var operand")
     (compiler-backend-register-group-call-arg-error-ok?)))
@@ -7847,22 +7847,22 @@
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             functions
             externs)])]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Spill -8))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r13))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     [_group-enable : unit
       (begin
         (compiler_backend.compiler-backend-current-slot-vars-set!
@@ -7955,30 +7955,30 @@
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             functions
             externs)])]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.RegisterPair
             compiler_abi.compiler-reg-id-r12
             compiler_abi.compiler-reg-id-r13))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rbx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rsi))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 3
                 (compiler_regalloc.CompilerRegLocation.RegisterPair
                   compiler_abi.compiler-reg-id-r14
                   compiler_abi.compiler-reg-id-r15))
-              compiler_regalloc.CompilerRegAssignmentList.Nil))))]
+              (compiler_regalloc.compiler-reg-assignment-table-empty)))))]
     [_group-enable : unit
       (begin
         (compiler_backend.compiler-backend-current-slot-vars-set!
@@ -8770,7 +8770,7 @@
 
 (define (compiler-backend-peephole-asm-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-peephole-assignments)]
     (match (compiler_backend.compiler-backend-emit-binop
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -10287,7 +10287,7 @@
         (ci.intern "test")
         blocks
         (compiler_ir_types.compiler-ir-label "entry")
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         vars
         (compiler_regalloc.compiler-reg-var-types-empty)
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
@@ -10462,7 +10462,7 @@
         test-id
         blocks
         (compiler_ir_types.compiler-ir-label "entry")
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         compiler-backend-long-block-instr-count
         (compiler_regalloc.compiler-reg-var-types-empty)
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
@@ -10491,12 +10491,12 @@
 
 (define (compiler-backend-binop-operand-folding-ok?) : bool
   (let
-    [rhs-spill : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [rhs-spill : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [cmp-types : compiler_regalloc.CompilerRegVarTypes
       (compiler_regalloc.compiler-reg-var-types-insert
         (compiler_regalloc.compiler-reg-var-types-insert
@@ -10559,24 +10559,24 @@
 
 (define (compiler-backend-bounds-operand-folding-ok?) : bool
   (let
-    [index-reg : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [index-reg : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
-    [index-reg-length-spill : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    [index-reg-length-spill : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Spill -16))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BoundsCheck
@@ -10651,8 +10651,8 @@
     [regs : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-scavenge-candidates)]
     [count : i64 (array-length regs)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler-backend-test-reg-assignment-list-from regs 0)]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler-backend-test-reg-assignment-table-from regs 0)]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BoundsCheck
@@ -10693,8 +10693,8 @@
     [regs : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-scavenge-candidates)]
     [count : i64 (array-length regs)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler-backend-test-reg-assignment-list-from regs 0)]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler-backend-test-reg-assignment-table-from regs 0)]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -10738,13 +10738,13 @@
 
 (define (compiler-backend-win64-bounds-index-scratch-ok?) : bool
   (let
-    [length-rax : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [length-rax : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rax))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [ok : bool
       (match (compiler-backend-emit-test-instrs-target
         (compiler_ir_types.compiler-ir-instr-cons
@@ -10780,13 +10780,13 @@
         (ci.intern-compat-state-capture-active))]
     [_win : unit
       (compiler_backend.compiler-backend-set-current-fn-win64! backend-state)]
-    [rhs-rax : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [rhs-rax : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rax))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [ok : bool
       (match (compiler_backend.compiler-backend-emit-compare-branch
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -11085,7 +11085,7 @@
 
 (define (compiler-backend-branch-fallthrough-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-peephole-assignments)]
     (match (compiler_backend.compiler-backend-emit-branch
       assignments
@@ -11129,7 +11129,7 @@
 
 (define (compiler-backend-zero-load-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-load-value-with-plan
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     (compiler_ir_types.CompilerIrValue.I64 0)
     "%rax"
     (compiler_backend.compiler-backend-state-new
@@ -11274,7 +11274,7 @@
           0
           (compiler_ast_types.AstType.I64))
         compiler_ir_types.CompilerIrInstrList.Nil)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       4)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -11294,7 +11294,7 @@
           0
           (compiler_ast_types.AstType.F64))
         compiler_ir_types.CompilerIrInstrList.Nil)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       4)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -11314,12 +11314,12 @@
           0
           (compiler_ast_types.AstType.F64))
         compiler_ir_types.CompilerIrInstrList.Nil)
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)
+        (compiler_regalloc.compiler-reg-assignment-table-empty))
       4)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -11331,41 +11331,41 @@
 
 (define (compiler-backend-scratch-staging-direct-shapes-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r13))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.RegisterPair
                 compiler_abi.compiler-reg-id-r12
                 compiler_abi.compiler-reg-id-r13))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
-    [_r8-tie-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
+    [_r8-tie-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r8))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r8))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     [diag : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
     [backend-state : compiler_backend.CompilerBackendState
@@ -11462,18 +11462,18 @@
               "    call _tl_f\n    movq %rax,"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-phi-same-home-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-phi-same-home-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-phi-same-home-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -11513,20 +11513,20 @@
           compiler_ir_types.CompilerIrInstrList.Nil)))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-phi-group-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-phi-group-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.RegisterPair
         compiler_abi.compiler-reg-id-r12
         compiler_abi.compiler-reg-id-r13))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.RegisterPair
           compiler_abi.compiler-reg-id-r14
           compiler_abi.compiler-reg-id-r15))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-phi-group-cycle-blocks) : compiler_ir_types.CompilerIrBlockList
   (let
@@ -11554,30 +11554,30 @@
             compiler_ir_types.CompilerIrInstrList.Nil)))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (compiler-backend-phi-f64-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-phi-f64-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-xmm-register-id 2)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-phi-f64-spill-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-phi-f64-spill-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -16))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-phi-f64-cycle-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -11602,23 +11602,23 @@
           compiler_ir_types.CompilerIrInstrList.Nil)))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-phi-f32-three-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-phi-f32-three-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-xmm-register-id 2)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 5)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-phi-f32-three-cycle-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -11651,20 +11651,20 @@
             compiler_ir_types.CompilerIrInstrList.Nil))))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-phi-group-f64-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-phi-group-f64-cycle-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.RegisterPair
         (compiler_abi.compiler-abi-xmm-register-id 2)
         (compiler_abi.compiler-abi-xmm-register-id 3)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.RegisterPair
           (compiler_abi.compiler-abi-xmm-register-id 4)
           (compiler_abi.compiler-abi-xmm-register-id 5)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-phi-group-f64-cycle-blocks) : compiler_ir_types.CompilerIrBlockList
   (let
@@ -11714,23 +11714,23 @@
         compiler_ir_types.CompilerIrInstrList.Nil)
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (compiler-backend-branch-phi-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-branch-phi-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r14))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-branch-phi-edge-copy-ok?) : bool
   (let
@@ -11796,7 +11796,7 @@
 (define (compiler-backend-phi-immediate-stack-copy-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-phi-edge-copies
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     (compiler-backend-branch-phi-blocks)
     (compiler_ir_types.compiler-ir-label "body")
     (compiler_ir_types.compiler-ir-label "entry")
@@ -11826,17 +11826,17 @@
 (define (compiler-backend-phi-direct-scalar-copy-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-phi-edge-copies
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     (compiler-backend-branch-phi-blocks)
     (compiler_ir_types.compiler-ir-label "body")
     (compiler_ir_types.compiler-ir-label "body")
@@ -11851,16 +11851,16 @@
     [(compiler_backend.ResultCompilerBackend.Ok reg-reg)
       (match (compiler_backend.compiler-backend-emit-phi-edge-copies
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Spill -16))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))
         (compiler-backend-branch-phi-blocks)
         (compiler_ir_types.compiler-ir-label "body")
         (compiler_ir_types.compiler-ir-label "body")
@@ -11875,16 +11875,16 @@
         [(compiler_backend.ResultCompilerBackend.Ok spill-reg)
           (match (compiler_backend.compiler-backend-emit-phi-edge-copies
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 0
                 (compiler_regalloc.CompilerRegLocation.Spill -8))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   1
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-r13))
-                compiler_regalloc.CompilerRegAssignmentList.Nil))
+                (compiler_regalloc.compiler-reg-assignment-table-empty)))
             (compiler-backend-branch-phi-blocks)
             (compiler_ir_types.compiler-ir-label "body")
             (compiler_ir_types.compiler-ir-label "body")
@@ -11926,7 +11926,7 @@
 (define (compiler-backend-phi-return-entry-asm
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [entry-instrs : compiler_ir_types.CompilerIrInstrList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]) : compiler_backend.ResultCompilerBackend
   (let
     [use-counts : (__tl_dyn-array i64)
@@ -12004,18 +12004,18 @@
         (compiler-backend-single-phi-return-join-instrs))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (compiler-backend-single-phi-return-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-single-phi-return-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r14))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-single-phi-return-shortcut-ok?) : bool
   (match (compiler-backend-phi-return-entry-asm
@@ -12100,33 +12100,33 @@
         (compiler-backend-multi-phi-return-join-instrs))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (compiler-backend-multi-phi-return-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-multi-phi-return-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r14))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r15))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rbx))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))))))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
 
 (define (compiler-backend-multi-phi-return-shortcut-ok?) : bool
   (match (compiler-backend-phi-return-entry-asm
@@ -12187,23 +12187,23 @@
         (compiler-backend-phi-return-work-join-instrs))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (compiler-backend-phi-return-work-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-phi-return-work-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r14))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r15))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-phi-return-rejects-work-ok?) : bool
   (match (compiler-backend-phi-return-entry-asm
@@ -12267,23 +12267,23 @@
         (compiler-backend-mov-phi-copy-join-instrs))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (compiler-backend-mov-phi-copy-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-mov-phi-copy-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r14))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-mov-phi-copy-fusion-ok?) : bool
   (let
@@ -12390,7 +12390,7 @@
         [(compiler_backend.ResultCompilerBackend.Ok same-home)
           (match (compiler_backend.compiler-backend-emit-phi-edge-copies
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            compiler_regalloc.CompilerRegAssignmentList.Nil
+            (compiler_regalloc.compiler-reg-assignment-table-empty)
             (compiler-backend-phi-cycle-blocks)
             (compiler_ir_types.compiler-ir-label "join")
             (compiler_ir_types.compiler-ir-label "back")
@@ -12418,7 +12418,7 @@
                 ;; scavenged GP register. It used to carry a pushq/popq bracket
                 ;; around the staging register; #phi-staged-copy proves the
                 ;; register free per edge (no register homes exist in this
-                ;; assignment list, and no copy dst homes one), so the bracket is
+                ;; assignment table, and no copy dst homes one), so the bracket is
                 ;; gone and the pair itself is what the shape asserts.
                 (compiler_backend.compiler-backend-string-contains?
                   cycle
@@ -12482,7 +12482,7 @@
     [ok : bool
       (match (compiler_backend.compiler-backend-emit-phi-edge-copies
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         (compiler-backend-phi-cycle-blocks)
         (compiler_ir_types.compiler-ir-label "join")
         (compiler_ir_types.compiler-ir-label "back")
@@ -12622,7 +12622,7 @@
     [copied : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-phi-edge-copies
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         blocks
         (compiler_ir_types.compiler-ir-label "join")
         (compiler_ir_types.compiler-ir-label "entry")
@@ -12858,7 +12858,7 @@
         (ci.intern-compat-state-capture-active))]
     [restore : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-arg-move
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         (BackendArgMove compiler_abi.compiler-reg-id-rsi BackendArgMoveStackPop)
         backend-state)]
     [ok : bool
@@ -12894,18 +12894,18 @@
 
 (define (compiler-backend-base1-arg-cycle-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rdx))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rsi))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [args : compiler_ir_types.CompilerIrCallArgs
       (compiler_ir_types.CompilerIrCallArgs.Two
         (compiler_ir_types.CompilerIrValue.Var 0)
@@ -12940,18 +12940,18 @@
 
 (define (compiler-backend-base1-arg-env-source-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rdi))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rsi))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [args : compiler_ir_types.CompilerIrCallArgs
       (compiler_ir_types.CompilerIrCallArgs.Two
         (compiler_ir_types.CompilerIrValue.Var 0)
@@ -12985,18 +12985,18 @@
 
 (define (compiler-backend-c-abi-arg-cycle-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rsi))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rdi))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [args : compiler_ir_types.CompilerIrCallArgs
       (compiler_ir_types.CompilerIrCallArgs.Two
         (compiler_ir_types.CompilerIrValue.Var 0)
@@ -15694,51 +15694,51 @@
       "    vpbroadcastb ")
     (compiler-backend-avx2-uniform-zip-ok?)))
 
-(define (compiler-backend-stack-splat-dst-only-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-stack-splat-dst-only-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    compiler_regalloc.CompilerRegAssignmentList.Nil))
+    (compiler_regalloc.compiler-reg-assignment-table-empty)))
 
-(define (compiler-backend-stack-splat-spill-assignments [offset : i64]) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-stack-splat-spill-assignments [offset : i64]) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill offset))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-stack-splat-register-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-stack-splat-register-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-stack-splat-float-register-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-stack-splat-float-register-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-stack-memory-operand-ok?) : bool
   (let
@@ -15938,68 +15938,68 @@
     (compiler-backend-avx512-stack-splat-f64-spill-ok?)
     (compiler-backend-register-splat-fallback-ok?)))
 
-(define (compiler-backend-vector-spill-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-vector-spill-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-rdi))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-vector-register-id 6)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Spill -64))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 (compiler_abi.compiler-abi-mask-register-id 1)))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))))))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
 
-(define (compiler-backend-avx2-native-mask-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx2-native-mask-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-rdi))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-vector-register-id 6)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Spill -64))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 (compiler_abi.compiler-abi-vector-register-id 7)))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 5
                 (compiler_regalloc.CompilerRegLocation.Register
                   (compiler_abi.compiler-abi-vector-register-id 8)))
-              compiler_regalloc.CompilerRegAssignmentList.Nil)))))))
+              (compiler_regalloc.compiler-reg-assignment-table-empty))))))))
 
 (define (compiler-backend-avx2-native-mask-emission-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-avx2-native-mask-assignments)]
     [diag : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
@@ -16187,38 +16187,38 @@
         "    vmovdqu -64(%rbp), %ymm14\n    vpaddq %ymm6, %ymm14, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-vector-prefix-spill-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-vector-prefix-spill-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Spill -64))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
-(define (compiler-backend-vector-prefix-source-carry-spill-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-vector-prefix-source-carry-spill-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -64))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -8))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-vector-register-id 7)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx2-vector-prefix-i64-spill-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-avx2-vector-prefix
@@ -16259,7 +16259,7 @@
 
 (define (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-vector-prefix-source-carry-spill-assignments)]
     (and
       (match (compiler_backend.compiler-backend-emit-avx2-vector-prefix
@@ -16362,7 +16362,7 @@
 
 (define (compiler-backend-avx512-vector-prefix-numeric-spill-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-vector-prefix-spill-assignments)]
     (and
       (match (compiler_backend.compiler-backend-emit-avx512-vector-prefix
@@ -16437,7 +16437,7 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-vector-prefix-spill-assignments)]
     [prev-mode : compiler_backend.CompilerBackendMode
       (compiler_backend.compiler-backend-test-get-compiler-backend-current-mode
@@ -16514,38 +16514,38 @@
               (compiler_backend.compiler-backend-string-contains? asm "%zmm1\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
-(define (compiler-backend-avx512-vector-prefix-bool-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-vector-prefix-bool-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 2)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-rax))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Spill -64))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
-(define (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -64))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -8))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-mask-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx512-vector-prefix-bool-scratch-requirement
   [ordinal : i64]
@@ -16555,9 +16555,9 @@
     (compiler_abi.CompilerRegTargetAbi.Linux)
     (compiler_regalloc.compiler-reg-scratch-policy
       (compiler_abi.CompilerRegTargetAbi.Linux)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       (compiler_regalloc.compiler-reg-id-seq-empty))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     (compiler_regalloc.compiler-reg-var-types-empty)
     (compiler_ir_types.ir-instr-vector-prefix
       2
@@ -16865,43 +16865,43 @@
       (compiler_backend.CompilerBackendMode.Avx512)
       "%zmm14")))
 
-(define (compiler-backend-simd-address-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-simd-address-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-rdi))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rax))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-vector-register-id 6)))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 (compiler_abi.compiler-abi-vector-register-id 7)))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 5
                 (compiler_regalloc.CompilerRegLocation.Register
                   (compiler_abi.compiler-abi-mask-register-id 1)))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   6
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-rcx))
-                compiler_regalloc.CompilerRegAssignmentList.Nil))))))))
+                (compiler_regalloc.compiler-reg-assignment-table-empty)))))))))
 
 (define (compiler-backend-simd-indexed-address-with-base-emits?
   [base : compiler_ir_types.CompilerIrValue]
@@ -17142,51 +17142,51 @@
         0
         (+ (array-ref xs i) 1)))))")
 
-(define (compiler-backend-avx512-select-alias-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-select-alias-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-mask-register-id 1)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-vector-register-id 6)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-vector-register-id 7)))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
 
-(define (compiler-backend-avx512-select-false-alias-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-select-false-alias-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 7)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-mask-register-id 1)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-vector-register-id 6)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-vector-register-id 7)))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
 
 (define (compiler-backend-avx512-select-true-alias-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-avx512-select
@@ -17232,23 +17232,23 @@
       (string.eq asm "    vmovdqu64 %zmm6, %zmm7{%k1}\n")]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-avx512-mask-load-temp-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-mask-load-temp-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 1)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-mask-register-id 2)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx512-mask-load-temp-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-avx512-mask-load
@@ -17279,23 +17279,23 @@
         (not (compiler_backend.compiler-backend-string-contains? asm "%zmm15")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-avx512-mask-store-temp-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-mask-store-temp-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 1)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-mask-register-id 2)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx512-mask-store-temp-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-avx512-mask-store
@@ -18135,15 +18135,15 @@
       "%k")))
 
 (define (compiler-backend-vector-reduce-direct-assignments
-  [dst-location : compiler_regalloc.CompilerRegLocation]) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+  [dst-location : compiler_regalloc.CompilerRegLocation]) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment 1 dst-location)
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-avx512-vector-reduce-narrow-case-ok?
   [elem-ty : compiler_ast_types.AstType]
@@ -18528,23 +18528,23 @@
             "register home unavailable")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-avx512-tail-mask-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-tail-mask-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 1)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx512-tail-mask-emits?
   [index : compiler_ir_types.CompilerIrValue]
@@ -18614,19 +18614,19 @@
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-tail-mask-planned-assignments
-  [index-location : compiler_regalloc.CompilerRegLocation]) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+  [index-location : compiler_regalloc.CompilerRegLocation]) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 1)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment 1 index-location)
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx512-tail-mask-planned-case-ok?
   [index-location : compiler_regalloc.CompilerRegLocation]
@@ -18726,23 +18726,23 @@
     (compiler-backend-avx512-tail-mask-dynamic-zero-ok?)
     (compiler-backend-avx512-tail-mask-planned-ok?)))
 
-(define (compiler-backend-avx2-tail-mask-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx2-tail-mask-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx2-tail-mask-emits [lanes : i64]) : compiler_backend.ResultCompilerBackend
   (compiler_backend.compiler-backend-emit-avx2-tail-mask
@@ -18829,18 +18829,18 @@
           (compiler_backend.compiler-backend-program-collections-uses-avx2-i64-lane-id?
             dword))))))
 
-(define (compiler-backend-avx512-mask-not-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-mask-not-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 1)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-mask-register-id 2)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-avx512-mask-not-emits? [lanes : i64] [want : String]) : bool
   (match (compiler_backend.compiler-backend-emit-avx512-mask-not
@@ -18864,29 +18864,29 @@
     (compiler-backend-avx512-mask-not-emits? 32 "    knotd %k1, %k2\n")
     (compiler-backend-avx512-mask-not-emits? 64 "    knotq %k1, %k2\n")))
 
-(define (compiler-backend-avx512-mask-binop-same-dst-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-mask-binop-same-dst-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 1)))
-    compiler_regalloc.CompilerRegAssignmentList.Nil))
+    (compiler_regalloc.compiler-reg-assignment-table-empty)))
 
-(define (compiler-backend-avx512-mask-binop-copy-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-mask-binop-copy-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 1)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-mask-register-id 2)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-avx512-mask-binop-emits?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrMaskBinOp]
   [want : String]) : bool
@@ -18927,18 +18927,18 @@
       (compiler_ir_types.CompilerIrMaskBinOp.Or)
       "    kmovw %k1, %k2\n")))
 
-(define (compiler-backend-avx512-mask-reduce-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-mask-reduce-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 1)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-avx512-mask-reduce-emits?
   [op : compiler_ir_types.CompilerIrMaskReduceOp]
@@ -18972,33 +18972,33 @@
       8
       "    kmovw %k1, %eax\n    cmpl $255, %eax\n    sete %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")))
 
-(define (compiler-backend-avx512-mask-spill-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-mask-spill-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -16))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Spill -24))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
 
-(define (compiler-backend-avx512-mask-spill-compare-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-avx512-mask-spill-compare-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       4
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         5
         (compiler_regalloc.CompilerRegLocation.Register
@@ -19293,7 +19293,7 @@
     [(compiler_regalloc.CompilerRegMaybeLocation.No) true]))
 
 (define (compiler-backend-avx512-mask-spill-assignment?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]) : bool
   (if (> var 6)
     false
@@ -19478,23 +19478,23 @@
       true
       "vpsubq")))
 
-(define (compiler-backend-vector-binop-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-vector-binop-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-vector-register-id 7)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-vector-register-id 8)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx2-vector-binop-emits?
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -19985,8 +19985,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -20037,7 +20037,7 @@
         (compiler_backend.compiler-backend-set-scavenge-ctx!
           starts
           ends
-          compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-empty)
           vars)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -20065,7 +20065,7 @@
         test-id
         compiler_ir_types.CompilerIrBlockList.Nil
         (compiler_ir_types.compiler-ir-label "entry")
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         vars
         (compiler_regalloc.compiler-reg-var-types-empty)
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
@@ -20191,7 +20191,7 @@
 
 (define (compiler-backend-emit-test-instrs
   [instrs : compiler_ir_types.CompilerIrInstrList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]) : compiler_backend.ResultCompilerBackend
   (compiler-backend-emit-test-instrs-target
     instrs
@@ -20201,7 +20201,7 @@
 
 (define (compiler-backend-emit-test-instrs-target
   [instrs : compiler_ir_types.CompilerIrInstrList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [target : compiler_backend.CompilerBackendTarget]) : compiler_backend.ResultCompilerBackend
   (let
@@ -20217,7 +20217,7 @@
 
 (define (compiler-backend-emit-test-instrs-target-with-backend-state
   [instrs : compiler_ir_types.CompilerIrInstrList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [target : compiler_backend.CompilerBackendTarget]
   [backend-state : compiler_backend.CompilerBackendState]) : compiler_backend.ResultCompilerBackend
@@ -20237,8 +20237,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -21632,12 +21632,12 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.U64))
         compiler_ir_types.CompilerIrInstrList.Nil)
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           4
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)
+        (compiler_regalloc.compiler-reg-assignment-table-empty))
       5)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21653,7 +21653,7 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.U64))
         compiler_ir_types.CompilerIrInstrList.Nil)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       5)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21678,7 +21678,7 @@
             (compiler_ir_types.CompilerIrValue.Var 2)
             (compiler_ast_types.AstType.U64))
           compiler_ir_types.CompilerIrInstrList.Nil))
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       4)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21706,7 +21706,7 @@
             (compiler_ir_types.CompilerIrValue.Var 3)
             (compiler_ast_types.AstType.U64))
           compiler_ir_types.CompilerIrInstrList.Nil))
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       5)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21731,12 +21731,12 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.F64))
         compiler_ir_types.CompilerIrInstrList.Nil)
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           4
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)
+        (compiler_regalloc.compiler-reg-assignment-table-empty))
       5)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21752,7 +21752,7 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.F64))
         compiler_ir_types.CompilerIrInstrList.Nil)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       5)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21780,12 +21780,12 @@
             (compiler_ir_types.CompilerIrValue.Var 2)
             (compiler_ast_types.AstType.F64))
           compiler_ir_types.CompilerIrInstrList.Nil))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           3
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)
+        (compiler_regalloc.compiler-reg-assignment-table-empty))
       4)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21807,7 +21807,7 @@
             (compiler_ir_types.CompilerIrValue.Var 2)
             (compiler_ast_types.AstType.F64))
           compiler_ir_types.CompilerIrInstrList.Nil))
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       4)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21832,12 +21832,12 @@
             (compiler_ir_types.CompilerIrValue.Var 3)
             (compiler_ast_types.AstType.F64))
           compiler_ir_types.CompilerIrInstrList.Nil))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           4
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)
+        (compiler_regalloc.compiler-reg-assignment-table-empty))
       5)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21857,12 +21857,12 @@
           (compiler_ir_types.CompilerIrValue.I64 7)
           (compiler_ast_types.AstType.I64))
         compiler_ir_types.CompilerIrInstrList.Nil))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         2
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)
+      (compiler_regalloc.compiler-reg-assignment-table-empty))
     4)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
@@ -21907,7 +21907,7 @@
                 (compiler_ir_types.CompilerIrValue.Var 3)
                 (compiler_ast_types.AstType.I32))
               compiler_ir_types.CompilerIrInstrList.Nil))))
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       5)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21931,7 +21931,7 @@
             (compiler_ir_types.CompilerIrMaybeValue.Some
               (compiler_ir_types.CompilerIrValue.Var 2)))
           compiler_ir_types.CompilerIrInstrList.Nil))
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       3)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -21946,13 +21946,13 @@
 
 (define (compiler-backend-addr-of-register-home-shape-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     (match (compiler_backend.compiler-backend-emit-addr-of
       assignments
       2
@@ -21969,7 +21969,7 @@
     (compiler_ir_types.compiler-ir-instr-cons
       (compiler_ir_types.CompilerIrInstr.AddrOf 2 1)
       compiler_ir_types.CompilerIrInstrList.Nil)
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     4)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
@@ -21996,7 +21996,7 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           24)
         compiler_ir_types.CompilerIrInstrList.Nil))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     5)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
@@ -22043,7 +22043,7 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           16)
         compiler_ir_types.CompilerIrInstrList.Nil))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     6)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
@@ -22075,23 +22075,23 @@
 
 (define (compiler-backend-win64-gep-offset-rax-home-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rsi))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rax))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rax))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     [ok : bool
       (match (compiler-backend-emit-test-instrs-target
         (compiler_ir_types.compiler-ir-instr-cons
@@ -22147,7 +22147,7 @@
               (compiler_ir_types.CompilerIrValue.Var 4)
               (compiler_ast_types.AstType.U64))
             compiler_ir_types.CompilerIrInstrList.Nil))))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     7)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
@@ -22207,7 +22207,7 @@
               (compiler_ir_types.CompilerIrValue.Var 4)
               (compiler_ast_types.AstType.F64))
             compiler_ir_types.CompilerIrInstrList.Nil))))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     7)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
@@ -22266,7 +22266,7 @@
                   (compiler_ir_types.compiler-ir-label "eq")
                   (compiler_ir_types.compiler-ir-label "ne"))
                 compiler_ir_types.CompilerIrInstrList.Nil))))))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     9)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
@@ -22296,7 +22296,7 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.I64))
         compiler_ir_types.CompilerIrInstrList.Nil))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     4)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
@@ -22340,12 +22340,12 @@
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.F64))
           compiler_ir_types.CompilerIrInstrList.Nil))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)
+        (compiler_regalloc.compiler-reg-assignment-table-empty))
       4)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -22366,7 +22366,7 @@
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.F64))
           compiler_ir_types.CompilerIrInstrList.Nil))
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       4)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -22398,7 +22398,7 @@
             (compiler_ir_types.CompilerIrValue.I64 2)
             (compiler_ast_types.AstType.I64))
           compiler_ir_types.CompilerIrInstrList.Nil)))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     4)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
@@ -22426,33 +22426,33 @@
 ;; StorePtr consumes the same fused Gep address forms as Load: zero and
 ;; nonzero displacements, plus a register-homed scaled index, emit directly in
 ;; the store memory operand. A second non-memory use keeps the Gep materialized.
-(define (compiler-backend-gep-store-fold-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-gep-store-fold-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-rsi))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-rax))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rdi))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rcx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r8))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))))))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
 
 (define (compiler-backend-gep-store-fold-positive-ok?
   [offset : compiler_ir_types.CompilerIrValue]
@@ -22535,12 +22535,12 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.I64))
         compiler_ir_types.CompilerIrInstrList.Nil)
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)
+        (compiler_regalloc.compiler-reg-assignment-table-empty))
       3)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -22559,7 +22559,7 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.I64))
         compiler_ir_types.CompilerIrInstrList.Nil)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       3)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -22578,7 +22578,7 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.F64))
         compiler_ir_types.CompilerIrInstrList.Nil)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       3)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -22603,7 +22603,7 @@
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64))
           compiler_ir_types.CompilerIrInstrList.Nil))
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       5)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
@@ -22627,13 +22627,13 @@
 
 (define (compiler-backend-gep-store-index-home-preserved-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Gep
@@ -22662,20 +22662,20 @@
 
 (define (compiler-backend-store-address-source-home-preserved-ok?) : bool
   (let
-    [src-r9 : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [src-r9 : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
-    [pair-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    [pair-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r8))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [plain-ok : bool
       (match (compiler-backend-emit-test-instrs
         (compiler_ir_types.compiler-ir-instr-cons
@@ -22759,20 +22759,20 @@
 
 (define (compiler-backend-store-home-base-shape-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
-    [r11-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    [r11-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r11))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -22859,7 +22859,7 @@
               (compiler_ir_types.CompilerIrValue.Var 6)
               (compiler_ast_types.AstType.U8))
             compiler_ir_types.CompilerIrInstrList.Nil))))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     8)
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (let
@@ -22899,28 +22899,28 @@
 
 (define (compiler-backend-gep-load-register-homes-shape-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r8))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               3
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rcx))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 4
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r9))
-              compiler_regalloc.CompilerRegAssignmentList.Nil))))]
+              (compiler_regalloc.compiler-reg-assignment-table-empty)))))]
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Gep
@@ -22969,8 +22969,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -22983,23 +22983,23 @@
     [prev-current-count : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-current-count
         backend-state)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             4
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rcx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               5
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r10))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Mov
@@ -23107,53 +23107,53 @@
             "    movq 192(%r10), %rcx\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-gep-load-multi-emergency-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-gep-load-multi-emergency-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       1
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r9))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         2
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-rcx))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           3
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rdx))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             4
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r10))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               5
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r11))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 6
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r8))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   7
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-rsi))
-                (compiler_regalloc.compiler-reg-assignment-cons
+                (compiler_regalloc.compiler-reg-assignments-prepend
                   (compiler_regalloc.CompilerRegAssignment
                     8
                     (compiler_regalloc.CompilerRegLocation.Register
                       compiler_abi.compiler-reg-id-rdi))
-                  (compiler_regalloc.compiler-reg-assignment-cons
+                  (compiler_regalloc.compiler-reg-assignments-prepend
                     (compiler_regalloc.CompilerRegAssignment
                       9
                       (compiler_regalloc.CompilerRegLocation.Register
                         compiler_abi.compiler-reg-id-rax))
-                    compiler_regalloc.CompilerRegAssignmentList.Nil))))))))))
+                    (compiler_regalloc.compiler-reg-assignment-table-empty)))))))))))
 
 (define (compiler-backend-gep-load-multi-emergency-instrs) : compiler_ir_types.CompilerIrInstrList
   (let
@@ -23332,8 +23332,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -23348,7 +23348,7 @@
         backend-state)]
     [prev-emergency-slot-offset : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emergency-slot-offset)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-gep-load-multi-emergency-assignments)]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler-backend-gep-load-multi-emergency-instrs)]
@@ -23422,18 +23422,18 @@
 
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r13))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.CopyBytes
@@ -23479,8 +23479,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -23493,23 +23493,23 @@
     [prev-current-count : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-current-count
         backend-state)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             4
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               5
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r13))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.CopyBytes
@@ -23598,8 +23598,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -23612,23 +23612,23 @@
     [prev-current-count : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-current-count
         backend-state)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           5
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             8
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               9
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r13))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.CopyBytes
@@ -23751,25 +23751,25 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
-    [reg-src : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [reg-src : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           5
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             6
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rbx))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
-    [stack-src : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    [stack-src : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           6
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rbx))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     (and
       (match (compiler_backend.compiler-backend-emit-cast
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -23808,13 +23808,13 @@
 
 (define (compiler-backend-global-store-direct-home-shape-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     (and
       (match (compiler-backend-emit-test-instrs
         (compiler_ir_types.compiler-ir-instr-cons
@@ -23846,7 +23846,7 @@
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ast_types.AstType.I64))
           compiler_ir_types.CompilerIrInstrList.Nil)
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         2)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -23866,7 +23866,7 @@
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ast_types.AstType.F64))
           compiler_ir_types.CompilerIrInstrList.Nil)
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         2)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -23892,42 +23892,42 @@
         (compiler_ir_types.compiler-ir-value-cons
           (compiler_ir_types.CompilerIrValue.Var 1)
           compiler_ir_types.CompilerIrValueList.Nil))]
-    [direct-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [direct-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rbx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.RegisterPair
                 compiler_abi.compiler-reg-id-r14
                 compiler_abi.compiler-reg-id-r15))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
-    [noop-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
+    [noop-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r14))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r15))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.RegisterPair
                 compiler_abi.compiler-reg-id-r14
                 compiler_abi.compiler-reg-id-r15))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     [diag : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
     (and
@@ -24019,33 +24019,33 @@
 ;; load then folds to a displacement from the just-computed address.
 (define (compiler-backend-chained-gep-same-home-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rax))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rax))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 3
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-rax))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   4
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-rax))
-                compiler_regalloc.CompilerRegAssignmentList.Nil)))))]
+                (compiler_regalloc.compiler-reg-assignment-table-empty))))))]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Gep
@@ -24082,28 +24082,28 @@
 ;; the ALU memory operand: `addq (base,idx,8), dst` with no separate movq.
 (define (compiler-backend-gep-load-alu-fold-shape-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r8))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r14))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 5
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r14))
-              compiler_regalloc.CompilerRegAssignmentList.Nil))))]
+              (compiler_regalloc.compiler-reg-assignment-table-empty)))))]
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Gep
@@ -24196,28 +24196,28 @@
           (compiler_ir_types.compiler-ir-instr-seq-to-list instrs)])]
     [_ compiler_ir_types.CompilerIrInstrList.Nil]))
 
-(define (compiler-backend-gep-fold-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-gep-fold-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r8))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           4
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r14))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             5
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r13))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
 
 (define (compiler-backend-gep-fold-disp-shape-ok?) : bool
   (let
@@ -24370,33 +24370,33 @@
 ;; the 64-bit ALU op. The fused movzbq load stays.
 (define (compiler-backend-gep-load-alu-fold-rejects-narrow-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r8))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               3
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rcx))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 4
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r14))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   5
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-r14))
-                compiler_regalloc.CompilerRegAssignmentList.Nil)))))]
+                (compiler_regalloc.compiler-reg-assignment-table-empty))))))]
     (match (compiler-backend-emit-test-instrs
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Gep
@@ -24451,16 +24451,16 @@
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.I64))
         compiler_ir_types.CompilerIrInstrList.Nil))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register dst-reg))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     3))
 
 (define (compiler-backend-mul-pow2-lea-shape-ok?) : bool
@@ -24534,23 +24534,23 @@
 
 (define (compiler-backend-entry-load-register-homes-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r13))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r14))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.EntryArgc 0)
@@ -24601,37 +24601,37 @@
 
 (define (compiler-backend-entry-load-fallbacks-ok?) : bool
   (let
-    [spill-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [spill-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
-    [pair-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    [pair-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.RegisterPair
             compiler_abi.compiler-reg-id-r12
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
-    [r11-occupied-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    [r11-occupied-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r11))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [no-location-ok? : bool
       (match (compiler-backend-emit-test-instrs
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.EntryArgc 0)
           compiler_ir_types.CompilerIrInstrList.Nil)
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         1)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
@@ -24923,17 +24923,17 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler_ir_types.compiler-ir-label "entry")
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 2)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     from-ty
@@ -24988,16 +24988,16 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler_ir_types.compiler-ir-label "entry")
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     from-ty
@@ -25057,17 +25057,17 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler_ir_types.compiler-ir-label "entry")
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 2)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ast_types.AstType.I64)
@@ -25121,16 +25121,16 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler_ir_types.compiler-ir-label "entry")
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ast_types.AstType.I64)
@@ -25190,16 +25190,16 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler_ir_types.compiler-ir-label "entry")
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ast_types.AstType.U64)
@@ -25271,17 +25271,17 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler_ir_types.compiler-ir-label "entry")
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 2)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     from-ty
@@ -25335,16 +25335,16 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler_ir_types.compiler-ir-label "entry")
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     from-ty
@@ -25403,16 +25403,16 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler_ir_types.compiler-ir-label "entry")
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ast_types.AstType.I32)
@@ -25484,15 +25484,15 @@
   [dst-home : i64]) : compiler_backend.ResultCompilerBackend
   (compiler_backend.compiler-backend-emit-bitcast
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register src-home))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register dst-home))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     from-ty
@@ -25586,16 +25586,16 @@
   [from-ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
   (compiler_backend.compiler-backend-emit-bitcast
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     from-ty
@@ -25652,16 +25652,16 @@
   [to-ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
   (compiler_backend.compiler-backend-emit-bitcast
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ast_types.AstType.U64)
@@ -25718,16 +25718,16 @@
   [ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
   (compiler_backend.compiler-backend-emit-bitcast
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     ty
@@ -25775,16 +25775,16 @@
 (define (compiler-backend-spill-int-to-int-bitcast-home-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-bitcast
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ast_types.AstType.I64)
@@ -26937,17 +26937,17 @@
 
 (define (compiler-backend-direct-f64-neg-home-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-unop
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 2)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrUnOp.Neg)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -26967,16 +26967,16 @@
 
 (define (compiler-backend-spill-f64-neg-home-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-unop
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrUnOp.Neg)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -26999,29 +26999,29 @@
 
 (define (compiler-backend-float-sqrt-home-ok?) : bool
   (let
-    [direct : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [direct : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 2)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-xmm-register-id 3)))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
-    [spill : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    [spill : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Spill -16))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     (and
       (match (compiler_backend.compiler-backend-emit-unop
         direct
@@ -27336,22 +27336,22 @@
       0
       ty)
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 2)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-xmm-register-id 4)))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))
     2
     op
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -27417,21 +27417,21 @@
       0
       ty)
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 4)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Spill -16))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))
     2
     (compiler_ir_types.CompilerIrBinOp.Add)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -27501,22 +27501,22 @@
       0
       ty)
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 2)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))
     2
     (compiler_ir_types.CompilerIrBinOp.Lt)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -27594,21 +27594,21 @@
       0
       ty)
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 4)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Spill -16))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))
     2
     (compiler_ir_types.CompilerIrBinOp.Lt)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -27689,17 +27689,17 @@
       0
       ty)
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 2)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 4)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     2
     (compiler_ir_types.CompilerIrBinOp.Add)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -27723,21 +27723,21 @@
       0
       ty)
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Spill -24))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))
     2
     (compiler_ir_types.CompilerIrBinOp.Lt)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -27817,15 +27817,15 @@
         0
         (compiler_ast_types.AstType.F64))
       (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register lhs-home))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register rhs-home))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))
       2
       (compiler_ir_types.CompilerIrBinOp.Add)
       (compiler_ir_types.CompilerIrValue.Var 0)
@@ -27893,17 +27893,17 @@
         0
         (compiler_ast_types.AstType.F64))
       (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 2)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-xmm-register-id 3)))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))
       2
       (compiler_ir_types.CompilerIrBinOp.Lt)
       (compiler_ir_types.CompilerIrValue.Var 0)
@@ -27929,16 +27929,16 @@
         0
         (compiler_ast_types.AstType.F64))
       (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Spill -24))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-xmm-register-id 3)))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))
       2
       (compiler_ir_types.CompilerIrBinOp.Lt)
       (compiler_ir_types.CompilerIrValue.Var 0)
@@ -28002,8 +28002,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -28018,17 +28018,17 @@
         backend-state)]
     [starts : (__tl_dyn-array i64) (make-array i64 2)]
     [ends : (__tl_dyn-array i64) (make-array i64 2)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r8))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Spill -16))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [_ctx : unit
       (begin
         (array-set! starts 0 0)
@@ -28238,12 +28238,12 @@
 
 (define (compiler-backend-direct-condition-branch-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-branch
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)
+      (compiler_regalloc.compiler-reg-assignment-table-empty))
     "bool_branch"
     (compiler_ir_types.CompilerIrValue.Var 0)
     (compiler_ir_types.compiler-ir-label "yes")
@@ -28253,11 +28253,11 @@
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackend.Ok reg-asm)
       (match (compiler_backend.compiler-backend-emit-branch
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Spill -24))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)
+          (compiler_regalloc.compiler-reg-assignment-table-empty))
         "bool_branch"
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.compiler-ir-label "yes")
@@ -28284,26 +28284,26 @@
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-direct-compare-branch-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-direct-compare-branch-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-direct-compare-branch-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-direct-compare-branch-assignments)]
     (match (compiler_backend.compiler-backend-emit-compare-branch
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -28550,17 +28550,17 @@
       0
       (compiler_ast_types.AstType.I64))
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r15))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrBinOp.BitAnd)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -28617,22 +28617,22 @@
       0
       (compiler_ast_types.AstType.I64))
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r15))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r13))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))
     1
     (compiler_ir_types.CompilerIrBinOp.Lt)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -28688,17 +28688,17 @@
       0
       ty)
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r15))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     op
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -28764,22 +28764,22 @@
       0
       (compiler_ast_types.AstType.I64))
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r15))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rcx))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))
     2
     op
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -28858,16 +28858,16 @@
       0
       (compiler_ast_types.AstType.I64))
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     op
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -28931,17 +28931,17 @@
       0
       (compiler_ast_types.AstType.I64))
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     op
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -29005,21 +29005,21 @@
       0
       (compiler_ast_types.AstType.I64))
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Spill -16))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))
     2
     op
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -29070,16 +29070,16 @@
 
 (define (compiler-backend-spill-unop-home-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-unop
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         0
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
     1
     (compiler_ir_types.CompilerIrUnOp.Neg)
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -29278,48 +29278,48 @@
 ;; deterministic.  The local context wrapper keeps the scratch/liveness and
 ;; Gep-fold globals hermetic: this predicate is also run after tests that seed
 ;; those tables deliberately.
-(define (compiler-backend-divmod-polish-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-divmod-polish-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rdx))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rax))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rdi))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 5
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-rsi))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   6
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-r10))
-                (compiler_regalloc.compiler-reg-assignment-cons
+                (compiler_regalloc.compiler-reg-assignments-prepend
                   (compiler_regalloc.CompilerRegAssignment
                     7
                     (compiler_regalloc.CompilerRegLocation.Register
                       compiler_abi.compiler-reg-id-r14))
-                  compiler_regalloc.CompilerRegAssignmentList.Nil)))))))))
+                  (compiler_regalloc.compiler-reg-assignment-table-empty))))))))))
 
 (define (compiler-backend-divmod-polish-instrs
   [multi-use-result : bool]
@@ -29379,8 +29379,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -29423,7 +29423,7 @@
     [prev1-reg : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-home-override1-reg
         backend-state)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-divmod-polish-assignments)]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler-backend-divmod-polish-instrs
@@ -29557,43 +29557,43 @@
 ;; %r9 carries the magic and divmod SRC must emergency-borrow the live array base
 ;; in %rcx.  The direct store must reject that address/clobber intersection so
 ;; %rcx is restored before the ordinary Gep+StorePtr reads it.
-(define (compiler-backend-c22-divmod-store-collision-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-c22-divmod-store-collision-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-rcx))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r8))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           4
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             7
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rdx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               8
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rax))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 10
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r10))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   11
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-r11))
-                compiler_regalloc.CompilerRegAssignmentList.Nil))))))))
+                (compiler_regalloc.compiler-reg-assignment-table-empty)))))))))
 
 (define (compiler-backend-c22-divmod-store-collision-instrs) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
@@ -29669,8 +29669,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -29715,7 +29715,7 @@
         backend-state)]
     [prev-emergency-slot-offset : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-emergency-slot-offset)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-c22-divmod-store-collision-assignments)]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler-backend-c22-divmod-store-collision-instrs)]
@@ -29837,7 +29837,7 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-divrem-binop-types ty)
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     2
     op
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -29935,18 +29935,18 @@
 
 (define (compiler-backend-divrem-rax-rhs-preserved-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rax))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     (match (compiler_backend.compiler-backend-emit-binop
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-divrem-binop-types (compiler_ast_types.AstType.I64))
@@ -30291,7 +30291,7 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-narrow-binop-types lhs-ty rhs-ty)
     (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     2
     op
     (compiler_ir_types.CompilerIrValue.Var 0)
@@ -30441,7 +30441,7 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler_regalloc.compiler-reg-var-types-empty)
     (compiler-backend-global-compare-types)
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     0
     (compiler_ir_types.CompilerIrBinOp.Ge)
     (compiler_ir_types.CompilerIrValue.Global (ci.intern "g_next"))
@@ -30535,12 +30535,12 @@
 
 (define (compiler-backend-missing-var-compare-width-ok?) : bool
   (let
-    [rhs-spill : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [rhs-spill : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           1
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     (match (compiler_backend.compiler-backend-emit-binop
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_regalloc.compiler-reg-var-types-empty)
@@ -31021,7 +31021,7 @@
   (match (compiler_backend.compiler-backend-emit-call-args
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler_backend.CompilerBackendTarget.Linux)
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     (compiler-backend-i64-immediate-call-args8)
     (compiler-backend-i64-type-list8)
     false
@@ -31055,13 +31055,13 @@
 
 (define (compiler-backend-stack-f32-arg-bits-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     (match (compiler-backend-test-emit-scalar-stack-call-arg-text
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_backend.CompilerBackendTarget.Linux)
@@ -31085,14 +31085,14 @@
 
 (define (compiler-backend-group-stack-f64-arg-bits-ok?) : bool
   (let
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.RegisterPair
             (compiler_abi.compiler-abi-xmm-register-id 3)
             (compiler_abi.compiler-abi-xmm-register-id 4)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [ty : compiler_ast_types.AstType
       (compiler-backend-register-group-f64-test-type)]
     [index : compiler_backend.CompilerBackendProgramIndex
@@ -31135,14 +31135,14 @@
       (compiler_ir_types.compiler-ir-param-cons
         (compiler_ir_types.CompilerIrParam.Param "pair" ty 0)
         compiler_ir_types.CompilerIrParamList.Nil)]
-    [reg-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [reg-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.RegisterPair
             compiler_abi.compiler-reg-id-r12
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     (and
       (match (compiler_backend.compiler-backend-emit-param-spills
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -31176,7 +31176,7 @@
       (match (compiler_backend.compiler-backend-emit-param-spills
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_backend.CompilerBackendTarget.Linux)
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         params
         6
         0
@@ -31311,42 +31311,42 @@
           (set! i (- i 1))))
       params)))
 
-(define (compiler-backend-linux-atomic-pressure-memory-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-linux-atomic-pressure-memory-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-rdi))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-rsi))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rdx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rcx))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 5
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r8))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   6
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-r15))
-                compiler_regalloc.CompilerRegAssignmentList.Nil))))))))
+                (compiler_regalloc.compiler-reg-assignment-table-empty)))))))))
 
 (define (compiler-backend-linux-atomic-group-allocation-ok?) : bool
   (let
@@ -31365,14 +31365,14 @@
       (compiler-backend-linux-atomic-pressure-types int-group true)]
     [pressure-args : compiler_ir_types.CompilerIrCallArgs
       (compiler-backend-linux-atomic-pressure-args true)]
-    [pressure-call-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [pressure-call-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.RegisterPair
             compiler_abi.compiler-reg-id-r12
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [pressure-call-result : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-call-args
         bases
@@ -31395,19 +31395,19 @@
       (match pressure-call-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
         [(compiler_backend.ResultCompilerBackend.Err _) ""])]
-    [pressure-param-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [pressure-param-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.RegisterPair
             compiler_abi.compiler-reg-id-r12
             compiler_abi.compiler-reg-id-r13))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             6
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r15))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [pressure-param-result : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-param-spills
         bases
@@ -31425,7 +31425,7 @@
       (match pressure-param-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
         [(compiler_backend.ResultCompilerBackend.Err _) ""])]
-    [memory-param-assignments : compiler_regalloc.CompilerRegAssignmentList
+    [memory-param-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-linux-atomic-pressure-memory-assignments)]
     [_memory-group-enable : unit
       (begin
@@ -31463,14 +31463,14 @@
     [mixed-args : compiler_ir_types.CompilerIrCallArgs
       (compiler_ir_types.CompilerIrCallArgs.One
         (compiler_ir_types.CompilerIrValue.Var 0))]
-    [mixed-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [mixed-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.RegisterPair
             compiler_abi.compiler-reg-id-r12
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [mixed-call-result : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-call-args
         bases
@@ -31525,19 +31525,19 @@
           (compiler_ir_types.compiler-ir-value-cons
             (compiler_ir_types.CompilerIrValue.Var 1)
             compiler_ir_types.CompilerIrValueList.Nil)))]
-    [exhausted-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [exhausted-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.RegisterPair
             compiler_abi.compiler-reg-id-r12
             (compiler_abi.compiler-abi-xmm-register-id 3)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-xmm-register-id 4)))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [exhausted-call-result : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-call-args
         bases
@@ -32046,7 +32046,7 @@
   (match (compiler_backend.compiler-backend-emit-direct-tail-call-args
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     target
-    compiler_regalloc.CompilerRegAssignmentList.Nil
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
     (compiler-backend-i64-immediate-call-args8)
     (compiler-backend-i64-type-list8)
     ""
@@ -32245,8 +32245,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -32263,13 +32263,13 @@
       (compiler_ast_types.ast-ty-func
         (compiler_ast_types.ast-type-list-new)
         (compiler_ast_types.AstType.I64))]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r11))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [types : compiler_regalloc.CompilerRegVarTypes
       (compiler_regalloc.compiler-reg-var-types-insert
         (compiler_regalloc.compiler-reg-var-types-empty)
@@ -32421,7 +32421,7 @@
           name-id
           args
           ret
-          compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-empty)
           ""
           (compiler_regalloc.compiler-reg-var-types-empty)
           (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
@@ -32664,7 +32664,7 @@
       (compiler_ir_types.CompilerIrCallArgs.One
         (compiler_ir_types.CompilerIrValue.I64 41))
       (compiler_ast_types.AstType.I64)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       ""
       ""
       (compiler_regalloc.compiler-reg-var-types-empty)
@@ -32691,7 +32691,7 @@
       (compiler_ir_types.CompilerIrValue.Var 1)
       compiler_ir_types.CompilerIrCallArgs.Nil
       (compiler_ast_types.AstType.I64)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       ""
       ""
       (compiler_regalloc.compiler-reg-var-types-empty)
@@ -33166,8 +33166,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -33200,7 +33200,7 @@
           (compiler_ast_types.AstType.U64)
           1
           blocks
-          compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-empty)
           backend-state)
         (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
           backend-state
@@ -33214,7 +33214,7 @@
     [result : compiler_backend.ResultCompilerBackend
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         1
         (compiler_backend.CompilerBackendTarget.Linux)
         backend-state)]
@@ -33322,10 +33322,10 @@
 
 (define (compiler-backend-inline-fast-alloc-emergency-assignments-from
   [regs : (__tl_dyn-array i64)]
-  [index : i64]) : compiler_regalloc.CompilerRegAssignmentList
+  [index : i64]) : compiler_regalloc.CompilerRegAssignmentTable
   (if (>= index (array-length regs))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         index
         (compiler_regalloc.CompilerRegLocation.Register (array-ref regs index)))
@@ -33333,7 +33333,7 @@
         regs
         (+ index 1)))))
 
-(define (compiler-backend-inline-fast-alloc-emergency-assignments) : compiler_regalloc.CompilerRegAssignmentList
+(define (compiler-backend-inline-fast-alloc-emergency-assignments) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler-backend-inline-fast-alloc-emergency-assignments-from
     (compiler-backend-inline-fast-alloc-emergency-regs)
     0))
@@ -33373,8 +33373,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -33401,7 +33401,7 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-emergency-slot-offset)]
     [prev-emergency-restore-suppressed : bool
       (compiler_backend.compiler-backend-test-get-compiler-backend-emergency-restore-suppressed)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-inline-fast-alloc-emergency-assignments)]
     [instrs : compiler_ir_types.CompilerIrInstrList
       (compiler-backend-inline-fast-alloc-emergency-instrs)]
@@ -34832,8 +34832,8 @@
         (compiler-backend-scavenge-pick
           starts
           ends
-          (compiler_regalloc.compiler-reg-assignment-index-build
-            compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+            (compiler_regalloc.compiler-reg-assignment-table-empty)
             1)
           0
           0
@@ -34845,8 +34845,8 @@
         (compiler-backend-scavenge-pick
           starts
           ends
-          (compiler_regalloc.compiler-reg-assignment-index-build
-            compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+            (compiler_regalloc.compiler-reg-assignment-table-empty)
             1)
           0
           0
@@ -34859,55 +34859,55 @@
   (let
     [starts : (__tl_dyn-array i64) (make-array i64 5)]
     [ends : (__tl_dyn-array i64) (make-array i64 5)]
-    [r10-free : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [r10-free : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rcx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rdx))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 4
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r8))
-              compiler_regalloc.CompilerRegAssignmentList.Nil))))]
-    [r11-free : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignment-table-empty)))))]
+    [r11-free : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rcx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rdx))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 3
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r10))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   4
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-r8))
-                compiler_regalloc.CompilerRegAssignmentList.Nil)))))]
+                (compiler_regalloc.compiler-reg-assignment-table-empty))))))]
     (begin
       (array-set! starts 0 0)
       (array-set! starts 1 0)
@@ -34924,7 +34924,9 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            (compiler_regalloc.compiler-reg-assignment-index-build r10-free 5)
+            (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+              r10-free
+              5)
             5
             5
             (compiler_backend.compiler-backend-binop-scavenge-exclude-build)
@@ -34935,7 +34937,9 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            (compiler_regalloc.compiler-reg-assignment-index-build r11-free 5)
+            (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+              r11-free
+              5)
             5
             5
             (compiler_backend.compiler-backend-binop-scavenge-exclude-build)
@@ -34947,55 +34951,55 @@
   (let
     [starts : (__tl_dyn-array i64) (make-array i64 5)]
     [ends : (__tl_dyn-array i64) (make-array i64 5)]
-    [r10-free : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [r10-free : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rcx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rdx))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 4
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r8))
-              compiler_regalloc.CompilerRegAssignmentList.Nil))))]
-    [r11-free : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignment-table-empty)))))]
+    [r11-free : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rcx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rdx))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 3
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r10))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   4
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-r8))
-                compiler_regalloc.CompilerRegAssignmentList.Nil)))))]
+                (compiler_regalloc.compiler-reg-assignment-table-empty))))))]
     (begin
       (array-set! starts 0 0)
       (array-set! starts 1 0)
@@ -35012,7 +35016,9 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            (compiler_regalloc.compiler-reg-assignment-index-build r10-free 5)
+            (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+              r10-free
+              5)
             5
             5
             (compiler_backend.compiler-backend-scavenge-exclude-with "%r13")
@@ -35023,7 +35029,9 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            (compiler_regalloc.compiler-reg-assignment-index-build r11-free 5)
+            (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+              r11-free
+              5)
             5
             5
             (compiler_backend.compiler-backend-scavenge-exclude-with "%r13")
@@ -35038,38 +35046,38 @@
         (ci.intern-compat-state-capture-active))]
     [starts : (__tl_dyn-array i64) (make-array i64 7)]
     [ends : (__tl_dyn-array i64) (make-array i64 7)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rcx))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-rdx))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 3
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-r8))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   5
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-r13))
-                (compiler_regalloc.compiler-reg-assignment-cons
+                (compiler_regalloc.compiler-reg-assignments-prepend
                   (compiler_regalloc.CompilerRegAssignment
                     6
                     (compiler_regalloc.CompilerRegLocation.Register
                       compiler_abi.compiler-reg-id-r14))
-                  compiler_regalloc.CompilerRegAssignmentList.Nil))))))]
+                  (compiler_regalloc.compiler-reg-assignment-table-empty)))))))]
     (begin
       (array-set! starts 0 0)
       (array-set! starts 1 0)
@@ -35090,7 +35098,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            (compiler_regalloc.compiler-reg-assignment-index-build
+            (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
               assignments
               7)
             7
@@ -35105,7 +35113,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            (compiler_regalloc.compiler-reg-assignment-index-build
+            (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
               assignments
               7)
             7
@@ -35128,8 +35136,8 @@
         (compiler-backend-scavenge-pick
           starts
           ends
-          (compiler_regalloc.compiler-reg-assignment-index-build
-            compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+            (compiler_regalloc.compiler-reg-assignment-table-empty)
             1)
           0
           0
@@ -35141,8 +35149,8 @@
         (compiler-backend-scavenge-pick
           starts
           ends
-          (compiler_regalloc.compiler-reg-assignment-index-build
-            compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+            (compiler_regalloc.compiler-reg-assignment-table-empty)
             1)
           0
           0
@@ -35151,16 +35159,16 @@
           "%r9")
         "%r9"))))
 
-(define (compiler-backend-test-reg-assignment-list-from
+(define (compiler-backend-test-reg-assignment-table-from
   [regs : (__tl_dyn-array i64)]
-  [index : i64]) : compiler_regalloc.CompilerRegAssignmentList
+  [index : i64]) : compiler_regalloc.CompilerRegAssignmentTable
   (if (>= index (array-length regs))
-    compiler_regalloc.CompilerRegAssignmentList.Nil
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         index
         (compiler_regalloc.CompilerRegLocation.Register (array-ref regs index)))
-      (compiler-backend-test-reg-assignment-list-from regs (+ index 1)))))
+      (compiler-backend-test-reg-assignment-table-from regs (+ index 1)))))
 
 (define (compiler-backend-test-fill-live-range!
   [starts : (__tl_dyn-array i64)]
@@ -35313,8 +35321,8 @@
     [regs : (__tl_dyn-array i64) (make-array i64 13)]
     [starts : (__tl_dyn-array i64) (make-array i64 13)]
     [ends : (__tl_dyn-array i64) (make-array i64 13)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      compiler_regalloc.CompilerRegAssignmentList.Nil]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignment-table-empty)]
     [picked : String ""]
     [ok : bool false]
     (begin
@@ -35332,7 +35340,9 @@
       (array-set! regs 11 compiler_abi.compiler-reg-id-rdi)
       (array-set! regs 12 compiler_abi.compiler-reg-id-rax)
       (compiler-backend-test-fill-live-range! starts ends 13 0 10)
-      (set! assignments (compiler-backend-test-reg-assignment-list-from regs 0))
+      (set!
+        assignments
+        (compiler-backend-test-reg-assignment-table-from regs 0))
       (compiler_backend.compiler-backend-test-set-compiler-backend-emergency-pending!
         false)
       (compiler_backend.compiler-backend-test-set-compiler-backend-emergency-used!
@@ -35346,7 +35356,9 @@
         (compiler-backend-scavenge-pick
           starts
           ends
-          (compiler_regalloc.compiler-reg-assignment-index-build assignments 13)
+          (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+            assignments
+            13)
           13
           4
           (array.make-array String 0)
@@ -35437,23 +35449,23 @@
           compiler_ir_types.CompilerIrInstrList.Nil)))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-call-target-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-call-target-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r10))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-scratch-vreg-tail-target-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -35468,23 +35480,23 @@
         compiler_ir_types.CompilerIrInstrList.Nil))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-tail-target-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-tail-target-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r11))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r10))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-scratch-vreg-switch-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -35531,18 +35543,18 @@
           compiler_ir_types.CompilerIrInstrList.Nil)))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-c-abi-return-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-c-abi-return-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r10))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r12))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-scratch-vreg-bounds-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -35568,18 +35580,18 @@
         compiler_ir_types.CompilerIrInstrList.Nil))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-memory-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-memory-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r9))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r10))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-scratch-vreg-fused-sibling-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -35610,17 +35622,17 @@
               compiler_ir_types.CompilerIrInstrList.Nil)))))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-fused-sibling-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-fused-sibling-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         2
         (compiler_regalloc.CompilerRegLocation.Spill -8))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         ;; The first fused Load publishes this result before the second
         ;; Gep+Load is emitted. No planned scratch in the four-instruction
         ;; group may use its home.
@@ -35628,15 +35640,15 @@
           3
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             4
             (compiler_regalloc.CompilerRegLocation.Spill -16))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               5
               (compiler_regalloc.CompilerRegLocation.Spill -24))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))))))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
 
 (define (compiler-backend-scratch-vreg-float-load-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -35674,16 +35686,16 @@
         compiler_ir_types.CompilerIrInstrList.Nil))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-float-memory-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-float-memory-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -16))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -8))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-scratch-vreg-float-arith-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -35762,78 +35774,78 @@
           compiler_ir_types.CompilerIrInstrList.Nil)))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-float-arith-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-float-arith-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 6)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-scratch-vreg-float-compare-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-float-compare-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -16))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 7)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
-(define (compiler-backend-scratch-vreg-float-unop-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-float-unop-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 6)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-scratch-vreg-float-arith-return-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-float-arith-return-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 6)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 0)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
-(define (compiler-backend-scratch-vreg-float-compare-return-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-float-compare-return-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -16))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 7)))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-scratch-vreg-splat-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -35877,48 +35889,48 @@
         compiler_ir_types.CompilerIrInstrList.Nil))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-splat-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-splat-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-vector-register-id 6)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-scratch-vreg-reduce-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-reduce-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 2)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-scratch-vreg-prefix-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-prefix-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-vector-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r8))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Spill -16))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-scratch-vreg-indexed-simd-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -36007,65 +36019,65 @@
                           compiler_ir_types.CompilerIrInstrList.Nil)))))))))))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-indexed-simd-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-indexed-simd-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -16))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-vector-register-id 6)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-vector-register-id 7)))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 (compiler_abi.compiler-abi-mask-register-id 1)))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 5
                 (compiler_regalloc.CompilerRegLocation.Register
                   (compiler_abi.compiler-abi-mask-register-id 2)))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   6
                   (compiler_regalloc.CompilerRegLocation.Register
                     (compiler_abi.compiler-abi-vector-register-id 8)))
-                (compiler_regalloc.compiler-reg-assignment-cons
+                (compiler_regalloc.compiler-reg-assignments-prepend
                   (compiler_regalloc.CompilerRegAssignment
                     7
                     (compiler_regalloc.CompilerRegLocation.Spill -64))
-                  (compiler_regalloc.compiler-reg-assignment-cons
+                  (compiler_regalloc.compiler-reg-assignments-prepend
                     (compiler_regalloc.CompilerRegAssignment
                       8
                       (compiler_regalloc.CompilerRegLocation.Register
                         compiler_abi.compiler-reg-id-r12))
-                    (compiler_regalloc.compiler-reg-assignment-cons
+                    (compiler_regalloc.compiler-reg-assignments-prepend
                       (compiler_regalloc.CompilerRegAssignment
                         9
                         (compiler_regalloc.CompilerRegLocation.Register
                           (compiler_abi.compiler-abi-vector-register-id 9)))
-                      (compiler_regalloc.compiler-reg-assignment-cons
+                      (compiler_regalloc.compiler-reg-assignments-prepend
                         (compiler_regalloc.CompilerRegAssignment
                           10
                           (compiler_regalloc.CompilerRegLocation.Register
                             (compiler_abi.compiler-abi-vector-register-id 10)))
-                        (compiler_regalloc.compiler-reg-assignment-cons
+                        (compiler_regalloc.compiler-reg-assignments-prepend
                           (compiler_regalloc.CompilerRegAssignment
                             11
                             (compiler_regalloc.CompilerRegLocation.Register
                               (compiler_abi.compiler-abi-vector-register-id 11)))
-                          compiler_regalloc.CompilerRegAssignmentList.Nil)))))))))))))
+                          (compiler_regalloc.compiler-reg-assignment-table-empty))))))))))))))
 
 (define (compiler-backend-scratch-vreg-tail-mask-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -36086,28 +36098,28 @@
           compiler_ir_types.CompilerIrInstrList.Nil)))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-tail-mask-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-tail-mask-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 1)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-rcx))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-mask-register-id 2)))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
 
 (define (compiler-backend-scratch-vreg-tail-mask-pressure-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -36131,28 +36143,28 @@
             compiler_ir_types.CompilerIrInstrList.Nil))))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-tail-mask-pressure-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-tail-mask-pressure-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-mask-register-id 1)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             4
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rcx))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
 
 (define (compiler-backend-scratch-vreg-indexed-simd-fused-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -36176,31 +36188,31 @@
           compiler_ir_types.CompilerIrInstrList.Nil)))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-indexed-simd-fused-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-indexed-simd-fused-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -16))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-vector-register-id 6)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-vector-register-id 8)))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 (compiler_abi.compiler-abi-vector-register-id 7)))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))))))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
 
 (define (compiler-backend-scratch-vreg-cast-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -36253,52 +36265,52 @@
         compiler_ir_types.CompilerIrInstrList.Nil))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-cast-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-cast-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -16))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-scratch-vreg-cast-gp-only-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-cast-gp-only-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 6)))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-scratch-vreg-bitcast-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-bitcast-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -16))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-scratch-vreg-float-mov-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-float-mov-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-xmm-register-id 6)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -16))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-scratch-vreg-aggregate-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (let
@@ -36371,24 +36383,24 @@
         compiler_ir_types.CompilerIrFunctionList.Nil)
       compiler_ir_types.CompilerIrExternList.Nil)))
 
-(define (compiler-backend-scratch-vreg-aggregate-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-aggregate-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-xmm-register-id 4)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r8))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.RegisterPair
             (compiler_abi.compiler-abi-xmm-register-id 6)
             compiler_abi.compiler-reg-id-r13))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-scratch-vreg-copy-xmm-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -36578,28 +36590,28 @@
                 compiler_ir_types.CompilerIrInstrList.Nil))))
         compiler_ir_types.CompilerIrBlockList.Nil))))
 
-(define (compiler-backend-scratch-vreg-float-phi-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-float-phi-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-xmm-register-id 2)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 5)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-xmm-register-id 4)))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
 
 (define (compiler-backend-scratch-f64-four-types) : compiler_regalloc.CompilerRegVarTypes
   (compiler_regalloc.compiler-reg-var-types-insert
@@ -36616,33 +36628,33 @@
     0
     (compiler_ast_types.AstType.F64)))
 
-(define (compiler-backend-scratch-float-phi-branch-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-float-phi-branch-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         (compiler_abi.compiler-abi-xmm-register-id 2)))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           (compiler_abi.compiler-abi-xmm-register-id 3)))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             (compiler_abi.compiler-abi-xmm-register-id 5)))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-xmm-register-id 4)))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               4
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r12))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))))))
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))))))
 
 (define (compiler-backend-scratch-float-phi-branch-types) : compiler_regalloc.CompilerRegVarTypes
   (compiler_regalloc.compiler-reg-var-types-insert
@@ -36650,18 +36662,18 @@
     4
     (compiler_ast_types.AstType.Bool)))
 
-(define (compiler-backend-scratch-vreg-phi-test-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-phi-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-scratch-test-types-from [var : i64] [vars : i64]) : compiler_regalloc.CompilerRegVarTypes
   (if (>= var vars)
@@ -36673,7 +36685,7 @@
 
 (define (compiler-backend-scratch-test-base-plan
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_regalloc.CompilerRegPlan
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegPlan
   (compiler_regalloc.CompilerRegPlan.Plan
     assignments
     (compiler_liveness.compiler-live-set-empty)
@@ -36684,7 +36696,7 @@
 
 (define (compiler-backend-scratch-test-base-plan-with-types
   [types : compiler_regalloc.CompilerRegVarTypes]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_regalloc.CompilerRegPlan
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegPlan
   (compiler_regalloc.CompilerRegPlan.Plan
     assignments
     (compiler_liveness.compiler-live-set-empty)
@@ -36699,7 +36711,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [vars : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_regalloc.CompilerRegScratchPlanResult
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegScratchPlanResult
   (compiler_regalloc.compiler-reg-plan-with-scratch-vreg-result
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     abi
@@ -36717,7 +36729,7 @@
   [name : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_regalloc.CompilerRegScratchPlanResult
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegScratchPlanResult
   (compiler_regalloc.compiler-reg-plan-with-scratch-vreg-result
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     abi
@@ -36734,7 +36746,7 @@
   [name : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_regalloc.CompilerRegScratchPlanResult
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegScratchPlanResult
   (compiler-backend-scratch-test-result-for-abi
     (compiler_abi.CompilerRegTargetAbi.Linux)
     name
@@ -36805,7 +36817,7 @@
     (let
       [blocks : compiler_ir_types.CompilerIrBlockList
         (compiler-backend-scratch-vreg-call-target-test-blocks)]
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-call-target-test-assignments)]
       [listed : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
@@ -36884,13 +36896,13 @@
     (let
       [blocks : compiler_ir_types.CompilerIrBlockList
         (compiler-backend-scratch-vreg-switch-test-blocks)]
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r8))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)]
+          (compiler_regalloc.compiler-reg-assignment-table-empty))]
       [listed : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_switch"
@@ -37141,34 +37153,34 @@
   (cfg
     scratch-vreg
     (let
-      [scalar-assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+      [scalar-assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Spill -16))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)]
-      [phi-stage-assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignment-table-empty))]
+      [phi-stage-assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Spill -16))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Spill -8))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))]
-      [cycle-assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+      [cycle-assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r13))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -37288,20 +37300,20 @@
       [backend-state : compiler_backend.CompilerBackendState
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active))]
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Spill -16))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Spill -8))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 2
                 (compiler_regalloc.CompilerRegLocation.Spill -24))
-              compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+              (compiler_regalloc.compiler-reg-assignment-table-empty))))]
       [scratch-length-id : i64 (ci.intern "scratch_length")]
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
@@ -37427,20 +37439,20 @@
   (cfg
     scratch-vreg
     (let
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Spill -8))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Spill -16))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 2
                 (compiler_regalloc.CompilerRegLocation.Spill -24))
-              compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+              (compiler_regalloc.compiler-reg-assignment-table-empty))))]
       [diag : compiler_diagnostic.CompilerDiagnostic
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
       [backend-state : compiler_backend.CompilerBackendState
@@ -37616,13 +37628,13 @@
   (cfg
     scratch-vreg
     (let
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r10))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)]
+          (compiler_regalloc.compiler-reg-assignment-table-empty))]
       [result : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_bounds"
@@ -37711,7 +37723,7 @@
     (let
       [blocks : compiler_ir_types.CompilerIrBlockList
         (compiler-backend-scratch-vreg-fused-sibling-test-blocks)]
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-fused-sibling-test-assignments)]
       [listed : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
@@ -37785,7 +37797,7 @@
   (cfg
     scratch-vreg
     (let
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-memory-test-assignments)]
       [linux : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
@@ -37867,17 +37879,17 @@
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           compiler_ir_types.CompilerIrFunctionList.Nil
           externs)]
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Spill -8))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r11))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
       [blocks : compiler_ir_types.CompilerIrBlockList
         (compiler-backend-scratch-vreg-c-memory-test-blocks name)]
       [linux : compiler_regalloc.CompilerRegScratchPlanResult
@@ -37997,7 +38009,7 @@
   (cfg
     scratch-vreg
     (let
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-float-memory-test-assignments)]
       [load-linux : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
@@ -38036,7 +38048,7 @@
   (cfg
     scratch-vreg
     (let
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-float-memory-test-assignments)]
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
@@ -38130,30 +38142,30 @@
           (compiler_ast_types.AstType.Bool)
           (compiler_ast_types.AstType.F64)
           3)]
-      [direct-arith-assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+      [direct-arith-assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-xmm-register-id 8)))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Register
                 (compiler_abi.compiler-abi-xmm-register-id 6)))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))]
-      [direct-compare-assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+      [direct-compare-assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Register
                 (compiler_abi.compiler-abi-xmm-register-id 6)))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
       [arith : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
           (compiler_abi.CompilerRegTargetAbi.Linux)
@@ -38387,11 +38399,11 @@
   (cfg
     scratch-vreg
     (let
-      [arith-assignments : compiler_regalloc.CompilerRegAssignmentList
+      [arith-assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-float-arith-test-assignments)]
-      [compare-assignments : compiler_regalloc.CompilerRegAssignmentList
+      [compare-assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-float-compare-test-assignments)]
-      [return-assignments : compiler_regalloc.CompilerRegAssignmentList
+      [return-assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-float-arith-return-test-assignments)]
       [backend-state : compiler_backend.CompilerBackendState
         (compiler_backend.compiler-backend-state-new
@@ -38739,7 +38751,7 @@
     (let
       [blocks : compiler_ir_types.CompilerIrBlockList
         (compiler-backend-scratch-vreg-indexed-simd-test-blocks)]
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-indexed-simd-test-assignments)]
       [listed : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
@@ -38977,7 +38989,7 @@
     (let
       [blocks : compiler_ir_types.CompilerIrBlockList
         (compiler-backend-scratch-vreg-tail-mask-test-blocks)]
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-tail-mask-test-assignments)]
       [listed : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
@@ -39053,29 +39065,29 @@
   (cfg
     scratch-vreg
     (let
-      [splat-assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+      [splat-assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Register
                 (compiler_abi.compiler-abi-vector-register-id 6)))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))]
-      [reduce-assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+      [reduce-assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Register
               (compiler_abi.compiler-abi-vector-register-id 6)))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Spill -16))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
       [diag : compiler_diagnostic.CompilerDiagnostic
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
       [backend-state : compiler_backend.CompilerBackendState
@@ -39207,16 +39219,16 @@
       [bitcast-xmm : String (compiler-backend-scratch-test-register bitcast 0)]
       [bitcast-gp : String (compiler-backend-scratch-test-register bitcast 1)]
       [mov-xmm : String (compiler-backend-scratch-test-register mov 0)]
-      [same-home : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+      [same-home : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Spill -8))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Spill -8))
-            compiler_regalloc.CompilerRegAssignmentList.Nil))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty)))]
       (and
         (= (compiler-backend-scratch-test-plan-count cast) 3)
         (= (compiler-backend-scratch-test-success-count cast) 3)
@@ -39349,13 +39361,13 @@
           compiler_ir_types.CompilerIrExternList.Nil)]
       [backend-state : compiler_backend.CompilerBackendState
         (struct-get index backend-state)]
-      [cast-assignments : compiler_regalloc.CompilerRegAssignmentList
+      [cast-assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-cast-test-assignments)]
-      [gp-only-assignments : compiler_regalloc.CompilerRegAssignmentList
+      [gp-only-assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-cast-gp-only-test-assignments)]
-      [bitcast-assignments : compiler_regalloc.CompilerRegAssignmentList
+      [bitcast-assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-bitcast-test-assignments)]
-      [mov-assignments : compiler_regalloc.CompilerRegAssignmentList
+      [mov-assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-float-mov-test-assignments)]
       (match (compiler_backend.compiler-backend-emit-cast
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -39734,13 +39746,13 @@
   (let
     [starts : (__tl_dyn-array i64) (make-array i64 1)]
     [ends : (__tl_dyn-array i64) (make-array i64 1)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-emergency-exclude-fallback)]
     (begin
@@ -39759,7 +39771,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            (compiler_regalloc.compiler-reg-assignment-index-build
+            (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
               assignments
               1)
             1
@@ -39795,7 +39807,7 @@
   [masks : (__tl_dyn-array i64)]
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
-  [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
+  [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [point : i64]) : bool
   (let
@@ -40124,20 +40136,20 @@
           compiler_abi.compiler-reg-id-r9))]
     [scratch : compiler_regalloc.CompilerRegScratchPlan
       (compiler_regalloc.CompilerRegScratchPlan items first slots)]
-    [base-assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [base-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r8))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [base-intervals : compiler_regalloc.CompilerRegIntervalSeq
       (compiler_regalloc.compiler-reg-interval-seq-prepend
         (compiler_regalloc.CompilerRegInterval 0 0 10)
         (compiler_regalloc.compiler-reg-interval-seq-empty))]
     [vars : i64
       (compiler_backend.compiler-backend-scratch-plan-extend-vars scratch 1)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_backend.compiler-backend-scratch-plan-extend-assignments
         scratch
         1
@@ -40197,7 +40209,7 @@
           (not
             (compiler_backend.compiler-backend-callee-needs-save?
               backend-state
-              compiler_regalloc.CompilerRegAssignmentList.Nil
+              (compiler_regalloc.compiler-reg-assignment-table-empty)
               compiler_abi.compiler-reg-id-rbx))
           (= compiler_regalloc.compiler-reg-early-exit-prefix-count 2)
           (match rewritten
@@ -40290,35 +40302,37 @@
   (let
     [starts : (__tl_dyn-array i64) (make-array i64 5)]
     [ends : (__tl_dyn-array i64) (make-array i64 5)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r10))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.RegisterPair
                 compiler_abi.compiler-reg-id-r11
                 (compiler_abi.compiler-abi-xmm-register-id 2)))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 3
                 (compiler_regalloc.CompilerRegLocation.Spill 0))
-              (compiler_regalloc.compiler-reg-assignment-cons
+              (compiler_regalloc.compiler-reg-assignments-prepend
                 (compiler_regalloc.CompilerRegAssignment
                   4
                   (compiler_regalloc.CompilerRegLocation.Register
                     compiler_abi.compiler-reg-id-r9))
-                compiler_regalloc.CompilerRegAssignmentList.Nil)))))]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_regalloc.compiler-reg-assignment-index-build assignments 5)]
+                (compiler_regalloc.compiler-reg-assignment-table-empty))))))]
+    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+        assignments
+        5)]
     (begin
       (array-set! starts 0 0)
       (array-set! ends 0 2)
@@ -40474,8 +40488,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -40484,13 +40498,13 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-vars)]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler-backend-scavenge-loop-live-through-blocks)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r8))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     (begin
       (compiler-backend-test-scavenge-install-ctx!
         "scavenge_loop_live_through"
@@ -40541,25 +40555,25 @@
     [vars : i64 3]
     [starts : (__tl_dyn-array i64) (make-array i64 vars)]
     [ends : (__tl_dyn-array i64) (make-array i64 vars)]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Register
               (if carried?
                 compiler_abi.compiler-reg-id-r13
                 compiler_abi.compiler-reg-id-r14)))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               2
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r13))
-            compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     (begin
       ;; var 0: the dividend definition -- dead after point 10
       (array-set! starts 0 9)
@@ -40573,7 +40587,9 @@
       (compiler_backend.compiler-backend-set-scavenge-ctx-index!
         starts
         ends
-        (compiler_regalloc.compiler-reg-assignment-index-build assignments vars)
+        (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+          assignments
+          vars)
         0
         vars))))
 
@@ -40586,8 +40602,8 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-starts)]
     [prev-ends : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-ends)]
-    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index)]
+    [prev-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments)]
     [prev-plan-mask : i64
       (compiler_backend.compiler-backend-test-get-compiler-backend-scavenge-ctx-plan-reg-mask)]
     [prev-occupied-masks : (__tl_dyn-array i64)
@@ -40711,13 +40727,13 @@
                   (compiler_ast_types.AstType.Bool)
                   4)
                 compiler_ir_types.CompilerIrParamList.Nil)))))]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           3
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r9))
-        compiler_regalloc.CompilerRegAssignmentList.Nil)]
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -40766,22 +40782,22 @@
           compiler_ir_types.CompilerIrInstrList.Nil)))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-scalar-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-scalar-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-r12))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-r13))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Spill -24))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-scratch-vreg-scalar-plan-ok?) : bool
   (cfg
@@ -40949,20 +40965,20 @@
           compiler_ir_types.CompilerIrInstrList.Nil)))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-(define (compiler-backend-scratch-vreg-scalar-control-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-scalar-control-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -16))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Spill -24))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-scratch-vreg-scalar-control-plan-ok?) : bool
   (cfg
@@ -41017,34 +41033,34 @@
 ;; shape emission must stage the result in a planned scratch register distinct
 ;; from every select home; otherwise loading the false value destroys the true
 ;; value before cmovne reads it.
-(define (compiler-backend-scratch-vreg-select-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-select-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Register
         compiler_abi.compiler-reg-id-rdi))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Register
           compiler_abi.compiler-reg-id-rax))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             3
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rax))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)))))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
 
 (define (compiler-backend-scratch-vreg-select-plan-ok?) : bool
   (cfg
     scratch-vreg
     (let
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-select-assignments)]
       [backend-state : compiler_backend.CompilerBackendState
         (compiler_backend.compiler-backend-state-new
@@ -41107,44 +41123,44 @@
       (compiler_backend.compiler-backend-string-contains? asm needle)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-scratch-vreg-scalar-spill-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  (compiler_regalloc.compiler-reg-assignment-cons
+(define (compiler-backend-scratch-vreg-scalar-spill-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
       0
       (compiler_regalloc.CompilerRegLocation.Spill -8))
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         1
         (compiler_regalloc.CompilerRegLocation.Spill -16))
-      (compiler_regalloc.compiler-reg-assignment-cons
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           2
           (compiler_regalloc.CompilerRegLocation.Spill -24))
-        compiler_regalloc.CompilerRegAssignmentList.Nil))))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?) : bool
   (cfg
     scratch-vreg
     (let
-      [assignments : compiler_regalloc.CompilerRegAssignmentList
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-scalar-spill-assignments)]
-      [shift-register-assignments : compiler_regalloc.CompilerRegAssignmentList
-        (compiler_regalloc.compiler-reg-assignment-cons
+      [shift-register-assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             0
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-r12))
-          (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
               1
               (compiler_regalloc.CompilerRegLocation.Register
                 compiler_abi.compiler-reg-id-r13))
-            (compiler_regalloc.compiler-reg-assignment-cons
+            (compiler_regalloc.compiler-reg-assignments-prepend
               (compiler_regalloc.CompilerRegAssignment
                 2
                 (compiler_regalloc.CompilerRegLocation.Register
                   compiler_abi.compiler-reg-id-rcx))
-              compiler_regalloc.CompilerRegAssignmentList.Nil)))]
+              (compiler_regalloc.compiler-reg-assignment-table-empty))))]
       [fallthrough : compiler_backend.CompilerBackendMaybeLabel
         (compiler_backend.CompilerBackendMaybeLabel.No)]
       [backend-state : compiler_backend.CompilerBackendState
@@ -42449,7 +42465,7 @@ b_keep:
     [b-before : compiler_backend.ResultCompilerBackend
       (compiler-backend-emit-test-instrs-target-with-backend-state
         b-instrs
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         5
         (compiler_backend.CompilerBackendTarget.Linux)
         state-b)]
@@ -42488,7 +42504,7 @@ b_keep:
     [b-after : compiler_backend.ResultCompilerBackend
       (compiler-backend-emit-test-instrs-target-with-backend-state
         b-instrs
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         5
         (compiler_backend.CompilerBackendTarget.Linux)
         state-b)]

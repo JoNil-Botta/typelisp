@@ -1930,7 +1930,7 @@
   (source-function i64)
   (blocks compiler_ir_types.CompilerIrBlockList)
   (current-label i64)
-  (assignments compiler_regalloc.CompilerRegAssignmentList)
+  (assignments compiler_regalloc.CompilerRegAssignmentTable)
   (vars i64)
   (types compiler_regalloc.CompilerRegVarTypes)
   (global-types CompilerBackendGlobalTypeTable)
@@ -2018,12 +2018,12 @@
   (phi-targets (__tl_dyn-array BackendSymbolSeq))
   (abort-targets (__tl_dyn-array CompilerBackendTarget))
   (assignment-indexes
-    (__tl_dyn-array compiler_regalloc.CompilerRegAssignmentIndex))
+    (__tl_dyn-array compiler_regalloc.CompilerRegAssignmentTable))
   (empty-i64-array (__tl_dyn-array i64))
   (empty-live-set compiler_liveness.CompilerLiveI64Set)
   (empty-instr-seq compiler_ir_types.CompilerIrInstrSeq)
   (empty-symbol-seq BackendSymbolSeq)
-  (empty-assignment-index compiler_regalloc.CompilerRegAssignmentIndex))
+  (empty-assignment-index compiler_regalloc.CompilerRegAssignmentTable))
 
 (define compiler-backend-function-i64-current-slot-vars : i64
   0)
@@ -2212,7 +2212,7 @@
 
 (define (compiler-backend-function-state-assignment-indexes
   [state : CompilerBackendFunctionState]) : (__tl_dyn-array
-    compiler_regalloc.CompilerRegAssignmentIndex)
+    compiler_regalloc.CompilerRegAssignmentTable)
   (unsafe
     (ptr-read
       (int->ptr
@@ -2224,7 +2224,7 @@
                 (type CompilerBackendFunctionStateData)
                 assignment-indexes)))
           : u64)
-        : (Ptr (__tl_dyn-array compiler_regalloc.CompilerRegAssignmentIndex))))))
+        : (Ptr (__tl_dyn-array compiler_regalloc.CompilerRegAssignmentTable))))))
 
 (define (compiler-backend-function-state-live-sets
   [state : CompilerBackendFunctionState]) : (__tl_dyn-array
@@ -2303,9 +2303,9 @@
     [empty-instr-seq : compiler_ir_types.CompilerIrInstrSeq
       (compiler-backend-empty-instr-seq)]
     [empty-symbol-seq : BackendSymbolSeq (BackendSymbolSeq empty-i64-array 0)]
-    [empty-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-      (compiler_regalloc.compiler-reg-assignment-index-build
-        compiler_regalloc.CompilerRegAssignmentList.Nil
+    [empty-assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
         1)]
     [i64s : (__tl_dyn-array i64)
       (array.make-array i64 compiler-backend-function-i64-count)]
@@ -2332,8 +2332,8 @@
     [abort-targets : (__tl_dyn-array CompilerBackendTarget)
       (array.make-array CompilerBackendTarget 1)]
     [assignment-indexes : (__tl_dyn-array
-      compiler_regalloc.CompilerRegAssignmentIndex)
-      (array.make-array compiler_regalloc.CompilerRegAssignmentIndex 1)]
+      compiler_regalloc.CompilerRegAssignmentTable)
+      (array.make-array compiler_regalloc.CompilerRegAssignmentTable 1)]
     [cell : (__tl_dyn-array CompilerBackendFunctionStateData)
       (array.make-array CompilerBackendFunctionStateData 1)]
     (begin
@@ -2575,12 +2575,12 @@
   (array-set! (compiler-backend-function-state-i64-arrays state) index value))
 
 (define (compiler-backend-function-state-assignment-index
-  [state : CompilerBackendFunctionState]) : compiler_regalloc.CompilerRegAssignmentIndex
+  [state : CompilerBackendFunctionState]) : compiler_regalloc.CompilerRegAssignmentTable
   (array-ref (compiler-backend-function-state-assignment-indexes state) 0))
 
 (define (compiler-backend-function-state-set-assignment-index!
   [state : CompilerBackendFunctionState]
-  [value : compiler_regalloc.CompilerRegAssignmentIndex]) : unit
+  [value : compiler_regalloc.CompilerRegAssignmentTable]) : unit
   (array-set!
     (compiler-backend-function-state-assignment-indexes state)
     0
@@ -3955,7 +3955,7 @@
   [backend-state : CompilerBackendState]
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [point : i64]
   [exclude0 : String]
@@ -3995,7 +3995,7 @@
 
 (define (compiler-backend-vector-temp-zmm
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [exclude0 : String]
   [exclude1 : String]
   [exclude2 : String]
@@ -4033,26 +4033,25 @@
     [index : i64 (compiler_regalloc.compiler-reg-xmm-family-index home)]
     (and (>= index 2) (<= index 15))))
 
-;; Per-function dense operand-home index for emission.
-;; compiler-backend-emit-function installs the index built ONCE from the
-;; function's FINAL (post-coloring) assignment list -- every re-plan stage
-;; (caller-save, loop-split, remat, scratch-vreg, slot coloring) is already
-;; folded into that list -- so each operand home query during emission is an
-;; O(1) array read instead of an O(list) early-exit walk. `active` gates the
-;; fast path: callers of the emit helpers outside whole-function emission
-;; (unit tests, closure-entry adapters) keep the original list walk. The rax
+;; Per-function dense operand-home view for emission.
+;; compiler-backend-emit-function installs the function's FINAL (post-coloring)
+;; assignment table after every re-plan stage (caller-save, loop-split, remat,
+;; scratch-vreg, slot coloring) has been folded into it, so each operand-home
+;; query is an O(1) array read. `active` gates the function-state view; callers
+;; of emit helpers outside whole-function emission (unit tests, closure-entry
+;; adapters) read the same authoritative table from their context. The rax
 ;; override mirrors the single-entry delta that
 ;; compiler-backend-rax-call-arg-assignments inserts for call-result
-;; forwarding: while that modified list flows through the call-arg emitters,
+;; forwarding: while that copied override table flows through the call-arg emitters,
 ;; `rax-override-var` names the one var whose home the insert pins to %rax
-;; (the lists agree on every other var, so the shared index stays exact).
+;; (the tables agree on every other var, so the shared view stays exact).
 ;; Short, emission-local home overrides used by the adjacent constant-divmod
 ;; folds.  They never alter the allocator plan: a producer and the divmod it
 ;; feeds may temporarily agree on the divmod SRC, and a single-use result may
 ;; remain there through its direct store.  Two slots cover those two SSA values
 ;; while the fused bundle is emitted.  Unlike the call-result %rax override,
-;; these apply even when the dense assignment index is disabled (unit helpers
-;; and small functions still use the assignment list directly).
+;; these apply even when the function-state assignment view is disabled (unit
+;; helpers and small functions still use their context table directly).
 (define (compiler-backend-emit-home-overrides-disable!
   [function-state : CompilerBackendFunctionState]) : unit
   (begin
@@ -4075,7 +4074,7 @@
 
 (define (compiler-backend-emit-assignment-lookup
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]) : compiler_regalloc.CompilerRegMaybeLocation
   (let
     [function-state : CompilerBackendFunctionState
@@ -4092,7 +4091,7 @@
       (compiler-backend-function-state-i64
         function-state
         compiler-backend-function-i64-rax-override-var)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
+    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-function-state-assignment-index function-state)]
     (cond
       [(and (>= override0-var 0) (= var override0-var))
@@ -4114,7 +4113,7 @@
           (compiler_regalloc.CompilerRegMaybeLocation.Some
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rax))
-          (compiler_regalloc.compiler-reg-assignment-index-lookup
+          (compiler_regalloc.compiler-reg-assignment-table-lookup
             assignment-index
             var))]
       [else (compiler_regalloc.compiler-reg-assignment-lookup assignments var)])))
@@ -4135,7 +4134,7 @@
 
 (define (compiler-backend-vector-var-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [role : String]) : ResultBackendRegId
   (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
@@ -4169,7 +4168,7 @@
 
 (define (compiler-backend-vector-var-reg
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [role : String]
   [width : String]) : ResultBackendReg
@@ -4184,7 +4183,7 @@
 
 (define (compiler-backend-mask-var-reg
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [role : String]) : ResultBackendReg
   (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
@@ -4209,7 +4208,7 @@
       (ResultBackendReg.Err (compiler-backend-mask-home-unavailable role))]))
 
 (define (compiler-backend-mask-var-stack-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackOperand
   (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
@@ -4226,7 +4225,7 @@
         (compiler-backend-slot-with-backend-state backend-state var))]))
 
 (define (compiler-backend-mask-value-stack-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackOperand
   (match value
@@ -4264,7 +4263,7 @@
     "\n"))
 
 (define (compiler-backend-avx512-mask-register-use
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [role : String]
   [lanes : i64]
@@ -4295,7 +4294,7 @@
         (string.append "backend: unsupported AVX-512 mask " role))]))
 
 (define (compiler-backend-avx512-mask-dst-reg
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [role : String]
   [scratch : String]
@@ -4306,7 +4305,7 @@
       (compiler-backend-mask-var-reg backend-state assignments dst role)]))
 
 (define (compiler-backend-avx512-mask-store-dst
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [lanes : i64]
   [reg : String]
@@ -4317,7 +4316,7 @@
     [(CompilerBackendMaybeStackOperand.No) ""]))
 
 (define (compiler-backend-avx512-mask-source-into-gpr
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [role : String]
   [lanes : i64]
@@ -4523,7 +4522,7 @@
 
 (define (compiler-backend-simd-base-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]) : String
   (match base
     [(compiler_ir_types.CompilerIrValue.Var id)
@@ -4543,7 +4542,7 @@
 
 (define (compiler-backend-simd-index-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [index : compiler_ir_types.CompilerIrValue]) : String
   (match index
     [(compiler_ir_types.CompilerIrValue.Var id)
@@ -4564,7 +4563,7 @@
     [_ ""]))
 
 (define (compiler-backend-emit-simd-base-data-pointer
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [base-reg : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -4584,7 +4583,7 @@
 
 (define (compiler-backend-emit-simd-indexed-address
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
@@ -4676,7 +4675,7 @@
 
 (define (compiler-backend-emit-avx2-vector-load
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
@@ -4747,7 +4746,7 @@
       lanes)))
 
 (define (compiler-backend-stack-memory-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackOperand
   (match value
@@ -4785,7 +4784,7 @@
     [_ "vpbroadcastq"]))
 
 (define (compiler-backend-splat-memory-load
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
@@ -4801,7 +4800,7 @@
     [(CompilerBackendMaybeStackOperand.No) (CompilerBackendMaybeAsm.No)]))
 
 (define (compiler-backend-avx2-splat-load
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
@@ -4992,7 +4991,7 @@
 
 (define (compiler-backend-emit-avx2-splat
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
@@ -5050,7 +5049,7 @@
       lanes)))
 
 (define (compiler-backend-emit-avx2-i64-vector-mul
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -5140,7 +5139,7 @@
             message)))]))
 
 (define (compiler-backend-emit-avx2-i64-vector-shr
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -5223,7 +5222,7 @@
 
 (define (compiler-backend-emit-avx2-vector-binop
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -5337,7 +5336,7 @@
 
 (define (compiler-backend-emit-avx2-vector-binop-memory-source
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [reg-value : compiler_ir_types.CompilerIrValue]
@@ -5439,7 +5438,7 @@
 
 (define (compiler-backend-emit-avx2-vector-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
   [value : compiler_ir_types.CompilerIrValue]
@@ -5538,7 +5537,7 @@
 
 (define (compiler-backend-avx512-mask-value-reg
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [role : String]) : ResultBackendReg
   (match value
@@ -5596,7 +5595,7 @@
     (string.append prefix role)))
 
 (define (compiler-backend-vector-var-stack-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackOperand
   (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
@@ -5613,7 +5612,7 @@
         (compiler-backend-slot-with-backend-state backend-state var))]))
 
 (define (compiler-backend-vector-value-stack-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackOperand
   (match value
@@ -5634,7 +5633,7 @@
   (str_cat.str-cat "    " move " " reg ", " operand "\n"))
 
 (define (compiler-backend-vector-register-use
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [role : String]
   [width : String]
@@ -5671,7 +5670,7 @@
         (compiler-backend-vector-unsupported-message width role))]))
 
 (define (compiler-backend-vector-memory-or-register-use
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [role : String]
   [width : String]
@@ -5701,7 +5700,7 @@
         (compiler-backend-vector-unsupported-message width role))]))
 
 (define (compiler-backend-vector-dst-reg
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [role : String]
   [width : String]
@@ -5716,7 +5715,7 @@
       (compiler-backend-vector-var-reg backend-state assignments dst role width)]))
 
 (define (compiler-backend-vector-store-dst
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [width : String]
   [elem-ty : compiler_ast_types.AstType]
@@ -5850,7 +5849,7 @@
     [_ ""]))
 
 (define (compiler-backend-avx512-splat-load
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
@@ -6191,7 +6190,7 @@
   [type-segment-bases : i64]
   [_function : String]
   [_current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
@@ -6267,7 +6266,7 @@
 
 (define (compiler-backend-emit-avx512-vector-load
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
@@ -6339,7 +6338,7 @@
 
 (define (compiler-backend-emit-avx512-splat
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
@@ -6398,7 +6397,7 @@
 
 (define (compiler-backend-emit-vector-splat
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
@@ -6433,7 +6432,7 @@
 
 (define (compiler-backend-emit-avx512-vector-binop
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -6527,7 +6526,7 @@
 
 (define (compiler-backend-emit-avx512-vector-binop-memory-source
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [reg-value : compiler_ir_types.CompilerIrValue]
@@ -6627,7 +6626,7 @@
 
 (define (compiler-backend-emit-avx512-vector-compare
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -6984,7 +6983,7 @@
 
 (define (compiler-backend-emit-avx2-vector-compare
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -7097,7 +7096,7 @@
 
 (define (compiler-backend-emit-vector-compare
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -7133,7 +7132,7 @@
 
 (define (compiler-backend-emit-avx512-vector-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
   [value : compiler_ir_types.CompilerIrValue]
@@ -7201,7 +7200,7 @@
 
 (define (compiler-backend-emit-vector-load
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
@@ -7273,7 +7272,7 @@
     index))
 
 (define (compiler-backend-emit-avx2-gather-adjustments
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [logical-base : compiler_ir_types.CompilerIrValue]
   [lane-offset : bool]
@@ -7320,7 +7319,7 @@
       [(ResultCompilerBackend.Err diag) (ResultBackendGatherAdjust.Err diag)])))
 
 (define (compiler-backend-emit-avx512-gather-adjustments
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [logical-base : compiler_ir_types.CompilerIrValue]
   [lane-offset : bool]
@@ -7368,7 +7367,7 @@
 
 (define (compiler-backend-emit-avx2-gather-load
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [index-base : compiler_ir_types.CompilerIrValue]
@@ -7571,7 +7570,7 @@
 
 (define (compiler-backend-emit-avx512-gather-load
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [index-base : compiler_ir_types.CompilerIrValue]
@@ -7740,7 +7739,7 @@
 
 (define (compiler-backend-emit-gather-load
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [index-base : compiler_ir_types.CompilerIrValue]
@@ -7966,7 +7965,7 @@
   [target : CompilerBackendTarget]
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [source : compiler_ir_types.CompilerIrValue]
   [selector-low : compiler_ir_types.CompilerIrValue]
@@ -8308,7 +8307,7 @@
 
 (define (compiler-backend-emit-vector-binop
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -8359,7 +8358,7 @@
 
 (define (compiler-backend-emit-vector-binop-memory-source
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [reg-value : compiler_ir_types.CompilerIrValue]
@@ -8805,7 +8804,7 @@
       "\n")))
 
 (define (compiler-backend-avx2-vector-prefix-bool-carry
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [carry : compiler_ir_types.CompilerIrValue]
   [dst-reg : String]
   [op : compiler_ir_types.CompilerIrVectorPrefixOp]
@@ -8873,7 +8872,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-avx2-vector-prefix-numeric-carry
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [carry : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
   [planned-gp : String]
@@ -8940,7 +8939,7 @@
               (ResultCompilerBackend.Err message)]))])))
 
 (define (compiler-backend-emit-avx2-vector-prefix
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrVectorPrefixOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -9353,7 +9352,7 @@
       "\n")))
 
 (define (compiler-backend-avx512-vector-prefix-bool-result-asm
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [lanes : i64]
   [mask-move : String]
@@ -9376,7 +9375,7 @@
       backend-state)))
 
 (define (compiler-backend-emit-avx512-vector-prefix-bool
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrVectorPrefixOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -9482,7 +9481,7 @@
               message)))])))
 
 (define (compiler-backend-emit-avx512-vector-prefix-numeric
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrVectorPrefixOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -9594,7 +9593,7 @@
               message)))])))
 
 (define (compiler-backend-emit-avx512-vector-prefix
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrVectorPrefixOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -9642,7 +9641,7 @@
           backend-state)])))
 
 (define (compiler-backend-emit-vector-prefix
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrVectorPrefixOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -9772,7 +9771,7 @@
 
 (define (compiler-backend-emit-vector-reduce
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -9810,7 +9809,7 @@
 
 (define (compiler-backend-emit-vector-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
   [value : compiler_ir_types.CompilerIrValue]
@@ -9849,7 +9848,7 @@
 (define (compiler-backend-emit-avx512-tail-mask-dynamic
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst-reg : String]
   [dst : i64]
   [index : compiler_ir_types.CompilerIrValue]
@@ -10037,7 +10036,7 @@
   [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
@@ -10142,7 +10141,7 @@
 
 (define (compiler-backend-emit-avx512-predicated-load
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
@@ -10246,7 +10245,7 @@
 
 (define (compiler-backend-emit-avx512-predicated-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
   [value : compiler_ir_types.CompilerIrValue]
@@ -10347,7 +10346,7 @@
 
 (define (compiler-backend-emit-avx512-mask-load
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
@@ -10474,7 +10473,7 @@
 
 (define (compiler-backend-emit-avx512-mask-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
   [value : compiler_ir_types.CompilerIrValue]
@@ -10612,7 +10611,7 @@
       (string.append "kor" (compiler-backend-avx512-mask-op-suffix lanes))]))
 
 (define (compiler-backend-mask-value-spilled?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : bool
   (match (compiler-backend-mask-value-stack-operand
@@ -10623,7 +10622,7 @@
     [(CompilerBackendMaybeStackOperand.No) false]))
 
 (define (compiler-backend-mask-dst-spilled?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [backend-state : CompilerBackendState]) : bool
   (match (compiler-backend-mask-var-stack-operand assignments dst backend-state)
@@ -10631,7 +10630,7 @@
     [(CompilerBackendMaybeStackOperand.No) false]))
 
 (define (compiler-backend-emit-avx512-mask-binop-gpr
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrMaskBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -10713,7 +10712,7 @@
 
 (define (compiler-backend-emit-avx512-mask-binop
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrMaskBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -10800,7 +10799,7 @@
                 message)))]))))
 
 (define (compiler-backend-emit-avx512-mask-not-gpr
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
@@ -10863,7 +10862,7 @@
 
 (define (compiler-backend-emit-avx512-mask-not
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
@@ -10947,7 +10946,7 @@
 
 (define (compiler-backend-emit-avx512-mask-reduce
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrMaskReduceOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -11033,7 +11032,7 @@
 
 (define (compiler-backend-emit-avx512-select
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [mask : compiler_ir_types.CompilerIrValue]
   [on-true : compiler_ir_types.CompilerIrValue]
@@ -11248,7 +11247,7 @@
 
 (define (compiler-backend-emit-avx2-mask-binop
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrMaskBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -11333,7 +11332,7 @@
 
 (define (compiler-backend-emit-mask-binop
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrMaskBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -11366,7 +11365,7 @@
 
 (define (compiler-backend-emit-avx2-mask-not
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
@@ -11427,7 +11426,7 @@
 
 (define (compiler-backend-emit-mask-not
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
@@ -11454,7 +11453,7 @@
 
 (define (compiler-backend-emit-avx2-mask-reduce
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrMaskReduceOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -11510,7 +11509,7 @@
 
 (define (compiler-backend-emit-mask-reduce
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrMaskReduceOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -11540,7 +11539,7 @@
 
 (define (compiler-backend-emit-avx2-select
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [mask : compiler_ir_types.CompilerIrValue]
   [on-true : compiler_ir_types.CompilerIrValue]
@@ -11643,7 +11642,7 @@
       lanes)))
 
 (define (compiler-backend-load-value-asm
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [reg : String]
   [backend-state : CompilerBackendState]) : String
@@ -11657,7 +11656,7 @@
 
 (define (compiler-backend-emit-scalar-select
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [condition : compiler_ir_types.CompilerIrValue]
   [on-true : compiler_ir_types.CompilerIrValue]
@@ -11797,7 +11796,7 @@
 
 (define (compiler-backend-emit-select
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [mask : compiler_ir_types.CompilerIrValue]
   [on-true : compiler_ir_types.CompilerIrValue]
@@ -12112,7 +12111,7 @@
   [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
@@ -12240,7 +12239,7 @@
   [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
   [value : compiler_ir_types.CompilerIrValue]
@@ -12406,7 +12405,7 @@
   [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
@@ -12452,7 +12451,7 @@
   [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [index : compiler_ir_types.CompilerIrValue]
   [value : compiler_ir_types.CompilerIrValue]
@@ -12551,7 +12550,7 @@
   [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
@@ -12632,7 +12631,7 @@
   [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [index : compiler_ir_types.CompilerIrValue]
   [end-value : compiler_ir_types.CompilerIrValue]
@@ -12697,13 +12696,13 @@
   16384)
 
 ;; "Does this function's plan home a value in register R" is a per-function,
-;; per-REGISTER constant: the emitted assignment list is fixed before body
+;; per-REGISTER constant: the emitted assignment table is fixed before body
 ;; emission (every re-plan stage -- caller-save, loop-split, remat, scratch-vreg,
 ;; slot coloring -- is already folded into it, exactly as for the dense operand
-;; index above). The prologue/epilogue, frame layout, callee-save and FPO paths
+;; view above). The prologue/epilogue, frame layout, callee-save and FPO paths
 ;; ask it tens of times per function, and each ask used to re-walk the whole
-;; list through `compiler-reg-location-uses-register?` (two ownership-id folds
-;; per node). Fold the list ONCE per function into a register bitmask instead.
+;; table through `compiler-reg-location-uses-register?` (two ownership-id folds
+;; per populated entry). Fold the table ONCE per function into a register bitmask.
 ;;
 ;; The bit index is the register's OWNERSHIP id (`compiler-abi-registers-overlap?`'s
 ;; equivalence class: a vec id folds onto its xmm sibling), so the mask answers
@@ -12738,26 +12737,37 @@
     [_ 0]))
 
 (define (compiler-backend-plan-reg-mask-of
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [mask : i64]) : i64
-  (match assignments
-    [(compiler_regalloc.CompilerRegAssignmentList.Nil) mask]
-    [(compiler_regalloc.CompilerRegAssignmentList.Cons item rest)
-      (compiler-backend-plan-reg-mask-of
-        (box-get rest)
-        (bit-or
-          mask
-          (compiler-backend-plan-location-reg-mask (struct-get item location))))]))
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
+      (struct-get assignments items)]
+    [index : i64 0]
+    [out : i64 mask]
+    (begin
+      (while (< index (array-length present))
+        (begin
+          (if (= (array-ref present index) 0)
+            unit
+            (set!
+              out
+              (bit-or
+                out
+                (compiler-backend-plan-location-reg-mask
+                  (array-ref items index)))))
+          (set! index (+ index 1))))
+      out)))
 
-;; `active` gates the fast path exactly as the dense operand index does, and it
-;; has the same lifetime: installed from the final list alongside that index and
+;; `active` gates the fast path exactly as the dense operand view does, and it
+;; has the same lifetime: installed from the final table alongside that view and
 ;; cleared with it in compiler-backend-clear-function-emit-state!. Clearing is
 ;; REQUIRED, not tidiness -- the backend self-test calls the callee-save helpers
-;; directly with their own lists, and a mask left active from the previously
+;; directly with their own tables, and a mask left active from the previously
 ;; emitted function would answer for that function instead.
 (define (compiler-backend-set-emit-plan-reg-mask!
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : unit
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : unit
   (let
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
@@ -12773,39 +12783,38 @@
 
 (define (compiler-backend-plan-uses-reg?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [reg : i64]) : bool
   (let
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
-    (match assignments
-      ;; An empty plan homes nothing, whatever the installed mask describes: this
-      ;; is the exact list answer, and it keeps out-of-emission callers correct.
-      [(compiler_regalloc.CompilerRegAssignmentList.Nil) false]
-      [(compiler_regalloc.CompilerRegAssignmentList.Cons _ _)
-        (if (compiler-backend-function-state-bool?
-          function-state
-          compiler-backend-function-bool-emit-plan-reg-mask-active)
-          (let
-            [bit : i64 (compiler-backend-plan-reg-id-bit reg)]
-            (if (= bit 0)
-              (compiler_regalloc.compiler-reg-assignments-use-register?
-                assignments
-                reg)
-              (not
-                (=
-                  (bit-and
-                    (compiler-backend-function-state-i64
-                      function-state
-                      compiler-backend-function-i64-emit-plan-reg-mask)
-                    bit)
-                  0))))
-          (compiler_regalloc.compiler-reg-assignments-use-register?
-            assignments
-            reg))])))
+    ;; An empty plan homes nothing, whatever the installed mask describes; this
+    ;; keeps out-of-emission callers correct.
+    (if (= (compiler_regalloc.compiler-reg-assignment-count assignments) 0)
+      false
+      (if (compiler-backend-function-state-bool?
+        function-state
+        compiler-backend-function-bool-emit-plan-reg-mask-active)
+        (let
+          [bit : i64 (compiler-backend-plan-reg-id-bit reg)]
+          (if (= bit 0)
+            (compiler_regalloc.compiler-reg-assignments-use-register?
+              assignments
+              reg)
+            (not
+              (=
+                (bit-and
+                  (compiler-backend-function-state-i64
+                    function-state
+                    compiler-backend-function-i64-emit-plan-reg-mask)
+                  bit)
+                0))))
+        (compiler_regalloc.compiler-reg-assignments-use-register?
+          assignments
+          reg)))))
 
 (define (compiler-backend-plan-uses-callee-regs?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [backend-state : CompilerBackendState]) : bool
   (or
     (compiler-backend-callee-needs-save?
@@ -12850,7 +12859,7 @@
 
 (define (compiler-backend-win64-xmm-callee-highest-at
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [idx : i64]
   [highest : i64]) : i64
   (if (>=
@@ -12872,7 +12881,7 @@
         highest))))
 
 (define (compiler-backend-win64-xmm-callee-highest
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [backend-state : CompilerBackendState]) : i64
   (if (compiler-backend-current-fn-win64? backend-state)
     (compiler-backend-win64-xmm-callee-highest-at
@@ -12883,7 +12892,7 @@
     -1))
 
 (define (compiler-backend-plan-uses-win64-xmm-callee-regs?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [backend-state : CompilerBackendState]) : bool
   (>= (compiler-backend-win64-xmm-callee-highest assignments backend-state) 0))
 
@@ -12900,7 +12909,7 @@
 
 (define (compiler-backend-win64-gp-callee-save-prefix
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : i64
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : i64
   (if (compiler-backend-callee-needs-save?
     backend-state
     assignments
@@ -12915,7 +12924,7 @@
 ;; without collisions and pre-FPO Win64 layouts stay stable.
 (define (compiler-backend-frame-slots
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [backend-state : CompilerBackendState]) : i64
   (let
     [highest : i64
@@ -12976,7 +12985,7 @@
 ;; stack accesses use compiler-backend-group-word{0,1}-slot.
 (define (compiler-backend-frame-slots-with-groups
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [has-group-vars : bool]
   [backend-state : CompilerBackendState]) : i64
   (let
@@ -13015,7 +13024,7 @@
 
 (define (compiler-backend-win64-xmm-callee-slot-offset
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [idx : i64]) : i64
   (-
@@ -13032,7 +13041,7 @@
         (* 2 (+ idx 1))))))
 
 (define (compiler-backend-win64-xmm-callee-slot
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [idx : i64]
   [backend-state : CompilerBackendState]) : String
@@ -13093,7 +13102,7 @@
     ""))
 
 (define (compiler-backend-emit-win64-xmm-callee-regs-at
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [frame : i64]
   [idx : i64]
@@ -13163,7 +13172,7 @@
 
 (define (compiler-backend-emit-save-win64-xmm-callee-regs
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [frame : i64]
   [backend-state : CompilerBackendState]) : String
@@ -13180,7 +13189,7 @@
 
 (define (compiler-backend-emit-save-win64-xmm-callee-regs-fpo-at
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [rsp-bias : i64]
   [idx : i64]) : String
@@ -13225,7 +13234,7 @@
 
 (define (compiler-backend-emit-windows-seh-prologue-tail
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [frame : i64]
   [backend-state : CompilerBackendState]) : String
@@ -13291,7 +13300,7 @@
   [target : CompilerBackendTarget]
   [symbol : String]
   [frame : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
   (str_cat.str-cat
@@ -13393,7 +13402,7 @@
   [backend-state : CompilerBackendState]
   [symbol : String]
   [frame : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [push-regs : (__tl_dyn-array String)]
   [push-count : i64]) : String
@@ -13540,7 +13549,7 @@
   [target : CompilerBackendTarget]
   [params : compiler_ir_types.CompilerIrParamList]
   [vars : i64]
-  [program-index : CompilerBackendProgramIndex]) : compiler_regalloc.CompilerRegAssignmentList
+  [program-index : CompilerBackendProgramIndex]) : compiler_regalloc.CompilerRegAssignmentTable
   (let
     [table : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignment-table-make vars)]
@@ -13553,11 +13562,11 @@
       0
       program-index
       table)
-      (compiler_regalloc.compiler-reg-assignment-table-to-list table)
-      compiler_regalloc.CompilerRegAssignmentList.Nil)))
+      table
+      (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-shrinkwrap-incoming-value-ready?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]) : bool
   (match value
     [(compiler_ir_types.CompilerIrValue.Var var)
@@ -13578,7 +13587,7 @@
 ;; needs (for example, a large literal staged into %r8 before returning the
 ;; third argument from %r8).
 (define (compiler-backend-shrinkwrap-compare-value-ready?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : bool
   (match (compiler-backend-immediate-operand backend-state value)
@@ -13597,7 +13606,7 @@
         [_ false])]))
 
 (define (compiler-backend-shrinkwrap-incoming-return-ready?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrMaybeValue]) : bool
   (match value
     [(compiler_ir_types.CompilerIrMaybeValue.No) true]
@@ -13614,7 +13623,7 @@
   [target : CompilerBackendTarget]
   [params : compiler_ir_types.CompilerIrParamList]
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [source-function : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -13626,7 +13635,7 @@
   (let
     [seq : compiler_ir_types.CompilerIrBlockSeq
       (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
-    [selected : compiler_regalloc.CompilerRegAssignmentList
+    [selected : compiler_regalloc.CompilerRegAssignmentTable
       (if incoming?
         (compiler-backend-shrinkwrap-incoming-assignments
           type-segment-bases
@@ -13641,10 +13650,9 @@
         (<= prefix-count (compiler_ir_types.compiler-ir-block-seq-count seq))
         (or
           (not incoming?)
-          (match selected
-            [(compiler_regalloc.CompilerRegAssignmentList.Nil)
-              (= (compiler_ir_types.compiler-ir-param-list-count params) 0)]
-            [_ true])))]
+          (if (= (compiler_regalloc.compiler-reg-assignment-count selected) 0)
+            (= (compiler_ir_types.compiler-ir-param-list-count params) 0)
+            true)))]
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state
         (struct-get program-index backend-state))]
@@ -13866,7 +13874,7 @@
 
 (define (compiler-backend-emit-load-var-with-plan-into
   [out : (&mut out CompilerBackendAsmBuf)]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [backend-state : CompilerBackendState]) : unit
@@ -13935,7 +13943,7 @@
               (compiler-backend-asm-append
                 out
                 (compiler-backend-load-value-asm
-                  compiler_regalloc.CompilerRegAssignmentList.Nil
+                  (compiler_regalloc.compiler-reg-assignment-table-empty)
                   value
                   reg
                   backend-state))])]
@@ -13950,7 +13958,7 @@
 
 (define (compiler-backend-emit-store-var-with-plan-into
   [out : (&mut out CompilerBackendAsmBuf)]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [backend-state : CompilerBackendState]) : unit
@@ -14009,7 +14017,7 @@
         "\n")]))
 
 (define (compiler-backend-emit-store-var-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [backend-state : CompilerBackendState]) : String
@@ -14027,7 +14035,7 @@
       (compiler-backend-asm-buf-finish (& line)))))
 
 (define (compiler-backend-emit-load-float-var-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [ty : compiler_ast_types.AstType]
   [reg : String]
@@ -14074,7 +14082,7 @@
           "\n")])))
 
 (define (compiler-backend-emit-load-f64-var-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [backend-state : CompilerBackendState]) : String
@@ -14086,7 +14094,7 @@
     backend-state))
 
 (define (compiler-backend-emit-store-float-var-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [ty : compiler_ast_types.AstType]
@@ -14125,7 +14133,7 @@
         (compiler-backend-emit-store-float-var var-id reg ty backend-state)])))
 
 (define (compiler-backend-emit-store-f64-var-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [backend-state : CompilerBackendState]) : String
@@ -14599,14 +14607,14 @@
 ;; inline during the body, so an early return would restore a partial set.
 (define (compiler-backend-callee-needs-save?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [reg : i64]) : bool
   (or
     (compiler-backend-plan-uses-reg? backend-state assignments reg)
     (compiler-backend-const-hoist-uses-reg? reg)))
 
 (define (compiler-backend-emit-save-callee-reg
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [reg-id : i64]
   [idx : i64]
@@ -14623,7 +14631,7 @@
     ""))
 
 (define (compiler-backend-emit-restore-callee-reg
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [reg-id : i64]
   [idx : i64]
@@ -14643,7 +14651,7 @@
 ;; stack order. The allocator hands out r12, r13, r14, r15, then rbx; for two or
 ;; more such homes, `leaq slot, %rsp` plus pops is no larger than the movq loads.
 (define (compiler-backend-callee-save-pop-eligible?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [backend-state : CompilerBackendState]) : bool
   (let
     [r12 : bool
@@ -14705,7 +14713,7 @@
 
 (define (compiler-backend-callee-save-pop-start-idx
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : i64
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : i64
   (cond
     [(compiler-backend-callee-needs-save?
         backend-state
@@ -14731,7 +14739,7 @@
 
 (define (compiler-backend-emit-pop-callee-reg
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [reg-id : i64]) : String
   (if (compiler-backend-callee-needs-save? backend-state assignments reg-id)
     (str_cat.str-cat
@@ -14742,7 +14750,7 @@
     ""))
 
 (define (compiler-backend-emit-restore-callee-regs-pop
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
   (string.append
@@ -14789,7 +14797,7 @@
 ;; homes a value in them must spill/reload across the call boundary. They retain
 ;; slots 5/6; Win64 FPO appends %rbp at the non-overlapping slot 7.
 (define (compiler-backend-emit-save-win64-callee-regs
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-current-fn-win64? backend-state)
@@ -14809,7 +14817,7 @@
     ""))
 
 (define (compiler-backend-emit-restore-win64-callee-regs
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-current-fn-win64? backend-state)
@@ -14829,7 +14837,7 @@
     ""))
 
 (define (compiler-backend-emit-restore-win64-xmm-callee-regs
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-current-fn-win64? backend-state)
@@ -14847,7 +14855,7 @@
     ""))
 
 (define (compiler-backend-emit-save-callee-regs
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
   (string.append
@@ -14902,7 +14910,7 @@
                 backend-state))))))))
 
 (define (compiler-backend-emit-restore-callee-regs
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
   (let
@@ -14984,7 +14992,7 @@
     (compiler_ir_types.compiler-ir-label "return")))
 
 (define (compiler-backend-inline-return-tail
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
   (string.append
@@ -14992,7 +15000,7 @@
     "    leave\n    ret\n"))
 
 (define (compiler-backend-tail-jump-tail
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [target : String]
   [backend-state : CompilerBackendState]) : String
@@ -16495,7 +16503,7 @@
   ".L_tl_f64_sign_bit")
 
 (define (compiler-backend-emit-load-float-value-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [reg : String]
@@ -16548,7 +16556,7 @@
 
 (define (compiler-backend-float-value-register
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]) : String
   (match value
     [(compiler_ir_types.CompilerIrValue.Var id)
@@ -16567,7 +16575,7 @@
     [_ ""]))
 
 (define (compiler-backend-float-value-stack-address
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : String
   (match value
@@ -16588,7 +16596,7 @@
     [_ ""]))
 
 (define (compiler-backend-float-value-memory-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : String
@@ -16630,7 +16638,7 @@
 
 (define (compiler-backend-emit-load-float-bits-to-gp
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [gp-reg : String]
@@ -16674,7 +16682,7 @@
                 "backend: unsupported float stack argument value"))))))))
 
 (define (compiler-backend-float-direct-rhs-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [dst-home : String]
@@ -16734,7 +16742,7 @@
 
 (define (compiler-backend-emit-load-value-with-plan-into
   [out : (&mut out CompilerBackendAsmBuf)]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [reg : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -16840,7 +16848,7 @@
 ;; scalar loads); the sequence buffer takes their text in one append.
 (define (compiler-backend-emit-load-float-value-into
   [out : (&mut out CompilerBackendAsmBuf)]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [reg : String]
@@ -16862,7 +16870,7 @@
 ;; is sized for it and `finish` publishes it with no copy: the same single
 ;; allocation the former str-cat performed.
 (define (compiler-backend-emit-load-value-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [reg : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -16882,7 +16890,7 @@
 
 (define (compiler-backend-emit-load-typed-var-to-reg-with-plan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [id : i64]
   [ty : compiler_ast_types.AstType]
   [reg : String]
@@ -16935,7 +16943,7 @@
             ;; so the immediate/leaq materialisation is width-correct for any use).
             [(compiler_regalloc.CompilerRegLocation.Remat value)
               (compiler-backend-load-value-asm
-                compiler_regalloc.CompilerRegAssignmentList.Nil
+                (compiler_regalloc.compiler-reg-assignment-table-empty)
                 value
                 reg
                 backend-state)])]
@@ -16989,7 +16997,7 @@
 
 (define (compiler-backend-address-base-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [avoid : String]
   [allow-rbp : bool]) : String
@@ -17018,7 +17026,7 @@
     [_ ""]))
 
 (define (compiler-backend-emit-address-base-with-avoid
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [fallback-reg : String]
   [avoid : String]
@@ -17056,7 +17064,7 @@
 ;; %rbp base here (allow-rbp = true; spelled `off(,%rbp,1)`). The variable-index
 ;; store caller uses emit-address-base-with-avoid with allow-rbp = false.
 (define (compiler-backend-emit-address-base
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [fallback-reg : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackendAddressBase
@@ -17338,7 +17346,7 @@
         [(CompilerBackendMaybeImmediate.No) (CompilerBackendMaybeAsm.No)])]))
 
 (define (compiler-backend-emit-store-immediate-to-var-home
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
@@ -17414,7 +17422,7 @@
     [_ false]))
 
 (define (compiler-backend-emit-vmovq-xmm-to-var-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [xmm-reg : String]
   [backend-state : CompilerBackendState]) : String
@@ -17459,7 +17467,7 @@
         "\n")]))
 
 (define (compiler-backend-vector-reduce-store-scalar
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [elem-ty : compiler_ast_types.AstType]
   [xmm-reg : String]
@@ -17721,7 +17729,7 @@
 
 (define (compiler-backend-emit-avx2-vector-reduce
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -18173,7 +18181,7 @@
 
 (define (compiler-backend-emit-avx512-vector-reduce
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -18265,7 +18273,7 @@
 
 (define (compiler-backend-emit-store-typed-var-with-plan-into
   [out : (&mut out CompilerBackendAsmBuf)]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [ty : compiler_ast_types.AstType]
@@ -18289,7 +18297,7 @@
       backend-state)))
 
 (define (compiler-backend-emit-store-typed-var-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [reg : String]
   [ty : compiler_ast_types.AstType]
@@ -18366,7 +18374,7 @@
           (compiler-backend-emit-group-word-move scratch dst sse?))))))
 
 (define (compiler-backend-emit-load-pack-word
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [word : compiler_ir_types.CompilerIrValue]
   [sse? : bool]
   [reg : String]
@@ -18405,7 +18413,7 @@
         backend-state))))
 
 (define (compiler-backend-emit-load-pack-word-unless-immediate
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [word : compiler_ir_types.CompilerIrValue]
   [sse? : bool]
   [reg : String]
@@ -18433,7 +18441,7 @@
 
 (define (compiler-backend-emit-pack-words-direct-registers
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [w0 : compiler_ir_types.CompilerIrValue]
   [w1 : compiler_ir_types.CompilerIrValue]
   [dst0 : String]
@@ -18460,7 +18468,7 @@
 
 (define (compiler-backend-pack-word-source-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [word : compiler_ir_types.CompilerIrValue]
   [sse? : bool]) : String
   (if sse?
@@ -18469,7 +18477,7 @@
 
 (define (compiler-backend-emit-pack-words
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [w0 : compiler_ir_types.CompilerIrValue]
   [w1 : compiler_ir_types.CompilerIrValue]
   [dst0 : String]
@@ -18601,7 +18609,7 @@
 (define (compiler-backend-group-legacy-word1-slot
   [var : i64]
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [backend-state : CompilerBackendState]) : i64
   (-
     0
@@ -18619,7 +18627,7 @@
 (define (compiler-backend-group-word0-slot
   [var : i64]
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [backend-state : CompilerBackendState]) : i64
   (-
     0
@@ -18632,12 +18640,12 @@
 (define (compiler-backend-group-word1-slot
   [var : i64]
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [backend-state : CompilerBackendState]) : i64
   (+ (compiler-backend-group-word0-slot var vars assignments backend-state) 8))
 
 (define (compiler-backend-addr-of-source-slot
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [src : i64]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-addressable-group-var? backend-state src)
@@ -18666,7 +18674,7 @@
 
 (define (compiler-backend-emit-pack
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [words : compiler_ir_types.CompilerIrValueList]
   [ty : compiler_ast_types.AstType]
@@ -18816,7 +18824,7 @@
 ;; Extract word `index` of a register-group value into `dst`'s home.
 (define (compiler-backend-emit-word
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [index : i64]
@@ -18914,7 +18922,7 @@
 ;; of a register-group var, regardless of how the allocator homed it. Used by the
 ;; call/return/param ABI to move group words to/from the ABI registers.
 (define (compiler-backend-group-word-operand-with-backend-state
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [index : i64]
   [vars : i64]
@@ -18993,7 +19001,7 @@
 ;; Compatibility boundary for older callers that do not yet carry a backend
 ;; capability. Production emission uses the explicit-state twin above.
 (define (compiler-backend-group-word-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [index : i64]
   [vars : i64]) : ResultCompilerBackend
@@ -19008,7 +19016,7 @@
 ;; or an argument register pair). The value must be a group var.
 (define (compiler-backend-emit-group-load
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [reg0 : String]
   [reg1 : String]
@@ -19065,7 +19073,7 @@
 ;; (for a call result captured in rax:rdx, or an incoming group parameter).
 (define (compiler-backend-emit-group-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [reg0 : String]
   [reg1 : String]
@@ -19175,7 +19183,7 @@
 ;; sequential case remains correct when scavenging must choose another register.
 (define (compiler-backend-emit-group-copy
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [vars : i64]
@@ -19345,7 +19353,7 @@
 ;; each eightbyte through a scavenged GP register so no in-flight arg is clobbered.
 (define (compiler-backend-emit-group-stack-arg
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [stack-idx : i64]
   [vars : i64]
@@ -19415,7 +19423,7 @@
 
 (define (compiler-backend-emit-group-word-stack-arg
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [word-index : i64]
   [stack-idx : i64]
@@ -19459,7 +19467,7 @@
 (define (compiler-backend-emit-group-word-call-arg
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [word-index : i64]
   [int-idx : i64]
@@ -19531,7 +19539,7 @@
 
 (define (compiler-backend-emit-group-word-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [word-index : i64]
   [reg : String]
@@ -19560,7 +19568,7 @@
 (define (compiler-backend-emit-group-word-stack-param
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [word-index : i64]
   [stack-idx : i64]
@@ -19595,7 +19603,7 @@
 (define (compiler-backend-emit-group-word-param
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [word-index : i64]
   [int-idx : i64]
@@ -19660,7 +19668,7 @@
 
 (define (compiler-backend-emit-load-typed-value-with-plan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
@@ -19720,7 +19728,7 @@
 
 (define (compiler-backend-emit-load-typed-value-to-reg-with-plan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [reg : String]
@@ -21434,7 +21442,7 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [intervals : compiler_regalloc.CompilerRegIntervalSeq]
   [vars : i64]
   [frame-base-slots : i64]
@@ -21857,10 +21865,10 @@
   [n : i64]
   [i : i64]
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_regalloc.CompilerRegAssignmentList
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
   (if (>= i n)
     assignments
-    (compiler_regalloc.compiler-reg-assignment-cons
+    (compiler_regalloc.compiler-reg-assignments-prepend
       (compiler_regalloc.CompilerRegAssignment
         (+ vars i)
         (if (= (array-ref regs i) compiler_abi.compiler-reg-id-invalid)
@@ -21877,7 +21885,7 @@
 (define (compiler-backend-const-hoist-extend-assignments
   [synth : CompilerBackendConstHoistSynth]
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_regalloc.CompilerRegAssignmentList
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
   (match synth
     [(CompilerBackendConstHoistSynth n regs _ _)
       (compiler-backend-const-hoist-extend-assignments-from
@@ -22015,7 +22023,7 @@
   [index : i64]
   [success : i64]
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_regalloc.CompilerRegAssignmentList
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
   (if (>= index (array-length items))
     assignments
     (let
@@ -22029,7 +22037,7 @@
           success
           vars
           assignments)
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             (+ vars success)
             (compiler_regalloc.CompilerRegLocation.Register reg))
@@ -22043,7 +22051,7 @@
 (define (compiler-backend-scratch-plan-extend-assignments
   [plan : compiler_regalloc.CompilerRegScratchPlan]
   [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_regalloc.CompilerRegAssignmentList
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler-backend-scratch-plan-extend-assignments-from
     (struct-get plan items)
     0
@@ -23890,7 +23898,7 @@
 
 (define (compiler-backend-emit-binop-direct-compare
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [dst-home : String]
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -23967,7 +23975,7 @@
 
 (define (compiler-backend-emit-binop-direct-rcx-shift
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst-home : String]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -24020,7 +24028,7 @@
 
 (define (compiler-backend-emit-binop-spill-direct-shift
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -24385,7 +24393,7 @@
     "\n"))
 
 (define (compiler-backend-emit-float-binop-direct
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst-home : String]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -24413,7 +24421,7 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-float-binop-spill-direct
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -24475,7 +24483,7 @@
           (ResultCompilerBackend.Err message)]))))
 
 (define (compiler-backend-emit-float-compare-direct
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst-home : String]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -24507,7 +24515,7 @@
           dst-home)))))
 
 (define (compiler-backend-emit-float-compare-spill-direct
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -24546,7 +24554,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-float-binop-fallback
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -24858,7 +24866,7 @@
 
 (define (compiler-backend-binop-rcx-shift?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
   [dst-home : String]) : bool
@@ -24877,7 +24885,7 @@
 ;; never appear as scalar binop operands.
 (define (compiler-backend-value-scalar-register
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]) : String
   (match value
     [(compiler_ir_types.CompilerIrValue.Var id)
@@ -24899,7 +24907,7 @@
 ;; source operand. Forwarded addr-of values are not stack loads and must fall
 ;; back to the ordinary load path.
 (define (compiler-backend-value-stack-address
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : String
   (match value
@@ -25159,7 +25167,7 @@
 
 (define (compiler-backend-emit-binop-direct-immediate
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst-home : String]
   [mnem : String]
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -25246,7 +25254,7 @@
 
 (define (compiler-backend-emit-binop-spill-direct-immediate
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [mnem : String]
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -25338,7 +25346,7 @@
 
 (define (compiler-backend-binop-spill-source-operand
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : String
@@ -25351,7 +25359,7 @@
 
 (define (compiler-backend-emit-binop-spill-direct-source
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [mnem : String]
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -25508,8 +25516,8 @@
               v
               after)
             (not (= (array-ref compiler-backend-scavenge-ctx-starts v) after))
-            (compiler_regalloc.compiler-reg-assignment-index-var-uses-register?
-              compiler-backend-scavenge-ctx-assignment-index
+            (compiler_regalloc.compiler-reg-assignment-table-var-uses-register?
+              compiler-backend-scavenge-ctx-assignments
               v
               (compiler_abi.compiler-abi-register-id-from-spelling home)))
             (set! carried true)
@@ -25537,7 +25545,7 @@
 ;; destination home, when available, is the natural one-copy SRC; only a
 ;; fixed/memory/live dividend needs a scavenged source register.
 (define (compiler-backend-emit-signed-literal-divmod-dst-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -25670,7 +25678,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-signed-literal-divmod-here-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -25744,7 +25752,7 @@
   [type-segment-bases : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -26548,7 +26556,7 @@
   [type-segment-bases : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -26573,10 +26581,8 @@
     backend-state))
 
 (define (compiler-backend-empty-assignments?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : bool
-  (match assignments
-    [(compiler_regalloc.CompilerRegAssignmentList.Nil) true]
-    [_ false]))
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : bool
+  (= (compiler_regalloc.compiler-reg-assignment-count assignments) 0))
 
 (define (compiler-backend-commutative-binop?
   [op : compiler_ir_types.CompilerIrBinOp]) : bool
@@ -26593,7 +26599,7 @@
 (define (compiler-backend-rax-forwardable-binop?
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -26604,7 +26610,7 @@
     (not (compiler-backend-binop-f64? types global-types lhs rhs ty))))
 
 (define (compiler-backend-binop-result-store
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [ty : compiler_ast_types.AstType]
   [store-result : bool]
@@ -26620,7 +26626,7 @@
 
 (define (compiler-backend-emit-binop-rax-rhs
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -26771,7 +26777,7 @@
   [type-segment-bases : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -26841,7 +26847,7 @@
   [type-segment-bases : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [rax-var : i64]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -26930,7 +26936,7 @@
       backend-state)))
 
 (define (compiler-backend-emit-float-arith-return
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -27017,7 +27023,7 @@
             (ResultCompilerBackend.Err message)])))))
 
 (define (compiler-backend-emit-float-compare-return
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -27156,7 +27162,7 @@
 
 (define (compiler-backend-scavenge-binop-return-rhs-reg
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
   [planned : String]) : String
@@ -27189,7 +27195,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -27418,7 +27424,7 @@
       jumps-asm)))
 
 (define (compiler-backend-branch-test-var-asm
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [backend-state : CompilerBackendState]) : String
   (if (>= (compiler-backend-forwarded-addr-of-src backend-state var-id) 0)
@@ -27447,7 +27453,7 @@
           [(compiler_regalloc.CompilerRegLocation.Remat value)
             (str_cat.str-cat
               (compiler-backend-load-value-asm
-                compiler_regalloc.CompilerRegAssignmentList.Nil
+                (compiler_regalloc.compiler-reg-assignment-table-empty)
                 value
                 "%rax"
                 backend-state)
@@ -27459,7 +27465,7 @@
           "\n")])))
 
 (define (compiler-backend-emit-load-test-branch-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [cond : compiler_ir_types.CompilerIrValue]
   [true-label : i64]
@@ -27495,7 +27501,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-branch-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [cond : compiler_ir_types.CompilerIrValue]
   [true-label : i64]
@@ -27588,7 +27594,7 @@
             (ResultCompilerBackend.Err message)]))]))
 
 (define (compiler-backend-emit-branch
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [cond : compiler_ir_types.CompilerIrValue]
   [true-label : i64]
@@ -27779,7 +27785,7 @@
 ;; value is a computed address, not the contents of the home register).
 (define (compiler-backend-value-scalar-register-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]) : String
   (match value
     [(compiler_ir_types.CompilerIrValue.Var id)
@@ -27813,7 +27819,7 @@
 
 (define (compiler-backend-emit-compare-branch-with-lhs-operand
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -27929,7 +27935,7 @@
 
 (define (compiler-backend-emit-compare-branch-with-plan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -28079,7 +28085,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -28106,7 +28112,7 @@
 
 (define (compiler-backend-emit-compare-branch
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -28168,7 +28174,7 @@
     (compiler-backend-copy-address 0 base)))
 
 (define (compiler-backend-emit-load-compare-branch-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [ptr : compiler_ir_types.CompilerIrValue]
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -28295,7 +28301,7 @@
 
 (define (compiler-backend-emit-gep-load-compare-branch-with-plan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
@@ -28455,7 +28461,7 @@
                 "backend: non-immediate fused gep load compare branch")))]))))
 
 (define (compiler-backend-bounds-length-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [length : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : String
   (match (compiler-backend-immediate-operand backend-state length)
@@ -28585,7 +28591,7 @@
 (define (compiler-backend-emit-bounds-check
   [target : CompilerBackendTarget]
   [function : String]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-len : String]
   [planned-index : String]
   [index : compiler_ir_types.CompilerIrValue]
@@ -28764,7 +28770,7 @@
               (ResultCompilerBackend.Err message)]))))))
 
 (define (compiler-backend-emit-unop-with-plan
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrUnOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -28868,7 +28874,7 @@
             (ResultCompilerBackend.Err message)])))))
 
 (define (compiler-backend-emit-unop
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrUnOp]
   [src : compiler_ir_types.CompilerIrValue]
@@ -28884,7 +28890,7 @@
     backend-state))
 
 (define (compiler-backend-emit-addr-of
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : i64]
   [planned-address : String]
@@ -29094,7 +29100,7 @@
 
 (define (compiler-backend-emit-gep
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
@@ -29193,7 +29199,7 @@
 
 (define (compiler-backend-emit-gep-staged-avoid
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
@@ -29361,7 +29367,7 @@
 
 (define (compiler-backend-emit-gep-staged
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
@@ -29386,7 +29392,7 @@
 
 (define (compiler-backend-emit-load-instr
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
@@ -29477,7 +29483,7 @@
         (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-load-float-address-to-var
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [addr : String]
   [ty : compiler_ast_types.AstType]
@@ -29512,7 +29518,7 @@
 
 (define (compiler-backend-emit-load-scalar-address-to-var
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [addr : String]
   [ty : compiler_ast_types.AstType]
@@ -29630,7 +29636,7 @@
 (define (compiler-backend-param-register-exclude-count
   [backend-state : CompilerBackendState]
   [params : compiler_ir_types.CompilerIrParamList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : i64
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : i64
   (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
     [(compiler_ir_types.CompilerIrParamList.Nil) 0]
     [(compiler_ir_types.CompilerIrParamList.Array seq)
@@ -29680,7 +29686,7 @@
 (define (compiler-backend-param-register-exclude-fill
   [backend-state : CompilerBackendState]
   [params : compiler_ir_types.CompilerIrParamList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [out : (__tl_dyn-array String)]
   [index : i64]) : i64
   (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
@@ -29714,7 +29720,7 @@
 (define (compiler-backend-param-register-exclude
   [backend-state : CompilerBackendState]
   [params : compiler_ir_types.CompilerIrParamList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : (__tl_dyn-array
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : (__tl_dyn-array
     String)
   (let
     [n : i64
@@ -30017,7 +30023,7 @@
 
 (define (compiler-backend-emit-copy-bytes-avoid
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : compiler_ir_types.CompilerIrValue]
   [src : compiler_ir_types.CompilerIrValue]
   [size : i64]
@@ -30128,7 +30134,7 @@
 
 (define (compiler-backend-emit-copy-bytes
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : compiler_ir_types.CompilerIrValue]
   [src : compiler_ir_types.CompilerIrValue]
   [size : i64]
@@ -30155,7 +30161,7 @@
 
 (define (compiler-backend-copy-run-protect-value-count
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]) : i64
   (if (string.eq
     (compiler-backend-value-scalar-register backend-state assignments value)
@@ -30167,7 +30173,7 @@
 ;; first instruction of any other shape, exactly as the cons walk did.
 (define (compiler-backend-copy-run-protect-count
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : i64
   (if (>= index (struct-get instrs len))
@@ -30225,7 +30231,7 @@
 
 (define (compiler-backend-copy-run-protect-fill-value
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [out : (__tl_dyn-array String)]
   [index : i64]) : i64
@@ -30240,7 +30246,7 @@
 
 (define (compiler-backend-copy-run-protect-fill
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [cursor : i64]
   [out : (__tl_dyn-array String)]
@@ -30310,7 +30316,7 @@
 
 (define (compiler-backend-copy-run-protect-exclude
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : (__tl_dyn-array String)
   (let
@@ -30341,7 +30347,7 @@
 ;; spilled/remat/non-var operands load into scavenged scratches as before.
 (define (compiler-backend-emit-copy-bytes-from-gep-avoid
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
@@ -30405,7 +30411,7 @@
 ;; base directly. Out-of-imm32 displacements keep the staged addq fold.
 (define (compiler-backend-emit-copy-bytes-from-gep-const
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [src : compiler_ir_types.CompilerIrValue]
   [size : i64]
@@ -30537,7 +30543,7 @@
 ;; pointer home is the chunk load base directly.
 (define (compiler-backend-emit-copy-bytes-from-gep-dyn
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
@@ -30765,7 +30771,7 @@
 (define (compiler-backend-copy-gep-element-spelling
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
@@ -30823,7 +30829,7 @@
 ;; addresses run from `src-disp`, so the destination bias cancels it back to 0.
 (define (compiler-backend-emit-copy-bytes-gep-src
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : compiler_ir_types.CompilerIrValue]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
@@ -30906,7 +30912,7 @@
 ;; `dst-disp` (the GAP9 fold) via the bias; source addresses start at 0.
 (define (compiler-backend-emit-copy-bytes-gep-dst
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [src : compiler_ir_types.CompilerIrValue]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
@@ -30988,7 +30994,7 @@
 ;; staged index scratch is scavenged only on the path that needs it, so no
 ;; dead pick can trigger an emergency spill.
 (define (compiler-backend-emit-copy-gep-dyn-address
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
   [scale : i64]
@@ -31080,7 +31086,7 @@
 (define (compiler-backend-emit-c-memory-stack-arg
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [stack-idx : i64]
   [size : i64]
@@ -31130,7 +31136,7 @@
 
 (define (compiler-backend-emit-load-from-gep
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
@@ -31341,7 +31347,7 @@
 
 (define (compiler-backend-emit-load-from-gep-pair-first
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
@@ -31403,7 +31409,7 @@
 
 (define (compiler-backend-emit-load-from-gep-r10-live
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [offset : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
@@ -31458,7 +31464,7 @@
 
 (define (compiler-backend-emit-load-from-gep-pair
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [offset0 : compiler_ir_types.CompilerIrValue]
   [elem-ty0 : compiler_ast_types.AstType]
@@ -31543,7 +31549,7 @@
 
 (define (compiler-backend-emit-load-from-gep-pair-planned
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [offset0 : compiler_ir_types.CompilerIrValue]
   [elem-ty0 : compiler_ast_types.AstType]
@@ -31611,7 +31617,7 @@
 
 (define (compiler-backend-emit-load-load
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [first-dst : i64]
   [ptr : compiler_ir_types.CompilerIrValue]
   [first-ty : compiler_ast_types.AstType]
@@ -31689,7 +31695,7 @@
 
 (define (compiler-backend-emit-store-value-to-address
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [src : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
   [addr : String]
@@ -31783,7 +31789,7 @@
 
 (define (compiler-backend-emit-store-ptr
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : compiler_ir_types.CompilerIrValue]
   [src : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
@@ -31839,7 +31845,7 @@
 
 (define (compiler-backend-emit-store-to-gep
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
@@ -31979,7 +31985,7 @@
 ;; register-homed or the scale is not SIB-encodable.
 (define (compiler-backend-emit-store-to-gep-staged
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
   [value : compiler_ir_types.CompilerIrValue]
@@ -32105,7 +32111,7 @@
 
 (define (compiler-backend-emit-store-ptr-pair
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [ptr : compiler_ir_types.CompilerIrValue]
   [value0 : compiler_ir_types.CompilerIrValue]
   [ty0 : compiler_ast_types.AstType]
@@ -32300,7 +32306,7 @@
     [_ (str_cat.str-cat "    cvttsd2siq " src-reg ", " dst-reg "\n")]))
 
 (define (compiler-backend-emit-float-to-float-cast
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [from-ty : compiler_ast_types.AstType]
@@ -32365,7 +32371,7 @@
   [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [from-ty : compiler_ast_types.AstType]
@@ -32510,7 +32516,7 @@
               (ResultCompilerBackend.Err message)]))))))
 
 (define (compiler-backend-emit-float-to-int-cast
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [from-ty : compiler_ast_types.AstType]
@@ -32584,7 +32590,7 @@
   [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [from-ty : compiler_ast_types.AstType]
@@ -32825,7 +32831,7 @@
 
 (define (compiler-backend-emit-bitcast
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [from-ty : compiler_ast_types.AstType]
@@ -36882,7 +36888,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [arg-ty : compiler_ast_types.AstType]
   [is-float : bool]
@@ -37030,7 +37036,7 @@
 
 (define (compiler-backend-arg-move-source-reg
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [source : CompilerBackendArgMoveSource]) : i64
   (match source
     [(BackendArgMoveReg r) r]
@@ -37075,7 +37081,7 @@
 
 (define (compiler-backend-arg-move-parallel-edge
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [move : CompilerBackendArgMove]) : pmove.CompilerParallelMoveEdge
   (match move
     [(BackendArgMove dest source)
@@ -37092,7 +37098,7 @@
 
 (define (compiler-backend-arg-move-parallel-edges
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [moves : CompilerBackendArgMoveSeq]
   [index : i64]) : pmove.CompilerParallelMoveEdgeSeq
   (let
@@ -37114,7 +37120,7 @@
 
 (define (compiler-backend-arg-move-decision
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [moves : CompilerBackendArgMoveSeq]) : pmove.CompilerParallelMoveDecision
   (let
     [edges : pmove.CompilerParallelMoveEdgeSeq
@@ -37127,7 +37133,7 @@
 
 (define (compiler-backend-arg-moves-conflict?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [moves : CompilerBackendArgMoveSeq]
   [all : CompilerBackendArgMoveSeq]) : bool
   (pmove.compiler-parallel-move-seq-has-blocked?
@@ -37176,7 +37182,7 @@
 
 (define (compiler-backend-arg-move-list-redirect
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [moves : CompilerBackendArgMoveSeq]
   [oldreg : i64]
   [newreg : i64]) : CompilerBackendArgMoveSeq
@@ -37210,7 +37216,7 @@
 ;; stack slot rather than a scavenged register.
 (define (compiler-backend-arg-move-list-redirect-to-stack
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [moves : CompilerBackendArgMoveSeq]
   [oldreg : i64]) : CompilerBackendArgMoveSeq
   (let
@@ -37238,7 +37244,7 @@
       out)))
 
 (define (compiler-backend-emit-arg-move
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [move : CompilerBackendArgMove]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match move
@@ -37290,7 +37296,7 @@
 ;; the same mask as the legacy candidate registers.
 (define (compiler-backend-arg-move-list-exclude-mask
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [moves : CompilerBackendArgMoveSeq]) : i64
   (let
     [mask : i64 0]
@@ -37324,7 +37330,7 @@
 ;; a saturation guard reached only under --cfg arg-cycle-stack for the forcing test.
 (define (compiler-backend-arg-temp-pick-reg
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [moves : CompilerBackendArgMoveSeq]
   [all : CompilerBackendArgMoveSeq]) : i64
   (let
@@ -37370,7 +37376,7 @@
       (array-length cands))))
 
 (define (compiler-backend-emit-arg-move-list
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [moves : CompilerBackendArgMoveSeq]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (compiler-backend-emit-arg-move-list-with-all
@@ -37384,7 +37390,7 @@
 ;; of the whole marshalling -- including those of already-emitted moves, which
 ;; still hold placed argument values that must survive to the call.
 (define (compiler-backend-emit-arg-move-list-with-all
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [moves : CompilerBackendArgMoveSeq]
   [all : CompilerBackendArgMoveSeq]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -37660,7 +37666,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [arg-assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [c-abi? : bool]
@@ -38027,7 +38033,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [c-abi? : bool]
@@ -38096,7 +38102,7 @@
 (define (compiler-backend-emit-call-args
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [c-abi? : bool]
@@ -38137,9 +38143,9 @@
 
 ;; Call compiler-backend-emit-call-args with the dense-index rax override
 ;; engaged for exactly the dynamic extent of the arg emission: the caller has
-;; established that its `assignments` argument is the per-function list PLUS
-;; the single rax-forward insert (or equals the plain list when
-;; `override-var` is -1), and the override makes the shared index answer
+;; established that its `assignments` argument is a copy of the per-function
+;; table with the single rax-forward override (or the unchanged table when
+;; `override-var` is -1), and the override makes the function-state view answer
 ;; identically for that one pinned var. Reset on both result paths so the
 ;; main emission spine always observes -1.
 (define (compiler-backend-emit-call-args-with-override-into
@@ -38147,7 +38153,7 @@
   [type-segment-bases : i64]
   [override-var : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [c-abi? : bool]
@@ -38199,7 +38205,7 @@
   [type-segment-bases : i64]
   [override-var : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [c-abi? : bool]
@@ -38278,10 +38284,10 @@
 
 (define (compiler-backend-rax-call-arg-assignments
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [program-index : CompilerBackendProgramIndex]
   [rax-var : i64]
-  [rax-ty : compiler_ast_types.AstType]) : compiler_regalloc.CompilerRegAssignmentList
+  [rax-ty : compiler_ast_types.AstType]) : compiler_regalloc.CompilerRegAssignmentTable
   (if (and
     (>= rax-var 0)
     (compiler-backend-rax-call-arg-eligible?
@@ -38306,7 +38312,7 @@
 (define (compiler-backend-emit-direct-tail-stack-call-arg
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [arg-ty : compiler_ast_types.AstType]
   [is-float : bool]
@@ -38377,7 +38383,7 @@
 (define (compiler-backend-emit-direct-tail-call-args-from
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [arg-index : i64]
@@ -38498,7 +38504,7 @@
 (define (compiler-backend-emit-direct-tail-call-args
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [planned-stage : String]
@@ -38539,7 +38545,7 @@
 
 (define (compiler-backend-vars-same-home?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [left : i64]
   [right : i64]) : bool
   (if (= left right)
@@ -38562,7 +38568,7 @@
 
 (define (compiler-backend-value-same-home?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]) : bool
   (match src
@@ -38572,14 +38578,14 @@
 
 (define (compiler-backend-phi-same-home?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]) : bool
   (compiler-backend-value-same-home? backend-state assignments dst value))
 
 (define (compiler-backend-phi-source-uses-home?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [source : CompilerBackendPhiSource]
   [dst : i64]) : bool
   (match source
@@ -38592,7 +38598,7 @@
 
 (define (compiler-backend-phi-copy-source-uses-home?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [phi-copy : CompilerBackendPhiCopy]
   [dst : i64]) : bool
   (match phi-copy
@@ -38605,7 +38611,7 @@
 
 (define (compiler-backend-var-parallel-resource0
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]) : i64
   (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
     [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
@@ -38621,7 +38627,7 @@
 
 (define (compiler-backend-var-parallel-resource1
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]) : i64
   (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
     [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
@@ -38633,7 +38639,7 @@
 
 (define (compiler-backend-phi-source-parallel-resource0
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [source : CompilerBackendPhiSource]) : i64
   (match source
     [(CompilerBackendPhiSource.Value value)
@@ -38648,7 +38654,7 @@
 
 (define (compiler-backend-phi-source-parallel-resource1
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [source : CompilerBackendPhiSource]) : i64
   (match source
     [(CompilerBackendPhiSource.Value value)
@@ -38663,7 +38669,7 @@
 
 (define (compiler-backend-phi-copy-parallel-edge
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [phi-copy : CompilerBackendPhiCopy]) : pmove.CompilerParallelMoveEdge
   (match phi-copy
     [(CompilerBackendPhiCopy.Copy dst source _)
@@ -38682,7 +38688,7 @@
 
 (define (compiler-backend-phi-copy-list-parallel-edges
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]
   [index : i64]) : pmove.CompilerParallelMoveEdgeSeq
   (let
@@ -38704,7 +38710,7 @@
 
 (define (compiler-backend-phi-copy-list-decision
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]) : pmove.CompilerParallelMoveDecision
   (let
     [edges : pmove.CompilerParallelMoveEdgeSeq
@@ -38757,7 +38763,7 @@
 ;; invalid for the stack, or a canonical register ID for an outermost break.
 (define (compiler-backend-phi-source-replace-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [source : CompilerBackendPhiSource]
   [dst : i64]
   [loc : i64]) : CompilerBackendPhiSource
@@ -38777,7 +38783,7 @@
 
 (define (compiler-backend-phi-copy-list-replace-source-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]
   [dst-home-var : i64]
   [loc : i64]) : CompilerBackendPhiCopySeq
@@ -38851,7 +38857,7 @@
 ;; blocked check uses, so everything it would self-block is dropped here.
 (define (compiler-backend-phi-copy-list-drop-same-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]) : CompilerBackendPhiCopySeq
   (let
     [out : CompilerBackendPhiCopySeq
@@ -39043,7 +39049,7 @@
   scratch-vreg
   (define (compiler-backend-phi-planned-avoiding-value-home
     [backend-state : CompilerBackendState]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable]
     [value : compiler_ir_types.CompilerIrValue]
     [planned : String]) : String
     (match value
@@ -39075,7 +39081,7 @@
       [_ planned])))
 
 (define (compiler-backend-phi-temp-home-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (>= (compiler-backend-forwarded-addr-of-src backend-state var-id) 0)
@@ -39278,7 +39284,7 @@
 
 (define (compiler-backend-emit-phi-group-word-save
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [index : i64]
   [vars : i64]
@@ -39316,7 +39322,7 @@
 
 (define (compiler-backend-emit-phi-group-word-restore
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [index : i64]
   [vars : i64]
@@ -39354,7 +39360,7 @@
 
 (define (compiler-backend-emit-phi-temp-save
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
@@ -39405,7 +39411,7 @@
 ;; group-temp order while using fixed frame slots instead of %rsp pushes.
 (define (compiler-backend-emit-phi-temp-restore
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
@@ -39460,7 +39466,7 @@
 ;; to home no live value and to be no copy's dst-home, so the bracketed
 ;; `movq dst-home, reg` ... `movq reg, consumer-home` is sound across the cycle.
 (define (compiler-backend-emit-phi-temp-save-reg
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [reg : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -39471,7 +39477,7 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-phi-temp-restore-reg
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [reg : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -39482,7 +39488,7 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-phi-temp-save-xmm
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [reg : String]
   [ty : compiler_ast_types.AstType]
@@ -39501,7 +39507,7 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-phi-temp-restore-xmm
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [reg : String]
   [ty : compiler_ast_types.AstType]
@@ -39524,7 +39530,7 @@
 ;; contributes its ordinary scavenge bit and cannot be picked as the temp.
 (define (compiler-backend-phi-copy-list-dst-home-mask
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]) : i64
   (let
     [mask : i64 0]
@@ -39577,7 +39583,7 @@
 ;; the emit position is a valid scavenge point.
 (define (compiler-backend-phi-temp-pick-reg
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]
   [all : CompilerBackendPhiCopySeq]) : String
   (let
@@ -39636,7 +39642,7 @@
               (compiler-backend-scavenge-freeness-check!
                 compiler-backend-scavenge-ctx-starts
                 compiler-backend-scavenge-ctx-ends
-                compiler-backend-scavenge-ctx-assignment-index
+                compiler-backend-scavenge-ctx-assignments
                 compiler-backend-scavenge-ctx-vars
                 point
                 reg))
@@ -39655,7 +39661,7 @@
 (define (compiler-backend-phi-copy-reg-swappable?
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [phi-copy : CompilerBackendPhiCopy]
   [program-index : CompilerBackendProgramIndex]) : bool
   (match phi-copy
@@ -39689,7 +39695,7 @@
 (define (compiler-backend-phi-copy-list-reg-swappable?
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]) : bool
   (let
@@ -39716,7 +39722,7 @@
 (define (compiler-backend-phi-copy-xmm-swappable?
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [phi-copy : CompilerBackendPhiCopy]
   [program-index : CompilerBackendProgramIndex]) : bool
   (match phi-copy
@@ -39750,7 +39756,7 @@
 (define (compiler-backend-phi-copy-list-xmm-swappable?
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]) : bool
   (let
@@ -39771,7 +39777,7 @@
 
 (define (compiler-backend-emit-phi-source-load-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
@@ -39890,7 +39896,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-phi-var-source-direct
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src-id : i64]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
@@ -40034,7 +40040,7 @@
 
 (define (compiler-backend-emit-phi-source-immediate-or-load-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
@@ -40058,7 +40064,7 @@
 
 (define (compiler-backend-emit-phi-source-scalar-to-var
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
@@ -40102,7 +40108,7 @@
 
 (define (compiler-backend-emit-phi-source-to-var
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [source : CompilerBackendPhiSource]
   [ty : compiler_ast_types.AstType]
@@ -40185,7 +40191,7 @@
 
 (define (compiler-backend-emit-phi-copy-item
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [phi-copy : CompilerBackendPhiCopy]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -40208,7 +40214,7 @@
 ;; break sets it true for the rest of the edge.
 (define (compiler-backend-emit-phi-copy-list
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -40241,7 +40247,7 @@
 ;; still hold placed phi values that must survive to the merge block entry.
 (define (compiler-backend-emit-phi-copy-list-with-all
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : CompilerBackendPhiCopySeq]
   [all : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]
@@ -40407,7 +40413,7 @@
 
 (define (compiler-backend-leading-phi-copies-seq-from
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [from-label : i64]) : ResultBackendPhiCopies
@@ -40450,7 +40456,7 @@
 
 (define (compiler-backend-leading-phi-copies-seq
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [from-label : i64]) : ResultBackendPhiCopies
   (compiler-backend-leading-phi-copies-seq-from
@@ -40462,7 +40468,7 @@
 
 (define (compiler-backend-emit-leading-phi-copies
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [from-label : i64]
   [program-index : CompilerBackendProgramIndex]
@@ -40487,7 +40493,7 @@
 
 (define (compiler-backend-emit-phi-edge-copies
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [target-label : i64]
   [from-label : i64]
@@ -40532,7 +40538,7 @@
 ;; block's entry point once the label matches. See #phi-staged-copy.
 (define (compiler-backend-emit-phi-edge-copies-scan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [target-label : i64]
   [from-label : i64]
@@ -40586,7 +40592,7 @@
 
 (define (compiler-backend-emit-phi-edge-copies-scan-seq
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
   [index : i64]
   [target-label : i64]
@@ -40629,7 +40635,7 @@
 
 (define (compiler-backend-emit-mov-phi-copy-edge
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [target-label : i64]
   [from-label : i64]
@@ -40686,7 +40692,7 @@
 
 (define (compiler-backend-emit-mov-phi-copy-edge-scan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [target-label : i64]
   [from-label : i64]
@@ -40772,7 +40778,7 @@
 
 (define (compiler-backend-emit-mov-phi-copy-edge-scan-seq
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
   [index : i64]
   [target-label : i64]
@@ -40990,7 +40996,7 @@
 
 (define (compiler-backend-emit-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [current-label : i64]
@@ -41092,7 +41098,7 @@
 
 (define (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [current-label : i64]
@@ -41208,7 +41214,7 @@
 
 (define (compiler-backend-emit-compare-branch-with-phi-copies
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [current-label : i64]
@@ -41245,7 +41251,7 @@
 
 (define (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [current-label : i64]
@@ -41359,7 +41365,7 @@
 
 (define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [current-label : i64]
@@ -41579,7 +41585,7 @@
 ;; once the callee-regs conjunct is false.
 (define (compiler-backend-shared-return-count
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
   (if (compiler-backend-plan-uses-callee-regs? assignments backend-state)
     (compiler-backend-block-list-return-count backend-state blocks)
@@ -41587,7 +41593,7 @@
 
 (define (compiler-backend-use-shared-return?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
   (compiler-backend-use-shared-return-count?
     backend-state
@@ -41596,7 +41602,7 @@
 
 (define (compiler-backend-use-shared-return-count?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [return-count : i64]) : bool
   (and
     (compiler-backend-plan-uses-callee-regs? assignments backend-state)
@@ -41605,7 +41611,7 @@
 (define (compiler-backend-return-tail-for-return-count
   [backend-state : CompilerBackendState]
   [source-function : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [return-count : i64]) : String
   (let
@@ -41639,7 +41645,7 @@
 (define (compiler-backend-return-tail
   [backend-state : CompilerBackendState]
   [source-function : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : String
   (compiler-backend-return-tail-for-return-count
@@ -41652,7 +41658,7 @@
 (define (compiler-backend-return-epilogue
   [backend-state : CompilerBackendState]
   [source-function : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : String
   (if (compiler-backend-use-shared-return? backend-state assignments blocks)
@@ -41692,7 +41698,7 @@
   [backend-state : CompilerBackendState]
   [source-function : i64]
   [value : compiler_ir_types.CompilerIrValue]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [ret-ty : compiler_ast_types.AstType]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?
     (compiler-backend-state-function-state backend-state))
@@ -41779,7 +41785,7 @@
   [source-function : i64]
   [return-count : i64]
   [value : compiler_ir_types.CompilerIrMaybeValue]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [ret-ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
@@ -41884,7 +41890,7 @@
   [source-function : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [value : compiler_ir_types.CompilerIrMaybeValue]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [ret-ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
@@ -41909,7 +41915,7 @@
   [name : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
@@ -42103,7 +42109,7 @@
   [return-count : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [from-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [ret-ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
@@ -42163,7 +42169,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [target-label : i64]
   [from-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [ret-ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
@@ -42216,7 +42222,7 @@
   [index : i64]
   [target-label : i64]
   [from-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [ret-ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
@@ -42256,7 +42262,7 @@
   [return-count : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [from-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [ret-ty : compiler_ast_types.AstType]
   [moved-dst : i64]
@@ -42321,7 +42327,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [target-label : i64]
   [from-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [ret-ty : compiler_ast_types.AstType]
   [moved-dst : i64]
@@ -42382,7 +42388,7 @@
   [index : i64]
   [target-label : i64]
   [from-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [ret-ty : compiler_ast_types.AstType]
   [moved-dst : i64]
@@ -42427,7 +42433,7 @@
 ;; of routing through %rax and storing back (2 instrs).
 (define (compiler-backend-var-register-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]) : String
   (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
     [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
@@ -42441,7 +42447,7 @@
 
 (define (compiler-backend-value-register-home
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]) : String
   (match value
     [(compiler_ir_types.CompilerIrValue.Var id)
@@ -42464,7 +42470,7 @@
 
 (define (compiler-backend-emit-mov
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
@@ -42628,7 +42634,7 @@
 ;; as holding the value across its (empty) interval, so leave those untouched.
 (define (compiler-backend-call-result-store-dead?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]) : bool
   (and
     (compiler-backend-var-never-used? backend-state dst)
@@ -42646,7 +42652,7 @@
 ;; and C-ABI indirect-call paths store %rax/%xmm0 inline rather than via
 ;; emit-call-result-store; route their stores through the same deadness check.
 (define (compiler-backend-emit-call-result-store-reg-normalize
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [reg : String]
   [ty : compiler_ast_types.AstType]
@@ -42664,7 +42670,7 @@
         backend-state))))
 
 (define (compiler-backend-emit-call-result-store-reg
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [reg : String]
   [ty : compiler_ast_types.AstType]
@@ -42678,7 +42684,7 @@
     backend-state))
 
 (define (compiler-backend-emit-c-abi-call-result-store-reg
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [reg : String]
   [ty : compiler_ast_types.AstType]
@@ -42703,7 +42709,7 @@
 
 (define (compiler-backend-emit-call-result-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [ty : compiler_ast_types.AstType]
   [vars : i64]
@@ -42719,7 +42725,7 @@
 
 (define (compiler-backend-emit-c-abi-call-result-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [ty : compiler_ast_types.AstType]
   [vars : i64]
@@ -42735,7 +42741,7 @@
 
 (define (compiler-backend-emit-call-result-store-normalize
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [ty : compiler_ast_types.AstType]
   [vars : i64]
@@ -42757,7 +42763,7 @@
 
 (define (compiler-backend-emit-call-result-store-live
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [ty : compiler_ast_types.AstType]
   [vars : i64]
@@ -42796,7 +42802,7 @@
 (define (compiler-backend-emit-call-result-store-normalize-into
   [out : (&mut out CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [ty : compiler_ast_types.AstType]
   [vars : i64]
@@ -42880,8 +42886,8 @@
 (define (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
-  [arg-assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-stage : String]
   [dst : i64]
   [name : i64]
@@ -43168,8 +43174,8 @@
 (define (compiler-backend-emit-inline-memory-call-with-arg-assignments
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
-  [arg-assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-stage : String]
   [dst : i64]
   [name : i64]
@@ -43264,8 +43270,8 @@
   [name : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
-  [arg-assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
@@ -43369,7 +43375,7 @@
               global-types
               extern-call-info
               program-index)]
-          [effective-arg-assignments : compiler_regalloc.CompilerRegAssignmentList
+          [effective-arg-assignments : compiler_regalloc.CompilerRegAssignmentTable
             (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
               type-segment-bases
               program-index
@@ -43589,7 +43595,7 @@
 
 (define (compiler-backend-spmd-avx2-save-value
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [elem-ty : compiler_ast_types.AstType]
   [mask? : bool]
@@ -43640,7 +43646,7 @@
 
 (define (compiler-backend-spmd-avx2-save-args
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrSpmdCallArgList]
   [index : i64]
   [special-index : i64]
@@ -43695,7 +43701,7 @@
 
 (define (compiler-backend-spmd-avx2-result-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
   [vars : i64]
   [program-index : CompilerBackendProgramIndex]
@@ -43747,7 +43753,7 @@
 
 (define (compiler-backend-spmd-private-vector-args-asm
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrSpmdCallArgList]
   [index : i64]
   [vector-index : i64]
@@ -43828,7 +43834,7 @@
             backend-state))])))
 
 (define (compiler-backend-spmd-private-save-mask-value
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
   [offset : i64]
@@ -43859,7 +43865,7 @@
             message)))]))
 
 (define (compiler-backend-spmd-private-save-mask-args
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrSpmdCallArgList]
   [index : i64]
   [mask-index : i64]
@@ -43930,7 +43936,7 @@
 
 (define (compiler-backend-spmd-private-result-store
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
   [vars : i64]
   [program-index : CompilerBackendProgramIndex]
@@ -44015,7 +44021,7 @@
   [active-mask : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrSpmdCallArgList]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -44090,7 +44096,7 @@
   [active-mask : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrSpmdCallArgList]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -44214,7 +44220,7 @@
   [active-mask : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrSpmdCallArgList]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -44322,7 +44328,7 @@
   [active-mask : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrSpmdCallArgList]
   [result : compiler_ir_types.CompilerIrSpmdCallResult]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -44502,7 +44508,7 @@
     planned))
 
 (define (compiler-backend-emit-c-abi-return-base-save
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
   [save-offset : i64]
   [planned : String]
@@ -44570,14 +44576,14 @@
         0))))
 
 (define (compiler-backend-assignments-use-reg?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [reg : String]) : bool
   (compiler_regalloc.compiler-reg-assignments-use-register?
     assignments
     (compiler_abi.compiler-abi-register-id-from-spelling reg)))
 
 (define (compiler-backend-emit-entry-load
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [label : i64]
   [ty : compiler_ast_types.AstType]
@@ -44641,7 +44647,7 @@
     [else "    xorq %rax, %rax\n"]))
 
 (define (compiler-backend-emit-cpuid
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [leaf : compiler_ir_types.CompilerIrValue]
   [subleaf : compiler_ir_types.CompilerIrValue]
@@ -44701,7 +44707,7 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-xgetbv
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [index : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -44792,7 +44798,7 @@
 ;; with a scavenged temp. Conflict-free sites stay byte-identical (see the builder).
 (define (compiler-backend-emit-syscall
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -45007,7 +45013,7 @@
   [function : String]
   [current-label : i64]
   [cases : compiler_ir_types.CompilerIrSwitchCaseList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -45465,7 +45471,7 @@
   [case-count : i64]
   [default-label : i64]
   [total-switch : bool]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-index-reg : String]
   [planned-table-reg : String]) : ResultCompilerBackend
   (let
@@ -45639,7 +45645,7 @@
   [cases : compiler_ir_types.CompilerIrSwitchCaseList]
   [default-label : i64]
   [trap-label : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-index-reg : String]
   [planned-table-reg : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -47035,7 +47041,7 @@
                   compiler-backend-function-i64-use-home-mask-value)
                 (compiler-backend-scavenge-reg-bit
                   (compiler-backend-var-register-home-index
-                    compiler-backend-scavenge-ctx-assignment-index
+                    compiler-backend-scavenge-ctx-assignments
                     var))))
             unit))
         (if (>= var (array-length counts))
@@ -47520,7 +47526,7 @@
 (define (compiler-backend-gep-fusion-pinned-vars
   [vars : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : compiler_liveness.CompilerLiveI64Set
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_liveness.CompilerLiveI64Set
   (if (<= vars 0)
     (compiler_liveness.compiler-live-set-empty)
     (let
@@ -47532,8 +47538,8 @@
         (compiler-backend-gep-fusion-pin-candidate? counts adjacent vars))
         (compiler_liveness.compiler-live-set-empty)
         (let
-          [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-            (compiler_regalloc.compiler-reg-assignment-index-build
+          [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+            (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
               assignments
               vars)]
           [words : (__tl_dyn-array i64)
@@ -47546,7 +47552,7 @@
                 (if (and
                   (array-ref adjacent index)
                   (= (array-ref counts index) 1)
-                  (match (compiler_regalloc.compiler-reg-assignment-index-lookup
+                  (match (compiler_regalloc.compiler-reg-assignment-table-lookup
                     assignment-index
                     index)
                     [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
@@ -47933,7 +47939,7 @@
   [rax-var : i64]
   [rax-ty : compiler_ast_types.AstType]) : ResultCompilerBackend
   (let
-    [arg-assignments : compiler_regalloc.CompilerRegAssignmentList
+    [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-rax-call-arg-assignments
         ctx.type-segment-bases
         ctx.assignments
@@ -48173,7 +48179,7 @@
 (define (compiler-backend-rax-forwardable-consumer?
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [rax-var : i64]
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (match instr
@@ -48204,7 +48210,7 @@
 (define (compiler-backend-rest-starts-rax-forwardable-consumer?
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [rax-var : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : bool
@@ -48765,7 +48771,7 @@
 (define (compiler-backend-gep-load-pair-alu-probe
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (__tl_dyn-array i64)]
@@ -48868,7 +48874,7 @@
 
 (define (compiler-backend-emit-gep-load-pair-alu
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [mnem : String]
   [dst : i64]
   [addr0 : String]
@@ -49400,7 +49406,7 @@
 (define (compiler-backend-gep-load-alu-probe
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (__tl_dyn-array i64)]
@@ -49482,7 +49488,7 @@
 
 (define (compiler-backend-emit-gep-load-alu
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [mnem : String]
   [alu-dst : i64]
   [x : compiler_ir_types.CompilerIrValue]
@@ -50370,7 +50376,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [name : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
@@ -50639,8 +50645,8 @@
   [func : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
-  [arg-assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-target : String]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
@@ -50660,7 +50666,7 @@
         functions
         externs
         program-index)]
-    [effective-arg-assignments : compiler_regalloc.CompilerRegAssignmentList
+    [effective-arg-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
         type-segment-bases
         program-index
@@ -50803,7 +50809,7 @@
   [func : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-target : String]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
@@ -50840,7 +50846,7 @@
   [func : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-target : String]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
@@ -50986,7 +50992,7 @@
 (define (compiler-backend-indirect-c-call-direct-home
   [backend-state : CompilerBackendState]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [func : compiler_ir_types.CompilerIrValue]) : String
   (let
     [home : String
@@ -51016,7 +51022,7 @@
   [func : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-target : String]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
@@ -51162,7 +51168,7 @@
   [name : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [slots : compiler_ir_types.CompilerIrCAbiReturnSlotList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-target : String]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
@@ -51271,7 +51277,7 @@
   [func : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [slots : compiler_ir_types.CompilerIrCAbiReturnSlotList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [planned-target : String]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
@@ -51430,7 +51436,7 @@
 ;; add/imul/xor).  Wider fallback shapes keep their ordinary home.
 (define (compiler-backend-divmod-producer-retargetable?
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -51489,7 +51495,7 @@
 ;; emergency save/restore even though the selected LEA/IMUL/XOR needs no
 ;; scratch at all.
 (define (compiler-backend-emit-divmod-producer-to-src
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
@@ -51607,7 +51613,7 @@
 (define (compiler-backend-divmod-direct-gep-store?
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [result-dst : i64]
   [gep-dst : i64]
   [base : compiler_ir_types.CompilerIrValue]
@@ -51659,7 +51665,7 @@
 ;; one is needed).  A rejected store resumes at Gep after the emergency restores.
 (define (compiler-backend-divmod-direct-gep-store-clobber-safe?
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [src : String]
   [magic : String]
   [base : compiler_ir_types.CompilerIrValue]
@@ -51702,7 +51708,7 @@
 ;; store reads it; other borrowed registers (including SRC) remain protected
 ;; until the bundle's ordinary trailing restore.
 (define (compiler-backend-divmod-address-emergency-restore-asm
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [src : String]
   [base : compiler_ir_types.CompilerIrValue]
   [offset : compiler_ir_types.CompilerIrValue]
@@ -54830,7 +54836,7 @@
                   (compiler-backend-scavenge-check-instr
                     compiler-backend-scavenge-ctx-starts
                     compiler-backend-scavenge-ctx-ends
-                    compiler-backend-scavenge-ctx-assignment-index
+                    compiler-backend-scavenge-ctx-assignments
                     compiler-backend-scavenge-ctx-vars
                     ctx.function
                     (*
@@ -55003,7 +55009,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [block : compiler_ir_types.CompilerIrBlock]
   [fallthrough : CompilerBackendMaybeLabel]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
@@ -55139,7 +55145,7 @@
   [all-blocks : compiler_ir_types.CompilerIrBlockList]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
   [index : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
@@ -55232,7 +55238,7 @@
   [source-function : i64]
   [all-blocks : compiler_ir_types.CompilerIrBlockList]
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
@@ -55346,7 +55352,7 @@
   [source-function : i64]
   [all-blocks : compiler_ir_types.CompilerIrBlockList]
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
@@ -55431,7 +55437,7 @@
     ""))
 
 (define (compiler-backend-emit-spmd-private-special-param
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [name : String]
   [ty : compiler_ast_types.AstType]
   [var-id : i64]
@@ -55557,7 +55563,7 @@
 (define (compiler-backend-emit-spmd-private-param-spills-from
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [params : compiler_ir_types.CompilerIrParamList]
   [int-idx : i64]
   [float-idx : i64]
@@ -55702,7 +55708,7 @@
 (define (compiler-backend-emit-spmd-private-param-spills
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [params : compiler_ir_types.CompilerIrParamList]
   [vars : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -55722,7 +55728,7 @@
     backend-state))
 
 (define (compiler-backend-emit-private-memory-param-address
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [all-params : compiler_ir_types.CompilerIrParamList]
   [var-id : i64]
   [addr : String]
@@ -55765,7 +55771,7 @@
 (define (compiler-backend-emit-param-spills-from
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [all-params : compiler_ir_types.CompilerIrParamList]
   [params : compiler_ir_types.CompilerIrParamList]
   [int-idx : i64]
@@ -56132,7 +56138,7 @@
 (define (compiler-backend-emit-param-spills
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [params : compiler_ir_types.CompilerIrParamList]
   [int-idx : i64]
   [float-idx : i64]
@@ -56545,7 +56551,7 @@
 (define (compiler-backend-scavenge-occupancy-build
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
-  [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
+  [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]) : (__tl_dyn-array i64)
   (let
     [instr-count : i64
@@ -56632,81 +56638,71 @@
 
 (define (compiler-backend-var-register-home-index
   [assignment-index
-    : (& assignment-index compiler_regalloc.CompilerRegAssignmentIndex)]
+    : (& assignment-index compiler_regalloc.CompilerRegAssignmentTable)]
   [var : i64]) : String
   (compiler_abi.compiler-abi-register-spelling
-    (compiler_regalloc.compiler-reg-assignment-index-primary-register-home
+    (compiler_regalloc.compiler-reg-assignment-table-primary-register-home
       assignment-index
       var)))
 
-(defstruct CompilerBackendScavengeAssignmentIndex
-  (index compiler_regalloc.CompilerRegAssignmentIndex)
+(defstruct CompilerBackendScavengeAssignments
+  (index compiler_regalloc.CompilerRegAssignmentTable)
   (plan-mask i64))
 
-(define (compiler-backend-scavenge-assignment-index-fill!
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
-  [present : (__tl_dyn-array i64)]
-  [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)]
-  [mask : i64]) : i64
-  (match assignments
-    [(compiler_regalloc.CompilerRegAssignmentList.Nil) mask]
-    [(compiler_regalloc.CompilerRegAssignmentList.Cons item rest)
-      (let
-        [var : i64 (struct-get item var)]
-        [location : compiler_regalloc.CompilerRegLocation
-          (struct-get item location)]
-        (compiler-backend-scavenge-assignment-index-fill!
-          (box-get rest)
-          present
-          items
-          (if (or
-            (< var 0)
-            (>= var (array-length present))
-            (not (= (array-ref present var) 0)))
-            mask
-            (let
-              [loc-mask : i64
-                (compiler-backend-scavenge-location-mask location)]
-              (begin
-                (array-set! present var 1)
-                (array-set! items var location)
-                (bit-or mask loc-mask))))))]))
-
-(define (compiler-backend-scavenge-assignment-index-build
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
-  [vars : i64]) : CompilerBackendScavengeAssignmentIndex
+(define (compiler-backend-scavenge-assignment-mask
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : i64
   (let
-    [n : i64
-      (if (< vars 1)
-        1
-        vars)]
-    [present : (__tl_dyn-array i64) (make-array i64 n)]
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      (make-array compiler_regalloc.CompilerRegLocation n)]
+      (struct-get assignments items)]
+    [var : i64 0]
+    [mask : i64 0]
     (begin
-      (compiler_regalloc.compiler-reg-fill-location-array
-        items
-        (compiler_regalloc.CompilerRegLocation.Spill 0))
-      (let
-        [plan-mask : i64
-          (compiler-backend-scavenge-assignment-index-fill!
-            assignments
-            present
-            items
-            0)]
-        (CompilerBackendScavengeAssignmentIndex
-          (compiler_regalloc.CompilerRegAssignmentIndex present items)
-          plan-mask)))))
+      (while (< var (array-length present))
+        (begin
+          (if (= (array-ref present var) 0)
+            unit
+            (set!
+              mask
+              (bit-or
+                mask
+                (compiler-backend-scavenge-location-mask (array-ref items var)))))
+          (set! var (+ var 1))))
+      mask)))
+
+(define (compiler-backend-scavenge-assignments-build
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [vars : i64]) : CompilerBackendScavengeAssignments
+  (let
+    [view : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
+        assignments
+        vars)]
+    (CompilerBackendScavengeAssignments
+      view
+      (compiler-backend-scavenge-assignment-mask view))))
 
 (define (compiler-backend-assignments-have-register-home?
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]) : bool
-  (match assignments
-    [(compiler_regalloc.CompilerRegAssignmentList.Nil) false]
-    [(compiler_regalloc.CompilerRegAssignmentList.Cons item rest)
-      (match (struct-get item location)
-        [(compiler_regalloc.CompilerRegLocation.Register _) true]
-        [(compiler_regalloc.CompilerRegLocation.RegisterPair _ _) true]
-        [_ (compiler-backend-assignments-have-register-home? (box-get rest))])]))
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : bool
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
+      (struct-get assignments items)]
+    [var : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< var (array-length present)) (not found))
+        (begin
+          (if (= (array-ref present var) 0)
+            unit
+            (match (array-ref items var)
+              [(compiler_regalloc.CompilerRegLocation.Register _)
+                (set! found true)]
+              [(compiler_regalloc.CompilerRegLocation.RegisterPair _ _)
+                (set! found true)]
+              [_ unit]))
+          (set! var (+ var 1))))
+      found)))
 
 (cfg
   scavenge-self-check
@@ -56714,11 +56710,11 @@
     [starts : (& starts (__tl_dyn-array i64))]
     [ends : (& ends (__tl_dyn-array i64))]
     [assignment-index
-      : (& assignment-index compiler_regalloc.CompilerRegAssignmentIndex)]
+      : (& assignment-index compiler_regalloc.CompilerRegAssignmentTable)]
     [vars : i64]
     [point : i64]
     [reg : String]) : bool
-    (compiler_regalloc.compiler-reg-assignment-index-register-free-over-range?
+    (compiler_regalloc.compiler-reg-assignment-table-register-free-over-range?
       starts
       ends
       assignment-index
@@ -56736,11 +56732,11 @@
 (define compiler-backend-scavenge-ctx-ends : (__tl_dyn-array i64)
   (make-array i64 1))
 
-(define (compiler-backend-scavenge-empty-assignments) : compiler_regalloc.CompilerRegAssignmentList
-  compiler_regalloc.CompilerRegAssignmentList.Nil)
+(define (compiler-backend-scavenge-empty-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignment-table-empty))
 
-(define compiler-backend-scavenge-ctx-assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-  (compiler_regalloc.compiler-reg-assignment-index-build
+(define compiler-backend-scavenge-ctx-assignments : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
     (compiler-backend-scavenge-empty-assignments)
     1))
 (define compiler-backend-scavenge-ctx-plan-reg-mask : i64
@@ -56856,14 +56852,14 @@
 (define (compiler-backend-set-scavenge-ctx-ready!
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
-  [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
+  [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
   [plan-mask : i64]
   [occupied-masks : (__tl_dyn-array i64)]
   [vars : i64]) : unit
   (begin
     (set! compiler-backend-scavenge-ctx-starts starts)
     (set! compiler-backend-scavenge-ctx-ends ends)
-    (set! compiler-backend-scavenge-ctx-assignment-index assignment-index)
+    (set! compiler-backend-scavenge-ctx-assignments assignment-index)
     (set! compiler-backend-scavenge-ctx-plan-reg-mask plan-mask)
     (set!
       compiler-backend-scavenge-ctx-scratch-masks
@@ -56874,7 +56870,7 @@
 (define (compiler-backend-set-scavenge-ctx-index!
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
-  [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
+  [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
   [plan-mask : i64]
   [vars : i64]) : unit
   (let
@@ -56895,10 +56891,10 @@
 (define (compiler-backend-set-scavenge-ctx!
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]) : unit
-  (match (compiler-backend-scavenge-assignment-index-build assignments vars)
-    [(CompilerBackendScavengeAssignmentIndex assignment-index plan-mask)
+  (match (compiler-backend-scavenge-assignments-build assignments vars)
+    [(CompilerBackendScavengeAssignments assignment-index plan-mask)
       (compiler-backend-set-scavenge-ctx-index!
         starts
         ends
@@ -56957,7 +56953,7 @@
 
 (define (compiler-backend-scavenge-install-ctx-from-intervals!
   [slot-vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [intervals : compiler_regalloc.CompilerRegIntervalSeq]
   [backend-state : CompilerBackendState]) : unit
   (let
@@ -56970,18 +56966,18 @@
         (compiler-backend-state-function-state backend-state)
         0)
       (if (< slot-vars 1)
-        (match (compiler-backend-scavenge-assignment-index-build assignments 0)
-          [(CompilerBackendScavengeAssignmentIndex assignment-index plan-mask)
+        (match (compiler-backend-scavenge-assignments-build assignments 0)
+          [(CompilerBackendScavengeAssignments assignment-index plan-mask)
             (compiler-backend-set-scavenge-ctx-index!
               (make-array i64 1)
               (make-array i64 1)
               assignment-index
               (bit-or plan-mask abi-mask)
               0)])
-        (match (compiler-backend-scavenge-assignment-index-build
+        (match (compiler-backend-scavenge-assignments-build
           assignments
           slot-vars)
-          [(CompilerBackendScavengeAssignmentIndex assignment-index plan-mask)
+          [(CompilerBackendScavengeAssignments assignment-index plan-mask)
             (let
               [interval-index : compiler_regalloc.CompilerRegIntervalIndex
                 (compiler_regalloc.compiler-reg-interval-index-build
@@ -57114,7 +57110,7 @@
 ;; such as r10/r11 stay available unless one is an operand home. n = 7.
 (define (compiler-backend-scavenge-exclude-ops2
   [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [v1 : compiler_ir_types.CompilerIrValue]
   [v2 : compiler_ir_types.CompilerIrValue]) : (__tl_dyn-array String)
   (let
@@ -57499,7 +57495,7 @@
     [dst-home : String
       (if (and (>= dst-var 0) (< dst-var vars))
         (compiler-backend-var-register-home-index
-          compiler-backend-scavenge-ctx-assignment-index
+          compiler-backend-scavenge-ctx-assignments
           dst-var)
         "")]
     [ex : (__tl_dyn-array String)
@@ -57523,7 +57519,7 @@
         (compiler-backend-scavenge-freeness-check!
           compiler-backend-scavenge-ctx-starts
           compiler-backend-scavenge-ctx-ends
-          compiler-backend-scavenge-ctx-assignment-index
+          compiler-backend-scavenge-ctx-assignments
           vars
           point
           reg)
@@ -57536,7 +57532,7 @@
     [starts : (& starts (__tl_dyn-array i64))]
     [ends : (& ends (__tl_dyn-array i64))]
     [assignment-index
-      : (& assignment-index compiler_regalloc.CompilerRegAssignmentIndex)]
+      : (& assignment-index compiler_regalloc.CompilerRegAssignmentTable)]
     [vars : i64]
     [point : i64]
     [reg : String]) : unit
@@ -57639,7 +57635,7 @@
     [dst-home : String
       (if (and (>= dst-var 0) (< dst-var compiler-backend-scavenge-ctx-vars))
         (compiler-backend-var-register-home-index
-          compiler-backend-scavenge-ctx-assignment-index
+          compiler-backend-scavenge-ctx-assignments
           dst-var)
         "")]
     [ex : (__tl_dyn-array String)
@@ -57690,7 +57686,7 @@
     [dst-home : String
       (if (and (>= dst-var 0) (< dst-var vars))
         (compiler-backend-var-register-home-index
-          compiler-backend-scavenge-ctx-assignment-index
+          compiler-backend-scavenge-ctx-assignments
           dst-var)
         "")]
     [ex : (__tl_dyn-array String)
@@ -57713,7 +57709,7 @@
         (compiler-backend-scavenge-freeness-check!
           compiler-backend-scavenge-ctx-starts
           compiler-backend-scavenge-ctx-ends
-          compiler-backend-scavenge-ctx-assignment-index
+          compiler-backend-scavenge-ctx-assignments
           vars
           point
           reg)
@@ -57745,7 +57741,7 @@
         (compiler-backend-scavenge-freeness-check!
           compiler-backend-scavenge-ctx-starts
           compiler-backend-scavenge-ctx-ends
-          compiler-backend-scavenge-ctx-assignment-index
+          compiler-backend-scavenge-ctx-assignments
           compiler-backend-scavenge-ctx-vars
           point
           reg)
@@ -57773,7 +57769,7 @@
         (compiler-backend-scavenge-freeness-check!
           compiler-backend-scavenge-ctx-starts
           compiler-backend-scavenge-ctx-ends
-          compiler-backend-scavenge-ctx-assignment-index
+          compiler-backend-scavenge-ctx-assignments
           compiler-backend-scavenge-ctx-vars
           point
           reg)
@@ -57785,7 +57781,7 @@
   (define (compiler-backend-scavenge-check-instr
     [starts : (__tl_dyn-array i64)]
     [ends : (__tl_dyn-array i64)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
+    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
     [vars : i64]
     [name : String]
     [point : i64]
@@ -57806,7 +57802,7 @@
               ;; coverage for non-register vars is a false positive (the old
               ;; check aborted at the first all-spilled function before reaching
               ;; the real register hazards). cfg-gated: oracle-only, no codegen.
-              (match (compiler_regalloc.compiler-reg-assignment-index-lookup
+              (match (compiler_regalloc.compiler-reg-assignment-table-lookup
                 assignment-index
                 v)
                 [(compiler_regalloc.CompilerRegMaybeLocation.Some loc)
@@ -57868,7 +57864,7 @@
           (while (< w vars)
             (begin
               (if (compiler_liveness.compiler-live-set-contains? live-after w)
-                (match (compiler_regalloc.compiler-reg-assignment-index-lookup
+                (match (compiler_regalloc.compiler-reg-assignment-table-lookup
                   assignment-index
                   w)
                   [(compiler_regalloc.CompilerRegMaybeLocation.Some loc)
@@ -57911,7 +57907,7 @@
   (define (compiler-backend-scavenge-check-seq
     [starts : (__tl_dyn-array i64)]
     [ends : (__tl_dyn-array i64)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
+    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
     [vars : i64]
     [name : String]
     [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -57948,7 +57944,7 @@
   (define (compiler-backend-scavenge-check-blocks
     [starts : (__tl_dyn-array i64)]
     [ends : (__tl_dyn-array i64)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex]
+    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable]
     [vars : i64]
     [name : String]
     [liveness : compiler_liveness.CompilerFunctionLiveness]
@@ -58001,7 +57997,7 @@
     [ret-ty : compiler_ast_types.AstType]
     [slot-vars : i64]
     [emit-blocks : compiler_ir_types.CompilerIrBlockList]
-    [assignments : compiler_regalloc.CompilerRegAssignmentList]) : unit
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : unit
     (if (< slot-vars 1)
       unit
       (let
@@ -58016,8 +58012,8 @@
           (compiler_liveness.compiler-live-analyze-function func)]
         [starts : (__tl_dyn-array i64) (make-array i64 slot-vars)]
         [ends : (__tl_dyn-array i64) (make-array i64 slot-vars)]
-        [assignment-index : compiler_regalloc.CompilerRegAssignmentIndex
-          (compiler_regalloc.compiler-reg-assignment-index-build
+        [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
+          (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
             assignments
             slot-vars)]
         (begin
@@ -58618,7 +58614,7 @@
 ;; hands out plan-saved callee regs; emergency picks are wrapped locally), so
 ;; it is fixed before body emission and matches every inline restore site.
 (define (compiler-backend-fill-push-csr-regs!
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [regs : (__tl_dyn-array String)]
   [backend-state : CompilerBackendState]) : i64
   (let
@@ -59843,7 +59839,7 @@
 (define (compiler-backend-commit-frame-layout!
   [backend-state : CompilerBackendState]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentList]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [symbol : String]
   [frame : i64]
   [push-count : i64]
@@ -61821,7 +61817,7 @@
               blocks
               walk-vars
               walk-vars
-              compiler_regalloc.CompilerRegAssignmentList.Nil
+              (compiler_regalloc.compiler-reg-assignment-table-empty)
               (compiler_regalloc.compiler-reg-var-types-empty)))]
         [alloc-blocks : compiler_ir_types.CompilerIrBlockList
           (match leaf-csr-rewrite
@@ -61852,7 +61848,7 @@
           (if (= alloc-vars walk-vars)
             walk-types
             (compiler_regalloc.compiler-reg-function-var-types alloc-func))]
-        [alloc-preassignments : compiler_regalloc.CompilerRegAssignmentList
+        [alloc-preassignments : compiler_regalloc.CompilerRegAssignmentTable
           (match leaf-csr-rewrite
             [(compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
                 _
@@ -61906,7 +61902,7 @@
               alloc-blocks
               alloc-vars
               alloc-vars
-              compiler_regalloc.CompilerRegAssignmentList.Nil
+              (compiler_regalloc.compiler-reg-assignment-table-empty)
               (compiler_regalloc.compiler-reg-var-types-empty)))]
         [call-save-reg-plan : compiler_regalloc.CompilerRegPlan
           (if call-save-enabled
@@ -61953,7 +61949,7 @@
               call-save-blocks
               call-save-vars
               call-save-vars
-              compiler_regalloc.CompilerRegAssignmentList.Nil
+              (compiler_regalloc.compiler-reg-assignment-table-empty)
               (compiler_regalloc.compiler-reg-var-types-empty)))]
         [rewrite-reg-plan : compiler_regalloc.CompilerRegPlan
           (if call-save-enabled
@@ -62003,7 +61999,7 @@
               rewritten-blocks
               rewritten-vars
               rewritten-vars
-              compiler_regalloc.CompilerRegAssignmentList.Nil
+              (compiler_regalloc.compiler-reg-assignment-table-empty)
               (compiler_regalloc.compiler-reg-var-types-empty)))]
         [remat0-reg-plan : compiler_regalloc.CompilerRegPlan
           (if call-save-enabled
@@ -62038,7 +62034,7 @@
             remat0-blocks
             remat0-vars
             remat0-vars
-            compiler_regalloc.CompilerRegAssignmentList.Nil
+            (compiler_regalloc.compiler-reg-assignment-table-empty)
             (compiler_regalloc.compiler-reg-var-types-empty))]
         ;; Downstream-facing FINAL pipeline names (= identity of the remat output).
         [remat-reg-plan : compiler_regalloc.CompilerRegPlan
@@ -62149,7 +62145,7 @@
             scratch-vars
             remat-vars
             fusion-pinned-vars)]
-        [assignments : compiler_regalloc.CompilerRegAssignmentList
+        [assignments : compiler_regalloc.CompilerRegAssignmentTable
           (match coloring
             [(compiler_regalloc.CompilerRegColoring.None)
               (compiler_regalloc.compiler-reg-plan-assignments scratch-reg-plan)]
@@ -62159,22 +62155,24 @@
                 scratch-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
                   scratch-reg-plan))])]
-        ;; Dense O(1) operand-home index for emission, built ONCE per function
-        ;; from the final list above (caller-save / loop-split / remat /
-        ;; scratch-vreg / slot-coloring re-plans are all folded into it by this
-        ;; point, so no stage can go stale). Sized by scratch-vars -- the full
-        ;; var count the assignments and the emitted IR are keyed to -- matching
-        ;; the scavenge self-check idiom. Small functions skip the build: an
-        ;; early-exit walk of a short sorted list is already cheaper than the
-        ;; wrapper's array setup, so they stay on the list lookup (identical
-        ;; results) and pay no per-function array allocation.
+        [_regalloc-assignment-census : unit
+          (cfg
+            regalloc-census
+            (compiler_regalloc.compiler-reg-assignment-census-record!
+              (& assignments))
+            unit)]
+        ;; Install the final authoritative table for direct operand-home lookup
+        ;; in large functions. Caller-save / loop-split / remat / scratch-vreg /
+        ;; slot-coloring re-plans are all folded into this table, so no emission
+        ;; view can go stale. Small functions read the same table directly from
+        ;; their emission context and avoid the state-wrapper setup.
         [_emit-assignment-index : unit
           (begin
             (if (>= scratch-vars 64)
               (begin
                 (compiler-backend-function-state-set-assignment-index!
                   function-state
-                  (compiler_regalloc.compiler-reg-assignment-index-build
+                  (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
                     assignments
                     scratch-vars))
                 (compiler-backend-function-state-set-bool!
@@ -62185,7 +62183,7 @@
                 function-state
                 compiler-backend-function-bool-emit-assignment-index-active
                 false))
-            ;; Same list, same "fixed before body emission" guarantee: fold the
+            ;; Same table, same "fixed before body emission" guarantee: fold the
             ;; plan's register homes into the per-function mask that
             ;; compiler-backend-plan-uses-reg? answers from. Unlike the dense
             ;; index this is installed for EVERY function -- it is one machine
@@ -62201,7 +62199,7 @@
               -1)
             (compiler-backend-emit-home-overrides-disable! function-state))]
         [scavenge-assignments
-          : compiler_regalloc.CompilerRegAssignmentList
+          : compiler_regalloc.CompilerRegAssignmentTable
           ;; Start ordinary scavenging from real IR homes. Planned scratch
           ;; homes are appended below with exact intervals; retaining them as
           ;; interval-less pseudo-vars here would reserve each register for the
@@ -62380,7 +62378,7 @@
         ;; for a loop magic and then overwrite that magic at a divmod site.
         [const-hoist-occupancy-vars : i64
           (compiler-backend-scratch-plan-extend-vars scratch-plan scratch-vars)]
-        [const-hoist-occupancy-assignments : compiler_regalloc.CompilerRegAssignmentList
+        [const-hoist-occupancy-assignments : compiler_regalloc.CompilerRegAssignmentTable
           (compiler-backend-scratch-plan-extend-assignments
             scratch-plan
             scratch-vars
@@ -62428,7 +62426,7 @@
           (compiler-backend-const-hoist-extend-vars
             const-hoist-synth
             scratch-vars)]
-        [scavenge-base-assignments : compiler_regalloc.CompilerRegAssignmentList
+        [scavenge-base-assignments : compiler_regalloc.CompilerRegAssignmentTable
           (compiler-backend-const-hoist-extend-assignments
             const-hoist-synth
             scratch-vars
@@ -63080,7 +63078,7 @@
     (compiler-backend-set-scavenge-ctx!
       (make-array i64 1)
       (make-array i64 1)
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       0)
     ;; Scratch-backed function state is retired before the caller-global
     ;; sentinels below are cleared. Do not recreate a lazy compatibility state
@@ -63885,7 +63883,7 @@
           ;; outgoing stack-arg area would clobber them otherwise).
           (compiler-backend-frame-slots-with-groups
             vars
-            compiler_regalloc.CompilerRegAssignmentList.Nil
+            (compiler_regalloc.compiler-reg-assignment-table-empty)
             (compiler-backend-type-list-has-group?
               type-segment-bases
               param-types
@@ -63909,7 +63907,7 @@
     (match (compiler-backend-emit-param-spills
       type-segment-bases
       target
-      compiler_regalloc.CompilerRegAssignmentList.Nil
+      (compiler_regalloc.compiler-reg-assignment-table-empty)
       params
       1
       0
@@ -63922,7 +63920,7 @@
         (match (compiler-backend-emit-call-args
           type-segment-bases
           target
-          compiler_regalloc.CompilerRegAssignmentList.Nil
+          (compiler_regalloc.compiler-reg-assignment-table-empty)
           args
           param-types
           false
@@ -63944,7 +63942,7 @@
                   (compiler-backend-closure-entry-label
                     (compiler-backend-symbol-text-index program-index name))
                   frame
-                  compiler_regalloc.CompilerRegAssignmentList.Nil
+                  (compiler_regalloc.compiler-reg-assignment-table-empty)
                   vars
                   (struct-get program-index backend-state))
                 ""
@@ -66740,6 +66738,7 @@
                             regalloc-census
                             (begin
                               (compiler_regalloc.compiler-reg-call-span-census-print!)
+                              (compiler_regalloc.compiler-reg-assignment-census-print!)
                               (compiler_regalloc.compiler-reg-move-census-print!)
                               (io.print-error
                                 (str_cat.str-cat
@@ -66864,6 +66863,7 @@
       regalloc-census
       (begin
         (compiler_regalloc.compiler-reg-call-span-census-reset!)
+        (compiler_regalloc.compiler-reg-assignment-census-reset!)
         (compiler_regalloc.compiler-reg-move-census-reset!)))
     (cfg scavenge-census (compiler-backend-scavenge-census-reset!))
     (cfg compile-profile (compiler-backend-profile-start profile-state))
@@ -77137,28 +77137,28 @@
       (compiler-backend-state-function-state state-a)]
     [function-b : CompilerBackendFunctionState
       (compiler-backend-state-function-state state-b)]
-    [assignments-a : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+    [assignments-a : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r12))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Spill 24))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
-    [assignments-b : compiler_regalloc.CompilerRegAssignmentList
-      (compiler_regalloc.compiler-reg-assignment-cons
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    [assignments-b : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
           0
           (compiler_regalloc.CompilerRegLocation.Register
             compiler_abi.compiler-reg-id-r13))
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             1
             (compiler_regalloc.CompilerRegLocation.Spill 40))
-          compiler_regalloc.CompilerRegAssignmentList.Nil))]
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [disp-a : (__tl_dyn-array i64) (array.make-array i64 1)]
     [kind-a : (__tl_dyn-array i64) (array.make-array i64 1)]
     [scale-a : (__tl_dyn-array i64) (array.make-array i64 1)]
@@ -77169,12 +77169,12 @@
       (begin
         (compiler-backend-function-state-set-assignment-index!
           function-a
-          (compiler_regalloc.compiler-reg-assignment-index-build
+          (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
             assignments-a
             4))
         (compiler-backend-function-state-set-assignment-index!
           function-b
-          (compiler_regalloc.compiler-reg-assignment-index-build
+          (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
             assignments-b
             4))
         (compiler-backend-function-state-set-bool!
@@ -77461,9 +77461,9 @@
       (compiler-backend-state-function-state state-a)]
     [function-b : CompilerBackendFunctionState
       (compiler-backend-state-function-state state-b)]
-    [index-a : compiler_regalloc.CompilerRegAssignmentIndex
+    [index-a : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-function-state-assignment-index function-a)]
-    [index-b : compiler_regalloc.CompilerRegAssignmentIndex
+    [index-b : compiler_regalloc.CompilerRegAssignmentTable
       (compiler-backend-function-state-assignment-index function-b)]
     [a-c-xmm : String (compiler-backend-current-c-memory-planned-xmm state-a)]
     [b-c-xmm : String (compiler-backend-current-c-memory-planned-xmm state-b)]
@@ -77835,9 +77835,9 @@
     (compiler-backend-state-function-state backend-state)
     compiler-backend-function-bool-identity-tail-forwarder-active))
 
-(define (compiler-backend-test-get-compiler-backend-scavenge-ctx-assignment-index) : compiler_regalloc.CompilerRegAssignmentIndex
+(define (compiler-backend-test-get-compiler-backend-scavenge-ctx-assignments) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler-backend-global-shared-view
-    compiler-backend-scavenge-ctx-assignment-index))
+    compiler-backend-scavenge-ctx-assignments))
 
 (define (compiler-backend-test-get-compiler-backend-emit-instrs-continue-pending
   [backend-state : CompilerBackendState]) : bool
@@ -78261,12 +78261,12 @@
     [home : String
       (compiler-backend-value-register-home
         backend-state
-        (compiler_regalloc.compiler-reg-assignment-cons
+        (compiler_regalloc.compiler-reg-assignments-prepend
           (compiler_regalloc.CompilerRegAssignment
             2
             (compiler_regalloc.CompilerRegLocation.Register
               compiler_abi.compiler-reg-id-rax))
-          compiler_regalloc.CompilerRegAssignmentList.Nil)
+          (compiler_regalloc.compiler-reg-assignment-table-empty))
         (compiler_ir_types.CompilerIrValue.Var 2))]
     (string.eq home "")))
 

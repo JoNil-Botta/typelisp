@@ -72,10 +72,6 @@
   (var i64)
   (location CompilerRegLocation))
 
-(defenum CompilerRegAssignmentList
-  (Nil)
-  (Cons CompilerRegAssignment (Box CompilerRegAssignmentList)))
-
 (defstruct CompilerRegInterval
   (var i64)
   (start i64)
@@ -106,10 +102,11 @@
   (No)
   (Some ast.AstType))
 
-(defstruct CompilerRegAssignmentIndex
-  (present (__tl_dyn-array i64))
-  (items (__tl_dyn-array CompilerRegLocation)))
-
+;; Authoritative assignment storage. Variable IDs define deterministic plan
+;; order: iteration scans the dense `present` domain from low to high, while
+;; `items[var]` provides direct lookup. Greedy/worklist code owns its table and
+;; mutates it in place; plan overlays use the copying helper below so a retained
+;; predecessor cannot observe successor-only updates.
 (defstruct CompilerRegAssignmentTable
   (present (__tl_dyn-array i64))
   (items (__tl_dyn-array CompilerRegLocation)))
@@ -409,7 +406,7 @@
 
 (defenum CompilerRegPlan
   (Plan
-    CompilerRegAssignmentList
+    CompilerRegAssignmentTable
     live.CompilerLiveI64Set
     CompilerRegIntervalSeq
     CompilerRegVarTypes
@@ -427,16 +424,16 @@
     ir.CompilerIrBlockList
     i64
     i64
-    CompilerRegAssignmentList
+    CompilerRegAssignmentTable
     CompilerRegVarTypes))
 
 ;; Per-instruction rewrite state for rematerialization. The rewritten
 ;; instructions themselves are not carried here: they are pushed straight into
 ;; a caller-owned `CompilerIrInstrBuilder` threaded `(&mut ...)` through the
 ;; walk, so the payload is only the scalars and lists that thread forward
-;; (emit point, next var id, and the extra assignment/type lists remat grows).
+;; (emit point, next var id, and the extra assignment/type overlays remat grows).
 (defenum CompilerRegCallSaveInstrRewrite
-  (Rewrite i64 i64 CompilerRegAssignmentList CompilerRegVarTypes))
+  (Rewrite i64 i64 CompilerRegAssignmentTable CompilerRegVarTypes))
 
 ;; Conservative cold-call clobber splitting happens before scalar allocation.
 ;; `temp-start` is the first synthetic stack-home used to carry a protected GP
@@ -733,10 +730,16 @@
     (compiler-reg-string-prefix? name "__tl_spmd_active_mask")
     (compiler-reg-string-prefix? name "__tl_spmd_mask_arg_")))
 
-(define (compiler-reg-assignment-cons
+(define (compiler-reg-assignments-prepend
   [head : CompilerRegAssignment]
-  [rest : CompilerRegAssignmentList]) : CompilerRegAssignmentList
-  (CompilerRegAssignmentList.Cons head (box rest)))
+  [rest : CompilerRegAssignmentTable]) : CompilerRegAssignmentTable
+  ;; Cold fixture/overlay builder. Preserve the old persistent-prepend
+  ;; ownership contract by copying before overriding `head.var`; production
+  ;; allocator mutations use compiler-reg-assignment-table-insert directly.
+  (compiler-reg-assignment-insert
+    rest
+    (struct-get head var)
+    (struct-get head location)))
 
 ;; Capacity for a seq that must hold `len + 1` elements; the caller copies the
 ;; live prefix into a fresh array of this size when the current one is full.
@@ -2487,48 +2490,6 @@
           (set! index (+ index 1))))
       unit)))
 
-(define (compiler-reg-assignment-index-fill!
-  [assignments : CompilerRegAssignmentList]
-  [present : (__tl_dyn-array i64)]
-  [items : (__tl_dyn-array CompilerRegLocation)]) : unit
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) unit]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (begin
-        (let
-          [var : i64 (struct-get item var)]
-          (if (or
-            (< var 0)
-            (>= var (array-length present))
-            (not (= (array-ref present var) 0)))
-            unit
-            (begin
-              (array-set! present var 1)
-              (array-set! items var (struct-get item location)))))
-        (compiler-reg-assignment-index-fill! (box-get rest) present items))]))
-
-(define (compiler-reg-assignment-index-build
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]) : CompilerRegAssignmentIndex
-  (let
-    [present : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (array.make-array CompilerRegLocation vars)]
-    (begin
-      (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
-      (compiler-reg-assignment-index-fill! assignments present items)
-      (CompilerRegAssignmentIndex present items))))
-
-(define (compiler-reg-assignment-index-lookup
-  [index : (& index CompilerRegAssignmentIndex)]
-  [var : i64]) : CompilerRegMaybeLocation
-  (if (or (< var 0) (>= var (array-length (struct-get index present))))
-    CompilerRegMaybeLocation.No
-    (if (= (array-ref (struct-get index present) var) 0)
-      CompilerRegMaybeLocation.No
-      (CompilerRegMaybeLocation.Some
-        (clone (array-ref (struct-get index items) var))))))
-
 (define (compiler-reg-assignment-table-make [vars : i64]) : CompilerRegAssignmentTable
   (let
     [n : i64
@@ -2541,6 +2502,41 @@
     (begin
       (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (CompilerRegAssignmentTable present items))))
+
+(define (compiler-reg-assignment-table-empty) : CompilerRegAssignmentTable
+  (compiler-reg-assignment-table-make 1))
+
+(define (compiler-reg-assignment-table-copy-with-capacity
+  [assignments : (& assignments CompilerRegAssignmentTable)]
+  [capacity : i64]) : CompilerRegAssignmentTable
+  (let
+    [old-present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [old-items : (__tl_dyn-array CompilerRegLocation)
+      (struct-get assignments items)]
+    [size : i64
+      (if (> capacity (array-length old-present))
+        capacity
+        (array-length old-present))]
+    [out : CompilerRegAssignmentTable (compiler-reg-assignment-table-make size)]
+    [present : (__tl_dyn-array i64) (struct-get out present)]
+    [items : (__tl_dyn-array CompilerRegLocation) (struct-get out items)]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length old-present))
+        (begin
+          (array-set! present index (array-ref old-present index))
+          (if (= (array-ref old-present index) 0)
+            unit
+            (array-set! items index (clone (array-ref old-items index))))
+          (set! index (+ index 1))))
+      out)))
+
+(define (compiler-reg-assignment-table-with-min-capacity
+  [assignments : CompilerRegAssignmentTable]
+  [vars : i64]) : CompilerRegAssignmentTable
+  (if (<= vars (array-length (struct-get assignments present)))
+    assignments
+    (compiler-reg-assignment-table-copy-with-capacity assignments vars)))
 
 (define (compiler-reg-assignment-table-insert
   [assignments : CompilerRegAssignmentTable]
@@ -2557,6 +2553,27 @@
           (array-set! present var 1)
           (array-set! items var location)))
       assignments)))
+
+(define (compiler-reg-assignment-table-overlay!
+  [dst : CompilerRegAssignmentTable]
+  [src : CompilerRegAssignmentTable]) : unit
+  (let
+    [present : (__tl_dyn-array i64) (struct-get src present)]
+    [items : (__tl_dyn-array CompilerRegLocation) (struct-get src items)]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length present))
+        (begin
+          (if (= (array-ref present index) 0)
+            unit
+            (begin
+              (compiler-reg-assignment-table-insert
+                dst
+                index
+                (clone (array-ref items index)))
+              unit))
+          (set! index (+ index 1))))
+      unit)))
 
 ;; RAGreedy Component 1: drop a var's current assignment (present[var]=0) without
 ;; choosing a new location. The evict-and-requeue worklist UNASSIGNS an evicted
@@ -2575,7 +2592,7 @@
       assignments)))
 
 (define (compiler-reg-assignment-table-lookup
-  [assignments : CompilerRegAssignmentTable]
+  [assignments : (& assignments CompilerRegAssignmentTable)]
   [var : i64]) : CompilerRegMaybeLocation
   (let
     [present : (__tl_dyn-array i64) (struct-get assignments present)]
@@ -2585,7 +2602,7 @@
       CompilerRegMaybeLocation.No
       (if (= (array-ref present var) 0)
         CompilerRegMaybeLocation.No
-        (CompilerRegMaybeLocation.Some (array-ref items var))))))
+        (CompilerRegMaybeLocation.Some (clone (array-ref items var)))))))
 
 (define (compiler-reg-assignment-table-has-spill-from?
   [assignments : CompilerRegAssignmentTable]
@@ -2609,32 +2626,6 @@
 (define (compiler-reg-assignment-table-has-spill?
   [assignments : CompilerRegAssignmentTable]) : bool
   (compiler-reg-assignment-table-has-spill-from? assignments 0))
-
-(define (compiler-reg-assignment-table-to-list-from
-  [assignments : CompilerRegAssignmentTable]
-  [index : i64]
-  [out : CompilerRegAssignmentList]) : CompilerRegAssignmentList
-  (if (< index 0)
-    out
-    (let
-      [present : (__tl_dyn-array i64) (struct-get assignments present)]
-      [items : (__tl_dyn-array CompilerRegLocation)
-        (struct-get assignments items)]
-      (compiler-reg-assignment-table-to-list-from
-        assignments
-        (- index 1)
-        (if (= (array-ref present index) 0)
-          out
-          (compiler-reg-assignment-cons
-            (CompilerRegAssignment index (array-ref items index))
-            out))))))
-
-(define (compiler-reg-assignment-table-to-list
-  [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignmentList
-  (compiler-reg-assignment-table-to-list-from
-    assignments
-    (- (array-length (struct-get assignments present)) 1)
-    CompilerRegAssignmentList.Nil))
 
 (define (compiler-reg-interval-index-fill!
   [intervals : CompilerRegIntervalSeq]
@@ -6723,54 +6714,32 @@
               (set! done true)))))
       result)))
 
-(define (compiler-reg-assignment-insert
-  [assignments : CompilerRegAssignmentList]
+(define (compiler-reg-assignment-table-override-copy
+  [assignments : (& assignments CompilerRegAssignmentTable)]
   [var : i64]
-  [location : CompilerRegLocation]) : CompilerRegAssignmentList
-  (match assignments
-    [(CompilerRegAssignmentList.Nil)
-      (compiler-reg-assignment-cons
-        (CompilerRegAssignment var location)
-        CompilerRegAssignmentList.Nil)]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (let
-        [id : i64 (struct-get item var)]
-        (if (= id var)
-          (compiler-reg-assignment-cons
-            (CompilerRegAssignment var location)
-            (box-get rest))
-          (if (> id var)
-            (compiler-reg-assignment-cons
-              (CompilerRegAssignment var location)
-              assignments)
-            (compiler-reg-assignment-cons
-              item
-              (compiler-reg-assignment-insert (box-get rest) var location)))))]))
+  [location : CompilerRegLocation]) : CompilerRegAssignmentTable
+  (if (< var 0)
+    (compiler-reg-assignment-table-copy-with-capacity
+      assignments
+      (array-length (struct-get assignments present)))
+    (compiler-reg-assignment-table-insert
+      (compiler-reg-assignment-table-copy-with-capacity assignments (+ var 1))
+      var
+      location)))
+
+;; Compatibility name for expression-shaped builders. The input is consumed,
+;; but the returned table still owns fresh arrays; retained snapshots call the
+;; explicit borrowed override helper above.
+(define (compiler-reg-assignment-insert
+  [assignments : CompilerRegAssignmentTable]
+  [var : i64]
+  [location : CompilerRegLocation]) : CompilerRegAssignmentTable
+  (compiler-reg-assignment-table-override-copy assignments var location))
 
 (define (compiler-reg-assignment-lookup
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [var : i64]) : CompilerRegMaybeLocation
-  (let
-    [cursor : CompilerRegAssignmentList assignments]
-    [result : CompilerRegMaybeLocation CompilerRegMaybeLocation.No]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (match cursor
-          [(CompilerRegAssignmentList.Nil) (set! done true)]
-          [(CompilerRegAssignmentList.Cons item rest)
-            (let
-              [id : i64 (struct-get item var)]
-              (if (= id var)
-                (begin
-                  (set!
-                    result
-                    (CompilerRegMaybeLocation.Some (struct-get item location)))
-                  (set! done true))
-                (if (> id var)
-                  (set! done true)
-                  (set! cursor (box-get rest)))))]))
-      result)))
+  (compiler-reg-assignment-table-lookup assignments var))
 
 (define (compiler-reg-location-eq?
   [left : CompilerRegLocation]
@@ -6849,46 +6818,62 @@
     [(CompilerRegLocation.RegisterPair first _) first]
     [_ cabi.compiler-reg-id-invalid]))
 
-(define (compiler-reg-assignment-index-var-uses-register?
-  [assignment-index : (& assignment-index CompilerRegAssignmentIndex)]
+(define (compiler-reg-assignment-table-var-uses-register?
+  [assignment-index : (& assignment-index CompilerRegAssignmentTable)]
   [var : i64]
   [reg : i64]) : bool
-  (match (compiler-reg-assignment-index-lookup assignment-index var)
+  (match (compiler-reg-assignment-table-lookup assignment-index var)
     [(CompilerRegMaybeLocation.Some location)
       (compiler-reg-location-uses-register? location reg)]
     [(CompilerRegMaybeLocation.No) false]))
 
-(define (compiler-reg-assignment-index-primary-register-home
-  [assignment-index : (& assignment-index CompilerRegAssignmentIndex)]
+(define (compiler-reg-assignment-table-primary-register-home
+  [assignment-index : (& assignment-index CompilerRegAssignmentTable)]
   [var : i64]) : i64
-  (match (compiler-reg-assignment-index-lookup assignment-index var)
+  (match (compiler-reg-assignment-table-lookup assignment-index var)
     [(CompilerRegMaybeLocation.Some location)
       (compiler-reg-location-primary-register location)]
     [(CompilerRegMaybeLocation.No) cabi.compiler-reg-id-invalid]))
 
 (define (compiler-reg-assignments-use-register?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [reg : i64]) : bool
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) false]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (if (compiler-reg-location-uses-register? (struct-get item location) reg)
-        true
-        (compiler-reg-assignments-use-register? (box-get rest) reg))]))
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [items : (__tl_dyn-array CompilerRegLocation)
+      (struct-get assignments items)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index (array-length present)) (not found))
+        (begin
+          (if (and
+            (not (= (array-ref present index) 0))
+            (compiler-reg-location-uses-register? (array-ref items index) reg))
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
 
 (define (compiler-reg-assignments-register-use-count
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [reg : i64]) : i64
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) 0]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (+
-        (if (compiler-reg-location-uses-register?
-          (struct-get item location)
-          reg)
-          1
-          0)
-        (compiler-reg-assignments-register-use-count (box-get rest) reg))]))
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [items : (__tl_dyn-array CompilerRegLocation)
+      (struct-get assignments items)]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index (array-length present))
+        (begin
+          (if (and
+            (not (= (array-ref present index) 0))
+            (compiler-reg-location-uses-register? (array-ref items index) reg))
+            (set! count (+ count 1))
+            unit)
+          (set! index (+ index 1))))
+      count)))
 
 (define (compiler-reg-var-live-at-point?
   [starts : (& starts (__tl_dyn-array i64))]
@@ -6918,10 +6903,10 @@
     (<= (array-ref starts var) hi)
     (<= lo (array-ref ends var))))
 
-(define (compiler-reg-assignment-index-register-free-at-point?
+(define (compiler-reg-assignment-table-register-free-at-point?
   [starts : (__tl_dyn-array i64)]
   [ends : (__tl_dyn-array i64)]
-  [assignment-index : CompilerRegAssignmentIndex]
+  [assignment-index : CompilerRegAssignmentTable]
   [vars : i64]
   [point : i64]
   [reg : i64]) : bool
@@ -6933,7 +6918,7 @@
         (begin
           (if (and
             (compiler-reg-var-live-at-point? starts ends v point)
-            (compiler-reg-assignment-index-var-uses-register?
+            (compiler-reg-assignment-table-var-uses-register?
               assignment-index
               v
               reg))
@@ -6942,10 +6927,10 @@
           (set! v (+ v 1))))
       free)))
 
-(define (compiler-reg-assignment-index-register-free-over-range?
+(define (compiler-reg-assignment-table-register-free-over-range?
   [starts : (& starts (__tl_dyn-array i64))]
   [ends : (& ends (__tl_dyn-array i64))]
-  [assignment-index : (& assignment-index CompilerRegAssignmentIndex)]
+  [assignment-index : (& assignment-index CompilerRegAssignmentTable)]
   [vars : i64]
   [lo : i64]
   [hi : i64]
@@ -6958,7 +6943,7 @@
         (begin
           (if (and
             (compiler-reg-var-live-over-range? starts ends v lo hi)
-            (compiler-reg-assignment-index-var-uses-register?
+            (compiler-reg-assignment-table-var-uses-register?
               assignment-index
               v
               reg))
@@ -7194,34 +7179,17 @@
     [(CompilerRegMaybeType.No) false]))
 
 (define (compiler-reg-location-conflicts?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [var : i64]
   [ignore-var : i64]
   [location : CompilerRegLocation]) : bool
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) false]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (let
-        [assigned-var : i64 (struct-get item var)]
-        [assigned-location : CompilerRegLocation (struct-get item location)]
-        (if (or (= assigned-var var) (= assigned-var ignore-var))
-          (compiler-reg-location-conflicts?
-            (box-get rest)
-            intervals
-            var
-            ignore-var
-            location)
-          (if (and
-            (compiler-reg-location-overlaps? assigned-location location)
-            (compiler-reg-vars-interfere-index? intervals var assigned-var))
-            true
-            (compiler-reg-location-conflicts?
-              (box-get rest)
-              intervals
-              var
-              ignore-var
-              location))))]))
+  (compiler-reg-assignment-table-location-conflicts?
+    assignments
+    intervals
+    var
+    ignore-var
+    location))
 
 (define (compiler-reg-assignment-table-location-conflicts-from?
   [assignments : CompilerRegAssignmentTable]
@@ -8601,20 +8569,37 @@
         0))))
 
 (define (compiler-reg-assignment-count
-  [assignments : CompilerRegAssignmentList]) : i64
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) 0]
-    [(CompilerRegAssignmentList.Cons _ rest)
-      (+ 1 (compiler-reg-assignment-count (box-get rest)))]))
+  [assignments : CompilerRegAssignmentTable]) : i64
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index (array-length present))
+        (begin
+          (if (= (array-ref present index) 0)
+            unit
+            (set! count (+ count 1)))
+          (set! index (+ index 1))))
+      count)))
 
-(define (compiler-reg-spill-count [assignments : CompilerRegAssignmentList]) : i64
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) 0]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (match (struct-get item location)
-        [(CompilerRegLocation.Spill _)
-          (+ 1 (compiler-reg-spill-count (box-get rest)))]
-        [_ (compiler-reg-spill-count (box-get rest))])]))
+(define (compiler-reg-spill-count [assignments : CompilerRegAssignmentTable]) : i64
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [items : (__tl_dyn-array CompilerRegLocation)
+      (struct-get assignments items)]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index (array-length present))
+        (begin
+          (if (= (array-ref present index) 0)
+            unit
+            (match (array-ref items index)
+              [(CompilerRegLocation.Spill _) (set! count (+ count 1))]
+              [_ unit]))
+          (set! index (+ index 1))))
+      count)))
 
 (define (compiler-reg-copy-hints-add-move!
   [hints : (__tl_dyn-array i64)]
@@ -11156,7 +11141,7 @@
     blocks
     vars
     vars
-    CompilerRegAssignmentList.Nil
+    (compiler-reg-assignment-table-empty)
     (compiler-reg-var-types-empty)))
 
 (define (compiler-reg-loop-split-direction-present?
@@ -11491,41 +11476,38 @@
         [(CompilerRegMaybeInterval.No) true]))))
 
 (define (compiler-reg-loop-split-location-conflicts-region?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [region-intervals : CompilerRegIntervalSeq]
   [ignore-var : i64]
   [location : CompilerRegLocation]) : bool
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) false]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (let
-        [assigned-var : i64 (struct-get item var)]
-        [assigned-location : CompilerRegLocation (struct-get item location)]
-        (if (or
-          (= assigned-var ignore-var)
-          (not (compiler-reg-location-overlaps? assigned-location location)))
-          (compiler-reg-loop-split-location-conflicts-region?
-            (box-get rest)
-            intervals
-            region-intervals
-            ignore-var
-            location)
-          (if (compiler-reg-loop-split-var-overlaps-region?
-            intervals
-            assigned-var
-            region-intervals)
-            true
-            (compiler-reg-loop-split-location-conflicts-region?
-              (box-get rest)
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [items : (__tl_dyn-array CompilerRegLocation)
+      (struct-get assignments items)]
+    [assigned-var : i64 0]
+    [conflict : bool false]
+    (begin
+      (while (and (< assigned-var (array-length present)) (not conflict))
+        (begin
+          (if (and
+            (not (= (array-ref present assigned-var) 0))
+            (not (= assigned-var ignore-var))
+            (compiler-reg-location-overlaps?
+              (array-ref items assigned-var)
+              location)
+            (compiler-reg-loop-split-var-overlaps-region?
               intervals
-              region-intervals
-              ignore-var
-              location))))]))
+              assigned-var
+              region-intervals))
+            (set! conflict true)
+            unit)
+          (set! assigned-var (+ assigned-var 1))))
+      conflict)))
 
 (define (compiler-reg-loop-split-first-register
   [regs : CompilerRegIdSeq]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [region-intervals : CompilerRegIntervalSeq]
   [ignore-var : i64]) : CompilerRegMaybeId
@@ -11554,49 +11536,39 @@
 ;; `acc` threads the search: -2 = none seen yet, -1 = multiple (not evictable),
 ;; >=0 = the one var found so far.
 (define (compiler-reg-loop-split-region-occupant
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [region-intervals : CompilerRegIntervalSeq]
   [ignore-var : i64]
   [location : CompilerRegLocation]
   [acc : i64]) : i64
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) acc]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (let
-        [assigned-var : i64 (struct-get item var)]
-        [assigned-location : CompilerRegLocation (struct-get item location)]
-        (if (or
-          (= acc (- 0 1))
-          (= assigned-var ignore-var)
-          (not (compiler-reg-location-overlaps? assigned-location location)))
-          (compiler-reg-loop-split-region-occupant
-            (box-get rest)
-            intervals
-            region-intervals
-            ignore-var
-            location
-            acc)
-          (if (compiler-reg-loop-split-var-overlaps-region?
-            intervals
-            assigned-var
-            region-intervals)
-            (compiler-reg-loop-split-region-occupant
-              (box-get rest)
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [items : (__tl_dyn-array CompilerRegLocation)
+      (struct-get assignments items)]
+    [assigned-var : i64 0]
+    [out : i64 acc]
+    (begin
+      (while (and (< assigned-var (array-length present)) (not (= out (- 0 1))))
+        (begin
+          (if (and
+            (not (= (array-ref present assigned-var) 0))
+            (not (= assigned-var ignore-var))
+            (compiler-reg-location-overlaps?
+              (array-ref items assigned-var)
+              location)
+            (compiler-reg-loop-split-var-overlaps-region?
               intervals
-              region-intervals
-              ignore-var
-              location
-              (if (= acc (- 0 2))
+              assigned-var
+              region-intervals))
+            (set!
+              out
+              (if (= out (- 0 2))
                 assigned-var
                 (- 0 1)))
-            (compiler-reg-loop-split-region-occupant
-              (box-get rest)
-              intervals
-              region-intervals
-              ignore-var
-              location
-              acc))))]))
+            unit)
+          (set! assigned-var (+ assigned-var 1))))
+      out)))
 
 ;; Eviction-aware register pick: used when no candidate register is FREE over the
 ;; region. Find a candidate register whose region occupant is a SINGLE var of
@@ -11606,7 +11578,7 @@
 ;; Returns the register and the var to evict, or None.
 (define (compiler-reg-loop-split-first-register-evict
   [regs : CompilerRegIdSeq]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [region-intervals : CompilerRegIntervalSeq]
   [ignore-var : i64]
@@ -12402,7 +12374,7 @@
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -12607,7 +12579,7 @@
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -12683,7 +12655,7 @@
   [block-index : i64]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -12830,7 +12802,7 @@
   [block-index : i64]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -12942,22 +12914,22 @@
       (compiler-reg-region-label-map region-labels)]
     ;; The new region-resident var (id `vars`) takes the register. When this
     ;; candidate evicted a lower-weight var to free that register, also override
-    ;; the evicted var to Spill -- assignment-list-merge -> assignment-insert
+    ;; the evicted var to Spill -- assignment-table-merge -> assignment-insert
     ;; overwrites its prior Register home, and a whole-var spill is always sound.
     ;; (The offset is a placeholder; color-stack-slots re-colors all spills.)
-    [extra-assignments : CompilerRegAssignmentList
+    [extra-assignments : CompilerRegAssignmentTable
       (if (>= evicted-var 0)
-        (compiler-reg-assignment-cons
+        (compiler-reg-assignments-prepend
           (CompilerRegAssignment vars (CompilerRegLocation.Register reg))
-          (compiler-reg-assignment-cons
+          (compiler-reg-assignments-prepend
             (CompilerRegAssignment
               evicted-var
               (CompilerRegLocation.Spill
                 (compiler-reg-stack-slot-offset evicted-var)))
-            CompilerRegAssignmentList.Nil))
-        (compiler-reg-assignment-cons
+            (compiler-reg-assignment-table-empty)))
+        (compiler-reg-assignments-prepend
           (CompilerRegAssignment vars (CompilerRegLocation.Register reg))
-          CompilerRegAssignmentList.Nil))]
+          (compiler-reg-assignment-table-empty)))]
     (begin
       (array-set! remap stack-var vars)
       ;; Home the whole coalesced group (move-related members of `stack-var`), not
@@ -13098,7 +13070,7 @@
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -13205,7 +13177,7 @@
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -13271,7 +13243,7 @@
   [h : i64]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -13383,7 +13355,7 @@
   [depths : (__tl_dyn-array i64)]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -13544,45 +13516,40 @@
 
 (define (compiler-reg-leaf-csr-location-conflicts-region?
   [func : ir.CompilerIrFunction]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [region-intervals : CompilerRegIntervalSeq]
   [ignore-var : i64]
   [location : CompilerRegLocation]) : bool
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) false]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (let
-        [assigned-var : i64 (struct-get item var)]
-        [assigned-location : CompilerRegLocation (struct-get item location)]
-        (if (or
-          (= assigned-var ignore-var)
-          (not (compiler-reg-location-overlaps? assigned-location location))
-          (compiler-reg-leaf-csr-fuse-safe? func assigned-var))
-          (compiler-reg-leaf-csr-location-conflicts-region?
-            func
-            (box-get rest)
-            intervals
-            region-intervals
-            ignore-var
-            location)
-          (if (compiler-reg-loop-split-var-overlaps-region?
-            intervals
-            assigned-var
-            region-intervals)
-            true
-            (compiler-reg-leaf-csr-location-conflicts-region?
-              func
-              (box-get rest)
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [items : (__tl_dyn-array CompilerRegLocation)
+      (struct-get assignments items)]
+    [assigned-var : i64 0]
+    [conflict : bool false]
+    (begin
+      (while (and (< assigned-var (array-length present)) (not conflict))
+        (begin
+          (if (and
+            (not (= (array-ref present assigned-var) 0))
+            (not (= assigned-var ignore-var))
+            (compiler-reg-location-overlaps?
+              (array-ref items assigned-var)
+              location)
+            (not (compiler-reg-leaf-csr-fuse-safe? func assigned-var))
+            (compiler-reg-loop-split-var-overlaps-region?
               intervals
-              region-intervals
-              ignore-var
-              location))))]))
+              assigned-var
+              region-intervals))
+            (set! conflict true)
+            unit)
+          (set! assigned-var (+ assigned-var 1))))
+      conflict)))
 
 (define (compiler-reg-leaf-csr-first-inner-register
   [func : ir.CompilerIrFunction]
   [regs : CompilerRegIdSeq]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [region-intervals : CompilerRegIntervalSeq]
   [ignore-var : i64]) : CompilerRegMaybeId
@@ -13689,7 +13656,7 @@
 
 (define (compiler-reg-leaf-csr-location-conflicts-outer-segments?
   [segments : CompilerRegIntervalSeq]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [region-start : i64]
   [region-end : i64]
@@ -13742,7 +13709,7 @@
       conflict)))
 
 (define (compiler-reg-leaf-csr-location-conflicts-outer?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [region-start : i64]
   [region-end : i64]
@@ -13780,7 +13747,7 @@
 
 (define (compiler-reg-leaf-csr-first-outer-register
   [regs : CompilerRegIdSeq]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [region-start : i64]
   [region-end : i64]
@@ -13823,7 +13790,7 @@
   [var : i64]
   [param-vars : live.CompilerLiveI64Set]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -13952,7 +13919,7 @@
   [var : i64]
   [param-vars : live.CompilerLiveI64Set]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -14038,7 +14005,7 @@
   [vars : i64]
   [param-vars : live.CompilerLiveI64Set]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -14309,22 +14276,22 @@
     [outer-remap : (__tl_dyn-array i64) (compiler-reg-caller-save-remap vars)]
     [region-remap : (__tl_dyn-array i64)
       (compiler-reg-caller-save-remap (+ vars 1))]
-    [extra-assignments : CompilerRegAssignmentList
-      (compiler-reg-assignment-cons
+    [extra-assignments : CompilerRegAssignmentTable
+      (compiler-reg-assignments-prepend
         (CompilerRegAssignment
           outer-var
           (CompilerRegLocation.Register outer-reg))
-        (compiler-reg-assignment-cons
+        (compiler-reg-assignments-prepend
           (CompilerRegAssignment
             inner-var
             (CompilerRegLocation.Register inner-reg))
           (if (>= fused-occupant 0)
-            (compiler-reg-assignment-cons
+            (compiler-reg-assignments-prepend
               (CompilerRegAssignment
                 fused-occupant
                 (CompilerRegLocation.Register inner-reg))
-              CompilerRegAssignmentList.Nil)
-            CompilerRegAssignmentList.Nil)))]
+              (compiler-reg-assignment-table-empty))
+            (compiler-reg-assignment-table-empty))))]
     (begin
       (array-set! outer-remap stack-var outer-var)
       (array-set! region-remap outer-var inner-var)
@@ -14377,7 +14344,7 @@
             (live.compiler-live-analyze-function func)]
           [selection : CompilerRegIntervalSelection
             (compiler-reg-live-interval-selection func liveness)]
-          [assignments : CompilerRegAssignmentList
+          [assignments : CompilerRegAssignmentTable
             (compiler-reg-plan-assignments plan)]
           [group-vars : live.CompilerLiveI64Set
             (compiler-reg-function-group-vars type-segment-bases func type-info)]
@@ -14541,7 +14508,7 @@
         (struct-get liveness-handle baseline)]
       [selection : CompilerRegIntervalSelection
         (compiler-reg-live-interval-selection func liveness)]
-      [assignments : CompilerRegAssignmentList
+      [assignments : CompilerRegAssignmentTable
         (compiler-reg-plan-assignments plan)]
       [group-vars : live.CompilerLiveI64Set
         (compiler-reg-function-group-vars type-segment-bases func type-info)]
@@ -14735,7 +14702,7 @@
                                             ;; compare, silently miscompiled).
                                             ;; Deeper-round edits therefore go in
                                             ;; as `extra` so they win.
-                                            (compiler-reg-assignment-list-merge
+                                            (compiler-reg-assignment-table-merge
                                               rest-assignments
                                               split-assignments)
                                             ;; Types stay in unwind order: every
@@ -14769,7 +14736,7 @@
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -14870,7 +14837,7 @@
   [vars : i64]
   [var : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -14929,7 +14896,7 @@
   [block-index : i64]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -15050,7 +15017,7 @@
   [block-index : i64]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -15084,7 +15051,7 @@
   [block-index : i64]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
@@ -15194,7 +15161,7 @@
   [in-vars : i64]
   [current-vars : i64]
   [plan : CompilerRegPlan]
-  [extra-assignments : CompilerRegAssignmentList]
+  [extra-assignments : CompilerRegAssignmentTable]
   [extra-types : CompilerRegVarTypes]
   [rounds-left : i64]) : CompilerRegCallSaveRewrite
   (if (<= rounds-left 0)
@@ -15278,8 +15245,8 @@
                 (match func
                   [(ir.CompilerIrFunction.Function name params ret-ty _ _)
                     (let
-                      [merged-assignments : CompilerRegAssignmentList
-                        (compiler-reg-assignment-list-merge
+                      [merged-assignments : CompilerRegAssignmentTable
+                        (compiler-reg-assignment-table-merge
                           next-assignments
                           extra-assignments)]
                       [merged-types : CompilerRegVarTypes
@@ -15335,7 +15302,7 @@
     vars
     vars
     plan
-    CompilerRegAssignmentList.Nil
+    (compiler-reg-assignment-table-empty)
     (compiler-reg-var-types-empty)
     (compiler-reg-loop-split-max-rounds-for-abi target-abi)))
 
@@ -17505,7 +17472,7 @@
 (cfg
   (any regalloc-census test)
   (define (compiler-reg-call-span-census-count
-    [census : CompilerRegCallSpanCensus]
+    [census : (& census CompilerRegCallSpanCensus)]
     [bucket : i64]
     [outcome : i64]) : i64
     (array-ref
@@ -17515,7 +17482,7 @@
 (cfg
   (any regalloc-census test)
   (define (compiler-reg-call-span-assignment-outcome
-    [assignments : CompilerRegAssignmentList]
+    [assignments : CompilerRegAssignmentTable]
     [split-vars : live.CompilerLiveI64Set]
     [var : i64]) : i64
     (if (live.compiler-live-set-contains? split-vars var)
@@ -17534,7 +17501,7 @@
   (define (compiler-reg-call-span-census-intervals!
     [census : CompilerRegCallSpanCensus]
     [intervals : CompilerRegIntervalSeq]
-    [assignments : CompilerRegAssignmentList]
+    [assignments : CompilerRegAssignmentTable]
     [call-points : live.CompilerLiveI64Set]
     [split-vars : live.CompilerLiveI64Set]) : unit
     (let
@@ -17589,7 +17556,7 @@
 (cfg
   (any regalloc-census test)
   (define (compiler-reg-call-span-census-merge-into!
-    [dst : CompilerRegCallSpanCensus]
+    [dst : (&mut dst CompilerRegCallSpanCensus)]
     [src : CompilerRegCallSpanCensus]) : unit
     (let
       [dst-counts : (__tl_dyn-array i64) (struct-get dst counts)]
@@ -17623,7 +17590,7 @@
     [func : ir.CompilerIrFunction]
     [plan : CompilerRegPlan]) : unit
     (compiler-reg-call-span-census-merge-into!
-      compiler-reg-call-span-census-total
+      (&mut compiler-reg-call-span-census-total)
       (compiler-reg-plan-call-span-census func plan))))
 
 (cfg
@@ -17637,20 +17604,20 @@
       "|"
       (string.int->string
         (compiler-reg-call-span-census-count
-          compiler-reg-call-span-census-total
+          (& compiler-reg-call-span-census-total)
           bucket
           (compiler-reg-call-span-outcome-register)))
       (string.concat5
         "|"
         (string.int->string
           (compiler-reg-call-span-census-count
-            compiler-reg-call-span-census-total
+            (& compiler-reg-call-span-census-total)
             bucket
             (compiler-reg-call-span-outcome-spill)))
         "|"
         (string.int->string
           (compiler-reg-call-span-census-count
-            compiler-reg-call-span-census-total
+            (& compiler-reg-call-span-census-total)
             bucket
             (compiler-reg-call-span-outcome-unassigned)))
         "\n"))))
@@ -17665,6 +17632,134 @@
       (io.print-error (compiler-reg-call-span-census-row "1" 1))
       (io.print-error (compiler-reg-call-span-census-row "2-3" 2))
       (io.print-error (compiler-reg-call-span-census-row "4+" 3)))))
+
+;; Dense assignment occupancy for performance and representation audits. These
+;; counters are compiled only for explicit regalloc-census builds.
+(cfg
+  regalloc-census
+  (define compiler-reg-assignment-census-plans : i64
+    0))
+(cfg
+  regalloc-census
+  (define compiler-reg-assignment-census-capacity : i64
+    0))
+(cfg
+  regalloc-census
+  (define compiler-reg-assignment-census-assigned : i64
+    0))
+(cfg
+  regalloc-census
+  (define compiler-reg-assignment-census-register : i64
+    0))
+(cfg
+  regalloc-census
+  (define compiler-reg-assignment-census-spill : i64
+    0))
+(cfg
+  regalloc-census
+  (define compiler-reg-assignment-census-remat : i64
+    0))
+(cfg
+  regalloc-census
+  (define compiler-reg-assignment-census-max-capacity : i64
+    0))
+(cfg
+  regalloc-census
+  (define compiler-reg-assignment-census-max-assigned : i64
+    0))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-assignment-census-reset!) : unit
+    (begin
+      (set! compiler-reg-assignment-census-plans 0)
+      (set! compiler-reg-assignment-census-capacity 0)
+      (set! compiler-reg-assignment-census-assigned 0)
+      (set! compiler-reg-assignment-census-register 0)
+      (set! compiler-reg-assignment-census-spill 0)
+      (set! compiler-reg-assignment-census-remat 0)
+      (set! compiler-reg-assignment-census-max-capacity 0)
+      (set! compiler-reg-assignment-census-max-assigned 0))))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-assignment-census-record!
+    [assignments : (& assignments CompilerRegAssignmentTable)]) : unit
+    (let
+      [present : (__tl_dyn-array i64) (struct-get assignments present)]
+      [items : (__tl_dyn-array CompilerRegLocation)
+        (struct-get assignments items)]
+      [capacity : i64 (array-length present)]
+      [index : i64 0]
+      [assigned : i64 0]
+      [registers : i64 0]
+      [spills : i64 0]
+      [remats : i64 0]
+      (begin
+        (while (< index capacity)
+          (begin
+            (if (= (array-ref present index) 0)
+              unit
+              (begin
+                (set! assigned (+ assigned 1))
+                (match (clone (array-ref items index))
+                  [(CompilerRegLocation.Register _)
+                    (set! registers (+ registers 1))]
+                  [(CompilerRegLocation.RegisterPair _ _)
+                    (set! registers (+ registers 1))]
+                  [(CompilerRegLocation.Spill _) (set! spills (+ spills 1))]
+                  [(CompilerRegLocation.Remat _) (set! remats (+ remats 1))])))
+            (set! index (+ index 1))))
+        (set!
+          compiler-reg-assignment-census-plans
+          (+ compiler-reg-assignment-census-plans 1))
+        (set!
+          compiler-reg-assignment-census-capacity
+          (+ compiler-reg-assignment-census-capacity capacity))
+        (set!
+          compiler-reg-assignment-census-assigned
+          (+ compiler-reg-assignment-census-assigned assigned))
+        (set!
+          compiler-reg-assignment-census-register
+          (+ compiler-reg-assignment-census-register registers))
+        (set!
+          compiler-reg-assignment-census-spill
+          (+ compiler-reg-assignment-census-spill spills))
+        (set!
+          compiler-reg-assignment-census-remat
+          (+ compiler-reg-assignment-census-remat remats))
+        (if (> capacity compiler-reg-assignment-census-max-capacity)
+          (set! compiler-reg-assignment-census-max-capacity capacity)
+          unit)
+        (if (> assigned compiler-reg-assignment-census-max-assigned)
+          (set! compiler-reg-assignment-census-max-assigned assigned)
+          unit)))))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-assignment-census-print!) : unit
+    (begin
+      (io.print-error
+        "regalloc-assignment-census|plans|capacity|assigned|register|spill|remat|max-capacity|max-assigned\n")
+      (io.print-error
+        (str_cat.str-cat
+          "regalloc-assignment-census|"
+          (string.int->string compiler-reg-assignment-census-plans)
+          "|"
+          (string.int->string compiler-reg-assignment-census-capacity)
+          "|"
+          (string.int->string compiler-reg-assignment-census-assigned)
+          "|"
+          (string.int->string compiler-reg-assignment-census-register)
+          "|"
+          (string.int->string compiler-reg-assignment-census-spill)
+          "|"
+          (string.int->string compiler-reg-assignment-census-remat)
+          "|"
+          (string.int->string compiler-reg-assignment-census-max-capacity)
+          "|"
+          (string.int->string compiler-reg-assignment-census-max-assigned)
+          "\n")))))
 
 ;; ---- move census (cfg regalloc-census) ------------------------------------
 ;; Categorise every harvested IR move by why it survived as a reg-reg copy, to
@@ -17686,7 +17781,7 @@
 (cfg
   regalloc-census
   (define (compiler-reg-move-census-reset!) : unit
-    (compiler-reg-fill-i64-array compiler-reg-move-census-counts 0)))
+    (set! compiler-reg-move-census-counts (array.make-array i64 16))))
 
 (cfg
   regalloc-census
@@ -22742,9 +22837,9 @@
                         "group-pair-assigned|members="
                         (string.int->string count)
                         "|"
-                        reg0
+                        (string.int->string reg0)
                         ":"
-                        reg1
+                        (string.int->string reg1)
                         "|evict-cost="
                         (string.int->string best-cost)
                         "\n"))
@@ -23594,7 +23689,7 @@
           [(cabi.CompilerRegTargetAbi.Windows) final-assignments])
         final-assignments)]
     (CompilerRegPlan.Plan
-      (compiler-reg-assignment-table-to-list pair-assignments)
+      pair-assignments
       ineligible
       intervals
       type-info
@@ -23824,7 +23919,7 @@
   [func : ir.CompilerIrFunction]
   [forced-spill-from : i64]
   [type-info : CompilerRegVarTypes]
-  [forced-assignments : CompilerRegAssignmentList]) : CompilerRegPlan
+  [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
   (let
     [liveness-handle : CompilerRegLivenessHandle
       (compiler-reg-liveness-handle-make func true)]
@@ -23905,7 +24000,7 @@
             [(CompilerRegParamAssignPlan.Plan preassignments ineligible blocked)
               (let
                 [_forced : unit
-                  (compiler-reg-assignment-table-fill!
+                  (compiler-reg-assignment-table-overlay!
                     preassignments
                     forced-assignments)]
                 (compiler-reg-plan-from
@@ -23936,7 +24031,7 @@
     func
     forced-spill-from
     type-info
-    CompilerRegAssignmentList.Nil))
+    (compiler-reg-assignment-table-empty)))
 
 (define (compiler-reg-plan-function-scalar-cold-for-abi-with-types
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -23993,7 +24088,7 @@
   (let
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     (CompilerRegPlan.Plan
-      CompilerRegAssignmentList.Nil
+      (compiler-reg-assignment-table-empty)
       (live.compiler-live-set-empty)
       (compiler-reg-interval-seq-empty)
       type-info
@@ -24535,7 +24630,7 @@
   [items : (__tl_dyn-array CompilerRegInterval)]
   [count : i64]
   [index : i64]
-  [assignment-index : CompilerRegAssignmentIndex]
+  [assignment-index : CompilerRegAssignmentTable]
   [pinned : live.CompilerLiveI64Set]
   [ineligible : live.CompilerLiveI64Set]
   [colorable : (__tl_dyn-array bool)]
@@ -24564,7 +24659,7 @@
         ;; Spilled scalars are re-homed by the id remap (the stale
         ;; assignment entry keyed by the old id is never queried);
         ;; register-homed values keep their ids and homes.
-        (match (compiler-reg-assignment-index-lookup assignment-index var)
+        (match (compiler-reg-assignment-table-lookup assignment-index var)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Spill _) false]
@@ -25796,51 +25891,36 @@
   [remap : (__tl_dyn-array i64)]
   [present : (__tl_dyn-array i64)]
   [items : (__tl_dyn-array CompilerRegLocation)]
-  [assignments : CompilerRegAssignmentList]) : unit
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) unit]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (begin
-        (let
-          [var : i64 (struct-get item var)]
-          [location : CompilerRegLocation (struct-get item location)]
-          (match location
-            [(CompilerRegLocation.Spill _) unit]
-            [_
-              (let
-                [new-id : i64 (compiler-reg-remap-id remap var)]
-                (if (and (>= new-id 0) (< new-id (array-length present)))
-                  (begin
-                    (array-set! present new-id 1)
-                    (array-set! items new-id location))
-                  unit))]))
-        (compiler-reg-color-scatter-assignments
-          remap
-          present
-          items
-          (box-get rest)))]))
-
-(define (compiler-reg-assignment-arrays-to-list
-  [present : (__tl_dyn-array i64)]
-  [items : (__tl_dyn-array CompilerRegLocation)]
-  [index : i64]
-  [acc : CompilerRegAssignmentList]) : CompilerRegAssignmentList
-  (if (< index 0)
-    acc
-    (compiler-reg-assignment-arrays-to-list
-      present
-      items
-      (- index 1)
-      (if (= (array-ref present index) 0)
-        acc
-        (compiler-reg-assignment-cons
-          (CompilerRegAssignment index (array-ref items index))
-          acc)))))
+  [assignments : CompilerRegAssignmentTable]) : unit
+  (let
+    [source-present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [source-items : (__tl_dyn-array CompilerRegLocation)
+      (struct-get assignments items)]
+    [var : i64 0]
+    (begin
+      (while (< var (array-length source-present))
+        (begin
+          (if (= (array-ref source-present var) 0)
+            unit
+            (let
+              [location : CompilerRegLocation (array-ref source-items var)]
+              (match location
+                [(CompilerRegLocation.Spill _) unit]
+                [_
+                  (let
+                    [new-id : i64 (compiler-reg-remap-id remap var)]
+                    (if (and (>= new-id 0) (< new-id (array-length present)))
+                      (begin
+                        (array-set! present new-id 1)
+                        (array-set! items new-id location))
+                      unit))])))
+          (set! var (+ var 1))))
+      unit)))
 
 (define (compiler-reg-color-rebuild-assignments
   [remap : (__tl_dyn-array i64)]
   [vars : i64]
-  [assignments : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignmentTable
   (let
     [present : (__tl_dyn-array i64) (array.make-array i64 vars)]
     [items : (__tl_dyn-array CompilerRegLocation)
@@ -25848,11 +25928,7 @@
     (begin
       (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (compiler-reg-color-scatter-assignments remap present items assignments)
-      (compiler-reg-assignment-arrays-to-list
-        present
-        items
-        (- vars 1)
-        CompilerRegAssignmentList.Nil))))
+      (CompilerRegAssignmentTable present items))))
 
 ;; Identity-pin scalar parameter variables: the prologue's param spill writes
 ;; each parameter to its remapped formula slot, and ordinary parameters keep
@@ -25954,7 +26030,7 @@
   [alias : (__tl_dyn-array i64)]
   [group-vars : live.CompilerLiveI64Set]
   [ineligible : live.CompilerLiveI64Set]
-  [assignment-index : CompilerRegAssignmentIndex]
+  [assignment-index : CompilerRegAssignmentTable]
   [var-tys : (__tl_dyn-array ast.AstType)]
   [remap : (__tl_dyn-array i64)]
   [hull-starts : (__tl_dyn-array i64)]
@@ -25982,10 +26058,10 @@
               type-segment-bases
               (array-ref var-tys dst)
               (array-ref var-tys src-var))
-            (match (compiler-reg-assignment-index-lookup assignment-index dst)
+            (match (compiler-reg-assignment-table-lookup assignment-index dst)
               [(CompilerRegMaybeLocation.Some _) false]
               [(CompilerRegMaybeLocation.No) true])
-            (match (compiler-reg-assignment-index-lookup
+            (match (compiler-reg-assignment-table-lookup
               assignment-index
               src-var)
               [(CompilerRegMaybeLocation.Some _) false]
@@ -26001,7 +26077,7 @@
   [alias : (__tl_dyn-array i64)]
   [group-vars : live.CompilerLiveI64Set]
   [ineligible : live.CompilerLiveI64Set]
-  [assignment-index : CompilerRegAssignmentIndex]
+  [assignment-index : CompilerRegAssignmentTable]
   [var-tys : (__tl_dyn-array ast.AstType)]
   [remap : (__tl_dyn-array i64)]
   [hull-starts : (__tl_dyn-array i64)]
@@ -26031,7 +26107,7 @@
   [alias : (__tl_dyn-array i64)]
   [group-vars : live.CompilerLiveI64Set]
   [ineligible : live.CompilerLiveI64Set]
-  [assignment-index : CompilerRegAssignmentIndex]
+  [assignment-index : CompilerRegAssignmentTable]
   [var-tys : (__tl_dyn-array ast.AstType)]
   [remap : (__tl_dyn-array i64)]
   [hull-starts : (__tl_dyn-array i64)]
@@ -26293,7 +26369,7 @@
   [vars : i64]
   [group-vars : live.CompilerLiveI64Set]
   [ineligible : live.CompilerLiveI64Set]
-  [assignment-index : CompilerRegAssignmentIndex]
+  [assignment-index : CompilerRegAssignmentTable]
   [colorable : (__tl_dyn-array bool)]
   [remap : (__tl_dyn-array i64)]) : unit
   (let
@@ -26308,7 +26384,7 @@
             (not (live.compiler-live-set-contains? group-vars i))
             (not (live.compiler-live-set-contains? ineligible i))
             (< (array-ref remap i) 0)
-            (match (compiler-reg-assignment-index-lookup assignment-index i)
+            (match (compiler-reg-assignment-table-lookup assignment-index i)
               [(CompilerRegMaybeLocation.Some location)
                 (match location
                   [(CompilerRegLocation.Spill _) true]
@@ -27193,10 +27269,10 @@
               (compiler-reg-vector-stack-extra-slots vector-stack-words 0 0))
             8)]
         [slot-ends : (__tl_dyn-array i64) (array.make-array i64 slots)]
-        [assignments : CompilerRegAssignmentList
+        [assignments : CompilerRegAssignmentTable
           (compiler-reg-plan-assignments plan)]
-        [assignment-index : CompilerRegAssignmentIndex
-          (compiler-reg-assignment-index-build assignments vars)]
+        [assignment-index : CompilerRegAssignmentTable
+          (compiler-reg-assignment-table-with-min-capacity assignments vars)]
         [ineligible : live.CompilerLiveI64Set
           (compiler-reg-plan-ineligible plan)]
         [colorable : (__tl_dyn-array bool) (array.make-array bool vars)]
@@ -27408,7 +27484,7 @@
                                 (set! next (+ slot words))))
                             unit)
                           (array-set! remap i (array-ref remap root)))
-                        (match (compiler-reg-assignment-index-lookup
+                        (match (compiler-reg-assignment-table-lookup
                           assignment-index
                           i)
                           [(CompilerRegMaybeLocation.Some location)
@@ -28081,7 +28157,7 @@
               (set! i (+ i 1))))
           (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count))))]))
 
-(define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentList
+(define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentTable
   (match plan
     [(CompilerRegPlan.Plan assignments _ _ _ _ _) assignments]))
 
@@ -28108,18 +28184,17 @@
     [(CompilerRegPlan.Plan _ _ _ _ split _)
       (compiler-reg-call-split-regions split)]))
 
-(define (compiler-reg-assignment-list-merge
-  [extra : CompilerRegAssignmentList]
-  [base : CompilerRegAssignmentList]) : CompilerRegAssignmentList
-  (match extra
-    [(CompilerRegAssignmentList.Nil) base]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (compiler-reg-assignment-list-merge
-        (box-get rest)
-        (compiler-reg-assignment-insert
-          base
-          (struct-get item var)
-          (struct-get item location)))]))
+(define (compiler-reg-assignment-table-merge
+  [extra : CompilerRegAssignmentTable]
+  [base : CompilerRegAssignmentTable]) : CompilerRegAssignmentTable
+  (let
+    [out : CompilerRegAssignmentTable
+      (compiler-reg-assignment-table-copy-with-capacity
+        base
+        (array-length (struct-get extra present)))]
+    (begin
+      (compiler-reg-assignment-table-overlay! out extra)
+      out)))
 
 (define (compiler-reg-var-types-merge
   [extra : CompilerRegVarTypes]
@@ -28176,7 +28251,7 @@
             extra-assignments
             extra-types)
           (CompilerRegPlan.Plan
-            (compiler-reg-assignment-list-merge extra-assignments assignments)
+            (compiler-reg-assignment-table-merge extra-assignments assignments)
             ineligible
             intervals
             (compiler-reg-var-types-merge extra-types types)
@@ -28191,24 +28266,34 @@
 ;; result as a second physical value. Fresh split vars are >= `in-vars` and keep
 ;; their real preassigned homes.
 (define (compiler-reg-leaf-csr-phantom-assignments
-  [assignments : CompilerRegAssignmentList]
-  [in-vars : i64]) : CompilerRegAssignmentList
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) CompilerRegAssignmentList.Nil]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (let
-        [var : i64 (struct-get item var)]
-        (if (< var in-vars)
-          (compiler-reg-assignment-cons
-            (CompilerRegAssignment
-              var
-              (CompilerRegLocation.Remat (ir.CompilerIrValue.Bool false)))
-            (compiler-reg-leaf-csr-phantom-assignments (box-get rest) in-vars))
-          (compiler-reg-leaf-csr-phantom-assignments (box-get rest) in-vars)))]))
+  [assignments : CompilerRegAssignmentTable]
+  [in-vars : i64]) : CompilerRegAssignmentTable
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [limit : i64
+      (if (< in-vars (array-length present))
+        in-vars
+        (array-length present))]
+    [out : CompilerRegAssignmentTable
+      (compiler-reg-assignment-table-make limit)]
+    [var : i64 0]
+    (begin
+      (while (< var limit)
+        (begin
+          (if (= (array-ref present var) 0)
+            unit
+            (begin
+              (compiler-reg-assignment-table-insert
+                out
+                var
+                (CompilerRegLocation.Remat (ir.CompilerIrValue.Bool false)))
+              unit))
+          (set! var (+ var 1))))
+      out)))
 
 (define (compiler-reg-plan-hide-leaf-csr-phantoms
   [plan : CompilerRegPlan]
-  [preassignments : CompilerRegAssignmentList]
+  [preassignments : CompilerRegAssignmentTable]
   [in-vars : i64]) : CompilerRegPlan
   (match plan
     [(CompilerRegPlan.Plan
@@ -28219,7 +28304,7 @@
         shadows
         split-plan)
       (CompilerRegPlan.Plan
-        (compiler-reg-assignment-list-merge
+        (compiler-reg-assignment-table-merge
           (compiler-reg-leaf-csr-phantom-assignments preassignments in-vars)
           assignments)
         ineligible
@@ -28247,18 +28332,19 @@
       out)))
 
 (define (compiler-reg-plan-var-count-assignments
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [best : i64]) : i64
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) best]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (let
-        [var : i64 (struct-get item var)]
-        (compiler-reg-plan-var-count-assignments
-          (box-get rest)
-          (if (>= var best)
-            (+ var 1)
-            best)))]))
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [var : i64 (- (array-length present) 1)]
+    (begin
+      (while (if (< var 0)
+        false
+        (= (array-ref present var) 0))
+        (set! var (- var 1)))
+      (if (>= var best)
+        (+ var 1)
+        best))))
 
 (define (compiler-reg-plan-var-count-types
   [types : CompilerRegVarTypes]
@@ -28424,7 +28510,7 @@
                 cabi.compiler-reg-id-invalid))))))))
 
 (define (compiler-reg-scratch-var-register-homed?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [var : i64]) : bool
   (match (compiler-reg-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
@@ -28435,7 +28521,7 @@
     [_ false]))
 
 (define (compiler-reg-scratch-value-direct?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Var var)
@@ -28455,7 +28541,7 @@
     [_ false]))
 
 (define (compiler-reg-scratch-value-register-homed?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Var var)
@@ -28463,7 +28549,7 @@
     [_ false]))
 
 (define (compiler-reg-scratch-value-same-home?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [dst : i64]
   [src : ir.CompilerIrValue]) : bool
   (match src
@@ -28480,7 +28566,7 @@
     [_ false]))
 
 (define (compiler-reg-scratch-var-register-home
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [var : i64]) : i64
   (match (compiler-reg-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
@@ -28490,7 +28576,7 @@
     [(CompilerRegMaybeLocation.No) cabi.compiler-reg-id-invalid]))
 
 (define (compiler-reg-scratch-float-value-register
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [value : ir.CompilerIrValue]) : i64
   (match value
     [(ir.CompilerIrValue.Var var)
@@ -28502,7 +28588,7 @@
     [_ cabi.compiler-reg-id-invalid]))
 
 (define (compiler-reg-scratch-float-value-memory?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Var var)
@@ -28517,7 +28603,7 @@
     [_ false]))
 
 (define (compiler-reg-scratch-float-rhs-direct?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [rhs : ir.CompilerIrValue]
   [accumulator : i64]) : bool
   (let
@@ -28553,7 +28639,7 @@
   (ir.compiler-ir-binop-compare? op))
 
 (define (compiler-reg-scratch-float-arithmetic-slot-count
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [dst : i64]
   [rhs : ir.CompilerIrValue]
   [binop-return : bool]) : i64
@@ -28582,7 +28668,7 @@
             1))))))
 
 (define (compiler-reg-scratch-float-compare-fallback?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]) : bool
   (let
@@ -28592,7 +28678,7 @@
       (not (compiler-reg-scratch-float-rhs-direct? assignments rhs lhs-home)))))
 
 (define (compiler-reg-scratch-float-compare-slot-count
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [dst : i64]
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]
@@ -28629,7 +28715,7 @@
           1)))))
 
 (define (compiler-reg-scratch-cast-xmm-needed?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [dst : i64]
   [src : ir.CompilerIrValue]
   [from-ty : ast.AstType]
@@ -28647,7 +28733,7 @@
       [else false])))
 
 (define (compiler-reg-scratch-cast-gp-count
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [dst : i64]
   [src : ir.CompilerIrValue]
   [from-ty : ast.AstType]
@@ -28673,7 +28759,7 @@
 
 (define (compiler-reg-scratch-cast-slot-count
   [type-segment-bases : i64]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [dst : i64]
   [src : ir.CompilerIrValue]
   [from-ty : ast.AstType]
@@ -28694,7 +28780,7 @@
       (compiler-reg-scratch-cast-gp-count assignments dst src from-ty to-ty))))
 
 (define (compiler-reg-scratch-bitcast-xmm-needed?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [dst : i64]
   [src : ir.CompilerIrValue]
   [from-ty : ast.AstType]
@@ -28712,7 +28798,7 @@
       [else false])))
 
 (define (compiler-reg-scratch-bitcast-gp-needed?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [dst : i64]
   [src : ir.CompilerIrValue]
   [from-ty : ast.AstType]
@@ -28728,7 +28814,7 @@
       [else false])))
 
 (define (compiler-reg-scratch-bitcast-slot-count
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [dst : i64]
   [src : ir.CompilerIrValue]
   [from-ty : ast.AstType]
@@ -28770,7 +28856,7 @@
 (define (compiler-reg-scratch-vreg-slots
   [_type-segment-bases : i64]
   [_abi : cabi.CompilerRegTargetAbi]
-  [_assignments : CompilerRegAssignmentList]
+  [_assignments : CompilerRegAssignmentTable]
   [_types : CompilerRegVarTypes]
   [_instr : ir.CompilerIrInstr]
   [_phi-targets : CompilerRegLabelSeq]
@@ -29106,7 +29192,7 @@
 (define (compiler-reg-scratch-vreg-count-seq
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [types : CompilerRegVarTypes]
   [instrs : ir.CompilerIrInstrSeq]
   [phi-targets : CompilerRegLabelSeq]
@@ -29139,7 +29225,7 @@
 (define (compiler-reg-scratch-vreg-count-blocks
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [types : CompilerRegVarTypes]
   [blocks : ir.CompilerIrBlockList]
   [phi-targets : CompilerRegLabelSeq]
@@ -29311,7 +29397,7 @@
                   (compiler-reg-id-seq-empty))))))))))
 
 (define (compiler-reg-scratch-used-registers
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [regs : CompilerRegIdSeq]) : CompilerRegIdSeq
   (let
     [index : i64 0]
@@ -29330,7 +29416,7 @@
 
 (define (compiler-reg-scratch-call-target-allowed
   [target-abi : cabi.CompilerRegTargetAbi]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [tail? : bool]) : CompilerRegIdSeq
   ;; %r10 is the legacy preferred target scratch.  A non-tail call may also use
   ;; a callee-saved register already present in the function plan (and therefore
@@ -29347,7 +29433,7 @@
 
 (define (compiler-reg-scratch-policy
   [target-abi : cabi.CompilerRegTargetAbi]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [phi-excluded : CompilerRegIdSeq]) : CompilerRegScratchPolicy
   (CompilerRegScratchPolicy
     (compiler-reg-scratch-call-target-allowed target-abi assignments false)
@@ -29390,7 +29476,7 @@
     cabi.compiler-reg-id-invalid))
 
 (define (compiler-reg-scratch-location-registers
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [var : i64]) : CompilerRegIdSeq
   (match (compiler-reg-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
@@ -29405,7 +29491,7 @@
     [(CompilerRegMaybeLocation.No) (compiler-reg-id-seq-empty)]))
 
 (define (compiler-reg-scratch-value-registers
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [value : ir.CompilerIrValue]) : CompilerRegIdSeq
   (match value
     [(ir.CompilerIrValue.Var var)
@@ -29413,7 +29499,7 @@
     [_ (compiler-reg-id-seq-empty)]))
 
 (define (compiler-reg-scratch-instr-registers
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [instr : ir.CompilerIrInstr]) : CompilerRegIdSeq
   (match instr
     [(ir.CompilerIrInstr.AddrOf dst src)
@@ -29612,13 +29698,13 @@
     [_ (compiler-reg-id-seq-empty)]))
 
 (define (compiler-reg-scratch-memory-constraint
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [instr : ir.CompilerIrInstr]) : CompilerRegScratchConstraint
   (compiler-reg-scratch-gp-constraint-excluding
     (compiler-reg-scratch-instr-registers assignments instr)))
 
 (define (compiler-reg-scratch-xmm-constraint
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [instr : ir.CompilerIrInstr]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
     (CompilerRegScratchClass.Xmm)
@@ -29628,7 +29714,7 @@
 
 (define (compiler-reg-scratch-aggregate-constraint
   [policy : CompilerRegScratchPolicy]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [instr : ir.CompilerIrInstr]
   [sse? : bool]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
@@ -29642,7 +29728,7 @@
     cabi.compiler-reg-id-invalid))
 
 (define (compiler-reg-scratch-pack-registers
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [words : ir.CompilerIrValueList]) : CompilerRegIdSeq
   (match words
     [(ir.CompilerIrValueList.Nil) (compiler-reg-id-seq-empty)]
@@ -29673,7 +29759,7 @@
 
 (define (compiler-reg-scratch-switch-constraint
   [policy : CompilerRegScratchPolicy]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [instr : ir.CompilerIrInstr]) : CompilerRegScratchConstraint
   (compiler-reg-scratch-gp-constraint-excluding
     (compiler-reg-id-seq-append
@@ -29681,7 +29767,7 @@
       (compiler-reg-scratch-instr-registers assignments instr))))
 
 (define (compiler-reg-scratch-fixed-constraint
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [instr : ir.CompilerIrInstr]
   [reg : i64]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
@@ -29691,7 +29777,7 @@
     reg))
 
 (define (compiler-reg-scratch-fixed-xmm-constraint
-  [_assignments : CompilerRegAssignmentList]
+  [_assignments : CompilerRegAssignmentTable]
   [_instr : ir.CompilerIrInstr]
   [reg : i64]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
@@ -29701,7 +29787,7 @@
     reg))
 
 (define (compiler-reg-scratch-scalar-constraint
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [instr : ir.CompilerIrInstr]
   [extra : CompilerRegIdSeq]) : CompilerRegScratchConstraint
   (compiler-reg-scratch-gp-constraint-excluding
@@ -29733,7 +29819,7 @@
 ;; predecessor terminator point.  The function-wide union is conservative but
 ;; also covers fused terminators without rebuilding edge-specific liveness.
 (define (compiler-reg-scratch-phi-dst-registers-instr
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [instr : ir.CompilerIrInstr]) : CompilerRegIdSeq
   (match instr
     [(ir.CompilerIrInstr.Phi dst _ _)
@@ -29815,7 +29901,7 @@
     0))
 
 (define (compiler-reg-scratch-phi-dst-registers-seq-from
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : CompilerRegIdSeq
   (let
@@ -29839,7 +29925,7 @@
       out)))
 
 (define (compiler-reg-scratch-phi-dst-registers-block-seq-from
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [blocks : ir.CompilerIrBlockSeq]
   [index : i64]) : CompilerRegIdSeq
   (let
@@ -29862,7 +29948,7 @@
       out)))
 
 (define (compiler-reg-scratch-phi-dst-registers-blocks
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [blocks : ir.CompilerIrBlockList]) : CompilerRegIdSeq
   (compiler-reg-scratch-phi-dst-registers-block-seq-from
     assignments
@@ -29873,7 +29959,7 @@
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
   [instr : ir.CompilerIrInstr]
   [point : i64]
@@ -30549,7 +30635,7 @@
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
   [instr : ir.CompilerIrInstr]
   [point : i64]
@@ -30997,7 +31083,7 @@
           (set! i (+ i 1)))))))
 
 (define (compiler-reg-scratch-group-registers-from
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [last : i64]) : CompilerRegIdSeq
@@ -31017,7 +31103,7 @@
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
   [instr : ir.CompilerIrInstr]
   [point : i64]
@@ -31095,7 +31181,7 @@
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
   [instrs : ir.CompilerIrInstrSeq]
   [phi-targets : CompilerRegLabelSeq]
@@ -31177,7 +31263,7 @@
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
   [blocks : ir.CompilerIrBlockList]
   [phi-targets : CompilerRegLabelSeq]
@@ -31367,7 +31453,7 @@
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
-  [assignment-list : CompilerRegAssignmentList]
+  [assignment-view : CompilerRegAssignmentTable]
   [assignment-table : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
   [instr : ir.CompilerIrInstr]
@@ -31388,7 +31474,7 @@
           type-segment-bases
           target-abi
           policy
-          assignment-list
+          assignment-view
           var-types
           instr
           point
@@ -31421,7 +31507,7 @@
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
-  [assignment-list : CompilerRegAssignmentList]
+  [assignment-view : CompilerRegAssignmentTable]
   [assignment-table : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
   [instrs : ir.CompilerIrInstrSeq]
@@ -31457,7 +31543,7 @@
                         type-segment-bases
                         target-abi
                         policy
-                        assignment-list
+                        assignment-view
                         assignment-table
                         var-types
                         instr
@@ -31490,7 +31576,7 @@
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
-  [assignment-list : CompilerRegAssignmentList]
+  [assignment-view : CompilerRegAssignmentTable]
   [assignment-table : CompilerRegAssignmentTable]
   [var-types : CompilerRegVarTypes]
   [blocks : ir.CompilerIrBlockList]
@@ -31516,7 +31602,7 @@
             type-segment-bases
             target-abi
             policy
-            assignment-list
+            assignment-view
             assignment-table
             var-types
             instrs
@@ -31536,7 +31622,7 @@
                 type-segment-bases
                 target-abi
                 policy
-                assignment-list
+                assignment-view
                 assignment-table
                 var-types
                 (box-get rest)
@@ -31567,7 +31653,7 @@
                     type-segment-bases
                     target-abi
                     policy
-                    assignment-list
+                    assignment-view
                     assignment-table
                     var-types
                     instrs
@@ -31632,14 +31718,15 @@
               (array.make-array CompilerRegIdSeq out-vars)]
             [depths : (__tl_dyn-array i64)
               (compiler-reg-function-loop-depths blocks)]
-            [assignment-list : CompilerRegAssignmentList
-              (compiler-reg-assignment-table-to-list base-assignments)]
+            [assignment-view : CompilerRegAssignmentTable base-assignments]
             [assignments : CompilerRegAssignmentTable
-              (compiler-reg-assignment-table-from-list assignment-list out-vars)]
+              (compiler-reg-assignment-table-copy-with-capacity
+                assignment-view
+                out-vars)]
             [policy : CompilerRegScratchPolicy
               (compiler-reg-scratch-policy
                 target-abi
-                assignment-list
+                assignment-view
                 (compiler-reg-id-seq-empty))]
             (begin
               (compiler-reg-fill-i64-array starts -1)
@@ -31666,7 +31753,7 @@
                 type-segment-bases
                 target-abi
                 policy
-                assignment-list
+                assignment-view
                 assignments
                 base-types
                 blocks
@@ -31835,29 +31922,6 @@
           scratch-base
           out-vars)
         out))))
-
-(define (compiler-reg-assignment-table-fill!
-  [table : CompilerRegAssignmentTable]
-  [assignments : CompilerRegAssignmentList]) : unit
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) unit]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (begin
-        (compiler-reg-assignment-table-insert
-          table
-          (struct-get item var)
-          (struct-get item location))
-        (compiler-reg-assignment-table-fill! table (box-get rest)))]))
-
-(define (compiler-reg-assignment-table-from-list
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]) : CompilerRegAssignmentTable
-  (let
-    [table : CompilerRegAssignmentTable
-      (compiler-reg-assignment-table-make vars)]
-    (begin
-      (compiler-reg-assignment-table-fill! table assignments)
-      table)))
 
 (define (compiler-reg-scratch-default-pool
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -32155,7 +32219,7 @@
   [success : i64]
   [vars : i64]
   [seen : CompilerRegIdSeq]
-  [assignments : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignmentTable
   (if (>= index (array-length items))
     assignments
     (let
@@ -32173,7 +32237,7 @@
           vars
           seen
           assignments)
-        (compiler-reg-assignment-cons
+        (compiler-reg-assignments-prepend
           (CompilerRegAssignment
             (+ vars success)
             (CompilerRegLocation.Register reg))
@@ -32313,9 +32377,11 @@
                             ends
                             (- out-vars 1)
                             (compiler-reg-interval-seq-empty))]
+                        [plan-assignments : CompilerRegAssignmentTable
+                          (compiler-reg-plan-assignments plan)]
                         [assignments : CompilerRegAssignmentTable
-                          (compiler-reg-assignment-table-from-list
-                            (compiler-reg-plan-assignments plan)
+                          (compiler-reg-assignment-table-copy-with-capacity
+                            plan-assignments
                             out-vars)]
                         [scratch-registers : (__tl_dyn-array i64)
                           (compiler-reg-scratch-register-array _abi)]
@@ -32365,7 +32431,7 @@
                                   ;; accounting sees it without making
                                   ;; caller-saved temporaries inflate every
                                   ;; var-sized backend table.
-                                  (compiler-reg-assignment-list-merge
+                                  (compiler-reg-assignment-table-merge
                                     (compiler-reg-scratch-compact-assignments-from
                                       _abi
                                       items
@@ -32373,7 +32439,7 @@
                                       0
                                       _vars
                                       (compiler-reg-id-seq-empty)
-                                      CompilerRegAssignmentList.Nil)
+                                      (compiler-reg-assignment-table-empty))
                                     base-assignments)
                                   ineligible
                                   base-intervals
@@ -32555,7 +32621,7 @@
         blocks
         vars
         vars
-        CompilerRegAssignmentList.Nil
+        (compiler-reg-assignment-table-empty)
         (compiler-reg-var-types-empty))
       (let
         [shadow-regs : (__tl_dyn-array i64)
@@ -32587,8 +32653,8 @@
         [active : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
         [active-n : i64 0]
         [next-var : i64 vars]
-        [extra-assignments : CompilerRegAssignmentList
-          CompilerRegAssignmentList.Nil]
+        [extra-assignments : CompilerRegAssignmentTable
+          (compiler-reg-assignment-table-empty)]
         [extra-types : CompilerRegVarTypes (compiler-reg-var-types-empty)]
         [cursor : i64 0]
         [point : i64 0]
@@ -32687,7 +32753,7 @@
                                           (set! next-var (+ next-var 1))
                                           (set!
                                             extra-assignments
-                                            (compiler-reg-assignment-cons
+                                            (compiler-reg-assignments-prepend
                                               (CompilerRegAssignment
                                                 w
                                                 (CompilerRegLocation.Register
@@ -32964,7 +33030,7 @@
           table))]))
 
 (define (compiler-reg-remat-var-spilled?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [var : i64]) : bool
   (match (compiler-reg-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
@@ -32975,7 +33041,7 @@
 
 (define (compiler-reg-remat-table-eligible?
   [table : CompilerRegRematTable]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [parents : (__tl_dyn-array i64)]
   [merged-roots : live.CompilerLiveI64Set]
   [var : i64]) : bool
@@ -33011,29 +33077,31 @@
     [(CompilerRegMaybeInterval.No) false]))
 
 (define (compiler-reg-remat-location-conflicts-at?
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [point : i64]
   [location : CompilerRegLocation]) : bool
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) false]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (if (and
-        (compiler-reg-location-overlaps? (struct-get item location) location)
-        (compiler-reg-remat-interval-active-at?
-          intervals
-          (struct-get item var)
-          point))
-        true
-        (compiler-reg-remat-location-conflicts-at?
-          (box-get rest)
-          intervals
-          point
-          location))]))
+  (let
+    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [items : (__tl_dyn-array CompilerRegLocation)
+      (struct-get assignments items)]
+    [var : i64 0]
+    [conflict : bool false]
+    (begin
+      (while (and (< var (array-length present)) (not conflict))
+        (begin
+          (if (and
+            (not (= (array-ref present var) 0))
+            (compiler-reg-location-overlaps? (array-ref items var) location)
+            (compiler-reg-remat-interval-active-at? intervals var point))
+            (set! conflict true)
+            unit)
+          (set! var (+ var 1))))
+      conflict)))
 
 (define (compiler-reg-remat-first-free-register-at
   [regs : CompilerRegIdSeq]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [point : i64]
   [chosen : CompilerRegIdSeq]) : CompilerRegMaybeId
@@ -33061,7 +33129,7 @@
 
 (define (compiler-reg-remat-selected-register
   [table : CompilerRegRematTable]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [point : i64]
   [chosen : CompilerRegIdSeq]
@@ -33146,11 +33214,11 @@
   [vars : i64]
   [next-var : i64]
   [table : CompilerRegRematTable]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [parents : (__tl_dyn-array i64)]
   [merged-roots : live.CompilerLiveI64Set]
-  [extra-assignments : CompilerRegAssignmentList]
+  [extra-assignments : CompilerRegAssignmentTable]
   [extra-types : CompilerRegVarTypes]
   [remap : (__tl_dyn-array i64)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : CompilerRegCallSaveInstrRewrite
@@ -33166,7 +33234,7 @@
       [types : (__tl_dyn-array ast.AstType) (struct-get table types)]
       [chosen : CompilerRegIdSeq (compiler-reg-id-seq-empty)]
       [out-next-var : i64 next-var]
-      [out-extra-assignments : CompilerRegAssignmentList extra-assignments]
+      [out-extra-assignments : CompilerRegAssignmentTable extra-assignments]
       [out-extra-types : CompilerRegVarTypes extra-types]
       [word-index : i64 0]
       [word-count : i64 (live.compiler-live-set-word-count uses)]
@@ -33217,7 +33285,7 @@
                                   (compiler-reg-id-seq-prepend reg chosen))
                                 (set!
                                   out-extra-assignments
-                                  (compiler-reg-assignment-cons
+                                  (compiler-reg-assignments-prepend
                                     (CompilerRegAssignment
                                       temp
                                       (CompilerRegLocation.Register reg))
@@ -33274,11 +33342,11 @@
   [vars : i64]
   [next-var : i64]
   [table : CompilerRegRematTable]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [parents : (__tl_dyn-array i64)]
   [merged-roots : live.CompilerLiveI64Set]
-  [extra-assignments : CompilerRegAssignmentList]
+  [extra-assignments : CompilerRegAssignmentTable]
   [extra-types : CompilerRegVarTypes]
   [remap : (__tl_dyn-array i64)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : CompilerRegCallSaveInstrRewrite
@@ -33287,7 +33355,7 @@
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [out-point : i64 point]
     [out-next-var : i64 next-var]
-    [out-extra-assignments : CompilerRegAssignmentList extra-assignments]
+    [out-extra-assignments : CompilerRegAssignmentTable extra-assignments]
     [out-extra-types : CompilerRegVarTypes extra-types]
     (begin
       (while (< index count)
@@ -33329,11 +33397,11 @@
   [vars : i64]
   [next-var : i64]
   [table : CompilerRegRematTable]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [parents : (__tl_dyn-array i64)]
   [merged-roots : live.CompilerLiveI64Set]
-  [extra-assignments : CompilerRegAssignmentList]
+  [extra-assignments : CompilerRegAssignmentTable]
   [extra-types : CompilerRegVarTypes]
   [remap : (__tl_dyn-array i64)]
   [acc : ir.CompilerIrBlockList]) : CompilerRegCallSaveRewrite
@@ -33414,11 +33482,11 @@
   [vars : i64]
   [next-var : i64]
   [table : CompilerRegRematTable]
-  [assignments : CompilerRegAssignmentList]
+  [assignments : CompilerRegAssignmentTable]
   [intervals : CompilerRegIntervalIndex]
   [parents : (__tl_dyn-array i64)]
   [merged-roots : live.CompilerLiveI64Set]
-  [extra-assignments : CompilerRegAssignmentList]
+  [extra-assignments : CompilerRegAssignmentTable]
   [extra-types : CompilerRegVarTypes]
   [remap : (__tl_dyn-array i64)]
   [acc : ir.CompilerIrBlockList]) : CompilerRegCallSaveRewrite
@@ -33427,7 +33495,7 @@
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
     [out-point : i64 point]
     [out-next-var : i64 next-var]
-    [out-extra-assignments : CompilerRegAssignmentList extra-assignments]
+    [out-extra-assignments : CompilerRegAssignmentTable extra-assignments]
     [out-extra-types : CompilerRegVarTypes extra-types]
     [out-acc : ir.CompilerIrBlockList acc]
     (begin
@@ -33483,13 +33551,8 @@
 ;; the remat table, liveness fixpoint, interval selection, and coalesce map
 ;; for the (majority) spill-free functions.
 (define (compiler-reg-assignments-have-spill?
-  [assignments : CompilerRegAssignmentList]) : bool
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) false]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (match (struct-get item location)
-        [(CompilerRegLocation.Spill _) true]
-        [_ (compiler-reg-assignments-have-spill? (box-get rest))])]))
+  [assignments : CompilerRegAssignmentTable]) : bool
+  (compiler-reg-assignment-table-has-spill? assignments))
 
 (define (compiler-reg-remat-rewrite-blocks
   [type-segment-bases : i64]
@@ -33504,7 +33567,7 @@
       blocks
       vars
       vars
-      CompilerRegAssignmentList.Nil
+      (compiler-reg-assignment-table-empty)
       (compiler-reg-var-types-empty))
     (let
       [table : CompilerRegRematTable (compiler-reg-remat-table-build func)]
@@ -33543,7 +33606,7 @@
               interval-index
               parents
               merged-roots
-              CompilerRegAssignmentList.Nil
+              (compiler-reg-assignment-table-empty)
               (compiler-reg-var-types-empty)
               remap
               ir.CompilerIrBlockList.Nil)

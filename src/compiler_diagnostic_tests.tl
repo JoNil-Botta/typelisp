@@ -191,34 +191,35 @@
             (compiler_diagnostic.CompilerDiagnosticSomeString "related"))
           "first note")
         "second note")]
-    (match (compiler_diagnostic.compiler-diagnostic-secondary-spans diag)
-      [(compiler_diagnostic.CompilerDiagnosticLabelCons label rest-labels-box)
-        (match (compiler_diagnostic.compiler-diagnostic-notes diag)
-          [(compiler_diagnostic.CompilerDiagnosticNoteCons note rest-notes-box)
-            (let
-              [rest-labels : compiler_diagnostic.CompilerDiagnosticLabelList
-                (box-get rest-labels-box)]
-              [rest-notes : compiler_diagnostic.CompilerDiagnosticNoteList
-                (box-get rest-notes-box)]
-              (and
-                (string.eq note "second note")
-                (match rest-notes
-                  [(compiler_diagnostic.CompilerDiagnosticNoteCons tail-note _)
-                    (string.eq tail-note "first note")]
-                  [compiler_diagnostic.CompilerDiagnosticNoteNil false])
-                (match rest-labels
-                  [(compiler_diagnostic.CompilerDiagnosticLabelCons _ _)
-                    (string.eq
-                      (compiler_diagnostic.compiler-diagnostic-span-path
-                        (& (struct-get label span)))
-                      "other.tl")]
-                  [compiler_diagnostic.CompilerDiagnosticLabelNil false])
-                (match (compiler_diagnostic.compiler-diagnostic-code diag)
-                  [(compiler_diagnostic.CompilerDiagnosticSomeString code)
-                    (string.eq code "E1234")]
-                  [compiler_diagnostic.CompilerDiagnosticNoString false])))]
-          [compiler_diagnostic.CompilerDiagnosticNoteNil false])]
-      [compiler_diagnostic.CompilerDiagnosticLabelNil false])))
+    [labels : compiler_diagnostic.CompilerDiagnosticLabelList
+      (compiler_diagnostic.compiler-diagnostic-secondary-spans diag)]
+    [notes : compiler_diagnostic.CompilerDiagnosticNoteList
+      (compiler_diagnostic.compiler-diagnostic-notes diag)]
+    [first-label : compiler_diagnostic.CompilerDiagnosticLabel
+      (compiler_diagnostic.compiler-diagnostic-label-list-get labels 0)]
+    [second-label : compiler_diagnostic.CompilerDiagnosticLabel
+      (compiler_diagnostic.compiler-diagnostic-label-list-get labels 1)]
+    (and
+      (= (compiler_diagnostic.compiler-diagnostic-label-list-count labels) 2)
+      (= (compiler_diagnostic.compiler-diagnostic-note-list-count notes) 2)
+      (string.eq
+        (compiler_diagnostic.compiler-diagnostic-note-list-get notes 0)
+        "second note")
+      (string.eq
+        (compiler_diagnostic.compiler-diagnostic-note-list-get notes 1)
+        "first note")
+      (string.eq
+        (compiler_diagnostic.compiler-diagnostic-span-path
+          (& (struct-get first-label span)))
+        "other.tl")
+      (string.eq
+        (compiler_diagnostic.compiler-diagnostic-span-path
+          (& (struct-get second-label span)))
+        "first.tl")
+      (match (compiler_diagnostic.compiler-diagnostic-code diag)
+        [(compiler_diagnostic.CompilerDiagnosticSomeString code)
+          (string.eq code "E1234")]
+        [compiler_diagnostic.CompilerDiagnosticNoString false]))))
 
 (define (compiler-diagnostic-code-or-empty-ok?) : bool
   (let
@@ -233,6 +234,103 @@
       (string.eq
         (compiler_diagnostic.compiler-diagnostic-code-or-empty coded)
         "E1234"))))
+
+(define (compiler-diagnostic-dense-sequences-ok?) : bool
+  (let
+    [base : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-simple "dense.tl" 1 1 "base")]
+    [note-one : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-with-note base "one")]
+    [note-two : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-with-note note-one "two")]
+    [label-one : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-with-secondary
+        base
+        (compiler_diagnostic.CompilerDiagnosticSpan "one.tl" 1 1 1 2)
+        compiler_diagnostic.CompilerDiagnosticNoString)]
+    [label-two : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-with-secondary
+        label-one
+        (compiler_diagnostic.CompilerDiagnosticSpan "two.tl" 2 1 2 2)
+        compiler_diagnostic.CompilerDiagnosticNoString)]
+    [base-notes : compiler_diagnostic.CompilerDiagnosticNoteList
+      (compiler_diagnostic.compiler-diagnostic-notes base)]
+    [one-notes : compiler_diagnostic.CompilerDiagnosticNoteList
+      (compiler_diagnostic.compiler-diagnostic-notes note-one)]
+    [two-notes : compiler_diagnostic.CompilerDiagnosticNoteList
+      (compiler_diagnostic.compiler-diagnostic-notes note-two)]
+    [base-labels : compiler_diagnostic.CompilerDiagnosticLabelList
+      (compiler_diagnostic.compiler-diagnostic-secondary-spans base)]
+    [one-labels : compiler_diagnostic.CompilerDiagnosticLabelList
+      (compiler_diagnostic.compiler-diagnostic-secondary-spans label-one)]
+    [two-labels : compiler_diagnostic.CompilerDiagnosticLabelList
+      (compiler_diagnostic.compiler-diagnostic-secondary-spans label-two)]
+    [empty-diagnostics : compiler_diagnostic.CompilerDiagnosticList
+      (compiler_diagnostic.compiler-diagnostic-list-empty)]
+    [single-diagnostics : compiler_diagnostic.CompilerDiagnosticList
+      (compiler_diagnostic.compiler-diagnostic-list-single
+        (compiler_diagnostic.compiler-diagnostic-simple "dense.tl" 1 1 "single"))]
+    [diagnostics : compiler_diagnostic.CompilerDiagnosticList
+      (compiler_diagnostic.compiler-diagnostic-list-empty)]
+    (begin
+      (compiler_diagnostic.compiler-diagnostic-list-push!
+        (&mut diagnostics)
+        (compiler_diagnostic.compiler-diagnostic-simple "dense.tl" 1 1 "one"))
+      (compiler_diagnostic.compiler-diagnostic-list-push!
+        (&mut diagnostics)
+        (compiler_diagnostic.compiler-diagnostic-simple "dense.tl" 3 1 "three"))
+      (compiler_diagnostic.compiler-diagnostic-list-insert!
+        (&mut diagnostics)
+        1
+        (compiler_diagnostic.compiler-diagnostic-simple "dense.tl" 2 1 "two"))
+      (and
+        (=
+          (compiler_diagnostic.compiler-diagnostic-note-list-count base-notes)
+          0)
+        (=
+          (compiler_diagnostic.compiler-diagnostic-note-list-count one-notes)
+          1)
+        (=
+          (compiler_diagnostic.compiler-diagnostic-note-list-count two-notes)
+          2)
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-note-list-get one-notes 0)
+          "one")
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-note-list-get two-notes 0)
+          "two")
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-note-list-get two-notes 1)
+          "one")
+        (=
+          (compiler_diagnostic.compiler-diagnostic-label-list-count base-labels)
+          0)
+        (=
+          (compiler_diagnostic.compiler-diagnostic-label-list-count one-labels)
+          1)
+        (=
+          (compiler_diagnostic.compiler-diagnostic-label-list-count two-labels)
+          2)
+        (=
+          (compiler_diagnostic.compiler-diagnostic-list-count empty-diagnostics)
+          0)
+        (=
+          (compiler_diagnostic.compiler-diagnostic-list-count
+            single-diagnostics)
+          1)
+        (= (compiler_diagnostic.compiler-diagnostic-list-count diagnostics) 3)
+        (=
+          (compiler_diagnostic.compiler-diagnostic-line
+            (compiler_diagnostic.compiler-diagnostic-list-get diagnostics 0))
+          1)
+        (=
+          (compiler_diagnostic.compiler-diagnostic-line
+            (compiler_diagnostic.compiler-diagnostic-list-get diagnostics 1))
+          2)
+        (=
+          (compiler_diagnostic.compiler-diagnostic-line
+            (compiler_diagnostic.compiler-diagnostic-list-get diagnostics 2))
+          3)))))
 
 ;; Pin every classifier row against a real message from the typechecker, using
 ;; the exact wording the compiler emits. The classifier keys on message text, so
@@ -301,5 +399,6 @@
     (unless (compiler-diagnostic-end-span-ok?) (return 4))
     (unless (compiler-diagnostic-metadata-ok?) (return 4))
     (unless (compiler-diagnostic-code-or-empty-ok?) (return 4))
+    (unless (compiler-diagnostic-dense-sequences-ok?) (return 4))
     (unless (compiler-diagnostic-typecheck-code-kinds-ok?) (return 5))
     42))

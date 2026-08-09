@@ -339,12 +339,14 @@
   (repl-stderr-write-line (cdiag.compiler-diagnostic-render diag)))
 
 (define (repl-report-diagnostics [diagnostics : cdiag.CompilerDiagnosticList]) : unit
-  (match diagnostics
-    [(cdiag.CompilerDiagnosticList.Nil) unit]
-    [(cdiag.CompilerDiagnosticList.Cons diag rest)
+  (let
+    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
+    [index : i64 0]
+    (while (< index count)
       (begin
-        (repl-report-diagnostic diag)
-        (repl-report-diagnostics (box-get rest)))]))
+        (repl-report-diagnostic
+          (cdiag.compiler-diagnostic-list-get diagnostics index))
+        (set! index (+ index 1))))))
 
 (define (repl-char-display-helpers-source) : String
   "(define __tl_repl_ascii_printable_table : String

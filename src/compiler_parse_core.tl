@@ -10070,9 +10070,9 @@
   [toks : (__tl_dyn-array token.SpannedToken)]
   [cur : (__tl_dyn-array i64)]
   [out : (&mut out ParseAstDeclVec)]
-  [diagnostics : cdiag.CompilerDiagnosticList]) : cdiag.CompilerDiagnosticList
+  [diagnostics : (&mut diagnostics cdiag.CompilerDiagnosticList)]) : unit
   (if (= (reader.peek-spanned-tag toks cur) (token.tag-end))
-    (cdiag.compiler-diagnostic-list-reverse diagnostics)
+    unit
     (let
       [mark : i64 (reader.sp-node-pool-len)]
       [form-start : i64 (reader.cur-pos cur)]
@@ -10138,6 +10138,7 @@
                           message))]
                     (begin
                       (reader.sp-node-pool-truncate! mark)
+                      (cdiag.compiler-diagnostic-list-push! diagnostics diag)
                       (parse-ast-program-forms-recovery-into-vec
                         path
                         dispatch
@@ -10145,9 +10146,7 @@
                         toks
                         cur
                         out
-                        (cdiag.compiler-diagnostic-list-prepend
-                          diag
-                          diagnostics))))])))]
+                        diagnostics)))])))]
         [(reader.ResultSpannedSexpr.Err err)
           (let
             [diag : cdiag.CompilerDiagnostic
@@ -10156,6 +10155,7 @@
             (begin
               (reader.sp-node-pool-truncate! mark)
               (parse-ast-recover-top-level-cursor! toks cur form-start)
+              (cdiag.compiler-diagnostic-list-push! diagnostics diag)
               (parse-ast-program-forms-recovery-into-vec
                 path
                 dispatch
@@ -10163,7 +10163,7 @@
                 toks
                 cur
                 out
-                (cdiag.compiler-diagnostic-list-prepend diag diagnostics))))]))))
+                diagnostics)))]))))
 
 (define (parse-ast-program-recovery-diagnostic-with-cfg-and-pools
   [path : String]
@@ -10192,6 +10192,8 @@
           compiler-parse-state-marker-id))
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
+          (cdiag.compiler-diagnostic-list-empty)]
+        (begin
           (parse-ast-program-forms-recovery-into-vec
             path
             dispatch
@@ -10199,10 +10201,10 @@
             toks
             cur
             (&mut out)
-            cdiag.CompilerDiagnosticList.Nil)]
-        (ResultAstProgramRecovery.Parsed
-          (ast.ast-program (parse-ast-decl-vec-to-list (& out)))
-          (box diagnostics))))))
+            (&mut diagnostics))
+          (ResultAstProgramRecovery.Parsed
+            (ast.ast-program (parse-ast-decl-vec-to-list (& out)))
+            (box diagnostics)))))))
 
 (define (parse-ast-source-recovery-diagnostic-with-cfg-and-pools
   [path : String]
@@ -12588,27 +12590,21 @@
         diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
+        [second : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
         (and
           (= (ast.ast-decl-list-len (& (box-get decls-box))) 2)
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 2)
-          (match diagnostics
-            [(cdiag.CompilerDiagnosticList.Cons first first-rest)
-              (match (box-get first-rest)
-                [(cdiag.CompilerDiagnosticList.Cons second second-rest)
-                  (and
-                    (= (cdiag.compiler-diagnostic-line first) 1)
-                    (string.eq
-                      (cdiag.compiler-diagnostic-message first)
-                      "parse: malformed define")
-                    (= (cdiag.compiler-diagnostic-line second) 3)
-                    (string.eq
-                      (cdiag.compiler-diagnostic-message second)
-                      "parse: malformed define")
-                    (match (box-get second-rest)
-                      [(cdiag.CompilerDiagnosticList.Nil) true]
-                      [_ false]))]
-                [_ false])]
-            [_ false])))]
+          (= (cdiag.compiler-diagnostic-line first) 1)
+          (string.eq
+            (cdiag.compiler-diagnostic-message first)
+            "parse: malformed define")
+          (= (cdiag.compiler-diagnostic-line second) 3)
+          (string.eq
+            (cdiag.compiler-diagnostic-message second)
+            "parse: malformed define")))]
     [(ResultAstProgramRecovery.Fatal _) false]))
 
 (define (compiler-parse-recovery-reader-progress-ok?) : bool

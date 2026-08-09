@@ -2,6 +2,7 @@
 (import stdlib.string)
 (import compiler_builtin_ids as cbi)
 (import lint_core)
+(import lint_core_tests)
 (import compiler_ast_types as ast)
 (import stdlib.io)
 
@@ -98,26 +99,28 @@
 
 (define (lint-smoke-nested-str-cat-self-test) : i64
   (let
-    [vx : i64 (lint_core.lint-test-var "x")]
-    [vy : i64 (lint_core.lint-test-var "y")]
-    [vz : i64 (lint_core.lint-test-var "z")]
-    [str-cat-callee : i64 (lint_core.lint-test-var "str-cat")]
+    [vx : i64 (lint_core_tests.lint-test-var "x")]
+    [vy : i64 (lint_core_tests.lint-test-var "y")]
+    [vz : i64 (lint_core_tests.lint-test-var "z")]
+    [str-cat-callee : i64 (lint_core_tests.lint-test-var "str-cat")]
     [str-cat-yz : i64
-      (ast.ast-expr-call str-cat-callee (lint_core.lint-test-expr-list2 vy vz))]
+      (ast.ast-expr-call
+        str-cat-callee
+        (lint_core_tests.lint-test-expr-list2 vy vz))]
     [nested-str-cat : i64
       (ast.ast-expr-call
         str-cat-callee
-        (lint_core.lint-test-expr-list2 vx str-cat-yz))]
+        (lint_core_tests.lint-test-expr-list2 vx str-cat-yz))]
     [flat-str-cat : i64
       (ast.ast-expr-call
         str-cat-callee
-        (lint_core.lint-test-expr-list3 vx vy vz))]
+        (lint_core_tests.lint-test-expr-list3 vx vy vz))]
     [spanned-str-cat : i64
       (ast.ast-expr-spanned nested-str-cat (ast.ast-source-span 23 4 23 36))]
     (begin
       (if (=
         (lint_core.lint-findings-count
-          (lint_core.lint-test-walk
+          (lint_core_tests.lint-test-walk
             nested-str-cat
             (lint_core.lint-default-ladder-threshold)
             (lint_core.lint-findings-empty)))
@@ -125,7 +128,7 @@
         unit
         (io.panic "lint: nested str-cat should be flagged once"))
       (match (lint_core.lint-findings-get
-        (lint_core.lint-test-walk
+        (lint_core_tests.lint-test-walk
           spanned-str-cat
           (lint_core.lint-default-ladder-threshold)
           (lint_core.lint-findings-empty))
@@ -147,7 +150,7 @@
           (io.panic "lint: spanned nested str-cat should produce a finding")])
       (if (=
         (lint_core.lint-findings-count
-          (lint_core.lint-test-walk
+          (lint_core_tests.lint-test-walk
             flat-str-cat
             (lint_core.lint-default-ladder-threshold)
             (lint_core.lint-findings-empty)))
@@ -159,7 +162,7 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
-      [core-result : i64 (lint_core.compiler-lint-self-test)]
+      [core-result : i64 (lint_core_tests.compiler-lint-self-test)]
       (if (= core-result 42)
         (if (= (lint-smoke-deprecated-string-concat-self-test) 42)
           (lint-smoke-nested-str-cat-self-test)

@@ -109,8 +109,7 @@ Current examples include:
   `compiler_parse_core.tl`
 - `compiler-symbols-self-test` in `compiler_symbols.tl`
 - `compiler-typecheck-self-test` in `compiler_typecheck.tl`
-- `compiler-live-self-test`,
-  `compiler-regalloc-self-test`, and `compiler-backend-self-test`
+- `compiler-regalloc-self-test` and `compiler-backend-self-test`
 - `compiler-optimize-self-test` plus the pass-specific optimizer self-tests
 
 Prefer small hand-built fixtures and deterministic structural assertions over

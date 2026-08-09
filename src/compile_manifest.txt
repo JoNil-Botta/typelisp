@@ -381,7 +381,11 @@ decision|src/compiler_backend_tests.tl|backend smoke-test helper module (main-le
 decision|src/compiler_driver_smoke_tests.tl|shared driver/lowering smoke-test helper module (main-less): imported by the thin compiler_driver_pic/compiler_lower_symbol_identity wrappers and the consolidated compiler_codegen_smoke_suite; kept in src/ for native integration staging; no direct CLI/main compile case
 decision|src/compiler_lower_package_tests.tl|SPMD package callable smoke-test helper module (main-less): imported by the package fixture drivers; kept in src/ for native integration staging without adding test-only lowering support to the compiler; no direct CLI/main compile case
 decision|src/compiler_parallel_move.tl|target-neutral parallel move graph solver (#4365): main-less, imported by compiler_backend.tl for call/syscall argument moves and phi edge copies and by compiler_regalloc.tl for coalescing move-chain validation; exercised through compiler_backend_smoke and compiler_regalloc_smoke
-decision|src/compiler_regalloc_tests.tl|register-allocator self-test companion split from compiler_regalloc.tl (#5169): main-less, imported by src/tests/compiler_regalloc_smoke.tl; holds the 135 (cfg test) blocks plus the compiler-regalloc-self-test entry that drives them. The regalloc-census and (any regalloc-census test) blocks stay in the production module because they compile into instrumentation builds, as do the compiler-regalloc-self-test-require!/failure-message helpers, whose symbols selfhost_compiler_regalloc asserts
+decision|src/compiler_regalloc_tests.tl|register-allocator self-test companion split from compiler_regalloc.tl (#5169): main-less, imported by src/tests/compiler_regalloc_smoke.tl; holds the 135 (cfg test) blocks plus the compiler-regalloc-self-test entry that drives them, plus the regalloc fixture builders and -ok? assertions moved from production compiler_regalloc.tl (simplify.md A1). The regalloc-census and (any regalloc-census test) blocks stay in the production module because they compile into instrumentation builds, as do the compiler-regalloc-self-test-require!/failure-message helpers, whose symbols selfhost_compiler_regalloc asserts
+decision|src/compiler_diagnostic_tests.tl|diagnostic self-check companion split from compiler_diagnostic.tl (simplify.md A1, #5169 pattern): main-less, imported by src/tests/compiler_parse_smoke.tl; holds the render/metadata/typecheck-code fixtures and the compiler-diagnostic-self-test entry; production assembly coverage stays on selfhost_compiler_diagnostic
+decision|src/compiler_liveness_tests.tl|liveness self-test companion split from compiler_liveness.tl (simplify.md A1, #5169 pattern): main-less, imported by src/tests/compiler_liveness_smoke.tl; holds the fixture builders and -ok? checks plus the compiler-live-self-test entry; production assembly coverage stays on selfhost_compiler_liveness, runtime coverage via the compiler_liveness_smoke native integration test
+decision|src/lint_core_tests.tl|lint self-test companion split from lint_core.tl (simplify.md A1, #5169 pattern): main-less, imported by src/tests/lint_smoke.tl; holds the fixture helpers and the compiler-lint-self-test entry; lint_core.tl itself carries no manifest case
+decision|src/lint_driver_core_tests.tl|lint driver self-test companion split from lint_driver_core.tl (simplify.md A1, #5169 pattern): main-less, imported by src/tests/lint_driver_smoke.tl; holds the fixture sources/decls builders, finding helpers, and the six self-test entries; lint_driver_core.tl itself stays decision-only
 case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|skip|direct
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_file_with_roots_and_cfg:
@@ -405,7 +409,7 @@ case|selfhost_compiler_diagnostic|src/compiler_diagnostic.tl|assembly|skip|direc
 contains|_tl_compiler_diagnostic_render:
 contains|_tl_compiler_diagnostic_at_start:
 contains|_tl_compiler_diagnostic_from_source_error:
-contains|_tl_compiler_diagnostic_self_test:
+contains|_tl_compiler_diagnostic_render_source:
 end
 
 case|selfhost_compiler_driver_core|src/compiler_driver_core.tl|assembly|skip|direct
@@ -441,8 +445,6 @@ end
 
 case|selfhost_compiler_liveness|src/compiler_liveness.tl|assembly|skip|direct
 contains|_tl_compiler_live_analyze_function:
-contains|_tl_compiler_live_self_test:
-contains|liveness: smoke mismatch
 end
 
 case|selfhost_compiler_embedded_stdlib|src/compiler_embedded_stdlib.tl|assembly|skip|direct
@@ -490,7 +492,7 @@ contains|_tl_compiler_load_self_test:
 contains|_tl_compiler_load_cfg_import_ok_question:
 end
 
-decision|src/compiler_lower_tests.tl|lowering self-test/fixture companion split from compiler_lower.tl (#5169): main-less, imported only by lowering fixture drivers; production compiler_lower.tl and compiler_driver_core imports remain fixture-free
+decision|src/compiler_lower_tests.tl|lowering self-test/fixture companion split from compiler_lower.tl (#5169): main-less, imported only by lowering fixture drivers; production compiler_lower.tl and compiler_driver_core imports remain fixture-free; also hosts the test-only lowering helpers (prune chain, capture/cleanup probes, decl-paths entry point) moved out of production
 
 case|selfhost_compiler_lower|src/compiler_lower.tl|assembly|skip|direct
 contains|_tl_lower_compiler_source:
@@ -651,7 +653,7 @@ contains|_tl_parse_format_source:
 contains|format cst: unclosed delimiter
 end
 
-case|selfhost_format_doc|src/format_doc.tl|assembly|skip|direct
+case|selfhost_format_doc|src/tests/format_doc.tl|assembly|skip|direct
 contains|_tl_format_doc_doc_empty:
 contains|_tl_format_doc_render_doc:
 contains|_tl_format_doc_format_doc_self_test:
@@ -671,7 +673,7 @@ contains|_tl_format_rules_format_rules_render_source_width:
 contains|_tl_format_rules_format_rules_self_test:
 end
 
-case|selfhost_format_rules_doc_compat|src/format_rules_doc_compat.tl|assembly|skip|direct
+case|selfhost_format_rules_doc_compat|src/tests/format_rules_doc_compat.tl|assembly|skip|direct
 contains|_tl_format_rules_doc_compat_format_rules_define_doc:
 contains|_tl_format_rules_doc_compat_format_rules_let_binding_annotated_doc:
 contains|_tl_format_rules_doc_compat_format_rules_let_doc:
@@ -740,9 +742,9 @@ contains|_tl_token_sym:
 contains|_tl_source_error_message:
 end
 
-decision|src/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); imported by src/lint_smoke.tl and exercised through the selfhost_lint_smoke case; has no main to compile directly
+decision|src/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); imported by src/tests/lint_smoke.tl and exercised through the selfhost_lint_smoke case; has no main to compile directly
 
-decision|src/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), file/package source linting, and the driver self-test; main-less, imported by src/main.tl and src/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_main cases; has no main to compile directly
+decision|src/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), and file/package source linting; main-less, imported by src/main.tl and src/tests/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_main cases; has no main to compile directly
 
 # Optimization-benchmark codegen smoke. Each flattened opt_* TypeLisp source
 # must compile to assembly that defines main: with no backend "# TODO" (the

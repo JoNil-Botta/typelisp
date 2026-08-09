@@ -92,7 +92,7 @@ string_length tests/integration/string_length.tl
 substring tests/integration/substring.tl
 sym_i64_env tests/integration/sym_i64_env.tl
 tl_alloc tests/integration/tl_alloc.tl
-tl_format_doc src/format_doc.tl
+tl_format_doc src/tests/format_doc.tl
 tl_lex src/lex.tl
 tl_compiler_parse_core src/compiler_parse_core.tl
 tl_compiler_symbols src/compiler_symbols.tl
@@ -186,13 +186,16 @@ compile_pass() {
                 "$COMPILER" compile "$(compiler_input_path "$ROOT/$source")" -o "$out" \
                     --target linux-x86_64 \
                     --cfg selfhost-compile-manifest \
-                    --stdlib-root "$(compiler_input_path "$ROOT/stdlib")"
+                    --stdlib-root "$(compiler_input_path "$ROOT/stdlib")" \
+                    --stdlib-root "$(compiler_input_path "$ROOT/src")"
             fi
             continue
         fi
         compile_source=$(compile_source_for_case "$name" "$source" "$out_dir")
         echo "[$pass_name] $compile_source -> $out"
-        "$COMPILER" compile "$compile_source" -o "$out"
+        "$COMPILER" compile "$compile_source" -o "$out" \
+            --stdlib-root "$(compiler_input_path "$ROOT/stdlib")" \
+            --stdlib-root "$(compiler_input_path "$ROOT/src")"
     done
 }
 

@@ -1,6 +1,7 @@
 ;; compiler_liveness_smoke.tl - Runnable smoke for compiler_liveness.tl.
 (import compiler_ir_types as ir)
 (import compiler_liveness as live)
+(import compiler_liveness_tests as live_tests)
 (import compiler_intern as ci)
 
 (define (compiler-live-smoke-spmd-call-use-def-ok?) : bool
@@ -10,12 +11,12 @@
         (ir.CompilerIrSpmdCallArg.Arg
           (ir.CompilerIrSpmdValueClass.Uniform)
           (ir.CompilerIrValue.Var 21)
-          (live.compiler-live-i64-ty))
+          (live_tests.compiler-live-i64-ty))
         (ir.ir-spmd-call-arg-cons
           (ir.CompilerIrSpmdCallArg.Arg
             (ir.CompilerIrSpmdValueClass.Varying)
             (ir.CompilerIrValue.Var 22)
-            (live.compiler-live-i64-ty))
+            (live_tests.compiler-live-i64-ty))
           ir.CompilerIrSpmdCallArgList.Nil))]
     [instr : ir.CompilerIrInstr
       (ir.ir-instr-spmd-call
@@ -27,7 +28,7 @@
         (ir.CompilerIrSpmdCallResult.Value
           6
           (ir.CompilerIrSpmdValueClass.Varying)
-          (live.compiler-live-i64-ty)))]
+          (live_tests.compiler-live-i64-ty)))]
     (and
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses instr)
@@ -72,7 +73,7 @@
 
 (define (main) : i64
   (let
-    [base : i64 (live.compiler-live-self-test)]
+    [base : i64 (live_tests.compiler-live-self-test)]
     (if (and
       (= base 42)
       (compiler-live-smoke-spmd-call-use-def-ok?)

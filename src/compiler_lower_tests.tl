@@ -14,12 +14,183 @@
 (import compiler_typecheck_api)
 (import compiler_load)
 (import compiler_ctfe)
+(import compiler_clone)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.test)
 (import stdlib.io)
+
+;; --- fixtures moved from production compiler_lower.tl -------------------------
+(define (lower-test-generated-name-id [value : String]) : i64
+  (ci.intern-generated-canonical-name value))
+
+(define (lower-name-env-resolve-with-id
+  [names : compiler_lower.LowerNameEnv]
+  [source-name : String]
+  [source-id : i64]) : String
+  (match (compiler_lower.lower-name-env-lookup-with-id names source-id)
+    [(compiler_typecheck_core.TcMaybeString.Some logical) logical]
+    [(compiler_typecheck_core.TcMaybeString.No) source-name]))
+
+(define (lower-prune-unreachable-functions-with-clone-roots
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [entry-path : String]
+  [program : compiler_ast_types.AstProgram]
+  [paths : compiler_ast_types.AstDeclPathList]
+  [names : compiler_lower.LowerNameEnv]
+  [clone-roots : compiler_clone.CloneRootEntries]) : compiler_lower.LowerPrunedProgram
+  (match (compiler_lower.lower-prune-unreachable-functions-with-clone-roots-and-plan
+    pools
+    entry-path
+    program
+    paths
+    names
+    clone-roots)
+    [(compiler_lower.LowerPrunedProgramWithPlan.Program
+        pruned-program
+        pruned-paths
+        _)
+      (compiler_lower.LowerPrunedProgram.Program pruned-program pruned-paths)]))
+
+(define (lower-prune-unreachable-functions
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [entry-path : String]
+  [program : compiler_ast_types.AstProgram]
+  [paths : compiler_ast_types.AstDeclPathList]
+  [names : compiler_lower.LowerNameEnv]) : compiler_lower.LowerPrunedProgram
+  (lower-prune-unreachable-functions-with-clone-roots
+    pools
+    entry-path
+    program
+    paths
+    names
+    (compiler_clone.CloneRootEntries.Empty)))
+
+(define (lower-test-prune-unreachable-functions
+  [entry-path : String]
+  [program : compiler_ast_types.AstProgram]
+  [paths : compiler_ast_types.AstDeclPathList]
+  [names : compiler_lower.LowerNameEnv]) : compiler_lower.LowerPrunedProgram
+  (lower-prune-unreachable-functions
+    (compiler_ast_types.ast-node-pool-context-capture-active)
+    entry-path
+    program
+    paths
+    names))
+
+(define (lower-capture-list-count [captures : compiler_lower.LowerCaptureList]) : i64
+  (struct-get captures count))
+
+(define (lower-capture-list-storage-entry?
+  [captures : compiler_lower.LowerCaptureList]
+  [index : i64]
+  [name-id : i64]
+  [var-id : i64]
+  [offset : i64]) : bool
+  (if (or (< index 0) (>= index (struct-get captures count)))
+    false
+    (match (array-ref (struct-get captures items) index)
+      [(compiler_lower.LowerCapture.Capture
+          capture-name-id
+          capture-var-id
+          _
+          capture-offset)
+        (and
+          (= capture-name-id name-id)
+          (= capture-var-id var-id)
+          (= capture-offset offset))])))
+
+(define (lower-cleanup-stack-count
+  [cleanups : compiler_lower.LowerCleanupStack]) : i64
+  (struct-get cleanups count))
+
+(define (lower-cleanup-stack-entry?
+  [cleanups : compiler_lower.LowerCleanupStack]
+  [index : i64]
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]) : bool
+  (if (or (< index 0) (>= index (struct-get cleanups count)))
+    false
+    (and
+      (= (array-ref (struct-get cleanups hidden-name-ids) index) hidden-name-id)
+      (=
+        (array-ref (struct-get cleanups cleanup-name-ids) index)
+        cleanup-name-id))))
+
+(define (compiler-lower-array-var-set-ok?) : bool
+  (let
+    [left : compiler_lower.LowerArrayVarSet
+      (compiler_lower.lower-array-var-set-add
+        (compiler_lower.lower-array-var-set-add
+          (compiler_lower.lower-array-var-set-add
+            (compiler_lower.lower-array-var-set-empty)
+            10
+            1)
+          20
+          2)
+        10
+        4)]
+    [right : compiler_lower.LowerArrayVarSet
+      (compiler_lower.lower-array-var-set-add
+        (compiler_lower.lower-array-var-set-add
+          (compiler_lower.lower-array-var-set-empty)
+          30
+          3)
+        20
+        1)]
+    [merged : compiler_lower.LowerArrayVarSet
+      (compiler_lower.lower-array-var-set-merge left right)]
+    [vars : (__tl_dyn-array i64) (struct-get merged vars)]
+    [offsets : (__tl_dyn-array i64) (struct-get merged offsets)]
+    (and
+      (= (struct-get merged count) 3)
+      (= (array-length vars) 3)
+      (= (array-length offsets) 3)
+      (= (array-ref vars 0) 10)
+      (= (array-ref offsets 0) 4)
+      (= (array-ref vars 1) 20)
+      (= (array-ref offsets 1) 2)
+      (= (array-ref vars 2) 30)
+      (= (array-ref offsets 2) 3)
+      (= (compiler_lower.lower-array-var-set-max-offset merged) 4))))
+
+;; Lower every top-level decl of the expanded program. This used to be
+;; a tail-recursive walk (one call per decl), but the inline-aggregate TCO
+;; guard declines frame reuse here, so a whole-compiler input stacked
+;; one ~56KB frame per decl (7,035 frames = 402MB of the measured 502MB stack
+;; peak that forced the 1GB Windows reserves). Iterate instead; the
+;; threaded accumulators become loop state.
+(define (lower-skip-runtime-until-next-module
+  [decls : compiler_ast_types.AstDeclList]) : compiler_ast_types.AstDeclList
+  (match (compiler_ast_types.ast-decl-list-step decls)
+    [(compiler_ast_types.AstDeclListStep.Nil)
+      (compiler_ast_types.ast-decl-list-new)]
+    [(compiler_ast_types.AstDeclListStep.Cons decl rest)
+      (let
+        [rest : compiler_ast_types.AstDeclList rest]
+        (match decl
+          [(compiler_ast_types.AstDecl.Module _) decls]
+          [_
+            (let
+              [kept-rest : compiler_ast_types.AstDeclList
+                (lower-skip-runtime-until-next-module rest)]
+              (if (compiler_lower.lower-type-decl? decl)
+                (compiler_ast_types.ast-decl-list-prepend-builder
+                  decl
+                  kept-rest)
+                kept-rest))]))]))
+
+(define (lower-compiler-program-with-decl-paths
+  [entry-path : String]
+  [program : compiler_ast_types.AstProgram]
+  [paths : compiler_ast_types.AstDeclPathList]) : compiler_lower.ResultCompilerLower
+  (compiler_lower.lower-compiler-program-with-decl-paths-mode
+    entry-path
+    program
+    paths
+    (compiler_lower.CompilerLowerMode.Scalar)))
 
 ;; --- self-test ---------------------------------------------------------------
 (define (compiler-lower-smoke-source) : String
@@ -1018,7 +1189,7 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-stdlib-string-wrapper-prune-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths
         "stdlib/tl"
         program
         (compiler-lower-stdlib-string-wrapper-prune-paths))
@@ -1492,7 +1663,7 @@
     (cbi.compiler-builtin-reset!)
     (match (compiler_typecheck_api.typecheck-compiler-source-load src)
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-        (compiler_lower.lower-compiler-program-with-decl-paths
+        (lower-compiler-program-with-decl-paths
           ""
           (compiler_ast_types.ast-program decls)
           paths)]
@@ -5690,7 +5861,7 @@
                     (& decls)
                     1
                     (compiler_ast_types.ast-decl-fallback))))
-              (match (compiler_lower.lower-compiler-program-with-decl-paths
+              (match (lower-compiler-program-with-decl-paths
                 "app.tl"
                 program
                 (compiler-lower-generated-paths))
@@ -5727,7 +5898,7 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-module-symbol-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
         (compiler-lower-module-symbol-paths))
@@ -5764,7 +5935,7 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-package-owned-symbol-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths
         ""
         program
         (compiler-lower-package-owned-symbol-paths))
@@ -6053,7 +6224,7 @@
   (let
     [fn : compiler_ast_types.AstDecl
       (compiler_ast_types.ast-decl-def-fn-id
-        (compiler_lower.lower-test-generated-name-id "generated")
+        (lower-test-generated-name-id "generated")
         (compiler_ast_types.ast-param-list-new)
         (compiler_ast_types.AstType.I64)
         (compiler_ast_types.ast-node-push
@@ -6092,7 +6263,7 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-module-specialize-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
         (compiler-lower-module-specialize-paths))
@@ -7719,7 +7890,7 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-stdlib-hash-string-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
         (compiler-lower-stdlib-hash-string-paths))
@@ -8707,7 +8878,7 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-runtime-substring-scratch-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
         (compiler-lower-runtime-substring-scratch-paths))
@@ -8731,7 +8902,7 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-runtime-substring-call-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
         (compiler-lower-runtime-substring-scratch-paths))
@@ -8755,7 +8926,7 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-runtime-substring-capturing-lambda-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
         (compiler-lower-runtime-substring-scratch-paths))
@@ -8779,7 +8950,7 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-runtime-atomic-reachable-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
         (compiler-lower-runtime-atomic-reachable-paths))
@@ -11214,7 +11385,7 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-public-literal-float-to-bits-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match (compiler_lower.lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths
         "stdlib/math.tl"
         program
         (compiler-lower-public-literal-float-to-bits-paths))
@@ -11528,11 +11699,11 @@
 
 (define (compiler-lower-ast-dce-program) : compiler_ast_types.AstProgram
   (let
-    [callback-id : i64 (compiler_lower.lower-test-generated-name-id "callback")]
+    [callback-id : i64 (lower-test-generated-name-id "callback")]
     [callback-target-id : i64 cbi.compiler-builtin-id-fix-callback_target]
     [main-id : i64 cbi.compiler-builtin-id-fix-main]
     [helper-id : i64 cbi.compiler-builtin-id-fix-helper]
-    [dead-id : i64 (compiler_lower.lower-test-generated-name-id "dead")]
+    [dead-id : i64 (lower-test-generated-name-id "dead")]
     (compiler_ast_types.ast-program
       (compiler_ast_types.ast-decl-cons
         (compiler_ast_types.ast-decl-def-id
@@ -11624,7 +11795,7 @@
   (compiler_ast_types.ast-program
     (compiler_ast_types.ast-decl-cons
       (compiler_ast_types.ast-decl-def-fn-id
-        (compiler_lower.lower-test-generated-name-id "helper")
+        (lower-test-generated-name-id "helper")
         (compiler_ast_types.ast-param-list-new)
         (compiler_ast_types.AstType.I64)
         (compiler_ast_types.ast-node-push
@@ -11632,7 +11803,7 @@
             (compiler_ast_types.ast-lit-int 7))))
       (compiler_ast_types.ast-decl-cons
         (compiler_ast_types.ast-decl-def-fn-id
-          (compiler_lower.lower-test-generated-name-id "dead")
+          (lower-test-generated-name-id "dead")
           (compiler_ast_types.ast-param-list-new)
           (compiler_ast_types.AstType.I64)
           (compiler_ast_types.ast-node-push
@@ -11644,7 +11815,7 @@
   (compiler_ast_types.ast-program
     (compiler_ast_types.ast-decl-cons
       (compiler_ast_types.ast-decl-def-fn-id
-        (compiler_lower.lower-test-generated-name-id "main")
+        (lower-test-generated-name-id "main")
         (compiler_ast_types.ast-param-list-new)
         (compiler_ast_types.AstType.I64)
         (compiler_ast_types.ast-node-push
@@ -11652,7 +11823,7 @@
             (compiler_ast_types.ast-lit-int 0))))
       (compiler_ast_types.ast-decl-cons
         (compiler_ast_types.ast-decl-def-fn-id
-          (compiler_lower.lower-test-generated-name-id "macro-only-helper")
+          (lower-test-generated-name-id "macro-only-helper")
           (compiler_ast_types.ast-param-list-new)
           (compiler_ast_types.AstType.I64)
           (compiler_ast_types.ast-node-push
@@ -11660,7 +11831,7 @@
               (compiler_ast_types.ast-lit-int 7))))
         (compiler_ast_types.ast-decl-cons
           (compiler_ast_types.ast-decl-def-macro-id
-            (compiler_lower.lower-test-generated-name-id "macro-uses-helper")
+            (lower-test-generated-name-id "macro-uses-helper")
             (compiler_ast_types.ast-macro-param-list-new)
             (compiler_ast_types.AstType.Expr)
             (compiler_ast_types.ast-expr-call
@@ -11674,10 +11845,10 @@
   (compiler_ast_types.ast-program
     (compiler_ast_types.ast-decl-cons
       (compiler_ast_types.ast-decl-module-id
-        (compiler_lower.lower-test-generated-name-id "stdlib.comptime"))
+        (lower-test-generated-name-id "stdlib.comptime"))
       (compiler_ast_types.ast-decl-cons
         (compiler_ast_types.ast-decl-def-fn-id
-          (compiler_lower.lower-test-generated-name-id "ctfe-runtime-helper")
+          (lower-test-generated-name-id "ctfe-runtime-helper")
           (compiler_ast_types.ast-param-list-new)
           (compiler_ast_types.AstType.I64)
           (compiler_ast_types.ast-node-push
@@ -11685,10 +11856,10 @@
               (compiler_ast_types.ast-lit-int 7))))
         (compiler_ast_types.ast-decl-cons
           (compiler_ast_types.ast-decl-module-id
-            (compiler_lower.lower-test-generated-name-id "main"))
+            (lower-test-generated-name-id "main"))
           (compiler_ast_types.ast-decl-cons
             (compiler_ast_types.ast-decl-def-fn-id
-              (compiler_lower.lower-test-generated-name-id "main")
+              (lower-test-generated-name-id "main")
               (compiler_ast_types.ast-param-list-new)
               (compiler_ast_types.AstType.I64)
               (compiler_ast_types.ast-node-push
@@ -11701,7 +11872,7 @@
     [decls : compiler_ast_types.AstDeclList
       (compiler_ast_types.ast-decl-cons
         (compiler_ast_types.ast-decl-def-fn-id
-          (compiler_lower.lower-test-generated-name-id "ctfe-runtime-helper")
+          (lower-test-generated-name-id "ctfe-runtime-helper")
           (compiler_ast_types.ast-param-list-new)
           (compiler_ast_types.AstType.I64)
           (compiler_ast_types.ast-node-push
@@ -11710,16 +11881,16 @@
         (compiler_ast_types.ast-decl-cons
           (compiler_ast_types.ast-decl-comptime-decl
             (compiler_ast_types.ast-decl-def-struct-id
-              (compiler_lower.lower-test-generated-name-id "ExprClauseList")
+              (lower-test-generated-name-id "ExprClauseList")
               compiler_ast_types.AstStructRepr.Default
               compiler_ast_types.AstStructCleanup.No
               (compiler_ast_types.ast-field-def-list-new)))
           (compiler_ast_types.ast-decl-cons
             (compiler_ast_types.ast-decl-module-id
-              (compiler_lower.lower-test-generated-name-id "main"))
+              (lower-test-generated-name-id "main"))
             (compiler_ast_types.ast-decl-cons
               (compiler_ast_types.ast-decl-def-fn-id
-                (compiler_lower.lower-test-generated-name-id "main")
+                (lower-test-generated-name-id "main")
                 (compiler_ast_types.ast-param-list-new)
                 (compiler_ast_types.AstType.I64)
                 (compiler_ast_types.ast-node-push
@@ -11727,7 +11898,7 @@
                     (compiler_ast_types.ast-lit-int 0))))
               (compiler_ast_types.ast-decl-list-new)))))]
     [kept : compiler_ast_types.AstDeclList
-      (compiler_lower.lower-skip-runtime-until-next-module decls)]
+      (lower-skip-runtime-until-next-module decls)]
     (and
       (= (lower-test-decl-list-count kept) 3)
       (lower-test-decl-list-defines? kept "ExprClauseList")
@@ -11740,11 +11911,10 @@
       (compiler_ast_types.ast-program
         (compiler_ast_types.ast-decl-cons
           (compiler_ast_types.ast-decl-module-id
-            (compiler_lower.lower-test-generated-name-id "stdlib.comptime"))
+            (lower-test-generated-name-id "stdlib.comptime"))
           (compiler_ast_types.ast-decl-cons
             (compiler_ast_types.ast-decl-def-fn-id
-              (compiler_lower.lower-test-generated-name-id
-                "ctfe-runtime-helper")
+              (lower-test-generated-name-id "ctfe-runtime-helper")
               (compiler_ast_types.ast-param-list-new)
               (compiler_ast_types.AstType.I64)
               (compiler_ast_types.ast-node-push
@@ -11753,16 +11923,16 @@
             (compiler_ast_types.ast-decl-cons
               (compiler_ast_types.ast-decl-comptime-decl
                 (compiler_ast_types.ast-decl-def-struct-id
-                  (compiler_lower.lower-test-generated-name-id "ExprClauseList")
+                  (lower-test-generated-name-id "ExprClauseList")
                   compiler_ast_types.AstStructRepr.Default
                   compiler_ast_types.AstStructCleanup.No
                   (compiler_ast_types.ast-field-def-list-new)))
               (compiler_ast_types.ast-decl-cons
                 (compiler_ast_types.ast-decl-module-id
-                  (compiler_lower.lower-test-generated-name-id "main"))
+                  (lower-test-generated-name-id "main"))
                 (compiler_ast_types.ast-decl-cons
                   (compiler_ast_types.ast-decl-def-fn-id
-                    (compiler_lower.lower-test-generated-name-id "main")
+                    (lower-test-generated-name-id "main")
                     (compiler_ast_types.ast-param-list-new)
                     (compiler_ast_types.AstType.I64)
                     (compiler_ast_types.ast-node-push
@@ -11780,7 +11950,7 @@
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
-      (compiler_lower.lower-test-prune-unreachable-functions
+      (lower-test-prune-unreachable-functions
         "entry.tl"
         program
         (compiler_ast_types.ast-decl-path-list-new)
@@ -11827,17 +11997,17 @@
           compiler_ast_types.AstEnumCleanup.No
           (compiler_ast_types.ast-variant-def-cons
             (compiler_ast_types.ast-variant-def-id
-              (compiler_lower.lower-test-generated-name-id "UsedA")
+              (lower-test-generated-name-id "UsedA")
               (compiler_ast_types.ast-type-list-new)
               (compiler_ast_types.ast-variant-payload-cleanup-list-new))
             (compiler_ast_types.ast-variant-def-list-new)))
         (compiler_ast_types.ast-decl-cons
           (compiler_ast_types.ast-decl-def-enum-id
-            (compiler_lower.lower-test-generated-name-id "DeadEnum")
+            (lower-test-generated-name-id "DeadEnum")
             compiler_ast_types.AstEnumCleanup.No
             (compiler_ast_types.ast-variant-def-cons
               (compiler_ast_types.ast-variant-def-id
-                (compiler_lower.lower-test-generated-name-id "DeadA")
+                (lower-test-generated-name-id "DeadA")
                 (compiler_ast_types.ast-type-list-new)
                 (compiler_ast_types.ast-variant-payload-cleanup-list-new))
               (compiler_ast_types.ast-variant-def-list-new)))
@@ -11848,18 +12018,18 @@
               compiler_ast_types.AstStructCleanup.No
               (compiler_ast_types.ast-field-def-cons
                 (compiler_ast_types.ast-field-def-id
-                  (compiler_lower.lower-test-generated-name-id "value")
+                  (lower-test-generated-name-id "value")
                   (compiler_ast_types.AstType.Enum used-enum-id)
                   compiler_ast_types.AstFieldCleanup.No)
                 (compiler_ast_types.ast-field-def-list-new)))
             (compiler_ast_types.ast-decl-cons
               (compiler_ast_types.ast-decl-def-struct-id
-                (compiler_lower.lower-test-generated-name-id "DeadBox")
+                (lower-test-generated-name-id "DeadBox")
                 compiler_ast_types.AstStructRepr.Default
                 compiler_ast_types.AstStructCleanup.No
                 (compiler_ast_types.ast-field-def-cons
                   (compiler_ast_types.ast-field-def-id
-                    (compiler_lower.lower-test-generated-name-id "value")
+                    (lower-test-generated-name-id "value")
                     (compiler_ast_types.AstType.I64)
                     compiler_ast_types.AstFieldCleanup.No)
                   (compiler_ast_types.ast-field-def-list-new)))
@@ -11907,7 +12077,7 @@
           compiler_ast_types.AstEnumCleanup.No
           (compiler_ast_types.ast-variant-def-cons
             (compiler_ast_types.ast-variant-def-id
-              (compiler_lower.lower-test-generated-name-id "OkIoString")
+              (lower-test-generated-name-id "OkIoString")
               (compiler_ast_types.ast-type-list-new)
               (compiler_ast_types.ast-variant-payload-cleanup-list-new))
             (compiler_ast_types.ast-variant-def-list-new)))
@@ -11917,7 +12087,7 @@
             compiler_ast_types.AstEnumCleanup.No
             (compiler_ast_types.ast-variant-def-cons
               (compiler_ast_types.ast-variant-def-id
-                (compiler_lower.lower-test-generated-name-id "DeadResultA")
+                (lower-test-generated-name-id "DeadResultA")
                 (compiler_ast_types.ast-type-list-new)
                 (compiler_ast_types.ast-variant-payload-cleanup-list-new))
               (compiler_ast_types.ast-variant-def-list-new)))
@@ -11958,7 +12128,7 @@
           compiler_ast_types.AstStructCleanup.No
           (compiler_ast_types.ast-field-def-cons
             (compiler_ast_types.ast-field-def-id
-              (compiler_lower.lower-test-generated-name-id "handle")
+              (lower-test-generated-name-id "handle")
               (compiler_ast_types.AstType.I64)
               compiler_ast_types.AstFieldCleanup.No)
             (compiler_ast_types.ast-field-def-list-new)))
@@ -11969,18 +12139,18 @@
             compiler_ast_types.AstStructCleanup.No
             (compiler_ast_types.ast-field-def-cons
               (compiler_ast_types.ast-field-def-id
-                (compiler_lower.lower-test-generated-name-id "handle")
+                (lower-test-generated-name-id "handle")
                 (compiler_ast_types.AstType.I64)
                 compiler_ast_types.AstFieldCleanup.No)
               (compiler_ast_types.ast-field-def-list-new)))
           (compiler_ast_types.ast-decl-cons
             (compiler_ast_types.ast-decl-def-struct-id
-              (compiler_lower.lower-test-generated-name-id "DeadArenaPeer")
+              (lower-test-generated-name-id "DeadArenaPeer")
               compiler_ast_types.AstStructRepr.Default
               compiler_ast_types.AstStructCleanup.No
               (compiler_ast_types.ast-field-def-cons
                 (compiler_ast_types.ast-field-def-id
-                  (compiler_lower.lower-test-generated-name-id "handle")
+                  (lower-test-generated-name-id "handle")
                   (compiler_ast_types.AstType.I64)
                   compiler_ast_types.AstFieldCleanup.No)
                 (compiler_ast_types.ast-field-def-list-new)))
@@ -11994,7 +12164,7 @@
                   compiler_ast_types.AstStructCleanup.No
                   (compiler_ast_types.ast-field-def-cons
                     (compiler_ast_types.ast-field-def-id
-                      (compiler_lower.lower-test-generated-name-id "owner")
+                      (lower-test-generated-name-id "owner")
                       (compiler_ast_types.AstType.Struct
                         cbi.compiler-builtin-id-fix-arena_dot_Arena)
                       compiler_ast_types.AstFieldCleanup.No)
@@ -12048,7 +12218,7 @@
       (compiler_ast_types.ast-expr-let
         (compiler_ast_types.ast-let-binding-cons
           (compiler_ast_types.ast-let-binding-id
-            (compiler_lower.lower-test-generated-name-id "mark")
+            (lower-test-generated-name-id "mark")
             (compiler_ast_types.AstMaybeType.Some
               (compiler_ast_types.AstType.Struct
                 cbi.compiler-builtin-id-fix-ImportedMark))
@@ -12064,14 +12234,13 @@
           (compiler_ast_types.ast-field-def-list-new))
         (compiler_ast_types.ast-decl-cons
           (compiler_ast_types.ast-decl-def-struct-id
-            (compiler_lower.lower-test-generated-name-id "DeadMark")
+            (lower-test-generated-name-id "DeadMark")
             compiler_ast_types.AstStructRepr.Default
             compiler_ast_types.AstStructCleanup.No
             (compiler_ast_types.ast-field-def-list-new))
           (compiler_ast_types.ast-decl-cons
             (compiler_ast_types.ast-decl-test-id
-              (compiler_lower.lower-test-generated-name-id
-                "uses-imported-mark-annotation")
+              (lower-test-generated-name-id "uses-imported-mark-annotation")
               test-body
               (compiler_ast_types.ast-source-span 1 1 1 1))
             (compiler_ast_types.ast-decl-cons
@@ -12114,23 +12283,23 @@
           compiler_ast_types.AstStructCleanup.No
           (compiler_ast_types.ast-field-def-cons
             (compiler_ast_types.ast-field-def-id
-              (compiler_lower.lower-test-generated-name-id "x")
+              (lower-test-generated-name-id "x")
               (compiler_ast_types.AstType.I64)
               compiler_ast_types.AstFieldCleanup.No)
             (compiler_ast_types.ast-field-def-cons
               (compiler_ast_types.ast-field-def-id
-                (compiler_lower.lower-test-generated-name-id "y")
+                (lower-test-generated-name-id "y")
                 (compiler_ast_types.AstType.I64)
                 compiler_ast_types.AstFieldCleanup.No)
               (compiler_ast_types.ast-field-def-list-new))))
         (compiler_ast_types.ast-decl-cons
           (compiler_ast_types.ast-decl-def-struct-id
-            (compiler_lower.lower-test-generated-name-id "DeadGeom")
+            (lower-test-generated-name-id "DeadGeom")
             compiler_ast_types.AstStructRepr.Default
             compiler_ast_types.AstStructCleanup.No
             (compiler_ast_types.ast-field-def-cons
               (compiler_ast_types.ast-field-def-id
-                (compiler_lower.lower-test-generated-name-id "value")
+                (lower-test-generated-name-id "value")
                 (compiler_ast_types.AstType.I64)
                 compiler_ast_types.AstFieldCleanup.No)
               (compiler_ast_types.ast-field-def-list-new)))
@@ -12153,10 +12322,10 @@
                           "geom.QPoint")
                         (compiler_ast_types.ast-pattern-cons
                           (compiler_ast_types.ast-pat-binding-id
-                            (compiler_lower.lower-test-generated-name-id "x"))
+                            (lower-test-generated-name-id "x"))
                           (compiler_ast_types.ast-pattern-cons
                             (compiler_ast_types.ast-pat-binding-id
-                              (compiler_lower.lower-test-generated-name-id "y"))
+                              (lower-test-generated-name-id "y"))
                             (compiler_ast_types.ast-pattern-list-new))))
                       (compiler_ast_types.ast-node-push
                         (compiler_ast_types.AstExpr.Literal
@@ -12211,13 +12380,13 @@
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
-      (compiler_lower.lower-test-prune-unreachable-functions
+      (lower-test-prune-unreachable-functions
         "entry.tl"
         program
         (compiler_ast_types.ast-decl-path-list-new)
         names)]
     [no-main-pruned : compiler_lower.LowerPrunedProgram
-      (compiler_lower.lower-test-prune-unreachable-functions
+      (lower-test-prune-unreachable-functions
         "entry.tl"
         no-main-program
         (compiler_ast_types.ast-decl-path-list-new)
@@ -12260,11 +12429,7 @@
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
-      (compiler_lower.lower-test-prune-unreachable-functions
-        "entry.tl"
-        program
-        paths
-        names)]
+      (lower-test-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
       [(compiler_lower.LowerPrunedProgram.Program kept-program _)
         (match kept-program
@@ -12296,11 +12461,7 @@
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
-      (compiler_lower.lower-test-prune-unreachable-functions
-        "entry.tl"
-        program
-        paths
-        names)]
+      (lower-test-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
       [(compiler_lower.LowerPrunedProgram.Program kept-program _)
         (match kept-program
@@ -12330,11 +12491,7 @@
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
-      (compiler_lower.lower-test-prune-unreachable-functions
-        "entry.tl"
-        program
-        paths
-        names)]
+      (lower-test-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
       [(compiler_lower.LowerPrunedProgram.Program kept-program _)
         (match kept-program
@@ -12365,11 +12522,7 @@
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
-      (compiler_lower.lower-test-prune-unreachable-functions
-        "entry.tl"
-        program
-        paths
-        names)]
+      (lower-test-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
       [(compiler_lower.LowerPrunedProgram.Program kept-program _)
         (match kept-program
@@ -12399,11 +12552,7 @@
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
-      (compiler_lower.lower-test-prune-unreachable-functions
-        "entry.tl"
-        program
-        paths
-        names)]
+      (lower-test-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
       [(compiler_lower.LowerPrunedProgram.Program kept-program _)
         (match kept-program
@@ -12430,7 +12579,7 @@
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
-      (compiler_lower.lower-test-prune-unreachable-functions
+      (lower-test-prune-unreachable-functions
         "entry.tl"
         program
         (compiler_ast_types.ast-decl-path-list-new)
@@ -12447,7 +12596,7 @@
                 (not (lower-test-decl-list-defines? kept "macro-only-helper"))))])])))
 
 (define (compiler-lower-stdlib-comptime-runtime-dce-ok?) : bool
-  (match (compiler_lower.lower-compiler-program-with-decl-paths
+  (match (lower-compiler-program-with-decl-paths
     "entry.tl"
     (compiler-lower-stdlib-comptime-runtime-dce-program)
     (compiler_ast_types.ast-decl-path-list-new))
@@ -12485,7 +12634,7 @@
                 "entry.tl"
                 compiler_lower.LowerNameEnv.Nil)]
             [pruned : compiler_lower.LowerPrunedProgram
-              (compiler_lower.lower-test-prune-unreachable-functions
+              (lower-test-prune-unreachable-functions
                 "entry.tl"
                 program
                 (compiler_ast_types.ast-decl-path-list-new)
@@ -12881,18 +13030,15 @@
     (and
       (= (compiler_lower.lower-name-env-count names) 2)
       (string.eq
-        (compiler_lower.lower-name-env-resolve-with-id
-          names
-          "source-b"
-          source-b-id)
+        (lower-name-env-resolve-with-id names "source-b" source-b-id)
         "logical-b")
-      (= (compiler_lower.lower-capture-list-count captures) 2)
+      (= (lower-capture-list-count captures) 2)
       (compiler_lower.lower-capture-list-contains-name? captures 102)
-      (compiler_lower.lower-capture-list-storage-entry? captures 0 102 2 8)
-      (compiler_lower.lower-capture-list-storage-entry? captures 1 101 1 0)
-      (= (compiler_lower.lower-cleanup-stack-count cleanups) 2)
-      (compiler_lower.lower-cleanup-stack-entry? cleanups 0 201 301)
-      (compiler_lower.lower-cleanup-stack-entry? cleanups 1 202 302)
+      (lower-capture-list-storage-entry? captures 0 102 2 8)
+      (lower-capture-list-storage-entry? captures 1 101 1 0)
+      (= (lower-cleanup-stack-count cleanups) 2)
+      (lower-cleanup-stack-entry? cleanups 0 201 301)
+      (lower-cleanup-stack-entry? cleanups 1 202 302)
       (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
       (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
         [(compiler_lower.LowerCAbiSlot.Slot ty offset)
@@ -14075,7 +14221,7 @@
       (if (compiler-lower-foreach-tests-ok?)
         unit
         (set! ok false))
-      (if (compiler_lower.compiler-lower-array-var-set-ok?)
+      (if (compiler-lower-array-var-set-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-spmd-reduce-tests-ok?)

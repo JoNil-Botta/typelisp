@@ -1424,9 +1424,6 @@
   (define compiler-lower-profile-name-cache-local-misses : i64
     0))
 
-(define (lower-test-generated-name-id [value : String]) : i64
-  (ci.intern-generated-canonical-name value))
-
 ;; Non-resetting stage snapshots inside lower.typecheck: the checked-program
 ;; build's retention decomposes across the walk / clone augmentation / context
 ;; extension stages. Detail rows carry absolute alloc-live and the running peak
@@ -2127,14 +2124,6 @@
     (if (>= symbol-id 0)
       (tc_core.TcMaybeString.Some (ir.compiler-ir-symbol-text symbol-id))
       (tc_core.TcMaybeString.No))))
-
-(define (lower-name-env-resolve-with-id
-  [names : LowerNameEnv]
-  [source-name : String]
-  [source-id : i64]) : String
-  (match (lower-name-env-lookup-with-id names source-id)
-    [(tc_core.TcMaybeString.Some logical) logical]
-    [(tc_core.TcMaybeString.No) source-name]))
 
 (define (lower-name-env-count [names : LowerNameEnv]) : i64
   (match names
@@ -6246,8 +6235,6 @@
   0)
 (define lower-spmd-scalar-call-context : LowerSpmdScalarCallContext
   (LowerSpmdScalarCallContext.No))
-(define lower-no-main-entry-prune-active : bool
-  false)
 
 (define (lower-reset-file-state!) : unit
   (begin
@@ -6260,8 +6247,7 @@
     (set! lower-spmd-inline-next-temp 0)
     (set! lower-spmd-scalar-call-context (LowerSpmdScalarCallContext.No))
     (lower-reach-scratch-globals-reset!)
-    (lower-module-decl-index-reset!)
-    (set! lower-no-main-entry-prune-active false)))
+    (lower-module-decl-index-reset!)))
 
 (define (lower-reset-intern-owned-state!) : unit
   (tc_core.compiler-typecheck-reset-intern-owned-state!))
@@ -11251,9 +11237,6 @@
 (define (lower-comptime-runtime-skip-module? [module : String]) : bool
   (string.eq module "stdlib.comptime"))
 
-(define (lower-no-main-entry-prune-set! [active : bool]) : unit
-  (set! lower-no-main-entry-prune-active active))
-
 (define lower-comptime-error-id-generation : i64
   -1)
 (define lower-comptime-error-id : i64
@@ -11942,49 +11925,6 @@
             (begin
               (lower-reach-scratch-globals-reset!)
               result))))]))
-
-(define (lower-prune-unreachable-functions-with-clone-roots
-  [pools : ast.AstNodePoolContext]
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [names : LowerNameEnv]
-  [clone-roots : clone_support.CloneRootEntries]) : LowerPrunedProgram
-  (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
-    pools
-    entry-path
-    program
-    paths
-    names
-    clone-roots)
-    [(LowerPrunedProgramWithPlan.Program pruned-program pruned-paths _)
-      (LowerPrunedProgram.Program pruned-program pruned-paths)]))
-
-(define (lower-prune-unreachable-functions
-  [pools : ast.AstNodePoolContext]
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [names : LowerNameEnv]) : LowerPrunedProgram
-  (lower-prune-unreachable-functions-with-clone-roots
-    pools
-    entry-path
-    program
-    paths
-    names
-    (clone_support.CloneRootEntries.Empty)))
-
-(define (lower-test-prune-unreachable-functions
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [names : LowerNameEnv]) : LowerPrunedProgram
-  (lower-prune-unreachable-functions
-    (ast.ast-node-pool-context-capture-active)
-    entry-path
-    program
-    paths
-    names))
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
@@ -18775,9 +18715,6 @@
               (set! index (+ index 1)))]))
       found)))
 
-(define (lower-capture-list-count [captures : LowerCaptureList]) : i64
-  (struct-get captures count))
-
 (define (lower-capture-list-empty) : LowerCaptureList
   (LowerCaptureList (make-array LowerCapture 0) 0))
 
@@ -18790,21 +18727,6 @@
     (begin
       (array-push! items capture)
       (LowerCaptureList items (+ count 1)))))
-
-(define (lower-capture-list-storage-entry?
-  [captures : LowerCaptureList]
-  [index : i64]
-  [name-id : i64]
-  [var-id : i64]
-  [offset : i64]) : bool
-  (if (or (< index 0) (>= index (struct-get captures count)))
-    false
-    (match (array-ref (struct-get captures items) index)
-      [(LowerCapture.Capture capture-name-id capture-var-id _ capture-offset)
-        (and
-          (= capture-name-id name-id)
-          (= capture-var-id var-id)
-          (= capture-offset offset))])))
 
 (define (lower-unsupported-capture-message) : String
   "lower: unsupported lambda capture type")
@@ -20339,22 +20261,6 @@
         cleanup-name-ids
         live-name-ids
         (+ count 1)))))
-
-(define (lower-cleanup-stack-count [cleanups : LowerCleanupStack]) : i64
-  (struct-get cleanups count))
-
-(define (lower-cleanup-stack-entry?
-  [cleanups : LowerCleanupStack]
-  [index : i64]
-  [hidden-name-id : i64]
-  [cleanup-name-id : i64]) : bool
-  (if (or (< index 0) (>= index (struct-get cleanups count)))
-    false
-    (and
-      (= (array-ref (struct-get cleanups hidden-name-ids) index) hidden-name-id)
-      (=
-        (array-ref (struct-get cleanups cleanup-name-ids) index)
-        cleanup-name-id))))
 
 (define (lower-emit-cleanup-stack-at
   [state : LowerState]
@@ -40983,36 +40889,6 @@
               unit)
             (set! index (+ index 1)))))
       max-offset)))
-
-(define (compiler-lower-array-var-set-ok?) : bool
-  (let
-    [left : LowerArrayVarSet
-      (lower-array-var-set-add
-        (lower-array-var-set-add
-          (lower-array-var-set-add (lower-array-var-set-empty) 10 1)
-          20
-          2)
-        10
-        4)]
-    [right : LowerArrayVarSet
-      (lower-array-var-set-add
-        (lower-array-var-set-add (lower-array-var-set-empty) 30 3)
-        20
-        1)]
-    [merged : LowerArrayVarSet (lower-array-var-set-merge left right)]
-    [vars : (__tl_dyn-array i64) (struct-get merged vars)]
-    [offsets : (__tl_dyn-array i64) (struct-get merged offsets)]
-    (and
-      (= (struct-get merged count) 3)
-      (= (array-length vars) 3)
-      (= (array-length offsets) 3)
-      (= (array-ref vars 0) 10)
-      (= (array-ref offsets 0) 4)
-      (= (array-ref vars 1) 20)
-      (= (array-ref offsets 1) 2)
-      (= (array-ref vars 2) 30)
-      (= (array-ref offsets 2) 3)
-      (= (lower-array-var-set-max-offset merged) 4))))
 
 (define (lower-masked-vector-index-literal-offset
   [ctx : tc_core.TcContext]
@@ -63893,28 +63769,6 @@
           ""
           cbi.compiler-builtin-id-fix-empty)))))
 
-;; Lower every top-level decl of the expanded program. This used to be
-;; a tail-recursive walk (one call per decl), but the inline-aggregate TCO
-;; guard declines frame reuse here, so a whole-compiler input stacked
-;; one ~56KB frame per decl (7,035 frames = 402MB of the measured 502MB stack
-;; peak that forced the 1GB Windows reserves). Iterate instead; the
-;; threaded accumulators become loop state.
-(define (lower-skip-runtime-until-next-module [decls : ast.AstDeclList]) : ast.AstDeclList
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) (ast.ast-decl-list-new)]
-    [(ast.AstDeclListStep.Cons decl rest)
-      (let
-        [rest : ast.AstDeclList rest]
-        (match decl
-          [(ast.AstDecl.Module _) decls]
-          [_
-            (let
-              [kept-rest : ast.AstDeclList
-                (lower-skip-runtime-until-next-module rest)]
-              (if (lower-type-decl? decl)
-                (ast.ast-decl-list-prepend-builder decl kept-rest)
-                kept-rest))]))]))
-
 (defenum LowerSkippedRuntimeWithPaths
   (Skipped ast.AstDeclList ast.AstDeclPathList))
 
@@ -65300,62 +65154,6 @@
             prev-module-id)
           result)))))
 
-;; Serial/test compatibility adapter for expanded-program lowering.  The
-;; explicit production entry above threads compile-owned pool/interner state
-;; through explicit workers with deliberate bridges around legacy phases; this
-;; adapter preserves the historical surface for tests/tools.
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
-  [load-state : load.CompilerLoadSessionState]
-  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
-  [job-state : tc_core.TcJobState]
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [mode : CompilerLowerMode]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
-  (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names-and-intern-state
-    load-state
-    prefix-cache
-    job-state
-    entry-path
-    program
-    paths
-    mode
-    stdlib-roots
-    cache-scope
-    pools
-    source-names
-    (ci.intern-compat-state-capture-active)))
-
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
-  [load-state : load.CompilerLoadSessionState]
-  [prefix-cache : tc_core.TcPrefixSnapshotCacheState]
-  [job-state : tc_core.TcJobState]
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [mode : CompilerLowerMode]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : ast.AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
-  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
-    load-state
-    prefix-cache
-    job-state
-    entry-path
-    program
-    paths
-    mode
-    stdlib-roots
-    cache-scope
-    pools
-    source-names
-    (ci.intern-compat-state-capture-active)))
-
 (define (lower-compiler-program-with-decl-paths-mode-cache
   [entry-path : String]
   [program : ast.AstProgram]
@@ -65699,16 +65497,6 @@
     mode
     (svec.new)
     (tc_core.tc-prefix-default-cache-scope)))
-
-(define (lower-compiler-program-with-decl-paths
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]) : ResultCompilerLower
-  (lower-compiler-program-with-decl-paths-mode
-    entry-path
-    program
-    paths
-    (CompilerLowerMode.Scalar)))
 
 (define (lower-compiler-program [program : ast.AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path "<source>" program))

@@ -1094,10 +1094,19 @@ fi
 # The reconciled #5675/#6173 tree retains 52 segments: the authoritative
 # Windows probe measured 3,357,074 used nodes, 3,407,872 capacity, and
 # 109,051,904 physical payload bytes.
+# #6371's pre-reconciliation relocation of compiler self-test fixtures out of
+# production modules brought ast_expr_pool.macro_expand back to 51 segments:
+# the authoritative Windows probe measured 3,331,983 used nodes. Reconciliation
+# with current main's added compiler features returns the combined tree to 52
+# segments: 3,361,826 used nodes, 3,407,872 capacity, and 109,051,904 physical
+# payload bytes.
 # #6384's loop-carried memory aggregate provenance and regression coverage
 # crossed ast_expr_pool.macro_expand from 52 to 53 segments; the authoritative
 # Windows CI probe measured 3,408,354 used nodes, 3,473,408 capacity, and
 # 111,149,056 physical payload bytes.
+# Reconciled with #6371's fixture relocation, the combined tree remains at 52
+# segments: the authoritative Windows probe measured 3,362,558 used nodes,
+# 3,407,872 capacity, and 109,051,904 physical payload bytes.
 # #5937's persistent typechecker list storage and focused wide/deep tests
 # crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
 # Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload
@@ -1136,6 +1145,10 @@ fi
 # crossed that boundary from 31 to 32 segments: the authoritative Windows probe
 # measured 2,034,470 used nodes, 2,097,152 capacity, and 67,108,864 physical
 # payload bytes.
+# #6371's relocation of compiler self-test fixtures out of production modules
+# brings the combined tree back to 31 segments: the authoritative Windows probe
+# measured 2,008,157 used nodes, 2,031,616 capacity, and 65,011,712 physical
+# payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1169,10 +1182,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 53 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 52 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 31 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \

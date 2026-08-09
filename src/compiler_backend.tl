@@ -46504,8 +46504,9 @@
 ;; The backend already has one complete, allocation-free instruction operand
 ;; walk for use counts. Reuse that walk when emission only needs the register
 ;; homes mentioned by one instruction instead of compiling a second giant
-;; CompilerIrInstr match into the compiler. A zero-length count array selects
-;; mask-only mode; ordinary use-count walks keep their existing behavior.
+;; CompilerIrInstr match into the compiler. A two-word `[-1,
+;; function-state-address]` carrier selects mask-only mode; ordinary
+;; nonnegative use-count arrays keep their existing behavior.
 (define (compiler-backend-use-count-inc
   [counts : (__tl_dyn-array i64)]
   [var : i64]) : unit

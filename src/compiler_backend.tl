@@ -71041,55 +71041,6 @@
               1
               0)))))))
 
-;; Range forms used by the streaming descriptor path. They preserve operand
-;; identity without allocating a substring for each side of every movq.
-(define (compiler-backend-peephole-decimal-range-valid?
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : bool
-  (let
-    [i : i64 start]
-    [ok : bool (< start end)]
-    (begin
-      (if (and ok (= (compiler-backend-peephole-byte-at data i) 45))
-        (begin
-          (set! i (+ i 1))
-          (if (= i end)
-            (set! ok false)
-            unit))
-        unit)
-      (while (and ok (< i end))
-        (let
-          [b : i64 (compiler-backend-peephole-byte-at data i)]
-          (begin
-            (if (and (>= b 48) (<= b 57))
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ok)))
-
-(define (compiler-backend-peephole-decimal-range-value
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : i64
-  (let
-    [neg : bool (= (compiler-backend-peephole-byte-at data start) 45)]
-    [i : i64
-      (if neg
-        (+ start 1)
-        start)]
-    [value : i64 0]
-    (begin
-      (while (< i end)
-        (begin
-          (set!
-            value
-            (+ (* value 10) (- (compiler-backend-peephole-byte-at data i) 48)))
-          (set! i (+ i 1))))
-      (if neg
-        (- 0 value)
-        value))))
-
 (define compiler-backend-peephole-memory-base-none : i64
   0)
 (define compiler-backend-peephole-memory-base-rbp : i64
@@ -71155,18 +71106,36 @@
                 base
                 0
                 false)]
-            [(compiler-backend-peephole-decimal-range-valid?
-                data
-                start
-                prefix-end)
-              (compiler-backend-peephole-stack-owner-key-from-parts
-                base
-                (compiler-backend-peephole-decimal-range-value
-                  data
-                  start
-                  prefix-end)
-                true)]
-            [else (compiler-backend-peephole-owner-key-unknown)]))]
+            [else
+              ;; Validate and accumulate the displacement together. The former
+              ;; valid?/value pair walked every digit twice on the overwhelmingly
+              ;; common explicit stack-slot spelling.
+              (let
+                [neg : bool
+                  (= (compiler-backend-peephole-byte-at data start) 45)]
+                [i : i64
+                  (if neg
+                    (+ start 1)
+                    start)]
+                [valid : bool (< i prefix-end)]
+                [value : i64 0]
+                (begin
+                  (while (and valid (< i prefix-end))
+                    (let
+                      [b : i64 (compiler-backend-peephole-byte-at data i)]
+                      (begin
+                        (if (and (>= b 48) (<= b 57))
+                          (set! value (+ (* value 10) (- b 48)))
+                          (set! valid false))
+                        (set! i (+ i 1)))))
+                  (if valid
+                    (compiler-backend-peephole-stack-owner-key-from-parts
+                      base
+                      (if neg
+                        (- 0 value)
+                        value)
+                      true)
+                    (compiler-backend-peephole-owner-key-unknown))))]))]
       [(and
           (= memory-base compiler-backend-peephole-memory-base-rip)
           (> prefix-end start))

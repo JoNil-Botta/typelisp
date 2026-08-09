@@ -72769,7 +72769,11 @@
           (set! ms (+ ms 1))))
       (let
         [mlen : i64
-          (- (compiler-backend-peephole-scan-byte-range data ms end 32) ms)]
+          (if (and
+            (< (+ ms 4) end)
+            (= (compiler-backend-peephole-byte-at data (+ ms 4)) 32))
+            4
+            (- (compiler-backend-peephole-scan-byte-range data ms end 32) ms))]
         [operand-start : i64 (+ ms mlen)]
         [has-operands : bool false]
         [comma : i64 -1]

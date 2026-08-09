@@ -30444,7 +30444,17 @@
         [(tc_i64_i64_map.LookupMissing)
           (begin
             (tc_i64_i64_map.insert-ref! seen key-id 1)
-            (tc-name-bound-before-hygiene-global-boundary-id? env key-id))]))))
+            (or
+              ;; Explicit module caches deliberately stop the environment scan.
+              ;; The symbol index still exposes a compile-root collision in
+              ;; O(1), so retain the local binding that must shadow it.
+              (csym.compiler-symbols-handle-found?
+                (csym.compiler-symbols-lookup-value-in-module-id-or
+                  (tc-context-symbols ctx)
+                  (csym.compiler-symbol-root-module-id)
+                  name-id
+                  (csym.compiler-symbols-missing-handle)))
+              (tc-name-bound-before-hygiene-global-boundary-id? env key-id)))]))))
 
 (define (tc-bind-struct-cleanup-local-shadowed!
   [ctx : TcContext]

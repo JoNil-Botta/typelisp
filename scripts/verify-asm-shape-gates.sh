@@ -108,13 +108,16 @@ count_fallthrough_jmp() {
     ' "$1"
 }
 
-# Count `jmp L` lines whose target label was already defined earlier: backward
-# jumps (loop back edges, the `jmp self` trap loops) the peephole must never
-# touch, since it can only prove fallthrough equivalence scanning forward.
-count_backward_jmp() {
+# Count direct branch lines whose target label was already defined earlier.
+# Tail-recursion lowering can leave a direct `jmp` or, after SSA construction
+# and loop rotation, fold the back edge into a conditional branch. The focused
+# backend peephole self-test separately pins that a literal backward `jmp` is
+# retained; this end-to-end gate pins the compiler-generated backward control
+# transfer without depending on which earlier optimizer pass spells it.
+count_backward_branch() {
     awk '
         /^[^[:blank:]:]+:$/ { seen[substr($0, 1, length($0) - 1)] = 1; next }
-        /^    jmp [^[:blank:]*%(,]+$/ { if (substr($0, 9) in seen) n++ }
+        /^    j[a-z]+ [^[:blank:]*%(,]+$/ { if ($2 in seen) n++ }
         END { print n + 0 }
     ' "$1"
 }
@@ -160,13 +163,13 @@ assert_no_fallthrough_jmp() {
     fi
 }
 
-assert_backward_jmp_at_least() {
+assert_backward_branch_at_least() {
     _file=$1
     _want=$2
     _label=$3
-    _got=$(count_backward_jmp "$_file")
+    _got=$(count_backward_branch "$_file")
     if [ "$_got" -lt "$_want" ]; then
-        fail "$_label expected at least $_want surviving backward jmp(s), got $_got"
+        fail "$_label expected at least $_want surviving backward branch(es), got $_got"
     fi
 }
 
@@ -338,15 +341,17 @@ check_fallthrough_jmp_chain() {
         assert_regex_count_eq "$_drop" \
             '^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$' 0 \
             "fallthrough-jmp-chain-drop-$_target"
-        # The self-recursive tail call in the same body is a backward jump.
-        assert_backward_jmp_at_least "$_drop" 1 "fallthrough-jmp-chain-drop-$_target"
+        # The self-recursive tail call in the same body remains a backward
+        # control transfer. Tailrec + SSA may spell it as a conditional loop
+        # branch instead of the backend's original direct jump.
+        assert_backward_branch_at_least "$_drop" 1 "fallthrough-jmp-chain-drop-$_target"
 
         # Both arms carry work here, so the then arm's jump to the merge label
         # crosses the else arm's real instructions and must survive.
         assert_regex_count_eq "$_keep" \
             '^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$' 1 \
             "fallthrough-jmp-chain-keep-$_target"
-        assert_backward_jmp_at_least "$_keep" 1 "fallthrough-jmp-chain-keep-$_target"
+        assert_backward_branch_at_least "$_keep" 1 "fallthrough-jmp-chain-keep-$_target"
     done
 }
 

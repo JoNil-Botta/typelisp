@@ -2,7 +2,7 @@
 ;; over i64 lanes, including a non-multiple-of-8 tail.
 (import stdlib.array)
 
-(define (init-xs [xs : (Array i64)]) : unit
+(define (init-xs [xs : (__tl_dyn-array i64)]) : unit
   (begin
     (array-set! xs 0 99)
     (array-set! xs 1 -3)
@@ -18,7 +18,7 @@
     (array-set! xs 11 6)
     (array-set! xs 12 -2)))
 
-(define (init-out [out : (Array i64)] [len : i64]) : unit
+(define (init-out [out : (__tl_dyn-array i64)] [len : i64]) : unit
   (let
     [i : i64 0]
     (while (< i len)
@@ -26,14 +26,20 @@
         (array-set! out i -99)
         (set! i (+ i 1))))))
 
-(define (fill-masked [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (fill-masked
+  [xs : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
+  [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs (+ i 1)) 0)
       (array-set! out (+ i 1) 0)
       (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))))
 
-(define (fill-scalar [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (fill-scalar
+  [xs : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
+  [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -43,7 +49,10 @@
           (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))
         (set! i (+ i 1))))))
 
-(define (arrays-eq [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
+(define (arrays-eq
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [n : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
@@ -60,9 +69,9 @@
   (let
     [n : i64 12]
     [len : i64 13]
-    [xs : (Array i64) (array.make-array i64 len)]
-    [got : (Array i64) (array.make-array i64 len)]
-    [want : (Array i64) (array.make-array i64 len)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 len)]
+    [got : (__tl_dyn-array i64) (array.make-array i64 len)]
+    [want : (__tl_dyn-array i64) (array.make-array i64 len)]
     (begin
       (init-xs xs)
       (init-out got len)

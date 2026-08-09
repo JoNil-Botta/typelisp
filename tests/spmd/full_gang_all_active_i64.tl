@@ -14,9 +14,9 @@
     [else 3]))
 
 (define (fill
-  [xs : (Array i64)]
-  [copy : (Array i64)]
-  [out : (Array i64)]
+  [xs : (__tl_dyn-array i64)]
+  [copy : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -34,9 +34,9 @@
 
 (define (run-case [n : i64]) : bool
   (let
-    [xs : (Array i64) (array.make-array i64 capacity)]
-    [copy : (Array i64) (array.make-array i64 capacity)]
-    [out : (Array i64) (array.make-array i64 capacity)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [copy : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin

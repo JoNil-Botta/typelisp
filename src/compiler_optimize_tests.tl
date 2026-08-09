@@ -4328,6 +4328,36 @@
       [(not (= (opt-dce-clean-array-count run) 4)) 6]
       [else 42])))
 
+;; Forward block order sees v0 before the later dead v1 that uses it. One DCE
+;; sweep drops v1 too late to revisit v0; the fixed-point driver must recollect
+;; uses and remove v0 on its second sweep.
+(define (opt-dce-cross-block-chain) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          0
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "exit"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "exit")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            1
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.No))
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
 ;; Returns 42 when DCE keeps the used call result `v1` and the side-effecting
 ;; instructions, drops the unused `v0`, and is idempotent on a second pass.
 (define (compiler-optimize-dce-self-test) : i64
@@ -4373,6 +4403,15 @@
       (compiler_optimize.opt-dce-block-list-array-pass
         (compiler_optimize.opt-collect-blocks-uses-array 8 live-blocks)
         live-blocks)]
+    [cross-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-dce-cross-block-chain)]
+    [cross-once : compiler_ir_types.CompilerIrBlockList
+      (match (compiler_optimize.opt-dce-block-list-array-pass
+        (compiler_optimize.opt-collect-blocks-uses-array 2 cross-blocks)
+        cross-blocks)
+        [(compiler_optimize.OptBlockListPassResult.Result next _) next])]
+    [cross-fixed : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-dce-block-list-array-fixpoint 2 cross-blocks 8)]
     [alloc-tests : i64 (compiler-optimize-dce-alloc-self-test)]
     (cond
       [(not
@@ -4392,6 +4431,18 @@
       [(not (= (compiler_ir_types.compiler-ir-instr-list-count again) 2)) 7]
       [(not unused-word-dead) 8]
       [(not (= alloc-tests 42)) 9]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-instruction-count
+              cross-once)
+            3))
+        10]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-instruction-count
+              cross-fixed)
+            2))
+        11]
       [else 42])))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
@@ -15791,6 +15842,43 @@
               (compiler_ir_types.compiler-ir-label "entry"))
             (compiler_ir_types.CompilerIrInstrList.Nil)))))))
 
+(define (opt-tailrec-entry-instrs
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrInstrList
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label "entry"))
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.CompilerIrInstrList.Nil)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (compiler_ir_types.compiler-ir-instr-seq-to-list instrs)])]))
+
+(define (opt-tailrec-entry-collision-function) : compiler_ir_types.CompilerIrFunction
+  (match (opt-tailrec-test-function)
+    [(compiler_ir_types.CompilerIrFunction.Function
+        name
+        params
+        ret
+        frame
+        blocks)
+      (compiler_ir_types.CompilerIrFunction.Function
+        name
+        params
+        ret
+        frame
+        (compiler_optimize.opt-inline-block-append
+          blocks
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "entry__ssa_entry")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 0)))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.CompilerIrBlockList.Nil))))]))
+
 (define (compiler-optimize-tailrec-self-test) : i64
   (let
     [rewritten : compiler_ir_types.CompilerIrFunction
@@ -15805,7 +15893,11 @@
     [once-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks once)]
     [rewritten-instrs : compiler_ir_types.CompilerIrInstrList
-      (opt-function-first-instrs rewritten)]
+      (opt-tailrec-entry-instrs rewritten-blocks)]
+    [collision : compiler_ir_types.CompilerIrFunction
+      (opt-tailrec-entry-collision-function)]
+    [collision-out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-tailrec-function collision)]
     (cond
       [(not (= (compiler_optimize.opt-function-frame rewritten) 4)) 1]
       [(not
@@ -15816,20 +15908,41 @@
         2]
       [(not (= (opt-count-tail-call-blocks rewritten-blocks) 0)) 3]
       [(not
+          (opt-rotate-ssa-test-single-jump-to?
+            rewritten-blocks
+            (compiler_ir_types.compiler-ir-label "entry__ssa_entry")
+            (compiler_ir_types.compiler-ir-label "entry")))
+        7]
+      [(not
           (=
             (opt-count-jump-to-blocks
               rewritten-blocks
               (compiler_ir_types.compiler-ir-label "entry"))
-            1))
+            2))
         4]
       [(not (= (opt-count-tail-call-blocks once-blocks) 0)) 5]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function once)))
+        8]
+      [(not
+          (opt-block-list-has-label?
+            once-blocks
+            (compiler_ir_types.compiler-ir-label "entry__ssa_entry")))
+        9]
       [(not
           (=
             (opt-count-jump-to-blocks
               once-blocks
               (compiler_ir_types.compiler-ir-label "entry"))
-            1))
+            2))
         6]
+      [(not
+          (compiler_optimize.opt-function-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            collision
+            collision-out))
+        10]
       [else 42])))
 
 (define (opt-count-phi-instr-seq-from
@@ -19984,10 +20097,11 @@
     3
     (opt-ssa-construct-address-taken-blocks)))
 
-;; The tail-recursion-to-loop shape: the back edge targets the function ENTRY
-;; block and the latch reassigns the parameters. SSA construction must decline
-;; this function (a phi at the entry block cannot see the implicit
-;; function-entry edge that carries the initial parameter values).
+;; The raw tail-recursion-to-loop shape targets the function ENTRY block and its
+;; latch reassigns a parameter. SSA construction must decline that raw form (a
+;; phi cannot see the implicit function-entry edge). Tailrec production first
+;; adds an explicit entry preheader; the paired fixture below must then construct
+;; a valid typed loop phi.
 (define (opt-ssa-entry-backedge-params) : compiler_ir_types.CompilerIrParamList
   (compiler_ir_types.compiler-ir-param-cons
     (compiler_ir_types.CompilerIrParam.Param
@@ -20054,6 +20168,15 @@
     (compiler_ast_types.AstType.I64)
     4
     (opt-ssa-entry-backedge-blocks)))
+
+(define (opt-ssa-entry-backedge-preheader-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "ssa_entry_backedge_preheader")
+    (opt-ssa-entry-backedge-params)
+    (compiler_ast_types.AstType.I64)
+    4
+    (compiler_optimize.opt-ssa-explicit-entry-blocks
+      (opt-ssa-entry-backedge-blocks))))
 
 (define (opt-natural-loop-nested-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -25725,7 +25848,18 @@
 ;; clear the pass's two-eliminable-check guard-economics gate. Variant 16 is
 ;; 14's profitable twin: base+i AND base+i+1, two eliminable scale-1
 ;; variable-base checks, which version through the no-division scale-1
-;; guard.
+;; guard. Variants 17-25 stride the counter by 8 (the word-loader shape):
+;; 17 is 16's twin and versions (the guard gains the step-k no-wrap
+;; condition `wrap(bound + step - 1) >= bound`), 18 is 14's twin and stays
+;; out under the same economics gate, 19 checks the step-8 counter directly
+;; (the plain counter case, `bound <= len`), 20 keeps the step-8 stride but
+;; compares against an in-loop definition -- a non-loop-invariant bound
+;; still refuses -- and 21 is a THREE-member scale-1 fan (base+i, +1, +2)
+;; whose guard must cost exactly what 17's two-member fan costs. Variants
+;; 22-23 are the step refusals (a zero step and a non-literal one), and
+;; 24-25 are the no-wrap condition's literal-bound boundary: 24's bound of
+;; 100 satisfies the cap at compile time and emits no condition, while 25's
+;; i64-MAX bound can never satisfy it and rejects the versioning outright.
 (define (opt-bce-version-test-check-tail [variant : i64]) : compiler_ir_types.CompilerIrInstrList
   (let
     [after-check : compiler_ir_types.CompilerIrInstrList
@@ -25734,14 +25868,30 @@
           6
           (compiler_ir_types.CompilerIrBinOp.Add)
           (compiler_ir_types.CompilerIrValue.Var 3)
-          (compiler_ir_types.CompilerIrValue.I64 1)
+          ;; Variants 17+ stride the counter by 8 (the word-loader shape);
+          ;; 22 steps by 0 and 23 by a non-literal, both of which the shape
+          ;; scan must refuse.
+          (cond
+            [(= variant 23) (compiler_ir_types.CompilerIrValue.Var 0)]
+            [(= variant 22) (compiler_ir_types.CompilerIrValue.I64 0)]
+            [(>= variant 17) (compiler_ir_types.CompilerIrValue.I64 8)]
+            [else (compiler_ir_types.CompilerIrValue.I64 1)])
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
             7
             (compiler_ir_types.CompilerIrBinOp.Lt)
             (compiler_ir_types.CompilerIrValue.Var 6)
-            (compiler_ir_types.CompilerIrValue.Var 0)
+            ;; Variant 20 compares against an in-loop definition: the bound is
+            ;; not loop-invariant and the shape scan must refuse. Variants
+            ;; 24-25 use a LITERAL bound, which folds the no-wrap condition at
+            ;; compile time (24 satisfies the cap, 25 cannot).
+            (cond
+              [(= variant 20) (compiler_ir_types.CompilerIrValue.Var 5)]
+              [(= variant 24) (compiler_ir_types.CompilerIrValue.I64 100)]
+              [(= variant 25)
+                (compiler_ir_types.CompilerIrValue.I64 9223372036854775807)]
+              [else (compiler_ir_types.CompilerIrValue.Var 0)])
             (compiler_ast_types.AstType.Bool))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Branch
@@ -25754,7 +25904,12 @@
         (compiler_ir_types.CompilerIrInstr.BoundsCheck
           (cond
             [(= variant 0) (compiler_ir_types.CompilerIrValue.Var 5)]
-            [(= variant 1) (compiler_ir_types.CompilerIrValue.Var 3)]
+            ;; 19-20 and 22-25 check the counter itself; 21 is a fan and
+            ;; takes the variable-base index like 16-18.
+            [(or
+                (= variant 1)
+                (and (>= variant 19) (<= variant 25) (not (= variant 21))))
+              (compiler_ir_types.CompilerIrValue.Var 3)]
             [else (compiler_ir_types.CompilerIrValue.Var 9)])
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ir_types.compiler-ir-label "bce_version_ok"))
@@ -25778,13 +25933,28 @@
               after-check)]
           ;; 16's second check is `base + i + 1`: a SECOND eliminable
           ;; scale-1 variable-base index, which is what clears the gate.
-          [(= variant 16)
+          ;; 17 is 16's step-8 twin.
+          [(or (= variant 16) (= variant 17))
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.BoundsCheck
                 (compiler_ir_types.CompilerIrValue.Var 11)
                 (compiler_ir_types.CompilerIrValue.Var 1)
                 (compiler_ir_types.compiler-ir-label "bce_version_ok_second"))
               after-check)]
+          ;; 21's three-member fan (base+i, +1, +2 on a step-8 counter):
+          ;; the subsumed middle check needs no condition of its own.
+          [(= variant 21)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 11)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "bce_version_ok_second"))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 12)
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.compiler-ir-label "bce_version_ok_third"))
+                after-check))]
           [else after-check]))]
     (cond
       [(= variant 2)
@@ -25957,7 +26127,10 @@
             (compiler_ir_types.CompilerIrValue.Var 3)
             (compiler_ast_types.AstType.I64))
           check)]
-      [(= variant 16)
+      ;; 17 is 16's step-8 twin: the same two eliminable scale-1
+      ;; variable-base checks on a counter striding by 8, which version
+      ;; through the no-division guard plus the step-k no-wrap condition.
+      [(or (= variant 16) (= variant 17))
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
             9
@@ -25973,6 +26146,45 @@
               (compiler_ir_types.CompilerIrValue.I64 1)
               (compiler_ast_types.AstType.I64))
             check))]
+      ;; 18 is 14's step-8 twin: a LONE scale-1 variable-base check on a
+      ;; step-8 counter still fails the two-eliminable-check economics gate.
+      [(= variant 18)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64))
+          check)]
+      ;; 21's three-member scale-1 variable-base fan on a step-8 counter:
+      ;; base+i, base+i+1, base+i+2. The whole fan versions through ONE
+      ;; extremal condition set (min-side cond A at k=0, max-side cond A
+      ;; and cond B at k=2) instead of two conditions per member, so its
+      ;; guard must cost exactly what 17's two-member fan costs.
+      [(= variant 21)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              11
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                12
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ir_types.CompilerIrValue.I64 2)
+                (compiler_ast_types.AstType.I64))
+              check)))]
       [(or (= variant 12) (= variant 13))
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
@@ -26134,6 +26346,81 @@
               (compiler_optimize.opt-phi-input-count inputs)]
             [_ (- 0 1)])])]))
 
+;; Does the named block hold a BinOp with the given opcode AND the given i64
+;; literal operand? Guard-shape evidence: the step-k no-wrap condition adds
+;; `step - 1` to the bound before comparing it back against the bound, so a
+;; step-8 loop's guard carries an Add against 7 and a step-1 loop's does not.
+(define (opt-bce-version-test-binop-op-lit-from?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [literal : i64]) : bool
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.BinOp _ instr-op lhs rhs _)
+        (if (and
+          (compiler_optimize.opt-binop-eq instr-op op)
+          (or
+            (match lhs
+              [(compiler_ir_types.CompilerIrValue.I64 k) (= k literal)]
+              [_ false])
+            (match rhs
+              [(compiler_ir_types.CompilerIrValue.I64 k) (= k literal)]
+              [_ false])))
+          true
+          (opt-bce-version-test-binop-op-lit-from?
+            instrs
+            (+ index 1)
+            op
+            literal))]
+      [_
+        (opt-bce-version-test-binop-op-lit-from? instrs (+ index 1) op literal)])))
+
+(define (opt-bce-version-test-block-binop-op-lit?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label-want : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [literal : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label-want)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-bce-version-test-binop-op-lit-from? instrs 0 op literal)])]))
+
+;; Count the BinOps with the given opcode in one block: guard-shape evidence
+;; for the fan subsumption (a k-member (base, length) fan needs exactly the
+;; extremal compares, not two per member).
+(define (opt-bce-version-test-block-binop-count-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-bce-version-test-block-binop-count-from
+      instrs
+      (+ index 1)
+      op
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        [(compiler_ir_types.CompilerIrInstr.BinOp _ instr-op _ _ _)
+          (if (compiler_optimize.opt-binop-eq instr-op op)
+            (+ acc 1)
+            acc)]
+        [_ acc]))))
+
+(define (opt-bce-version-test-block-binop-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label-want : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label-want)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-bce-version-test-block-binop-count-from instrs 0 op 0)])]))
+
 (define (compiler-optimize-bce-version-self-test) : i64
   (let
     [versioned : compiler_ir_types.CompilerIrFunction
@@ -26176,6 +26463,32 @@
             out
             (compiler_ir_types.compiler-ir-label "entry")
             slow-block)])]
+    [step8-counter : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 19)))]
+    [step8-counter-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks step8-counter)]
+    [noninv-bound-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 20))))]
+    [zero-step-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 22))))]
+    [var-step-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 23))))]
+    [lit-bound : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 24)))]
+    [lit-bound-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks lit-bound)]
+    [max-bound-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 25))))]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -26288,6 +26601,92 @@
           [(compiler_optimize.OptUnrollMaybeShape.No) false]
           [(compiler_optimize.OptUnrollMaybeShape.Some _) true])
         20]
+      ;; A counter striding by a positive literal other than 1 versions too
+      ;; (variant 19 checks the step-8 counter directly): the counter case's
+      ;; `bound <= len` reasoning is step-independent once the guard rules
+      ;; out a wrapping final increment, so the guard must carry the no-wrap
+      ;; add of `step - 1` onto the bound.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function step8-counter)))
+        21]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count step8-counter-out)
+            5))
+        22]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              step8-counter-out
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        23]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              step8-counter-out
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        24]
+      [(not
+          (opt-bce-version-test-block-binop-op-lit?
+            step8-counter-out
+            (compiler_ir_types.compiler-ir-label "loop__bce_guard")
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            7))
+        25]
+      ;; A non-loop-invariant bound still refuses (variant 20): three blocks,
+      ;; check intact.
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count noninv-bound-out)
+            3))
+        26]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              noninv-bound-out
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        27]
+      ;; A ZERO step (variant 22) and a NON-LITERAL step (variant 23) are
+      ;; outside the admitted shape: the counter's trip range is not
+      ;; [seed, bound-1] for either, so both leave the function untouched.
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count zero-step-out) 3))
+        28]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count var-step-out) 3))
+        29]
+      ;; A LITERAL bound folds the no-wrap condition at compile time. 100 is
+      ;; far under `i64-MAX - step + 1`, so variant 24 versions with NO
+      ;; no-wrap instruction in its guard...
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function lit-bound)))
+        30]
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count lit-bound-out) 5))
+        31]
+      [(opt-bce-version-test-block-binop-op-lit?
+          lit-bound-out
+          (compiler_ir_types.compiler-ir-label "loop__bce_guard")
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          7)
+        32]
+      ;; ... while an i64-MAX bound can never satisfy the cap, so variant 25
+      ;; rejects the versioning outright rather than emitting a guard that
+      ;; always fails.
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count max-bound-out) 3))
+        33]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              max-bound-out
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        34]
       [else 42])))
 
 ;; Full-pipeline integration: a lowered while loop with a checked array read
@@ -26604,6 +27003,21 @@
         (opt-bce-version-test-function (opt-bce-version-test-blocks 16)))]
     [two-scale1-out : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks two-scale1)]
+    [step8-scale1 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 17)))]
+    [step8-scale1-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks step8-scale1)]
+    [step8-lone-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 18))))]
+    [fan3 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 21)))]
+    [fan3-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks fan3)]
+    [guard-label : i64 (compiler_ir_types.compiler-ir-label "loop__bce_guard")]
     (cond
       ;; scale-2 Mul-form variable-base load: versions through the
       ;; synthesized derived-seed quotient guard (one division by the step).
@@ -26794,6 +27208,141 @@
               (compiler_ir_types.CompilerIrBinOp.Div))
             0))
         34]
+      ;; The step-8 twin versions identically -- the scale-1 guard's
+      ;; `bound - 1` reasoning is step-independent once the no-wrap
+      ;; condition rules out a wrapping final increment: check-free fast
+      ;; clone, both checks kept in the slow loop, no division, and the
+      ;; guard carries the no-wrap add of `step - 1` onto the bound.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function step8-scale1)))
+        35]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count step8-scale1-out)
+            5))
+        36]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              step8-scale1-out
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        37]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              step8-scale1-out
+              (compiler_ir_types.compiler-ir-label "loop"))
+            2))
+        38]
+      [(not
+          (=
+            (opt-count-binop-op-blocks
+              step8-scale1-out
+              (compiler_ir_types.CompilerIrBinOp.Div))
+            0))
+        39]
+      [(not
+          (opt-bce-version-test-block-binop-op-lit?
+            step8-scale1-out
+            guard-label
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            7))
+        40]
+      ;; ... while its lone-check twin stays out under the same
+      ;; two-eliminable-check economics gate (three blocks, check intact).
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count step8-lone-out) 3))
+        41]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              step8-lone-out
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        53]
+      ;; The THREE-member step-8 fan (variant 21) versions the same way, and
+      ;; its guard carries only the extremal conditions: three `>=` (min-side
+      ;; cond A, max-side cond A, the no-wrap compare), one `<=` (max-side
+      ;; cond B) and one `<` (the seed < bound entry condition). Before fan
+      ;; subsumption each member paid two conditions of its own.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function fan3)))
+        43]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count fan3-out) 5)) 44]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              fan3-out
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        45]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              fan3-out
+              (compiler_ir_types.compiler-ir-label "loop"))
+            3))
+        46]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              fan3-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            3))
+        47]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              fan3-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le))
+            1))
+        48]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              fan3-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Lt))
+            1))
+        49]
+      ;; Subsumption, stated as the property that matters: the THREE-member
+      ;; fan's guard costs exactly what the TWO-member fan's does. A
+      ;; per-check guard would have paid two more conditions for the extra
+      ;; member.
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              fan3-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            (opt-bce-version-test-block-binop-count
+              step8-scale1-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))))
+        50]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              fan3-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le))
+            (opt-bce-version-test-block-binop-count
+              step8-scale1-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le))))
+        51]
+      [(not
+          (opt-bce-version-test-block-binop-op-lit?
+            fan3-out
+            guard-label
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            7))
+        52]
       [else 42])))
 
 (test
@@ -26811,7 +27360,9 @@
 ;; makes the swap check's index underivable (store+1 used directly) -- which
 ;; PARTIALLY versions now (the counter check still derives, the swap check
 ;; stays in the fast clone) -- 2 puts a call in the swap block, 3 makes the
-;; counter step +2 -- the latter two must leave the function untouched. Variant
+;; counter step +2 -- the call must leave the function untouched, while the
+;; larger positive literal step versions like step 1 (the guard gains the
+;; step-k no-wrap condition). Variant
 ;; 4 gives the header a switch terminator so cloning exercises every switch
 ;; edge, including the compiler trap default. Variant 5 uses explicit pending
 ;; total-enum provenance and must remain unversioned by the profitability gate.
@@ -27388,6 +27939,11 @@
         (opt-bce-mb-test-chain-function 1))]
     [chain-out : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks chain)]
+    [step-two : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 3)))]
+    [step-two-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks step-two)]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -27513,6 +28069,47 @@
               (compiler_ir_types.compiler-ir-label "body"))
             1))
         20]
+      ;; Variant 3 strides the counter by +2: admitted now that any positive
+      ;; literal step versions (the executed-trip counter values are a subset
+      ;; of [seed, bound-1] for any positive step), with the guard's no-wrap
+      ;; condition covering the larger increment. Both checks drop from the
+      ;; fast region.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function step-two)))
+        21]
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count step-two-out) 11))
+        22]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              step-two-out
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        23]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              step-two-out
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            0))
+        24]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              step-two-out
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        25]
+      ;; The guard carries the no-wrap add of `step - 1` onto the bound.
+      [(not
+          (opt-bce-version-test-block-binop-op-lit?
+            step-two-out
+            (compiler_ir_types.compiler-ir-label "body__bce_guard")
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            1))
+        26]
       [else 42])))
 
 (define (opt-bce-mb-test-cloned-switch-cases-ok?
@@ -27979,10 +28576,6 @@
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-bce-version-function
           (opt-bce-mb-test-function (opt-bce-mb-test-blocks 2))))]
-    [step-two : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks
-        (compiler_optimize.opt-bce-version-function
-          (opt-bce-mb-test-function (opt-bce-mb-test-blocks 3))))]
     ;; The same nine-block chain the positive fixture versions, with each
     ;; forwarder padded to fourteen instructions: 103 cloned instructions
     ;; against a budget of 96, so the growth cap -- and nothing else --
@@ -27994,8 +28587,7 @@
     (cond
       ;; every rejection leaves the function untouched.
       [(not (= (compiler_ir_types.compiler-ir-block-list-count with-call) 6)) 1]
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count step-two) 6)) 2]
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count too-big) 11)) 3]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count too-big) 11)) 2]
       [else 42])))
 
 ;; Partial versioning: the swap check's store+1 index does not derive, but the
@@ -33300,6 +33892,10 @@
       (compiler_optimize.opt-ssa-construct-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         entry-backedge)]
+    [entry-backedge-preheader-out : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ssa-construct-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-ssa-entry-backedge-preheader-function))]
     [constructed-nested : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-ssa-construct-function
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -33525,6 +34121,17 @@
             entry-backedge
             entry-backedge-out))
         53]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function entry-backedge-preheader-out)))
+        61]
+      [(not
+          (=
+            (opt-count-phi-blocks
+              (compiler_optimize.opt-function-blocks
+                entry-backedge-preheader-out))
+            1))
+        62]
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function constructed-nested)))

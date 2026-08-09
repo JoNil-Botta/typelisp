@@ -25,6 +25,17 @@ case "$(uname -s)" in
     *) HOST_TARGET=linux ;;
 esac
 
+set +e
+"$COMPILER" run tools/compiler-surface-ast-smoke.tl \
+    --stdlib-root stdlib --stdlib-root src \
+    --cfg compiler-surface-selftest --cfg compiler-surface-producer
+surface_status=$?
+set -e
+if [ "$surface_status" -ne 42 ]; then
+    echo "compiler surface selftest exited $surface_status, expected 42" >&2
+    exit 1
+fi
+
 WORKDIR=target/embedded-stdlib-tlci-verify
 EMBEDDED_IMAGE=target/embedded-stdlib-tlci/stdlib.tlci
 IMAGE_A=$WORKDIR/stdlib-a.tlci

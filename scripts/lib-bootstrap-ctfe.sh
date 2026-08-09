@@ -142,6 +142,49 @@ bootstrap_seed_dotted_import_bridge_root() {
     printf '%s\n' "$bridge_root"
 }
 
+# `stage0-seed-bootstrap` expands explicit shared-view macros to their legacy
+# direct-read form because published seeds reject ptr-addr-of on globals. A
+# newer seed enforces the move-out-of-global rule instead, so handing it the
+# cfg makes it reject the legacy direct read (E0200) -- the same shape that
+# broke the stage0 publication flow while per-PR CI stayed green (#6385).
+# Probe the actual seed, after any compatibility bridge, and set
+# SEED_REQUIRES_LEGACY_GLOBAL_VIEWS so only a seed that needs the legacy
+# spelling receives the cfg. An unexpected probe failure is fatal.
+bootstrap_resolve_seed_global_views() {
+    compiler=$1
+    workdir=$2
+    probe="$workdir/seed-global-view-probe.tl"
+    probe_stdout="$workdir/seed-global-view-probe.stdout"
+    probe_stderr="$workdir/seed-global-view-probe.stderr"
+    mkdir -p "$workdir"
+    cat > "$probe" <<'EOF'
+(define seed-global-view-probe : String "")
+(define (main) : i64
+  (unsafe
+    (begin
+      (ptr-read (ptr-addr-of seed-global-view-probe))
+      0)))
+EOF
+    SEED_REQUIRES_LEGACY_GLOBAL_VIEWS=0
+    if "$compiler" check "$probe" \
+        > "$probe_stdout" \
+        2> "$probe_stderr"; then
+        echo "[bootstrap] seed supports explicit global shared views"
+        return 0
+    fi
+    if grep -qF 'ptr-addr-of requires a local or parameter name' \
+        "$probe_stderr"; then
+        SEED_REQUIRES_LEGACY_GLOBAL_VIEWS=1
+        echo "[bootstrap] seed requires legacy global shared views"
+        return 0
+    fi
+
+    echo "[bootstrap] global shared-view capability probe failed unexpectedly" >&2
+    sed 's/^/  /' "$probe_stdout" >&2 || true
+    sed 's/^/  /' "$probe_stderr" >&2 || true
+    return 1
+}
+
 # A seed compiler's backend runtime is baked into the seed binary. When source
 # introduces a new runtime entry point, the first generated compiler therefore
 # needs a one-generation compatibility definition. Newer compilers emit the

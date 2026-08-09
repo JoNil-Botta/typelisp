@@ -6,6 +6,12 @@ Programs whose exit code is computed by a SIMD-lowered `foreach` map or
 code as the `scalar` reference — the comparison the SPMD acceptance criteria
 (#1011–#1014) need, beyond #1148's single full-width program.
 
+These low-level compiler fixtures intentionally use the private
+`(__tl_dyn-array T)` representation for their backing buffers. They exercise
+array bounds and SIMD lowering directly, rather than defining the public array
+surface. Public API coverage uses native `Slice`/`Vec` values in the dedicated
+integration fixtures and `native_slice_surface_i64.tl`.
+
 `SPEC.md` also defines the `defdispatch` declaration form for runtime SIMD
 dispatch: one logical function lists scalar, AVX2, and AVX-512 variant
 functions, and ordinary calls choose the best runnable variant once per process.

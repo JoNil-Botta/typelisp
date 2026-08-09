@@ -444,9 +444,7 @@
 (define (compiler-symbol-map-contains-id?
   [map : (& map CompilerSymbolMap)]
   [name-id : i64]) : bool
-  (match (compiler-symbol-map-lookup-id map name-id)
-    [(option_i64.Some _) true]
-    [(option_i64.None) false]))
+  (>= (compiler-symbol-map-lookup-handle-id map name-id) 0))
 
 (define (compiler-symbol-map-bind-id!
   [map : (&mut map CompilerSymbolMap)]
@@ -565,17 +563,39 @@
   [symbols : CompilerSymbols]
   [name-id : i64]
   [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-symbols-lookup-value-id symbols name-id)
-    fallback))
+  (match symbols
+    [(CompilerSymbols values _ _ _ _ _)
+      (let
+        [handle : i64
+          (compiler-symbol-map-lookup-handle-id
+            (& values)
+            (compiler-symbol-name-id-key name-id))]
+        (if (>= handle 0)
+          handle
+          (match (compiler-symbol-dotted-variant-key-id name-id)
+            [(option_i64.Some key-id)
+              (let
+                [variant-handle : i64
+                  (compiler-symbol-map-lookup-handle-id (& values) key-id)]
+                (if (>= variant-handle 0)
+                  variant-handle
+                  fallback))]
+            [(option_i64.None) fallback])))]))
 
 (define (compiler-symbols-lookup-type-id-or
   [symbols : CompilerSymbols]
   [name-id : i64]
   [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-symbols-lookup-type-id symbols name-id)
-    fallback))
+  (match symbols
+    [(CompilerSymbols _ types _ _ _ _)
+      (let
+        [handle : i64
+          (compiler-symbol-map-lookup-handle-id
+            (& types)
+            (compiler-symbol-name-id-key name-id))]
+        (if (>= handle 0)
+          handle
+          fallback))]))
 
 (define (compiler-symbols-decls [symbols : CompilerSymbols]) : (__tl_dyn-array
     ast.AstDecl)
@@ -1303,27 +1323,48 @@
   [module-id : i64]
   [name-id : i64]
   [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-symbols-lookup-value-in-module-id symbols module-id name-id)
-    fallback))
+  (match symbols
+    [(CompilerSymbols values _ _ _ _ _)
+      (let
+        [handle : i64
+          (compiler-symbol-map-lookup-handle-id
+            (& values)
+            (compiler-symbol-module-key-id-by-id module-id name-id))]
+        (if (>= handle 0)
+          handle
+          fallback))]))
 
 (define (compiler-symbols-lookup-type-in-module-id-or
   [symbols : CompilerSymbols]
   [module-id : i64]
   [name-id : i64]
   [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-symbols-lookup-type-in-module-id symbols module-id name-id)
-    fallback))
+  (match symbols
+    [(CompilerSymbols _ types _ _ _ _)
+      (let
+        [handle : i64
+          (compiler-symbol-map-lookup-handle-id
+            (& types)
+            (compiler-symbol-module-key-id-by-id module-id name-id))]
+        (if (>= handle 0)
+          handle
+          fallback))]))
 
 (define (compiler-symbols-lookup-macro-in-module-id-or
   [symbols : CompilerSymbols]
   [module-id : i64]
   [name-id : i64]
   [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-symbols-lookup-macro-in-module-id symbols module-id name-id)
-    fallback))
+  (match symbols
+    [(CompilerSymbols _ _ macros _ _ _)
+      (let
+        [handle : i64
+          (compiler-symbol-map-lookup-handle-id
+            (& macros)
+            (compiler-symbol-module-key-id-by-id module-id name-id))]
+        (if (>= handle 0)
+          handle
+          fallback))]))
 
 (define (compiler-registries-lookup-field-in-module-id
   [registries : CompilerRegistries]
@@ -3137,29 +3178,53 @@
   [registries : CompilerRegistries]
   [name-id : i64]
   [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-registries-lookup-variant-id registries name-id)
-    fallback))
+  (match registries
+    [(CompilerRegistries variants _ _)
+      (let
+        [handle : i64
+          (compiler-symbol-map-lookup-handle-id
+            (& variants)
+            (compiler-symbol-name-id-key name-id))]
+        (if (>= handle 0)
+          handle
+          (match (compiler-symbol-dotted-variant-key-id name-id)
+            [(option_i64.Some key-id)
+              (let
+                [variant-handle : i64
+                  (compiler-symbol-map-lookup-handle-id (& variants) key-id)]
+                (if (>= variant-handle 0)
+                  variant-handle
+                  fallback))]
+            [(option_i64.None) fallback])))]))
 
 (define (compiler-registries-lookup-variant-key-id-or
   [registries : CompilerRegistries]
   [key-id : i64]
   [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-registries-lookup-variant-key-id registries key-id)
-    fallback))
+  (match registries
+    [(CompilerRegistries variants _ _)
+      (let
+        [handle : i64
+          (compiler-symbol-map-lookup-handle-id (& variants) key-id)]
+        (if (>= handle 0)
+          handle
+          fallback))]))
 
 (define (compiler-registries-lookup-struct-field-id-or
   [registries : CompilerRegistries]
   [struct-name-id : i64]
   [field-name-id : i64]
   [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-registries-lookup-struct-field-id
-      registries
-      struct-name-id
-      field-name-id)
-    fallback))
+  (match registries
+    [(CompilerRegistries _ fields _)
+      (let
+        [handle : i64
+          (compiler-symbol-map-lookup-handle-id
+            (& fields)
+            (compiler-struct-field-key-id-by-id struct-name-id field-name-id))]
+        (if (>= handle 0)
+          handle
+          fallback))]))
 
 (define (compiler-registries-add-variant-in-module-id
   [registries : CompilerRegistries (:consume)]

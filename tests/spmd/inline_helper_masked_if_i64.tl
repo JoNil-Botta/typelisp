@@ -1,7 +1,7 @@
 ;; Direct source-known helper calls inside AVX-512 masked SPMD branches.
 (import stdlib.array)
 
-(define (init-xs [xs : (Array i64)]) : unit
+(define (init-xs [xs : (__tl_dyn-array i64)]) : unit
   (begin
     (array-set! xs 0 -3)
     (array-set! xs 1 4)
@@ -23,14 +23,17 @@
 (define (non-negative? [x : i64]) : bool
   (>= x 0))
 
-(define (fill-inline [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (fill-inline
+  [xs : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
+  [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (non-negative? (array-ref xs i))
       (array-set! out i (bump (array-ref xs i)))
       (array-set! out i 0))))
 
-(define (sum-array [xs : (Array i64)] [n : i64]) : i64
+(define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [sum : i64 0]
@@ -44,8 +47,8 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (Array i64) (array.make-array i64 n)]
-    [out : (Array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
       (init-xs xs)
       (fill-inline xs out n)

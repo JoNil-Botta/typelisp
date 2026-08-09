@@ -1,6 +1,6 @@
 (import stdlib.array)
 
-(define (init [a : (Array i8)] [b : (Array i8)] [n : i64]) : unit
+(define (init [a : (__tl_dyn-array i8)] [b : (__tl_dyn-array i8)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -9,12 +9,16 @@
         (array-set! b i (cast (+ i 2) : i8))
         (set! i (+ i 1))))))
 
-(define (fill [a : (Array i8)] [b : (Array i8)] [out : (Array i8)] [n : i64]) : unit
+(define (fill
+  [a : (__tl_dyn-array i8)]
+  [b : (__tl_dyn-array i8)]
+  [out : (__tl_dyn-array i8)]
+  [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set! out i (* (array-ref a i) (array-ref b i)))))
 
-(define (sum [out : (Array i8)] [n : i64]) : i64
+(define (sum [out : (__tl_dyn-array i8)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -28,9 +32,9 @@
 (define (main) : i64
   (let
     [n : i64 9]
-    [a : (Array i8) (array.make-array i8 n)]
-    [b : (Array i8) (array.make-array i8 n)]
-    [out : (Array i8) (array.make-array i8 n)]
+    [a : (__tl_dyn-array i8) (array.make-array i8 n)]
+    [b : (__tl_dyn-array i8) (array.make-array i8 n)]
+    [out : (__tl_dyn-array i8) (array.make-array i8 n)]
     (begin
       (init a b n)
       (fill a b out n)

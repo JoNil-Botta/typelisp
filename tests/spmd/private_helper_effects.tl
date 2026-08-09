@@ -3,7 +3,7 @@
 (import stdlib.atomic)
 
 (define (heavy-effects
-  [out : (Array i64)]
+  [out : (__tl_dyn-array i64)]
   [atomic-out : (& atomic-out atomic.AtomicI64Buffer)]
   [i : i64]) : unit
   (begin
@@ -11,7 +11,7 @@
     (atomic.atomic-i64-add! atomic-out 0 1)))
 
 (define (fill
-  [out : (Array i64)]
+  [out : (__tl_dyn-array i64)]
   [atomic-out : (& atomic-out atomic.AtomicI64Buffer)]
   [n : i64]) : unit
   (foreach
@@ -20,7 +20,7 @@
       (heavy-effects out atomic-out i)
       unit)))
 
-(define (sum-array [xs : (Array i64)] [n : i64]) : i64
+(define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [sum : i64 0]
@@ -33,7 +33,7 @@
 
 (define (main) : i64
   (let
-    [out : (Array i64) (array.make-array i64 16)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 16)]
     [atomic-out : atomic.AtomicI64Buffer (atomic.i64-buffer 1)]
     (begin
       (fill out (& atomic-out) 13)

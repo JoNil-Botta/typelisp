@@ -577,26 +577,76 @@
   (WindowsAvx512)
   (InlineAggregates))
 
+;; Lowering threads one state through every expression in a function. Keep the
+;; public carrier to one word and mutate its function-owned cell in place:
+;; returning the former wide value from every variable allocation, emission,
+;; and label transition copied the complete state through `tl_memcpy` millions
+;; of times. Builders were already shared mutable storage, so this preserves
+;; the existing linear state semantics while making that ownership explicit.
+(defstruct LowerStateData
+  (next-var i64)
+  (next-label i64)
+  (next-lambda i64)
+  (current-label i64)
+  (current-instrs ir.CompilerIrInstrBuilder)
+  (blocks ir.CompilerIrBlockBuilder)
+  (functions ir.CompilerIrFunctionBuilder)
+  ;; Exact interned IR function identity. Derive display text only where
+  ;; needed; re-interning that text can select a different provenance ID.
+  (function i64)
+  (spans (Box ir.CompilerSourceSpans))
+  (names LowerNameCache)
+  (type-cache LowerTypeCache)
+  (mode CompilerLowerMode)
+  (address-taken lower_i64_i64_map.Map)
+  ;; Tail-call-safe current function parameter var range: [start, end).
+  (tail-param-start i64)
+  (tail-param-end i64))
+
 (defenum LowerState
-  (State
-    i64
-    i64
-    i64
-    i64
-    ir.CompilerIrInstrBuilder
-    ir.CompilerIrBlockBuilder
-    ir.CompilerIrFunctionBuilder
-    ;; Exact interned IR function identity. Derive display text only where
-    ;; needed; re-interning that text can select a different provenance ID.
-    i64
-    (Box ir.CompilerSourceSpans)
-    LowerNameCache
-    LowerTypeCache
-    CompilerLowerMode
-    lower_i64_i64_map.Map
-    ;; Tail-call-safe current function parameter var range: [start, end).
-    i64
-    i64))
+  (State (Box LowerStateData)))
+
+(define (lower-state-new
+  [next-var : i64]
+  [next-label : i64]
+  [next-lambda : i64]
+  [current-label : i64]
+  [current-instrs : ir.CompilerIrInstrBuilder]
+  [blocks : ir.CompilerIrBlockBuilder]
+  [functions : ir.CompilerIrFunctionBuilder]
+  [function : i64]
+  [spans : (Box ir.CompilerSourceSpans)]
+  [names : LowerNameCache]
+  [type-cache : LowerTypeCache]
+  [mode : CompilerLowerMode]
+  [address-taken : lower_i64_i64_map.Map]
+  [tail-param-start : i64]
+  [tail-param-end : i64]) : LowerState
+  (LowerState.State
+    (box
+      (LowerStateData
+        next-var
+        next-label
+        next-lambda
+        current-label
+        current-instrs
+        blocks
+        functions
+        function
+        spans
+        names
+        type-cache
+        mode
+        address-taken
+        tail-param-start
+        tail-param-end))))
+
+;; Most lowering transitions consume their state linearly. A few control-flow
+;; builders deliberately fork from a shared snapshot; clone only at those
+;; explicit seams so the fork keeps the former by-value counter/builder heads.
+(define (lower-state-clone [state : LowerState]) : LowerState
+  (match state
+    [(LowerState.State data) (LowerState.State (box (box-get data)))]))
 
 (defenum LowerMaybeArrayVar
   (No)
@@ -2021,6 +2071,21 @@
   [diag : cdiag.CompilerDiagnostic]
   [path : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-path diag path))
+
+(define (lower-resetting-entry-in-live-session?) : bool
+  (load.compiler-load-active-session-live?))
+
+(define (lower-resetting-entry-live-session-error
+  [entry : String]
+  [path : String]) : ResultCompilerLower
+  (ResultCompilerLower.Err
+    (box
+      (lower-diagnostic-with-path
+        (lower-diagnostic
+          (str_cat.str-cat
+            entry
+            ": standalone resetting compiler entry cannot run inside an active compiler load session"))
+        path))))
 
 (define (lower-reference-support-message) : String
   "lower: reference-typed programs require borrow/reference lowering support")
@@ -11918,84 +11983,57 @@
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
-    [(LowerState.State next-var _ _ _ _ _ _ _ _ _ _ _ _ _ _) next-var]))
+    [(LowerState.State data) (struct-get (box-get data) next-var)]))
 
 (define (lower-state-current-label [state : LowerState]) : i64
   (match state
-    [(LowerState.State _ _ _ label _ _ _ _ _ _ _ _ _ _ _) label]))
+    [(LowerState.State data) (struct-get (box-get data) current-label)]))
 
 (define (lower-state-current-function [state : LowerState]) : String
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ function _ _ _ _ _ _ _)
-      (ir.compiler-ir-symbol-text function)]))
+    [(LowerState.State data)
+      (ir.compiler-ir-symbol-text (struct-get (box-get data) function))]))
 
 (define (lower-state-current-function-id [state : LowerState]) : i64
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ function _ _ _ _ _ _ _) function]))
+    [(LowerState.State data) (struct-get (box-get data) function)]))
 
 (define (lower-state-spans [state : LowerState]) : ir.CompilerSourceSpans
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ spans _ _ _ _ _ _) (box-get spans)]))
+    [(LowerState.State data) (box-get (struct-get (box-get data) spans))]))
 
 (define (lower-state-names [state : LowerState]) : LowerNameCache
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ names _ _ _ _ _) names]))
+    [(LowerState.State data) (struct-get (box-get data) names)]))
 
 (define (lower-state-type-cache [state : LowerState]) : LowerTypeCache
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ _ type-cache _ _ _ _) type-cache]))
+    [(LowerState.State data) (struct-get (box-get data) type-cache)]))
 
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ mode _ _ _) mode]))
+    [(LowerState.State data) (struct-get (box-get data) mode)]))
 
 (define (lower-state-register-address-taken-var?
   [state : LowerState]
   [var-id : i64]) : bool
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ address-taken _ _)
-      (lower_i64_i64_map.contains? (& address-taken) var-id)]))
+    [(LowerState.State data)
+      (lower_i64_i64_map.contains?
+        (& (struct-get (box-get data) address-taken))
+        var-id)]))
 
 (define (lower-state-register-address-taken-mark
   [state : LowerState (:consume)]
   [var-id : i64]) : LowerState
   (match state
-    [(LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        address-taken
-        tail-param-start
-        tail-param-end)
-      (let
-        [next-address-taken : lower_i64_i64_map.Map address-taken]
-        (begin
-          (lower_i64_i64_map.insert-ref! (&mut next-address-taken) var-id 1)
-          (LowerState.State
-            next-var
-            next-label
-            next-lambda
-            current-label
-            current-instrs
-            blocks
-            functions
-            function
-            spans
-            names
-            type-cache
-            mode
-            next-address-taken
-            tail-param-start
-            tail-param-end)))]))
+    [(LowerState.State data)
+      (begin
+        (lower_i64_i64_map.insert-ref!
+          (&mut (struct-get (box-get data) address-taken))
+          var-id
+          1)
+        state)]))
 
 ;; Keep reusable-result provenance in a high, disjoint key range of the
 ;; address-taken fact map. Function-local IR var ids are dense from zero and
@@ -12038,8 +12076,12 @@
   [value : ir.CompilerIrValue]) : i64
   (if (lower-state-inline-result-alias-tracking-active? state)
     (match state
-      [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ facts _ _)
-        (- (lower-inline-result-alias-marker-in-map (& facts) value) 1)])
+      [(LowerState.State data)
+        (-
+          (lower-inline-result-alias-marker-in-map
+            (& (struct-get (box-get data) address-taken))
+            value)
+          1)])
     -1))
 
 (define (lower-state-inline-result-alias-set
@@ -12048,47 +12090,15 @@
   [origin-var : i64]) : LowerState
   (if (lower-state-inline-result-alias-tracking-active? state)
     (match state
-      [(LowerState.State
-          next-var
-          next-label
-          next-lambda
-          current-label
-          current-instrs
-          blocks
-          functions
-          function
-          spans
-          names
-          type-cache
-          mode
-          facts
-          tail-param-start
-          tail-param-end)
-        (let
-          [next-facts : lower_i64_i64_map.Map facts]
-          (begin
-            (lower-inline-result-alias-marker-set-ref!
-              (&mut next-facts)
-              var-id
-              (if (>= origin-var 0)
-                (+ origin-var 1)
-                0))
-            (LowerState.State
-              next-var
-              next-label
-              next-lambda
-              current-label
-              current-instrs
-              blocks
-              functions
-              function
-              spans
-              names
-              type-cache
-              mode
-              next-facts
-              tail-param-start
-              tail-param-end)))])
+      [(LowerState.State data)
+        (begin
+          (lower-inline-result-alias-marker-set-ref!
+            (&mut (struct-get (box-get data) address-taken))
+            var-id
+            (if (>= origin-var 0)
+              (+ origin-var 1)
+              0))
+          state)])
     state))
 
 (define (lower-state-inline-result-alias-mark-value
@@ -12112,11 +12122,11 @@
 
 (define (lower-state-tail-param-start [state : LowerState]) : i64
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ _ param-start _) param-start]))
+    [(LowerState.State data) (struct-get (box-get data) tail-param-start)]))
 
 (define (lower-state-tail-param-end [state : LowerState]) : i64
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ _ _ param-end) param-end]))
+    [(LowerState.State data) (struct-get (box-get data) tail-param-end)]))
 
 (define (lower-state-tail-param-range-contains?
   [state : LowerState]
@@ -12127,204 +12137,65 @@
 
 (define (lower-state-clear-tail-param-range [state : LowerState]) : LowerState
   (match state
-    [(LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        address-taken
-        _
-        _)
-      (LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        address-taken
-        0
-        0)]))
+    [(LowerState.State data)
+      (begin
+        (set! (struct-get (box-get data) tail-param-start) 0)
+        (set! (struct-get (box-get data) tail-param-end) 0)
+        state)]))
 
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (match state
-    [(LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        address-taken
-        tail-param-start
-        tail-param-end)
-      (LowerAlloc.Alloc
-        (LowerState.State
-          (+ next-var 1)
-          next-label
-          next-lambda
-          current-label
-          current-instrs
-          blocks
-          functions
-          function
-          spans
-          names
-          type-cache
-          mode
-          address-taken
-          tail-param-start
-          tail-param-end)
-        next-var)]))
+    [(LowerState.State data)
+      (let
+        [next-var : i64 (struct-get (box-get data) next-var)]
+        (begin
+          (set! (struct-get (box-get data) next-var) (+ next-var 1))
+          (LowerAlloc.Alloc state next-var)))]))
 
 (define (lower-state-next-label-number [state : LowerState]) : i64
   (match state
-    [(LowerState.State _ next-label _ _ _ _ _ _ _ _ _ _ _ _ _) next-label]))
+    [(LowerState.State data) (struct-get (box-get data) next-label)]))
 
 (define (lower-state-fresh-label [state : LowerState] [prefix : String]) : LowerLabel
   (match state
-    [(LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        address-taken
-        tail-param-start
-        tail-param-end)
-      (LowerLabel.Label
-        (LowerState.State
-          next-var
-          (+ next-label 1)
-          next-lambda
-          current-label
-          current-instrs
-          blocks
-          functions
-          function
-          spans
-          names
-          type-cache
-          mode
-          address-taken
-          tail-param-start
-          tail-param-end)
-        (ir.compiler-ir-label
-          (string.append
-            (string.append prefix ".")
-            (string.int->string next-label))))]))
+    [(LowerState.State data)
+      (let
+        [next-label : i64 (struct-get (box-get data) next-label)]
+        (begin
+          (set! (struct-get (box-get data) next-label) (+ next-label 1))
+          (LowerLabel.Label
+            state
+            (ir.compiler-ir-label
+              (string.append
+                (string.append prefix ".")
+                (string.int->string next-label))))))]))
 
 (define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
   (match state
-    [(LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        address-taken
-        tail-param-start
-        tail-param-end)
+    [(LowerState.State data)
       (let
-        [function-text : String (ir.compiler-ir-symbol-text function)]
+        [next-lambda : i64 (struct-get (box-get data) next-lambda)]
+        [function-text : String
+          (ir.compiler-ir-symbol-text (struct-get (box-get data) function))]
         [lambda-name : String
           (string.append
             (string.append (string.append "__tl_lambda_" function-text) "_")
             (string.int->string next-lambda))]
         [lambda-id : i64 (ci.intern-generated-name lambda-name)]
-        (LowerLambdaName.Name
-          (LowerState.State
-            next-var
-            next-label
-            (+ next-lambda 1)
-            current-label
-            current-instrs
-            blocks
-            functions
-            function
-            spans
-            names
-            type-cache
-            mode
-            address-taken
-            tail-param-start
-            tail-param-end)
-          lambda-id))]))
+        (begin
+          (set! (struct-get (box-get data) next-lambda) (+ next-lambda 1))
+          (LowerLambdaName.Name state lambda-id)))]))
 
 (define (lower-state-emit
   [state : LowerState (:consume)]
   [instr : ir.CompilerIrInstr]) : LowerState
   (match state
-    [(LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        address-taken
-        tail-param-start
-        tail-param-end)
-      (let
-        [next-instrs : ir.CompilerIrInstrBuilder current-instrs]
-        (begin
-          (ir.compiler-ir-instr-builder-push! (&mut next-instrs) instr)
-          (LowerState.State
-            next-var
-            next-label
-            next-lambda
-            current-label
-            next-instrs
-            blocks
-            functions
-            function
-            spans
-            names
-            type-cache
-            mode
-            address-taken
-            tail-param-start
-            tail-param-end)))]))
+    [(LowerState.State data)
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut (struct-get (box-get data) current-instrs))
+          instr)
+        state)]))
 
 (define (lower-runtime-abort-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -12352,52 +12223,25 @@
     (ir.compiler-debug-info-enabled?)
     (and (not lower-current-decl-generated?) (lower-runtime-abort-instr? instr)))
     (match state
-      [(LowerState.State
-          next-var
-          next-label
-          next-lambda
-          current-label
-          current-instrs
-          blocks
-          functions
-          function
-          spans
-          names
-          type-cache
-          mode
-          address-taken
-          tail-param-start
-          tail-param-end)
+      [(LowerState.State data)
         (let
-          [next-instrs : ir.CompilerIrInstrBuilder current-instrs]
           [next-spans : ir.CompilerSourceSpans
             (match (lower-ast-expr-span expr)
               [(ir.CompilerMaybeSourceSpan.Some span)
                 (ir.compiler-source-spans-insert-instr-located
-                  (box-get spans)
-                  function
+                  (box-get (struct-get (box-get data) spans))
+                  (struct-get (box-get data) function)
                   instr
                   lower-current-source-path-id
                   span)]
-              [(ir.CompilerMaybeSourceSpan.No) (box-get spans)])]
+              [(ir.CompilerMaybeSourceSpan.No)
+                (box-get (struct-get (box-get data) spans))])]
           (begin
-            (ir.compiler-ir-instr-builder-push! (&mut next-instrs) instr)
-            (LowerState.State
-              next-var
-              next-label
-              next-lambda
-              current-label
-              next-instrs
-              blocks
-              functions
-              function
-              (box next-spans)
-              names
-              type-cache
-              mode
-              address-taken
-              tail-param-start
-              tail-param-end)))])
+            (ir.compiler-ir-instr-builder-push!
+              (&mut (struct-get (box-get data) current-instrs))
+              instr)
+            (set! (struct-get (box-get data) spans) (box next-spans))
+            state))])
     (lower-state-emit state instr)))
 
 ;; Bounds-check helpers emit their BoundsCheck before the final GEP/load and do
@@ -12415,54 +12259,27 @@
       [(ir.CompilerMaybeSourceSpan.No) state]
       [(ir.CompilerMaybeSourceSpan.Some span)
         (match state
-          [(LowerState.State
-              next-var
-              next-label
-              next-lambda
-              current-label
-              current-instrs
-              blocks
-              functions
-              function
-              spans
-              names
-              type-cache
-              mode
-              address-taken
-              tail-param-start
-              tail-param-end)
+          [(LowerState.State data)
             (let
               [bounds-label : i64
                 (ir.compiler-ir-label
                   (str_cat.str-cat
                     (str_cat.str-cat label-prefix ".")
-                    (string.int->string (- next-label 1))))]
+                    (string.int->string
+                      (- (struct-get (box-get data) next-label) 1))))]
               [next-spans : ir.CompilerSourceSpans
                 (ir.compiler-source-spans-insert-instr-located
-                  (box-get spans)
-                  function
+                  (box-get (struct-get (box-get data) spans))
+                  (struct-get (box-get data) function)
                   (ir.CompilerIrInstr.BoundsCheck
                     ir.CompilerIrValue.Unit
                     ir.CompilerIrValue.Unit
                     bounds-label)
                   lower-current-source-path-id
                   span)]
-              (LowerState.State
-                next-var
-                next-label
-                next-lambda
-                current-label
-                current-instrs
-                blocks
-                functions
-                function
-                (box next-spans)
-                names
-                type-cache
-                mode
-                address-taken
-                tail-param-start
-                tail-param-end))])])))
+              (begin
+                (set! (struct-get (box-get data) spans) (box next-spans))
+                state))])])))
 
 (define (lower-state-record-latest-bounds-check-at-expr
   [state : LowerState]
@@ -12473,70 +12290,33 @@
   [state : LowerState (:consume)]
   [next-label : i64]) : LowerState
   (match state
-    [(LowerState.State
-        next-var
-        next-label-id
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        address-taken
-        tail-param-start
-        tail-param-end)
-      (LowerState.State
-        next-var
-        next-label-id
-        next-lambda
-        next-label
-        (ir.compiler-ir-instr-builder-new)
-        (let
-          [next-blocks : ir.CompilerIrBlockBuilder blocks]
-          (begin
-            (ir.compiler-ir-block-builder-push!
-              (&mut next-blocks)
-              (ir.CompilerIrBlock.Block
-                current-label
-                (ir.compiler-ir-instr-builder-to-seq current-instrs)))
-            next-blocks))
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        address-taken
-        tail-param-start
-        tail-param-end)]))
+    [(LowerState.State data)
+      (let
+        [current-label : i64 (struct-get (box-get data) current-label)]
+        [current-instrs : ir.CompilerIrInstrBuilder
+          (struct-get (box-get data) current-instrs)]
+        (begin
+          (ir.compiler-ir-block-builder-push!
+            (&mut (struct-get (box-get data) blocks))
+            (ir.CompilerIrBlock.Block
+              current-label
+              (ir.compiler-ir-instr-builder-to-seq current-instrs)))
+          (set! (struct-get (box-get data) current-label) next-label)
+          (set!
+            (struct-get (box-get data) current-instrs)
+            (ir.compiler-ir-instr-builder-new))
+          state))]))
 
 (define (lower-state-build-blocks [state : LowerState]) : ir.CompilerIrBlockList
   (match state
-    [(LowerState.State
-        _
-        _
-        _
-        current-label
-        current-instrs
-        blocks
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _)
+    [(LowerState.State data)
       (let
         [current-block : ir.CompilerIrBlock
           (ir.CompilerIrBlock.Block
-            current-label
-            (ir.compiler-ir-instr-builder-to-seq current-instrs))]
+            (struct-get (box-get data) current-label)
+            (ir.compiler-ir-instr-builder-to-seq
+              (struct-get (box-get data) current-instrs)))]
+        [blocks : ir.CompilerIrBlockBuilder (struct-get (box-get data) blocks)]
         [next-blocks : ir.CompilerIrBlockBuilder
           (ir.CompilerIrBlockBuilder
             (struct-get blocks slots)
@@ -12552,8 +12332,10 @@
   [state : LowerState]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunctionList
   (match state
-    [(LowerState.State _ _ _ _ _ _ functions _ _ _ _ _ _ _ _)
+    [(LowerState.State data)
       (let
+        [functions : ir.CompilerIrFunctionBuilder
+          (struct-get (box-get data) functions)]
         [out : ir.CompilerIrFunctionBuilder
           (ir.CompilerIrFunctionBuilder
             (struct-get functions slots)
@@ -12567,44 +12349,13 @@
   [new-functions : ir.CompilerIrFunctionList]
   [new-spans : ir.CompilerSourceSpans]) : LowerState
   (match state
-    [(LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        _
-        names
-        type-cache
-        mode
-        address-taken
-        tail-param-start
-        tail-param-end)
-      (let
-        [next-functions : ir.CompilerIrFunctionBuilder functions]
-        (begin
-          (ir.compiler-ir-function-builder-append-list!
-            (&mut next-functions)
-            new-functions)
-          (LowerState.State
-            next-var
-            next-label
-            next-lambda
-            current-label
-            current-instrs
-            blocks
-            next-functions
-            function
-            (box new-spans)
-            names
-            type-cache
-            mode
-            address-taken
-            tail-param-start
-            tail-param-end)))]))
+    [(LowerState.State data)
+      (begin
+        (ir.compiler-ir-function-builder-append-list!
+          (&mut (struct-get (box-get data) functions))
+          new-functions)
+        (set! (struct-get (box-get data) spans) (box new-spans))
+        state)]))
 
 (define (lower-materialize
   [state : LowerState]
@@ -13175,16 +12926,18 @@
     (lower-gep-byte state base offset)))
 
 ;; Inline the hottest by-value aggregate copies. The flip to
-;; inline-by-value aggregates made the 17-112 B band, especially
+;; inline-by-value aggregates made the 17-128 B band, especially
 ;; AstTypeList/AstType, ResultTcType/ResultTcType.Ok, and CompilerIrInstr copies,
 ;; dynamically dominant, but the 16 B ceiling pushed every one of them onto a
-;; `tl_memcpy` CALL (~88 dynamic instructions each). Inline they cost only
-;; `size/8` load+store pairs. Raising the ceiling to 112 B turns that band into straight movs (a few
-;; instructions) while still routing genuinely large copies through tl_memcpy so
-;; the emitted code does not blow up. Must stay a multiple of 8 so the inline
+;; `tl_memcpy` CALL (~88 dynamic instructions each). Inline they lower to
+;; at most eleven 16-byte XMM or scalar-tail load+store pairs.
+;; Capping the expansion by that
+;; operation count, as production compiler memcpy lowering does, admits the hot
+;; 120-176 B band while still routing genuinely large copies through tl_memcpy
+;; so the emitted code does not blow up. Must stay a multiple of 8 so the inline
 ;; chunk loop (lower-copy-chunk-size: 8/4/2/1) terminates cleanly for any size.
 (define lower-inline-copy-threshold : i64
-  112)
+  176)
 
 ;; Copy `size` bytes dst<-src via a single tl_memcpy runtime call instead
 ;; of `size/8` separate gep+load+gep+store chunks. The flip from heap-handle
@@ -14340,6 +14093,25 @@
       (lower-state-emit state (ir.CompilerIrInstr.CopyBytes dst src size))
       (lower-copy-bytes state dst dst-offset src src-offset size))))
 
+;; Return-slot copies are paid on every aggregate-returning wrapper edge. The
+;; measured opt1 self-compile has 1.67M 216-byte and 0.91M 208-byte copies in
+;; the move checker alone. Let final sret copies use fourteen 16-byte memory
+;; operations, matching the target-style operation budget, without globally
+;; expanding cold field/list copies in the same size band.
+(define lower-inline-return-copy-threshold : i64
+  216)
+
+(define (lower-copy-return-bytes
+  [state : LowerState]
+  [dst : ir.CompilerIrValue]
+  [src : ir.CompilerIrValue]
+  [size : i64]) : LowerState
+  (if (and
+    (> size lower-inline-copy-threshold)
+    (<= size lower-inline-return-copy-threshold))
+    (lower-state-emit state (ir.CompilerIrInstr.CopyBytes dst src size))
+    (lower-copy-bytes state dst 0 src 0 size)))
+
 (define (lower-inline-aggregate-copy-size
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : ResultLowerSize
@@ -14523,12 +14295,10 @@
         [(ResultLowerSize.Ok size)
           (ResultLowerExpr.Ok
             (LowerExpr.Expr
-              (lower-copy-bytes
+              (lower-copy-return-bytes
                 state
                 (ir.CompilerIrValue.Var sret-var)
-                0
                 value
-                0
                 size)
               (ir.CompilerIrValue.Var sret-var)
               ret-ty))]
@@ -19684,7 +19454,7 @@
           (ir.compiler-ir-symbol-typed-id logical-name)
           body)]
       [state : LowerState
-        (LowerState.State
+        (lower-state-new
           (+
             source-start
             param-count
@@ -37852,7 +37622,7 @@
                                       idx-value-ty)
                                     (match (lower-array-set-direct-store
                                       ctx
-                                      idx-state
+                                      (lower-state-clone idx-state)
                                       env
                                       type-env
                                       arr
@@ -39466,11 +39236,13 @@
   [type-env : tc_core.TcTypeEnv]
   [cond : ast.AstExpr]
   [body : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-state-fresh-label state "while_header")
+  (match (lower-state-fresh-label (lower-state-clone state) "while_header")
     [(LowerLabel.Label header-label-state header-label)
       (match (lower-state-fresh-label header-label-state "while_body")
         [(LowerLabel.Label body-label-state body-label)
-          (match (lower-state-fresh-label body-label-state "while_exit")
+          (match (lower-state-fresh-label
+            (lower-state-clone body-label-state)
+            "while_exit")
             [(LowerLabel.Label exit-label-state exit-label)
               (let
                 [header-start : LowerState
@@ -54292,7 +54064,7 @@
         (ir.compiler-ir-symbol-typed-id hidden-name)
         body)]
     [state : LowerState
-      (LowerState.State
+      (lower-state-new
         param-count
         0
         0
@@ -54426,7 +54198,7 @@
         (ir.compiler-ir-symbol-typed-id hidden-name)
         body)]
     [state : LowerState
-      (LowerState.State
+      (lower-state-new
         param-count
         0
         0
@@ -59222,12 +58994,10 @@
     [(ResultLowerSize.Ok size)
       (ResultLowerState.Ok
         (lower-state-emit
-          (lower-copy-bytes
+          (lower-copy-return-bytes
             state
             (ir.CompilerIrValue.Var sret-var)
-            0
             value
-            0
             size)
           (ir.CompilerIrInstr.Return
             (lower-return-maybe (ir.CompilerIrValue.Var sret-var) ret-ty))))]
@@ -61837,7 +61607,7 @@
           (ir.compiler-ir-symbol-typed-id logical-name)
           body)]
       [state : LowerState
-        (LowerState.State
+        (lower-state-new
           (+
             source-start
             param-count
@@ -65936,6 +65706,12 @@
   [src : String]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
+    (when
+      (lower-resetting-entry-in-live-session?)
+      (return
+        (lower-resetting-entry-live-session-error
+          "lower-compiler-source-with-path-mode"
+          path)))
     ;; Each standalone single-source compile (smoke self-tests, emit-source,
     ;; check tools) runs in a fresh arena, so interned name strings from a
     ;; previous compile are freed. Reset the persistent intern table here so a

@@ -7,7 +7,7 @@
 ;; checksum is 247, so every mode must exit 247.
 (import stdlib.array)
 
-(define (init [a : (Array i64)] [b : (Array i64)] [n : i64]) : unit
+(define (init [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -16,12 +16,16 @@
         (array-set! b i (* i 2))
         (set! i (+ i 1))))))
 
-(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (fill
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
+  [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))
 
-(define (checksum [out : (Array i64)] [n : i64]) : i64
+(define (checksum [out : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -35,9 +39,9 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [a : (Array i64) (array.make-array i64 n)]
-    [b : (Array i64) (array.make-array i64 n)]
-    [out : (Array i64) (array.make-array i64 n)]
+    [a : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [b : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
       (init a b n)
       (fill a b out n)

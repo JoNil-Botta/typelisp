@@ -414,10 +414,14 @@ Vec bang place macros as available yet.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
   `(import stdlib.test)`.
 - `thread.tl`: minimal native thread primitives for selfhost worker pools:
-  spawn/join for `(-> i64 i64)` entries, counting semaphores, and default worker
-  count, plus generated `(thread.handle T)` modules for checked scalar nullary
-  closures such as `(import (thread.handle i64) as thread_i64)` with
-  `thread_i64.Handle`, `thread_i64.spawn`, and `thread_i64.join`.
+  spawn/join for `(-> i64 i64)` entries, non-consuming bounded completion
+  observation, counting semaphores, and default worker count. `thread.wait-for`
+  borrows a handle and returns `ThreadWaitReady`, `ThreadWaitTimedOut`, or
+  `ThreadWaitErr`; zero milliseconds is a poll, and every result leaves the
+  handle valid for another wait and exactly one later join. Generated
+  `(thread.handle T)` modules for checked scalar nullary closures, such as
+  `(import (thread.handle i64) as thread_i64)`, expose `thread_i64.Handle`,
+  `thread_i64.spawn`, `thread_i64.wait-for`, and `thread_i64.join`.
   `thread.spawn-string`/`thread.join-string` and
   `thread.spawn-i64-vec`/`thread.join-i64-vec` and
   `thread.spawn-box-i64`/`thread.join-box-i64` run the task in a fresh atomic

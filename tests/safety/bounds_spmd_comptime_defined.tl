@@ -9,12 +9,12 @@
   (x i64)
   (y i64))
 
-(define (fill [out : (Array i64)] [n : i64]) : unit
+(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n]) (array-set! out i (+ i 1))))
 
 (define (main) : i64
   (let
-    [items : (Array i64) (array.make-array i64 3)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 3)]
     [p : Point (Point 20 22)]
     [m : option_i64.Option (option_i64.Some 7)]
     (begin

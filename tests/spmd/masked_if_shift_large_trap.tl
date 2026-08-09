@@ -4,9 +4,9 @@
 (define (main) : i64
   (let
     [n : i64 19]
-    [xs : (Array u32) (array.make-array u32 n)]
-    [counts : (Array u32) (array.make-array u32 n)]
-    [out : (Array u32) (array.make-array u32 n)]
+    [xs : (__tl_dyn-array u32) (array.make-array u32 n)]
+    [counts : (__tl_dyn-array u32) (array.make-array u32 n)]
+    [out : (__tl_dyn-array u32) (array.make-array u32 n)]
     [i : i64 0]
     (begin
       (while (< i n)

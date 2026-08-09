@@ -13,12 +13,12 @@
   [x : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ x a) b) c) d) e) f) g))
 
-(define (fill [out : (Array i64)] [n : i64]) : unit
+(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set! out i (heavy-uniform-stack 1 2 3 4 5 6 7 i))))
 
-(define (sum-array [xs : (Array i64)] [n : i64]) : i64
+(define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [sum : i64 0]
@@ -32,7 +32,7 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [out : (Array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
       (fill out n)
       (if (= (sum-array out n) 442)

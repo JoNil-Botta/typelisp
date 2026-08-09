@@ -4,9 +4,9 @@
 ;; array at runtime. Sequential gang copies must load both inputs before their
 ;; corresponding output store, preserving scalar alias semantics.
 (define (alias-map
-  [left : (Array i64)]
-  [right : (Array i64)]
-  [out : (Array i64)]
+  [left : (__tl_dyn-array i64)]
+  [right : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -15,7 +15,7 @@
 (define (main) : i64
   (let
     [n : i64 257]
-    [values : (Array i64) (array.make-array i64 260)]
+    [values : (__tl_dyn-array i64) (array.make-array i64 260)]
     [i : i64 0]
     [ok : bool true]
     (begin

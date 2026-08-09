@@ -370,7 +370,7 @@
 
 ;: Append one owned environment override at the end of the vector-backed set.
 ;: Duplicate names are preserved in append order.
-(define (env-vec-append
+(define (env-vec-append!
   [env : (&mut env ProcessEnvVec)]
   [name : String]
   [value : String]) : unit
@@ -1125,7 +1125,7 @@
   (let
     [env : ProcessEnvVec (env-vec-new)]
     (begin
-      (env-vec-append (&mut env) name value)
+      (env-vec-append! (&mut env) name value)
       env)))
 
 ;: Inline test helper for vector-backed environment overrides.
@@ -1137,8 +1137,8 @@
   (let
     [env : ProcessEnvVec (env-vec-new)]
     (begin
-      (env-vec-append (&mut env) name-a value-a)
-      (env-vec-append (&mut env) name-b value-b)
+      (env-vec-append! (&mut env) name-a value-a)
+      (env-vec-append! (&mut env) name-b value-b)
       env)))
 
 ;: Inline test helper for malformed vector-backed environment overrides.

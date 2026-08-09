@@ -88,9 +88,15 @@ esac
 printf '%s' "$BUILD_GIT_HASH" > "$BUILD_GIT_HASH_FILE"
 printf '%s' "$BUILD_DATE" > "$BUILD_DATE_FILE"
 
+# Only stage1 runs on the published seed, and only a seed that still rejects
+# ptr-addr-of on globals may receive the legacy shared-view cfg. A seed that
+# already enforces the move-out-of-global rule rejects the legacy direct read
+# the cfg would select, so SEED_REQUIRES_LEGACY_GLOBAL_VIEWS (resolved below,
+# after any compatibility bridge) decides.
 stage_seed_bootstrap_cfg_args() {
     stage_number=$1
-    if [ "$stage_number" -eq 1 ]; then
+    if [ "$stage_number" -eq 1 ] &&
+        [ "$SEED_REQUIRES_LEGACY_GLOBAL_VIEWS" -eq 1 ]; then
         printf '%s\n' --cfg stage0-seed-bootstrap
     fi
 }
@@ -196,6 +202,11 @@ if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
     SEED_CTFE_COMPAT_STDLIB=
     echo "[build-stage0] short-variant bridge ready; building stage1 from current sources"
 fi
+
+# Probe the compiler that actually builds stage1 -- the seed, or the last
+# compatibility bridge built from it -- so the legacy shared-view cfg is only
+# used by a seed that still needs it.
+bootstrap_resolve_seed_global_views "$PREV" "$WORKDIR"
 
 i=1
 while [ "$i" -le "$STAGES" ]; do

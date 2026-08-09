@@ -615,6 +615,37 @@
         want)]
     [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
 
+(define (compiler-lower-resetting-entry-live-session-guard-ok?) : bool
+  (let
+    [previous-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-active-session-state-shared-view)]
+    [live-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-session-state-new)]
+    [generation-before : i64 (ci.intern-generation)]
+    [_select-live : unit
+      (compiler_load.compiler-load-session-state-use! live-state)]
+    [result : compiler_lower.ResultCompilerLower
+      (compiler_lower.lower-compiler-source "(define (main) : i64 0)")]
+    [generation-after : i64 (ci.intern-generation)]
+    [_restore : unit
+      (compiler_load.compiler-load-session-state-use! previous-state)]
+    (and
+      (compiler_load.compiler-load-session-state-standalone-reset-safe?
+        previous-state)
+      (= generation-before generation-after)
+      (match result
+        [(compiler_lower.ResultCompilerLower.Err diag)
+          (string.eq
+            (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+            "lower-compiler-source-with-path-mode: standalone resetting compiler entry cannot run inside an active compiler load session")]
+        [(compiler_lower.ResultCompilerLower.Ok _ _) false]))))
+
+(test
+  compiler-lower-resetting-entry-live-session-guard
+  (test.assert-true
+    (compiler-lower-resetting-entry-live-session-guard-ok?)
+    "lower standalone entry rejects a live compiler session before reset"))
+
 (define (compiler-lower-pool-copy-arena-restoration-ok?) : bool
   (let
     [home : arena.Arena (arena.current)]
@@ -1941,6 +1972,22 @@
 (define (main) : i64
   (struct-get (id-mixed (Mixed16 (cast 1 : u32) 2.0 40)) tail))")
 
+(define (compiler-lower-inline-sret-return-copy-source) : String
+  "(defstruct Return216
+  (f00 i64) (f01 i64) (f02 i64) (f03 i64) (f04 i64) (f05 i64)
+  (f06 i64) (f07 i64) (f08 i64) (f09 i64) (f10 i64) (f11 i64)
+  (f12 i64) (f13 i64) (f14 i64) (f15 i64) (f16 i64) (f17 i64)
+  (f18 i64) (f19 i64) (f20 i64) (f21 i64) (f22 i64) (f23 i64)
+  (f24 i64) (f25 i64) (f26 i64))
+(define (return216-id [value : Return216]) : Return216 value)
+(define (main) : i64
+  (struct-get
+    (return216-id
+      (Return216
+        0 1 2 3 4 5 6 7 8 9 10 11 12 13
+        14 15 16 17 18 19 20 21 22 23 24 25 42))
+    f26))")
+
 (define (compiler-lower-inline-sret-struct-constructor-source) : String
   "(defstruct Wide (a i64) (b i64) (c i64))
 (define (make-wide [x : i64]) : Wide
@@ -2304,6 +2351,25 @@
               [(compiler_lower.ResultCompilerLower.Err _) false]))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-inline-sret-return-copy-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-inline-sret-return-copy-source)
+    (compiler_lower.CompilerLowerMode.InlineAggregates))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-copy-bytes-count functions "return216-id")
+              1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "return216-id"
+                "tl_memcpy")
+              0))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-inline-sret-constructor-copy-shape-ok?) : bool
   (match (compiler_lower.lower-compiler-source-with-mode
     (compiler-lower-inline-sret-struct-constructor-source)
@@ -2430,6 +2496,7 @@
     (compiler-lower-inline-boxed-recursive-shape-ok?)
     (compiler-lower-inline-imported-enum-payload-ok?)
     (compiler-lower-inline-aggregate-copy-shape-ok?)
+    (compiler-lower-inline-sret-return-copy-shape-ok?)
     (compiler-lower-inline-sret-constructor-copy-shape-ok?)
     (compiler-lower-inline-sret-enum-match-shape-ok?)
     (compiler-lower-inline-hot-loop-struct-shape-ok?)

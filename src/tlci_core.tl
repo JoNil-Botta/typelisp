@@ -900,6 +900,12 @@
 (define tlci-host-callback-name-expr-struct-get-from-value : String
   "expr-struct-get-from-value")
 
+;; A computed struct assignment has its field name on the value stack too:
+;; pop target, Name/String field, and value expressions, then push the
+;; resulting assignment. Refs #5999.
+(define tlci-host-callback-name-expr-struct-set-from-value : String
+  "expr-struct-set-from-value")
+
 ;; Computed enum variant names likewise retain their source-name identity as a
 ;; session value. Pop a PatternList after the name and push the resulting
 ;; variant pattern. Refs #5626.

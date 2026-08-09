@@ -8,10 +8,10 @@
   (let
     [n : i64 19]
     [capacity : i64 32]
-    [xs : (Array i32) (array.make-array i32 capacity)]
-    [counts : (Array i32) (array.make-array i32 capacity)]
-    [left : (Array i32) (array.make-array i32 capacity)]
-    [right : (Array i32) (array.make-array i32 capacity)]
+    [xs : (__tl_dyn-array i32) (array.make-array i32 capacity)]
+    [counts : (__tl_dyn-array i32) (array.make-array i32 capacity)]
+    [left : (__tl_dyn-array i32) (array.make-array i32 capacity)]
+    [right : (__tl_dyn-array i32) (array.make-array i32 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -46,10 +46,10 @@
   (let
     [n : i64 19]
     [capacity : i64 32]
-    [xs : (Array u32) (array.make-array u32 capacity)]
-    [counts : (Array u32) (array.make-array u32 capacity)]
-    [left : (Array u32) (array.make-array u32 capacity)]
-    [right : (Array u32) (array.make-array u32 capacity)]
+    [xs : (__tl_dyn-array u32) (array.make-array u32 capacity)]
+    [counts : (__tl_dyn-array u32) (array.make-array u32 capacity)]
+    [left : (__tl_dyn-array u32) (array.make-array u32 capacity)]
+    [right : (__tl_dyn-array u32) (array.make-array u32 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -84,10 +84,10 @@
   (let
     [n : i64 13]
     [capacity : i64 16]
-    [xs : (Array i64) (array.make-array i64 capacity)]
-    [counts : (Array i64) (array.make-array i64 capacity)]
-    [left : (Array i64) (array.make-array i64 capacity)]
-    [right : (Array i64) (array.make-array i64 capacity)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [counts : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [left : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [right : (__tl_dyn-array i64) (array.make-array i64 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -122,10 +122,10 @@
   (let
     [n : i64 13]
     [capacity : i64 16]
-    [xs : (Array u64) (array.make-array u64 capacity)]
-    [counts : (Array u64) (array.make-array u64 capacity)]
-    [left : (Array u64) (array.make-array u64 capacity)]
-    [right : (Array u64) (array.make-array u64 capacity)]
+    [xs : (__tl_dyn-array u64) (array.make-array u64 capacity)]
+    [counts : (__tl_dyn-array u64) (array.make-array u64 capacity)]
+    [left : (__tl_dyn-array u64) (array.make-array u64 capacity)]
+    [right : (__tl_dyn-array u64) (array.make-array u64 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin

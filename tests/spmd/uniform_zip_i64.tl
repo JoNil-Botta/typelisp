@@ -3,7 +3,11 @@
 ;; The length forces both full-vector and tail paths under avx2/avx512.
 (import stdlib.array)
 
-(define (init [a : (Array i64)] [b : (Array i64)] [c : (Array i64)] [n : i64]) : unit
+(define (init
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [c : (__tl_dyn-array i64)]
+  [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -14,10 +18,10 @@
         (set! i (+ i 1))))))
 
 (define (fill
-  [a : (Array i64)]
-  [b : (Array i64)]
-  [c : (Array i64)]
-  [out : (Array i64)]
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [c : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
   [n : i64]
   [r : i64]) : unit
   (foreach
@@ -27,7 +31,7 @@
       i
       (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))
 
-(define (checksum [out : (Array i64)] [n : i64]) : i64
+(define (checksum [out : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -41,10 +45,10 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [a : (Array i64) (array.make-array i64 n)]
-    [b : (Array i64) (array.make-array i64 n)]
-    [c : (Array i64) (array.make-array i64 n)]
-    [out : (Array i64) (array.make-array i64 n)]
+    [a : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [b : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [c : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
       (init a b c n)
       (fill a b c out n 5)

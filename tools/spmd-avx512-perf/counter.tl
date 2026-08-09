@@ -15,15 +15,15 @@
 (define perf-attr-flags : u64
   (cast 4195 : u64))
 
-(define (array-u8-addr [items : (Array u8)]) : i64
+(define (array-u8-addr [items : (__tl_dyn-array u8)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
 
-(define (array-i32-addr [items : (Array i32)]) : i64
+(define (array-i32-addr [items : (__tl_dyn-array i32)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
 
-(define (array-u64-addr [items : (Array u64)]) : i64
+(define (array-u64-addr [items : (__tl_dyn-array u64)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64)))
 
@@ -72,9 +72,9 @@
       (bit-and (shr (cast status : i64) 8) 0xff)
       (+ 128 signal))))
 
-(define (perf-attr) : (Array u64)
+(define (perf-attr) : (__tl_dyn-array u64)
   (let
-    [attr : (Array u64) (array.make-array u64 16)]
+    [attr : (__tl_dyn-array u64) (array.make-array u64 16)]
     (begin
       ;; perf_event_attr starts with u32 type followed by u32 size.
       (array-set! attr 0 (shl (cast perf-attr-size : u64) 32))
@@ -85,9 +85,9 @@
       (array-set! attr 5 perf-attr-flags)
       attr)))
 
-(define (affinity-mask [cpu : i64]) : (Array u64)
+(define (affinity-mask [cpu : i64]) : (__tl_dyn-array u64)
   (let
-    [mask : (Array u64) (array.make-array u64 16)]
+    [mask : (__tl_dyn-array u64) (array.make-array u64 16)]
     (begin
       (array-set! mask (/ cpu 64) (shl (cast 1 : u64) (% cpu 64)))
       mask)))
@@ -167,7 +167,7 @@
 (define (kill-and-wait
   [pid : i64]
   [sync-write : i64]
-  [status-buffer : (Array i32)]) : unit
+  [status-buffer : (__tl_dyn-array i32)]) : unit
   (begin
     (unsafe
       (syscall 62 pid 9))
@@ -178,14 +178,14 @@
 
 (define (run-counter [cpu : i64]) : i64
   (let
-    [attr : (Array u64) (perf-attr)]
-    [affinity : (Array u64) (affinity-mask cpu)]
-    [sync-pipe : (Array i32) (array.make-array i32 2)]
-    [exec-pipe : (Array i32) (array.make-array i32 2)]
-    [scratch : (Array u8) (array.make-array u8 1)]
-    [status-buffer : (Array i32) (array.make-array i32 1)]
-    [counter-buffer : (Array u64) (array.make-array u64 3)]
-    [devnull-path : (Array u8) (io.c-string "/dev/null")]
+    [attr : (__tl_dyn-array u64) (perf-attr)]
+    [affinity : (__tl_dyn-array u64) (affinity-mask cpu)]
+    [sync-pipe : (__tl_dyn-array i32) (array.make-array i32 2)]
+    [exec-pipe : (__tl_dyn-array i32) (array.make-array i32 2)]
+    [scratch : (__tl_dyn-array u8) (array.make-array u8 1)]
+    [status-buffer : (__tl_dyn-array i32) (array.make-array i32 1)]
+    [counter-buffer : (__tl_dyn-array u64) (array.make-array u64 3)]
+    [devnull-path : (__tl_dyn-array u8) (io.c-string "/dev/null")]
     [exec-addr : i64
       (unsafe
         (cast (ptr->int (program-argv-at 4)) : i64))]

@@ -1,0 +1,19 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"workspaceFolders":[{"uri":"${{TMP_URI}}/root-a","name":"a"},{"uri":"${{TMP_URI}}/root-b","name":"b"}],"capabilities":{}}},
+  {"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"target"}},
+  {"jsonrpc":"2.0","id":3,"method":"workspace/symbol","params":{"query":"targetP"}},
+  {"jsonrpc":"2.0","id":4,"method":"workspace/symbol","params":{"query":""}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/root-a/a.tl","languageId":"typelisp","version":1,"text":"(module alpha.mod)\n(define (overlayOnly) : i64 9)\n"}}},
+  {"jsonrpc":"2.0","id":5,"method":"workspace/symbol","params":{"query":"target"}},
+  {"jsonrpc":"2.0","id":6,"method":"workspace/symbol","params":{"query":"overlay"}},
+  {"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":"${{TMP_URI}}/root-b/nested/b.tl","type":3}]}},
+  {"jsonrpc":"2.0","id":7,"method":"workspace/symbol","params":{"query":"target"}},
+  {"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"${{TMP_URI}}/root-a/a.tl"}}},
+  {"jsonrpc":"2.0","id":8,"method":"workspace/symbol","params":{"query":"target"}},
+  {"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":"${{TMP_URI}}/root-b/nested/b.tl","type":1}]}},
+  {"jsonrpc":"2.0","id":9,"method":"tl/projectSearch","params":{"textDocument":{"uri":"${{TMP_URI}}/root-a/a.tl"},"name":"target"}},
+  {"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders","params":{"event":{"removed":[{"uri":"${{TMP_URI}}/root-a","name":"a"}],"added":[]}}},
+  {"jsonrpc":"2.0","id":10,"method":"workspace/symbol","params":{"query":"target"}},
+  {"jsonrpc":"2.0","id":11,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

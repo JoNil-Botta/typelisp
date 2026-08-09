@@ -10,15 +10,17 @@
 ;; else block; the assembled-body peephole can.
 ;;
 ;; The two probes pin both directions of the rule. Never-taken self-recursion
-;; blocks inlining and TCO so the named bodies survive for the gate to inspect
+;; blocks inlining so the named bodies survive for the gate to inspect; tailrec
+;; lowering may turn that recursion into a loop before the backend runs
 ;; (scripts/verify-asm-shape-gates.sh check_fallthrough_jmp_chain; the
 ;; drop-probe assertion FAILS before the peephole).
 ;;
 ;; DROP: then-only conditional in a loop. The then arm carries a
 ;; multi-instruction dependency chain so it stays a real block instead of
 ;; collapsing to cmov, and its terminating `jmp` reaches the merge label across
-;; nothing but the empty else block's label. The self-recursive tail call is a
-;; BACKWARD jump in the same body and must survive untouched.
+;; nothing but the empty else block's label. The self-recursive tail call still
+;; produces a BACKWARD control transfer in the same body; after tailrec + SSA it
+;; can be a conditional loop branch rather than a direct jump.
 (define (chain-drop-probe [n : i64] [pivot : i64]) : i64
   (if (< n -999999)
     (chain-drop-probe (- n 1) pivot)

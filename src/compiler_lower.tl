@@ -494,9 +494,9 @@
 (defstruct CompilerLowerState
   (address i64))
 
-(defmacro (compiler-lower-state-read [state : Expr] [T : type] [field : Expr]) : Expr
+(defmacro (compiler-lower-state-read [state : Expr] [_T : type] [field : Expr]) : Expr
   `(let
-    [field-cell : (__tl_dyn-array ,T)
+    [field-cell : (__tl_dyn-array ,_T)
       (unsafe
         (ptr-read
           (int->ptr
@@ -505,16 +505,16 @@
                 (struct-get ,state address)
                 (comptime (offset-of (type CompilerLowerStateData) ,field)))
               : u64)
-            : (Ptr (__tl_dyn-array ,T)))))]
+            : (Ptr (__tl_dyn-array ,_T)))))]
     (array-ref field-cell 0)))
 
 (defmacro (compiler-lower-state-write!
   [state : Expr]
-  [T : type]
+  [_T : type]
   [field : Expr]
   [value : Expr]) : Expr
   `(let
-    [field-cell : (__tl_dyn-array ,T)
+    [field-cell : (__tl_dyn-array ,_T)
       (unsafe
         (ptr-read
           (int->ptr
@@ -523,7 +523,7 @@
                 (struct-get ,state address)
                 (comptime (offset-of (type CompilerLowerStateData) ,field)))
               : u64)
-            : (Ptr (__tl_dyn-array ,T)))))]
+            : (Ptr (__tl_dyn-array ,_T)))))]
     (array-set! field-cell 0 ,value)))
 
 (defmacro (compiler-lower-state-cell [T : type] [value : Expr]) : Expr
@@ -651,10 +651,10 @@
 
 (defmacro (compiler-lower-state-field-fingerprint
   [state : Expr]
-  [T : type]
+  [_T : type]
   [field : Expr]) : Expr
   `(let
-    [field-cell : (__tl_dyn-array ,T)
+    [field-cell : (__tl_dyn-array ,_T)
       (unsafe
         (ptr-read
           (int->ptr
@@ -663,13 +663,13 @@
                 (struct-get ,state address)
                 (comptime (offset-of (type CompilerLowerStateData) ,field)))
               : u64)
-            : (Ptr (__tl_dyn-array ,T)))))]
+            : (Ptr (__tl_dyn-array ,_T)))))]
     [base : i64
       (cast
         (unsafe
           (ptr->int (ptr-cast (array-data field-cell) : (Ptr i64))))
         : i64)]
-    [word-count : i64 (comptime (/ (+ (size-of (type ,T)) 7) 8))]
+    [word-count : i64 (comptime (/ (+ (size-of (type ,_T)) 7) 8))]
     [index : i64 0]
     [out : i64 0]
     (begin

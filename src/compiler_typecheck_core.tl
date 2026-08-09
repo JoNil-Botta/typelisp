@@ -15096,9 +15096,8 @@
         scoped))
     (tc-lookup-persistent-id env name-id)))
 
-(define (tc-name-bound-persistent-id? [env : TcTypeEnv] [name-id : i64]) : bool
+(define (tc-name-bound-persistent-key-id? [env : TcTypeEnv] [lookup-id : i64]) : bool
   (let
-    [lookup-id : i64 (tc-env-name-key-id name-id)]
     [store-handle : i64 (struct-get env store)]
     [head : i64 (struct-get env head)]
     [done : bool false]
@@ -15141,30 +15140,39 @@
                 (set! head (tc-type-env-binding-parent-at binding-ptr))))]))
       found)))
 
-(define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
+(define (tc-name-bound-persistent-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (tc-name-bound-persistent-key-id? env (tc-env-name-key-id name-id)))
+
+(define (tc-name-bound-selected-id?
+  [env : TcTypeEnv]
+  [scoped-id : i64]
+  [persistent-id : i64]) : bool
   (if tc-type-env-scoped-runtime-active
     (let
       [scoped : bool
-        (if (>= (tc-type-env-scoped-runtime-lookup-index name-id) 0)
+        (if (>= (tc-type-env-scoped-runtime-lookup-index scoped-id) 0)
           true
           (begin
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
-            (tc-name-bound-persistent-id?
+            (tc-name-bound-persistent-key-id?
               (struct-get
                 (struct-get tc-type-env-scoped-runtime-carrier sidecar)
                 persistent)
-              name-id)))]
+              persistent-id)))]
       (begin
         (cfg
           tc-env-scoped-dual-verify
-          (if (= scoped (tc-name-bound-persistent-id? env name-id))
+          (if (= scoped (tc-name-bound-persistent-key-id? env persistent-id))
             unit
             (io.panic
               "typecheck: scoped exact-bound lookup diverged from persistent env")))
         scoped))
-    (tc-name-bound-persistent-id? env name-id)))
+    (tc-name-bound-persistent-key-id? env persistent-id)))
+
+(define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (tc-name-bound-selected-id? env name-id (tc-env-name-key-id name-id)))
 
 (define (tc-lookup-unsafe-persistent-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
   (begin
@@ -19066,7 +19074,9 @@
     false))
 
 (define (tc-source-name-bound-exact-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (tc-name-bound-id? env (tc-env-name-key-id name-id)))
+  (let
+    [key-id : i64 (tc-env-name-key-id name-id)]
+    (tc-name-bound-selected-id? env key-id key-id)))
 
 (define (tc-current-module-source-lookup-key-id
   [ctx : TcContext]

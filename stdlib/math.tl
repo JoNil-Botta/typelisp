@@ -259,147 +259,530 @@
 
 ;; The exponential implementation below follows musl `exp`/`expf` and their
 ;; data tables at revision b306b16af15c89a04d8e0c55cac2dadbeb39c083.
-;; Constants remain exact IEEE-754 bit patterns and operation order is
-;; intentionally fixed: both are part of the stated error bounds.
-;: Internal exact tail and adjusted scale bits for one binary64 table entry.
+;; Tail corrections are shortest decimals folded to exact IEEE-754 payloads.
+;; Adjusted scales stay raw integer words for exponent arithmetic; payloads and
+;; operation order remain fixed because both are part of the stated bounds.
+;: Internal exact tail payload and adjusted scale bits for one binary64 entry.
 (defstruct MathExpF64TableEntry
   (tail-bits u64)
   (scale-bits u64))
 
-;: Return {tail, adjusted 2^(index/128)} bits from musl exp_data.c.
+;: Return {tail payload, adjusted 2^(index/128) bits} from musl exp_data.c.
 ;:
-;: Keeping the table in code avoids a heap-allocated module global. Binary32
-;: reuses every fourth scale entry, exactly matching musl's exp2f table.
+;: Tails stay in the `u64` ABI and are read with `f64-from-bits`; scales remain
+;: raw words. In-code storage avoids a global; binary32 reuses every fourth row.
 (define (math-exp-f64-table-entry [index : i64]) : MathExpF64TableEntry
   (cond
-    [(= index 0) (MathExpF64TableEntry 0x0000000000000000 0x3ff0000000000000)]
-    [(= index 1) (MathExpF64TableEntry 0x3c9b3b4f1a88bf6e 0x3feff63da9fb3335)]
-    [(= index 2) (MathExpF64TableEntry 0xbc7160139cd8dc5d 0x3fefec9a3e778061)]
-    [(= index 3) (MathExpF64TableEntry 0xbc905e7a108766d1 0x3fefe315e86e7f85)]
-    [(= index 4) (MathExpF64TableEntry 0x3c8cd2523567f613 0x3fefd9b0d3158574)]
-    [(= index 5) (MathExpF64TableEntry 0xbc8bce8023f98efa 0x3fefd06b29ddf6de)]
-    [(= index 6) (MathExpF64TableEntry 0x3c60f74e61e6c861 0x3fefc74518759bc8)]
-    [(= index 7) (MathExpF64TableEntry 0x3c90a3e45b33d399 0x3fefbe3ecac6f383)]
-    [(= index 8) (MathExpF64TableEntry 0x3c979aa65d837b6d 0x3fefb5586cf9890f)]
-    [(= index 9) (MathExpF64TableEntry 0x3c8eb51a92fdeffc 0x3fefac922b7247f7)]
-    [(= index 10) (MathExpF64TableEntry 0x3c3ebe3d702f9cd1 0x3fefa3ec32d3d1a2)]
-    [(= index 11) (MathExpF64TableEntry 0xbc6a033489906e0b 0x3fef9b66affed31b)]
-    [(= index 12) (MathExpF64TableEntry 0xbc9556522a2fbd0e 0x3fef9301d0125b51)]
-    [(= index 13) (MathExpF64TableEntry 0xbc5080ef8c4eea55 0x3fef8abdc06c31cc)]
-    [(= index 14) (MathExpF64TableEntry 0xbc91c923b9d5f416 0x3fef829aaea92de0)]
-    [(= index 15) (MathExpF64TableEntry 0x3c80d3e3e95c55af 0x3fef7a98c8a58e51)]
-    [(= index 16) (MathExpF64TableEntry 0xbc801b15eaa59348 0x3fef72b83c7d517b)]
-    [(= index 17) (MathExpF64TableEntry 0xbc8f1ff055de323d 0x3fef6af9388c8dea)]
-    [(= index 18) (MathExpF64TableEntry 0x3c8b898c3f1353bf 0x3fef635beb6fcb75)]
-    [(= index 19) (MathExpF64TableEntry 0xbc96d99c7611eb26 0x3fef5be084045cd4)]
-    [(= index 20) (MathExpF64TableEntry 0x3c9aecf73e3a2f60 0x3fef54873168b9aa)]
-    [(= index 21) (MathExpF64TableEntry 0xbc8fe782cb86389d 0x3fef4d5022fcd91d)]
-    [(= index 22) (MathExpF64TableEntry 0x3c8a6f4144a6c38d 0x3fef463b88628cd6)]
-    [(= index 23) (MathExpF64TableEntry 0x3c807a05b0e4047d 0x3fef3f49917ddc96)]
-    [(= index 24) (MathExpF64TableEntry 0x3c968efde3a8a894 0x3fef387a6e756238)]
-    [(= index 25) (MathExpF64TableEntry 0x3c875e18f274487d 0x3fef31ce4fb2a63f)]
-    [(= index 26) (MathExpF64TableEntry 0x3c80472b981fe7f2 0x3fef2b4565e27cdd)]
-    [(= index 27) (MathExpF64TableEntry 0xbc96b87b3f71085e 0x3fef24dfe1f56381)]
-    [(= index 28) (MathExpF64TableEntry 0x3c82f7e16d09ab31 0x3fef1e9df51fdee1)]
-    [(= index 29) (MathExpF64TableEntry 0xbc3d219b1a6fbffa 0x3fef187fd0dad990)]
-    [(= index 30) (MathExpF64TableEntry 0x3c8b3782720c0ab4 0x3fef1285a6e4030b)]
-    [(= index 31) (MathExpF64TableEntry 0x3c6e149289cecb8f 0x3fef0cafa93e2f56)]
-    [(= index 32) (MathExpF64TableEntry 0x3c834d754db0abb6 0x3fef06fe0a31b715)]
-    [(= index 33) (MathExpF64TableEntry 0x3c864201e2ac744c 0x3fef0170fc4cd831)]
-    [(= index 34) (MathExpF64TableEntry 0x3c8fdd395dd3f84a 0x3feefc08b26416ff)]
-    [(= index 35) (MathExpF64TableEntry 0xbc86a3803b8e5b04 0x3feef6c55f929ff1)]
-    [(= index 36) (MathExpF64TableEntry 0xbc924aedcc4b5068 0x3feef1a7373aa9cb)]
-    [(= index 37) (MathExpF64TableEntry 0xbc9907f81b512d8e 0x3feeecae6d05d866)]
-    [(= index 38) (MathExpF64TableEntry 0xbc71d1e83e9436d2 0x3feee7db34e59ff7)]
-    [(= index 39) (MathExpF64TableEntry 0xbc991919b3ce1b15 0x3feee32dc313a8e5)]
-    [(= index 40) (MathExpF64TableEntry 0x3c859f48a72a4c6d 0x3feedea64c123422)]
-    [(= index 41) (MathExpF64TableEntry 0xbc9312607a28698a 0x3feeda4504ac801c)]
-    [(= index 42) (MathExpF64TableEntry 0xbc58a78f4817895b 0x3feed60a21f72e2a)]
-    [(= index 43) (MathExpF64TableEntry 0xbc7c2c9b67499a1b 0x3feed1f5d950a897)]
-    [(= index 44) (MathExpF64TableEntry 0x3c4363ed60c2ac11 0x3feece086061892d)]
-    [(= index 45) (MathExpF64TableEntry 0x3c9666093b0664ef 0x3feeca41ed1d0057)]
-    [(= index 46) (MathExpF64TableEntry 0x3c6ecce1daa10379 0x3feec6a2b5c13cd0)]
-    [(= index 47) (MathExpF64TableEntry 0x3c93ff8e3f0f1230 0x3feec32af0d7d3de)]
-    [(= index 48) (MathExpF64TableEntry 0x3c7690cebb7aafb0 0x3feebfdad5362a27)]
-    [(= index 49) (MathExpF64TableEntry 0x3c931dbdeb54e077 0x3feebcb299fddd0d)]
-    [(= index 50) (MathExpF64TableEntry 0xbc8f94340071a38e 0x3feeb9b2769d2ca7)]
-    [(= index 51) (MathExpF64TableEntry 0xbc87deccdc93a349 0x3feeb6daa2cf6642)]
-    [(= index 52) (MathExpF64TableEntry 0xbc78dec6bd0f385f 0x3feeb42b569d4f82)]
-    [(= index 53) (MathExpF64TableEntry 0xbc861246ec7b5cf6 0x3feeb1a4ca5d920f)]
-    [(= index 54) (MathExpF64TableEntry 0x3c93350518fdd78e 0x3feeaf4736b527da)]
-    [(= index 55) (MathExpF64TableEntry 0x3c7b98b72f8a9b05 0x3feead12d497c7fd)]
-    [(= index 56) (MathExpF64TableEntry 0x3c9063e1e21c5409 0x3feeab07dd485429)]
-    [(= index 57) (MathExpF64TableEntry 0x3c34c7855019c6ea 0x3feea9268a5946b7)]
-    [(= index 58) (MathExpF64TableEntry 0x3c9432e62b64c035 0x3feea76f15ad2148)]
-    [(= index 59) (MathExpF64TableEntry 0xbc8ce44a6199769f 0x3feea5e1b976dc09)]
-    [(= index 60) (MathExpF64TableEntry 0xbc8c33c53bef4da8 0x3feea47eb03a5585)]
-    [(= index 61) (MathExpF64TableEntry 0xbc845378892be9ae 0x3feea34634ccc320)]
-    [(= index 62) (MathExpF64TableEntry 0xbc93cedd78565858 0x3feea23882552225)]
-    [(= index 63) (MathExpF64TableEntry 0x3c5710aa807e1964 0x3feea155d44ca973)]
-    [(= index 64) (MathExpF64TableEntry 0xbc93b3efbf5e2228 0x3feea09e667f3bcd)]
-    [(= index 65) (MathExpF64TableEntry 0xbc6a12ad8734b982 0x3feea012750bdabf)]
-    [(= index 66) (MathExpF64TableEntry 0xbc6367efb86da9ee 0x3fee9fb23c651a2f)]
-    [(= index 67) (MathExpF64TableEntry 0xbc80dc3d54e08851 0x3fee9f7df9519484)]
-    [(= index 68) (MathExpF64TableEntry 0xbc781f647e5a3ecf 0x3fee9f75e8ec5f74)]
-    [(= index 69) (MathExpF64TableEntry 0xbc86ee4ac08b7db0 0x3fee9f9a48a58174)]
-    [(= index 70) (MathExpF64TableEntry 0xbc8619321e55e68a 0x3fee9feb564267c9)]
-    [(= index 71) (MathExpF64TableEntry 0x3c909ccb5e09d4d3 0x3feea0694fde5d3f)]
-    [(= index 72) (MathExpF64TableEntry 0xbc7b32dcb94da51d 0x3feea11473eb0187)]
-    [(= index 73) (MathExpF64TableEntry 0x3c94ecfd5467c06b 0x3feea1ed0130c132)]
-    [(= index 74) (MathExpF64TableEntry 0x3c65ebe1abd66c55 0x3feea2f336cf4e62)]
-    [(= index 75) (MathExpF64TableEntry 0xbc88a1c52fb3cf42 0x3feea427543e1a12)]
-    [(= index 76) (MathExpF64TableEntry 0xbc9369b6f13b3734 0x3feea589994cce13)]
-    [(= index 77) (MathExpF64TableEntry 0xbc805e843a19ff1e 0x3feea71a4623c7ad)]
-    [(= index 78) (MathExpF64TableEntry 0xbc94d450d872576e 0x3feea8d99b4492ed)]
-    [(= index 79) (MathExpF64TableEntry 0x3c90ad675b0e8a00 0x3feeaac7d98a6699)]
-    [(= index 80) (MathExpF64TableEntry 0x3c8db72fc1f0eab4 0x3feeace5422aa0db)]
-    [(= index 81) (MathExpF64TableEntry 0xbc65b6609cc5e7ff 0x3feeaf3216b5448c)]
-    [(= index 82) (MathExpF64TableEntry 0x3c7bf68359f35f44 0x3feeb1ae99157736)]
-    [(= index 83) (MathExpF64TableEntry 0xbc93091fa71e3d83 0x3feeb45b0b91ffc6)]
-    [(= index 84) (MathExpF64TableEntry 0xbc5da9b88b6c1e29 0x3feeb737b0cdc5e5)]
-    [(= index 85) (MathExpF64TableEntry 0xbc6c23f97c90b959 0x3feeba44cbc8520f)]
-    [(= index 86) (MathExpF64TableEntry 0xbc92434322f4f9aa 0x3feebd829fde4e50)]
-    [(= index 87) (MathExpF64TableEntry 0xbc85ca6cd7668e4b 0x3feec0f170ca07ba)]
-    [(= index 88) (MathExpF64TableEntry 0x3c71affc2b91ce27 0x3feec49182a3f090)]
-    [(= index 89) (MathExpF64TableEntry 0x3c6dd235e10a73bb 0x3feec86319e32323)]
-    [(= index 90) (MathExpF64TableEntry 0xbc87c50422622263 0x3feecc667b5de565)]
-    [(= index 91) (MathExpF64TableEntry 0x3c8b1c86e3e231d5 0x3feed09bec4a2d33)]
-    [(= index 92) (MathExpF64TableEntry 0xbc91bbd1d3bcbb15 0x3feed503b23e255d)]
-    [(= index 93) (MathExpF64TableEntry 0x3c90cc319cee31d2 0x3feed99e1330b358)]
-    [(= index 94) (MathExpF64TableEntry 0x3c8469846e735ab3 0x3feede6b5579fdbf)]
-    [(= index 95) (MathExpF64TableEntry 0xbc82dfcd978e9db4 0x3feee36bbfd3f37a)]
-    [(= index 96) (MathExpF64TableEntry 0x3c8c1a7792cb3387 0x3feee89f995ad3ad)]
-    [(= index 97) (MathExpF64TableEntry 0xbc907b8f4ad1d9fa 0x3feeee07298db666)]
-    [(= index 98) (MathExpF64TableEntry 0xbc55c3d956dcaeba 0x3feef3a2b84f15fb)]
-    [(= index 99) (MathExpF64TableEntry 0xbc90a40e3da6f640 0x3feef9728de5593a)]
-    [(= index 100) (MathExpF64TableEntry 0xbc68d6f438ad9334 0x3feeff76f2fb5e47)]
-    [(= index 101) (MathExpF64TableEntry 0xbc91eee26b588a35 0x3fef05b030a1064a)]
-    [(= index 102) (MathExpF64TableEntry 0x3c74ffd70a5fddcd 0x3fef0c1e904bc1d2)]
-    [(= index 103) (MathExpF64TableEntry 0xbc91bdfbfa9298ac 0x3fef12c25bd71e09)]
-    [(= index 104) (MathExpF64TableEntry 0x3c736eae30af0cb3 0x3fef199bdd85529c)]
-    [(= index 105) (MathExpF64TableEntry 0x3c8ee3325c9ffd94 0x3fef20ab5fffd07a)]
-    [(= index 106) (MathExpF64TableEntry 0x3c84e08fd10959ac 0x3fef27f12e57d14b)]
-    [(= index 107) (MathExpF64TableEntry 0x3c63cdaf384e1a67 0x3fef2f6d9406e7b5)]
-    [(= index 108) (MathExpF64TableEntry 0x3c676b2c6c921968 0x3fef3720dcef9069)]
-    [(= index 109) (MathExpF64TableEntry 0xbc808a1883ccb5d2 0x3fef3f0b555dc3fa)]
-    [(= index 110) (MathExpF64TableEntry 0xbc8fad5d3ffffa6f 0x3fef472d4a07897c)]
-    [(= index 111) (MathExpF64TableEntry 0xbc900dae3875a949 0x3fef4f87080d89f2)]
-    [(= index 112) (MathExpF64TableEntry 0x3c74a385a63d07a7 0x3fef5818dcfba487)]
-    [(= index 113) (MathExpF64TableEntry 0xbc82919e2040220f 0x3fef60e316c98398)]
-    [(= index 114) (MathExpF64TableEntry 0x3c8e5a50d5c192ac 0x3fef69e603db3285)]
-    [(= index 115) (MathExpF64TableEntry 0x3c843a59ac016b4b 0x3fef7321f301b460)]
-    [(= index 116) (MathExpF64TableEntry 0xbc82d52107b43e1f 0x3fef7c97337b9b5f)]
-    [(= index 117) (MathExpF64TableEntry 0xbc892ab93b470dc9 0x3fef864614f5a129)]
-    [(= index 118) (MathExpF64TableEntry 0x3c74b604603a88d3 0x3fef902ee78b3ff6)]
-    [(= index 119) (MathExpF64TableEntry 0x3c83c5ec519d7271 0x3fef9a51fbc74c83)]
-    [(= index 120) (MathExpF64TableEntry 0xbc8ff7128fd391f0 0x3fefa4afa2a490da)]
-    [(= index 121) (MathExpF64TableEntry 0xbc8dae98e223747d 0x3fefaf482d8e67f1)]
-    [(= index 122) (MathExpF64TableEntry 0x3c8ec3bc41aa2008 0x3fefba1bee615a27)]
-    [(= index 123) (MathExpF64TableEntry 0x3c842b94c3a9eb32 0x3fefc52b376bba97)]
-    [(= index 124) (MathExpF64TableEntry 0x3c8a64a931d185ee 0x3fefd0765b6e4540)]
-    [(= index 125) (MathExpF64TableEntry 0xbc8e37bae43be3ed 0x3fefdbfdad9cbe14)]
-    [(= index 126) (MathExpF64TableEntry 0x3c77893b4d91cd9d 0x3fefe7c1819e90d8)]
-    [(= index 127) (MathExpF64TableEntry 0x3c5305c14160cc89 0x3feff3c22b8f71f1)]
+    [(= index 0)
+      (MathExpF64TableEntry (stdlib.math.f64-to-bits 0.0) 0x3ff0000000000000)]
+    [(= index 1)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 9.447885451727066e-17)
+        0x3feff63da9fb3335)]
+    [(= index 2)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -1.507066976926039e-17)
+        0x3fefec9a3e778061)]
+    [(= index 3)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.679155082825012e-17)
+        0x3fefe315e86e7f85)]
+    [(= index 4)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 4.9997448722726326e-17)
+        0x3fefd9b0d3158574)]
+    [(= index 5)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -4.823683599994895e-17)
+        0x3fefd06b29ddf6de)]
+    [(= index 6)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 7.357846871247418e-18)
+        0x3fefc74518759bc8)]
+    [(= index 7)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.773230223741951e-17)
+        0x3fefbe3ecac6f383)]
+    [(= index 8)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 8.189317638195515e-17)
+        0x3fefb5586cf9890f)]
+    [(= index 9)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.326891139980878e-17)
+        0x3fefac922b7247f7)]
+    [(= index 10)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.6665881442326747e-18)
+        0x3fefa3ec32d3d1a2)]
+    [(= index 11)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -1.128113245461828e-17)
+        0x3fef9b66affed31b)]
+    [(= index 12)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -7.402825309426177e-17)
+        0x3fef9301d0125b51)]
+    [(= index 13)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -3.578659767309563e-18)
+        0x3fef8abdc06c31cc)]
+    [(= index 14)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.170654745608695e-17)
+        0x3fef829aaea92de0)]
+    [(= index 15)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 2.919139999949279e-17)
+        0x3fef7a98c8a58e51)]
+    [(= index 16)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -2.7939114859515733e-17)
+        0x3fef72b83c7d517b)]
+    [(= index 17)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.399285355184285e-17)
+        0x3fef6af9388c8dea)]
+    [(= index 18)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 4.776959425256223e-17)
+        0x3fef635beb6fcb75)]
+    [(= index 19)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -7.927701432338473e-17)
+        0x3fef5be084045cd4)]
+    [(= index 20)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 9.341710609905046e-17)
+        0x3fef54873168b9aa)]
+    [(= index 21)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.534520675707472e-17)
+        0x3fef4d5022fcd91d)]
+    [(= index 22)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 4.585670326662351e-17)
+        0x3fef463b88628cd6)]
+    [(= index 23)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 2.8582430411116143e-17)
+        0x3fef3f49917ddc96)]
+    [(= index 24)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 7.826573258636076e-17)
+        0x3fef387a6e756238)]
+    [(= index 25)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 4.053626906769216e-17)
+        0x3fef31ce4fb2a63f)]
+    [(= index 26)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 2.823784425951061e-17)
+        0x3fef2b4565e27cdd)]
+    [(= index 27)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -7.882802262487991e-17)
+        0x3fef24dfe1f56381)]
+    [(= index 28)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 3.2904726646008416e-17)
+        0x3fef1e9df51fdee1)]
+    [(= index 29)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -1.5792094703347882e-18)
+        0x3fef187fd0dad990)]
+    [(= index 30)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 4.721368121170128e-17)
+        0x3fef1285a6e4030b)]
+    [(= index 31)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.3045277096919659e-17)
+        0x3fef0cafa93e2f56)]
+    [(= index 32)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 3.3484623336251524e-17)
+        0x3fef06fe0a31b715)]
+    [(= index 33)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 3.8611199774925664e-17)
+        0x3fef0170fc4cd831)]
+    [(= index 34)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.527550048505249e-17)
+        0x3feefc08b26416ff)]
+    [(= index 35)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -3.927184172445234e-17)
+        0x3feef6c55f929ff1)]
+    [(= index 36)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.346552106729483e-17)
+        0x3feef1a7373aa9cb)]
+    [(= index 37)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -8.684417614865944e-17)
+        0x3feeecae6d05d866)]
+    [(= index 38)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -1.5456342819397733e-17)
+        0x3feee7db34e59ff7)]
+    [(= index 39)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -8.70763476495455e-17)
+        0x3feee32dc313a8e5)]
+    [(= index 40)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 3.750854201303127e-17)
+        0x3feedea64c123422)]
+    [(= index 41)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.616854503526488e-17)
+        0x3feeda4504ac801c)]
+    [(= index 42)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.346099009198751e-18)
+        0x3feed60a21f72e2a)]
+    [(= index 43)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -2.443726321015018e-17)
+        0x3feed1f5d950a897)]
+    [(= index 44)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 2.1023049675215714e-18)
+        0x3feece086061892d)]
+    [(= index 45)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 7.771067937501065e-17)
+        0x3feeca41ed1d0057)]
+    [(= index 46)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.3357510088834541e-17)
+        0x3feec6a2b5c13cd0)]
+    [(= index 47)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 6.938291696959204e-17)
+        0x3feec32af0d7d3de)]
+    [(= index 48)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.9572585293112036e-17)
+        0x3feebfdad5362a27)]
+    [(= index 49)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 6.632256961675804e-17)
+        0x3feebcb299fddd0d)]
+    [(= index 50)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.478069123926778e-17)
+        0x3feeb9b2769d2ca7)]
+    [(= index 51)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -4.140839310392624e-17)
+        0x3feeb6daa2cf6642)]
+    [(= index 52)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -2.1571477251208752e-17)
+        0x3feeb42b569d4f82)]
+    [(= index 53)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -3.8287766552120535e-17)
+        0x3feeb1a4ca5d920f)]
+    [(= index 54)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 6.663804589232195e-17)
+        0x3feeaf4736b527da)]
+    [(= index 55)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 2.3936187400285282e-17)
+        0x3feead12d497c7fd)]
+    [(= index 56)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.68648095791174e-17)
+        0x3feeab07dd485429)]
+    [(= index 57)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.1264523354521684e-18)
+        0x3feea9268a5946b7)]
+    [(= index 58)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 7.007875046906994e-17)
+        0x3feea76f15ad2148)]
+    [(= index 59)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.0119214278381254e-17)
+        0x3feea5e1b976dc09)]
+    [(= index 60)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -4.8923067513522756e-17)
+        0x3feea47eb03a5585)]
+    [(= index 61)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -3.5260089953269434e-17)
+        0x3feea34634ccc320)]
+    [(= index 62)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.872303720902018e-17)
+        0x3feea23882552225)]
+    [(= index 63)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.001446664133532e-18)
+        0x3feea155d44ca973)]
+    [(= index 64)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.835808657661922e-17)
+        0x3feea09e667f3bcd)]
+    [(= index 65)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -1.1307344092910212e-17)
+        0x3feea012750bdabf)]
+    [(= index 66)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -8.416011634717156e-18)
+        0x3fee9fb23c651a2f)]
+    [(= index 67)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -2.9247977035436566e-17)
+        0x3fee9f7df9519484)]
+    [(= index 68)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -2.092304381843353e-17)
+        0x3fee9f75e8ec5f74)]
+    [(= index 69)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -3.9778645875427124e-17)
+        0x3fee9f9a48a58174)]
+    [(= index 70)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -3.833464968654295e-17)
+        0x3fee9feb564267c9)]
+    [(= index 71)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.763611164480894e-17)
+        0x3feea0694fde5d3f)]
+    [(= index 72)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -2.3591094770850053e-17)
+        0x3feea11473eb0187)]
+    [(= index 73)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 7.260074661098575e-17)
+        0x3feea1ed0130c132)]
+    [(= index 74)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 9.50689710108796e-18)
+        0x3feea2f336cf4e62)]
+    [(= index 75)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -4.272956133839906e-17)
+        0x3feea427543e1a12)]
+    [(= index 76)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.735219232374683e-17)
+        0x3feea589994cce13)]
+    [(= index 77)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -2.8396044410430936e-17)
+        0x3feea71a4623c7ad)]
+    [(= index 78)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -7.226635472101257e-17)
+        0x3feea8d99b4492ed)]
+    [(= index 79)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.786121003395918e-17)
+        0x3feeaac7d98a6699)]
+    [(= index 80)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.1548301170786783e-17)
+        0x3feeace5422aa0db)]
+    [(= index 81)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -9.416257568878152e-18)
+        0x3feeaf3216b5448c)]
+    [(= index 82)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 2.4253985766689806e-17)
+        0x3feeb1ae99157736)]
+    [(= index 83)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.604314051707707e-17)
+        0x3feeb45b0b91ffc6)]
+    [(= index 84)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.432131775424189e-18)
+        0x3feeb737b0cdc5e5)]
+    [(= index 85)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -1.2204007601863921e-17)
+        0x3feeba44cbc8520f)]
+    [(= index 86)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.336161863401293e-17)
+        0x3feebd829fde4e50)]
+    [(= index 87)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -3.7800879246373815e-17)
+        0x3feec0f170ca07ba)]
+    [(= index 88)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.5341410053603723e-17)
+        0x3feec49182a3f090)]
+    [(= index 89)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.2932855580427452e-17)
+        0x3feec86319e32323)]
+    [(= index 90)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -4.123367330661149e-17)
+        0x3feecc667b5de565)]
+    [(= index 91)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 4.703083974463456e-17)
+        0x3feed09bec4a2d33)]
+    [(= index 92)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.152602891550265e-17)
+        0x3feed503b23e255d)]
+    [(= index 93)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.827849326195279e-17)
+        0x3feed99e1330b358)]
+    [(= index 94)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 3.540948262646183e-17)
+        0x3feede6b5579fdbf)]
+    [(= index 95)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -3.2741571320938764e-17)
+        0x3feee36bbfd3f37a)]
+    [(= index 96)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 4.875160526227062e-17)
+        0x3feee89f995ad3ad)]
+    [(= index 97)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.718569790077838e-17)
+        0x3feeee07298db666)]
+    [(= index 98)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -4.719539664590972e-18)
+        0x3feef3a2b84f15fb)]
+    [(= index 99)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.773451958805706e-17)
+        0x3feef9728de5593a)]
+    [(= index 100)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -1.0772487078934056e-17)
+        0x3feeff76f2fb5e47)]
+    [(= index 101)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.221808618533911e-17)
+        0x3fef05b030a1064a)]
+    [(= index 102)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.821405440362259e-17)
+        0x3fef0c1e904bc1d2)]
+    [(= index 103)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -6.155536546227639e-17)
+        0x3fef12c25bd71e09)]
+    [(= index 104)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.685487290628973e-17)
+        0x3fef199bdd85529c)]
+    [(= index 105)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.3581249177694816e-17)
+        0x3fef20ab5fffd07a)]
+    [(= index 106)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 3.621615935336894e-17)
+        0x3fef27f12e57d14b)]
+    [(= index 107)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 8.588379527574144e-18)
+        0x3fef2f6d9406e7b5)]
+    [(= index 108)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.01562190116415e-17)
+        0x3fef3720dcef9069)]
+    [(= index 109)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -2.869134889187244e-17)
+        0x3fef3f0b555dc3fa)]
+    [(= index 110)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.495118966122005e-17)
+        0x3fef472d4a07897c)]
+    [(= index 111)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.56965572431627e-17)
+        0x3fef4f87080d89f2)]
+    [(= index 112)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.790126907604513e-17)
+        0x3fef5818dcfba487)]
+    [(= index 113)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -3.2211766346200164e-17)
+        0x3fef60e316c98398)]
+    [(= index 114)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.265370768556274e-17)
+        0x3fef69e603db3285)]
+    [(= index 115)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 3.5089866402403033e-17)
+        0x3fef7321f301b460)]
+    [(= index 116)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -3.266924100901318e-17)
+        0x3fef7c97337b9b5f)]
+    [(= index 117)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -4.3657593008079375e-17)
+        0x3fef864614f5a129)]
+    [(= index 118)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 1.7963932659833022e-17)
+        0x3fef902ee78b3ff6)]
+    [(= index 119)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 3.4300925275214166e-17)
+        0x3fef9a51fbc74c83)]
+    [(= index 120)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.545065618639427e-17)
+        0x3fefa4afa2a490da)]
+    [(= index 121)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.149009745457733e-17)
+        0x3fefaf482d8e67f1)]
+    [(= index 122)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 5.336805878514151e-17)
+        0x3fefba1bee615a27)]
+    [(= index 123)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 3.498978661192973e-17)
+        0x3fefc52b376bba97)]
+    [(= index 124)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 4.5784915277060095e-17)
+        0x3fefd0765b6e4540)]
+    [(= index 125)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits -5.241934575393899e-17)
+        0x3fefdbfdad9cbe14)]
+    [(= index 126)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 2.0414278897578303e-17)
+        0x3fefe7c1819e90d8)]
+    [(= index 127)
+      (MathExpF64TableEntry
+        (stdlib.math.f64-to-bits 4.124842848606488e-18)
+        0x3feff3c22b8f71f1)]
     [else (MathExpF64TableEntry 0 0)]))
 
 ;: Complete a binary64 result whose table scale may overflow or underflow.

@@ -28888,10 +28888,11 @@
             (compiler_backend.backend-and4
               (compiler_backend.compiler-backend-string-contains?
                 add-asm
-                "    movq %r12, %r8\n")
-              (compiler_backend.compiler-backend-string-contains?
-                add-asm
-                "    addq $7, %r8\n")
+                "    leaq 7(%r12), %r8\n")
+              (not
+                (compiler_backend.compiler-backend-string-contains?
+                  add-asm
+                  "    addq $7, %r8\n"))
               (compiler_backend.compiler-backend-string-contains?
                 cmp-asm
                 "    cmpq $7, %r8\n")

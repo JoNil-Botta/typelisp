@@ -21655,6 +21655,45 @@
               (opt-licm-loop-finish-instrs))))))
     10))
 
+;; R7: a `Global` operand is a hidden rip-relative load of that global's cell,
+;; so the descriptor chain rooted at one is loop-invariant exactly when the body
+;; cannot write the cell. `tail` selects what else the body does: 0 nothing,
+;; 1 a `Store` back into the same global, 2 a call whose effects are unknown.
+(define (opt-licm-global-cell-load-blocks
+  [symbols : OptLicmTestSymbols]
+  [cell : i64]
+  [tail : i64]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        7
+        (compiler_ir_types.CompilerIrValue.Global cell)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          8
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          (compiler_ast_types.AstType.I64))
+        (cond
+          [(= tail 1)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Store
+                cell
+                (compiler_ir_types.CompilerIrValue.I64 104)
+                (compiler_ast_types.AstType.I64))
+              (opt-licm-loop-finish-instrs))]
+          [(= tail 2)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Call
+                12
+                (struct-get symbols touch)
+                (compiler_ir_types.CompilerIrCallArgs.Nil)
+                (compiler_ast_types.AstType.I64))
+              (opt-licm-loop-finish-instrs))]
+          [else (opt-licm-loop-finish-instrs)])))
+    8))
+
 (define (opt-licm-direct-call-clean-test-functions
   [symbols : OptLicmTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
   (compiler_ir_types.compiler-ir-function-cons
@@ -22628,6 +22667,22 @@
       (opt-licm-optimized-function (opt-licm-header-load-element-store-blocks))]
     [raw-slot : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks raw-slot-func)]
+    [global-cell : i64 (opt-test-symbol "global_cell")]
+    [global-load-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-late-optimized-function
+        (opt-licm-global-cell-load-blocks symbols global-cell 0))]
+    [global-load : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks global-load-func)]
+    [global-store-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-late-optimized-function
+        (opt-licm-global-cell-load-blocks symbols global-cell 1))]
+    [global-store : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks global-store-func)]
+    [global-call-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-late-optimized-function
+        (opt-licm-global-cell-load-blocks symbols global-cell 2))]
+    [global-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks global-call-func)]
     [clean-summary : compiler_optimize.OptLicmStoreSummary
       (opt-licm-summary-for-instr
         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -22821,11 +22876,110 @@
               (compiler_ir_types.compiler-ir-label "loop"))
             1))
         25]
+      ;; A global operand is a hidden rip-relative load of that global's cell:
+      ;; variant when the body may write globals, invariant when it provably
+      ;; cannot.
       [(compiler_optimize.opt-licm-value-invariant?
+          false
           (opt_i64_i64_map.with-capacity 4)
           (opt_i64_i64_map.with-capacity 4)
           (compiler_ir_types.CompilerIrValue.Global (opt-test-symbol "g")))
         26]
+      [(not
+          (compiler_optimize.opt-licm-value-invariant?
+            true
+            (opt_i64_i64_map.with-capacity 4)
+            (opt_i64_i64_map.with-capacity 4)
+            (compiler_ir_types.CompilerIrValue.Global (opt-test-symbol "g"))))
+        126]
+      [(compiler_optimize.opt-licm-globals-clean?
+          (compiler_optimize.opt-licm-store-summary-empty)
+          true)
+        127]
+      [(not
+          (compiler_optimize.opt-licm-globals-clean?
+            (compiler_optimize.opt-licm-store-summary-empty)
+            false))
+        128]
+      [(compiler_optimize.opt-licm-globals-clean?
+          (compiler_optimize.opt-licm-store-summary-header-or-unknown-store)
+          false)
+        129]
+      [(compiler_optimize.opt-licm-globals-clean?
+          (compiler_optimize.opt-licm-store-summary-call-or-unknown)
+          false)
+        130]
+      ;; Element-only stores write element storage, which the memory model
+      ;; keeps disjoint from named global cells.
+      [(not
+          (compiler_optimize.opt-licm-globals-clean?
+            (compiler_optimize.opt-licm-store-summary-element-only-store)
+            false))
+        131]
+      ;; A call-free, store-free loop moves the whole global-rooted chain out.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function global-load-func)))
+        132]
+      [(not
+          (=
+            (opt-count-gep-label-blocks
+              global-load
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        133]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              global-load
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        134]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              global-load
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        135]
+      ;; A `Store` back into the same cell inside the body keeps the chain in.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function global-store-func)))
+        136]
+      [(not
+          (=
+            (opt-count-gep-label-blocks
+              global-store
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        137]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              global-store
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        138]
+      ;; So does a call whose memory effects are not proven.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function global-call-func)))
+        139]
+      [(not
+          (=
+            (opt-count-gep-label-blocks
+              global-call
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        140]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              global-call
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        141]
       [(not (compiler_optimize.opt-licm-store-summary-clean? clean-summary)) 27]
       [(compiler_optimize.opt-licm-store-summary-clean? store-summary) 28]
       [(not (struct-get store-summary header-or-unknown-store?)) 29]
@@ -40902,6 +41056,51 @@
         skip-first?
         acc)]))
 
+;; The global-cell pass's signature output: an entry `Mov <fresh> @G` that every
+;; later use reads instead of the cell. No other pass produces one -- LICM only
+;; relocates instructions that already exist -- so counting them separates "the
+;; cell was hoisted into a value" from "the cell is still read where it is
+;; used".
+(define (opt-gc-test-global-mov-instr?
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov
+        _
+        (compiler_ir_types.CompilerIrValue.Global _)
+        _)
+      true]
+    [_ false]))
+
+(define (opt-gc-test-global-mov-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-gc-test-global-mov-seq
+      instrs
+      (+ index 1)
+      (if (opt-gc-test-global-mov-instr?
+        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index))
+        (+ acc 1)
+        acc))))
+
+(define (opt-gc-test-global-mov-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [acc : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) acc]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-gc-test-global-mov-blocks
+            (box-get rest)
+            (opt-gc-test-global-mov-seq instrs 0 acc))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-gc-test-global-mov-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        acc)]))
+
 (define (opt-gc-test-is-global-named?
   [v : compiler_ir_types.CompilerIrValue]
   [name : String]) : bool
@@ -41975,7 +42174,7 @@
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks optimized)]
     ;; control: same summaries minus the global-cell facts -> the pass is a
-    ;; no-op and the loop keeps its per-iteration check
+    ;; no-op, so the cell is never lifted into an entry-loaded value
     [control : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.optimize-function-with-level-and-summaries
         pools
@@ -42009,17 +42208,19 @@
             (compiler_ir_types.compiler-ir-label "body"))
           1)
         4]
-      ;; ... and the control (pass disabled) never versions
+      ;; ... and the pass lifted the cell into an entry-loaded value.
+      [(< (opt-gc-test-global-mov-blocks blocks 0) 1) 5]
+      ;; The control (pass disabled) leaves the cell read where it is used.
+      ;; It may still version: this body is call-free and store-free, so LICM's
+      ;; global-operand invariance (opt-licm-globals-clean?) hoists the two
+      ;; descriptor loads to the preheader on its own and the versioner sees
+      ;; the same invariant bound. What only the global-cell pass does is turn
+      ;; `@G` itself into a value, which is what these two arms separate.
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function control)))
-        5]
-      [(match (compiler_optimize.opt-cfg-find-block
-          control-blocks
-          (compiler_ir_types.compiler-ir-label "body__bce_fast"))
-          [(compiler_optimize.OptMaybeBlock.No) false]
-          [(compiler_optimize.OptMaybeBlock.Some _) true])
         6]
+      [(not (= (opt-gc-test-global-mov-blocks control-blocks 0) 0)) 7]
       [else 42])))
 
 ;; --- dense LICM/induction insertion order witnesses -------------------------

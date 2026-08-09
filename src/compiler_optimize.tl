@@ -18006,7 +18006,13 @@
   (HeaderSlot i64)
   (DataSlot i64)
   (DataBuffer i64)
-  (DataElement i64))
+  (DataElement i64)
+  ;; A fixed-offset word of the object a global cell designates, reached by a
+  ;; literal-offset Gep off that global's `Global` operand. The payload is the
+  ;; global's symbol id. This is the same class of word as a descriptor header
+  ;; slot -- element storage is disjoint from it -- so the header-load proofs
+  ;; accept it, while a store through it stays a header-or-unknown store.
+  (GlobalSlot i64))
 
 (defenum OptLicmPtrEnv
   (Nil)
@@ -18191,7 +18197,24 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-collect-defs-blocks (ir.compiler-ir-block-seq-to-list seq) set)]))
 
+;; A `Global` operand is a hidden load of that global's cell -- the backend
+;; reads it rip-relative at the use site (`movq sym(%rip), reg`), which is why
+;; `GlobalAddr` (`leaq`) is a separate value form. So it is loop-invariant
+;; exactly when nothing in the loop body can write that cell, the same question
+;; the Load and Gep arms of opt-licm-candidate? already put to the loop's store
+;; summaries; `globals-clean?` carries that answer instead of the old blanket
+;; refusal. A global cell is written only by `Store` (the rip-relative store
+;; form, MemoryWrite -> header-or-unknown-store) or through a pointer derived
+;; from `GlobalAddr`, which is never classified DataBuffer/DataElement and so
+;; also lands in header-or-unknown-store; a call that may write reaches the
+;; summary as call-or-unknown? (indirect/C-ABI/SPMD/unknown-effect direct) or
+;; as header-or-unknown-store? (a memory-writing direct call), leaving only
+;; calls the P6 dual call-memory facts prove write nothing at all. Element-only
+;; stores write element storage, which the memory model keeps disjoint from
+;; descriptor header words and equally from named global cells, so they cannot
+;; change what a `Global` operand reads.
 (define (opt-licm-value-invariant?
+  [globals-clean? : bool]
   [loop-defs : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map]
   [value : ir.CompilerIrValue]) : bool
@@ -18200,21 +18223,39 @@
       (or
         (not (opt-used-contains loop-defs var))
         (opt-used-contains hoisted var))]
-    ;; A global operand is a hidden load of mutable state (the backend reads it
-    ;; rip-relative at the use site), so it is NOT loop-invariant: a store or
-    ;; call inside the loop can change it between iterations. Only literals are
-    ;; unconditionally invariant.
-    [(ir.CompilerIrValue.Global _) false]
+    [(ir.CompilerIrValue.Global _) globals-clean?]
     [_ true]))
 
 (define (opt-licm-values-invariant?
+  [globals-clean? : bool]
   [loop-defs : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map]
   [a : ir.CompilerIrValue]
   [b : ir.CompilerIrValue]) : bool
   (and
-    (opt-licm-value-invariant? loop-defs hoisted a)
-    (opt-licm-value-invariant? loop-defs hoisted b)))
+    (opt-licm-value-invariant? globals-clean? loop-defs hoisted a)
+    (opt-licm-value-invariant? globals-clean? loop-defs hoisted b)))
+
+;; The loop-level precondition for treating a `Global` operand as invariant
+;; (see opt-licm-value-invariant?): the body's composed RAW store summary --
+;; before the return-shaped side-exit poison, which is a profitability gate and
+;; not a memory fact -- proves no call that may write and no header-or-unknown
+;; store. `any-call?` closes the remaining case for profitability, not
+;; soundness: a proven-clean direct call still marks a call boundary, and the
+;; P6 hoist/allocate interlock measured loop-spanning ranges that cross a call
+;; costing more in spill staging than the reloads they save. Measured here
+;; (cachegrind, this host, one run each): dropping the `any-call?` term admits
+;; the clean-call loops and gives back the entire gvn_table win --
+;; 1,299,265,156 with the term, 1,306,531,147 without it against a
+;; 1,306,562,712 baseline -- while buying peephole_lines a further 7.59M
+;; (849,990,762 vs 857,577,638). cfg_domloops and the remaining rows are
+;; identical either way, so the call-free gate stays.
+(define (opt-licm-globals-clean?
+  [raw-legacy-summary : OptLicmStoreSummary]
+  [any-call? : bool]) : bool
+  (and
+    (not any-call?)
+    (opt-licm-store-summary-header-load-safe? raw-legacy-summary)))
 
 (define (opt-licm-store-summary-empty) : OptLicmStoreSummary
   (OptLicmStoreSummary false false false))
@@ -18539,6 +18580,7 @@
   (match kind
     [(OptLicmPtrKind.HeaderSlot _) true]
     [(OptLicmPtrKind.DataSlot _) true]
+    [(OptLicmPtrKind.GlobalSlot _) true]
     [_ false]))
 
 (define (opt-licm-header-slot-source?
@@ -18588,6 +18630,14 @@
                   (OptLicmPtrKind.DataSlot base-var)
                   (OptLicmPtrKind.Unknown)))
               (OptLicmPtrKind.Unknown))]))]
+    ;; `Gep <global operand>, <literal>` addresses a fixed word of the object
+    ;; that global's cell designates -- the descriptor handle a `Vec`/array
+    ;; global holds, or the handle's own header words. A variable offset is
+    ;; element indexing and stays Unknown.
+    [(ir.CompilerIrValue.Global name)
+      (match offset
+        [(ir.CompilerIrValue.I64 _) (OptLicmPtrKind.GlobalSlot name)]
+        [_ (OptLicmPtrKind.Unknown)])]
     [_ (OptLicmPtrKind.Unknown)]))
 
 (define (opt-licm-store-state-with-provenance
@@ -19136,12 +19186,16 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
+  ;; Whether a `Global` operand -- a hidden rip-relative load of that global's
+  ;; cell -- reads the same value on every iteration of this loop. See
+  ;; opt-licm-value-invariant? and opt-licm-globals-clean?.
+  [globals-clean? : bool]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _)
       (and
         (opt-licm-mode-late? licm-mode)
-        (opt-licm-value-invariant? loop-defs hoisted src)
+        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
         ;; In scalar loops, do not lengthen an arbitrary outside value's live
         ;; range merely to move its copy (the quicksort copy-c-string
         ;; regression). Literal seeds still unlock folding/motion. Vector loops
@@ -19153,7 +19207,7 @@
     [(ir.CompilerIrInstr.Cast _ src _ _)
       (and
         (opt-licm-mode-late? licm-mode)
-        (opt-licm-value-invariant? loop-defs hoisted src)
+        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
         (match src
           [(ir.CompilerIrValue.Var var)
             (or
@@ -19163,7 +19217,7 @@
     [(ir.CompilerIrInstr.Bitcast _ src _ _)
       (and
         (opt-licm-mode-late? licm-mode)
-        (opt-licm-value-invariant? loop-defs hoisted src)
+        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
         (match src
           [(ir.CompilerIrValue.Var var)
             (or
@@ -19173,9 +19227,9 @@
     [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
       (and
         (not (opt-binop-traps? op))
-        (opt-licm-values-invariant? loop-defs hoisted lhs rhs))]
+        (opt-licm-values-invariant? globals-clean? loop-defs hoisted lhs rhs))]
     [(ir.CompilerIrInstr.UnOp _ _ src _)
-      (opt-licm-value-invariant? loop-defs hoisted src)]
+      (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)]
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (and
         (opt-gvn-stable-var? sources dst)
@@ -19190,13 +19244,19 @@
             (not (struct-get store-summary call-or-unknown?))
             (not (struct-get legacy-store-summary call-or-unknown?))))
         ;; Gep computes an address from SSA values; it does not read through
-        ;; that address. Hidden mutable-global reads are already rejected by
-        ;; opt-licm-value-invariant?, so intervening stores cannot invalidate
-        ;; this pure address calculation. Before BCE, retain the older memory
+        ;; that address. A hidden mutable-global read among the operands is
+        ;; admitted only when opt-licm-globals-clean? proves the body cannot
+        ;; write any global cell, so intervening stores cannot invalidate this
+        ;; pure address calculation. Before BCE, retain the older memory
         ;; gate: moving a descriptor-length address too early can hide the
         ;; shared bound identity BCE needs. The post-LFTR run can use purity
         ;; after BCE and unrolling have consumed that fact.
-        (opt-licm-values-invariant? loop-defs hoisted base offset)
+        (opt-licm-values-invariant?
+          globals-clean?
+          loop-defs
+          hoisted
+          base
+          offset)
         (or
           (opt-licm-mode-late? licm-mode)
           (opt-licm-memory-safe?
@@ -19217,7 +19277,7 @@
       (and
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources src)
-        (opt-licm-value-invariant? loop-defs hoisted src)
+        (opt-licm-value-invariant? globals-clean? loop-defs hoisted src)
         (or
           (opt-licm-memory-safe?
             store-summary
@@ -19269,6 +19329,7 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
+  [globals-clean? : bool]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult.Result
@@ -19292,6 +19353,7 @@
         any-call?
         licm-mode
         descriptor-header-hoist?
+        globals-clean?
         instr)
         (match (opt-licm-filter-instr-seq-from
           type-segment-bases
@@ -19308,6 +19370,7 @@
           any-call?
           licm-mode
           descriptor-header-hoist?
+          globals-clean?
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult.Result kept moved next-hoisted _)
             (OptLicmInstrsResult.Result
@@ -19330,6 +19393,7 @@
           any-call?
           licm-mode
           descriptor-header-hoist?
+          globals-clean?
           hoisted)
           [(OptLicmInstrsResult.Result kept moved next-hoisted changed)
             (OptLicmInstrsResult.Result
@@ -19352,6 +19416,7 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
+  [globals-clean? : bool]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     type-segment-bases
@@ -19368,6 +19433,7 @@
     any-call?
     licm-mode
     descriptor-header-hoist?
+    globals-clean?
     hoisted))
 
 (define (opt-licm-filter-body-blocks
@@ -19384,6 +19450,7 @@
   [any-call? : bool]
   [licm-mode : i64]
   [descriptor-header-hoist? : bool]
+  [globals-clean? : bool]
   [hoisted : opt_i64_i64_map.Map (:consume)]) : OptLicmBlocksResult
   (match blocks
     [(ir.CompilerIrBlockList.Nil)
@@ -19409,6 +19476,7 @@
             any-call?
             licm-mode
             descriptor-header-hoist?
+            globals-clean?
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
@@ -19425,6 +19493,7 @@
                 any-call?
                 licm-mode
                 descriptor-header-hoist?
+                globals-clean?
                 next-hoisted)
                 [(OptLicmBlocksResult.Result
                     rest-blocks
@@ -19453,6 +19522,7 @@
         any-call?
         licm-mode
         descriptor-header-hoist?
+        globals-clean?
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -20026,6 +20096,15 @@
         [store-roots : OptLicmStoreRootList
           (struct-get store-state store-roots)]
         [any-call? : bool (struct-get store-state any-call?)]
+        ;; Global-cell invariance is a memory fact about the RAW body summary,
+        ;; so it reads through the return-shaped side-exit poison above the
+        ;; same way `descriptor-header-hoist?` does: the poison suppresses a
+        ;; profitability class, and the global-rooted chain it would otherwise
+        ;; close is the one whose per-iteration cost (a rip-relative cell load
+        ;; plus the descriptor words re-derived from it) the preheader copy
+        ;; removes outright rather than merely relocating.
+        [globals-clean? : bool
+          (opt-licm-globals-clean? raw-legacy-summary any-call?)]
         (match (opt-licm-filter-body-blocks
           type-segment-bases
           loop-defs
@@ -20044,6 +20123,7 @@
               1)
             0)
           descriptor-header-hoist?
+          globals-clean?
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             (if changed

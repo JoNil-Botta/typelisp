@@ -4328,6 +4328,36 @@
       [(not (= (opt-dce-clean-array-count run) 4)) 6]
       [else 42])))
 
+;; Forward block order sees v0 before the later dead v1 that uses it. One DCE
+;; sweep drops v1 too late to revisit v0; the fixed-point driver must recollect
+;; uses and remove v0 on its second sweep.
+(define (opt-dce-cross-block-chain) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          0
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "exit"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "exit")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            1
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.No))
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
 ;; Returns 42 when DCE keeps the used call result `v1` and the side-effecting
 ;; instructions, drops the unused `v0`, and is idempotent on a second pass.
 (define (compiler-optimize-dce-self-test) : i64
@@ -4373,6 +4403,15 @@
       (compiler_optimize.opt-dce-block-list-array-pass
         (compiler_optimize.opt-collect-blocks-uses-array 8 live-blocks)
         live-blocks)]
+    [cross-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-dce-cross-block-chain)]
+    [cross-once : compiler_ir_types.CompilerIrBlockList
+      (match (compiler_optimize.opt-dce-block-list-array-pass
+        (compiler_optimize.opt-collect-blocks-uses-array 2 cross-blocks)
+        cross-blocks)
+        [(compiler_optimize.OptBlockListPassResult.Result next _) next])]
+    [cross-fixed : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-dce-block-list-array-fixpoint 2 cross-blocks 8)]
     [alloc-tests : i64 (compiler-optimize-dce-alloc-self-test)]
     (cond
       [(not
@@ -4392,6 +4431,18 @@
       [(not (= (compiler_ir_types.compiler-ir-instr-list-count again) 2)) 7]
       [(not unused-word-dead) 8]
       [(not (= alloc-tests 42)) 9]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-instruction-count
+              cross-once)
+            3))
+        10]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-instruction-count
+              cross-fixed)
+            2))
+        11]
       [else 42])))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a

@@ -17714,42 +17714,62 @@
         [(OptRotateSsaRewrite.No)
           (opt-rotate-ssa-loops blocks context frame (box-get rest))])]))
 
+;; One rotation per round, each round verified on its own and each accepted
+;; rotation followed by a fresh context: the rewrite adds the landing block and
+;; rewires the header's predecessors, so the loop set, the predecessor map and
+;; the dominance facts all have to be rebuilt before the next loop's shape test
+;; reads them, and a rejected rotation must leave the rotations already banked
+;; in place. Without the rounds a function got at most ONE rotated loop per
+;; PIPELINE iteration -- two in total at `optimize-function-max-iterations` --
+;; so sibling loops raced for the rotated shape and the passes below,
+;; `bce_version` above all, locked the losers into their top-tested form.
+;; `live-out-into!` in benchmarks/liveness_scan is the measured case: its zero
+;; fill and its inner word loop both want the rotation and only one of them
+;; could have it. Fuel-bounded by the block count; an accepted rotation retires
+;; its header's top test, so no loop is rotated twice.
+(define (opt-rotate-ssa-rounds
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]
+  [remaining : i64]) : OptFunctionCtxResult
+  (if (<= remaining 0)
+    (OptFunctionCtxResult.Result func context)
+    (match func
+      [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+        (match (opt-rotate-ssa-loops
+          blocks
+          context
+          frame
+          (opt-cfg-natural-loops-with-context blocks context))
+          [(OptRotateSsaRewrite.No) (OptFunctionCtxResult.Result func context)]
+          [(OptRotateSsaRewrite.Some next-blocks next-frame)
+            (let
+              [next : ir.CompilerIrFunction
+                (ir.CompilerIrFunction.Function
+                  name
+                  params
+                  ret-ty
+                  next-frame
+                  next-blocks)]
+              [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+              (match (opt-verify-function-with-context next next-context)
+                [(ResultCompilerOptimizeVerify.Ok)
+                  (opt-rotate-ssa-rounds next next-context (- remaining 1))]
+                [(ResultCompilerOptimizeVerify.Err _)
+                  (OptFunctionCtxResult.Result func context)]))])])))
+
 (define (opt-rotate-ssa-function-with-context-result
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match func
-    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-verify-gate verified? func context)
         [(ResultCompilerOptimizeVerify.Ok)
-          (match (opt-rotate-ssa-loops
-            blocks
+          (opt-rotate-ssa-rounds
+            func
             context
-            frame
-            (opt-cfg-natural-loops-with-context blocks context))
-            [(OptRotateSsaRewrite.No)
-              (OptFunctionCtxResult.Result func context)]
-            [(OptRotateSsaRewrite.Some next-blocks next-frame)
-              (let
-                [next : ir.CompilerIrFunction
-                  (ir.CompilerIrFunction.Function
-                    name
-                    params
-                    ret-ty
-                    next-frame
-                    next-blocks)]
-                ;; Rotation rewires the CFG, so build one fresh context for
-                ;; the rewritten blocks, reuse it for the post-pass verify,
-                ;; and hand it back for the next pass. Any verifier rejection
-                ;; falls back to the input function unchanged.
-                [next-context : OptCfgContext
-                  (opt-cfg-context-build next-blocks)]
-                (match (opt-verify-function-with-context next next-context)
-                  [(ResultCompilerOptimizeVerify.Ok)
-                    (OptFunctionCtxResult.Result next next-context)]
-                  [(ResultCompilerOptimizeVerify.Err _)
-                    (OptFunctionCtxResult.Result func context)]))])]
+            (+ 1 (ir.compiler-ir-block-list-count blocks)))]
         [(ResultCompilerOptimizeVerify.Err _)
           (OptFunctionCtxResult.Result func context)])]))
 
@@ -22742,6 +22762,296 @@
         (opt-cfg-context-build blocks)
         func)]))
 
+;; --- dead phi elimination (dead_phi) -----------------------------------------
+;;
+;; The pipeline's DCE is use-count driven: an instruction dies once nothing names
+;; its result. That retires dead CHAINS and never a dead CYCLE, and SSA
+;; construction hands the optimizer one dead cycle per mutable local whose last
+;; assignment sits in a conditional arm inside a loop -- the arm's value reaches
+;; the `if` merge's phi, the merge phi reaches the enclosing loop header's phi,
+;; and the header phi feeds the merge phi back round the latch. Nothing else
+;; reads either, yet each holds the other's use count at one forever.
+;;
+;; Those pairs generate no code and still cost real optimization. A phi input is
+;; a use sited at the block that carries the edge, so a cycle that captures a
+;; value defined in an INNER loop pins that value as read outside it, and both
+;; loop passes below refuse exactly that: `bce_version`'s escape test
+;; (`opt-bce-mb-defs-escape?`) and `flag_exit`'s C8. A guarded compare loop under
+;; an `if` -- `benchmarks/intern_table`'s probe, and the position every inlined
+;; callee loop lands in -- therefore loses bounds-check versioning to a phi pair
+;; that lowers to nothing at all.
+;;
+;; The sweep is the half of DCE that use counts cannot express: a var is live
+;; when a NON-phi instruction names it, a phi's inputs become live only once the
+;; phi's own result is, and the marking runs to a fixpoint. Phis left unmarked
+;; are dropped -- exactly the phi-only sub-graphs, cycles included. Nothing else
+;; is touched: with their phi readers gone the values those cycles carried are
+;; ordinary dead chains, which the pipeline DCE already retires.
+;;
+;; Removing phis leaves labels and edges alone, so the incoming OptCfgContext
+;; stays valid and is handed straight back.
+(define (opt-dead-phi-round-max) : i64
+  12)
+
+(define (opt-dead-phi-instr-phi? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Phi _ _ _) true]
+    [_ false]))
+
+;; --- prescan ------------------------------------------------------------------
+(define (opt-dead-phi-instrs-have-phi?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-dead-phi-instr-phi? (ir.compiler-ir-instr-seq-ref instrs index))
+      true
+      (opt-dead-phi-instrs-have-phi? instrs (+ index 1)))))
+
+(define (opt-dead-phi-seq-have-phi?
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    false
+    (if (match (ir.compiler-ir-block-seq-ref blocks index)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (opt-dead-phi-instrs-have-phi? instrs 0)])
+      true
+      (opt-dead-phi-seq-have-phi? blocks (+ index 1)))))
+
+(define (opt-dead-phi-blocks-have-phi? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-dead-phi-instrs-have-phi? instrs 0)])
+        true
+        (opt-dead-phi-blocks-have-phi? (box-get rest)))]
+    [(ir.CompilerIrBlockList.Array seq) (opt-dead-phi-seq-have-phi? seq 0)]))
+
+;; --- seed: every operand a non-phi instruction names ---------------------------
+(define (opt-dead-phi-mark-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [live : (__tl_dyn-array i64)]) : unit
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (begin
+        (if (opt-dead-phi-instr-phi? instr)
+          unit
+          (opt-collect-instr-uses-array live instr))
+        (opt-dead-phi-mark-instrs! instrs (+ index 1) live)))))
+
+(define (opt-dead-phi-mark-seq!
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [live : (__tl_dyn-array i64)]) : unit
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    unit
+    (begin
+      (match (ir.compiler-ir-block-seq-ref blocks index)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-dead-phi-mark-instrs! instrs 0 live)])
+      (opt-dead-phi-mark-seq! blocks (+ index 1) live))))
+
+(define (opt-dead-phi-mark-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [live : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-dead-phi-mark-instrs! instrs 0 live)])
+        (opt-dead-phi-mark-blocks! (box-get rest) live))]
+    [(ir.CompilerIrBlockList.Array seq) (opt-dead-phi-mark-seq! seq 0 live)]))
+
+;; --- propagate: a live phi makes its own inputs live --------------------------
+(define (opt-dead-phi-expand-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [live : (__tl_dyn-array i64)]
+  [done : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array i64)]) : unit
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (begin
+      (match (ir.compiler-ir-instr-seq-ref instrs index)
+        [(ir.CompilerIrInstr.Phi dst inputs _)
+          (if (and
+            (>= dst 0)
+            (< dst (array-length live))
+            (> (array-ref live dst) 0)
+            (= (array-ref done dst) 0))
+            (begin
+              (array-set! done dst 1)
+              (opt-collect-phi-uses-array live inputs)
+              (array-set! changed 0 1))
+            unit)]
+        [_ unit])
+      (opt-dead-phi-expand-instrs! instrs (+ index 1) live done changed))))
+
+(define (opt-dead-phi-expand-seq!
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [live : (__tl_dyn-array i64)]
+  [done : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array i64)]) : unit
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    unit
+    (begin
+      (match (ir.compiler-ir-block-seq-ref blocks index)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-dead-phi-expand-instrs! instrs 0 live done changed)])
+      (opt-dead-phi-expand-seq! blocks (+ index 1) live done changed))))
+
+(define (opt-dead-phi-expand-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [live : (__tl_dyn-array i64)]
+  [done : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-dead-phi-expand-instrs! instrs 0 live done changed)])
+        (opt-dead-phi-expand-blocks! (box-get rest) live done changed))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-dead-phi-expand-seq! seq 0 live done changed)]))
+
+;; One sweep per round, and a round only repeats when it marked a phi that had
+;; not been expanded before. `true` means the marking settled; a function whose
+;; phi web is deeper than the round cap keeps every phi it has, because a
+;; half-propagated marking would call a live phi dead.
+(define (opt-dead-phi-expand-rounds!
+  [blocks : ir.CompilerIrBlockList]
+  [live : (__tl_dyn-array i64)]
+  [done : (__tl_dyn-array i64)]
+  [remaining : i64]) : bool
+  (if (<= remaining 0)
+    false
+    (let
+      [changed : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [_run : unit (opt-dead-phi-expand-blocks! blocks live done changed)]
+      (if (= (array-ref changed 0) 1)
+        (opt-dead-phi-expand-rounds! blocks live done (- remaining 1))
+        true))))
+
+;; --- sweep --------------------------------------------------------------------
+(define (opt-dead-phi-instr-dead?
+  [instr : ir.CompilerIrInstr]
+  [live : (__tl_dyn-array i64)]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Phi dst _ _)
+      (and (>= dst 0) (< dst (array-length live)) (= (array-ref live dst) 0))]
+    [_ false]))
+
+(define (opt-dead-phi-instrs-any-dead?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [live : (__tl_dyn-array i64)]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-dead-phi-instr-dead?
+      (ir.compiler-ir-instr-seq-ref instrs index)
+      live)
+      true
+      (opt-dead-phi-instrs-any-dead? instrs (+ index 1) live))))
+
+(define (opt-dead-phi-seq-any-dead?
+  [blocks : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [live : (__tl_dyn-array i64)]) : bool
+  (if (>= index (ir.compiler-ir-block-seq-count blocks))
+    false
+    (if (match (ir.compiler-ir-block-seq-ref blocks index)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (opt-dead-phi-instrs-any-dead? instrs 0 live)])
+      true
+      (opt-dead-phi-seq-any-dead? blocks (+ index 1) live))))
+
+(define (opt-dead-phi-any-dead?
+  [blocks : ir.CompilerIrBlockList]
+  [live : (__tl_dyn-array i64)]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-dead-phi-instrs-any-dead? instrs 0 live)])
+        true
+        (opt-dead-phi-any-dead? (box-get rest) live))]
+    [(ir.CompilerIrBlockList.Array seq) (opt-dead-phi-seq-any-dead? seq 0 live)]))
+
+(define (opt-dead-phi-keep-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [live : (__tl_dyn-array i64)]) : ir.CompilerIrInstrList
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (ir.CompilerIrInstrList.Nil)
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      [tail : ir.CompilerIrInstrList
+        (opt-dead-phi-keep-instrs instrs (+ index 1) live)]
+      (if (opt-dead-phi-instr-dead? instr live)
+        tail
+        (ir.compiler-ir-instr-cons instr tail)))))
+
+(define (opt-dead-phi-rewrite-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [live : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (match block
+          [(ir.CompilerIrBlock.Block label instrs)
+            (ir.compiler-ir-block
+              label
+              (opt-dead-phi-keep-instrs instrs 0 live))])
+        (opt-dead-phi-rewrite-blocks (box-get rest) live))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-dead-phi-rewrite-blocks (ir.compiler-ir-block-seq-to-list seq) live)]))
+
+;; --- driver -------------------------------------------------------------------
+;;
+;; Placed at the tail of the pipeline, immediately before DCE: the cycles this
+;; retires are lowering artifacts that every round rebuilds nothing of, so one
+;; sweep per round at the end is enough, and running it there leaves the loop
+;; cluster's own round-1 decisions -- which loop `rotate_ssa` canonicalizes,
+;; which loops `bce_version` clones -- reading exactly the IR they read before.
+;; DCE immediately after retires the chains the removed phis were the last
+;; readers of.
+(define (opt-dead-phi-blocks [blocks : ir.CompilerIrBlockList] [frame : i64]) : ir.CompilerIrBlockList
+  (if (not (opt-dead-phi-blocks-have-phi? blocks))
+    blocks
+    (let
+      [live : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      [done : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      [_mark : unit (opt-dead-phi-mark-blocks! blocks live)]
+      [settled? : bool
+        (opt-dead-phi-expand-rounds! blocks live done (opt-dead-phi-round-max))]
+      (if (or (not settled?) (not (opt-dead-phi-any-dead? blocks live)))
+        blocks
+        (opt-dead-phi-rewrite-blocks blocks live)))))
+
+;; Standalone driver for tests and ad-hoc runs.
+(define (opt-dead-phi-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (ir.CompilerIrFunction.Function
+        name
+        params
+        ret-ty
+        frame
+        (opt-dead-phi-blocks blocks frame))]))
+
 ;; --- monotone-flag loop-exit conversion (flag_exit) ---------------------------
 ;;
 ;; `(while (and (< i n) ok) ... (set! ok false) ...)` carries `ok` around the
@@ -23592,6 +23902,119 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (opt-flag-exit-merge-phis-agree? instrs 0 keys closure)])]))
 
+;; C7's separation clause. The rewrite folds a closure phi input keyed on X to
+;; the cleared literal C and one keyed on ANY OTHER exit to the continuing
+;; literal K, so the exits have to name arrivals a single path cannot both make.
+;; They do not when one exit block FALLS INTO another: a loop that tests the flag
+;; before the counter -- `(while (if ok (< i n) false) ...)`, the shape
+;; `opt-symbol-leaf-matches-from?` lowers to -- puts the gate's exit arm on the
+;; way to the counter's exit block, so a cleared path traverses the counter
+;; exit's edge and every phi input keyed there would be folded to K. The walk
+;; stops at loop blocks: re-entering the loop re-seeds the flag from the
+;; preheader, which is exactly the enclosing-loop shape the pass exists for.
+(define (opt-flag-exit-exit-walk?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [pred-map : OptPredMap]
+  [exits : OptLabelSet]
+  [label : i64]
+  [seen : (__tl_dyn-array i64)]) : bool
+  (match (opt-cfg-index-id index label)
+    [(option_i64.None) false]
+    [(option_i64.Some id)
+      (if (or (< id 0) (>= id (array-length seen)) (= (array-ref seen id) 1))
+        false
+        (begin
+          (array-set! seen id 1)
+          (cond
+            [(opt-label-contains exits label) true]
+            [(opt-loop-body-contains-id? body id) false]
+            [else
+              (opt-flag-exit-exit-walk-successors?
+                blocks
+                body
+                index
+                pred-map
+                exits
+                (opt-pred-map-successors pred-map label)
+                seen)])))]))
+
+(define (opt-flag-exit-exit-walk-successors?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [pred-map : OptPredMap]
+  [exits : OptLabelSet]
+  [labels : OptLabelSet]
+  [seen : (__tl_dyn-array i64)]) : bool
+  (match labels
+    [(OptLabelSet.Nil) false]
+    [(OptLabelSet.Dense _ _)
+      (or
+        (opt-flag-exit-exit-walk?
+          blocks
+          body
+          index
+          pred-map
+          exits
+          (opt-label-ref labels 0)
+          seen)
+        (opt-flag-exit-exit-walk-successors?
+          blocks
+          body
+          index
+          pred-map
+          exits
+          (opt-label-tail labels)
+          seen))]))
+
+(define (opt-flag-exit-exits-separate-from?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [pred-map : OptPredMap]
+  [exits : OptLabelSet]
+  [labels : OptLabelSet]
+  [count : i64]) : bool
+  (match labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (and
+        (not
+          (opt-flag-exit-exit-walk-successors?
+            blocks
+            body
+            index
+            pred-map
+            exits
+            (opt-pred-map-successors pred-map (opt-label-ref labels 0))
+            (array.make-array i64 count)))
+        (opt-flag-exit-exits-separate-from?
+          blocks
+          body
+          index
+          pred-map
+          exits
+          (opt-label-tail labels)
+          count))]))
+
+(define (opt-flag-exit-exits-separate?
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [body : OptLoopBody]
+  [exits : OptLabelSet]) : bool
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    (opt-flag-exit-exits-separate-from?
+      blocks
+      body
+      index
+      (struct-get context pred-map)
+      exits
+      exits
+      (opt-cfg-index-block-count index))))
+
 ;; C7's alternate-exit clause. With no alternate exit, a cleared path always left
 ;; through X already and there is nothing to reconcile.
 (define (opt-flag-exit-alt-exits-ok?
@@ -24125,6 +24548,7 @@
       (opt-flag-exit-gate-clean-at? blocks gate)
       (= (opt-label-count (opt-pred-map-lookup pred-map exit-label)) 1)
       (not (opt-flag-exit-block-starts-with-phi? blocks exit-label))
+      (opt-flag-exit-exits-separate? blocks context body exits)
       (opt-flag-exit-outside-phis-uniform? blocks body index exits closure)
       (opt-flag-exit-alt-exits-ok? blocks alt-labels exit-label closure))))
 
@@ -61408,15 +61832,47 @@
                             name
                             _t-scratch-reset)
                           unit)]
+                      ;; Retire dead phi webs before the loop passes read them:
+                      ;; a dead phi cycle reads its loop-defined input like any
+                      ;; other reader, and both `flag_exit` and `bce_version`
+                      ;; reject a loop whose defs are read outside it. DCE at
+                      ;; the tail of the same round retires the chains the
+                      ;; removed phis were the last readers of.
+                      [_t-dead-phi : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [dead-phi : ir.CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "dead_phi"
+                          (opt-dead-phi-function scratch-reset))]
+                      ;; Dropping phis leaves every label and every edge in
+                      ;; place, so `scratch_reset`'s topology context is still
+                      ;; exact -- but its dense block array holds the block
+                      ;; VALUES this pass just replaced, so refresh that array
+                      ;; before handing the context on.
+                      [_dead-phi-refresh : unit
+                        (opt-cfg-index-refresh-blocks!
+                          (struct-get scratch-reset-context index)
+                          (opt-function-blocks dead-phi))]
+                      [dead-phi-context : OptCfgContext scratch-reset-context]
+                      [_p-dead-phi : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "dead_phi"
+                            name
+                            _t-dead-phi)
+                          unit)]
                       [_t-licm : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
                         (opt-licm-function-with-context-result-and-direct-call-clean
                           type-segment-bases
-                          scratch-reset-context
+                          dead-phi-context
                           loop-cluster-verified?
                           (struct-get summaries direct-call-clean)
                           false
-                          scratch-reset)]
+                          dead-phi)]
                       [licm : ir.CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           type-segment-bases

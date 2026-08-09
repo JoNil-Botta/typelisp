@@ -29154,6 +29154,10 @@
 ;;      C7 rejects
 ;;   6  `(set! ok true)` from a false seed, resolved through an intermediate phi
 ;;      and a Mov: K = false, C = true, and the gate's arms are swapped
+;;   7  the gate's exit arm jumps INTO the counter-exhausted exit instead of the
+;;      shared merge -- the shape a loop that tests the flag BEFORE the counter
+;;      lowers to (`opt-symbol-leaf-matches-from?`) -- so C7's separation clause
+;;      rejects
 ;; Variants 1-5 each keep every other condition satisfied, so a variant that
 ;; stopped rejecting would convert rather than silently pass.
 (define (opt-flag-exit-test-entry-instrs) : compiler_ir_types.CompilerIrInstrList
@@ -29330,15 +29334,20 @@
 (define (opt-flag-exit-test-exit-phi [variant : i64]) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.Phi
     20
-    (compiler_ir_types.compiler-ir-phi-input-cons
-      (compiler_ir_types.CompilerIrValue.Var 11)
-      (compiler_ir_types.compiler-ir-label "done_early")
-      (if (= variant 5)
-        (compiler_ir_types.CompilerIrPhiInputList.Nil)
-        (compiler_ir_types.compiler-ir-phi-input-cons
-          (compiler_ir_types.CompilerIrValue.Var 11)
-          (compiler_ir_types.compiler-ir-label "done_full")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+    (if (= variant 7)
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        (compiler_ir_types.compiler-ir-label "done_full")
+        (compiler_ir_types.CompilerIrPhiInputList.Nil))
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        (compiler_ir_types.compiler-ir-label "done_early")
+        (if (= variant 5)
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.compiler-ir-label "done_full")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
     (compiler_ast_types.AstType.Bool)))
 
 ;; Variant 2 reads the loop counter after the loop; variant 3 returns the flag
@@ -29412,7 +29421,11 @@
                   (compiler_ir_types.compiler-ir-label "latch")
                   (opt-flag-exit-test-latch-instrs variant))
                 (compiler_ir_types.compiler-ir-block-cons
-                  (opt-flag-exit-test-jump-block "done_early" "exit")
+                  (opt-flag-exit-test-jump-block
+                    "done_early"
+                    (if (= variant 7)
+                      "done_full"
+                      "exit"))
                   (compiler_ir_types.compiler-ir-block-cons
                     (compiler_ir_types.compiler-ir-block
                       (compiler_ir_types.compiler-ir-label "done_full")
@@ -29693,6 +29706,10 @@
       [(not (opt-flag-exit-test-rejects? 4)) 16]
       ;; C7: the gate's exit arm has a second predecessor
       [(not (opt-flag-exit-test-rejects? 5)) 17]
+      ;; C7: the gate's exit arm falls INTO the counter-exhausted exit, so a
+      ;; cleared path traverses that exit's edge and the fold would call it
+      ;; continuing
+      [(not (opt-flag-exit-test-rejects? 7)) 25]
       ;; a false seed cleared to `true` through a phi and a Mov converts the
       ;; same way, with the gate's arms the other way round
       [(not
@@ -29725,6 +29742,331 @@
     (compiler-optimize-flag-exit-self-test)
     42
     "a loop-carried bool that only clears becomes a direct exit jump at the clear site, adds no exit predecessor, and rejects every shape that could observe the retired flag"))
+
+;; --- dead phi elimination self-tests ------------------------------------------
+;; The fixture is the shape SSA construction produces for a mutable local whose
+;; last assignment sits in a conditional arm inside a loop, which is the shape
+;; every guarded compare loop reaches the loop passes in: the `if` merge's phi
+;; (%12) captures a value defined INSIDE the inner loop on the taken edge and
+;; the enclosing header's phi (%11) on the skipped one, and the header phi reads
+;; the merge phi straight back. Nothing else reads either, so the pair is dead
+;; -- and use-count DCE can never say so, because each keeps the other's count
+;; at one. While it lives, %20 counts as read outside the inner loop, which is
+;; what `flag_exit`'s C8 and `bce_version`'s `opt-bce-mb-defs-escape?` refuse.
+;;   0  the plain dead cycle: both phis go, the live counter stays
+;;   1  a non-phi reader (the return) makes the cycle live: nothing goes
+;;   2  the only reader is another PHI that is itself live, so liveness has to
+;;      propagate through it: nothing goes
+(define (opt-dead-phi-test-done-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (if (= variant 2)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        18
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label "outer")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 18)))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (if (= variant 1)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.CompilerIrValue.Var 10))))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-dead-phi-test-outer-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      10
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 14)
+          (compiler_ir_types.compiler-ir-label "merge")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        11
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          15
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 15)
+            (compiler_ir_types.compiler-ir-label "guard")
+            (compiler_ir_types.compiler-ir-label "done"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-dead-phi-test-inner-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      20
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "inner_pre")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 21)
+          (compiler_ir_types.compiler-ir-label "inner")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        21
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          22
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 21)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 22)
+            (compiler_ir_types.compiler-ir-label "inner")
+            (compiler_ir_types.compiler-ir-label "inner_exit"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-dead-phi-test-merge-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Phi
+      12
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        (compiler_ir_types.compiler-ir-label "inner_exit")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label "skip")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        14
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "outer"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-dead-phi-test-jump-block [label : String] [target : String]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label label)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label target))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-dead-phi-test-guard-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      16
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 10)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.Bool))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 16)
+        (compiler_ir_types.compiler-ir-label "inner_pre")
+        (compiler_ir_types.compiler-ir-label "skip"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-dead-phi-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-dead-phi-test-jump-block "entry" "outer")
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "outer")
+        (opt-dead-phi-test-outer-instrs))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "guard")
+          (opt-dead-phi-test-guard-instrs))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-dead-phi-test-jump-block "inner_pre" "inner")
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "inner")
+              (opt-dead-phi-test-inner-instrs))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-dead-phi-test-jump-block "inner_exit" "merge")
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-dead-phi-test-jump-block "skip" "merge")
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "merge")
+                    (opt-dead-phi-test-merge-instrs))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.compiler-ir-block
+                      (compiler_ir_types.compiler-ir-label "done")
+                      (opt-dead-phi-test-done-instrs variant))
+                    (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))
+
+(define (opt-dead-phi-test-wrap
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "dead_phi")
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "n"
+        (compiler_ast_types.AstType.I64)
+        0)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "m"
+          (compiler_ast_types.AstType.I64)
+          1)
+        (compiler_ir_types.CompilerIrParamList.Nil)))
+    (compiler_ast_types.AstType.I64)
+    23
+    blocks))
+
+(define (opt-dead-phi-test-function [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-dead-phi-test-wrap (opt-dead-phi-test-blocks variant)))
+
+(define (opt-dead-phi-test-run [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-dead-phi-function
+      (opt-dead-phi-test-function variant))))
+
+(define (opt-dead-phi-test-phi-count-instrs
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-dead-phi-test-phi-count-instrs
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.Phi _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-dead-phi-test-phi-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-dead-phi-test-phi-count-instrs instrs 0 0)])]))
+
+(define (opt-dead-phi-test-defines-instrs?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]) : bool
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    false
+    (if (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Phi found _ _) (= found dst)]
+      [_ false])
+      true
+      (opt-dead-phi-test-defines-instrs? instrs (+ index 1) dst))))
+
+(define (opt-dead-phi-test-defines?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [dst : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-dead-phi-test-defines-instrs? instrs 0 dst)])]))
+
+(define (opt-dead-phi-test-unchanged? [variant : i64]) : bool
+  (compiler_optimize.opt-block-list-eq
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-dead-phi-test-run variant)
+    (opt-dead-phi-test-blocks variant)))
+
+(define (compiler-optimize-dead-phi-self-test) : i64
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [swept : compiler_ir_types.CompilerIrBlockList (opt-dead-phi-test-run 0)]
+    [twice : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-dead-phi-function (opt-dead-phi-test-wrap swept)))]
+    (cond
+      ;; the fixture the negative variants rely on is well formed to start with
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-dead-phi-test-function 0))))
+        1]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-dead-phi-test-wrap swept))))
+        2]
+      ;; both members of the cycle are gone
+      [(opt-dead-phi-test-defines? swept "outer" 11) 3]
+      [(opt-dead-phi-test-defines? swept "merge" 12) 4]
+      ;; the live counter phi and the inner loop's own phi are untouched
+      [(not (opt-dead-phi-test-defines? swept "outer" 10)) 5]
+      [(not (opt-dead-phi-test-defines? swept "inner" 20)) 6]
+      ;; and with the cycle gone the inner counter has no reader outside the
+      ;; inner loop at all, which is the fact both loop passes read
+      [(not (= (opt-dead-phi-test-phi-count swept "merge") 0)) 7]
+      [(not (= (opt-dead-phi-test-phi-count swept "outer") 1)) 8]
+      ;; idempotent: a second sweep finds nothing
+      [(not (compiler_optimize.opt-block-list-eq bases swept twice)) 9]
+      ;; a non-phi reader keeps the whole cycle
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-dead-phi-test-function 1))))
+        10]
+      [(not (opt-dead-phi-test-unchanged? 1)) 11]
+      ;; so does a reader that is itself a live phi: liveness has to propagate
+      ;; through the phi web, not stop at the first phi
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-dead-phi-test-function 2))))
+        12]
+      [(not (opt-dead-phi-test-unchanged? 2)) 13]
+      [else 42])))
+
+(test
+  dead-phi-cycle-elimination
+  (test.assert-i64-eq
+    (compiler-optimize-dead-phi-self-test)
+    42
+    "a phi web whose only readers are phis is retired, cycles included, while a non-phi reader or a live phi reader anywhere in the web keeps all of it"))
 
 (define (opt-gep-split-test-gep-count-from
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -33727,6 +34069,119 @@
               [_ false])
             false)])]))
 
+;; Two sibling counted loops, both rotatable. One rotation per invocation used
+;; to mean the second one waited for the next PIPELINE iteration -- and the cap
+;; is two, so a third loop never got one at all, while `bce_version` locked
+;; whichever loops lost the race into their top-tested form. The rounds inside
+;; the pass settle every loop before anything downstream reads the function.
+(define (opt-rotate-ssa-test-counted-loop
+  [header : String]
+  [land : String]
+  [body : String]
+  [latch : String]
+  [exit-label : String]
+  [phi : i64]
+  [step : i64]
+  [cond-var : i64]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label header)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          phi
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ir_types.compiler-ir-label land)
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var step)
+              (compiler_ir_types.compiler-ir-label latch)
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            cond-var
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var phi)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var cond-var)
+              (compiler_ir_types.compiler-ir-label body)
+              (compiler_ir_types.compiler-ir-label exit-label))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label body)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            step
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var phi)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label latch))
+            (compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-dead-phi-test-jump-block latch header)
+        tail))))
+
+(define (opt-rotate-ssa-test-siblings) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-dead-phi-test-jump-block "entry" "h1")
+    (opt-rotate-ssa-test-counted-loop
+      "h1"
+      "entry"
+      "b1"
+      "l1"
+      "mid"
+      1
+      2
+      3
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-dead-phi-test-jump-block "mid" "h2")
+        (opt-rotate-ssa-test-counted-loop
+          "h2"
+          "mid"
+          "b2"
+          "l2"
+          "exit"
+          4
+          5
+          6
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 4)))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-rotate-ssa-test-siblings-run) : compiler_ir_types.CompilerIrFunction
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-rotate-ssa-test-siblings)]
+    (match (compiler_optimize.opt-rotate-ssa-function-with-context-result
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "rotate_ssa_siblings")
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "n"
+            (compiler_ast_types.AstType.I64)
+            0)
+          (compiler_ir_types.CompilerIrParamList.Nil))
+        (compiler_ast_types.AstType.I64)
+        7
+        blocks))
+      [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
+
 (define (compiler-optimize-rotate-ssa-self-test) : i64
   (let
     [rotated : compiler_ir_types.CompilerIrFunction
@@ -33782,6 +34237,34 @@
             side-exit-blocks
             (compiler_ir_types.compiler-ir-label "header")))
         10]
+      ;; both sibling loops rotate inside ONE invocation
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-rotate-ssa-test-siblings-run))))
+        11]
+      [(not
+          (opt-block-list-has-label?
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-siblings-run))
+            (compiler_ir_types.compiler-ir-label "h1__rotate_land")))
+        12]
+      [(not
+          (opt-block-list-has-label?
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-siblings-run))
+            (compiler_ir_types.compiler-ir-label "h2__rotate_land")))
+        13]
+      [(opt-block-list-has-label?
+          (compiler_optimize.opt-function-blocks
+            (opt-rotate-ssa-test-siblings-run))
+          (compiler_ir_types.compiler-ir-label "h1"))
+        14]
+      [(opt-block-list-has-label?
+          (compiler_optimize.opt-function-blocks
+            (opt-rotate-ssa-test-siblings-run))
+          (compiler_ir_types.compiler-ir-label "h2"))
+        15]
       [else 42])))
 
 (define (opt-label-set-persistent-branch-self-test) : bool

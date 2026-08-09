@@ -64880,7 +64880,7 @@
           (compiler-backend-windows-words-stack-space
             (* 2 (compiler-backend-call-args-count args)))))]))
 
-(define (compiler-backend-emit-closure-entry-adapter-body
+(define (compiler-backend-emit-closure-entry-adapter
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [name : i64]
@@ -65026,7 +65026,7 @@
 ;; scavenge and therefore must finish emergency wrapping before their scratch
 ;; owner is retired. Preserve a caller-installed owner for focused nested
 ;; fixtures, while production enters with no active function owner.
-(define (compiler-backend-emit-closure-entry-adapter
+(define (compiler-backend-emit-closure-entry-adapter-owned
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [name : i64]
@@ -65052,7 +65052,7 @@
         backend-state
         (compiler-backend-regalloc-abi target))]
     [emitted : ResultCompilerBackend
-      (compiler-backend-emit-closure-entry-adapter-body
+      (compiler-backend-emit-closure-entry-adapter
         type-segment-bases
         target
         name
@@ -65092,7 +65092,7 @@
       [name : i64 (array-ref (struct-get names slots) index)]
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types ret-ty)
-          (match (compiler-backend-emit-closure-entry-adapter
+          (match (compiler-backend-emit-closure-entry-adapter-owned
             type-segment-bases
             target
             name
@@ -65150,7 +65150,7 @@
                 (struct-get program-index backend-state)
                 (compiler-backend-state-stream-state
                   (struct-get program-index backend-state)))
-              (match (compiler-backend-emit-closure-entry-adapter
+              (match (compiler-backend-emit-closure-entry-adapter-owned
                 type-segment-bases
                 target
                 name

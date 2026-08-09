@@ -8854,6 +8854,107 @@
 ;; The `movq $7, %rax` line exists to CLOBBER %rax so the reload that follows it
 ;; is not elided. P22-A2 (a movq that fully redefines a register immediately
 ;; after another movq into it drops the first) would delete that clobber and
+;; Explicit peephole session used by stateful carry/sweep tests. Production
+;; wrappers create the same pair per standalone call; these tests keep it only
+;; when they intentionally seed metadata before running the pass.
+(defstruct CompilerBackendPeepholeTestSession
+  (backend-state compiler_backend.CompilerBackendState)
+  (stream compiler_backend.CompilerBackendStreamState))
+
+(define (compiler-backend-peephole-test-session-new) : CompilerBackendPeepholeTestSession
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (CompilerBackendPeepholeTestSession
+      backend-state
+      (compiler_backend.compiler-backend-state-stream-state backend-state))))
+
+(define (compiler-backend-peephole-test-session-reset!
+  [session : CompilerBackendPeepholeTestSession]) : unit
+  (begin
+    (compiler_backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
+      (struct-get session backend-state)
+      (struct-get session stream))
+    (compiler_backend.compiler-backend-sweep-reset! (struct-get session stream))))
+
+(define (compiler-backend-peephole-test-session-asm
+  [session : CompilerBackendPeepholeTestSession]
+  [asm : String]) : String
+  (text_buf.render
+    (compiler_backend.compiler-backend-peephole-asm-buffer-with-state
+      (struct-get session backend-state)
+      (struct-get session stream)
+      asm
+      false)))
+
+(define (compiler-backend-peephole-test-session-win64!
+  [session : CompilerBackendPeepholeTestSession]
+  [symbol : String]
+  [frame : i64]
+  [slot-vars : i64]
+  [em-slot-offset : i64]
+  [em-used-count : i64]
+  [outgoing : i64]) : unit
+  (compiler_backend.compiler-backend-sweep-record-win64!
+    (struct-get session backend-state)
+    (struct-get session stream)
+    symbol
+    frame
+    slot-vars
+    em-slot-offset
+    em-used-count
+    outgoing))
+
+(define (compiler-backend-peephole-test-win64-asm
+  [symbol : String]
+  [frame : i64]
+  [slot-vars : i64]
+  [em-slot-offset : i64]
+  [em-used-count : i64]
+  [outgoing : i64]
+  [asm : String]) : String
+  (let
+    [session : CompilerBackendPeepholeTestSession
+      (compiler-backend-peephole-test-session-new)]
+    (begin
+      (compiler-backend-peephole-test-session-reset! session)
+      (compiler-backend-peephole-test-session-win64!
+        session
+        symbol
+        frame
+        slot-vars
+        em-slot-offset
+        em-used-count
+        outgoing)
+      (compiler-backend-peephole-test-session-asm session asm))))
+
+(define (compiler-backend-peephole-test-fpo-asm
+  [symbol : String]
+  [frame : i64]
+  [push-count : i64]
+  [slot-vars : i64]
+  [em-slot-offset : i64]
+  [em-used-count : i64]
+  [outgoing : i64]
+  [asm : String]) : String
+  (let
+    [session : CompilerBackendPeepholeTestSession
+      (compiler-backend-peephole-test-session-new)]
+    (begin
+      (compiler-backend-peephole-test-session-reset! session)
+      (compiler_backend.compiler-backend-sweep-record-fpo!
+        (struct-get session stream)
+        symbol
+        frame
+        push-count
+        slot-vars
+        em-slot-offset
+        em-used-count
+        outgoing
+        (struct-get session backend-state))
+      (compiler-backend-peephole-test-session-asm session asm))))
+
 ;; then the reload with it, so the clobbered value is consumed by
 ;; `movq %rax, -104(%rbp)` -- the owner-invalidation coverage is unchanged and
 ;; the pair stays out of A2's reach.
@@ -8929,8 +9030,6 @@
       (compiler_backend.compiler-backend-peephole-forward-frame-load-line
         "    movq %r8, -24(%rbp)"
         "    movq -24(%rbp), %r10")]
-    [_carry-safe-reset : unit
-      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
     [got : String (compiler_backend.compiler-backend-peephole-asm input)]
     (and (string.eq direct "    movq %r8, %r10") (string.eq got want))))
 
@@ -8956,8 +9055,6 @@
     vpmovmskb %ymm7, %r9
     movq 16(%rsp), %r9
 "]
-    [_carry-safe-reset : unit
-      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
     [got : String (compiler_backend.compiler-backend-peephole-asm input)]
     (string.eq got want)))
 
@@ -9013,8 +9110,6 @@
     movq %r9, 72(%rsp)
     addq $1, %r9
 "]
-    [_reset : unit
-      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
     [gap-got : String
       (compiler_backend.compiler-backend-peephole-asm gap-input)]
     [store-first-got : String
@@ -9025,13 +9120,17 @@
       (compiler_backend.compiler-backend-peephole-asm slot-clobbered-input)]
     [unsafe-label-got : String
       (compiler_backend.compiler-backend-peephole-asm unsafe-label-input)]
+    [session : CompilerBackendPeepholeTestSession
+      (compiler-backend-peephole-test-session-new)]
+    [_session-reset : unit
+      (compiler-backend-peephole-test-session-reset! session)]
     [_carry-safe : unit
       (compiler_backend.compiler-backend-peephole-carry-safe-insert!
+        (struct-get session backend-state)
+        (struct-get session stream)
         ".Lf7_carry")]
     [label-got : String
-      (compiler_backend.compiler-backend-peephole-asm label-input)]
-    [_reset-after : unit
-      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
+      (compiler-backend-peephole-test-session-asm session label-input)]
     (and
       (string.eq gap-got gap-want)
       (string.eq label-got label-want)
@@ -9069,8 +9168,6 @@
     movq %rax, %rbp
     movq %rbp, 8(%rsp)
 "]
-    [_reset : unit
-      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
     [got : String (compiler_backend.compiler-backend-peephole-asm input)]
     [read-got : String
       (compiler_backend.compiler-backend-peephole-asm read-input)]
@@ -9129,8 +9226,6 @@
 .Lf0_bounds_ok.1:
     movq (%r10), %rax
 "]
-    [_carry-safe-reset : unit
-      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
     [got : String (compiler_backend.compiler-backend-peephole-asm input)]
     (string.eq got want)))
 
@@ -9166,8 +9261,6 @@
     movq $1, %rax
     jmp .Lloop
 "]
-    [_carry-safe-reset : unit
-      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
     [chain-got : String
       (compiler_backend.compiler-backend-peephole-asm-drop-fallthrough
         chain-input)]
@@ -9219,8 +9312,6 @@
 .Lf0_bounds_ok.1:
     movq (%r10), %rax
 "]
-    [_carry-safe-reset : unit
-      (compiler_backend.compiler-backend-peephole-carry-safe-reset!)]
     [got : String
       (compiler_backend.compiler-backend-peephole-asm-drop-fallthrough input)]
     (string.eq got want)))
@@ -9254,11 +9345,8 @@
     ret
     .seh_endproc
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
-    [got : String (compiler_backend.compiler-backend-peephole-asm input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+    [got : String
+      (compiler-backend-peephole-test-win64-asm "main" 48 1 0 0 0 input)]
     (string.eq got want)))
 
 (define (compiler-backend-deadstore-sweep-win64-csr-stays-ok?) : bool
@@ -9272,11 +9360,8 @@
     leave
     ret
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
-    [got : String (compiler_backend.compiler-backend-peephole-asm input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+    [got : String
+      (compiler-backend-peephole-test-win64-asm "main" 48 1 0 0 0 input)]
     (string.eq got input)))
 
 (define (compiler-backend-deadstore-sweep-win64-address-stays-ok?) : bool
@@ -9291,11 +9376,8 @@
     leave
     ret
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
-    [got : String (compiler_backend.compiler-backend-peephole-asm input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+    [got : String
+      (compiler-backend-peephole-test-win64-asm "main" 48 1 0 0 0 input)]
     (string.eq got input)))
 
 (define (compiler-backend-deadstore-sweep-win64-pop-tail-ok?) : bool
@@ -9323,18 +9405,12 @@
     leave
     ret
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
-    [got : String (compiler_backend.compiler-backend-peephole-asm input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+    [got : String
+      (compiler-backend-peephole-test-win64-asm "main" 48 1 0 0 0 input)]
     (string.eq got want)))
 
 (define (compiler-backend-deadstore-sweep-linux-leave-poisons-ok?) : bool
   (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
     [input : String
       "main:
     subq $56, %rsp
@@ -9342,19 +9418,8 @@
     leave
     ret
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-fpo!
-        "main"
-        48
-        0
-        1
-        0
-        0
-        0
-        backend-state)]
-    [got : String (compiler_backend.compiler-backend-peephole-asm input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+    [got : String
+      (compiler-backend-peephole-test-fpo-asm "main" 48 0 1 0 0 0 input)]
     (string.eq got input)))
 
 (define (compiler-backend-deadstore-sweep-metadata-consumed-ok?) : bool
@@ -9385,13 +9450,15 @@
     leave
     ret
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
+    [session : CompilerBackendPeepholeTestSession
+      (compiler-backend-peephole-test-session-new)]
+    [_reset : unit (compiler-backend-peephole-test-session-reset! session)]
     [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
-    [first-got : String (compiler_backend.compiler-backend-peephole-asm first)]
+      (compiler-backend-peephole-test-session-win64! session "main" 48 1 0 0 0)]
+    [first-got : String
+      (compiler-backend-peephole-test-session-asm session first)]
     [second-got : String
-      (compiler_backend.compiler-backend-peephole-asm second)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+      (compiler-backend-peephole-test-session-asm session second)]
     (and (string.eq first-got first-want) (string.eq second-got second))))
 
 ;; Pass 2's coverage bitmap serves the many-read tail: 50 live store+read
@@ -9462,17 +9529,8 @@
           (text_buf.render (text_buf.append input-buf "    leave\n    ret\n"))]
         [want : String
           (text_buf.render (text_buf.append want-buf "    leave\n    ret\n"))]
-        [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-        [_record : unit
-          (compiler_backend.compiler-backend-sweep-record-win64!
-            "main"
-            808
-            100
-            0
-            0
-            0)]
-        [got : String (compiler_backend.compiler-backend-peephole-asm input)]
-        [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+        [got : String
+          (compiler-backend-peephole-test-win64-asm "main" 808 100 0 0 0 input)]
         (string.eq got want)))))
 
 ;; Byte-granular coverage: unaligned and wide reads overlap exactly by byte
@@ -9497,16 +9555,33 @@
         head
         "    movq $1, 16(%rsp)\n    movq 20(%rsp), %rax\n"
         tail)]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 5 0 0 0)]
     [no-overlap-got : String
-      (compiler_backend.compiler-backend-peephole-asm no-overlap-input)]
+      (compiler-backend-peephole-test-win64-asm
+        "main"
+        48
+        5
+        0
+        0
+        0
+        no-overlap-input)]
     [wide-overlap-got : String
-      (compiler_backend.compiler-backend-peephole-asm wide-overlap-input)]
+      (compiler-backend-peephole-test-win64-asm
+        "main"
+        48
+        5
+        0
+        0
+        0
+        wide-overlap-input)]
     [narrow-overlap-got : String
-      (compiler_backend.compiler-backend-peephole-asm narrow-overlap-input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+      (compiler-backend-peephole-test-win64-asm
+        "main"
+        48
+        5
+        0
+        0
+        0
+        narrow-overlap-input)]
     (and
       (string.eq
         no-overlap-got
@@ -9531,14 +9606,17 @@
         head
         "    movq $1, 40(%rsp)\n    movq 40(%rsp), %rax\n"
         tail)]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 5 0 0 0)]
     [adjacent-got : String
-      (compiler_backend.compiler-backend-peephole-asm adjacent-input)]
+      (compiler-backend-peephole-test-win64-asm
+        "main"
+        48
+        5
+        0
+        0
+        0
+        adjacent-input)]
     [covered-got : String
-      (compiler_backend.compiler-backend-peephole-asm covered-input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+      (compiler-backend-peephole-test-win64-asm "main" 48 5 0 0 0 covered-input)]
     (and
       (string.eq
         adjacent-got
@@ -9592,29 +9670,24 @@
     leave
     ret
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record-under : unit
-      (compiler_backend.compiler-backend-sweep-record-win64!
+    [under-got : String
+      (compiler-backend-peephole-test-win64-asm
         "main"
         262192
         32768
         0
         0
-        0)]
-    [under-got : String
-      (compiler_backend.compiler-backend-peephole-asm under-input)]
-    [_reset-mid : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record-over : unit
-      (compiler_backend.compiler-backend-sweep-record-win64!
+        0
+        under-input)]
+    [over-got : String
+      (compiler-backend-peephole-test-win64-asm
         "main"
         262200
         32769
         0
         0
-        0)]
-    [over-got : String
-      (compiler_backend.compiler-backend-peephole-asm over-input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+        0
+        over-input)]
     (and (string.eq under-got under-want) (string.eq over-got over-want))))
 
 ;; A leaq watermark poisons upward: candidates at or above the leaq's offset
@@ -9642,11 +9715,8 @@
     leave
     ret
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 5 0 0 0)]
-    [got : String (compiler_backend.compiler-backend-peephole-asm input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+    [got : String
+      (compiler-backend-peephole-test-win64-asm "main" 48 5 0 0 0 input)]
     (string.eq got want)))
 
 ;; The reads set is region-wide: a read before the store keeps it just as a
@@ -9666,14 +9736,10 @@
         head
         "    movq $1, 40(%rsp)\n    movq 40(%rsp), %rax\n"
         tail)]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 5 0 0 0)]
     [before-got : String
-      (compiler_backend.compiler-backend-peephole-asm before-input)]
+      (compiler-backend-peephole-test-win64-asm "main" 48 5 0 0 0 before-input)]
     [after-got : String
-      (compiler_backend.compiler-backend-peephole-asm after-input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+      (compiler-backend-peephole-test-win64-asm "main" 48 5 0 0 0 after-input)]
     (and (string.eq before-got before-input) (string.eq after-got after-input))))
 
 ;; The coverage window spans both eligibility windows: emergency-slot
@@ -9702,17 +9768,8 @@
     leave
     ret
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64!
-        "main"
-        48
-        5
-        -512
-        2
-        0)]
-    [got : String (compiler_backend.compiler-backend-peephole-asm input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+    [got : String
+      (compiler-backend-peephole-test-win64-asm "main" 48 5 -512 2 0 input)]
     (string.eq got want)))
 
 ;; Pass-1 fast paths: an inert record following a candidate must still poison
@@ -9730,11 +9787,8 @@
     leave
     ret
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
-    [got : String (compiler_backend.compiler-backend-peephole-asm input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+    [got : String
+      (compiler-backend-peephole-test-win64-asm "main" 48 1 0 0 0 input)]
     (string.eq got input)))
 
 ;; Pass-1 fast paths: a candidate as the region's last record is swept by the
@@ -9764,17 +9818,10 @@
     leaq 24(%rsp), %rsp
     movq $2, 40(%rsp)
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
     [last-got : String
-      (compiler_backend.compiler-backend-peephole-asm last-input)]
-    [_reset-mid : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record-tail : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
+      (compiler-backend-peephole-test-win64-asm "main" 48 1 0 0 0 last-input)]
     [tail-got : String
-      (compiler_backend.compiler-backend-peephole-asm tail-input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+      (compiler-backend-peephole-test-win64-asm "main" 48 1 0 0 0 tail-input)]
     (and (string.eq last-got last-want) (string.eq tail-got tail-input))))
 
 ;; The candidate verifier's comma hint: a one-space `movq src, N(%rsp)` store
@@ -9813,17 +9860,17 @@
     leave
     ret
 "]
-    [_reset : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 2 0 0 0)]
     [hint-got : String
-      (compiler_backend.compiler-backend-peephole-asm hint-input)]
-    [_reset-mid : unit (compiler_backend.compiler-backend-sweep-reset!)]
-    [_record-two : unit
-      (compiler_backend.compiler-backend-sweep-record-win64! "main" 48 2 0 0 0)]
+      (compiler-backend-peephole-test-win64-asm "main" 48 2 0 0 0 hint-input)]
     [two-space-got : String
-      (compiler_backend.compiler-backend-peephole-asm two-space-input)]
-    [_reset-after : unit (compiler_backend.compiler-backend-sweep-reset!)]
+      (compiler-backend-peephole-test-win64-asm
+        "main"
+        48
+        2
+        0
+        0
+        0
+        two-space-input)]
     (and
       (string.eq hint-got hint-want)
       (string.eq two-space-got two-space-input))))
@@ -9930,33 +9977,48 @@
   [src : String]) : bool
   (match (compiler_lower.lower-compiler-source src)
     [(compiler_lower.ResultCompilerLower.Ok first-program first-spans)
-      (match (compiler_backend.compiler-backend-emit-program-target-with-mode-buffer
-        first-program
-        (compiler_backend.CompilerBackendTarget.Linux)
-        (compiler_backend.CompilerBackendMode.Scalar)
-        first-spans
-        true)
-        [(compiler_backend.ResultCompilerBackendBuffer.Ok raw)
-          (let
-            [legacy : String
-              (compiler_backend.compiler-backend-peephole-asm-drop-fallthrough
-                (text_buf.render raw))]
-            (match (compiler_lower.lower-compiler-source src)
-              [(compiler_lower.ResultCompilerLower.Ok
-                  second-program
-                  second-spans)
-                (match (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
-                  second-program
-                  (compiler_backend.CompilerBackendTarget.Linux)
-                  (compiler_backend.CompilerBackendMode.Scalar)
-                  second-spans
-                  true
-                  false)
-                  [(compiler_backend.ResultCompilerBackendBuffer.Ok streamed)
-                    (string.eq legacy (text_buf.render streamed))]
-                  [(compiler_backend.ResultCompilerBackendBuffer.Err _) false])]
-              [(compiler_lower.ResultCompilerLower.Err _) false]))]
-        [(compiler_backend.ResultCompilerBackendBuffer.Err _) false])]
+      (let
+        [legacy-state : compiler_backend.CompilerBackendState
+          (compiler_backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active))]
+        [legacy-stream : compiler_backend.CompilerBackendStreamState
+          (compiler_backend.compiler-backend-state-stream-state legacy-state)]
+        (match (compiler_backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+          legacy-state
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          first-program
+          (compiler_backend.CompilerBackendTarget.Linux)
+          (compiler_backend.CompilerBackendMode.Scalar)
+          first-spans
+          true
+          false
+          false
+          (profile_state.compiler-profile-state-new))
+          [(compiler_backend.ResultCompilerBackendBuffer.Ok raw)
+            (let
+              [legacy : String
+                (text_buf.render
+                  (compiler_backend.compiler-backend-peephole-asm-buffer-with-state
+                    legacy-state
+                    legacy-stream
+                    (text_buf.render raw)
+                    true))]
+              (match (compiler_lower.lower-compiler-source src)
+                [(compiler_lower.ResultCompilerLower.Ok
+                    second-program
+                    second-spans)
+                  (match (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+                    second-program
+                    (compiler_backend.CompilerBackendTarget.Linux)
+                    (compiler_backend.CompilerBackendMode.Scalar)
+                    second-spans
+                    true
+                    false)
+                    [(compiler_backend.ResultCompilerBackendBuffer.Ok streamed)
+                      (string.eq legacy (text_buf.render streamed))]
+                    [(compiler_backend.ResultCompilerBackendBuffer.Err _) false])]
+                [(compiler_lower.ResultCompilerLower.Err _) false]))]
+          [(compiler_backend.ResultCompilerBackendBuffer.Err _) false]))]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-streamed-final-output-equivalent?) : bool
@@ -14400,15 +14462,16 @@
       (compiler_backend.compiler-backend-state-set-abort-site-counter!
         untouched-state
         11)]
+    [failure-stream : compiler_backend.CompilerBackendStreamState
+      (compiler_backend.compiler-backend-state-stream-state failure-state)]
     [duplicate-result : compiler_backend.ResultCompilerBackendBuffer
-      (compiler_backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+      (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
         failure-state
         0
         (compiler-backend-explicit-state-duplicate-function-program name-id)
         (compiler_backend.CompilerBackendTarget.Linux)
         (compiler_backend.CompilerBackendMode.Scalar)
         spans
-        false
         false
         false
         (profile_state.compiler-profile-state-new))]
@@ -14419,15 +14482,23 @@
             (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
             "duplicate emitted function symbol")]
         [(compiler_backend.ResultCompilerBackendBuffer.Ok _) false])]
+    [duplicate-stream-retired : bool
+      (and
+        (not
+          (compiler_backend.compiler-backend-assembly-stream-active?
+            failure-stream))
+        (=
+          (compiler_backend.compiler-backend-assembly-stream-home-arena-handle-value
+            failure-stream)
+          0))]
     [valid-result : compiler_backend.ResultCompilerBackendBuffer
-      (compiler_backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+      (compiler_backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
         failure-state
         0
         (compiler-backend-explicit-state-minimal-program name-id)
         (compiler_backend.CompilerBackendTarget.Linux)
         (compiler_backend.CompilerBackendMode.Scalar)
         spans
-        false
         false
         false
         (profile_state.compiler-profile-state-new))]
@@ -14443,6 +14514,7 @@
       (cbi.state-install! builtin-before)
       (and
         duplicate-failed
+        duplicate-stream-retired
         (=
           (compiler_backend.compiler-backend-state-abort-site-counter
             failure-state)
@@ -41241,8 +41313,11 @@
 (define (compiler-backend-stream-home-carries-grown-head-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]
-    [previous-stream-home : arena.Arena
-      (compiler_backend.compiler-backend-test-get-compiler-backend-assembly-stream-home-arena)]
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [stream : compiler_backend.CompilerBackendStreamState
+      (compiler_backend.compiler-backend-state-stream-state backend-state)]
     [home : arena.Arena (arena.make)]
     [scratch : arena.Arena (arena.make)]
     [_set-home : unit
@@ -41263,17 +41338,17 @@
         (text_buf.append (text_buf.append (text_buf.empty) "x") "y"))]
     [_carry-home : unit
       (compiler_backend.compiler-backend-assembly-stream-carry-home-current!
+        stream
         home-before-copy)]
     [carried-home : arena.Arena
-      (compiler_backend.compiler-backend-test-get-compiler-backend-assembly-stream-home-arena)]
+      (compiler_backend.compiler-backend-test-get-compiler-backend-assembly-stream-home-arena
+        stream)]
     [ok : bool
       (and
         (arena.eq? (arena.current) scratch)
         (string.eq (text_buf.render copied) "xy")
         (not (arena.eq? carried-home home-before-copy)))]
     (begin
-      (compiler_backend.compiler-backend-test-set-compiler-backend-assembly-stream-home-arena!
-        previous-stream-home)
       (unsafe
         (arena.set! caller))
       (unsafe
@@ -41281,6 +41356,600 @@
       (unsafe
         (arena.destroy carried-home))
       ok)))
+
+(define (compiler-backend-stream-state-interleaving-ok?) : bool
+  (let
+    [caller : arena.Arena (arena.current)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [backend-a : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
+    [backend-b : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
+    [stream-a : compiler_backend.CompilerBackendStreamState
+      (compiler_backend.compiler-backend-state-stream-state backend-a)]
+    [stream-b : compiler_backend.CompilerBackendStreamState
+      (compiler_backend.compiler-backend-state-stream-state backend-b)]
+    [home-a : arena.Arena (arena.make)]
+    [raw-a : arena.Arena (arena.make)]
+    [peephole-a : arena.Arena (arena.make)]
+    [home-b : arena.Arena (arena.make)]
+    [raw-b : arena.Arena (arena.make)]
+    [peephole-b : arena.Arena (arena.make)]
+    [raw-mark-a : arena.ArenaMark
+      (begin
+        (unsafe
+          (arena.set! raw-a))
+        (arena.mark))]
+    [peephole-mark-a : arena.ArenaMark
+      (begin
+        (unsafe
+          (arena.set! peephole-a))
+        (arena.mark))]
+    [raw-mark-b : arena.ArenaMark
+      (begin
+        (unsafe
+          (arena.set! raw-b))
+        (arena.mark))]
+    [peephole-mark-b : arena.ArenaMark
+      (begin
+        (unsafe
+          (arena.set! peephole-b))
+        (arena.mark))]
+    [_set-caller : unit
+      (unsafe
+        (arena.set! caller))]
+    [_reset-a : unit
+      (compiler_backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
+        backend-a
+        stream-a)]
+    [_reset-b : unit
+      (compiler_backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
+        backend-b
+        stream-b)]
+    [_carry-a : unit
+      (compiler_backend.compiler-backend-peephole-carry-safe-insert!
+        backend-a
+        stream-a
+        ".Lshared_carry")]
+    [_start-a : unit
+      (compiler_backend.compiler-backend-assembly-stream-start!
+        stream-a
+        raw-a
+        raw-mark-a
+        peephole-a
+        peephole-mark-a
+        home-a)]
+    [_start-b : unit
+      (compiler_backend.compiler-backend-assembly-stream-start!
+        stream-b
+        raw-b
+        raw-mark-b
+        peephole-b
+        peephole-mark-b
+        home-b)]
+    [head-a : String ".globl a\na:\n    movq 72(%rsp), %r9\n.Lshared_carry:\n"]
+    [head-b : String ".globl b\nb:\n    movq 72(%rsp), %r9\n.Lshared_carry:\n"]
+    [tail : String "    movq %r9, 72(%rsp)\n    ret\n"]
+    [_a1 : unit
+      (compiler_backend.compiler-backend-assembly-stream-process-string!
+        head-a
+        backend-a
+        stream-a)]
+    [_b1 : unit
+      (compiler_backend.compiler-backend-assembly-stream-process-string!
+        head-b
+        backend-b
+        stream-b)]
+    [_a2 : unit
+      (compiler_backend.compiler-backend-assembly-stream-process-string!
+        tail
+        backend-a
+        stream-a)]
+    [_b2 : unit
+      (compiler_backend.compiler-backend-assembly-stream-process-string!
+        tail
+        backend-b
+        stream-b)]
+    [out-a : text_buf.TextBuf
+      (compiler_backend.compiler-backend-assembly-stream-finish!
+        backend-a
+        stream-a)]
+    [out-b : text_buf.TextBuf
+      (compiler_backend.compiler-backend-assembly-stream-finish!
+        backend-b
+        stream-b)]
+    [got-a : String (text_buf.render out-a)]
+    [got-b : String (text_buf.render out-b)]
+    [want-a : String (str_cat.str-cat head-a "    ret\n")]
+    [want-b : String (str_cat.str-cat head-b tail)]
+    [ok : bool
+      (and
+        (string.eq got-a want-a)
+        (string.eq got-b want-b)
+        (not
+          (compiler_backend.compiler-backend-assembly-stream-active? stream-a))
+        (not
+          (compiler_backend.compiler-backend-assembly-stream-active? stream-b)))]
+    (begin
+      (compiler_backend.compiler-backend-assembly-stream-abort! stream-a)
+      (compiler_backend.compiler-backend-assembly-stream-abort! stream-b)
+      (unsafe
+        (arena.set! caller))
+      ;; Flushing deliberately clears the backend's legacy function scratch
+      ;; sentinels while the raw arena is active. Retire those scratch-backed
+      ;; handles in the caller arena before reclaiming either raw stream.
+      (compiler_backend.compiler-backend-clear-scratch-escaped-emit-state!
+        backend-a)
+      (compiler_backend.compiler-backend-clear-scratch-escaped-emit-state!
+        backend-b)
+      (unsafe
+        (arena.destroy raw-a))
+      (unsafe
+        (arena.destroy peephole-a))
+      (unsafe
+        (arena.destroy home-a))
+      (unsafe
+        (arena.destroy raw-b))
+      (unsafe
+        (arena.destroy peephole-b))
+      (unsafe
+        (arena.destroy home-b))
+      ok)))
+
+;; Manual assembly-stream fixture.  Its process operation mirrors production:
+;; raw storage is active while a function chunk is appended, then the caller
+;; arena is restored so another stream may make progress before this one does.
+(defstruct CompilerBackendAssemblyStreamTestSession
+  (caller arena.Arena)
+  (backend-state compiler_backend.CompilerBackendState)
+  (stream compiler_backend.CompilerBackendStreamState)
+  (home arena.Arena)
+  (raw arena.Arena)
+  (raw-mark arena.ArenaMark)
+  (peephole arena.Arena)
+  (peephole-mark arena.ArenaMark))
+
+(define (compiler-backend-assembly-stream-test-session-new) : CompilerBackendAssemblyStreamTestSession
+  (let
+    [caller : arena.Arena (arena.current)]
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [stream : compiler_backend.CompilerBackendStreamState
+      (compiler_backend.compiler-backend-state-stream-state backend-state)]
+    [home : arena.Arena (arena.make)]
+    [raw : arena.Arena (arena.make)]
+    [peephole : arena.Arena (arena.make)]
+    [raw-mark : arena.ArenaMark
+      (begin
+        (unsafe
+          (arena.set! raw))
+        (arena.mark))]
+    [peephole-mark : arena.ArenaMark
+      (begin
+        (unsafe
+          (arena.set! peephole))
+        (arena.mark))]
+    [_restore : unit
+      (unsafe
+        (arena.set! caller))]
+    [_carry-reset : unit
+      (compiler_backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
+        backend-state
+        stream)]
+    [_sweep-reset : unit
+      (compiler_backend.compiler-backend-sweep-reset! stream)]
+    [_start : unit
+      (compiler_backend.compiler-backend-assembly-stream-start!
+        stream
+        raw
+        raw-mark
+        peephole
+        peephole-mark
+        home)]
+    (CompilerBackendAssemblyStreamTestSession
+      caller
+      backend-state
+      stream
+      home
+      raw
+      raw-mark
+      peephole
+      peephole-mark)))
+
+(define (compiler-backend-assembly-stream-test-session-process!
+  [session : CompilerBackendAssemblyStreamTestSession]
+  [chunk : String]) : unit
+  (begin
+    (compiler_backend.compiler-backend-assembly-stream-begin-raw!
+      (struct-get session backend-state)
+      (struct-get session stream))
+    (compiler_backend.compiler-backend-assembly-stream-process-string!
+      chunk
+      (struct-get session backend-state)
+      (struct-get session stream))
+    (unsafe
+      (arena.set! (struct-get session caller)))))
+
+(define (compiler-backend-assembly-stream-test-session-finish-copy
+  [session : CompilerBackendAssemblyStreamTestSession]) : String
+  (let
+    [out : text_buf.TextBuf
+      (compiler_backend.compiler-backend-assembly-stream-finish!
+        (struct-get session backend-state)
+        (struct-get session stream))]
+    [rendered : String (text_buf.render out)]
+    (string.copy rendered)))
+
+(define (compiler-backend-assembly-stream-test-session-destroy!
+  [session : CompilerBackendAssemblyStreamTestSession]) : unit
+  (begin
+    (compiler_backend.compiler-backend-assembly-stream-abort!
+      (struct-get session stream))
+    (unsafe
+      (arena.set! (struct-get session caller)))
+    (compiler_backend.compiler-backend-clear-scratch-escaped-emit-state!
+      (struct-get session backend-state))
+    (unsafe
+      (arena.destroy (struct-get session raw)))
+    (unsafe
+      (arena.destroy (struct-get session peephole)))
+    (unsafe
+      (arena.destroy (struct-get session home)))))
+
+(define (compiler-backend-assembly-stream-test-seed-a!
+  [session : CompilerBackendAssemblyStreamTestSession]) : unit
+  (begin
+    ;; Model a Linux scalar job and give only A the safe continuation label.
+    (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+      (struct-get session backend-state)
+      true)
+    (compiler_backend.compiler-backend-state-set-absolute-switch-ok!
+      (struct-get session backend-state)
+      true)
+    (compiler_backend.compiler-backend-peephole-carry-safe-insert!
+      (struct-get session backend-state)
+      (struct-get session stream)
+      ".Lshared_carry")
+    ;; The first A group is an audited Linux FPO function.  Its dead slot store
+    ;; is swept; B deliberately has the same shape without sweep metadata.
+    (compiler_backend.compiler-backend-sweep-record-fpo!
+      (struct-get session stream)
+      "a_sweep"
+      48
+      0
+      5
+      0
+      0
+      0
+      (struct-get session backend-state))))
+
+(define (compiler-backend-assembly-stream-test-seed-b!
+  [session : CompilerBackendAssemblyStreamTestSession]) : unit
+  (begin
+    ;; Model a Windows vector job.  These job-local policy bits must survive
+    ;; alternating calls through A's differently configured backend state.
+    (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+      (struct-get session backend-state)
+      false)
+    (compiler_backend.compiler-backend-state-set-absolute-switch-ok!
+      (struct-get session backend-state)
+      false)))
+
+(define (compiler-backend-assembly-stream-test-chunks [a? : bool]) : (__tl_dyn-array
+    String)
+  (let
+    [chunks : (__tl_dyn-array String) (array.make-array String 65)]
+    [prefix : String
+      (if a?
+        "a_fill_"
+        "b_fill_")]
+    [first : String
+      (if a?
+        ".globl a_sweep
+a_sweep:
+    subq $56, %rsp
+    movq $1, 40(%rsp)
+    movq _tl_stream_global(%rip), %r9
+    addq $1, %rax
+    movq _tl_stream_global(%rip), %r10
+    movq 72(%rsp), %r11
+.Lshared_carry:
+    movq %r11, 72(%rsp)
+    addq $56, %rsp
+    ret
+"
+        ".globl b_keep
+b_keep:
+    subq $56, %rsp
+    movq $1, 40(%rsp)
+    movq _tl_stream_global(%rip), %r9
+    addq $1, %rax
+    movq _tl_stream_global(%rip), %r10
+    movq 72(%rsp), %r11
+.Lshared_carry:
+    movq %r11, 72(%rsp)
+    addq $56, %rsp
+    ret
+")]
+    [i : i64 1]
+    (begin
+      (array-set! chunks 0 first)
+      (while (< i 65)
+        (let
+          [suffix : String (string.int->string i)]
+          [symbol : String (str_cat.str-cat prefix suffix)]
+          (begin
+            (array-set!
+              chunks
+              i
+              (str_cat.str-cat
+                ".globl "
+                symbol
+                "\n"
+                symbol
+                ":\n    movq $"
+                suffix
+                ", %rax\n    ret\n"))
+            (set! i (+ i 1)))))
+      chunks)))
+
+(define (compiler-backend-assembly-stream-test-run-serial
+  [chunks : (__tl_dyn-array String)]
+  [a? : bool]) : String
+  (let
+    [session : CompilerBackendAssemblyStreamTestSession
+      (compiler-backend-assembly-stream-test-session-new)]
+    [i : i64 0]
+    (begin
+      (if a?
+        (compiler-backend-assembly-stream-test-seed-a! session)
+        (compiler-backend-assembly-stream-test-seed-b! session))
+      (while (< i (array-length chunks))
+        (begin
+          (compiler-backend-assembly-stream-test-session-process!
+            session
+            (array-ref chunks i))
+          (set! i (+ i 1))))
+      (let
+        [out : String
+          (compiler-backend-assembly-stream-test-session-finish-copy session)]
+        (begin
+          (compiler-backend-assembly-stream-test-session-destroy! session)
+          out)))))
+
+;; Cross the production 64-function batch boundary while A and B alternate.
+;; Abort B after seven pending chunks, keep A live, and replay B in a new stream.
+;; Both final byte streams must equal their serial executions.  The first groups
+;; additionally prove that carry labels, stack/global owners and ordered sweep
+;; metadata cannot leak between the two differently configured backend jobs.
+(define (compiler-backend-stream-state-bounded-interleaving-ok?) : bool
+  (let
+    [chunks-a : (__tl_dyn-array String)
+      (compiler-backend-assembly-stream-test-chunks true)]
+    [chunks-b : (__tl_dyn-array String)
+      (compiler-backend-assembly-stream-test-chunks false)]
+    [serial-a : String
+      (compiler-backend-assembly-stream-test-run-serial chunks-a true)]
+    [serial-b : String
+      (compiler-backend-assembly-stream-test-run-serial chunks-b false)]
+    [session-a : CompilerBackendAssemblyStreamTestSession
+      (compiler-backend-assembly-stream-test-session-new)]
+    [failed-b : CompilerBackendAssemblyStreamTestSession
+      (compiler-backend-assembly-stream-test-session-new)]
+    [_seed-a : unit (compiler-backend-assembly-stream-test-seed-a! session-a)]
+    [_seed-failed-b : unit
+      (compiler-backend-assembly-stream-test-seed-b! failed-b)]
+    [i : i64 0]
+    (begin
+      (while (< i 7)
+        (begin
+          (compiler-backend-assembly-stream-test-session-process!
+            session-a
+            (array-ref chunks-a i))
+          (compiler-backend-assembly-stream-test-session-process!
+            failed-b
+            (array-ref chunks-b i))
+          (set! i (+ i 1))))
+      (compiler-backend-assembly-stream-test-session-destroy! failed-b)
+      (let
+        [session-b : CompilerBackendAssemblyStreamTestSession
+          (compiler-backend-assembly-stream-test-session-new)]
+        [_seed-b : unit
+          (compiler-backend-assembly-stream-test-seed-b! session-b)]
+        [replay : i64 0]
+        (begin
+          (while (< replay 7)
+            (begin
+              (compiler-backend-assembly-stream-test-session-process!
+                session-b
+                (array-ref chunks-b replay))
+              (set! replay (+ replay 1))))
+          (while (< i 65)
+            (begin
+              (compiler-backend-assembly-stream-test-session-process!
+                session-a
+                (array-ref chunks-a i))
+              (compiler-backend-assembly-stream-test-session-process!
+                session-b
+                (array-ref chunks-b i))
+              (set! i (+ i 1))))
+          (let
+            [out-a : String
+              (compiler-backend-assembly-stream-test-session-finish-copy
+                session-a)]
+            [out-b : String
+              (compiler-backend-assembly-stream-test-session-finish-copy
+                session-b)]
+            [ok : bool
+              (and
+                (string.eq out-a serial-a)
+                (string.eq out-b serial-b)
+                (not
+                  (compiler_backend.compiler-backend-string-contains?
+                    out-a
+                    "    movq $1, 40(%rsp)\n"))
+                (compiler_backend.compiler-backend-string-contains?
+                  out-b
+                  "    movq $1, 40(%rsp)\n")
+                (not
+                  (compiler_backend.compiler-backend-string-contains?
+                    out-a
+                    "    movq %r11, 72(%rsp)\n"))
+                (compiler_backend.compiler-backend-string-contains?
+                  out-b
+                  "    movq %r11, 72(%rsp)\n")
+                (compiler_backend.compiler-backend-string-contains?
+                  out-a
+                  "    movq %r9, %r10\n")
+                (compiler_backend.compiler-backend-string-contains?
+                  out-b
+                  "    movq %r9, %r10\n")
+                (compiler_backend.compiler-backend-state-scalar-registers-enabled?
+                  (struct-get session-a backend-state))
+                (not
+                  (compiler_backend.compiler-backend-state-scalar-registers-enabled?
+                    (struct-get session-b backend-state)))
+                (compiler_backend.compiler-backend-state-absolute-switch-ok?
+                  (struct-get session-a backend-state))
+                (not
+                  (compiler_backend.compiler-backend-state-absolute-switch-ok?
+                    (struct-get session-b backend-state))))]
+            (begin
+              (compiler-backend-assembly-stream-test-session-destroy! session-a)
+              (compiler-backend-assembly-stream-test-session-destroy! session-b)
+              ok)))))))
+
+(define (compiler-backend-stream-state-growth-ok?) : bool
+  (let
+    [session : CompilerBackendPeepholeTestSession
+      (compiler-backend-peephole-test-session-new)]
+    [backend-state : compiler_backend.CompilerBackendState
+      (struct-get session backend-state)]
+    [stream : compiler_backend.CompilerBackendStreamState
+      (struct-get session stream)]
+    [idle? : bool
+      (=
+        (compiler_backend.compiler-backend-stream-state-retained-table-bytes
+          stream)
+        0)]
+    [_reset : unit (compiler-backend-peephole-test-session-reset! session)]
+    [i : i64 0]
+    (begin
+      (while (< i 600)
+        (begin
+          (compiler_backend.compiler-backend-peephole-carry-safe-insert!
+            backend-state
+            stream
+            (str_cat.str-cat ".Lcarry_growth_" (string.int->string i)))
+          (set! i (+ i 1))))
+      (let
+        [last : String ".Lcarry_growth_599"]
+        [carry-grew? : bool
+          (and
+            (>=
+              (compiler_backend.compiler-backend-stream-state-carry-capacity
+                stream)
+              1024)
+            (>=
+              (compiler_backend.compiler-backend-stream-state-carry-bytes-capacity
+                stream)
+              16384)
+            (compiler_backend.compiler-backend-peephole-carry-safe-contains-bytes?
+              stream
+              (unsafe
+                (string-data last))
+              0
+              (string.string-length last)
+              (ci.intern-hash last)))]
+        [owner-input : text_buf.TextBuf (text_buf.empty)]
+        (begin
+          (set! i 0)
+          (while (< i 128)
+            (begin
+              (set!
+                owner-input
+                (text_buf.append
+                  owner-input
+                  (str_cat.str-cat
+                    "    movq very_long_owner_global_symbol_"
+                    (string.int->string i)
+                    "(%rip), %rax\n")))
+              (set! i (+ i 1))))
+          (let
+            [_owner-output : String
+              (compiler-backend-peephole-test-session-asm
+                session
+                (text_buf.render owner-input))]
+            [owner-grew? : bool
+              (and
+                (>=
+                  (compiler_backend.compiler-backend-stream-state-owner-capacity
+                    stream)
+                  128)
+                (>=
+                  (compiler_backend.compiler-backend-stream-state-owner-bytes-capacity
+                    stream)
+                  4096))]
+            (begin
+              (compiler_backend.compiler-backend-sweep-reset! stream)
+              (set! i 0)
+              (while (< i 200)
+                (begin
+                  (compiler_backend.compiler-backend-sweep-record-win64!
+                    backend-state
+                    stream
+                    (str_cat.str-cat
+                      "very_long_sweep_function_symbol_"
+                      (string.int->string i))
+                    48
+                    1
+                    0
+                    0
+                    0)
+                  (set! i (+ i 1))))
+              (let
+                [sweep-grew? : bool
+                  (and
+                    (>=
+                      (compiler_backend.compiler-backend-stream-state-sweep-capacity
+                        stream)
+                      256)
+                    (>=
+                      (compiler_backend.compiler-backend-stream-state-sweep-bytes-capacity
+                        stream)
+                      8192))]
+                [_coverage-reset : unit
+                  (compiler_backend.compiler-backend-sweep-reset! stream)]
+                [_coverage-record : unit
+                  (compiler-backend-peephole-test-session-win64!
+                    session
+                    "coverage"
+                    8192
+                    1024
+                    0
+                    0
+                    0)]
+                [_coverage-output : String
+                  (compiler-backend-peephole-test-session-asm
+                    session
+                    "coverage:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $8192, %rsp\n    movq $1, 8184(%rsp)\n    leave\n    ret\n")]
+                [coverage-grew? : bool
+                  (>=
+                    (compiler_backend.compiler-backend-stream-state-coverage-capacity
+                      stream)
+                    128)]
+                (and
+                  idle?
+                  carry-grew?
+                  owner-grew?
+                  sweep-grew?
+                  coverage-grew?
+                  (=
+                    (compiler_backend.compiler-backend-stream-state-record-capacity
+                      stream)
+                    0))))))))))
 
 ;; Function-local traversal state must follow the backend job, even when two
 ;; jobs reuse the same numeric ids and are interleaved. Resetting a failed job
@@ -41771,6 +42440,9 @@
         (compiler-backend-win64-xmm-callee-save-homes-ok?))
       (and
         (compiler-backend-peephole-ok?)
+        (compiler-backend-stream-state-interleaving-ok?)
+        (compiler-backend-stream-state-bounded-interleaving-ok?)
+        (compiler-backend-stream-state-growth-ok?)
         (compiler-backend-stream-home-carries-grown-head-ok?))
       (and
         (pmove.compiler-parallel-move-self-test?)

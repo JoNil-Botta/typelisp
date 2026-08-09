@@ -437,7 +437,8 @@
           (compiler-driver-state-typecheck-prefix-cache state)))
       unit)))
 
-(define (compiler-driver-allocation-profile-backend-output-snapshot!) : unit
+(define (compiler-driver-allocation-profile-backend-output-snapshot!
+  [backend-state : compiler_backend.CompilerBackendState]) : unit
   (if (= (allocation_profile.compiler-allocation-profile-control! 0 "" "" 0) 0)
     unit
     (begin
@@ -445,7 +446,8 @@
         2
         "backend"
         "backend-output-home"
-        (compiler_backend.compiler-backend-assembly-stream-home-arena-handle-value))
+        (compiler_backend.compiler-backend-assembly-stream-home-arena-handle-value
+          (compiler_backend.compiler-backend-state-stream-state backend-state)))
       unit)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : compiler_ast_types.AstNodePoolContext
@@ -1933,7 +1935,8 @@
                           profile-state
                           "backend"))
                       (compiler-driver-allocation-profile-snapshot! "backend")
-                      (compiler-driver-allocation-profile-backend-output-snapshot!)
+                      (compiler-driver-allocation-profile-backend-output-snapshot!
+                        backend-state)
                       (ResultCompilerDriverBuffer.Ok asm))]
                   [(compiler_backend.ResultCompilerBackendBuffer.Err diag)
                     (begin
@@ -1943,7 +1946,8 @@
                           profile-state
                           "backend"))
                       (compiler-driver-allocation-profile-snapshot! "backend")
-                      (compiler-driver-allocation-profile-backend-output-snapshot!)
+                      (compiler-driver-allocation-profile-backend-output-snapshot!
+                        backend-state)
                       (ResultCompilerDriverBuffer.Err
                         (box
                           (compiler_diagnostic.compiler-diagnostic-with-path

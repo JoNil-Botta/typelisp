@@ -42000,6 +42000,32 @@ b_keep:
                       stream)
                     0))))))))))
 
+;; The byte-derived record estimate deliberately targets normal generated
+;; assembly. Blank lines force the geometric fallback several times; their
+;; byte-exact output must survive and the stream must retire the grown arrays
+;; before its peephole arena is rewound.
+(define (compiler-backend-stream-record-growth-ok?) : bool
+  (let
+    [session : CompilerBackendPeepholeTestSession
+      (compiler-backend-peephole-test-session-new)]
+    [input : text_buf.TextBuf (text_buf.empty)]
+    [i : i64 0]
+    (begin
+      (while (< i 128)
+        (begin
+          (set! input (text_buf.append input "\n"))
+          (set! i (+ i 1))))
+      (let
+        [expected : String (text_buf.render input)]
+        [actual : String
+          (compiler-backend-peephole-test-session-asm session expected)]
+        [retired? : bool
+          (=
+            (compiler_backend.compiler-backend-stream-state-record-capacity
+              (struct-get session stream))
+            0)]
+        (and retired? (string.eq actual expected))))))
+
 ;; Function-local traversal state must follow the backend job, even when two
 ;; jobs reuse the same numeric ids and are interleaved. Resetting a failed job
 ;; must likewise leave the other job's continuation state intact.
@@ -42493,6 +42519,7 @@ b_keep:
         (compiler-backend-stream-state-bounded-interleaving-ok?)
         (compiler-backend-stream-flush-preserves-grown-state-ok?)
         (compiler-backend-stream-state-growth-ok?)
+        (compiler-backend-stream-record-growth-ok?)
         (compiler-backend-stream-home-carries-grown-head-ok?))
       (and
         (pmove.compiler-parallel-move-self-test?)

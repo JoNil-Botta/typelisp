@@ -1061,6 +1061,7 @@
           : u64)
         : (MutPtr i64))
       address)))
+
 (define (compiler-backend-stream-state-data
   [state : CompilerBackendStreamState]) : CompilerBackendStreamStateData
   (unsafe

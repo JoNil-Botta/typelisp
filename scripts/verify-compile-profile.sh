@@ -1110,9 +1110,12 @@ fi
 # segments: the authoritative Windows probe measured 3,362,558 used nodes,
 # 3,407,872 capacity, and 109,051,904 physical payload bytes.
 # #6159's explicit 30-cell lower-state owner and state-isolation coverage
-# crossed ast_expr_pool.macro_expand from 52 to 53 segments; the authoritative
-# Windows CI probe measured 3,410,553 used nodes, 3,473,408 capacity, and
-# 111,149,056 physical payload bytes.
+# crossed ast_expr_pool.macro_expand from 52 to 53 segments; after replacing
+# the first reflective state aggregate with the final typed-cell directory, the
+# authoritative Windows CI probe measured 3,410,813 used nodes, 3,473,408
+# capacity, and 111,149,056 physical payload bytes. The same final source tree
+# crossed ast_expr_pool.typecheck from 31 to 32 segments: 2,039,958 used nodes,
+# 2,097,152 capacity, and 67,108,864 physical payload bytes.
 # #5937's persistent typechecker list storage and focused wide/deep tests
 # crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
 # Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload
@@ -1219,7 +1222,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 53 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 31 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \

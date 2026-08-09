@@ -64183,13 +64183,20 @@
               crt-entry
               true
               true)]
+          [wrapped : ResultCompilerBackend
+            (match emitted
+              [(ResultCompilerBackend.Ok head)
+                (ResultCompilerBackend.Ok
+                  (compiler-backend-emergency-wrap head backend-state))]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]
           (begin
             ;; Clear scratch-owned references while the scratch arena is still
             ;; live, then retire the only job-owned handle before with-escape
             ;; rewinds it. This runs for success and controlled diagnostics.
             (compiler-backend-clear-function-owned-state! backend-state)
             (compiler-backend-state-retire-function-state! backend-state)
-            emitted)))]
+            wrapped)))]
     result))
 
 ;; Keep the direct path available for A/B experiments by raising
@@ -64242,10 +64249,17 @@
               crt-entry
               true
               true)]
+          [wrapped : ResultCompilerBackend
+            (match emitted
+              [(ResultCompilerBackend.Ok head)
+                (ResultCompilerBackend.Ok
+                  (compiler-backend-emergency-wrap head backend-state))]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]
           (begin
             (compiler-backend-clear-function-owned-state! backend-state)
             (compiler-backend-state-retire-function-state! backend-state)
-            emitted))
+            wrapped))
         (compiler-backend-emit-function-scratch
           type-segment-bases
           target
@@ -64371,11 +64385,7 @@
                 emit-entry
                 crt-entry
                 scratch
-                (text_buf.append
-                  buf
-                  (compiler-backend-emergency-wrap
-                    head
-                    (struct-get program-index backend-state)))))]
+                (text_buf.append buf head)))]
           [(ResultCompilerBackend.Err message)
             (begin
               (cfg
@@ -64481,11 +64491,7 @@
                 emit-entry
                 crt-entry
                 scratch
-                (text_buf.append
-                  buf
-                  (compiler-backend-emergency-wrap
-                    head
-                    (struct-get program-index backend-state)))))]
+                (text_buf.append buf head)))]
           [(ResultCompilerBackend.Err message)
             (begin
               (cfg
@@ -64562,9 +64568,7 @@
                       (struct-get program-index backend-state)
                       func)))
                 (compiler-backend-assembly-stream-process-string!
-                  (compiler-backend-emergency-wrap
-                    head
-                    (struct-get program-index backend-state))
+                  head
                   (struct-get program-index backend-state)
                   (compiler-backend-state-stream-state
                     (struct-get program-index backend-state)))
@@ -64686,9 +64690,7 @@
                     (struct-get program-index backend-state)
                     func)))
               (compiler-backend-assembly-stream-process-string!
-                (compiler-backend-emergency-wrap
-                  head
-                  (struct-get program-index backend-state))
+                head
                 (struct-get program-index backend-state)
                 (compiler-backend-state-stream-state
                   (struct-get program-index backend-state)))
@@ -64878,7 +64880,7 @@
           (compiler-backend-windows-words-stack-space
             (* 2 (compiler-backend-call-args-count args)))))]))
 
-(define (compiler-backend-emit-closure-entry-adapter
+(define (compiler-backend-emit-closure-entry-adapter-body
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [name : i64]
@@ -65020,6 +65022,60 @@
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
+;; Closure entry adapters are emitted functions too: their argument shuffles can
+;; scavenge and therefore must finish emergency wrapping before their scratch
+;; owner is retired. Preserve a caller-installed owner for focused nested
+;; fixtures, while production enters with no active function owner.
+(define (compiler-backend-emit-closure-entry-adapter
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [name : i64]
+  [param-types : compiler_ast_types.AstTypeList]
+  [ret-ty : compiler_ast_types.AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [externs : compiler_ir_types.CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (let
+    [backend-state : CompilerBackendState
+      (struct-get program-index backend-state)]
+    [previous-address : i64
+      (compiler-backend-state-function-state-address backend-state)]
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-function-state-new)]
+    [_install : unit
+      (compiler-backend-state-install-function-state!
+        backend-state
+        function-state)]
+    [_abi : unit
+      (compiler-backend-set-current-fn-abi!
+        backend-state
+        (compiler-backend-regalloc-abi target))]
+    [emitted : ResultCompilerBackend
+      (compiler-backend-emit-closure-entry-adapter-body
+        type-segment-bases
+        target
+        name
+        param-types
+        ret-ty
+        plan
+        functions
+        externs
+        program-index)]
+    [wrapped : ResultCompilerBackend
+      (match emitted
+        [(ResultCompilerBackend.Ok head)
+          (ResultCompilerBackend.Ok
+            (compiler-backend-emergency-wrap head backend-state))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
+    (begin
+      (compiler-backend-clear-function-owned-state! backend-state)
+      (compiler-backend-state-set-function-state-address!
+        backend-state
+        previous-address)
+      wrapped)))
+
 (define (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -65056,11 +65112,7 @@
                 externs
                 plan
                 program-index
-                (text_buf.append
-                  buf
-                  (compiler-backend-emergency-wrap
-                    head
-                    (struct-get program-index backend-state))))]
+                (text_buf.append buf head))]
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackendBuffer.Err message)])]
         [(CompilerBackendMaybeSignature.No)
@@ -65111,9 +65163,7 @@
                 [(ResultCompilerBackend.Ok head)
                   (begin
                     (compiler-backend-assembly-stream-process-string!
-                      (compiler-backend-emergency-wrap
-                        head
-                        (struct-get program-index backend-state))
+                      head
                       (struct-get program-index backend-state)
                       (compiler-backend-state-stream-state
                         (struct-get program-index backend-state)))
@@ -66071,11 +66121,7 @@
             type-segment-bases
             target
             (box-get rest)
-            (text_buf.append
-              buf
-              (compiler-backend-emergency-wrap
-                head
-                (struct-get program-index backend-state)))
+            (text_buf.append buf head)
             program-index)]
         [(ResultCompilerBackend.Err message)
           (ResultCompilerBackendBuffer.Err message)])]

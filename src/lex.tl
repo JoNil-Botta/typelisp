@@ -103,35 +103,18 @@
       [(and (>= code 65) (<= code 70)) (+ 10 (- code 65))]
       [else 0])))
 
-;; The symbol-char set as two 64-bit ASCII masks: bit k of `...-mask-lo` is
-;; code k, bit k of `...-mask-hi` is code 64+k. This is a static function of
-;; the byte value, not a cache.
-;;
-;; lo = {33 ! } {37 % } {38 & } {42 * } {43 + } {45 - } {46 . } {47 / }
-;;      {48-57 digits} {58 : } {60 < } {61 = } {62 > } {63 ? }
-;; hi = {65-90 A-Z} {95 _ } {97-122 a-z}
-(define lex-symbol-char-mask-lo : i64
-  -576482321629184000)
-(define lex-symbol-char-mask-hi : i64
-  576460745995190270)
-
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
-;; `scan-symbol-end` open-codes this same test; keep the two in step.
+;; `scan-symbol-end` open-codes this same classifier; keep the two in step.
 (define (is-symbol-char [c : char]) : bool
   (let
     [code : i64 (bit-and (cast c : i64) 255)]
-    (if (< code 128)
-      (=
-        (bit-and
-          (shr
-            (if (< code 64)
-              lex-symbol-char-mask-lo
-              lex-symbol-char-mask-hi)
-            (bit-and code 63))
-          1)
-        1)
-      false)))
+    [folded : i64 (bit-or code 32)]
+    (cond
+      [(and (>= folded 97) (<= folded 122)) true]
+      [(and (>= code 48) (<= code 57)) true]
+      [(and (>= code 42) (<= code 63)) (and (!= code 44) (!= code 59))]
+      [else (or (= code 33) (and (>= code 37) (<= code 38)) (= code 95))])))
 
 ;; The lexer is also used by standalone tools that do not initialize the
 ;; compiler builtin-ID catalog. Keep the direct builtin fast path when it is

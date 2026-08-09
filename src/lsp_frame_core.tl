@@ -2401,15 +2401,22 @@
   [fallback-path : String]
   [fallback-text : String]
   [labels : cdiag.CompilerDiagnosticLabelList]) : json.JsonSeq
-  (match labels
-    [(CompilerDiagnosticLabelNil) (json.list-empty)]
-    [(CompilerDiagnosticLabelCons entry rest)
-      (lsp-json-list-cons
-        (lsp-diagnostic-related-information fallback-path fallback-text entry)
-        (lsp-diagnostic-related-information-list
-          fallback-path
-          fallback-text
-          (box-get rest)))]))
+  (let
+    [index : i64 (- (cdiag.compiler-diagnostic-label-list-count labels) 1)]
+    [out : json.JsonSeq (json.list-empty)]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set!
+            out
+            (lsp-json-list-cons
+              (lsp-diagnostic-related-information
+                fallback-path
+                fallback-text
+                (cdiag.compiler-diagnostic-label-list-get labels index))
+              out))
+          (set! index (- index 1))))
+      out)))
 
 (define (lsp-diagnostic-message-tail [message : String]) : json.JsonMemberSeq
   (lsp-json-member "message" (json.JsonString message) (json.member-list-empty)))
@@ -2542,18 +2549,16 @@
       (lsp-range-from-compiler-span fallback-path fallback-text span)]
     [message : String (cdiag.compiler-diagnostic-message diag)]
     [code : String (cdiag.compiler-diagnostic-code-or-empty diag)]
-    (match labels
-      [(CompilerDiagnosticLabelNil)
-        (lsp-diagnostic-with-range range message code)]
-      [(CompilerDiagnosticLabelCons _ _)
-        (lsp-diagnostic-with-range-tail
-          range
-          code
-          (lsp-json-member
-            "relatedInformation"
-            (lsp-json-array
-              (lsp-diagnostic-related-information-list path text labels))
-            (lsp-diagnostic-message-tail message)))])))
+    (if (= (cdiag.compiler-diagnostic-label-list-count labels) 0)
+      (lsp-diagnostic-with-range range message code)
+      (lsp-diagnostic-with-range-tail
+        range
+        code
+        (lsp-json-member
+          "relatedInformation"
+          (lsp-json-array
+            (lsp-diagnostic-related-information-list path text labels))
+          (lsp-diagnostic-message-tail message))))))
 
 (define (lsp-compiler-diagnostic-kind [diag : cdiag.CompilerDiagnostic]) : String
   (if (string.eq
@@ -2586,18 +2591,16 @@
         (lsp-compiler-diagnostic-kind diag)
         index
         (lsp-diagnostic-message-tail message))]
-    (match labels
-      [(CompilerDiagnosticLabelNil)
-        (lsp-diagnostic-with-range-tail range code tail)]
-      [(CompilerDiagnosticLabelCons _ _)
-        (lsp-diagnostic-with-range-tail
-          range
-          code
-          (lsp-json-member
-            "relatedInformation"
-            (lsp-json-array
-              (lsp-diagnostic-related-information-list path text labels))
-            tail))])))
+    (if (= (cdiag.compiler-diagnostic-label-list-count labels) 0)
+      (lsp-diagnostic-with-range-tail range code tail)
+      (lsp-diagnostic-with-range-tail
+        range
+        code
+        (lsp-json-member
+          "relatedInformation"
+          (lsp-json-array
+            (lsp-diagnostic-related-information-list path text labels))
+          tail)))))
 
 (define (lsp-compiler-diagnostic-code-ok?
   [diag : cdiag.CompilerDiagnostic]
@@ -2876,29 +2879,29 @@
   [diagnostics : cdiag.CompilerDiagnosticList]
   [index : i64]
   [tail : json.JsonSeq]) : json.JsonSeq
-  (match diagnostics
-    [(cdiag.CompilerDiagnosticList.Nil) tail]
-    [(cdiag.CompilerDiagnosticList.Cons diag rest)
-      (let
-        [next : json.JsonSeq
-          (lsp-compiler-diagnostics-for-uri
-            uri
-            fallback-path
-            text
-            version
-            (box-get rest)
-            (+ index 1)
-            tail)]
-        (if (string.eq (lsp-diagnostic-uri uri fallback-path diag) uri)
-          (lsp-json-list-cons
-            (lsp-compiler-diagnostic-versioned
-              fallback-path
-              text
-              version
-              index
-              diag)
-            next)
-          next))]))
+  (let
+    [cursor : i64 (- (cdiag.compiler-diagnostic-list-count diagnostics) 1)]
+    [out : json.JsonSeq tail]
+    (begin
+      (while (>= cursor 0)
+        (let
+          [diag : cdiag.CompilerDiagnostic
+            (cdiag.compiler-diagnostic-list-get diagnostics cursor)]
+          (begin
+            (if (string.eq (lsp-diagnostic-uri uri fallback-path diag) uri)
+              (set!
+                out
+                (lsp-json-list-cons
+                  (lsp-compiler-diagnostic-versioned
+                    fallback-path
+                    text
+                    version
+                    (+ index cursor)
+                    diag)
+                  out))
+              unit)
+            (set! cursor (- cursor 1)))))
+      out)))
 
 (define (lsp-publish-external-diagnostic-groups
   [root-uri : String]
@@ -2909,35 +2912,33 @@
   [remaining : cdiag.CompilerDiagnosticList]
   [published : lsp_vector_families.LspDiagnosticUris]) : lsp_vector_families.LspDiagnosticUris
   (let
-    [cur : cdiag.CompilerDiagnosticList remaining]
+    [count : i64 (cdiag.compiler-diagnostic-list-count remaining)]
+    [index : i64 0]
     [result : lsp_vector_families.LspDiagnosticUris published]
-    [done : bool false]
     (begin
-      (while (not done)
-        (match cur
-          [(cdiag.CompilerDiagnosticList.Nil) (set! done true)]
-          [(cdiag.CompilerDiagnosticList.Cons diag rest)
-            (let
-              [diag-uri : String
-                (lsp-diagnostic-uri root-uri fallback-path diag)]
+      (while (< index count)
+        (let
+          [diag : cdiag.CompilerDiagnostic
+            (cdiag.compiler-diagnostic-list-get remaining index)]
+          [diag-uri : String (lsp-diagnostic-uri root-uri fallback-path diag)]
+          (begin
+            (if (or
+              (string.eq diag-uri root-uri)
+              (lsp-diagnostic-uris-contains? result diag-uri))
+              unit
               (begin
-                (set! cur (box-get rest))
-                (if (or
-                  (string.eq diag-uri root-uri)
-                  (lsp-diagnostic-uris-contains? result diag-uri))
-                  unit
-                  (begin
-                    (lsp-publish-diagnostics
-                      diag-uri
-                      (lsp-compiler-diagnostics-for-uri
-                        diag-uri
-                        fallback-path
-                        text
-                        version
-                        diagnostics
-                        0
-                        (json.list-empty)))
-                    (set! result (lsp-diagnostic-uris-add result diag-uri))))))]))
+                (lsp-publish-diagnostics
+                  diag-uri
+                  (lsp-compiler-diagnostics-for-uri
+                    diag-uri
+                    fallback-path
+                    text
+                    version
+                    diagnostics
+                    0
+                    (json.list-empty)))
+                (set! result (lsp-diagnostic-uris-add result diag-uri))))
+            (set! index (+ index 1)))))
       result)))
 
 ;; The semantic-index pass intentionally stops before producing an index when
@@ -3681,41 +3682,40 @@
   [diagnostics : cdiag.CompilerDiagnosticList]
   [index : i64]
   [acc : json.JsonSeq]) : json.JsonSeq
-  (match diagnostics
-    [(cdiag.CompilerDiagnosticList.Nil) acc]
-    [(cdiag.CompilerDiagnosticList.Cons diagnostic rest)
-      (let
-        [diagnostic-uri : String (lsp-diagnostic-uri uri path diagnostic)]
-        [diagnostic-kind : String (lsp-compiler-diagnostic-kind diagnostic)]
-        [next : json.JsonSeq
-          (if (not (string.eq diagnostic-uri uri))
-            acc
-            (match (lsp-code-action-find-diagnostic-from
-              context-diagnostics
-              request-range
-              version
-              diagnostic-kind
-              index
-              0)
-              [(LspJsonValue.Missing) acc]
-              [(LspJsonValue.Found context-diagnostic)
-                (lsp-code-action-compiler-fixes-from
-                  docs
-                  path
-                  context-diagnostic
-                  (cdiag.compiler-diagnostic-fixes diagnostic)
-                  0
-                  acc)]))]
-        (lsp-code-action-compiler-diagnostics
-          docs
-          uri
-          path
-          version
-          request-range
-          context-diagnostics
-          (box-get rest)
-          (+ index 1)
-          next))]))
+  (let
+    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
+    [cursor : i64 index]
+    [out : json.JsonSeq acc]
+    (begin
+      (while (< cursor count)
+        (let
+          [diagnostic : cdiag.CompilerDiagnostic
+            (cdiag.compiler-diagnostic-list-get diagnostics cursor)]
+          [diagnostic-uri : String (lsp-diagnostic-uri uri path diagnostic)]
+          [diagnostic-kind : String (lsp-compiler-diagnostic-kind diagnostic)]
+          (begin
+            (if (not (string.eq diagnostic-uri uri))
+              unit
+              (match (lsp-code-action-find-diagnostic-from
+                context-diagnostics
+                request-range
+                version
+                diagnostic-kind
+                cursor
+                0)
+                [(LspJsonValue.Missing) unit]
+                [(LspJsonValue.Found context-diagnostic)
+                  (set!
+                    out
+                    (lsp-code-action-compiler-fixes-from
+                      docs
+                      path
+                      context-diagnostic
+                      (cdiag.compiler-diagnostic-fixes diagnostic)
+                      0
+                      out))]))
+            (set! cursor (+ cursor 1)))))
+      out)))
 
 (define (lsp-code-action-compiler
   [docs : lsp_document_vec.Vec]

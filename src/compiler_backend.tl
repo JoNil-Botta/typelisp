@@ -22698,7 +22698,7 @@
       (if (string.eq home "")
         scratch-reg
         home)]
-    [quotient-asm : String
+    [quotient-prefix : String
       (str_cat.str-cat
         (compiler-backend-divmod-result-move src-reg "%rax")
         magic-load
@@ -22709,11 +22709,11 @@
           (str_cat.str-cat "    addq " src-reg ", %rdx\n")
           "")
         "    movq %rdx, %rax\n    shrq $63, %rax\n"
-        (compiler-backend-divmod-shift-reg "sar" shift "%rdx")
-        "    addq %rax, %rdx\n")]
+        (compiler-backend-divmod-shift-reg "sar" shift "%rdx"))]
     (if want-remainder
       (str_cat.str-cat
-        quotient-asm
+        quotient-prefix
+        "    addq %rax, %rdx\n"
         (compiler-backend-signed-remainder-from-src
           (cast divisor : u64)
           "%rdx"
@@ -22721,12 +22721,23 @@
           scratch-reg
           src-reg)
         (compiler-backend-divmod-result-move src-reg result-reg))
-      (str_cat.str-cat
-        quotient-asm
-        (if negative-divisor
-          "    negq %rdx\n"
-          "")
-        (compiler-backend-divmod-result-move "%rdx" result-reg)))))
+      ;; %rax holds the sign correction and %rdx the shifted high word. The
+      ;; final add is commutative, so accumulate into a requested %rax result
+      ;; directly instead of producing %rdx and immediately copying it.
+      (if (string.eq result-reg "%rax")
+        (str_cat.str-cat
+          quotient-prefix
+          "    addq %rdx, %rax\n"
+          (if negative-divisor
+            "    negq %rax\n"
+            ""))
+        (str_cat.str-cat
+          quotient-prefix
+          "    addq %rax, %rdx\n"
+          (if negative-divisor
+            "    negq %rdx\n"
+            "")
+          (compiler-backend-divmod-result-move "%rdx" result-reg))))))
 
 (define (compiler-backend-signed-constant-divmod-src-asm
   [divisor : i64]
@@ -25619,8 +25630,8 @@
       (if (string.eq dst-home "")
         (if (compiler-backend-binop-wants-remainder? op)
           src
-          ;; Quotient-only strength reductions all leave the quotient in
-          ;; %rax; staging the spilled store from %rax skips the %rdx hop.
+          ;; Quotient-only strength reductions honor a requested %rax result;
+          ;; staging a spilled store there avoids a fixed-register hop.
           "%rax")
         dst-home)]
     (match (compiler-backend-emit-load-value-with-plan

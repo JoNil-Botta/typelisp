@@ -258,8 +258,7 @@ _tl_stdlib_runtime_stdlib_runtime_abort_write_negative_decimal:
     movq %rdx, %rax
     shrq $63, %rax
     sarq $2, %rdx
-    addq %rax, %rdx
-    movq %rdx, %rax
+    addq %rdx, %rax
     movq %rax, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write_negative_decimal
     jmp .Lf4_if_merge.2

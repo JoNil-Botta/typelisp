@@ -45,6 +45,28 @@
 (define (thread-api-join-i64-code [result : thread_i64.JoinResult]) : i64
   (thread_i64.join-value-or result -1))
 
+(define (thread-api-typed-wait-shape [worker : (& worker thread_i64.Handle)]) : thread.ThreadWaitResult
+  (thread_i64.wait-for worker 0))
+
+(define (thread-api-wait-ready? [result : thread.ThreadWaitResult]) : bool
+  (match result
+    [(thread.ThreadWaitReady) true]
+    [(thread.ThreadWaitTimedOut) false]
+    [(thread.ThreadWaitErr _) false]))
+
+(define (thread-api-wait-timed-out? [result : thread.ThreadWaitResult]) : bool
+  (match result
+    [(thread.ThreadWaitReady) false]
+    [(thread.ThreadWaitTimedOut) true]
+    [(thread.ThreadWaitErr _) false]))
+
+(define (thread-api-negative-wait-rejected? [result : thread.ThreadWaitResult]) : bool
+  (match result
+    [(thread.ThreadWaitReady) false]
+    [(thread.ThreadWaitTimedOut) false]
+    [(thread.ThreadWaitErr message)
+      (string.eq message "thread: wait timeout must be nonnegative")]))
+
 (define (thread-api-safe-string-run) : i64
   42)
 
@@ -94,6 +116,62 @@
 
 (define (thread-api-large-semaphore-rejected?) : bool
   (= (thread.semaphore-create-handle-or 2147483648 -1) -1))
+
+(define (thread-api-bounded-wait-worker [sem-handle : i64]) : i64
+  (if (thread.semaphore-wait (thread.ThreadSemaphore sem-handle))
+    42
+    -1))
+
+(define (thread-api-bounded-wait-run [sem : thread.ThreadSemaphore]) : i64
+  (match (thread.spawn thread-api-bounded-wait-worker (struct-get sem handle))
+    [(thread.ThreadSpawnErr _) 14]
+    [(thread.ThreadSpawnOk worker)
+      (let
+        [result : i64 42]
+        [released : bool false]
+        [join-code : i64 -1]
+        (begin
+          (if (not
+            (thread-api-negative-wait-rejected? (thread.wait-for (& worker) -1)))
+            (set! result 15)
+            unit)
+          (if (and
+            (= result 42)
+            (not (thread-api-wait-timed-out? (thread.wait-for (& worker) 0))))
+            (set! result 16)
+            unit)
+          (if (and
+            (= result 42)
+            (not (thread-api-wait-timed-out? (thread.wait-for (& worker) 1))))
+            (set! result 17)
+            unit)
+          (if (and
+            (= result 42)
+            (not (thread-api-wait-timed-out? (thread.wait-for (& worker) 0))))
+            (set! result 18)
+            unit)
+          (set! released (thread.semaphore-post sem))
+          (if (not released)
+            (set! result 19)
+            (begin
+              (if (and
+                (= result 42)
+                (not (thread-api-wait-ready? (thread.wait-for (& worker) 5000))))
+                (set! result 20)
+                unit)
+              (if (and
+                (= result 42)
+                (not (thread-api-wait-ready? (thread.wait-for (& worker) 0))))
+                (set! result 21)
+                unit)
+              (set! join-code (thread-api-join-code (thread.join worker)))
+              (if (and (= result 42) (not (= join-code 42)))
+                (set! result 22)
+                unit)
+              (if (and (= result 42) (not (thread.semaphore-close sem)))
+                (set! result 23)
+                unit)))
+          result))]))
 
 (define (thread-api-finish-run
   [sem : thread.ThreadSemaphore]
@@ -179,7 +257,18 @@
       [(not (thread-api-large-semaphore-rejected?)) 12]
       [else
         (let
-          [sem-handle : i64 (thread.semaphore-create-handle-or 0 -1)]
-          (if (= sem-handle -1)
+          [wait-sem-handle : i64 (thread.semaphore-create-handle-or 0 -1)]
+          (if (= wait-sem-handle -1)
             13
-            (thread-api-run-with-semaphore (thread.ThreadSemaphore sem-handle))))])))
+            (let
+              [wait-code : i64
+                (thread-api-bounded-wait-run
+                  (thread.ThreadSemaphore wait-sem-handle))]
+              (if (not (= wait-code 42))
+                wait-code
+                (let
+                  [sem-handle : i64 (thread.semaphore-create-handle-or 0 -1)]
+                  (if (= sem-handle -1)
+                    24
+                    (thread-api-run-with-semaphore
+                      (thread.ThreadSemaphore sem-handle))))))))])))

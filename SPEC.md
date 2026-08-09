@@ -6339,6 +6339,12 @@ The accepted safe spawn shape is closure based:
 - `thread.join` consumes the thread handle, waits for completion, and
   returns a result typed by the closure return type. Double join and
   use-after-join are ordinary use-after-move errors.
+- `thread.wait-for` borrows rather than consumes the handle and observes
+  completion for a nonnegative bounded millisecond duration. Its result
+  distinguishes ready, timed out, and wait failure; zero is a nonblocking
+  poll. Every result leaves the handle available for another wait and for
+  exactly one later join. Readiness alone does not establish the joined
+  lifetime/cleanup proof below.
 - Joining a worker is also the proof that the worker no longer allocates
   into, mutates through, or holds values from any atomic arena whose
   lifetime depended on that worker. Resetting or destroying such an arena

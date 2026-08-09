@@ -10237,6 +10237,13 @@
 (define tc-type-env-scoped-runtime-marker-id-region : i64
   -1)
 
+;; This private marker is stable only within an intern generation.  Remember its
+;; canonical ID without carrying it through every recursive environment walk.
+(define tc-signature-lifetime-marker-id-generation : i64
+  -1)
+(define tc-signature-lifetime-marker-id-cache : i64
+  -1)
+
 (define (tc-type-env-scoped-runtime-active?) : bool
   tc-type-env-scoped-runtime-active)
 
@@ -11823,7 +11830,16 @@
   cbi.compiler-builtin-id-tc-active-region)
 
 (define (tc-signature-lifetime-marker-id) : i64
-  (ci.intern "\n__typelisp_signature_lifetime_marker"))
+  (let
+    [generation : i64 (ci.intern-generation)]
+    (if (= tc-signature-lifetime-marker-id-generation generation)
+      tc-signature-lifetime-marker-id-cache
+      (let
+        [marker-id : i64 (ci.intern "\n__typelisp_signature_lifetime_marker")]
+        (begin
+          (set! tc-signature-lifetime-marker-id-cache marker-id)
+          (set! tc-signature-lifetime-marker-id-generation generation)
+          marker-id)))))
 
 (define (tc-cleanup-owner-marker-id) : i64
   cbi.compiler-builtin-id-tc-cleanup-owner)
@@ -100620,6 +100636,7 @@
 (define (compiler-typecheck-reset-intern-owned-state!) : unit
   (begin
     (set! tc-type-env-scoped-runtime-marker-id-generation -1)
+    (set! tc-signature-lifetime-marker-id-generation -1)
     (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
     (set! tc-comptime-helper-prefix-cache-generation -1)
     (tc-source-dotted-alias-key-cache-reset!)

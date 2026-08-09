@@ -1,0 +1,17 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"workspaceSymbolProvider\":true"},
+    {"jsonpath_id": 2, "raw_contains": "\"name\":\"target\",\"kind\":12", "raw_contains": "\"name\":\"target\",\"kind\":13", "raw_contains": "\"name\":\"targetPrefix\"", "raw_contains": "\"name\":\"mytarget\"", "raw_contains": "\"containerName\":\"alpha.mod\"", "raw_contains": "\"containerName\":\"nested.b\"", "raw_contains": "\"location\":{\"uri\":\"${{TMP_URI}}/root-a/a.tl\"", "raw_contains": "\"range\":{\"start\":{\"line\":1,\"character\":9},\"end\":{\"line\":1,\"character\":15}}"},
+    {"jsonpath_id": 3, "raw_contains": "\"name\":\"targetPrefix\"", "raw_not_contains": "\"name\":\"target\"", "raw_not_contains": "\"name\":\"mytarget\""},
+    {"jsonpath_id": 4, "raw_contains": "\"name\":\"Pair\"", "raw_contains": "\"name\":\"other\"", "raw_contains": "\"name\":\"target\""},
+    {"jsonpath_id": 5, "raw_contains": "${{TMP_URI}}/root-b/nested/b.tl", "raw_not_contains": "${{TMP_URI}}/root-a/a.tl", "raw_not_contains": "targetPrefix"},
+    {"jsonpath_id": 6, "raw_contains": "\"name\":\"overlayOnly\"", "raw_contains": "${{TMP_URI}}/root-a/a.tl", "raw_not_contains": "target"},
+    {"jsonpath_id": 7, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 8, "raw_contains": "${{TMP_URI}}/root-a/a.tl", "raw_contains": "\"name\":\"target\"", "raw_not_contains": "${{TMP_URI}}/root-b/nested/b.tl"},
+    {"jsonpath_id": 9, "raw_contains": "\"success\":true", "raw_contains": "${{TMP_URI}}/root-a/a.tl", "raw_contains": "${{TMP_URI}}/root-b/nested/b.tl", "raw_contains": "\"name\":\"target\"", "raw_not_contains": "targetPrefix", "raw_not_contains": "mytarget"},
+    {"jsonpath_id": 10, "raw_contains": "${{TMP_URI}}/root-b/nested/b.tl", "raw_not_contains": "${{TMP_URI}}/root-a/a.tl"},
+    {"jsonpath_id": 11, "json_contains": "\"result\":null", "jsonpath_result": null}
+  ]
+}

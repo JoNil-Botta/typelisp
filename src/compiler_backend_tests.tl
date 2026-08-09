@@ -9084,6 +9084,22 @@
     [got : String (compiler_backend.compiler-backend-peephole-asm input)]
     (string.eq got want)))
 
+;; An action-2 pair drops the current line and keeps pending. Two consecutive
+;; drops therefore reuse the current parser result slot while the pending
+;; descriptor must remain backed by the other slot.
+(define (compiler-backend-peephole-pending-parse-slot-ok?) : bool
+  (let
+    [input : String
+      "    movq %rax, %r12
+    movq %rax, %r12
+    movq %rax, %r12
+    addq $1, %r13
+"]
+    [want : String "    movq %rax, %r12
+    addq $1, %r13
+"]
+    (string.eq (compiler_backend.compiler-backend-peephole-asm input) want)))
+
 ;; P22-A1: a spill store whose source register already mirrors the destination
 ;; slot writes back the value the slot holds and is dropped. The three positive
 ;; shapes are separated from the load by material the ADJACENT pair rules cannot
@@ -11021,6 +11037,7 @@
     (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-peephole-vector-gp-owners-ok?)
+    (compiler-backend-peephole-pending-parse-slot-ok?)
     (compiler-backend-peephole-dead-mirror-store-ok?)
     (compiler-backend-peephole-dead-reg-def-ok?)
     (compiler-backend-peephole-detailed-abort-guard-ok?)

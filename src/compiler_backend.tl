@@ -75315,6 +75315,13 @@
     [held-labels : (__tl_dyn-array CompilerBackendPeepholeLine)
       (array.make-array CompilerBackendPeepholeLine 8)]
     [held-label-count : i64 0]
+    ;; The parser returns its memory-class descriptor through a callsite-owned
+    ;; result slot. Alternate between two distinct callsites only when pending
+    ;; takes the current descriptor: if a pair rule drops the current line,
+    ;; reuse that now-dead slot while pending remains in the other one. This is
+    ;; the two-slot streaming discipline used by production parser pipelines;
+    ;; it keeps pending stable without materializing another 96-byte copy.
+    [parse-slot-b? : bool false]
     [c : i64 0]
     (begin
       (compiler-backend-peephole-owner-global-reset-with-backend-state!
@@ -75345,13 +75352,21 @@
                     end)]
                 [line-newline : bool (< end n)]
                 [line : CompilerBackendPeepholeLine
-                  (compiler-backend-peephole-parse-line
-                    (& context)
-                    asm
-                    i
-                    end
-                    line-newline
-                    false)]
+                  (if parse-slot-b?
+                    (compiler-backend-peephole-parse-line
+                      (& context)
+                      asm
+                      i
+                      end
+                      line-newline
+                      false)
+                    (compiler-backend-peephole-parse-line
+                      (& context)
+                      asm
+                      i
+                      end
+                      line-newline
+                      false))]
                 [consumed? : bool false]
                 (begin
                   (if held-jmp?
@@ -75457,9 +75472,9 @@
                               line)]
                           (cond
                             [(= action 1)
-                              (set!
-                                pending
-                                (compiler-backend-peephole-line-copy line))]
+                              (begin
+                                (set! pending line)
+                                (set! parse-slot-b? (not parse-slot-b?)))]
                             [(= action 2) unit]
                             [(= action 3)
                               (let
@@ -75536,14 +75551,12 @@
                                     prev-abort?
                                     (compiler-backend-peephole-desc-noreturn-abort?
                                       pending))
-                                  (set!
-                                    pending
-                                    (compiler-backend-peephole-line-copy line))))]))
+                                  (set! pending line)
+                                  (set! parse-slot-b? (not parse-slot-b?))))]))
                         (begin
                           (set! has-pending true)
-                          (set!
-                            pending
-                            (compiler-backend-peephole-line-copy line))))
+                          (set! pending line)
+                          (set! parse-slot-b? (not parse-slot-b?))))
                       (if (and
                         drop-fallthrough?
                         (=

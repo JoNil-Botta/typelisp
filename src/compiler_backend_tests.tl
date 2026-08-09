@@ -41821,6 +41821,55 @@ b_keep:
               (compiler-backend-assembly-stream-test-session-destroy! session-b)
               ok)))))))
 
+;; A nested batch flush may grow peephole-owned storage.  The assembly stream
+;; must preserve the nested pass's newly published handles/counts when it then
+;; publishes its own output cursor.  More than 1 KiB of distinct global keys
+;; exercises the owner-byte growth that caught the stale aggregate write.
+(define (compiler-backend-stream-flush-preserves-grown-state-ok?) : bool
+  (let
+    [session : CompilerBackendAssemblyStreamTestSession
+      (compiler-backend-assembly-stream-test-session-new)]
+    [body : text_buf.TextBuf
+      (text_buf.append
+        (text_buf.empty)
+        ".globl stream_growth\nstream_growth:\n")]
+    [i : i64 0]
+    (begin
+      (while (< i 128)
+        (begin
+          (set!
+            body
+            (text_buf.append
+              body
+              (str_cat.str-cat
+                "    movq very_long_stream_owner_global_symbol_"
+                (string.int->string i)
+                "(%rip), %rax\n")))
+          (set! i (+ i 1))))
+      (set! body (text_buf.append body "    ret\n"))
+      (compiler-backend-assembly-stream-test-session-process!
+        session
+        (text_buf.render body))
+      (let
+        [out : String
+          (compiler-backend-assembly-stream-test-session-finish-copy session)]
+        [ok : bool
+          (and
+            (>=
+              (compiler_backend.compiler-backend-stream-state-owner-capacity
+                (struct-get session stream))
+              128)
+            (>=
+              (compiler_backend.compiler-backend-stream-state-owner-bytes-capacity
+                (struct-get session stream))
+              4096)
+            (compiler_backend.compiler-backend-string-contains?
+              out
+              "very_long_stream_owner_global_symbol_127(%rip)"))]
+        (begin
+          (compiler-backend-assembly-stream-test-session-destroy! session)
+          ok)))))
+
 (define (compiler-backend-stream-state-growth-ok?) : bool
   (let
     [session : CompilerBackendPeepholeTestSession
@@ -42442,6 +42491,7 @@ b_keep:
         (compiler-backend-peephole-ok?)
         (compiler-backend-stream-state-interleaving-ok?)
         (compiler-backend-stream-state-bounded-interleaving-ok?)
+        (compiler-backend-stream-flush-preserves-grown-state-ok?)
         (compiler-backend-stream-state-growth-ok?)
         (compiler-backend-stream-home-carries-grown-head-ok?))
       (and

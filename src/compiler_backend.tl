@@ -74644,20 +74644,28 @@
                 state
                 (struct-get data assembly-peephole-mark)
                 (struct-get data assembly-home-arena))]
+            ;; The nested pass grows owner/sweep tables, retires its record
+            ;; sink, and may carry a grown home-arena head. Reload every field
+            ;; it published before updating the assembly half of the same
+            ;; aggregate; writing the pre-pass snapshot here would resurrect
+            ;; stale table handles/counts while leaving their in-place hash
+            ;; entries live.
+            [current : CompilerBackendStreamStateData
+              (compiler-backend-stream-state-data stream)]
             (begin
-              (set! (struct-get data assembly-out) (struct-get flushed out))
+              (set! (struct-get current assembly-out) (struct-get flushed out))
               (set!
-                (struct-get data assembly-sweep-cursor)
+                (struct-get current assembly-sweep-cursor)
                 (struct-get flushed sweep-cursor))
-              (set! (struct-get data assembly-batch-count) 0)
+              (set! (struct-get current assembly-batch-count) 0)
               (unsafe
-                (arena.set! (struct-get data assembly-raw-arena)))
+                (arena.set! (struct-get current assembly-raw-arena)))
               (unsafe
-                (arena.rewind (struct-get data assembly-raw-mark)))
-              (set! (struct-get data assembly-batch) (text_buf.empty))
+                (arena.rewind (struct-get current assembly-raw-mark)))
+              (set! (struct-get current assembly-batch) (text_buf.empty))
               (compiler-backend-clear-function-emit-state! backend-state)
-              (set! (struct-get data assembly-raw-ready) true)
-              (compiler-backend-stream-state-data-set! stream data)
+              (set! (struct-get current assembly-raw-ready) true)
+              (compiler-backend-stream-state-data-set! stream current)
               (unsafe
                 (arena.set! source-arena)))))))))
 

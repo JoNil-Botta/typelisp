@@ -72795,22 +72795,43 @@
                   start
                   end)
                 -1)]
+            ;; A pure register token cannot produce a memory owner key. Keep a
+            ;; trailing-')' spelling on the general path so even unusual input
+            ;; that begins with '%' retains the old memory-suffix behavior.
+            [src-register? : bool
+              (and
+                is-movq
+                (< op-src-start op-src-end)
+                (= (compiler-backend-peephole-byte-at data op-src-start) 37)
+                (not
+                  (=
+                    (compiler-backend-peephole-byte-at data (- op-src-end 1))
+                    41)))]
+            [dst-register? : bool
+              (and
+                is-movq
+                (< op-dst-start op-dst-end)
+                (= (compiler-backend-peephole-byte-at data op-dst-start) 37)
+                (not
+                  (=
+                    (compiler-backend-peephole-byte-at data (- op-dst-end 1))
+                    41)))]
             [src-memory-base : i64
-              (if is-movq
+              (if (and is-movq (not src-register?))
                 (compiler-backend-peephole-memory-base-range
                   data
                   op-src-start
                   op-src-end)
                 compiler-backend-peephole-memory-base-none)]
             [dst-memory-base : i64
-              (if is-movq
+              (if (and is-movq (not dst-register?))
                 (compiler-backend-peephole-memory-base-range
                   data
                   op-dst-start
                   op-dst-end)
                 compiler-backend-peephole-memory-base-none)]
             [src-key : i64
-              (if is-movq
+              (if (and is-movq (not src-register?))
                 (compiler-backend-peephole-owner-key-from-range
                   context
                   op-src-start
@@ -72818,7 +72839,7 @@
                   src-memory-base)
                 (compiler-backend-peephole-owner-key-unknown))]
             [dst-key : i64
-              (if is-movq
+              (if (and is-movq (not dst-register?))
                 (compiler-backend-peephole-owner-key-from-range
                   context
                   op-dst-start
@@ -72826,37 +72847,41 @@
                   dst-memory-base)
                 (compiler-backend-peephole-owner-key-unknown))]
             [src-reg : i64
-              (if is-movq
+              (if src-register?
                 (compiler-backend-peephole-reg-index-range
                   data
                   op-src-start
                   op-src-end)
                 -1)]
             [dst-reg : i64
-              (if is-movq
+              (if dst-register?
                 (compiler-backend-peephole-reg-index-range
                   data
                   op-dst-start
                   op-dst-end)
                 -1)]
             [src-flags : i64
-              (if is-movq
-                (compiler-backend-peephole-operand-flags
-                  data
-                  op-src-start
-                  op-src-end
-                  src-key
-                  src-memory-base)
-                0)]
+              (cond
+                [src-register? compiler-backend-peephole-op-register-flag]
+                [is-movq
+                  (compiler-backend-peephole-operand-flags
+                    data
+                    op-src-start
+                    op-src-end
+                    src-key
+                    src-memory-base)]
+                [else 0])]
             [dst-flags : i64
-              (if is-movq
-                (compiler-backend-peephole-operand-flags
-                  data
-                  op-dst-start
-                  op-dst-end
-                  dst-key
-                  dst-memory-base)
-                0)]
+              (cond
+                [dst-register? compiler-backend-peephole-op-register-flag]
+                [is-movq
+                  (compiler-backend-peephole-operand-flags
+                    data
+                    op-dst-start
+                    op-dst-end
+                    dst-key
+                    dst-memory-base)]
+                [else 0])]
             (CompilerBackendPeepholeLine
               src
               data

@@ -455,83 +455,116 @@
   (scratch-arena (__tl_dyn-array i64))
   (ir-arena (__tl_dyn-array i64)))
 
-;; Every field is a one-slot typed cell. The opaque carrier can therefore read
-;; only the cell descriptor from its stable address and mutate the payload in
-;; place; it never copies this aggregate's move-owned nested values.
-(defstruct CompilerLowerStateData
-  (active-global-name-cache (__tl_dyn-array LowerNameCache))
-  (decls-global-type-cache (__tl_dyn-array LowerTypeCache))
-  (rvo-early-return-functions (__tl_dyn-array lower_i64_i64_map.Map))
-  (reach-active-runtime-paths (__tl_dyn-array lower_i64_i64_map.Map))
-  (reach-active-body-used-types (__tl_dyn-array lower_i64_i64_map.Map))
-  (current-source-path-id (__tl_dyn-array i64))
-  (current-decl-generated (__tl_dyn-array bool))
-  (active-symbols (__tl_dyn-array csym.CompilerSymbols))
-  (active-symbols-ready (__tl_dyn-array bool))
-  (active-module-name-caches (__tl_dyn-array LowerModuleNameCacheList))
-  (active-module-local-views (__tl_dyn-array LowerModuleLocalViewList))
-  (active-loop-function (__tl_dyn-array i64))
-  (active-loop-entry-var-limit (__tl_dyn-array i64))
-  (alias-overlay-ids (__tl_dyn-array lower_i64_i64_map.Map))
-  (alias-overlay-valid (__tl_dyn-array bool))
-  (alias-symbol-memo (__tl_dyn-array (__tl_dyn-array i64)))
-  (canonical-path-count (__tl_dyn-array i64))
-  (canonical-path-recent (__tl_dyn-array String))
-  (canonical-path-prior (__tl_dyn-array String))
-  (entry-main-module-active (__tl_dyn-array bool))
-  (entry-main-module (__tl_dyn-array String))
-  (entry-main-module-id (__tl_dyn-array i64))
-  (module-decl-index-ready (__tl_dyn-array bool))
-  (module-decl-index-decl-count (__tl_dyn-array i64))
-  (module-decl-index-decl-offset (__tl_dyn-array i64))
-  (module-decl-index-modules (__tl_dyn-array lower_i64_i64_map.Map))
-  (module-decl-index-starts (__tl_dyn-array (__tl_dyn-array i64)))
-  (module-decl-index-ends (__tl_dyn-array (__tl_dyn-array i64)))
-  (module-decl-index-positions (__tl_dyn-array (__tl_dyn-array i64)))
-  (module-decl-index-arena (__tl_dyn-array i64))
-  (arenas (__tl_dyn-array CompilerLowerArenaState)))
+;; The owner points at a fixed directory of typed cell addresses. Keeping the
+;; directory untyped avoids reflecting one giant aggregate (and recomputing its
+;; layout at every accessor expansion) while every mutable value still has one
+;; stable, owner-private cell.
+(define active-global-name-cache : i64
+  0)
+(define decls-global-type-cache : i64
+  1)
+(define rvo-early-return-functions : i64
+  2)
+(define reach-active-runtime-paths : i64
+  3)
+(define reach-active-body-used-types : i64
+  4)
+(define current-source-path-id : i64
+  5)
+(define current-decl-generated : i64
+  6)
+(define active-symbols : i64
+  7)
+(define active-symbols-ready : i64
+  8)
+(define active-module-name-caches : i64
+  9)
+(define active-module-local-views : i64
+  10)
+(define active-loop-function : i64
+  11)
+(define active-loop-entry-var-limit : i64
+  12)
+(define alias-overlay-ids : i64
+  13)
+(define alias-overlay-valid : i64
+  14)
+(define alias-symbol-memo : i64
+  15)
+(define canonical-path-count : i64
+  16)
+(define canonical-path-recent : i64
+  17)
+(define canonical-path-prior : i64
+  18)
+(define entry-main-module-active : i64
+  19)
+(define entry-main-module : i64
+  20)
+(define entry-main-module-id : i64
+  21)
+(define module-decl-index-ready : i64
+  22)
+(define module-decl-index-decl-count : i64
+  23)
+(define module-decl-index-decl-offset : i64
+  24)
+(define module-decl-index-modules : i64
+  25)
+(define module-decl-index-starts : i64
+  26)
+(define module-decl-index-ends : i64
+  27)
+(define module-decl-index-positions : i64
+  28)
+(define module-decl-index-arena : i64
+  29)
+(define arenas : i64
+  30)
 
 (defstruct CompilerLowerState
   (address i64))
 
 (defmacro (compiler-lower-state-read [state : Expr] [_T : type] [field : Expr]) : Expr
-  `(let
-    [field-cell : (__tl_dyn-array ,_T)
-      (unsafe
-        (ptr-read
-          (int->ptr
-            (cast
-              (+
-                (struct-get ,state address)
-                (comptime (offset-of (type CompilerLowerStateData) ,field)))
-              : u64)
-            : (Ptr (__tl_dyn-array ,_T)))))]
-    (array-ref field-cell 0)))
+  `(unsafe
+    (ptr-read
+      (int->ptr
+        (cast
+          (unsafe
+            (ptr-read
+              (ptr-offset
+                (int->ptr (cast (struct-get ,state address) : u64) : (Ptr i64))
+                ,field)))
+          : u64)
+        : (Ptr ,_T)))))
 
 (defmacro (compiler-lower-state-write!
   [state : Expr]
   [_T : type]
   [field : Expr]
   [value : Expr]) : Expr
-  `(let
-    [field-cell : (__tl_dyn-array ,_T)
-      (unsafe
-        (ptr-read
-          (int->ptr
-            (cast
-              (+
-                (struct-get ,state address)
-                (comptime (offset-of (type CompilerLowerStateData) ,field)))
-              : u64)
-            : (Ptr (__tl_dyn-array ,_T)))))]
-    (array-set! field-cell 0 ,value)))
+  `(unsafe
+    (ptr-write!
+      (int->ptr
+        (cast
+          (unsafe
+            (ptr-read
+              (ptr-offset
+                (int->ptr (cast (struct-get ,state address) : u64) : (Ptr i64))
+                ,field)))
+          : u64)
+        : (MutPtr ,_T))
+      ,value)))
 
 (defmacro (compiler-lower-state-cell [T : type] [value : Expr]) : Expr
   `(let
     [cell : (__tl_dyn-array ,T) (array.make-array ,T 1)]
     (begin
       (array-set! cell 0 ,value)
-      cell)))
+      (cast
+        (unsafe
+          (ptr->int (ptr-cast (array-data cell) : (Ptr ,T))))
+        : i64))))
 
 (define (compiler-lower-state-from-address [address : i64]) : CompilerLowerState
   (CompilerLowerState address))
@@ -541,70 +574,149 @@
 
 (define (compiler-lower-state-new) : CompilerLowerState
   (let
-    [cell : (__tl_dyn-array CompilerLowerStateData)
-      (array.make-array CompilerLowerStateData 1)]
+    [cells : (__tl_dyn-array i64) (array.make-array i64 31)]
     [address : i64
       (cast
         (unsafe
-          (ptr->int (ptr-cast (array-data cell) : (Ptr CompilerLowerStateData))))
+          (ptr->int (ptr-cast (array-data cells) : (Ptr i64))))
         : i64)]
     [state : CompilerLowerState (CompilerLowerState address)]
     (begin
       (array-set!
-        cell
-        0
-        (CompilerLowerStateData
-          (compiler-lower-state-cell
-            LowerNameCache
-            (lower-empty-global-name-cache address))
-          (compiler-lower-state-cell LowerTypeCache (LowerTypeCache.No))
-          (compiler-lower-state-cell
-            lower_i64_i64_map.Map
-            (lower_i64_i64_map.with-capacity 8))
-          (compiler-lower-state-cell
-            lower_i64_i64_map.Map
-            (lower_i64_i64_map.with-capacity 8))
-          (compiler-lower-state-cell
-            lower_i64_i64_map.Map
-            (lower_i64_i64_map.with-capacity 8))
-          (compiler-lower-state-cell i64 0)
-          (compiler-lower-state-cell bool false)
-          (compiler-lower-state-cell
-            csym.CompilerSymbols
-            (csym.compiler-symbols-empty))
-          (compiler-lower-state-cell bool false)
-          (compiler-lower-state-cell
-            LowerModuleNameCacheList
-            (LowerModuleNameCacheList.Nil))
-          (compiler-lower-state-cell
-            LowerModuleLocalViewList
-            (LowerModuleLocalViewList.Nil))
-          (compiler-lower-state-cell i64 -1)
-          (compiler-lower-state-cell i64 -1)
-          (compiler-lower-state-cell
-            lower_i64_i64_map.Map
-            (lower_i64_i64_map.with-capacity 16))
-          (compiler-lower-state-cell bool true)
-          (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0))
-          (compiler-lower-state-cell i64 0)
-          (compiler-lower-state-cell String "")
-          (compiler-lower-state-cell String "")
-          (compiler-lower-state-cell bool false)
-          (compiler-lower-state-cell String "")
-          (compiler-lower-state-cell i64 cbi.compiler-builtin-id-fix-empty)
-          (compiler-lower-state-cell bool false)
-          (compiler-lower-state-cell i64 -1)
-          (compiler-lower-state-cell i64 -1)
-          (compiler-lower-state-cell
-            lower_i64_i64_map.Map
-            (lower_i64_i64_map.with-capacity 16))
-          (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0))
-          (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0))
-          (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0))
-          (compiler-lower-state-cell i64 0)
-          (compiler-lower-state-cell
-            CompilerLowerArenaState
-            (compiler-lower-arena-state-new))))
+        cells
+        active-global-name-cache
+        (compiler-lower-state-cell
+          LowerNameCache
+          (lower-empty-global-name-cache address)))
+      (array-set!
+        cells
+        decls-global-type-cache
+        (compiler-lower-state-cell LowerTypeCache (LowerTypeCache.No)))
+      (array-set!
+        cells
+        rvo-early-return-functions
+        (compiler-lower-state-cell
+          lower_i64_i64_map.Map
+          (lower_i64_i64_map.with-capacity 8)))
+      (array-set!
+        cells
+        reach-active-runtime-paths
+        (compiler-lower-state-cell
+          lower_i64_i64_map.Map
+          (lower_i64_i64_map.with-capacity 8)))
+      (array-set!
+        cells
+        reach-active-body-used-types
+        (compiler-lower-state-cell
+          lower_i64_i64_map.Map
+          (lower_i64_i64_map.with-capacity 8)))
+      (array-set!
+        cells
+        current-source-path-id
+        (compiler-lower-state-cell i64 0))
+      (array-set!
+        cells
+        current-decl-generated
+        (compiler-lower-state-cell bool false))
+      (array-set!
+        cells
+        active-symbols
+        (compiler-lower-state-cell
+          csym.CompilerSymbols
+          (csym.compiler-symbols-empty)))
+      (array-set!
+        cells
+        active-symbols-ready
+        (compiler-lower-state-cell bool false))
+      (array-set!
+        cells
+        active-module-name-caches
+        (compiler-lower-state-cell
+          LowerModuleNameCacheList
+          (LowerModuleNameCacheList.Nil)))
+      (array-set!
+        cells
+        active-module-local-views
+        (compiler-lower-state-cell
+          LowerModuleLocalViewList
+          (LowerModuleLocalViewList.Nil)))
+      (array-set! cells active-loop-function (compiler-lower-state-cell i64 -1))
+      (array-set!
+        cells
+        active-loop-entry-var-limit
+        (compiler-lower-state-cell i64 -1))
+      (array-set!
+        cells
+        alias-overlay-ids
+        (compiler-lower-state-cell
+          lower_i64_i64_map.Map
+          (lower_i64_i64_map.with-capacity 16)))
+      (array-set!
+        cells
+        alias-overlay-valid
+        (compiler-lower-state-cell bool true))
+      (array-set!
+        cells
+        alias-symbol-memo
+        (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0)))
+      (array-set! cells canonical-path-count (compiler-lower-state-cell i64 0))
+      (array-set!
+        cells
+        canonical-path-recent
+        (compiler-lower-state-cell String ""))
+      (array-set!
+        cells
+        canonical-path-prior
+        (compiler-lower-state-cell String ""))
+      (array-set!
+        cells
+        entry-main-module-active
+        (compiler-lower-state-cell bool false))
+      (array-set! cells entry-main-module (compiler-lower-state-cell String ""))
+      (array-set!
+        cells
+        entry-main-module-id
+        (compiler-lower-state-cell i64 cbi.compiler-builtin-id-fix-empty))
+      (array-set!
+        cells
+        module-decl-index-ready
+        (compiler-lower-state-cell bool false))
+      (array-set!
+        cells
+        module-decl-index-decl-count
+        (compiler-lower-state-cell i64 -1))
+      (array-set!
+        cells
+        module-decl-index-decl-offset
+        (compiler-lower-state-cell i64 -1))
+      (array-set!
+        cells
+        module-decl-index-modules
+        (compiler-lower-state-cell
+          lower_i64_i64_map.Map
+          (lower_i64_i64_map.with-capacity 16)))
+      (array-set!
+        cells
+        module-decl-index-starts
+        (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0)))
+      (array-set!
+        cells
+        module-decl-index-ends
+        (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0)))
+      (array-set!
+        cells
+        module-decl-index-positions
+        (compiler-lower-state-cell (__tl_dyn-array i64) (make-array i64 0)))
+      (array-set!
+        cells
+        module-decl-index-arena
+        (compiler-lower-state-cell i64 0))
+      (array-set!
+        cells
+        arenas
+        (compiler-lower-state-cell
+          CompilerLowerArenaState
+          (compiler-lower-arena-state-new)))
       state)))
 
 (define (compiler-lower-state-arenas [state : CompilerLowerState]) : CompilerLowerArenaState
@@ -654,21 +766,12 @@
   [_T : type]
   [field : Expr]) : Expr
   `(let
-    [field-cell : (__tl_dyn-array ,_T)
+    [base : i64
       (unsafe
         (ptr-read
-          (int->ptr
-            (cast
-              (+
-                (struct-get ,state address)
-                (comptime (offset-of (type CompilerLowerStateData) ,field)))
-              : u64)
-            : (Ptr (__tl_dyn-array ,_T)))))]
-    [base : i64
-      (cast
-        (unsafe
-          (ptr->int (ptr-cast (array-data field-cell) : (Ptr i64))))
-        : i64)]
+          (ptr-offset
+            (int->ptr (cast (struct-get ,state address) : u64) : (Ptr i64))
+            ,field)))]
     [word-count : i64 (comptime (/ (+ (size-of (type ,_T)) 7) 8))]
     [index : i64 0]
     [out : i64 0]

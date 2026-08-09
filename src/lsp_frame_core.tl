@@ -147,6 +147,17 @@
   (Continue lsp_vector_families.LspServerState)
   (Exit lsp_vector_families.LspServerState))
 
+;; Bounded, request-local workspace-symbol candidates. `rank` is 0 for an
+;; exact match, 1 for a prefix match, and 2 for a substring match. Empty
+;; queries assign rank 0 to every declaration and use the same tie-breaks.
+(defstruct LspWorkspaceSymbolCandidate
+  (rank i64)
+  (row lsp_vector_families.LspWorkspaceDeclRow))
+
+(defstruct LspWorkspaceSymbolResults
+  (slots (__tl_dyn-array LspWorkspaceSymbolCandidate))
+  (len i64))
+
 (defstruct LspLineCol
   (line i64)
   (col i64))
@@ -937,15 +948,18 @@
                               "foldingRangeProvider"
                               (json.JsonBool true)
                               (lsp-json-member
-                                "workspace"
-                                (lsp-json-object1
-                                  "workspaceFolders"
-                                  (lsp-json-object2
-                                    "supported"
-                                    (json.JsonBool true)
-                                    "changeNotifications"
-                                    (json.JsonBool true)))
-                                (json.member-list-empty)))))))))))))))
+                                "workspaceSymbolProvider"
+                                (json.JsonBool true)
+                                (lsp-json-member
+                                  "workspace"
+                                  (lsp-json-object1
+                                    "workspaceFolders"
+                                    (lsp-json-object2
+                                      "supported"
+                                      (json.JsonBool true)
+                                      "changeNotifications"
+                                      (json.JsonBool true)))
+                                  (json.member-list-empty))))))))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -7718,6 +7732,197 @@
   [index : i64]) : lsp_vector_families.LspWorkspaceDeclLookup
   (lsp-workspace-index-declaration-at (& (struct-get state workspace)) index))
 
+(define lsp-workspace-symbol-result-limit : i64
+  256)
+
+(define (lsp-workspace-decl-row-fallback) : lsp_vector_families.LspWorkspaceDeclRow
+  (lsp_vector_families.LspWorkspaceDeclRow
+    ""
+    ""
+    ""
+    ""
+    ""
+    false
+    false
+    (lsp-decl-entry-fallback)))
+
+(define (lsp-workspace-symbol-candidate-fallback) : LspWorkspaceSymbolCandidate
+  (LspWorkspaceSymbolCandidate 3 (lsp-workspace-decl-row-fallback)))
+
+(define (lsp-workspace-symbol-results-new) : LspWorkspaceSymbolResults
+  (LspWorkspaceSymbolResults
+    (make-array LspWorkspaceSymbolCandidate lsp-workspace-symbol-result-limit)
+    0))
+
+(define (lsp-workspace-symbol-results-len
+  [results : (& results LspWorkspaceSymbolResults)]) : i64
+  (struct-get results len))
+
+(define (lsp-workspace-symbol-results-get
+  [results : (& results LspWorkspaceSymbolResults)]
+  [index : i64]) : LspWorkspaceSymbolCandidate
+  (if (and (>= index 0) (< index (struct-get results len)))
+    (array-ref (struct-get results slots) index)
+    (lsp-workspace-symbol-candidate-fallback)))
+
+(define (lsp-workspace-symbol-match-rank [name : String] [query : String]) : i64
+  (cond
+    [(= (string.string-length query) 0) 0]
+    [(string.eq name query) 0]
+    [(string.is-string-prefix-at (& name) (& query) 0) 1]
+    [(string.contains (& name) (& query)) 2]
+    [else -1]))
+
+(define (lsp-workspace-symbol-candidate-less?
+  [left : LspWorkspaceSymbolCandidate]
+  [right : LspWorkspaceSymbolCandidate]) : bool
+  (let
+    [left-row : lsp_vector_families.LspWorkspaceDeclRow (struct-get left row)]
+    [right-row : lsp_vector_families.LspWorkspaceDeclRow (struct-get right row)]
+    [left-decl : lsp_vector_families.LspDeclEntry (struct-get left-row decl)]
+    [right-decl : lsp_vector_families.LspDeclEntry (struct-get right-row decl)]
+    [left-name : String (struct-get left-decl name)]
+    [right-name : String (struct-get right-decl name)]
+    [left-container : String (struct-get left-row module)]
+    [right-container : String (struct-get right-row module)]
+    [left-uri : String (struct-get left-row uri)]
+    [right-uri : String (struct-get right-row uri)]
+    (cond
+      [(< (struct-get left rank) (struct-get right rank)) true]
+      [(> (struct-get left rank) (struct-get right rank)) false]
+      [(not (string.eq left-name right-name))
+        (package_source_core.package-source-string-less? left-name right-name)]
+      [(not (string.eq left-container right-container))
+        (package_source_core.package-source-string-less?
+          left-container
+          right-container)]
+      [(not (string.eq left-uri right-uri))
+        (package_source_core.package-source-string-less? left-uri right-uri)]
+      [(< (struct-get left-decl name-line) (struct-get right-decl name-line))
+        true]
+      [(> (struct-get left-decl name-line) (struct-get right-decl name-line))
+        false]
+      [else
+        (< (struct-get left-decl name-col) (struct-get right-decl name-col))])))
+
+;; A source range is the stable editable identity. Overlapping workspace roots
+;; are already URI-deduplicated by the index, and this final guard also keeps a
+;; malformed duplicate summary from producing two protocol results.
+(define (lsp-workspace-symbol-candidate-same?
+  [left : LspWorkspaceSymbolCandidate]
+  [right : LspWorkspaceSymbolCandidate]) : bool
+  (let
+    [left-row : lsp_vector_families.LspWorkspaceDeclRow (struct-get left row)]
+    [right-row : lsp_vector_families.LspWorkspaceDeclRow (struct-get right row)]
+    [left-decl : lsp_vector_families.LspDeclEntry (struct-get left-row decl)]
+    [right-decl : lsp_vector_families.LspDeclEntry (struct-get right-row decl)]
+    (and
+      (string.eq (struct-get left-row uri) (struct-get right-row uri))
+      (string.eq (struct-get left-decl name) (struct-get right-decl name))
+      (= (struct-get left-decl name-line) (struct-get right-decl name-line))
+      (= (struct-get left-decl name-col) (struct-get right-decl name-col)))))
+
+(define (lsp-workspace-symbol-results-contain?
+  [results : (& results LspWorkspaceSymbolResults)]
+  [candidate : LspWorkspaceSymbolCandidate]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index (struct-get results len)) (not found))
+        (begin
+          (if (lsp-workspace-symbol-candidate-same?
+            candidate
+            (lsp-workspace-symbol-results-get results index))
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+;; Insert into the sorted live prefix and retain only the best 256 candidates.
+;; Since the cap is fixed by the protocol contract, this remains linear in the
+;; number of indexed declarations and uses constant request-local storage.
+(define (lsp-workspace-symbol-results-insert!
+  [results : (&mut results LspWorkspaceSymbolResults)]
+  [candidate : LspWorkspaceSymbolCandidate]) : unit
+  (if (lsp-workspace-symbol-results-contain? results candidate)
+    unit
+    (let
+      [len : i64 (struct-get results len)]
+      [position : i64 0]
+      (begin
+        (while (and
+          (< position len)
+          (not
+            (lsp-workspace-symbol-candidate-less?
+              candidate
+              (lsp-workspace-symbol-results-get results position))))
+          (set! position (+ position 1)))
+        (if (>= position lsp-workspace-symbol-result-limit)
+          unit
+          (let
+            [write : i64
+              (if (< len lsp-workspace-symbol-result-limit)
+                len
+                (- lsp-workspace-symbol-result-limit 1))]
+            (begin
+              (while (> write position)
+                (begin
+                  (array-set!
+                    (struct-get results slots)
+                    write
+                    (array-ref (struct-get results slots) (- write 1)))
+                  (set! write (- write 1))))
+              (array-set! (struct-get results slots) position candidate)
+              (if (< len lsp-workspace-symbol-result-limit)
+                (set! (struct-get results len) (+ len 1))
+                unit))))))))
+
+(define (lsp-workspace-symbol-query
+  [index : (& index lsp_vector_families.LspWorkspaceIndex)]
+  [query : String]) : LspWorkspaceSymbolResults
+  (let
+    [results : LspWorkspaceSymbolResults (lsp-workspace-symbol-results-new)]
+    [source-index : i64 0]
+    [sources : lsp_vector_families.LspWorkspaceSources
+      (struct-get index sources)]
+    (begin
+      (while (< source-index (lsp-workspace-sources-len (& sources)))
+        (let
+          [source : lsp_vector_families.LspWorkspaceSource
+            (lsp-workspace-sources-get (& sources) source-index)]
+          [decls : lsp_decl_vec.Vec (struct-get source decls)]
+          [decl-index : i64 0]
+          (begin
+            (while (< decl-index (lsp_decl_vec.len (& decls)))
+              (let
+                [decl : lsp_vector_families.LspDeclEntry
+                  (lsp_decl_vec.get
+                    (& decls)
+                    decl-index
+                    (lsp-decl-entry-fallback))]
+                [rank : i64
+                  (lsp-workspace-symbol-match-rank (struct-get decl name) query)]
+                (begin
+                  (if (>= rank 0)
+                    (lsp-workspace-symbol-results-insert!
+                      (&mut results)
+                      (LspWorkspaceSymbolCandidate
+                        rank
+                        (lsp_vector_families.LspWorkspaceDeclRow
+                          (struct-get source root-uri)
+                          (struct-get source root-path)
+                          (struct-get source uri)
+                          (struct-get source path)
+                          (struct-get source module)
+                          (struct-get source explicit-module)
+                          (struct-get source overlay)
+                          decl)))
+                    unit)
+                  (set! decl-index (+ decl-index 1)))))
+            (set! source-index (+ source-index 1)))))
+      results)))
+
 (define (lsp-workspace-index-refresh-path!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
   [docs : lsp_document_vec.Vec]
@@ -8253,6 +8458,77 @@
     (lsp-position
       (struct-get entry name-line)
       (+ (struct-get entry name-col) (struct-get entry name-len)))))
+
+(define (lsp-workspace-symbol-information-json
+  [candidate : LspWorkspaceSymbolCandidate]) : json.Json
+  (let
+    [row : lsp_vector_families.LspWorkspaceDeclRow (struct-get candidate row)]
+    [decl : lsp_vector_families.LspDeclEntry (struct-get row decl)]
+    (lsp-json-object4
+      "name"
+      (json.JsonString (struct-get decl name))
+      "kind"
+      (lsp-json-number (struct-get decl symbol-kind))
+      "location"
+      (lsp-json-object2
+        "uri"
+        (json.JsonString (struct-get row uri))
+        "range"
+        (lsp-decl-selection-range-json decl))
+      "containerName"
+      (json.JsonString (struct-get row module)))))
+
+(define (lsp-workspace-symbol-information-list
+  [results : (& results LspWorkspaceSymbolResults)]
+  [index : i64]) : json.JsonSeq
+  (if (>= index (lsp-workspace-symbol-results-len results))
+    (json.list-empty)
+    (lsp-json-list-cons
+      (lsp-workspace-symbol-information-json
+        (lsp-workspace-symbol-results-get results index))
+      (lsp-workspace-symbol-information-list results (+ index 1)))))
+
+(define (lsp-workspace-symbol-result-json
+  [index : (& index lsp_vector_families.LspWorkspaceIndex)]
+  [query : String]) : json.Json
+  (let
+    [results : LspWorkspaceSymbolResults
+      (lsp-workspace-symbol-query index query)]
+    (lsp-json-array (lsp-workspace-symbol-information-list (& results) 0))))
+
+(define (lsp-project-search-result-list
+  [results : (& results LspWorkspaceSymbolResults)]
+  [index : i64]) : json.JsonSeq
+  (if (>= index (lsp-workspace-symbol-results-len results))
+    (json.list-empty)
+    (let
+      [candidate : LspWorkspaceSymbolCandidate
+        (lsp-workspace-symbol-results-get results index)]
+      (if (not (= (struct-get candidate rank) 0))
+        (json.list-empty)
+        (let
+          [row : lsp_vector_families.LspWorkspaceDeclRow
+            (struct-get candidate row)]
+          [decl : lsp_vector_families.LspDeclEntry (struct-get row decl)]
+          (lsp-json-list-cons
+            (lsp-json-object2
+              "uri"
+              (json.JsonString (struct-get row uri))
+              "name"
+              (json.JsonString (struct-get decl name)))
+            (lsp-project-search-result-list results (+ index 1))))))))
+
+(define (lsp-project-search-result-json
+  [index : (& index lsp_vector_families.LspWorkspaceIndex)]
+  [name : String]) : json.Json
+  (let
+    [results : LspWorkspaceSymbolResults
+      (lsp-workspace-symbol-query index name)]
+    (lsp-json-object2
+      "success"
+      (json.JsonBool true)
+      "results"
+      (lsp-json-array (lsp-project-search-result-list (& results) 0)))))
 
 (define (lsp-decl-document-symbol-json
   [entry : lsp_vector_families.LspDeclEntry]) : json.Json
@@ -10157,134 +10433,6 @@
         (lsp-write-error id -32600 "Document not found")
         (LspDocumentHandleResult.Continue docs))]))
 
-(define (lsp-tl-source-file-name? [entry : String]) : bool
-  (let
-    [entry-len : i64 (string.string-length entry)]
-    (if (< entry-len 3)
-      false
-      (and
-        (= (string.string-ref entry (- entry-len 3)) '.')
-        (= (string.string-ref entry (- entry-len 2)) 't')
-        (= (string.string-ref entry (- entry-len 1)) 'l')))))
-
-(define (lsp-decls-contain-name? [decls : lsp_decl_vec.Vec] [needle : String]) : bool
-  (let
-    [n : i64 (lsp_decl_vec.len (& decls))]
-    [i : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (< i n) (not found))
-        (let
-          [entry : lsp_vector_families.LspDeclEntry
-            (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
-          (if (string.eq (struct-get entry name) needle)
-            (set! found true)
-            (set! i (+ i 1)))))
-      found)))
-
-;; tl/projectSearch - Search for a declaration name across .tl files in a directory
-(define (lsp-handle-tl-project-search
-  [id : json.Json]
-  [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-json-string-field params "name")
-    [(LspJsonText.Ok name)
-      (if (string.eq name "")
-        (begin
-          (lsp-write-error id -32600 "name cannot be empty")
-          (LspDocumentHandleResult.Continue docs))
-        (let
-          [td-key : String "textDocument"]
-          (match (json.object-get params (& td-key))
-            [(json.JsonFound document)
-              (match (lsp-json-string-field document "uri")
-                [(LspJsonText.Ok uri)
-                  (match (lsp-file-uri-to-path uri)
-                    [(LspUriPath.Ok file-path)
-                      (let
-                        [path : String
-                          (match (fs.try-file-kind (& file-path))
-                            [(fs.OkFsFileKind (fs.FsFileDirectory)) file-path]
-                            [_ (fs.dirname (& file-path))])]
-                        (match (fs.try-read-dir-vec (& path))
-                          [(fs.OkIoStringVector entries)
-                            (let
-                              [n : i64 (fs.string-vector-len (& entries))]
-                              [i : i64 0]
-                              [results : json.JsonSeq (json.list-empty)]
-                              (begin
-                                (while (< i n)
-                                  (let
-                                    [entry : String
-                                      (fs.string-vector-get (& entries) i "")]
-                                    (begin
-                                      (if (lsp-tl-source-file-name? entry)
-                                        (let
-                                          [entry-path : String
-                                            (fs.path-join (& path) (& entry))]
-                                          (match (io.try-read-file
-                                            (& entry-path))
-                                            [(io.OkIoBytes contents)
-                                              (if (lsp-decls-contain-name?
-                                                (lsp-scan-decls
-                                                  (byte_buf.to-string contents))
-                                                name)
-                                                (let
-                                                  [entry-uri : String
-                                                    (lsp-path-to-file-uri
-                                                      (fs.path-normalize
-                                                        (& entry-path)))]
-                                                  (set!
-                                                    results
-                                                    (lsp-json-list-cons
-                                                      (lsp-json-object2
-                                                        "uri"
-                                                        (json.JsonString
-                                                          entry-uri)
-                                                        "name"
-                                                        (json.JsonString name))
-                                                      results)))
-                                                unit)]
-                                            [(io.ErrIoBytes _) unit]))
-                                        unit)
-                                      (set! i (+ i 1)))))
-                                (lsp-write-response
-                                  id
-                                  (lsp-json-object2
-                                    "success"
-                                    (json.JsonBool true)
-                                    "results"
-                                    (lsp-json-array results)))
-                                (LspDocumentHandleResult.Continue docs)))]
-                          [(fs.ErrIoStringVector message)
-                            (begin
-                              (lsp-write-error
-                                id
-                                -32600
-                                (lsp-str2
-                                  "Failed to read directory: "
-                                  (io.error-message message)))
-                              (LspDocumentHandleResult.Continue docs))]))]
-                    [(LspUriPath.Err message)
-                      (begin
-                        (lsp-write-error id -32600 message)
-                        (LspDocumentHandleResult.Continue docs))])]
-                [(LspJsonText.Missing)
-                  (begin
-                    (lsp-write-error
-                      id
-                      -32600
-                      "Missing uri in textDocument parameter")
-                    (LspDocumentHandleResult.Continue docs))])]
-            [(json.JsonMissing)
-              (begin
-                (lsp-write-error id -32600 "Missing textDocument parameter")
-                (LspDocumentHandleResult.Continue docs))])))]
-    [(LspJsonText.Missing)
-      (begin
-        (lsp-write-error id -32600 "Missing name parameter")
-        (LspDocumentHandleResult.Continue docs))]))
-
 ;; tl/evalAtPoint - Evaluate expression at cursor
 (define (lsp-handle-tl-eval-at-point
   [id : json.Json]
@@ -10797,6 +10945,74 @@
             (LspHandleResult.Continue
               (lsp-server-state-did-change-workspace-folders state params))])])))
 
+(define (lsp-handle-workspace-symbol-with-params!
+  [id : json.Json]
+  [params : json.Json]
+  [state : (& state lsp_vector_families.LspServerState)]) : unit
+  (match (lsp-json-string-field params "query")
+    [(LspJsonText.Missing)
+      (lsp-write-error id -32602 "workspace/symbol requires a string query")]
+    [(LspJsonText.Ok query)
+      (lsp-write-response
+        id
+        (lsp-workspace-symbol-result-json
+          (& (struct-get state workspace))
+          query))]))
+
+(define (lsp-handle-project-search-with-params!
+  [id : json.Json]
+  [params : json.Json]
+  [state : (& state lsp_vector_families.LspServerState)]) : unit
+  (match (lsp-json-string-field params "name")
+    [(LspJsonText.Missing) (lsp-write-error id -32600 "Missing name parameter")]
+    [(LspJsonText.Ok name)
+      (if (= (string.string-length name) 0)
+        (lsp-write-error id -32600 "name cannot be empty")
+        (lsp-write-response
+          id
+          (lsp-project-search-result-json (& (struct-get state workspace)) name)))]))
+
+;; Workspace queries are read-only and run in a request-local arena. Repeated
+;; searches therefore retain neither candidate arrays nor JSON result graphs,
+;; while the immutable state-owned declaration rows remain untouched.
+(define (lsp-handle-workspace-query-message
+  [method : String]
+  [message : json.Json]
+  [state : lsp_vector_families.LspServerState]) : LspHandleResult
+  (let
+    [id-key : String "id"]
+    (match (json.object-get message (& id-key))
+      [(json.JsonMissing) (LspHandleResult.Continue state)]
+      [(json.JsonFound id)
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [scratch : i64 (arena.tl_arena_make)]
+          [_install : unit
+            (unsafe
+              (arena.tl_arena_set scratch))]
+          [params-key : String "params"]
+          (begin
+            (match (json.object-get message (& params-key))
+              [(json.JsonMissing)
+                (if (string.eq method "workspace/symbol")
+                  (lsp-write-error
+                    id
+                    -32602
+                    "workspace/symbol requires a string query")
+                  (lsp-write-error id -32600 "Missing params"))]
+              [(json.JsonFound params)
+                (if (string.eq method "workspace/symbol")
+                  (lsp-handle-workspace-symbol-with-params! id params (& state))
+                  (lsp-handle-project-search-with-params! id params (& state)))])
+            (let
+              [scratch-head : i64 (arena.tl_arena_current)]
+              (begin
+                (unsafe
+                  (arena.tl_arena_set previous))
+                (unsafe
+                  (arena.tl_arena_destroy scratch-head))))
+            (LspHandleResult.Continue state)))])))
+
 ;; Production state dispatch. All long-lived data crosses the loop through the
 ;; explicit aggregate; document providers never receive mutable workspace
 ;; vectors.
@@ -10818,6 +11034,10 @@
             (string.eq method "workspace/didChangeWatchedFiles")
             (string.eq method "workspace/didChangeWorkspaceFolders"))
           (lsp-handle-stateful-notification method message state stdlib-roots)]
+        [(or
+            (string.eq method "workspace/symbol")
+            (string.eq method "tl/projectSearch"))
+          (lsp-handle-workspace-query-message method message state)]
         [else
           (let
             [document-result : LspDocumentHandleResult
@@ -10868,7 +11088,6 @@
     (string.eq method "tl/signatureHelp")
     (string.eq method "tl/replacePattern")
     (string.eq method "tl/patch")
-    (string.eq method "tl/projectSearch")
     (string.eq method "tl/rename")
     (string.eq method "tl/delete")
     (string.eq method "tl/insertAfter")
@@ -10947,8 +11166,6 @@
     [(string.eq method "tl/replacePattern")
       (lsp-handle-tl-replace-pattern-at id params docs)]
     [(string.eq method "tl/patch") (lsp-handle-tl-patch id params docs)]
-    [(string.eq method "tl/projectSearch")
-      (lsp-handle-tl-project-search id params docs)]
     [(string.eq method "tl/rename") (lsp-handle-tl-rename id params docs)]
     [(string.eq method "tl/delete") (lsp-handle-tl-delete-at id params docs)]
     [(string.eq method "tl/insertAfter")
@@ -13749,6 +13966,181 @@
       (string.contains (& rendered) (& let-needle))
       (string.contains (& rendered) (& match-needle))
       (string.contains (& rendered) (& ok-needle)))))
+
+(define (lsp-workspace-symbol-test-decl [name : String] [line : i64]) : lsp_vector_families.LspDeclEntry
+  (lsp_vector_families.LspDeclEntry
+    "function"
+    name
+    line
+    2
+    (string.string-length name)
+    line
+    1
+    line
+    (+ (string.string-length name) 2)
+    12))
+
+(define (lsp-workspace-symbol-test-source
+  [uri : String]
+  [module : String]
+  [decls : lsp_decl_vec.Vec]) : lsp_vector_families.LspWorkspaceSource
+  (lsp_vector_families.LspWorkspaceSource
+    "file:///workspace"
+    "/workspace"
+    uri
+    uri
+    module
+    true
+    false
+    decls))
+
+(define (lsp-workspace-symbol-test-candidate-name
+  [results : (& results LspWorkspaceSymbolResults)]
+  [index : i64]) : String
+  (let
+    [row : lsp_vector_families.LspWorkspaceDeclRow
+      (struct-get (lsp-workspace-symbol-results-get results index) row)]
+    [decl : lsp_vector_families.LspDeclEntry (struct-get row decl)]
+    (struct-get decl name)))
+
+(define (lsp-workspace-symbol-test-candidate-module
+  [results : (& results LspWorkspaceSymbolResults)]
+  [index : i64]) : String
+  (struct-get
+    (struct-get (lsp-workspace-symbol-results-get results index) row)
+    module))
+
+(define (lsp-workspace-symbol-test-candidate-line
+  [results : (& results LspWorkspaceSymbolResults)]
+  [index : i64]) : i64
+  (let
+    [row : lsp_vector_families.LspWorkspaceDeclRow
+      (struct-get (lsp-workspace-symbol-results-get results index) row)]
+    [decl : lsp_vector_families.LspDeclEntry (struct-get row decl)]
+    (struct-get decl name-line)))
+
+(define (lsp-workspace-symbol-ranking-smoke-ok?) : bool
+  (let
+    [z-decls : lsp_decl_vec.Vec (lsp_decl_vec.new)]
+    [a-decls : lsp_decl_vec.Vec (lsp_decl_vec.new)]
+    [sources : lsp_vector_families.LspWorkspaceSources
+      (lsp-workspace-sources-new)]
+    (begin
+      ;; Deliberately insert in the reverse of the required result order.
+      (lsp_decl_vec.push
+        (&mut z-decls)
+        (lsp-workspace-symbol-test-decl "mytarget" 4))
+      (lsp_decl_vec.push
+        (&mut z-decls)
+        (lsp-workspace-symbol-test-decl "targetPrefix" 3))
+      (lsp_decl_vec.push
+        (&mut z-decls)
+        (lsp-workspace-symbol-test-decl "target" 2))
+      (lsp_decl_vec.push
+        (&mut z-decls)
+        (lsp-workspace-symbol-test-decl "Target" 1))
+      (lsp_decl_vec.push
+        (&mut a-decls)
+        (lsp-workspace-symbol-test-decl "target" 5))
+      (lsp-workspace-sources-push!
+        (&mut sources)
+        (lsp-workspace-symbol-test-source "file:///z.tl" "z.module" z-decls))
+      (lsp-workspace-sources-push!
+        (&mut sources)
+        (lsp-workspace-symbol-test-source "file:///a.tl" "a.module" a-decls))
+      (let
+        [workspace : lsp_vector_families.LspWorkspaceIndex
+          (lsp_vector_families.LspWorkspaceIndex
+            (lsp-workspace-roots-new)
+            sources)]
+        [ranked : LspWorkspaceSymbolResults
+          (lsp-workspace-symbol-query (& workspace) "target")]
+        [all : LspWorkspaceSymbolResults
+          (lsp-workspace-symbol-query (& workspace) "")]
+        [rendered : String
+          (json.stringify
+            (lsp-workspace-symbol-result-json (& workspace) "target"))]
+        [exact-rendered : String
+          (json.stringify
+            (lsp-project-search-result-json (& workspace) "target"))]
+        [prefix-needle : String "targetPrefix"]
+        [substring-needle : String "mytarget"]
+        [location-needle : String "\"location\":{\"uri\":\"file:///a.tl\""]
+        [container-needle : String "\"containerName\":\"a.module\""]
+        (and
+          (= (lsp-workspace-symbol-results-len (& ranked)) 4)
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-name (& ranked) 0)
+            "target")
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-module (& ranked) 0)
+            "a.module")
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-name (& ranked) 1)
+            "target")
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-module (& ranked) 1)
+            "z.module")
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-name (& ranked) 2)
+            "targetPrefix")
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-name (& ranked) 3)
+            "mytarget")
+          (= (lsp-workspace-symbol-results-len (& all)) 5)
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-name (& all) 0)
+            "Target")
+          (string.contains (& rendered) (& location-needle))
+          (string.contains (& rendered) (& container-needle))
+          (not (string.contains (& exact-rendered) (& prefix-needle)))
+          (not (string.contains (& exact-rendered) (& substring-needle))))))))
+
+(define (lsp-workspace-symbol-cap-dedup-smoke-ok?) : bool
+  (let
+    [decls : lsp_decl_vec.Vec (lsp_decl_vec.with-capacity 301)]
+    [index : i64 0]
+    (begin
+      (while (< index 300)
+        (begin
+          (lsp_decl_vec.push
+            (&mut decls)
+            (lsp-workspace-symbol-test-decl "same" (+ index 1)))
+          (set! index (+ index 1))))
+      ;; Exact duplicate source identities collapse to one result.
+      (lsp_decl_vec.push (&mut decls) (lsp-workspace-symbol-test-decl "same" 1))
+      (let
+        [sources : lsp_vector_families.LspWorkspaceSources
+          (lsp-workspace-sources-new)]
+        (begin
+          (lsp-workspace-sources-push!
+            (&mut sources)
+            (lsp-workspace-symbol-test-source "file:///many.tl" "many" decls))
+          (let
+            [workspace : lsp_vector_families.LspWorkspaceIndex
+              (lsp_vector_families.LspWorkspaceIndex
+                (lsp-workspace-roots-new)
+                sources)]
+            [results : LspWorkspaceSymbolResults
+              (lsp-workspace-symbol-query (& workspace) "same")]
+            (and
+              (=
+                (lsp-workspace-symbol-results-len (& results))
+                lsp-workspace-symbol-result-limit)
+              (= (lsp-workspace-symbol-test-candidate-line (& results) 0) 1)
+              (= (lsp-workspace-symbol-test-candidate-line (& results) 255) 256))))))))
+
+(test
+  lsp-workspace-symbol-ranking
+  (unless
+    (lsp-workspace-symbol-ranking-smoke-ok?)
+    (io.panic "lsp-workspace-symbol-ranking failed")))
+
+(test
+  lsp-workspace-symbol-cap-dedup
+  (unless
+    (lsp-workspace-symbol-cap-dedup-smoke-ok?)
+    (io.panic "lsp-workspace-symbol-cap-dedup failed")))
 
 (test
   lsp-replace-form-at-position-smoke

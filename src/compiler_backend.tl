@@ -58988,11 +58988,12 @@
                   [rsp-dst? : bool
                     (and
                       (>= (- end i) 6)
-                      (compiler-backend-peephole-range-eq?
-                        data
-                        (- end 6)
-                        end
-                        ", %rsp"))]
+                      (= (compiler-backend-peephole-byte-at data (- end 1)) 112)
+                      (= (compiler-backend-peephole-byte-at data (- end 6)) 44)
+                      (= (compiler-backend-peephole-byte-at data (- end 5)) 32)
+                      (= (compiler-backend-peephole-byte-at data (- end 4)) 37)
+                      (= (compiler-backend-peephole-byte-at data (- end 3)) 114)
+                      (= (compiler-backend-peephole-byte-at data (- end 2)) 115))]
                   ;; GAP1 push mode: classify saved-CSR-slot lines FIRST --
                   ;; the save/restore movs are deleted (the prologue pushes /
                   ;; epilogue pops replace them) and the pop-run leaq is

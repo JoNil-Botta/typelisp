@@ -4274,6 +4274,98 @@
   compile-profile
   (define compiler-tc-walk-splice-prescan-resets : i64
     0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-builds : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-rebuilds : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-build-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-build-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-build-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-rebuild-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-rebuild-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-rebuild-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-build-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-build-start-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-build-start-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-extensions : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-extension-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-extension-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-extension-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-extension-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-extension-start-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-extension-start-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-semantic-rejections : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-capacity-grows : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-cache-unavailable : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-clear-ordinary : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-clear-file : i64
+    0))
 
 ;; Marker-path sub-probe: 0 = whole-program list copies + context build,
 ;; 1 = macro-extend-top-env-with-module-marker, 2 = the env cache layer,
@@ -4383,6 +4475,136 @@
           compiler-tc-walk-splice-prescan-resets
           (+ compiler-tc-walk-splice-prescan-resets 1))]
       [else unit])))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-ctfe-build-start!) : unit
+    (begin
+      (set!
+        compiler-tc-walk-splice-ctfe-build-start-ns
+        (compiler-tc-walk-now-ns))
+      (set!
+        compiler-tc-walk-splice-ctfe-build-start-alloc
+        (profile.alloc-total))
+      (set! compiler-tc-walk-splice-ctfe-build-start-live (profile.alloc-live)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-ctfe-build-finish! [rebuild? : bool]) : unit
+    (let
+      [ns : i64
+        (-
+          (compiler-tc-walk-now-ns)
+          compiler-tc-walk-splice-ctfe-build-start-ns)]
+      [alloc : i64
+        (- (profile.alloc-total) compiler-tc-walk-splice-ctfe-build-start-alloc)]
+      [live : i64
+        (- (profile.alloc-live) compiler-tc-walk-splice-ctfe-build-start-live)]
+      (begin
+        (set!
+          compiler-tc-walk-splice-ctfe-builds
+          (+ compiler-tc-walk-splice-ctfe-builds 1))
+        (if rebuild?
+          (begin
+            (set!
+              compiler-tc-walk-splice-ctfe-rebuilds
+              (+ compiler-tc-walk-splice-ctfe-rebuilds 1))
+            (set!
+              compiler-tc-walk-splice-ctfe-rebuild-ns
+              (+ compiler-tc-walk-splice-ctfe-rebuild-ns ns))
+            (set!
+              compiler-tc-walk-splice-ctfe-rebuild-alloc
+              (+ compiler-tc-walk-splice-ctfe-rebuild-alloc alloc))
+            (set!
+              compiler-tc-walk-splice-ctfe-rebuild-live
+              (+ compiler-tc-walk-splice-ctfe-rebuild-live live)))
+          unit)
+        (set!
+          compiler-tc-walk-splice-ctfe-build-ns
+          (+ compiler-tc-walk-splice-ctfe-build-ns ns))
+        (set!
+          compiler-tc-walk-splice-ctfe-build-alloc
+          (+ compiler-tc-walk-splice-ctfe-build-alloc alloc))
+        (set!
+          compiler-tc-walk-splice-ctfe-build-live
+          (+ compiler-tc-walk-splice-ctfe-build-live live))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-ctfe-extension-start!) : unit
+    (begin
+      (set!
+        compiler-tc-walk-splice-ctfe-extension-start-ns
+        (compiler-tc-walk-now-ns))
+      (set!
+        compiler-tc-walk-splice-ctfe-extension-start-alloc
+        (profile.alloc-total))
+      (set!
+        compiler-tc-walk-splice-ctfe-extension-start-live
+        (profile.alloc-live)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-ctfe-extension-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-walk-splice-ctfe-extensions
+        (+ compiler-tc-walk-splice-ctfe-extensions 1))
+      (set!
+        compiler-tc-walk-splice-ctfe-extension-ns
+        (+
+          compiler-tc-walk-splice-ctfe-extension-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-walk-splice-ctfe-extension-start-ns)))
+      (set!
+        compiler-tc-walk-splice-ctfe-extension-alloc
+        (+
+          compiler-tc-walk-splice-ctfe-extension-alloc
+          (-
+            (profile.alloc-total)
+            compiler-tc-walk-splice-ctfe-extension-start-alloc)))
+      (set!
+        compiler-tc-walk-splice-ctfe-extension-live
+        (+
+          compiler-tc-walk-splice-ctfe-extension-live
+          (-
+            (profile.alloc-live)
+            compiler-tc-walk-splice-ctfe-extension-start-live))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-ctfe-extension-reject-note! [reason : i64]) : unit
+    (cond
+      [(= reason 1)
+        (set!
+          compiler-tc-walk-splice-ctfe-semantic-rejections
+          (+ compiler-tc-walk-splice-ctfe-semantic-rejections 1))]
+      [(= reason 2)
+        (set!
+          compiler-tc-walk-splice-ctfe-cache-unavailable
+          (+ compiler-tc-walk-splice-ctfe-cache-unavailable 1))]
+      [(= reason 3)
+        (set!
+          compiler-tc-walk-splice-ctfe-capacity-grows
+          (+ compiler-tc-walk-splice-ctfe-capacity-grows 1))]
+      [else unit])))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-ctfe-clear-reason-note! [reason : i64]) : unit
+    (begin
+      (compiler-tc-walk-splice-flag-note! 4)
+      (cond
+        [(= reason 1)
+          (set!
+            compiler-tc-walk-splice-ctfe-clear-ordinary
+            (+ compiler-tc-walk-splice-ctfe-clear-ordinary 1))]
+        [(= reason 2)
+          (set!
+            compiler-tc-walk-splice-ctfe-clear-file
+            (+ compiler-tc-walk-splice-ctfe-clear-file 1))]
+        [else unit]))))
 
 (cfg
   compile-profile
@@ -5935,7 +6157,29 @@
       (set! compiler-tc-macro-stdlib-source-interpreted 0)
       (set! compiler-tc-macro-walk-decls-shared 0)
       (set! compiler-tc-macro-walk-decls-expanded 0)
-      (set! compiler-tc-macro-walk-share-gate-open 0))))
+      (set! compiler-tc-macro-walk-share-gate-open 0)
+      (set! compiler-tc-walk-splice-registry-incremental 0)
+      (set! compiler-tc-walk-splice-registry-invalidated 0)
+      (set! compiler-tc-walk-splice-ctfe-deferred 0)
+      (set! compiler-tc-walk-splice-ctfe-cleared 0)
+      (set! compiler-tc-walk-splice-prescan-resets 0)
+      (set! compiler-tc-walk-splice-ctfe-builds 0)
+      (set! compiler-tc-walk-splice-ctfe-rebuilds 0)
+      (set! compiler-tc-walk-splice-ctfe-build-ns 0)
+      (set! compiler-tc-walk-splice-ctfe-build-alloc 0)
+      (set! compiler-tc-walk-splice-ctfe-build-live 0)
+      (set! compiler-tc-walk-splice-ctfe-rebuild-ns 0)
+      (set! compiler-tc-walk-splice-ctfe-rebuild-alloc 0)
+      (set! compiler-tc-walk-splice-ctfe-rebuild-live 0)
+      (set! compiler-tc-walk-splice-ctfe-extensions 0)
+      (set! compiler-tc-walk-splice-ctfe-extension-ns 0)
+      (set! compiler-tc-walk-splice-ctfe-extension-alloc 0)
+      (set! compiler-tc-walk-splice-ctfe-extension-live 0)
+      (set! compiler-tc-walk-splice-ctfe-semantic-rejections 0)
+      (set! compiler-tc-walk-splice-ctfe-capacity-grows 0)
+      (set! compiler-tc-walk-splice-ctfe-cache-unavailable 0)
+      (set! compiler-tc-walk-splice-ctfe-clear-ordinary 0)
+      (set! compiler-tc-walk-splice-ctfe-clear-file 0))))
 
 (cfg
   compile-profile
@@ -6915,6 +7159,57 @@
       (compiler-tc-macro-counter-profile-line
         "walk_splice_ctfe_cleared"
         compiler-tc-walk-splice-ctfe-cleared)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_builds"
+        compiler-tc-walk-splice-ctfe-builds)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_rebuilds"
+        compiler-tc-walk-splice-ctfe-rebuilds)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_build_us"
+        (/ compiler-tc-walk-splice-ctfe-build-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_build_alloc_kb"
+        (/ compiler-tc-walk-splice-ctfe-build-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_build_live_kb"
+        (/ compiler-tc-walk-splice-ctfe-build-live 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_rebuild_us"
+        (/ compiler-tc-walk-splice-ctfe-rebuild-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_rebuild_alloc_kb"
+        (/ compiler-tc-walk-splice-ctfe-rebuild-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_rebuild_live_kb"
+        (/ compiler-tc-walk-splice-ctfe-rebuild-live 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_extensions"
+        compiler-tc-walk-splice-ctfe-extensions)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_extension_us"
+        (/ compiler-tc-walk-splice-ctfe-extension-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_extension_alloc_kb"
+        (/ compiler-tc-walk-splice-ctfe-extension-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_extension_live_kb"
+        (/ compiler-tc-walk-splice-ctfe-extension-live 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_semantic_rejections"
+        compiler-tc-walk-splice-ctfe-semantic-rejections)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_capacity_grows"
+        compiler-tc-walk-splice-ctfe-capacity-grows)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_cache_unavailable"
+        compiler-tc-walk-splice-ctfe-cache-unavailable)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_clear_ordinary"
+        compiler-tc-walk-splice-ctfe-clear-ordinary)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_clear_file"
+        compiler-tc-walk-splice-ctfe-clear-file)
       (compiler-tc-macro-counter-profile-line
         "walk_splice_prescan_resets"
         compiler-tc-walk-splice-prescan-resets)
@@ -49592,10 +49887,9 @@
                 ""
                 cbi.compiler-builtin-id-fix-empty
                 (ctfe_support.ctfe-layout-info-list-with-capacity
-                  ;; Spare slots let generated-module splices extend the cached
-                  ;; metadata additively (compiler-typecheck-ctfe-env-extend-
-                  ;; for-splice!) instead of forcing a whole-program rebuild.
-                  (+ (ctfe_support.ctfe-metadata-decl-capacity decls) 256)))))])]))
+                  ;; Splice extension grows this owner-arena vector
+                  ;; geometrically; reserve only the known program surface.
+                  (ctfe_support.ctfe-metadata-decl-capacity decls)))))])]))
 
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
 ;; a single compile (same program/symbols/registries), but is requested up to ~8
@@ -76587,34 +76881,250 @@
 (define macro-expand-ctfe-env-has-metadata : bool
   false)
 
+;; Metadata vectors can grow after a splice. Keep those allocations in the
+;; arena that owns the initial cache instead of whichever short-lived macro
+;; generation happens to request the extension.
+(define macro-expand-ctfe-env-owner-arena : i64
+  0)
+(define macro-expand-ctfe-env-build-generation : i64
+  0)
+(define macro-expand-ctfe-env-rebuild-pending : bool
+  false)
+
 (define (compiler-typecheck-ctfe-env-cache-clear!) : unit
   (begin
     (set! macro-expand-ctfe-env-ready false)
     (set! macro-expand-ctfe-env-has-metadata false)
+    (set! macro-expand-ctfe-env-owner-arena 0)
+    (set! macro-expand-ctfe-env-build-generation 0)
+    (set! macro-expand-ctfe-env-rebuild-pending false)
     (set! macro-expand-ctfe-env-value (ctfe_support.ctfe-env-empty))))
 
-;; Additively extend the cached CTFE metadata with a spliced generated module's
-;; nominal declarations, avoiding the O(program) reflection/layout rebuild that
-;; compiler-typecheck-ctfe-env-cache-clear! forces on the next consumer. Only
-;; valid for an isolated generated-module splice: its names are fresh in their
-;; own namespace, so appending after the already-cached entries preserves the
-;; first-wins dedupe order a whole-program rebuild would produce. ctx must be
-;; the post-splice context whose registries already cover the spliced decls
-;; (the layout build resolves struct/enum layouts through them), and
-;; module/module-id the namespace active at the splice site, matching the
-;; module context a whole-program rebuild would attribute to any decl preceding
-;; the module's own marker. Returns false when the cache cannot be extended --
-;; not built yet, built without metadata while metadata is now required, or the
-;; reserved list capacity exhausted -- so the caller can fall back to the
-;; conservative clear.
+(define (compiler-typecheck-ctfe-env-cache-clear-for-splice! [_reason : i64]) : unit
+  (begin
+    (cfg
+      compile-profile
+      (compiler-tc-walk-ctfe-clear-reason-note! _reason)
+      unit)
+    (set! macro-expand-ctfe-env-ready false)
+    (set! macro-expand-ctfe-env-has-metadata false)
+    (set! macro-expand-ctfe-env-rebuild-pending true)
+    (set! macro-expand-ctfe-env-value (ctfe_support.ctfe-env-empty))))
+
+(defenum CompilerCtfeSpliceExtensionResult
+  (Extended)
+  (AlreadyCurrent)
+  (NoMetadata)
+  (SemanticRejected)
+  (CacheUnavailable))
+
+(define (compiler-typecheck-ctfe-splice-key-fresh?
+  [layouts : ctfe_support.CtfeLayoutInfoList]
+  [reflections : ctfe_support.CtfeReflectInfoList]
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [key-id : i64]) : bool
+  (if (or
+    (ctfe_support.ctfe-layout-info-list-contains-key-id? layouts key-id)
+    (ctfe_support.ctfe-reflect-info-list-contains-key-id? reflections key-id)
+    (tc_i64_i64_map.contains? seen key-id))
+    false
+    (begin
+      (tc_i64_i64_map.insert-ref! seen key-id 1)
+      true)))
+
+;; A delta is append-safe when every canonical nominal identity is fresh. An
+;; arbitrary delta must also have fresh unqualified reflection aliases and no
+;; imports: either can reorder first-wins/layout resolution. The isolated
+;; generated-module classifier already proves its namespace and append-only
+;; registry effects, so it may preserve earlier aliases and imports exactly as
+;; the established generated-module extension did. Paths and registry identity
+;; prove this classification is over the same post-splice ownership and symbol
+;; generation the layout extension will consume.
+(define (compiler-typecheck-ctfe-splice-append-safe?
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [module-id : i64]
+  [isolated-generated-module? : bool]
+  [registries : csym.CompilerRegistries]
+  [layouts : ctfe_support.CtfeLayoutInfoList]
+  [reflections : ctfe_support.CtfeReflectInfoList]) : bool
+  (if (or
+    (not
+      (=
+        (ast.ast-decl-list-len (& decls))
+        (ast.ast-decl-path-list-len (& paths))))
+    (not
+      (=
+        (csym.compiler-registries-identity registries)
+        (csym.compiler-registries-identity (tc-context-registries ctx)))))
+    false
+    (let
+      [count : i64 (ast.ast-decl-list-len (& decls))]
+      [position : i64 0]
+      [current-module-id : i64 module-id]
+      [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+      [decl-offset : i64 (struct-get decls offset)]
+      [seen : tc_i64_i64_map.Map
+        (tc_i64_i64_map.with-capacity
+          (+ (* (ctfe_support.ctfe-metadata-decl-capacity decls) 2) 1))]
+      [safe : bool true]
+      (begin
+        (while (and safe (< position count))
+          (begin
+            (match (array-ref decl-slots (+ decl-offset position))
+              [(ast.AstDecl.Module next-module)
+                (set! current-module-id next-module)]
+              [(ast.AstDecl.Import decl-meta _)
+                (if isolated-generated-module?
+                  unit
+                  (set! safe false))]
+              [(ast.AstDecl.DefStruct decl-meta name _ _ _)
+                (begin
+                  (set!
+                    safe
+                    (compiler-typecheck-ctfe-splice-key-fresh?
+                      layouts
+                      reflections
+                      (&mut seen)
+                      (if (=
+                        current-module-id
+                        cbi.compiler-builtin-id-fix-empty)
+                        name
+                        (ctfe_support.ctfe-qualified-name-key-id
+                          current-module-id
+                          name))))
+                  (if (and
+                    safe
+                    (not isolated-generated-module?)
+                    (not
+                      (= current-module-id cbi.compiler-builtin-id-fix-empty)))
+                    (set!
+                      safe
+                      (compiler-typecheck-ctfe-splice-key-fresh?
+                        layouts
+                        reflections
+                        (&mut seen)
+                        name))
+                    unit))]
+              [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
+                (begin
+                  (set!
+                    safe
+                    (compiler-typecheck-ctfe-splice-key-fresh?
+                      layouts
+                      reflections
+                      (&mut seen)
+                      (if (=
+                        current-module-id
+                        cbi.compiler-builtin-id-fix-empty)
+                        name
+                        (ctfe_support.ctfe-qualified-name-key-id
+                          current-module-id
+                          name))))
+                  (if (and
+                    safe
+                    (not isolated-generated-module?)
+                    (not
+                      (= current-module-id cbi.compiler-builtin-id-fix-empty)))
+                    (set!
+                      safe
+                      (compiler-typecheck-ctfe-splice-key-fresh?
+                        layouts
+                        reflections
+                        (&mut seen)
+                        name))
+                    unit))]
+              [(ast.AstDecl.DefEnum decl-meta name _ _)
+                (begin
+                  (set!
+                    safe
+                    (compiler-typecheck-ctfe-splice-key-fresh?
+                      layouts
+                      reflections
+                      (&mut seen)
+                      (if (=
+                        current-module-id
+                        cbi.compiler-builtin-id-fix-empty)
+                        name
+                        (ctfe_support.ctfe-qualified-name-key-id
+                          current-module-id
+                          name))))
+                  (if (and
+                    safe
+                    (not isolated-generated-module?)
+                    (not
+                      (= current-module-id cbi.compiler-builtin-id-fix-empty)))
+                    (set!
+                      safe
+                      (compiler-typecheck-ctfe-splice-key-fresh?
+                        layouts
+                        reflections
+                        (&mut seen)
+                        name))
+                    unit))]
+              [(ast.AstDecl.DefEnumLifetimes decl-meta name _ _ _)
+                (begin
+                  (set!
+                    safe
+                    (compiler-typecheck-ctfe-splice-key-fresh?
+                      layouts
+                      reflections
+                      (&mut seen)
+                      (if (=
+                        current-module-id
+                        cbi.compiler-builtin-id-fix-empty)
+                        name
+                        (ctfe_support.ctfe-qualified-name-key-id
+                          current-module-id
+                          name))))
+                  (if (and
+                    safe
+                    (not isolated-generated-module?)
+                    (not
+                      (= current-module-id cbi.compiler-builtin-id-fix-empty)))
+                    (set!
+                      safe
+                      (compiler-typecheck-ctfe-splice-key-fresh?
+                        layouts
+                        reflections
+                        (&mut seen)
+                        name))
+                    unit))]
+              [(ast.AstDecl.Unsafe inner-box)
+                (if (macro-decl-reflection-relevant? (box-get inner-box))
+                  (set! safe false)
+                  unit)]
+              [(ast.AstDecl.ModuleBody _ body-box)
+                (if (macro-decls-reflection-relevant? (box-get body-box))
+                  (set! safe false)
+                  unit)]
+              [_ unit])
+            (set! position (+ position 1))))
+        safe))))
+
+;; Additively extend the cached CTFE metadata across any append-safe splice.
+;; The caller supplies the declaration paths, active module ownership, and
+;; post-splice registries used by the new context. A full build performed while
+;; rebuilding that context already contains the delta, so its generation lets
+;; the caller skip a duplicate extension.
 (define (compiler-typecheck-ctfe-env-extend-for-splice!
   [ctx : TcContext]
   [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
   [module : String]
-  [module-id : i64]) : bool
-  (if (not ctfe-needs-metadata)
-    true
-    (if (and macro-expand-ctfe-env-ready macro-expand-ctfe-env-has-metadata)
+  [module-id : i64]
+  [isolated-generated-module? : bool]
+  [registries : csym.CompilerRegistries]
+  [prior-build-generation : i64]) : CompilerCtfeSpliceExtensionResult
+  (cond
+    [(not ctfe-needs-metadata) CompilerCtfeSpliceExtensionResult.NoMetadata]
+    [(not (= prior-build-generation macro-expand-ctfe-env-build-generation))
+      CompilerCtfeSpliceExtensionResult.AlreadyCurrent]
+    [(and
+        macro-expand-ctfe-env-ready
+        macro-expand-ctfe-env-has-metadata
+        (not (= macro-expand-ctfe-env-owner-arena 0)))
       (let
         [layouts : ctfe_support.CtfeLayoutInfoList
           (ctfe_support.ctfe-env-layouts
@@ -76623,25 +77133,56 @@
           (ctfe_support.ctfe-env-reflections
             (tc-global-shared-view macro-expand-ctfe-env-value))]
         [needed : i64 (ctfe_support.ctfe-metadata-decl-capacity decls)]
-        (if (and
-          (<=
-            (+ (struct-get layouts len) needed)
-            (array.length (struct-get layouts slots)))
-          (<=
-            (+ (struct-get reflections len) needed)
-            (array.length (struct-get reflections slots))))
+        (if (compiler-typecheck-ctfe-splice-append-safe?
+          ctx
+          decls
+          paths
+          module-id
+          isolated-generated-module?
+          registries
+          layouts
+          reflections)
           (let
+            [required-layouts : i64 (+ (struct-get layouts len) needed)]
+            [required-reflections : i64 (+ (struct-get reflections len) needed)]
+            [grew? : bool
+              (or
+                (> required-layouts (array.length (struct-get layouts slots)))
+                (>
+                  required-reflections
+                  (array.length (struct-get reflections slots))))]
+            [previous-arena : i64 (arena.tl_arena_current)]
+            [_profile-start : unit
+              (cfg
+                compile-profile
+                (compiler-tc-walk-ctfe-extension-start!)
+                unit)]
+            [_switch-owner : unit
+              (unsafe
+                (arena.tl_arena_set
+                  (tc-type-env-store-owner-current-head
+                    macro-expand-ctfe-env-owner-arena)))]
+            [grown-layouts : ctfe_support.CtfeLayoutInfoList
+              (ctfe_support.ctfe-layout-info-list-ensure-capacity
+                layouts
+                required-layouts)]
+            [grown-reflections : ctfe_support.CtfeReflectInfoList
+              (ctfe_support.ctfe-reflect-info-list-ensure-capacity
+                reflections
+                required-reflections)]
             [next-layouts : ctfe_support.CtfeLayoutInfoList
-              (tc-ctfe-layouts-from-decls ctx decls module module-id layouts)]
+              (tc-ctfe-layouts-from-decls
+                ctx
+                decls
+                module
+                module-id
+                grown-layouts)]
             [next-reflections : ctfe_support.CtfeReflectInfoList
               (ctfe_support.ctfe-reflections-from-decls
                 decls
                 module
                 module-id
-                reflections)]
-            ;; The cached base env is always a bare metadata node (built by
-            ;; tc-ctfe-env and only ever rebase-copied), so rebuilding it from
-            ;; the extended lists drops no bindings.
+                grown-reflections)]
             (begin
               (set!
                 macro-expand-ctfe-env-value
@@ -76650,33 +77191,89 @@
                   next-reflections
                   (ctfe_support.ctfe-env-pools
                     (tc-global-shared-view macro-expand-ctfe-env-value))))
-              true))
-          false))
-      false)))
+              (tc-type-env-store-restore-after-owner-alloc!
+                previous-arena
+                macro-expand-ctfe-env-owner-arena)
+              (if grew?
+                (cfg
+                  compile-profile
+                  (compiler-tc-walk-ctfe-extension-reject-note! 3)
+                  unit)
+                unit)
+              (cfg
+                compile-profile
+                (compiler-tc-walk-ctfe-extension-finish!)
+                unit)
+              CompilerCtfeSpliceExtensionResult.Extended))
+          (begin
+            (cfg
+              compile-profile
+              (compiler-tc-walk-ctfe-extension-reject-note! 1)
+              unit)
+            CompilerCtfeSpliceExtensionResult.SemanticRejected)))]
+    [else
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-walk-ctfe-extension-reject-note! 2)
+          unit)
+        CompilerCtfeSpliceExtensionResult.CacheUnavailable)]))
 
 ;; Build the CTFE base env (reflection + layout metadata) once per expansion run
-;; and reuse it across in-pass splice rebuilds (plan P2). A generated module can
-;; materialize a struct or enum whose own metadata is immediately queried by a
-;; later macro, so reflection-relevant splices clear the cache before calling this
-;; helper. The one other exception is a run whose first build did not need
-;; metadata (empty env) and a later rebuild that does; the has-metadata guard
-;; rebuilds for that case. On reuse the cached env is only rebased onto the active
-;; pools (cheap); a full build otherwise costs ~150MB.
+;; and reuse it across in-pass splice rebuilds (plan P2). Append-safe reflection
+;; splices extend it after context rebuild; semantic rejections invalidate and
+;; immediately rebuild it. The one other exception is a run whose first build
+;; did not need metadata (empty env) and a later rebuild that does; the
+;; has-metadata guard rebuilds for that case. On reuse the cached env is only
+;; rebased onto the active pools (cheap); a full build otherwise costs ~150MB.
 (define (macro-expand-ctfe-env-build-once! [ctx : TcContext]) : unit
   (let
     [reuse? : bool
       (and
         macro-expand-ctfe-env-ready
         (or (not ctfe-needs-metadata) macro-expand-ctfe-env-has-metadata))]
-    (begin
-      (if reuse?
-        unit
-        (set! macro-expand-ctfe-env-ready false))
+    (if reuse?
       (set! macro-expand-ctfe-env-value (tc-ctfe-env ctx))
-      (if reuse?
-        unit
-        (set! macro-expand-ctfe-env-has-metadata ctfe-needs-metadata))
-      (set! macro-expand-ctfe-env-ready true))))
+      (let
+        [_rebuild? : bool macro-expand-ctfe-env-rebuild-pending]
+        [_profile-start : unit
+          (cfg compile-profile (compiler-tc-walk-ctfe-build-start!) unit)]
+        [previous-arena : i64 (arena.tl_arena_current)]
+        [owner-arena : i64
+          (if (= macro-expand-ctfe-env-owner-arena 0)
+            (tc-type-env-store-owner-root previous-arena)
+            macro-expand-ctfe-env-owner-arena)]
+        [_switch-owner : unit
+          (unsafe
+            (arena.tl_arena_set
+              (tc-type-env-store-owner-current-head owner-arena)))]
+        (begin
+          (set! macro-expand-ctfe-env-ready false)
+          (set! macro-expand-ctfe-env-owner-arena owner-arena)
+          (set! macro-expand-ctfe-env-value (tc-ctfe-env ctx))
+          (tc-type-env-store-restore-after-owner-alloc!
+            previous-arena
+            owner-arena)
+          (set! macro-expand-ctfe-env-has-metadata ctfe-needs-metadata)
+          (set! macro-expand-ctfe-env-ready true)
+          (set!
+            macro-expand-ctfe-env-build-generation
+            (+ macro-expand-ctfe-env-build-generation 1))
+          (set! macro-expand-ctfe-env-rebuild-pending false)
+          (cfg
+            compile-profile
+            (compiler-tc-walk-ctfe-build-finish! _rebuild?)
+            unit))))))
+
+(define (compiler-typecheck-ctfe-env-rebuild-for-splice!
+  [ctx : TcContext]
+  [reason : i64]) : unit
+  (begin
+    (compiler-typecheck-ctfe-env-cache-clear-for-splice! reason)
+    ;; Rebuild at the fallback boundary. Deferring this until an incidental
+    ;; later macro could leave a terminal clear unpaired in the profile and
+    ;; makes the actual whole-program rescan invisible to the splice reason.
+    (macro-expand-ctfe-env-build-once! ctx)))
 
 ;; Live compiler symbols/registries reused across the expansion run (plan P2).
 ;; Generated modules extend the symbol table at its logical end, keeping every
@@ -95801,26 +96398,16 @@
                                                 cur-module-id))]
                                           [(MacroMaybeGeneratedModuleExtension.No)
                                             false])]
-                                      ;; An isolated generated-module splice only
-                                      ;; appends fresh namespaced declarations, so
-                                      ;; the cached CTFE reflection/layout metadata
-                                      ;; can be extended additively with just those
-                                      ;; decls once the rebuilt context exists,
-                                      ;; instead of clearing the cache and paying an
-                                      ;; O(program) metadata rebuild per splice.
-                                      ;; Arbitrary splices keep the conservative
-                                      ;; clear below.
-                                      [defer-ctfe-extension : bool
-                                        (and
-                                          (macro-decls-reflection-relevant?
-                                            expanded)
-                                          (match generated-ext
-                                            [(MacroMaybeGeneratedModuleExtension.No)
-                                              false]
-                                            [(MacroMaybeGeneratedModuleExtension.Some
-                                                _
-                                                _)
-                                              true]))]
+                                      ;; Any reflection-relevant delta gets the
+                                      ;; append-safety classification after the
+                                      ;; post-splice registries exist. Fresh
+                                      ;; ordinary Decls and generated Modules can
+                                      ;; therefore share the same O(delta) path.
+                                      [extend-ctfe-metadata? : bool
+                                        (macro-decls-reflection-relevant?
+                                          expanded)]
+                                      [ctfe-build-generation-before : i64
+                                        macro-expand-ctfe-env-build-generation]
                                       (begin
                                         (cfg
                                           compile-profile
@@ -95874,23 +96461,13 @@
                                         (if symbols-inserted
                                           unit
                                           (macro-live-symbols-invalidate!))
-                                        (if (and
-                                          (macro-decls-reflection-relevant?
-                                            expanded)
-                                          (not defer-ctfe-extension))
-                                          (begin
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-walk-splice-flag-note!
-                                                4))
-                                            (compiler-typecheck-ctfe-env-cache-clear!))
-                                          (cfg
-                                            compile-profile
-                                            (if defer-ctfe-extension
-                                              (compiler-tc-walk-splice-flag-note!
-                                                3)
-                                              unit)
-                                            unit))
+                                        (cfg
+                                          compile-profile
+                                          (if extend-ctfe-metadata?
+                                            (compiler-tc-walk-splice-flag-note!
+                                              3)
+                                            unit)
+                                          unit)
                                         ;; Generated Module catalogs are usually
                                         ;; inert additions, but a full catalog can
                                         ;; legitimately introduce a defmacro. Its
@@ -95960,14 +96537,32 @@
                                               ;; the established clear, which makes
                                               ;; the next consumer rebuild the full
                                               ;; metadata over the spliced program.
-                                              (if defer-ctfe-extension
-                                                (if (compiler-typecheck-ctfe-env-extend-for-splice!
+                                              (if extend-ctfe-metadata?
+                                                (match (compiler-typecheck-ctfe-env-extend-for-splice!
                                                   next-ctx
                                                   expanded
+                                                  expanded-paths
                                                   cur-module
-                                                  cur-module-id)
-                                                  unit
-                                                  (compiler-typecheck-ctfe-env-cache-clear!))
+                                                  cur-module-id
+                                                  (match generated-ext
+                                                    [(MacroMaybeGeneratedModuleExtension.Some
+                                                        _
+                                                        _)
+                                                      true]
+                                                    [(MacroMaybeGeneratedModuleExtension.No)
+                                                      false])
+                                                  (tc-context-registries
+                                                    next-ctx)
+                                                  ctfe-build-generation-before)
+                                                  [(CompilerCtfeSpliceExtensionResult.SemanticRejected)
+                                                    (compiler-typecheck-ctfe-env-rebuild-for-splice!
+                                                      next-ctx
+                                                      1)]
+                                                  [(CompilerCtfeSpliceExtensionResult.CacheUnavailable)
+                                                    (compiler-typecheck-ctfe-env-rebuild-for-splice!
+                                                      next-ctx
+                                                      1)]
+                                                  [_ unit])
                                                 unit)
                                               (set! cur-ctx next-ctx)
                                               (set! cur-orig-decls next-decls)
@@ -96053,6 +96648,11 @@
                                     (struct-get splice-decl-view view)]
                                   [next-paths : ast.AstDeclPathList
                                     (struct-get splice-path-view view)]
+                                  [extend-ctfe-metadata? : bool
+                                    (macro-decls-reflection-relevant?
+                                      materialized-decls)]
+                                  [ctfe-build-generation-before : i64
+                                    macro-expand-ctfe-env-build-generation]
                                   (begin
                                     (set!
                                       cur-materialize-seen
@@ -96068,10 +96668,6 @@
                                     ;; so retain the full registry rebuild even
                                     ;; when it contains no nominal declaration.
                                     (macro-live-registries-invalidate!)
-                                    (if (macro-decls-reflection-relevant?
-                                      materialized-decls)
-                                      (compiler-typecheck-ctfe-env-cache-clear!)
-                                      unit)
                                     (macro-live-prescan-ensure! next-decls)
                                     (macro-expand-set-expr-type-macro-names!
                                       macro-live-prescan-expr-type-names)
@@ -96098,6 +96694,26 @@
                                           next-ctx
                                           next-top-env)
                                         (begin
+                                          (if extend-ctfe-metadata?
+                                            (match (compiler-typecheck-ctfe-env-extend-for-splice!
+                                              next-ctx
+                                              materialized-decls
+                                              materialized-paths
+                                              cur-module
+                                              cur-module-id
+                                              false
+                                              (tc-context-registries next-ctx)
+                                              ctfe-build-generation-before)
+                                              [(CompilerCtfeSpliceExtensionResult.SemanticRejected)
+                                                (compiler-typecheck-ctfe-env-rebuild-for-splice!
+                                                  next-ctx
+                                                  2)]
+                                              [(CompilerCtfeSpliceExtensionResult.CacheUnavailable)
+                                                (compiler-typecheck-ctfe-env-rebuild-for-splice!
+                                                  next-ctx
+                                                  2)]
+                                              [_ unit])
+                                            unit)
                                           (set! cur-ctx next-ctx)
                                           (set! cur-orig-decls next-decls)
                                           (set! cur-top-env next-top-env)
@@ -99936,9 +100552,7 @@
     (set! macro-expand-active-module "")
     (macro-expand-set-macro-names! (TcNameIdList.Nil))
     (macro-expand-set-expr-type-macro-names! (TcNameIdList.Nil))
-    (set! macro-expand-ctfe-env-ready false)
-    (set! macro-expand-ctfe-env-has-metadata false)
-    (set! macro-expand-ctfe-env-value (ctfe_support.ctfe-env-empty))
+    (compiler-typecheck-ctfe-env-cache-clear!)
     (macro-live-symbols-reset!)
     (macro-live-prescan-reset!)
     (set! tc-lazy-import-summary-macro-force-record-count 0)

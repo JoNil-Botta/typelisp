@@ -22480,10 +22480,13 @@
           (str_cat.str-cat "    andq " scratch-reg ", " mask-reg "\n")))]
     [quotient-asm : String
       (string.append
+        ;; The dividend save feeds only the remainder expansion below; a
+        ;; quotient-only site never reads dividend-reg, so the copy is dead.
         (str_cat.str-cat
+          (if want-remainder
+            (str_cat.str-cat "    movq %rax, " dividend-reg "\n")
+            "")
           "    movq %rax, "
-          dividend-reg
-          "\n    movq %rax, "
           mask-reg
           "\n    sarq $63, "
           mask-reg
@@ -22703,7 +22706,7 @@
       (if (string.eq home "")
         scratch-reg
         home)]
-    [quotient-asm : String
+    [quotient-prefix : String
       (str_cat.str-cat
         (compiler-backend-divmod-result-move src-reg "%rax")
         magic-load
@@ -22714,11 +22717,11 @@
           (str_cat.str-cat "    addq " src-reg ", %rdx\n")
           "")
         "    movq %rdx, %rax\n    shrq $63, %rax\n"
-        (compiler-backend-divmod-shift-reg "sar" shift "%rdx")
-        "    addq %rax, %rdx\n")]
+        (compiler-backend-divmod-shift-reg "sar" shift "%rdx"))]
     (if want-remainder
       (str_cat.str-cat
-        quotient-asm
+        quotient-prefix
+        "    addq %rax, %rdx\n"
         (compiler-backend-signed-remainder-from-src
           (cast divisor : u64)
           "%rdx"
@@ -22726,12 +22729,23 @@
           scratch-reg
           src-reg)
         (compiler-backend-divmod-result-move src-reg result-reg))
-      (str_cat.str-cat
-        quotient-asm
-        (if negative-divisor
-          "    negq %rdx\n"
-          "")
-        (compiler-backend-divmod-result-move "%rdx" result-reg)))))
+      ;; %rax holds the sign correction and %rdx the shifted high word. The
+      ;; final add is commutative, so accumulate into a requested %rax result
+      ;; directly instead of producing %rdx and immediately copying it.
+      (if (string.eq result-reg "%rax")
+        (str_cat.str-cat
+          quotient-prefix
+          "    addq %rdx, %rax\n"
+          (if negative-divisor
+            "    negq %rax\n"
+            ""))
+        (str_cat.str-cat
+          quotient-prefix
+          "    addq %rax, %rdx\n"
+          (if negative-divisor
+            "    negq %rdx\n"
+            "")
+          (compiler-backend-divmod-result-move "%rdx" result-reg))))))
 
 (define (compiler-backend-signed-constant-divmod-src-asm
   [divisor : i64]
@@ -25197,17 +25211,26 @@
               ;; typechecker resolves the append operand without a
               ;; spurious match-arm mismatch.
               (let
+                ;; `x + 0` / `x - 0` are x at every width (wrapping
+                ;; included): the staged lhs move is the whole result.
                 [op-asm : String
-                  (match (compiler-backend-binop-immediate-direct-reg-asm
-                    type-segment-bases
-                    mnem
-                    op
-                    ty
-                    imm
-                    dst-home
-                    (compiler-backend-value-integer-zero? rhs))
-                    [(CompilerBackendMaybeAsm.Some asm) asm]
-                    [(CompilerBackendMaybeAsm.No) ""])]
+                  (if (and
+                    (string.eq imm "$0")
+                    (match op
+                      [(compiler_ir_types.CompilerIrBinOp.Add) true]
+                      [(compiler_ir_types.CompilerIrBinOp.Sub) true]
+                      [_ false]))
+                    ""
+                    (match (compiler-backend-binop-immediate-direct-reg-asm
+                      type-segment-bases
+                      mnem
+                      op
+                      ty
+                      imm
+                      dst-home
+                      (compiler-backend-value-integer-zero? rhs))
+                      [(CompilerBackendMaybeAsm.Some asm) asm]
+                      [(CompilerBackendMaybeAsm.No) ""]))]
                 (ResultCompilerBackend.Ok (string.append lhs-asm op-asm)))]
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)])]))))
@@ -25251,38 +25274,75 @@
         5
         "%r8"
         backend-state)]
-    (match (compiler-backend-emit-load-value-with-plan
-      assignments
-      lhs
-      result-reg
-      backend-state)
-      [(ResultCompilerBackend.Ok lhs-asm)
-        (match (compiler-backend-binop-immediate-direct-reg-asm
-          type-segment-bases
-          mnem
-          op
-          operand-ty
-          imm
+    [lhs-reg : String
+      (compiler-backend-value-scalar-register backend-state assignments lhs)]
+    ;; `x + 0` / `x - 0` are x at every width (wrapping included): the
+    ;; staged lhs move is the whole result, so no arithmetic follows.
+    [zero-addsub? : bool
+      (and
+        (string.eq imm "$0")
+        (match op
+          [(compiler_ir_types.CompilerIrBinOp.Add) true]
+          [(compiler_ir_types.CompilerIrBinOp.Sub) true]
+          [_ false]))]
+    (match (if (and
+      (not zero-addsub?)
+      (not (string.eq lhs-reg ""))
+      ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
+      ;; reference and silently rebased by the FPO rsp-rebase pass
+      ;; (miscompile) -- an rbp-homed lhs takes the mov+add path below.
+      (not (string.eq lhs-reg "%rbp"))
+      (= (compiler-backend-type-size type-segment-bases operand-ty) 8))
+      ;; A register-homed lhs makes the three-operand lea form a strict
+      ;; win over load+op: one instruction fewer before the home store.
+      (compiler-backend-binop-immediate-lea-asm op lhs-reg result-reg imm rhs)
+      (CompilerBackendMaybeAsm.No))
+      [(CompilerBackendMaybeAsm.Some lea-asm)
+        (ResultCompilerBackend.Ok
+          (str_cat.str-cat
+            lea-asm
+            (compiler-backend-emit-store-typed-var-with-plan
+              assignments
+              dst
+              result-reg
+              result-ty
+              backend-state)))]
+      [(CompilerBackendMaybeAsm.No)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          lhs
           result-reg
-          (compiler-backend-value-integer-zero? rhs))
-          [(CompilerBackendMaybeAsm.Some op-asm)
-            (ResultCompilerBackend.Ok
-              (str_cat.str-cat
-                lhs-asm
-                op-asm
-                (compiler-backend-emit-store-typed-var-with-plan
-                  assignments
-                  dst
-                  result-reg
-                  result-ty
-                  backend-state)))]
-          [(CompilerBackendMaybeAsm.No)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-at-start
-                  ""
-                  "backend: unsupported immediate spill binop")))])]
-      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+          backend-state)
+          [(ResultCompilerBackend.Ok lhs-asm)
+            (match (if zero-addsub?
+              (CompilerBackendMaybeAsm.Some "")
+              (compiler-backend-binop-immediate-direct-reg-asm
+                type-segment-bases
+                mnem
+                op
+                operand-ty
+                imm
+                result-reg
+                (compiler-backend-value-integer-zero? rhs)))
+              [(CompilerBackendMaybeAsm.Some op-asm)
+                (ResultCompilerBackend.Ok
+                  (str_cat.str-cat
+                    lhs-asm
+                    op-asm
+                    (compiler-backend-emit-store-typed-var-with-plan
+                      assignments
+                      dst
+                      result-reg
+                      result-ty
+                      backend-state)))]
+              [(CompilerBackendMaybeAsm.No)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-at-start
+                      ""
+                      "backend: unsupported immediate spill binop")))])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])])))
 
 (define (compiler-backend-binop-spill-source-operand
   [type-segment-bases : i64]
@@ -25578,7 +25638,9 @@
       (if (string.eq dst-home "")
         (if (compiler-backend-binop-wants-remainder? op)
           src
-          "%rdx")
+          ;; Quotient-only strength reductions honor a requested %rax result;
+          ;; staging a spilled store there avoids a fixed-register hop.
+          "%rax")
         dst-home)]
     (match (compiler-backend-emit-load-value-with-plan
       assignments

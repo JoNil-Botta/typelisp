@@ -3089,6 +3089,23 @@
     (OptBlockListPassResult.Result (opt-dce-block-list-array items blocks) true)
     (OptBlockListPassResult.Result blocks false)))
 
+;; A backward instruction sweep only cascades within one block. When a dead
+;; user sits in a later block than its definition, forward block order removes
+;; the user after the definition's block has already been visited. Recollect
+;; uses and sweep until nothing changes so the final optimizer round does not
+;; strand one link of a cross-block dead chain per block.
+(define (opt-dce-block-list-array-fixpoint
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [fuel : i64]) : ir.CompilerIrBlockList
+  (match (opt-dce-block-list-array-pass
+    (opt-collect-blocks-uses-array frame blocks)
+    blocks)
+    [(OptBlockListPassResult.Result next changed?)
+      (if (and changed? (> fuel 1))
+        (opt-dce-block-list-array-fixpoint frame next (- fuel 1))
+        next)]))
+
 (define (opt-dce-block-seq-array-in-place!
   [items : (__tl_dyn-array i64)]
   [seq : ir.CompilerIrBlockSeq]) : unit
@@ -61367,12 +61384,6 @@
                             _t-bool-branch-late)
                           unit)]
                       [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [used : (__tl_dyn-array i64)
-                        (opt-collect-blocks-uses-array
-                          bool-branch-late-frame
-                          bool-branch-late)]
-                      [dce-result : OptBlockListPassResult
-                        (opt-dce-block-list-array-pass used bool-branch-late)]
                       [dced : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases
@@ -61381,8 +61392,10 @@
                           params
                           ret-ty
                           bool-branch-late-frame
-                          (match dce-result
-                            [(OptBlockListPassResult.Result next _) next]))]
+                          (opt-dce-block-list-array-fixpoint
+                            bool-branch-late-frame
+                            bool-branch-late
+                            8))]
                       [_p-dce : unit
                         (cfg
                           compile-profile

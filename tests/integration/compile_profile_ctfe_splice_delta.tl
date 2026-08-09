@@ -1,6 +1,6 @@
 ;; CTFE metadata must follow reflection-relevant splices additively. This covers
 ;; ordinary Decls, a generated Module, a generated source-file materialization,
-;; owner-arena vector growth, and a conservative import-identity fallback.
+;; owner-arena vector growth, and import-identity invalidation.
 (import stdlib.comptime)
 
 (defmacro (reflection-score [T : type]) : i64
@@ -51,8 +51,8 @@
   (file_delta.file-score))
 
 ;; This ordinary Decls splice precedes the checked-in module at the end of the
-;; file. Its canonical key is fresh, but the unqualified Collision alias would
-;; become first-wins, so the classifier must take the measured rebuild path.
+;; file. Its canonical key is fresh, while the unqualified Collision alias must
+;; still preserve first-visible source order on the additive path.
 (defmacro (emit-collision-delta) : Decls
   `(begin
     (module generated.ctfe_collision_delta)

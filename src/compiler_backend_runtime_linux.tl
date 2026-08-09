@@ -884,12 +884,12 @@ tl_region_reset:
     .type tl_memcpy,@function
 tl_memcpy:
     movq %rdx, %rcx
-    cmpq %rsi, %rdi
-    jbe .Ltl_memcpy_fwd
     movq %rsi, %rax
     addq %rcx, %rax
     cmpq %rax, %rdi
     jae .Ltl_memcpy_fwd
+    cmpq %rsi, %rdi
+    jbe .Ltl_memcpy_fwd
     leaq -1(%rdi,%rcx), %rdi
     leaq -1(%rsi,%rcx), %rsi
     std
@@ -905,6 +905,12 @@ tl_memcpy:
     rep movsb
     ret
     .size tl_memcpy, . - tl_memcpy
+    .globl tl_memcpy_fresh
+    .type tl_memcpy_fresh,@function
+tl_memcpy_fresh:
+    movq %rdx, %rcx
+    jmp .Ltl_memcpy_fwd
+    .size tl_memcpy_fresh, . - tl_memcpy_fresh
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String

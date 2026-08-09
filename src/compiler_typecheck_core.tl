@@ -251,16 +251,7 @@
 (defenum TcTypeEnvView
   (Nil)
   (Bind i64 ast.AstType TcTypeEnv)
-  (Cache
-    tc_i64_i64_map.Map
-    (__tl_dyn-array ast.AstType)
-    (__tl_dyn-array i64)
-    (__tl_dyn-array i64)
-    (__tl_dyn-array i64)
-    bool
-    bool
-    TcTypeEnv
-    TcTypeEnv))
+  (Cache (Ptr TcTypeEnvCache) bool bool TcTypeEnv TcTypeEnv))
 
 (defenum TcTypeEnvSpineStep
   (Done)
@@ -554,20 +545,29 @@
     (ptr-read
       (int->ptr (cast (struct-get state address) : u64) : (Ptr TcJobStateData)))))
 
+(defmacro (tc-job-state-field [state : Expr] [field : Expr] [_T : type]) : Expr
+  `(unsafe
+    (ptr-read
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast (struct-get ,state address) : u64) : (Ptr u8))
+          (comptime (offset-of (type TcJobStateData) ,field)))
+        : (Ptr ,_T)))))
+
 (define (tc-job-state-source-key-cache [state : TcJobState]) : TcSourceKeyCacheState
-  (struct-get (tc-job-state-data state) source-key-cache))
+  (tc-job-state-field state source-key-cache TcSourceKeyCacheState))
 
 (define (tc-job-state-topenv-membership [state : TcJobState]) : TcTopEnvMembershipState
-  (struct-get (tc-job-state-data state) topenv-membership))
+  (tc-job-state-field state topenv-membership TcTopEnvMembershipState))
 
 (define (tc-job-state-thread-name-kind [state : TcJobState]) : TcThreadNameKindState
-  (struct-get (tc-job-state-data state) thread-name-kind))
+  (tc-job-state-field state thread-name-kind TcThreadNameKindState))
 
 (define (tc-job-state-inlay-hints [state : TcJobState]) : TcInlayHintState
-  (struct-get (tc-job-state-data state) inlay-hints))
+  (tc-job-state-field state inlay-hints TcInlayHintState))
 
 (define (tc-job-state-macro-call-sites [state : TcJobState]) : TcMacroCallSiteState
-  (struct-get (tc-job-state-data state) macro-call-sites))
+  (tc-job-state-field state macro-call-sites TcMacroCallSiteState))
 
 (define (tc-job-state-scratch-arenas [state : TcJobState]) : TcScratchArenaState
   (struct-get (tc-job-state-data state) scratch-arenas))
@@ -8034,6 +8034,22 @@
   `(unsafe
     (ptr-read ,cache-ptr)))
 
+;; Physical byte offsets in TcTypeEnvCache after the four-word chain prefix:
+;; ids=32 (the map is inline and 24 bytes), values=56, resolution candidate
+;; lanes=64/72/80, sidecar arrays=88/96/104, flags=112/113, and
+;; rest/below=120/128. Keep these literals paired with the raw-layout smoke and
+;; cache behavior tests; `offset-of` currently treats the inline map as one word
+;; and therefore under-reports every following field.
+(defmacro (tc-type-env-cache-field-at
+  [cache-ptr : comptime.Expr]
+  [byte-offset : comptime.Expr]
+  [_T : type]) : comptime.Expr
+  `(unsafe
+    (ptr-read
+      (ptr-cast
+        (ptr-offset (ptr-cast ,cache-ptr : (Ptr u8)) ,byte-offset)
+        : (Ptr ,_T)))))
+
 (define (tc-type-env-store-push-binding!
   [store-handle : i64]
   [binding : TcTypeEnvBinding]) : i64
@@ -8163,17 +8179,18 @@
           [store-handle : i64 (struct-get env store)]
           [cache-ptr : (Ptr TcTypeEnvCache)
             (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
-          [cache : TcTypeEnvCache (tc-type-env-cache-at cache-ptr)]
           (TcTypeEnvView.Cache
-            (struct-get cache ids)
-            (struct-get cache values)
-            (struct-get cache unsafe-flags)
-            (struct-get cache c-abi-fnptr-flags)
-            (struct-get cache shadow-flags)
-            (struct-get cache scan-through)
-            (struct-get cache partial)
-            (TcTypeEnv store-handle (struct-get cache rest) 0)
-            (TcTypeEnv store-handle (struct-get cache below) 0)))])))
+            cache-ptr
+            (tc-type-env-cache-field-at cache-ptr 112 bool)
+            (tc-type-env-cache-field-at cache-ptr 113 bool)
+            (TcTypeEnv
+              store-handle
+              (tc-type-env-cache-field-at cache-ptr 120 i64)
+              0)
+            (TcTypeEnv
+              store-handle
+              (tc-type-env-cache-field-at cache-ptr 128 i64)
+              0)))])))
 
 (define (tc-empty-env) : TcTypeEnv
   (tc-type-env-new))
@@ -8184,18 +8201,18 @@
 (define (tc-type-env-spine-step [env : TcTypeEnv]) : TcTypeEnvSpineStep
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) (TcTypeEnvSpineStep.Done)]
-    [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _) (TcTypeEnvSpineStep.Cache rest)]
+    [(TcTypeEnvView.Cache _ _ _ rest _) (TcTypeEnvSpineStep.Cache rest)]
     [(TcTypeEnvView.Bind key ty rest) (TcTypeEnvSpineStep.Bind key ty rest)]))
 
 (define (tc-type-env-marker-start [env : TcTypeEnv]) : TcTypeEnv
   (match (tc-type-env-view env)
-    [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _) rest]
+    [(TcTypeEnvView.Cache _ _ _ rest _) rest]
     [_ env]))
 
 (define (tc-type-env-marker-step [env : TcTypeEnv]) : TcTypeEnvMarkerStep
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) (TcTypeEnvMarkerStep.Done)]
-    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+    [(TcTypeEnvView.Cache _ scan-through _ rest _)
       (if scan-through
         (TcTypeEnvMarkerStep.Cache rest)
         (TcTypeEnvMarkerStep.Done))]
@@ -8204,16 +8221,21 @@
 (define (tc-type-env-lookup-step [env : TcTypeEnv] [name-id : i64]) : TcTypeEnvLookupStep
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) (TcTypeEnvLookupStep.Missing)]
-    [(TcTypeEnvView.Cache ids values _ _ _ _ partial _ below)
-      (match (tc_i64_i64_map.get (& ids) name-id)
-        [(tc_i64_i64_map.LookupFound index)
-          ;; AstType reads must stay `array-ref` because inline-by-value
-          ;; AstType values are multi-word.
-          (TcTypeEnvLookupStep.Found (array-ref values index))]
-        [(tc_i64_i64_map.LookupMissing)
-          (if partial
-            (TcTypeEnvLookupStep.Miss below)
-            (TcTypeEnvLookupStep.Missing))])]
+    [(TcTypeEnvView.Cache cache-ptr _ partial _ below)
+      (let
+        [ids : tc_i64_i64_map.Map
+          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+        [values : (__tl_dyn-array ast.AstType)
+          (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
+        (match (tc_i64_i64_map.get (& ids) name-id)
+          [(tc_i64_i64_map.LookupFound index)
+            ;; AstType reads must stay `array-ref` because inline-by-value
+            ;; AstType values are multi-word.
+            (TcTypeEnvLookupStep.Found (array-ref values index))]
+          [(tc_i64_i64_map.LookupMissing)
+            (if partial
+              (TcTypeEnvLookupStep.Miss below)
+              (TcTypeEnvLookupStep.Missing))]))]
     [(TcTypeEnvView.Bind key ty rest)
       (if (= key name-id)
         (TcTypeEnvLookupStep.Found ty)
@@ -8222,24 +8244,31 @@
 (define (tc-type-env-unsafe-lookup-step [env : TcTypeEnv] [name-id : i64]) : TcTypeEnvUnsafeLookupStep
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) (TcTypeEnvUnsafeLookupStep.Missing)]
-    [(TcTypeEnvView.Cache ids values unsafe-flags _ _ _ partial _ below)
-      (match (tc_i64_i64_map.get (& ids) name-id)
-        [(tc_i64_i64_map.LookupFound index)
-          ;; AstType read must stay `array-ref`; the unsafe flag is a
-          ;; scalar i64 and keeps the previous raw read path.
-          (TcTypeEnvUnsafeLookupStep.Found
-            (array-ref values index)
-            (=
-              (unsafe
-                (ptr-read
-                  (ptr-offset
-                    (ptr-cast (array-data unsafe-flags) : (Ptr i64))
-                    index)))
-              1))]
-        [(tc_i64_i64_map.LookupMissing)
-          (if partial
-            (TcTypeEnvUnsafeLookupStep.Miss below)
-            (TcTypeEnvUnsafeLookupStep.Missing))])]
+    [(TcTypeEnvView.Cache cache-ptr _ partial _ below)
+      (let
+        [ids : tc_i64_i64_map.Map
+          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+        [values : (__tl_dyn-array ast.AstType)
+          (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
+        [unsafe-flags : (__tl_dyn-array i64)
+          (tc-type-env-cache-field-at cache-ptr 88 (__tl_dyn-array i64))]
+        (match (tc_i64_i64_map.get (& ids) name-id)
+          [(tc_i64_i64_map.LookupFound index)
+            ;; AstType read must stay `array-ref`; the unsafe flag is a
+            ;; scalar i64 and keeps the previous raw read path.
+            (TcTypeEnvUnsafeLookupStep.Found
+              (array-ref values index)
+              (=
+                (unsafe
+                  (ptr-read
+                    (ptr-offset
+                      (ptr-cast (array-data unsafe-flags) : (Ptr i64))
+                      index)))
+                1))]
+          [(tc_i64_i64_map.LookupMissing)
+            (if partial
+              (TcTypeEnvUnsafeLookupStep.Miss below)
+              (TcTypeEnvUnsafeLookupStep.Missing))]))]
     [(TcTypeEnvView.Bind key ty rest)
       (if (= key name-id)
         (TcTypeEnvUnsafeLookupStep.Found
@@ -8760,7 +8789,7 @@
 
 (define (tc-env-partial-layer-depth [env : TcTypeEnv]) : i64
   (match (tc-type-env-view env)
-    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through partial _ below)
+    [(TcTypeEnvView.Cache _ scan-through partial _ below)
       (if (and scan-through partial)
         (+ 1 (tc-env-partial-layer-depth below))
         0)]
@@ -8773,17 +8802,20 @@
 ;; immutable explicit top-env boundary.
 (define (tc-env-partial-local-covered-count [env : TcTypeEnv]) : i64
   (match (tc-type-env-view env)
-    [(TcTypeEnvView.Cache _ values _ _ _ scan-through partial _ below)
-      (if (and scan-through partial)
-        (+
-          (/ (array.length values) 2)
-          (tc-env-partial-local-covered-count below))
-        0)]
+    [(TcTypeEnvView.Cache cache-ptr scan-through partial _ below)
+      (let
+        [values : (__tl_dyn-array ast.AstType)
+          (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
+        (if (and scan-through partial)
+          (+
+            (/ (array.length values) 2)
+            (tc-env-partial-local-covered-count below))
+          0))]
     [_ 0]))
 
 (define (tc-env-partial-local-base [env : TcTypeEnv]) : TcTypeEnv
   (match (tc-type-env-view env)
-    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through partial _ below)
+    [(TcTypeEnvView.Cache _ scan-through partial _ below)
       (if (and scan-through partial)
         (tc-env-partial-local-base below)
         env)]
@@ -8793,7 +8825,7 @@
   test
   (define (tc-env-cache-explicit-head? [env : TcTypeEnv]) : bool
     (match (tc-type-env-view env)
-      [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
+      [(TcTypeEnvView.Cache _ scan-through _ _ _) (not scan-through)]
       [_ false])))
 
 (define (tc-env-uncached-prefix-to-explicit-cache-count [env : TcTypeEnv]) : i64
@@ -9469,6 +9501,7 @@
 (define (tc-type-env-scoped-stack-find-lifetime-index-from
   [stack : TcTypeEnvScopedStack]
   [lifetime-id : i64]
+  [signature-marker-id : i64]
   [index : i64]) : i64
   (if (< index 0)
     -1
@@ -9477,11 +9510,13 @@
       (if (tc-env-binding-matches-lifetime-id?
         (struct-get slot name-id)
         (struct-get slot ty)
-        lifetime-id)
+        lifetime-id
+        signature-marker-id)
         index
         (tc-type-env-scoped-stack-find-lifetime-index-from
           stack
           lifetime-id
+          signature-marker-id
           (- index 1))))))
 
 (define (tc-type-env-scoped-stack-find-lifetime-index
@@ -9490,6 +9525,7 @@
   (tc-type-env-scoped-stack-find-lifetime-index-from
     stack
     lifetime-id
+    (tc-signature-lifetime-marker-id)
     (- (tc-type-env-scoped-stack-len stack) 1)))
 
 (define (tc-type-env-scoped-stack-signature-lifetime-index?
@@ -9500,10 +9536,11 @@
     false
     (let
       [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
-      (tc-signature-lifetime-marker-entry?
+      (tc-signature-lifetime-marker-entry-id?
         (struct-get slot name-id)
         (struct-get slot ty)
-        lifetime-id))))
+        lifetime-id
+        (tc-signature-lifetime-marker-id)))))
 
 (define (tc-type-env-scoped-visible-marker-kind
   [name-id : i64]
@@ -10314,6 +10351,13 @@
 (define tc-type-env-scoped-runtime-marker-id-region : i64
   -1)
 
+;; This private marker is stable only within an intern generation.  Remember its
+;; canonical ID without carrying it through every recursive environment walk.
+(define tc-signature-lifetime-marker-id-generation : i64
+  -1)
+(define tc-signature-lifetime-marker-id-cache : i64
+  -1)
+
 (define (tc-type-env-scoped-runtime-active?) : bool
   tc-type-env-scoped-runtime-active)
 
@@ -10770,8 +10814,8 @@
       count)))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
-  (if (< count 4)
-    8
+  (if (< count 5)
+    16
     (* count 2)))
 
 (define tc-env-cache-flag-default-shadow : i64
@@ -10782,8 +10826,36 @@
   4)
 (define tc-env-cache-flag-atomic-arena-owner : i64
   8)
-(define tc-env-cache-sidecar-position-scale : i64
+(define tc-env-cache-flag-signature-lifetime : i64
   16)
+(define tc-env-cache-sidecar-position-scale : i64
+  32)
+
+;; Environment name IDs are non-negative.  Negative derived keys let the
+;; existing relevance map index marker-owned lifetime spellings without
+;; colliding with ordinary bindings or allocating a second map per cache.
+(define (tc-env-cache-lifetime-marker-key [lifetime-id : i64]) : i64
+  (- -2 (* lifetime-id 2)))
+
+(define (tc-env-cache-arena-lifetime-marker-key [owner-id : i64]) : i64
+  (- -3 (* owner-id 2)))
+
+(define (tc-env-cache-lifetime-marker-lifetime-id
+  [name-id : i64]
+  [ty : ast.AstType]
+  [signature-marker-id : i64]
+  [region-marker-id : i64]
+  [ordinary-arena-marker-id : i64]
+  [atomic-arena-marker-id : i64]) : i64
+  (if (or
+    (= name-id signature-marker-id)
+    (= name-id region-marker-id)
+    (= name-id ordinary-arena-marker-id)
+    (= name-id atomic-arena-marker-id))
+    (match ty
+      [(ast.AstType.Var lifetime-id) lifetime-id]
+      [_ -1])
+    -1))
 
 (define (tc-env-cache-binding-sidecar-flags
   [rest-env : TcTypeEnv]
@@ -10885,6 +10957,49 @@
       true)
     false))
 
+(define (tc-env-cache-add-lifetime-marker!
+  [ids : (&mut ids tc_i64_i64_map.Map)]
+  [values : (__tl_dyn-array ast.AstType)]
+  [unsafe-flags : (__tl_dyn-array i64)]
+  [c-abi-fnptr-flags : (__tl_dyn-array i64)]
+  [shadow-flags : (__tl_dyn-array i64)]
+  [lifetime-id : i64]
+  [next : i64]
+  [ty : ast.AstType]
+  [signature : bool]
+  [arena-owner : bool]
+  [position : i64]) : bool
+  (if (< lifetime-id 0)
+    false
+    (let
+      [general-added : bool
+        (tc_i64_i64_map.insert-if-absent-ref!
+          ids
+          (tc-env-cache-lifetime-marker-key lifetime-id)
+          next)]
+      [arena-added : bool
+        (if arena-owner
+          (tc_i64_i64_map.insert-if-absent-ref!
+            ids
+            (tc-env-cache-arena-lifetime-marker-key lifetime-id)
+            next)
+          false)]
+      (if (or general-added arena-added)
+        (begin
+          (array-set! values next ty)
+          (array-set! unsafe-flags next 0)
+          (array-set! c-abi-fnptr-flags next 0)
+          (array-set!
+            shadow-flags
+            next
+            (+
+              (if signature
+                tc-env-cache-flag-signature-lifetime
+                0)
+              (* position tc-env-cache-sidecar-position-scale)))
+          true)
+        false))))
+
 (define (tc-env-cache-fill
   [env : TcTypeEnv]
   [ids : tc_i64_i64_map.Map (:consume)]
@@ -10903,6 +11018,8 @@
     [next : i64 0]
     [resolution-next : i64 0]
     [position : i64 0]
+    [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
+    [region-marker-id : i64 (tc-region-marker-id)]
     [cleanup-marker-id : i64 (tc-cleanup-owner-marker-id)]
     [ordinary-arena-marker-id : i64 (tc-ordinary-arena-owner-marker-id)]
     [atomic-arena-marker-id : i64 (tc-atomic-arena-owner-marker-id)]
@@ -10958,6 +11075,31 @@
                       unit)
                     (set! next (+ next 1)))
                   unit)
+                (let
+                  [marker-lifetime-id : i64
+                    (tc-env-cache-lifetime-marker-lifetime-id
+                      name-id
+                      ty
+                      signature-marker-id
+                      region-marker-id
+                      ordinary-arena-marker-id
+                      atomic-arena-marker-id)]
+                  (if (tc-env-cache-add-lifetime-marker!
+                    (&mut cur-ids)
+                    values
+                    unsafe-flags
+                    c-abi-fnptr-flags
+                    shadow-flags
+                    marker-lifetime-id
+                    next
+                    ty
+                    (= name-id signature-marker-id)
+                    (or
+                      (= name-id ordinary-arena-marker-id)
+                      (= name-id atomic-arena-marker-id))
+                    position)
+                    (set! next (+ next 1))
+                    unit))
                 (set! head (struct-get rest-env head))
                 (set! position (+ position 1))
                 (set! cur-above-boundary still-above)))]
@@ -10999,6 +11141,8 @@
     [next : i64 0]
     [resolution-next : i64 0]
     [position : i64 0]
+    [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
+    [region-marker-id : i64 (tc-region-marker-id)]
     [cleanup-marker-id : i64 (tc-cleanup-owner-marker-id)]
     [ordinary-arena-marker-id : i64 (tc-ordinary-arena-owner-marker-id)]
     [atomic-arena-marker-id : i64 (tc-atomic-arena-owner-marker-id)]
@@ -11051,6 +11195,31 @@
                       unit)
                     (set! next (+ next 1)))
                   unit)
+                (let
+                  [marker-lifetime-id : i64
+                    (tc-env-cache-lifetime-marker-lifetime-id
+                      name-id
+                      ty
+                      signature-marker-id
+                      region-marker-id
+                      ordinary-arena-marker-id
+                      atomic-arena-marker-id)]
+                  (if (tc-env-cache-add-lifetime-marker!
+                    (&mut cur-ids)
+                    values
+                    unsafe-flags
+                    c-abi-fnptr-flags
+                    shadow-flags
+                    marker-lifetime-id
+                    next
+                    ty
+                    (= name-id signature-marker-id)
+                    (or
+                      (= name-id ordinary-arena-marker-id)
+                      (= name-id atomic-arena-marker-id))
+                    position)
+                    (set! next (+ next 1))
+                    unit))
                 (set! left (- left 1))
                 (set! head (struct-get rest-env head))
                 (set! position (+ position 1))
@@ -11968,7 +12137,16 @@
   cbi.compiler-builtin-id-tc-active-region)
 
 (define (tc-signature-lifetime-marker-id) : i64
-  (ci.intern "\n__typelisp_signature_lifetime_marker"))
+  (let
+    [generation : i64 (ci.intern-generation)]
+    (if (= tc-signature-lifetime-marker-id-generation generation)
+      tc-signature-lifetime-marker-id-cache
+      (let
+        [marker-id : i64 (ci.intern "\n__typelisp_signature_lifetime_marker")]
+        (begin
+          (set! tc-signature-lifetime-marker-id-cache marker-id)
+          (set! tc-signature-lifetime-marker-id-generation generation)
+          marker-id)))))
 
 (define (tc-cleanup-owner-marker-id) : i64
   cbi.compiler-builtin-id-tc-cleanup-owner)
@@ -14982,11 +15160,13 @@
     (tc-hygiene-name-text-id name-id)
     (tc-env-key-display name-id)))
 
-(define (tc-lookup-persistent-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
+(define (tc-lookup-persistent-key-id
+  [env : TcTypeEnv]
+  [lookup-id : i64]
+  [display-id : i64]) : ResultTcType
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
     (let
-      [lookup-id : i64 (tc-env-name-key-id name-id)]
       [store-handle : i64 (struct-get env store)]
       [head : i64 (struct-get env head)]
       [done : bool false]
@@ -15053,12 +15233,19 @@
           (ResultTcType.Err
             (string.append
               "typecheck: unbound name "
-              (tc-env-key-display name-id))))))))
+              (tc-env-key-display display-id))))))))
 
-(define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
+(define (tc-lookup-persistent-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
+  (tc-lookup-persistent-key-id env (tc-env-name-key-id name-id) name-id))
+
+(define (tc-lookup-selected-id
+  [env : TcTypeEnv]
+  [scoped-id : i64]
+  [persistent-id : i64]
+  [display-id : i64]) : ResultTcType
   (if tc-type-env-scoped-runtime-active
     (let
-      [index : i64 (tc-type-env-scoped-runtime-lookup-index name-id)]
+      [index : i64 (tc-type-env-scoped-runtime-lookup-index scoped-id)]
       [scoped : ResultTcType
         (if (>= index 0)
           (begin
@@ -15077,15 +15264,20 @@
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
-            (tc-lookup-persistent-id
+            (tc-lookup-persistent-key-id
               (struct-get
                 (struct-get tc-type-env-scoped-runtime-carrier sidecar)
                 persistent)
-              name-id)))]
+              persistent-id
+              display-id)))]
       (begin
         (cfg
           tc-env-scoped-dual-verify
-          (if (tc-type-env-scoped-dual-result-type-matches? scoped env name-id)
+          (if (tc-type-env-scoped-dual-result-type-matches?
+            scoped
+            env
+            persistent-id
+            display-id)
             unit
             (io.panic
               "typecheck: scoped type lookup diverged from persistent env")))
@@ -15093,11 +15285,13 @@
           [(ResultTcType.Ok ty) (tc-poison-observation-note! ty)]
           [(ResultTcType.Err _) unit])
         scoped))
-    (tc-lookup-persistent-id env name-id)))
+    (tc-lookup-persistent-key-id env persistent-id display-id)))
 
-(define (tc-name-bound-persistent-id? [env : TcTypeEnv] [name-id : i64]) : bool
+(define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
+  (tc-lookup-selected-id env name-id (tc-env-name-key-id name-id) name-id))
+
+(define (tc-name-bound-persistent-key-id? [env : TcTypeEnv] [lookup-id : i64]) : bool
   (let
-    [lookup-id : i64 (tc-env-name-key-id name-id)]
     [store-handle : i64 (struct-get env store)]
     [head : i64 (struct-get env head)]
     [done : bool false]
@@ -15140,36 +15334,47 @@
                 (set! head (tc-type-env-binding-parent-at binding-ptr))))]))
       found)))
 
-(define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
+(define (tc-name-bound-persistent-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (tc-name-bound-persistent-key-id? env (tc-env-name-key-id name-id)))
+
+(define (tc-name-bound-selected-id?
+  [env : TcTypeEnv]
+  [scoped-id : i64]
+  [persistent-id : i64]) : bool
   (if tc-type-env-scoped-runtime-active
     (let
       [scoped : bool
-        (if (>= (tc-type-env-scoped-runtime-lookup-index name-id) 0)
+        (if (>= (tc-type-env-scoped-runtime-lookup-index scoped-id) 0)
           true
           (begin
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
-            (tc-name-bound-persistent-id?
+            (tc-name-bound-persistent-key-id?
               (struct-get
                 (struct-get tc-type-env-scoped-runtime-carrier sidecar)
                 persistent)
-              name-id)))]
+              persistent-id)))]
       (begin
         (cfg
           tc-env-scoped-dual-verify
-          (if (= scoped (tc-name-bound-persistent-id? env name-id))
+          (if (= scoped (tc-name-bound-persistent-key-id? env persistent-id))
             unit
             (io.panic
               "typecheck: scoped exact-bound lookup diverged from persistent env")))
         scoped))
-    (tc-name-bound-persistent-id? env name-id)))
+    (tc-name-bound-persistent-key-id? env persistent-id)))
 
-(define (tc-lookup-unsafe-persistent-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
+(define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (tc-name-bound-selected-id? env name-id (tc-env-name-key-id name-id)))
+
+(define (tc-lookup-unsafe-persistent-key-id
+  [env : TcTypeEnv]
+  [lookup-id : i64]
+  [display-id : i64]) : ResultTcTypeUnsafe
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
     (let
-      [lookup-id : i64 (tc-env-name-key-id name-id)]
       [store-handle : i64 (struct-get env store)]
       [head : i64 (struct-get env head)]
       [done : bool false]
@@ -15259,12 +15464,19 @@
           (ResultTcTypeUnsafe.Err
             (string.append
               "typecheck: unbound name "
-              (tc-env-key-display name-id))))))))
+              (tc-env-key-display display-id))))))))
 
-(define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
+(define (tc-lookup-unsafe-persistent-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
+  (tc-lookup-unsafe-persistent-key-id env (tc-env-name-key-id name-id) name-id))
+
+(define (tc-lookup-unsafe-selected-id
+  [env : TcTypeEnv]
+  [scoped-id : i64]
+  [persistent-id : i64]
+  [display-id : i64]) : ResultTcTypeUnsafe
   (if tc-type-env-scoped-runtime-active
     (let
-      [index : i64 (tc-type-env-scoped-runtime-lookup-index name-id)]
+      [index : i64 (tc-type-env-scoped-runtime-lookup-index scoped-id)]
       [scoped : ResultTcTypeUnsafe
         (if (>= index 0)
           (let
@@ -15287,28 +15499,40 @@
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
-            (tc-lookup-unsafe-persistent-id
+            (tc-lookup-unsafe-persistent-key-id
               (struct-get
                 (struct-get tc-type-env-scoped-runtime-carrier sidecar)
                 persistent)
-              name-id)))]
+              persistent-id
+              display-id)))]
       (begin
         (cfg
           tc-env-scoped-dual-verify
           (if (tc-type-env-scoped-dual-result-unsafe-matches?
             scoped
             env
-            name-id)
+            persistent-id
+            display-id)
             unit
             (io.panic
               (string.append
                 "typecheck: scoped unsafe lookup diverged for "
-                (tc-env-key-display name-id)))))
+                (tc-env-key-display display-id)))))
         (match scoped
           [(ResultTcTypeUnsafe.Ok ty _) (tc-poison-observation-note! ty)]
           [(ResultTcTypeUnsafe.Err _) unit])
         scoped))
-    (tc-lookup-unsafe-persistent-id env name-id)))
+    (tc-lookup-unsafe-persistent-key-id env persistent-id display-id)))
+
+(define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
+  (tc-lookup-unsafe-selected-id
+    env
+    name-id
+    (tc-env-name-key-id name-id)
+    name-id))
+
+(define (tc-lookup-unsafe-key-id [env : TcTypeEnv] [lookup-id : i64]) : ResultTcTypeUnsafe
+  (tc-lookup-unsafe-selected-id env lookup-id lookup-id lookup-id))
 
 ;; Alias shadowing asks one pure question about the persistent env chain: is
 ;; `name-id` bound anywhere in the span that starts at `env` and ends at the
@@ -15435,7 +15659,7 @@
     1
     (match (tc-type-env-view env)
       [(TcTypeEnvView.Nil) 2]
-      [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+      [(TcTypeEnvView.Cache _ scan-through _ rest _)
         (if (tc-name-bound-span-note-cache!
           (tc-type-env-cache-index (struct-get env head)))
           (if scan-through
@@ -15497,16 +15721,21 @@
   [name-id : i64]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
-    [(TcTypeEnvView.Cache ids _ _ _ _ scan-through _ rest _)
-      ;; A module's explicit cache now contains only imported aliases. Those
-      ;; aliases still shadow a declaration owned by the current module, even
-      ;; though marker scans stop at this cache boundary.
-      (match (tc_i64_i64_map.get (& ids) name-id)
-        [(tc_i64_i64_map.LookupFound _) true]
-        [(tc_i64_i64_map.LookupMissing)
-          (if scan-through
-            (tc-name-bound-before-hygiene-global-boundary-scan-id? rest name-id)
-            false)])]
+    [(TcTypeEnvView.Cache cache-ptr scan-through _ rest _)
+      (let
+        [ids : tc_i64_i64_map.Map
+          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+        ;; A module's explicit cache now contains only imported aliases. Those
+        ;; aliases still shadow a declaration owned by the current module, even
+        ;; though marker scans stop at this cache boundary.
+        (match (tc_i64_i64_map.get (& ids) name-id)
+          [(tc_i64_i64_map.LookupFound _) true]
+          [(tc_i64_i64_map.LookupMissing)
+            (if scan-through
+              (tc-name-bound-before-hygiene-global-boundary-scan-id?
+                rest
+                name-id)
+              false)]))]
     [(TcTypeEnvView.Bind key _ rest)
       (if (= key (tc-hygiene-global-boundary-id))
         false
@@ -15619,20 +15848,23 @@
       ;; Dotted source modules already publish canonical qualified entries in
       ;; the top environment. Resolve those on demand instead of copying every
       ;; declaration into every module-local cache snapshot.
-      (match (tc-lookup-persistent-id
+      (match (tc-lookup-persistent-key-id
         env
-        (tc-module-name-id-by-id module-id name-id))
+        (tc-module-name-id-by-id module-id name-id)
+        name-id)
         [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-        [(ResultTcType.Err _) (tc-lookup-persistent-id env env-name-id)])
-      (match (tc-lookup-id env env-name-id)
+        [(ResultTcType.Err _)
+          (tc-lookup-persistent-key-id env env-name-id env-name-id)])
+      (match (tc-lookup-selected-id env env-name-id env-name-id env-name-id)
         [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
         [(ResultTcType.Err message)
           (if (and
             (> (string.string-length module) 0)
             (not (tc-name-qualified-id? name-id)))
-            (match (tc-lookup-persistent-id
+            (match (tc-lookup-persistent-key-id
               env
-              (tc-module-name-id-by-id module-id name-id))
+              (tc-module-name-id-by-id module-id name-id)
+              name-id)
               [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
               [(ResultTcType.Err _) (ResultTcType.Err message)])
             (ResultTcType.Err message))]))))
@@ -15654,29 +15886,37 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (tc-lookup-id env name-id)))
 
-(define (tc-lookup-hygiene-global-scan
+(define (tc-lookup-hygiene-global-key-scan
   [root : TcTypeEnv]
   [env : TcTypeEnv]
-  [name-id : i64]) : ResultTcType
+  [lookup-id : i64]
+  [display-id : i64]) : ResultTcType
   (match (tc-type-env-spine-step env)
-    [(TcTypeEnvSpineStep.Done) (tc-lookup-persistent-id root name-id)]
+    [(TcTypeEnvSpineStep.Done)
+      (tc-lookup-persistent-key-id root lookup-id display-id)]
     [(TcTypeEnvSpineStep.Cache rest-env)
-      (tc-lookup-hygiene-global-scan root rest-env name-id)]
+      (tc-lookup-hygiene-global-key-scan root rest-env lookup-id display-id)]
     [(TcTypeEnvSpineStep.Bind key _ rest-env)
       (if (= key (tc-hygiene-global-boundary-id))
-        (tc-lookup-persistent-id rest-env name-id)
-        (tc-lookup-hygiene-global-scan root rest-env name-id))]))
+        (tc-lookup-persistent-key-id rest-env lookup-id display-id)
+        (tc-lookup-hygiene-global-key-scan root rest-env lookup-id display-id))]))
 
 (define (tc-lookup-hygiene-global-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
-  (tc-lookup-hygiene-global-scan env env name-id))
+  (tc-lookup-hygiene-global-key-scan
+    env
+    env
+    (tc-env-name-key-id name-id)
+    name-id))
 
 (define (tc-lookup-hygiene-global-visible-id
   [_ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]) : ResultTcType
-  (match (tc-lookup-hygiene-global-id env (tc-env-name-key-id name-id))
-    [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  (let
+    [lookup-id : i64 (tc-env-name-key-id name-id)]
+    (match (tc-lookup-hygiene-global-key-scan env env lookup-id lookup-id)
+      [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+      [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
 (define (tc-lookup-dotted-source-visible
   [ctx : TcContext]
@@ -15690,7 +15930,7 @@
     name-id
     false)
     [(TcNameLookup.Ok lookup-name lookup-id)
-      (match (tc-lookup-unsafe-id env (tc-env-name-key-id lookup-id))
+      (match (tc-lookup-unsafe-key-id env (tc-env-name-key-id lookup-id))
         [(ResultTcTypeUnsafe.Ok ty unsafe)
           (if unsafe
             (match (tc-require-unsafe
@@ -15794,14 +16034,24 @@
               (if (and
                 (not (csym.compiler-symbol-root-module-id? module-id))
                 (not (tc-name-qualified-id? name-id)))
-                (match (tc-lookup-unsafe-persistent-id
+                (let
+                  [module-name-id : i64
+                    (tc-module-name-id-by-id module-id name-id)]
+                  (match (tc-lookup-unsafe-persistent-key-id
+                    def-env
+                    module-name-id
+                    module-name-id)
+                    [(ResultTcTypeUnsafe.Ok ty unsafe)
+                      (ResultTcTypeUnsafe.Ok ty unsafe)]
+                    [(ResultTcTypeUnsafe.Err _)
+                      (tc-lookup-unsafe-persistent-key-id
+                        def-env
+                        env-name-id
+                        env-name-id)]))
+                (tc-lookup-unsafe-persistent-key-id
                   def-env
-                  (tc-module-name-id-by-id module-id name-id))
-                  [(ResultTcTypeUnsafe.Ok ty unsafe)
-                    (ResultTcTypeUnsafe.Ok ty unsafe)]
-                  [(ResultTcTypeUnsafe.Err _)
-                    (tc-lookup-unsafe-persistent-id def-env env-name-id)])
-                (tc-lookup-unsafe-persistent-id def-env env-name-id))]
+                  env-name-id
+                  env-name-id))]
             (match found
               [(ResultTcTypeUnsafe.Ok ty unsafe)
                 (if unsafe
@@ -15850,7 +16100,7 @@
 (define (tc-active-region-scan [env : TcTypeEnv]) : TcMaybeNameId
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) (TcMaybeNameId.No)]
-    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+    [(TcTypeEnvView.Cache _ scan-through _ rest _)
       (if scan-through
         (tc-active-region-scan rest)
         (TcMaybeNameId.No))]
@@ -16375,7 +16625,7 @@
   [region-marker-id : i64]) : TcMaybeNameId
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) (TcMaybeNameId.No)]
-    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+    [(TcTypeEnvView.Cache _ scan-through _ rest _)
       (if scan-through
         (tc-arena-phase-token-region-active-scan rest token-id region-marker-id)
         (TcMaybeNameId.No))]
@@ -16390,7 +16640,7 @@
     (let
       [region-marker-id : i64 (tc-arena-phase-token-region-marker-id token-id)]
       (match (tc-type-env-view env)
-        [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
+        [(TcTypeEnvView.Cache _ _ _ rest _)
           (tc-arena-phase-token-region-active-scan
             rest
             token-id
@@ -16408,7 +16658,7 @@
   [region-marker-id : i64]) : TcMaybeNameId
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) (TcMaybeNameId.No)]
-    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+    [(TcTypeEnvView.Cache _ scan-through _ rest _)
       (if scan-through
         (tc-arena-phase-token-owner-active-scan
           rest
@@ -16432,7 +16682,7 @@
       [owner-marker-id : i64 (tc-arena-phase-token-owner-marker-id token-id)]
       [region-marker-id : i64 (tc-arena-phase-token-region-marker-id token-id)]
       (match (tc-type-env-view env)
-        [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
+        [(TcTypeEnvView.Cache _ _ _ rest _)
           (tc-arena-phase-token-owner-active-scan
             rest
             token-id
@@ -16510,14 +16760,19 @@
   [sidecar-flag : i64]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
-    [(TcTypeEnvView.Cache ids _ _ _ sidecar-flags _ partial _ below)
-      (match (tc_i64_i64_map.get (& ids) name-id)
-        [(tc_i64_i64_map.LookupFound index)
-          (not (= (bit-and (array-ref sidecar-flags index) sidecar-flag) 0))]
-        [(tc_i64_i64_map.LookupMissing)
-          (if partial
-            (tc-owner-active-indexed-id? below name-id marker-id sidecar-flag)
-            false)])]
+    [(TcTypeEnvView.Cache cache-ptr _ partial _ below)
+      (let
+        [ids : tc_i64_i64_map.Map
+          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+        [sidecar-flags : (__tl_dyn-array i64)
+          (tc-type-env-cache-field-at cache-ptr 104 (__tl_dyn-array i64))]
+        (match (tc_i64_i64_map.get (& ids) name-id)
+          [(tc_i64_i64_map.LookupFound index)
+            (not (= (bit-and (array-ref sidecar-flags index) sidecar-flag) 0))]
+          [(tc_i64_i64_map.LookupMissing)
+            (if partial
+              (tc-owner-active-indexed-id? below name-id marker-id sidecar-flag)
+              false)]))]
     [(TcTypeEnvView.Bind key _ rest)
       (if (= key name-id)
         (tc-env-cache-owner-marker-head-id? rest name-id marker-id)
@@ -16891,24 +17146,41 @@
 ;; list and outlive nested stack bindings or scoped arenas. The default program
 ;; arena is inferred for untagged aggregate handles, so it has no lexical
 ;; binder in this environment walk.
-(define (tc-signature-lifetime-marker-entry?
+(define (tc-signature-lifetime-marker-entry-id?
   [key : i64]
   [ty : ast.AstType]
-  [lifetime-id : i64]) : bool
-  (if (= key (tc-signature-lifetime-marker-id))
+  [lifetime-id : i64]
+  [signature-marker-id : i64]) : bool
+  (if (= key signature-marker-id)
     (match ty
       [(ast.AstType.Var lifetime)
         (and (>= lifetime-id 0) (= lifetime lifetime-id))]
       [_ false])
     false))
 
-(define (tc-env-binding-matches-lifetime-id?
+(define (tc-signature-lifetime-marker-entry?
   [key : i64]
   [ty : ast.AstType]
   [lifetime-id : i64]) : bool
+  (tc-signature-lifetime-marker-entry-id?
+    key
+    ty
+    lifetime-id
+    (tc-signature-lifetime-marker-id)))
+
+(define (tc-env-binding-matches-lifetime-id?
+  [key : i64]
+  [ty : ast.AstType]
+  [lifetime-id : i64]
+  [signature-marker-id : i64]) : bool
   (cond
     [(= key lifetime-id) true]
-    [(tc-signature-lifetime-marker-entry? key ty lifetime-id) true]
+    [(tc-signature-lifetime-marker-entry-id?
+        key
+        ty
+        lifetime-id
+        signature-marker-id)
+      true]
     [(= key (tc-region-marker-id))
       (match ty
         [(ast.AstType.Var region)
@@ -16922,6 +17194,74 @@
           (tc-arena-region-owned-by-id? owner lifetime-id)]
         [_ false])]
     [else false]))
+
+;; 0 = no matching binding in this cache window, 1 = ordinary/region/arena
+;; binding, 2 = signature marker. Packed positions preserve the head-first
+;; lexical order when several binding forms spell the same lifetime.
+(define (tc-env-cache-lifetime-match-status
+  [cache-ptr : (Ptr TcTypeEnvCache)]
+  [lifetime-id : i64]) : i64
+  (let
+    [ids : tc_i64_i64_map.Map
+      (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+    [sidecar-flags : (__tl_dyn-array i64)
+      (tc-type-env-cache-field-at cache-ptr 104 (__tl_dyn-array i64))]
+    [ordinary-index : i64 (tc_i64_i64_map.get-value-or (& ids) lifetime-id -1)]
+    [marker-index : i64
+      (tc_i64_i64_map.get-value-or
+        (& ids)
+        (tc-env-cache-lifetime-marker-key lifetime-id)
+        -1)]
+    [owner-id : i64
+      (if (and
+        (>= lifetime-id (tc-arena-phase-structural-base))
+        (= (tc-arena-phase-structural-kind lifetime-id) 0))
+        (tc-arena-phase-structural-first-id lifetime-id)
+        -1)]
+    [owner-marker-index : i64
+      (if (>= owner-id 0)
+        (tc_i64_i64_map.get-value-or
+          (& ids)
+          (tc-env-cache-arena-lifetime-marker-key owner-id)
+          -1)
+        -1)]
+    [best-position : i64
+      (if (>= ordinary-index 0)
+        (/
+          (array-ref sidecar-flags ordinary-index)
+          tc-env-cache-sidecar-position-scale)
+        -1)]
+    [best-signature : bool false]
+    (begin
+      (if (>= marker-index 0)
+        (let
+          [flags : i64 (array-ref sidecar-flags marker-index)]
+          [position : i64 (/ flags tc-env-cache-sidecar-position-scale)]
+          (if (or (< best-position 0) (< position best-position))
+            (begin
+              (set! best-position position)
+              (set!
+                best-signature
+                (not (= (bit-and flags tc-env-cache-flag-signature-lifetime) 0))))
+            unit))
+        unit)
+      (if (>= owner-marker-index 0)
+        (let
+          [flags : i64 (array-ref sidecar-flags owner-marker-index)]
+          [position : i64 (/ flags tc-env-cache-sidecar-position-scale)]
+          (if (or (< best-position 0) (< position best-position))
+            (begin
+              (set! best-position position)
+              (set!
+                best-signature
+                (not (= (bit-and flags tc-env-cache-flag-signature-lifetime) 0))))
+            unit))
+        unit)
+      (if (< best-position 0)
+        0
+        (if best-signature
+          2
+          1)))))
 
 (define (tc-env-cache-covered-count [sidecar-flags : (__tl_dyn-array i64)]) : i64
   (array-ref sidecar-flags (- (array-length sidecar-flags) 1)))
@@ -16941,61 +17281,104 @@
       (if (= key name-id)
         base
         (tc-ordinary-binding-rank-id-from rest name-id (+ base 1)))]
-    [(TcTypeEnvView.Cache ids _ _ _ sidecar-flags scan-through partial _ below)
-      (if scan-through
-        (match (tc_i64_i64_map.get (& ids) name-id)
-          [(tc_i64_i64_map.LookupFound index)
-            (+
-              base
-              (/
-                (array-ref sidecar-flags index)
-                tc-env-cache-sidecar-position-scale))]
-          [(tc_i64_i64_map.LookupMissing)
-            (if partial
-              (tc-ordinary-binding-rank-id-from
-                below
-                name-id
-                (+ base (tc-env-cache-covered-count sidecar-flags)))
-              -1)])
-        -1)]))
+    [(TcTypeEnvView.Cache cache-ptr scan-through partial _ below)
+      (let
+        [ids : tc_i64_i64_map.Map
+          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+        [sidecar-flags : (__tl_dyn-array i64)
+          (tc-type-env-cache-field-at cache-ptr 104 (__tl_dyn-array i64))]
+        (if scan-through
+          (match (tc_i64_i64_map.get (& ids) name-id)
+            [(tc_i64_i64_map.LookupFound index)
+              (+
+                base
+                (/
+                  (array-ref sidecar-flags index)
+                  tc-env-cache-sidecar-position-scale))]
+            [(tc_i64_i64_map.LookupMissing)
+              (if partial
+                (tc-ordinary-binding-rank-id-from
+                  below
+                  name-id
+                  (+ base (tc-env-cache-covered-count sidecar-flags)))
+                -1)])
+          -1))]))
 
-(define (tc-lifetime-visible-scan-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
+(define (tc-lifetime-visible-scan-id?
+  [env : TcTypeEnv]
+  [lifetime-id : i64]
+  [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
-    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+    [(TcTypeEnvView.Cache cache-ptr scan-through partial rest below)
       (if scan-through
-        (tc-lifetime-visible-scan-id? rest lifetime-id)
+        (if partial
+          (or
+            (not
+              (= (tc-env-cache-lifetime-match-status cache-ptr lifetime-id) 0))
+            (tc-lifetime-visible-scan-id? below lifetime-id signature-marker-id))
+          (tc-lifetime-visible-scan-id? rest lifetime-id signature-marker-id))
         false)]
     [(TcTypeEnvView.Bind key ty rest)
-      (if (tc-env-binding-matches-lifetime-id? key ty lifetime-id)
+      (if (tc-env-binding-matches-lifetime-id?
+        key
+        ty
+        lifetime-id
+        signature-marker-id)
         true
-        (tc-lifetime-visible-scan-id? rest lifetime-id))]))
+        (tc-lifetime-visible-scan-id? rest lifetime-id signature-marker-id))]))
 
 (define (tc-lifetime-nearest-binding-signature-scan-id?
   [env : TcTypeEnv]
-  [lifetime-id : i64]) : bool
+  [lifetime-id : i64]
+  [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
-    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+    [(TcTypeEnvView.Cache cache-ptr scan-through partial rest below)
       (if scan-through
-        (tc-lifetime-nearest-binding-signature-scan-id? rest lifetime-id)
+        (if partial
+          (let
+            [status : i64
+              (tc-env-cache-lifetime-match-status cache-ptr lifetime-id)]
+            (cond
+              [(= status 2) true]
+              [(= status 1) false]
+              [else
+                (tc-lifetime-nearest-binding-signature-scan-id?
+                  below
+                  lifetime-id
+                  signature-marker-id)]))
+          (tc-lifetime-nearest-binding-signature-scan-id?
+            rest
+            lifetime-id
+            signature-marker-id))
         false)]
     [(TcTypeEnvView.Bind key ty rest)
-      (if (tc-env-binding-matches-lifetime-id? key ty lifetime-id)
-        (tc-signature-lifetime-marker-entry? key ty lifetime-id)
-        (tc-lifetime-nearest-binding-signature-scan-id? rest lifetime-id))]))
+      (if (tc-env-binding-matches-lifetime-id?
+        key
+        ty
+        lifetime-id
+        signature-marker-id)
+        (tc-signature-lifetime-marker-entry-id?
+          key
+          ty
+          lifetime-id
+          signature-marker-id)
+        (tc-lifetime-nearest-binding-signature-scan-id?
+          rest
+          lifetime-id
+          signature-marker-id))]))
 
 (define (tc-lifetime-visible-persistent-id?
   [env : TcTypeEnv]
   [lifetime-id : i64]) : bool
   (if (< lifetime-id 0)
     false
-    (or
-      (>= (tc-ordinary-binding-rank-id-from env lifetime-id 0) 0)
-      (match (tc-type-env-view env)
-        [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
-          (tc-lifetime-visible-scan-id? rest lifetime-id)]
-        [_ (tc-lifetime-visible-scan-id? env lifetime-id)]))))
+    (let
+      [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
+      (or
+        (>= (tc-ordinary-binding-rank-id-from env lifetime-id 0) 0)
+        (tc-lifetime-visible-scan-id? env lifetime-id signature-marker-id)))))
 
 (define (tc-lifetime-visible-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
   (if tc-type-env-scoped-runtime-active
@@ -17026,51 +17409,65 @@
   [lifetime-id : i64]
   [target-id : i64]
   [seen-target : bool]
-  [signature-only : bool]) : bool
+  [signature-only : bool]
+  [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
-    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+    [(TcTypeEnvView.Cache _ scan-through _ rest _)
       (if scan-through
         (tc-lifetime-outlives-binding-scan-inner-id
           rest
           lifetime-id
           target-id
           seen-target
-          signature-only)
+          signature-only
+          signature-marker-id)
         false)]
     [(TcTypeEnvView.Bind key ty rest)
       (if (if signature-only
-        (tc-signature-lifetime-marker-entry? key ty lifetime-id)
-        (tc-env-binding-matches-lifetime-id? key ty lifetime-id))
+        (tc-signature-lifetime-marker-entry-id?
+          key
+          ty
+          lifetime-id
+          signature-marker-id)
+        (tc-env-binding-matches-lifetime-id?
+          key
+          ty
+          lifetime-id
+          signature-marker-id))
         seen-target
         (tc-lifetime-outlives-binding-scan-inner-id
           rest
           lifetime-id
           target-id
           (or seen-target (= key target-id))
-          signature-only))]))
+          signature-only
+          signature-marker-id))]))
 
 (define (tc-lifetime-outlives-binding-scan-id
   [env : TcTypeEnv]
   [lifetime-id : i64]
   [target-id : i64]
   [seen-target : bool]
-  [signature-only : bool]) : bool
+  [signature-only : bool]
+  [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
-    [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
+    [(TcTypeEnvView.Cache _ _ _ rest _)
       (tc-lifetime-outlives-binding-scan-inner-id
         rest
         lifetime-id
         target-id
         seen-target
-        signature-only)]
+        signature-only
+        signature-marker-id)]
     [_
       (tc-lifetime-outlives-binding-scan-inner-id
         env
         lifetime-id
         target-id
         seen-target
-        signature-only)]))
+        signature-only
+        signature-marker-id)]))
 
 (define (tc-lifetime-outlives-binding-persistent-id?
   [env : TcTypeEnv]
@@ -17079,8 +17476,12 @@
   (if (or (< lifetime-id 0) (< target-id 0))
     false
     (let
+      [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
       [signature-lifetime : bool
-        (tc-lifetime-nearest-binding-signature-scan-id? env lifetime-id)]
+        (tc-lifetime-nearest-binding-signature-scan-id?
+          env
+          lifetime-id
+          signature-marker-id)]
       [lifetime-rank : i64 (tc-ordinary-binding-rank-id-from env lifetime-id 0)]
       [target-rank : i64 (tc-ordinary-binding-rank-id-from env target-id 0)]
       (if signature-lifetime
@@ -17089,7 +17490,8 @@
           lifetime-id
           target-id
           false
-          true)
+          true
+          signature-marker-id)
         (if (and (>= lifetime-rank 0) (>= target-rank 0))
           (> lifetime-rank target-rank)
           (tc-lifetime-outlives-binding-scan-id
@@ -17097,7 +17499,8 @@
             lifetime-id
             target-id
             false
-            false))))))
+            false
+            signature-marker-id))))))
 
 (define (tc-lifetime-outlives-binding-id?
   [env : TcTypeEnv]
@@ -17137,12 +17540,13 @@
   [target-lifetime-id : i64]
   [seen-target : bool]
   [value-signature : bool]
-  [target-signature : bool]) : bool
+  [target-signature : bool]
+  [signature-marker-id : i64]) : bool
   (if (and (>= value-lifetime-id 0) (= value-lifetime-id target-lifetime-id))
     true
     (match (tc-type-env-view env)
       [(TcTypeEnvView.Nil) false]
-      [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+      [(TcTypeEnvView.Cache _ scan-through _ rest _)
         (if scan-through
           (tc-lifetime-outlives-lifetime-scan-inner-id
             rest
@@ -17150,12 +17554,21 @@
             target-lifetime-id
             seen-target
             value-signature
-            target-signature)
+            target-signature
+            signature-marker-id)
           false)]
       [(TcTypeEnvView.Bind key ty rest)
         (if (if value-signature
-          (tc-signature-lifetime-marker-entry? key ty value-lifetime-id)
-          (tc-env-binding-matches-lifetime-id? key ty value-lifetime-id))
+          (tc-signature-lifetime-marker-entry-id?
+            key
+            ty
+            value-lifetime-id
+            signature-marker-id)
+          (tc-env-binding-matches-lifetime-id?
+            key
+            ty
+            value-lifetime-id
+            signature-marker-id))
           seen-target
           (tc-lifetime-outlives-lifetime-scan-inner-id
             rest
@@ -17164,10 +17577,19 @@
             (or
               seen-target
               (if target-signature
-                (tc-signature-lifetime-marker-entry? key ty target-lifetime-id)
-                (tc-env-binding-matches-lifetime-id? key ty target-lifetime-id)))
+                (tc-signature-lifetime-marker-entry-id?
+                  key
+                  ty
+                  target-lifetime-id
+                  signature-marker-id)
+                (tc-env-binding-matches-lifetime-id?
+                  key
+                  ty
+                  target-lifetime-id
+                  signature-marker-id)))
             value-signature
-            target-signature))])))
+            target-signature
+            signature-marker-id))])))
 
 (define (tc-lifetime-outlives-lifetime-scan-id
   [env : TcTypeEnv]
@@ -17175,16 +17597,18 @@
   [target-lifetime-id : i64]
   [seen-target : bool]
   [value-signature : bool]
-  [target-signature : bool]) : bool
+  [target-signature : bool]
+  [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
-    [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
+    [(TcTypeEnvView.Cache _ _ _ rest _)
       (tc-lifetime-outlives-lifetime-scan-inner-id
         rest
         value-lifetime-id
         target-lifetime-id
         seen-target
         value-signature
-        target-signature)]
+        target-signature
+        signature-marker-id)]
     [_
       (tc-lifetime-outlives-lifetime-scan-inner-id
         env
@@ -17192,7 +17616,8 @@
         target-lifetime-id
         seen-target
         value-signature
-        target-signature)]))
+        target-signature
+        signature-marker-id)]))
 
 (define (tc-lifetime-outlives-lifetime-persistent-id?
   [env : TcTypeEnv]
@@ -17203,12 +17628,17 @@
     (if (= value-lifetime-id target-lifetime-id)
       true
       (let
+        [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
         [value-signature : bool
-          (tc-lifetime-nearest-binding-signature-scan-id? env value-lifetime-id)]
+          (tc-lifetime-nearest-binding-signature-scan-id?
+            env
+            value-lifetime-id
+            signature-marker-id)]
         [target-signature : bool
           (tc-lifetime-nearest-binding-signature-scan-id?
             env
-            target-lifetime-id)]
+            target-lifetime-id
+            signature-marker-id)]
         [value-rank : i64
           (tc-ordinary-binding-rank-id-from env value-lifetime-id 0)]
         [target-rank : i64
@@ -17222,7 +17652,8 @@
               target-lifetime-id
               false
               value-signature
-              target-signature)]
+              target-signature
+              signature-marker-id)]
           [(and (>= value-rank 0) (>= target-rank 0))
             (> value-rank target-rank)]
           [else
@@ -17232,7 +17663,8 @@
               target-lifetime-id
               false
               false
-              false)])))))
+              false
+              signature-marker-id)])))))
 
 (define (tc-lifetime-outlives-lifetime-id?
   [env : TcTypeEnv]
@@ -18499,7 +18931,7 @@
     true
     (match (tc-type-env-view env)
       [(TcTypeEnvView.Nil) false]
-      [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+      [(TcTypeEnvView.Cache _ scan-through _ rest _)
         (if scan-through
           (tc-region-outlives-or-matches-scan rest value-region target-region)
           false)]
@@ -18529,7 +18961,7 @@
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (match (tc-type-env-view env)
-      [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
+      [(TcTypeEnvView.Cache _ _ _ rest _)
         (tc-region-outlives-or-matches-scan rest value-region target-region)]
       [_ (tc-region-outlives-or-matches-scan env value-region target-region)])))
 
@@ -18878,7 +19310,9 @@
     false))
 
 (define (tc-source-name-bound-exact-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (tc-name-bound-id? env (tc-env-name-key-id name-id)))
+  (let
+    [key-id : i64 (tc-env-name-key-id name-id)]
+    (tc-name-bound-selected-id? env key-id key-id)))
 
 (define (tc-current-module-source-lookup-key-id
   [ctx : TcContext]
@@ -18907,7 +19341,11 @@
       (TcMaybeString.Some (tc-env-key-display key-id))]
     [(TcMaybeNameId.No) (TcMaybeString.No)]))
 
-(define (tc-source-leading-segment-wins-over-exact-id?
+;; Dotted-local disambiguation compares binding ORDER in the raw source/local
+;; key domain. Its callers deliberately pass the unnormalized `a.b` and `a`
+;; ids: canonical top-env lookup happens only after this ordering decision.
+;; Normalizing either key here would skip a raw local exact binding.
+(define (tc-source-leading-segment-wins-over-exact-persistent-id?
   [env : TcTypeEnv]
   [name-id : i64]
   [prefix-id : i64]) : bool
@@ -18958,7 +19396,7 @@
                 (if (struct-get cache partial)
                   (if (>= (tc_i64_i64_map.get-value-or (& ids) name-id -1) 0)
                     false
-                    (tc-source-leading-segment-wins-over-exact-id?
+                    (tc-source-leading-segment-wins-over-exact-persistent-id?
                       (TcTypeEnv store-handle (struct-get cache below) 0)
                       name-id
                       prefix-id))
@@ -18972,13 +19410,61 @@
             false
             (if (= key prefix-id)
               true
-              (tc-source-leading-segment-wins-over-exact-id?
+              (tc-source-leading-segment-wins-over-exact-persistent-id?
                 (TcTypeEnv
                   store-handle
                   (tc-type-env-binding-parent-at binding-ptr)
                   0)
                 name-id
                 prefix-id))))])))
+
+;; The scoped stack already indexes the newest raw binding for each key. When
+;; either candidate is present, its monotonically increasing slot index answers
+;; the ordering question without rebuilding the persistent chain walk. If both
+;; miss, only the immutable persistent tail can contain either key.
+(define (tc-source-leading-segment-wins-over-exact-id?
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [prefix-id : i64]) : bool
+  (if tc-type-env-scoped-runtime-active
+    (let
+      [name-index : i64 (tc-type-env-scoped-runtime-lookup-index name-id)]
+      [prefix-index : i64 (tc-type-env-scoped-runtime-lookup-index prefix-id)]
+      [scoped : bool
+        (cond
+          [(>= prefix-index 0)
+            (if (>= name-index 0)
+              (> prefix-index name-index)
+              true)]
+          [(>= name-index 0) false]
+          [else
+            (begin
+              (cfg
+                compile-profile
+                (compiler-tc-env-profile-note-scoped-tail-fallback))
+              (tc-source-leading-segment-wins-over-exact-persistent-id?
+                (struct-get
+                  (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                  persistent)
+                name-id
+                prefix-id))])]
+      (begin
+        (cfg
+          tc-env-scoped-dual-verify
+          (if (=
+            scoped
+            (tc-source-leading-segment-wins-over-exact-persistent-id?
+              env
+              name-id
+              prefix-id))
+            unit
+            (io.panic
+              "typecheck: scoped dotted-name ordering diverged from persistent env")))
+        scoped))
+    (tc-source-leading-segment-wins-over-exact-persistent-id?
+      env
+      name-id
+      prefix-id)))
 
 (define (tc-source-leading-segment-wins-over-exact-id-from-dot?
   [env : TcTypeEnv]
@@ -27611,12 +28097,12 @@
 
 (define (tc-type-env-cache-head? [env : TcTypeEnv]) : bool
   (match (tc-type-env-view env)
-    [(TcTypeEnvView.Cache _ _ _ _ _ _ _ _ _) true]
+    [(TcTypeEnvView.Cache _ _ _ _ _) true]
     [_ false]))
 
 (define (tc-type-env-cache-partial-head? [env : TcTypeEnv]) : bool
   (match (tc-type-env-view env)
-    [(TcTypeEnvView.Cache _ _ _ _ _ _ partial _ _) partial]
+    [(TcTypeEnvView.Cache _ _ partial _ _) partial]
     [_ false]))
 
 (define (tc-type-env-bind-many [env : TcTypeEnv] [count : i64]) : TcTypeEnv
@@ -27798,7 +28284,7 @@
         (tc-env-partial-local-covered-count deep)
         (* (tc-local-cache-threshold) (+ (tc-local-cache-partial-layer-cap) 1)))
       (match (tc-type-env-view (tc-env-partial-local-base deep))
-        [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
+        [(TcTypeEnvView.Cache _ scan-through _ _ _) (not scan-through)]
         [_ false])
       (match (tc-lookup-id deep global-id)
         [(ResultTcType.Ok (ast.AstType.String)) true]
@@ -27812,7 +28298,7 @@
       ;; Explicitly layering a module-sized prefix must flatten all partial
       ;; windows without absorbing the global cache below them.
       (match (tc-type-env-view layered)
-        [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
+        [(TcTypeEnvView.Cache _ scan-through _ _ _) (not scan-through)]
         [_ false])
       (tc-type-env-cache-partial-head? layered)
       (match (tc-lookup-id layered global-id)
@@ -29354,23 +29840,26 @@
   (define (tc-type-env-scoped-dual-result-type-matches?
     [scoped : ResultTcType]
     [env : TcTypeEnv]
-    [name-id : i64]) : bool
+    [persistent-id : i64]
+    [display-id : i64]) : bool
     (match scoped
       [(ResultTcType.Ok scoped-ty)
-        (match (tc-lookup-persistent-id env name-id)
+        (match (tc-lookup-persistent-key-id env persistent-id display-id)
           [(ResultTcType.Ok persistent-ty) (tc-type-eq scoped-ty persistent-ty)]
           [(ResultTcType.Err _) false])]
-      [(ResultTcType.Err _) (not (tc-name-bound-persistent-id? env name-id))])))
+      [(ResultTcType.Err _)
+        (not (tc-name-bound-persistent-key-id? env persistent-id))])))
 
 (cfg
   tc-env-scoped-dual-verify
   (define (tc-type-env-scoped-dual-result-unsafe-matches?
     [scoped : ResultTcTypeUnsafe]
     [env : TcTypeEnv]
-    [name-id : i64]) : bool
+    [persistent-id : i64]
+    [display-id : i64]) : bool
     (match scoped
       [(ResultTcTypeUnsafe.Ok scoped-ty scoped-unsafe)
-        (match (tc-lookup-unsafe-persistent-id env name-id)
+        (match (tc-lookup-unsafe-persistent-key-id env persistent-id display-id)
           [(ResultTcTypeUnsafe.Ok persistent-ty persistent-unsafe)
             (if (tc-type-eq scoped-ty persistent-ty)
               (if (= scoped-unsafe persistent-unsafe)
@@ -29378,14 +29867,14 @@
                 (io.panic
                   (string.append
                     "typecheck: scoped unsafe flag diverged for "
-                    (ci.intern-str name-id))))
+                    (tc-env-key-display display-id))))
               (io.panic
                 (string.append
                   (string.append
                     (string.append
                       (string.append
                         "typecheck: scoped unsafe type diverged for "
-                        (ci.intern-str name-id))
+                        (tc-env-key-display display-id))
                       ": scoped=")
                     (tc-type-env-scoped-dual-type-kind scoped-ty))
                   (string.append
@@ -29395,13 +29884,13 @@
             (io.panic
               (string.append
                 "typecheck: scoped unsafe lookup found persistent miss for "
-                (ci.intern-str name-id)))])]
+                (tc-env-key-display display-id)))])]
       [(ResultTcTypeUnsafe.Err _)
-        (if (tc-name-bound-persistent-id? env name-id)
+        (if (tc-name-bound-persistent-key-id? env persistent-id)
           (io.panic
             (string.append
               "typecheck: scoped unsafe lookup missed persistent binding for "
-              (ci.intern-str name-id)))
+              (tc-env-key-display display-id)))
           true)])))
 
 (cfg
@@ -32807,18 +33296,23 @@
   [name-id : i64]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
-    [(TcTypeEnvView.Cache ids _ _ _ shadow-flags _ partial _ below)
-      (match (tc_i64_i64_map.get (& ids) name-id)
-        [(tc_i64_i64_map.LookupFound index)
-          (=
-            (bit-and
-              (array-ref shadow-flags index)
-              tc-env-cache-flag-default-shadow)
-            0)]
-        [(tc_i64_i64_map.LookupMissing)
-          (if partial
-            (tc-default-builtin-unshadowed-scan-id? below name-id)
-            true)])]
+    [(TcTypeEnvView.Cache cache-ptr _ partial _ below)
+      (let
+        [ids : tc_i64_i64_map.Map
+          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+        [shadow-flags : (__tl_dyn-array i64)
+          (tc-type-env-cache-field-at cache-ptr 104 (__tl_dyn-array i64))]
+        (match (tc_i64_i64_map.get (& ids) name-id)
+          [(tc_i64_i64_map.LookupFound index)
+            (=
+              (bit-and
+                (array-ref shadow-flags index)
+                tc-env-cache-flag-default-shadow)
+              0)]
+          [(tc_i64_i64_map.LookupMissing)
+            (if partial
+              (tc-default-builtin-unshadowed-scan-id? below name-id)
+              true)]))]
     [(TcTypeEnvView.Bind key _ rest)
       (if (= key name-id)
         false
@@ -32831,7 +33325,7 @@
   [name-id : i64]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
-    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
+    [(TcTypeEnvView.Cache _ scan-through _ rest _)
       (if scan-through
         (tc-name-local-bound-before-module-scan-id? rest name-id)
         false)]
@@ -56348,7 +56842,7 @@
       name
       false)
       [(TcNameLookup.Ok lookup-name lookup-id)
-        (match (tc-lookup-unsafe-id env (tc-env-name-key-id lookup-id))
+        (match (tc-lookup-unsafe-key-id env (tc-env-name-key-id lookup-id))
           [(ResultTcTypeUnsafe.Ok ty unsafe)
             (if unsafe
               (match (tc-require-unsafe
@@ -100774,6 +101268,7 @@
 (define (compiler-typecheck-reset-intern-owned-state!) : unit
   (begin
     (set! tc-type-env-scoped-runtime-marker-id-generation -1)
+    (set! tc-signature-lifetime-marker-id-generation -1)
     (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
     (set! tc-comptime-helper-prefix-cache-generation -1)
     (tc-source-dotted-alias-key-cache-reset!)

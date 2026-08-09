@@ -47,12 +47,19 @@
 ;: prelude uses it for helpers that moved out of hand-written assembly.
 (extern (runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
 
-;: Internal raw byte copy primitive. Caller contract: `n >= 0`, `src` has at
-;: least `n` readable initialized bytes, `dst` has at least `n` writable bytes,
-;: and both ranges stay live for the call. `tl_memcpy` is memmove-safe for
-;: overlapping `dst > src`.
-(unsafe
-  (extern (runtime-copy-bytes! [dst : (MutPtr u8)] [src : (Ptr u8)] [n : i64]) : unit (:symbol "tl_memcpy")))
+;: Stage2+ compiler builds expose a forward-only entry for destinations whose
+;: allocation proves they cannot overlap the source. The embedded-stdlib cfg
+;: is deliberately the bootstrap boundary: stage1 uses the old helper, then
+;: the candidate compiler emits this symbol while building stage2.
+(cfg
+  (all compiler-build-identity embedded-stdlib-tlci)
+  (unsafe
+    (extern (runtime-copy-bytes! [dst : (MutPtr u8)] [src : (Ptr u8)] [n : i64]) : unit (:symbol "tl_memcpy_fresh"))))
+
+(cfg
+  (not (all compiler-build-identity embedded-stdlib-tlci))
+  (unsafe
+    (extern (runtime-copy-bytes! [dst : (MutPtr u8)] [src : (Ptr u8)] [n : i64]) : unit (:symbol "tl_memcpy"))))
 
 ;: Return the currently active arena handle.
 (extern (runtime-arena-current) : i64 (:symbol "tl_arena_current"))

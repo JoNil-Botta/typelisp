@@ -14983,11 +14983,13 @@
     (tc-hygiene-name-text-id name-id)
     (tc-env-key-display name-id)))
 
-(define (tc-lookup-persistent-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
+(define (tc-lookup-persistent-key-id
+  [env : TcTypeEnv]
+  [lookup-id : i64]
+  [display-id : i64]) : ResultTcType
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
     (let
-      [lookup-id : i64 (tc-env-name-key-id name-id)]
       [store-handle : i64 (struct-get env store)]
       [head : i64 (struct-get env head)]
       [done : bool false]
@@ -15054,12 +15056,19 @@
           (ResultTcType.Err
             (string.append
               "typecheck: unbound name "
-              (tc-env-key-display name-id))))))))
+              (tc-env-key-display display-id))))))))
 
-(define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
+(define (tc-lookup-persistent-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
+  (tc-lookup-persistent-key-id env (tc-env-name-key-id name-id) name-id))
+
+(define (tc-lookup-selected-id
+  [env : TcTypeEnv]
+  [scoped-id : i64]
+  [persistent-id : i64]
+  [display-id : i64]) : ResultTcType
   (if tc-type-env-scoped-runtime-active
     (let
-      [index : i64 (tc-type-env-scoped-runtime-lookup-index name-id)]
+      [index : i64 (tc-type-env-scoped-runtime-lookup-index scoped-id)]
       [scoped : ResultTcType
         (if (>= index 0)
           (begin
@@ -15078,15 +15087,20 @@
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
-            (tc-lookup-persistent-id
+            (tc-lookup-persistent-key-id
               (struct-get
                 (struct-get tc-type-env-scoped-runtime-carrier sidecar)
                 persistent)
-              name-id)))]
+              persistent-id
+              display-id)))]
       (begin
         (cfg
           tc-env-scoped-dual-verify
-          (if (tc-type-env-scoped-dual-result-type-matches? scoped env name-id)
+          (if (tc-type-env-scoped-dual-result-type-matches?
+            scoped
+            env
+            persistent-id
+            display-id)
             unit
             (io.panic
               "typecheck: scoped type lookup diverged from persistent env")))
@@ -15094,7 +15108,10 @@
           [(ResultTcType.Ok ty) (tc-poison-observation-note! ty)]
           [(ResultTcType.Err _) unit])
         scoped))
-    (tc-lookup-persistent-id env name-id)))
+    (tc-lookup-persistent-key-id env persistent-id display-id)))
+
+(define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
+  (tc-lookup-selected-id env name-id (tc-env-name-key-id name-id) name-id))
 
 (define (tc-name-bound-persistent-key-id? [env : TcTypeEnv] [lookup-id : i64]) : bool
   (let
@@ -15174,11 +15191,13 @@
 (define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (tc-name-bound-selected-id? env name-id (tc-env-name-key-id name-id)))
 
-(define (tc-lookup-unsafe-persistent-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
+(define (tc-lookup-unsafe-persistent-key-id
+  [env : TcTypeEnv]
+  [lookup-id : i64]
+  [display-id : i64]) : ResultTcTypeUnsafe
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
     (let
-      [lookup-id : i64 (tc-env-name-key-id name-id)]
       [store-handle : i64 (struct-get env store)]
       [head : i64 (struct-get env head)]
       [done : bool false]
@@ -15268,12 +15287,19 @@
           (ResultTcTypeUnsafe.Err
             (string.append
               "typecheck: unbound name "
-              (tc-env-key-display name-id))))))))
+              (tc-env-key-display display-id))))))))
 
-(define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
+(define (tc-lookup-unsafe-persistent-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
+  (tc-lookup-unsafe-persistent-key-id env (tc-env-name-key-id name-id) name-id))
+
+(define (tc-lookup-unsafe-selected-id
+  [env : TcTypeEnv]
+  [scoped-id : i64]
+  [persistent-id : i64]
+  [display-id : i64]) : ResultTcTypeUnsafe
   (if tc-type-env-scoped-runtime-active
     (let
-      [index : i64 (tc-type-env-scoped-runtime-lookup-index name-id)]
+      [index : i64 (tc-type-env-scoped-runtime-lookup-index scoped-id)]
       [scoped : ResultTcTypeUnsafe
         (if (>= index 0)
           (let
@@ -15296,28 +15322,40 @@
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
-            (tc-lookup-unsafe-persistent-id
+            (tc-lookup-unsafe-persistent-key-id
               (struct-get
                 (struct-get tc-type-env-scoped-runtime-carrier sidecar)
                 persistent)
-              name-id)))]
+              persistent-id
+              display-id)))]
       (begin
         (cfg
           tc-env-scoped-dual-verify
           (if (tc-type-env-scoped-dual-result-unsafe-matches?
             scoped
             env
-            name-id)
+            persistent-id
+            display-id)
             unit
             (io.panic
               (string.append
                 "typecheck: scoped unsafe lookup diverged for "
-                (tc-env-key-display name-id)))))
+                (tc-env-key-display display-id)))))
         (match scoped
           [(ResultTcTypeUnsafe.Ok ty _) (tc-poison-observation-note! ty)]
           [(ResultTcTypeUnsafe.Err _) unit])
         scoped))
-    (tc-lookup-unsafe-persistent-id env name-id)))
+    (tc-lookup-unsafe-persistent-key-id env persistent-id display-id)))
+
+(define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
+  (tc-lookup-unsafe-selected-id
+    env
+    name-id
+    (tc-env-name-key-id name-id)
+    name-id))
+
+(define (tc-lookup-unsafe-key-id [env : TcTypeEnv] [lookup-id : i64]) : ResultTcTypeUnsafe
+  (tc-lookup-unsafe-selected-id env lookup-id lookup-id lookup-id))
 
 ;; Alias shadowing asks one pure question about the persistent env chain: is
 ;; `name-id` bound anywhere in the span that starts at `env` and ends at the
@@ -15633,20 +15671,23 @@
       ;; Dotted source modules already publish canonical qualified entries in
       ;; the top environment. Resolve those on demand instead of copying every
       ;; declaration into every module-local cache snapshot.
-      (match (tc-lookup-persistent-id
+      (match (tc-lookup-persistent-key-id
         env
-        (tc-module-name-id-by-id module-id name-id))
+        (tc-module-name-id-by-id module-id name-id)
+        name-id)
         [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-        [(ResultTcType.Err _) (tc-lookup-persistent-id env env-name-id)])
-      (match (tc-lookup-id env env-name-id)
+        [(ResultTcType.Err _)
+          (tc-lookup-persistent-key-id env env-name-id env-name-id)])
+      (match (tc-lookup-selected-id env env-name-id env-name-id env-name-id)
         [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
         [(ResultTcType.Err message)
           (if (and
             (> (string.string-length module) 0)
             (not (tc-name-qualified-id? name-id)))
-            (match (tc-lookup-persistent-id
+            (match (tc-lookup-persistent-key-id
               env
-              (tc-module-name-id-by-id module-id name-id))
+              (tc-module-name-id-by-id module-id name-id)
+              name-id)
               [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
               [(ResultTcType.Err _) (ResultTcType.Err message)])
             (ResultTcType.Err message))]))))
@@ -15668,29 +15709,37 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (tc-lookup-id env name-id)))
 
-(define (tc-lookup-hygiene-global-scan
+(define (tc-lookup-hygiene-global-key-scan
   [root : TcTypeEnv]
   [env : TcTypeEnv]
-  [name-id : i64]) : ResultTcType
+  [lookup-id : i64]
+  [display-id : i64]) : ResultTcType
   (match (tc-type-env-spine-step env)
-    [(TcTypeEnvSpineStep.Done) (tc-lookup-persistent-id root name-id)]
+    [(TcTypeEnvSpineStep.Done)
+      (tc-lookup-persistent-key-id root lookup-id display-id)]
     [(TcTypeEnvSpineStep.Cache rest-env)
-      (tc-lookup-hygiene-global-scan root rest-env name-id)]
+      (tc-lookup-hygiene-global-key-scan root rest-env lookup-id display-id)]
     [(TcTypeEnvSpineStep.Bind key _ rest-env)
       (if (= key (tc-hygiene-global-boundary-id))
-        (tc-lookup-persistent-id rest-env name-id)
-        (tc-lookup-hygiene-global-scan root rest-env name-id))]))
+        (tc-lookup-persistent-key-id rest-env lookup-id display-id)
+        (tc-lookup-hygiene-global-key-scan root rest-env lookup-id display-id))]))
 
 (define (tc-lookup-hygiene-global-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
-  (tc-lookup-hygiene-global-scan env env name-id))
+  (tc-lookup-hygiene-global-key-scan
+    env
+    env
+    (tc-env-name-key-id name-id)
+    name-id))
 
 (define (tc-lookup-hygiene-global-visible-id
   [_ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]) : ResultTcType
-  (match (tc-lookup-hygiene-global-id env (tc-env-name-key-id name-id))
-    [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+  (let
+    [lookup-id : i64 (tc-env-name-key-id name-id)]
+    (match (tc-lookup-hygiene-global-key-scan env env lookup-id lookup-id)
+      [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+      [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
 (define (tc-lookup-dotted-source-visible
   [ctx : TcContext]
@@ -15704,7 +15753,7 @@
     name-id
     false)
     [(TcNameLookup.Ok lookup-name lookup-id)
-      (match (tc-lookup-unsafe-id env (tc-env-name-key-id lookup-id))
+      (match (tc-lookup-unsafe-key-id env (tc-env-name-key-id lookup-id))
         [(ResultTcTypeUnsafe.Ok ty unsafe)
           (if unsafe
             (match (tc-require-unsafe
@@ -15808,14 +15857,24 @@
               (if (and
                 (not (csym.compiler-symbol-root-module-id? module-id))
                 (not (tc-name-qualified-id? name-id)))
-                (match (tc-lookup-unsafe-persistent-id
+                (let
+                  [module-name-id : i64
+                    (tc-module-name-id-by-id module-id name-id)]
+                  (match (tc-lookup-unsafe-persistent-key-id
+                    def-env
+                    module-name-id
+                    module-name-id)
+                    [(ResultTcTypeUnsafe.Ok ty unsafe)
+                      (ResultTcTypeUnsafe.Ok ty unsafe)]
+                    [(ResultTcTypeUnsafe.Err _)
+                      (tc-lookup-unsafe-persistent-key-id
+                        def-env
+                        env-name-id
+                        env-name-id)]))
+                (tc-lookup-unsafe-persistent-key-id
                   def-env
-                  (tc-module-name-id-by-id module-id name-id))
-                  [(ResultTcTypeUnsafe.Ok ty unsafe)
-                    (ResultTcTypeUnsafe.Ok ty unsafe)]
-                  [(ResultTcTypeUnsafe.Err _)
-                    (tc-lookup-unsafe-persistent-id def-env env-name-id)])
-                (tc-lookup-unsafe-persistent-id def-env env-name-id))]
+                  env-name-id
+                  env-name-id))]
             (match found
               [(ResultTcTypeUnsafe.Ok ty unsafe)
                 (if unsafe
@@ -29552,23 +29611,26 @@
   (define (tc-type-env-scoped-dual-result-type-matches?
     [scoped : ResultTcType]
     [env : TcTypeEnv]
-    [name-id : i64]) : bool
+    [persistent-id : i64]
+    [display-id : i64]) : bool
     (match scoped
       [(ResultTcType.Ok scoped-ty)
-        (match (tc-lookup-persistent-id env name-id)
+        (match (tc-lookup-persistent-key-id env persistent-id display-id)
           [(ResultTcType.Ok persistent-ty) (tc-type-eq scoped-ty persistent-ty)]
           [(ResultTcType.Err _) false])]
-      [(ResultTcType.Err _) (not (tc-name-bound-persistent-id? env name-id))])))
+      [(ResultTcType.Err _)
+        (not (tc-name-bound-persistent-key-id? env persistent-id))])))
 
 (cfg
   tc-env-scoped-dual-verify
   (define (tc-type-env-scoped-dual-result-unsafe-matches?
     [scoped : ResultTcTypeUnsafe]
     [env : TcTypeEnv]
-    [name-id : i64]) : bool
+    [persistent-id : i64]
+    [display-id : i64]) : bool
     (match scoped
       [(ResultTcTypeUnsafe.Ok scoped-ty scoped-unsafe)
-        (match (tc-lookup-unsafe-persistent-id env name-id)
+        (match (tc-lookup-unsafe-persistent-key-id env persistent-id display-id)
           [(ResultTcTypeUnsafe.Ok persistent-ty persistent-unsafe)
             (if (tc-type-eq scoped-ty persistent-ty)
               (if (= scoped-unsafe persistent-unsafe)
@@ -29576,14 +29638,14 @@
                 (io.panic
                   (string.append
                     "typecheck: scoped unsafe flag diverged for "
-                    (ci.intern-str name-id))))
+                    (tc-env-key-display display-id))))
               (io.panic
                 (string.append
                   (string.append
                     (string.append
                       (string.append
                         "typecheck: scoped unsafe type diverged for "
-                        (ci.intern-str name-id))
+                        (tc-env-key-display display-id))
                       ": scoped=")
                     (tc-type-env-scoped-dual-type-kind scoped-ty))
                   (string.append
@@ -29593,13 +29655,13 @@
             (io.panic
               (string.append
                 "typecheck: scoped unsafe lookup found persistent miss for "
-                (ci.intern-str name-id)))])]
+                (tc-env-key-display display-id)))])]
       [(ResultTcTypeUnsafe.Err _)
-        (if (tc-name-bound-persistent-id? env name-id)
+        (if (tc-name-bound-persistent-key-id? env persistent-id)
           (io.panic
             (string.append
               "typecheck: scoped unsafe lookup missed persistent binding for "
-              (ci.intern-str name-id)))
+              (tc-env-key-display display-id)))
           true)])))
 
 (cfg
@@ -56550,7 +56612,7 @@
       name
       false)
       [(TcNameLookup.Ok lookup-name lookup-id)
-        (match (tc-lookup-unsafe-id env (tc-env-name-key-id lookup-id))
+        (match (tc-lookup-unsafe-key-id env (tc-env-name-key-id lookup-id))
           [(ResultTcTypeUnsafe.Ok ty unsafe)
             (if unsafe
               (match (tc-require-unsafe

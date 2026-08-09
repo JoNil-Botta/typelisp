@@ -5,7 +5,7 @@
 ;; avx2, and avx512 builds must all exit 91.
 (import stdlib.array)
 
-(define (init [a : (Array i32)] [b : (Array i32)] [n : i64]) : unit
+(define (init [a : (__tl_dyn-array i32)] [b : (__tl_dyn-array i32)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -14,12 +14,16 @@
         (array-set! b i (cast (* i 3) : i32))
         (set! i (+ i 1))))))
 
-(define (fill [a : (Array i32)] [b : (Array i32)] [out : (Array i32)] [n : i64]) : unit
+(define (fill
+  [a : (__tl_dyn-array i32)]
+  [b : (__tl_dyn-array i32)]
+  [out : (__tl_dyn-array i32)]
+  [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))
 
-(define (checksum [out : (Array i32)] [n : i64]) : i64
+(define (checksum [out : (__tl_dyn-array i32)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -33,9 +37,9 @@
 (define (main) : i64
   (let
     [n : i64 7]
-    [a : (Array i32) (array.make-array i32 n)]
-    [b : (Array i32) (array.make-array i32 n)]
-    [out : (Array i32) (array.make-array i32 n)]
+    [a : (__tl_dyn-array i32) (array.make-array i32 n)]
+    [b : (__tl_dyn-array i32) (array.make-array i32 n)]
+    [out : (__tl_dyn-array i32) (array.make-array i32 n)]
     (begin
       (init a b n)
       (fill a b out n)

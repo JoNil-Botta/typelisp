@@ -5,9 +5,9 @@
 (define (main) : i64
   (let
     [n : i64 17]
-    [xs : (Array i16) (array.make-array i16 n)]
-    [out : (Array i16) (array.make-array i16 n)]
-    [copy : (Array i16) (array.make-array i16 n)]
+    [xs : (__tl_dyn-array i16) (array.make-array i16 n)]
+    [out : (__tl_dyn-array i16) (array.make-array i16 n)]
+    [copy : (__tl_dyn-array i16) (array.make-array i16 n)]
     (begin
       (foreach
         ([i : i64 0 n])

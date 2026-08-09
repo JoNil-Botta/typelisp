@@ -3,9 +3,9 @@
 (import stdlib.array)
 
 (define (fill-nested
-  [outer : (Array i64)]
-  [inner : (Array i64)]
-  [out : (Array i64)]
+  [outer : (__tl_dyn-array i64)]
+  [inner : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -20,9 +20,9 @@
         (array-set! inner i (+ (% i 2) 1))))))
 
 (define (fill-scalar
-  [outer : (Array i64)]
-  [inner : (Array i64)]
-  [out : (Array i64)]
+  [outer : (__tl_dyn-array i64)]
+  [inner : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -41,12 +41,12 @@
 
 (define (run-case [n : i64]) : bool
   (let
-    [outer : (Array i64) (array.make-array i64 n)]
-    [outer-ref : (Array i64) (array.make-array i64 n)]
-    [inner : (Array i64) (array.make-array i64 n)]
-    [inner-ref : (Array i64) (array.make-array i64 n)]
-    [got : (Array i64) (array.make-array i64 n)]
-    [want : (Array i64) (array.make-array i64 n)]
+    [outer : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [outer-ref : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [inner : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [inner-ref : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [got : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [want : (__tl_dyn-array i64) (array.make-array i64 n)]
     [i : i64 0]
     [ok : bool true]
     (begin

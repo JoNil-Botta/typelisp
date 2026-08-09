@@ -6,13 +6,13 @@
   (Zero)
   (One))
 
-(define (read-choice [items : (Array Choice)] [i : i64]) : Choice
+(define (read-choice [items : (__tl_dyn-array Choice)] [i : i64]) : Choice
   (array-ref items i))
 
 (define (main) : i64
   (let
-    [items : (Array Choice) (array.make-array Choice 2)]
-    [out : (Array i64) (array.make-array i64 2)]
+    [items : (__tl_dyn-array Choice) (array.make-array Choice 2)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 2)]
     (begin
       (array-set! items 0 Zero)
       (array-set! items 1 One)

@@ -3,7 +3,7 @@
 (import stdlib.result)
 (import (result.result i64 i64) as result_i64_i64)
 
-(define (main [out : (Array i64)] [flag : bool] [n : i64]) : result_i64_i64.Result
+(define (main [out : (__tl_dyn-array i64)] [flag : bool] [n : i64]) : result_i64_i64.Result
   (begin
     (foreach
       ([i : i64 0 n])

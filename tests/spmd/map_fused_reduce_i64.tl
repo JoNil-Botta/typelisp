@@ -3,7 +3,10 @@
 ;; AVX2, and AVX-512 results identical across full gangs and scalar tails.
 (import stdlib.array)
 
-(define (manual-map-sum [values : (Array i64)] [n : i64] [uniform : i64]) : i64
+(define (manual-map-sum
+  [values : (__tl_dyn-array i64)]
+  [n : i64]
+  [uniform : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -14,11 +17,14 @@
           (set! i (+ i 1))))
       acc)))
 
-(define (reduce-map-fused [values : (Array i64)] [n : i64] [uniform : i64]) : i64
+(define (reduce-map-fused
+  [values : (__tl_dyn-array i64)]
+  [n : i64]
+  [uniform : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref values i) uniform)))
 
 (define (reduce-map-lane-neutral
-  [values : (Array i64)]
+  [values : (__tl_dyn-array i64)]
   [n : i64]
   [uniform : i64]) : i64
   (spmd-reduce
@@ -27,7 +33,10 @@
     0
     (+ (+ (array-ref values i) uniform) (bit-and (program-index) 0))))
 
-(define (manual-surface-sum [values : (Array i64)] [n : i64] [uniform : i64]) : i64
+(define (manual-surface-sum
+  [values : (__tl_dyn-array i64)]
+  [n : i64]
+  [uniform : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -44,14 +53,17 @@
           (set! i (+ i 1))))
       acc)))
 
-(define (reduce-map-surface [values : (Array i64)] [n : i64] [uniform : i64]) : i64
+(define (reduce-map-surface
+  [values : (__tl_dyn-array i64)]
+  [n : i64]
+  [uniform : i64]) : i64
   (spmd-reduce
     sum
     ([i : i64 0 n])
     0
     (- (bit-or (array-ref values i) uniform) (bit-xor (array-ref values i) 1))))
 
-(define (manual-shift-sum [values : (Array i64)] [n : i64]) : i64
+(define (manual-shift-sum [values : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -62,12 +74,12 @@
           (set! i (+ i 1))))
       acc)))
 
-(define (reduce-map-shift [values : (Array i64)] [n : i64]) : i64
+(define (reduce-map-shift [values : (__tl_dyn-array i64)] [n : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (shl (array-ref values i) 1)))
 
 (define (main) : i64
   (let
-    [values : (Array i64) (array.make-array i64 11)]
+    [values : (__tl_dyn-array i64) (array.make-array i64 11)]
     [i : i64 0]
     (begin
       (while (< i 11)

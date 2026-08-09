@@ -16,7 +16,10 @@
   (* i 2))
 
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
-(define (dispatch_fill_inputs [a : (Array i64)] [b : (Array i64)] [n : i64]) : unit
+(define (dispatch_fill_inputs
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -26,7 +29,7 @@
         (set! i (+ i 1))))))
 
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
-(define (dispatch_checksum [out : (Array i64)] [n : i64]) : i64
+(define (dispatch_checksum [out : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -40,9 +43,9 @@
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_scalar [n : i64]) : i64
   (let
-    [a : (Array i64) (array.make-array i64 n)]
-    [b : (Array i64) (array.make-array i64 n)]
-    [out : (Array i64) (array.make-array i64 n)]
+    [a : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [b : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     [acc : i64 0]
     (begin
       (dispatch_fill_inputs a b n)
@@ -57,9 +60,9 @@
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_avx2 [n : i64]) : i64
   (let
-    [a : (Array i64) (array.make-array i64 n)]
-    [b : (Array i64) (array.make-array i64 n)]
-    [out : (Array i64) (array.make-array i64 n)]
+    [a : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [b : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     [acc : i64 0]
     (begin
       (dispatch_fill_inputs a b n)
@@ -74,9 +77,9 @@
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_avx512 [n : i64]) : i64
   (let
-    [a : (Array i64) (array.make-array i64 n)]
-    [b : (Array i64) (array.make-array i64 n)]
-    [out : (Array i64) (array.make-array i64 n)]
+    [a : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [b : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     [acc : i64 0]
     (begin
       (dispatch_fill_inputs a b n)

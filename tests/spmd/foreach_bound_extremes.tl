@@ -4,8 +4,8 @@
 (import stdlib.array)
 
 (define (fill
-  [input : (Array i64)]
-  [output : (Array i64)]
+  [input : (__tl_dyn-array i64)]
+  [output : (__tl_dyn-array i64)]
   [start : i64]
   [end : i64]) : unit
   (foreach
@@ -14,8 +14,8 @@
 
 (define (main) : i64
   (let
-    [input : (Array i64) (array.make-array i64 8)]
-    [output : (Array i64) (array.make-array i64 8)]
+    [input : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [output : (__tl_dyn-array i64) (array.make-array i64 8)]
     [i : i64 0]
     (begin
       (while (< i 8)

@@ -5,7 +5,10 @@
   (Named String)
   (Code i64))
 
-(define (main [items : (Array Choice)] [out : (Array i64)] [n : i64]) : unit
+(define (main
+  [items : (__tl_dyn-array Choice)]
+  [out : (__tl_dyn-array i64)]
+  [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set!

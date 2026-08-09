@@ -3,7 +3,7 @@
 ; array-ref so the checker sees the compiler array-read AST.
 (import stdlib.array)
 
-(define (bad [xs : (Array i64)] [n : i64]) : i64
+(define (bad [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (spmd-reduce
     sum
     ([i : i64 0 n])

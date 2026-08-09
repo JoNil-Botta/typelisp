@@ -4,10 +4,13 @@
 (define (scale [x : f64]) : f64
   (+ (* x 2.0) 1.0))
 
-(define (fill-inline-f64 [xs : (Array f64)] [out : (Array f64)] [n : i64]) : unit
+(define (fill-inline-f64
+  [xs : (__tl_dyn-array f64)]
+  [out : (__tl_dyn-array f64)]
+  [n : i64]) : unit
   (foreach ([i : i64 0 n]) (array-set! out i (scale (array-ref xs i)))))
 
-(define (sum-array [xs : (Array f64)] [n : i64]) : f64
+(define (sum-array [xs : (__tl_dyn-array f64)] [n : i64]) : f64
   (let
     [i : i64 0]
     [sum : f64 0.0]
@@ -21,8 +24,8 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (Array f64) (array.make-array f64 n)]
-    [out : (Array f64) (array.make-array f64 n)]
+    [xs : (__tl_dyn-array f64) (array.make-array f64 n)]
+    [out : (__tl_dyn-array f64) (array.make-array f64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

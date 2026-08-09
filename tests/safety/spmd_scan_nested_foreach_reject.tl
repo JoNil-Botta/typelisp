@@ -3,7 +3,7 @@
 ; helpers so the checker sees compiler array ASTs.
 (import stdlib.array)
 
-(define (bad [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (bad [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (spmd-scan
     sum
     ([i : i64 0 n] [prefix : i64 0])

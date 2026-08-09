@@ -2,7 +2,7 @@
 ;; value lanes. The n = 13 length exercises a masked tail in both SIMD modes.
 (import stdlib.array)
 
-(define (init-xs [xs : (Array i64)] [n : i64]) : unit
+(define (init-xs [xs : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -10,7 +10,7 @@
         (array-set! xs i (+ (* i 3) 2))
         (set! i (+ i 1))))))
 
-(define (init-out [out : (Array i64)] [n : i64]) : unit
+(define (init-out [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -19,8 +19,8 @@
         (set! i (+ i 1))))))
 
 (define (fill-masked
-  [xs : (Array i64)]
-  [out : (Array i64)]
+  [xs : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
   [n : i64]
   [bias : i64]) : unit
   (foreach
@@ -33,8 +33,8 @@
         (- (array-ref xs i) bias)))))
 
 (define (fill-scalar
-  [xs : (Array i64)]
-  [out : (Array i64)]
+  [xs : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array i64)]
   [n : i64]
   [bias : i64]) : unit
   (let
@@ -49,7 +49,10 @@
             (- (array-ref xs i) bias)))
         (set! i (+ i 1))))))
 
-(define (arrays-eq [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
+(define (arrays-eq
+  [a : (__tl_dyn-array i64)]
+  [b : (__tl_dyn-array i64)]
+  [n : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
@@ -65,9 +68,9 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (Array i64) (array.make-array i64 n)]
-    [got : (Array i64) (array.make-array i64 n)]
-    [want : (Array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [got : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [want : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
       (init-xs xs n)
       (init-out got n)

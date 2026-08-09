@@ -101,6 +101,8 @@ VECTOR_FIVE_STDOUT="$WORKDIR/profile-vector-five.stdout"
 VECTOR_FIVE_STDERR="$WORKDIR/profile-vector-five.stderr"
 GEN_IMPORT_STDOUT="$WORKDIR/profile-generated-import.stdout"
 GEN_IMPORT_STDERR="$WORKDIR/profile-generated-import.stderr"
+CTFE_SPLICE_STDOUT="$WORKDIR/profile-ctfe-splice.stdout"
+CTFE_SPLICE_STDERR="$WORKDIR/profile-ctfe-splice.stderr"
 RESULT_IMPORT_STDOUT="$WORKDIR/profile-result-import.stdout"
 RESULT_IMPORT_STDERR="$WORKDIR/profile-result-import.stderr"
 CROSS_SINGLE_STDOUT="$WORKDIR/profile-cross-single.stdout"
@@ -1168,6 +1170,34 @@ if [ "$NL_HOST_OS" = windows ]; then
     fi
     assert_profile_total_peak_covers_live_in \
         "$SELFHOST_STDERR" \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    # The compiler source currently exercises ordinary Decls, generated
+    # Modules, and generated-file nominal deltas. All are additive: the CTFE
+    # metadata cache builds once, grows when needed, and never rescans the
+    # whole source graph for a splice.
+    assert_profile_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_splice_ctfe_builds" \
+        1 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_splice_ctfe_cleared" \
+        0 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_splice_ctfe_cache_unavailable" \
+        0 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_counter_at_least_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_splice_ctfe_extensions" \
+        1 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
@@ -2621,6 +2651,58 @@ assert_contains_in \
     "compile-profile|typecheck.macro_scratch_release|" \
     "$GEN_IMPORT_STDOUT" \
     "$GEN_IMPORT_STDERR"
+
+echo "[compile-profile] check additive CTFE splice fixture"
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_ctfe_splice_delta.tl \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$CTFE_SPLICE_STDOUT" 2> "$CTFE_SPLICE_STDERR"; then
+    show_failure_logs "$CTFE_SPLICE_STDOUT" "$CTFE_SPLICE_STDERR"
+    fail "profiled additive CTFE splice fixture check failed"
+fi
+
+# Fresh ordinary/module/file nominals remain visible to later reflection. The
+# fixture also forces vector growth and one first-wins collision. Every clear
+# must therefore have a measured rebuild, and capacity must never make the
+# cache unavailable.
+CTFE_SPLICE_BUILDS=$(profile_counter_value_in \
+    "$CTFE_SPLICE_STDERR" \
+    "typecheck.macro.walk_splice_ctfe_builds")
+CTFE_SPLICE_REBUILDS=$(profile_counter_value_in \
+    "$CTFE_SPLICE_STDERR" \
+    "typecheck.macro.walk_splice_ctfe_rebuilds")
+CTFE_SPLICE_CLEARS=$(profile_counter_value_in \
+    "$CTFE_SPLICE_STDERR" \
+    "typecheck.macro.walk_splice_ctfe_cleared")
+if [ "$CTFE_SPLICE_BUILDS" -ne $((CTFE_SPLICE_REBUILDS + 1)) ] ||
+    [ "$CTFE_SPLICE_REBUILDS" -ne "$CTFE_SPLICE_CLEARS" ]; then
+    show_failure_logs "$CTFE_SPLICE_STDOUT" "$CTFE_SPLICE_STDERR"
+    fail "CTFE splice build/clear pairing mismatch: builds=$CTFE_SPLICE_BUILDS rebuilds=$CTFE_SPLICE_REBUILDS clears=$CTFE_SPLICE_CLEARS"
+fi
+assert_profile_counter_at_least_in \
+    "$CTFE_SPLICE_STDERR" \
+    "typecheck.macro.walk_splice_ctfe_extensions" \
+    1 \
+    "$CTFE_SPLICE_STDOUT" \
+    "$CTFE_SPLICE_STDERR"
+assert_profile_counter_at_least_in \
+    "$CTFE_SPLICE_STDERR" \
+    "typecheck.macro.walk_splice_ctfe_semantic_rejections" \
+    1 \
+    "$CTFE_SPLICE_STDOUT" \
+    "$CTFE_SPLICE_STDERR"
+assert_profile_counter_at_least_in \
+    "$CTFE_SPLICE_STDERR" \
+    "typecheck.macro.walk_splice_ctfe_capacity_grows" \
+    1 \
+    "$CTFE_SPLICE_STDOUT" \
+    "$CTFE_SPLICE_STDERR"
+assert_profile_counter_eq_in \
+    "$CTFE_SPLICE_STDERR" \
+    "typecheck.macro.walk_splice_ctfe_cache_unavailable" \
+    0 \
+    "$CTFE_SPLICE_STDOUT" \
+    "$CTFE_SPLICE_STDERR"
 
 echo "[compile-profile] check generated result import fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_result_import.tl \

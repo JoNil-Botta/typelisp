@@ -73190,6 +73190,52 @@
             none
             none
             0)))
+      ;; The streaming descriptor has already walked both movq operands. When
+      ;; neither can mention rsp, the dead-frame sweep has no fact to extract:
+      ;; this is an ordinary 8-byte instruction with no candidate, rsp effect,
+      ;; or memory reference. Tracked registers prove they are not rsp; an
+      ;; untracked register stays on the byte-audit path because it may be rsp.
+      (when
+        (compiler-backend-peephole-desc-movq? line)
+        (let
+          [src-flags : i64 (compiler-backend-peephole-desc-op-src-flags line)]
+          [dst-flags : i64 (compiler-backend-peephole-desc-op-dst-flags line)]
+          (when
+            (and
+              (not
+                (compiler-backend-peephole-op-flag?
+                  src-flags
+                  compiler-backend-peephole-op-stack-flag))
+              (or
+                (not
+                  (compiler-backend-peephole-op-flag?
+                    src-flags
+                    compiler-backend-peephole-op-register-flag))
+                (>= (compiler-backend-peephole-desc-op-src-reg line) 0))
+              (not
+                (compiler-backend-peephole-op-flag?
+                  dst-flags
+                  compiler-backend-peephole-op-stack-flag))
+              (or
+                (not
+                  (compiler-backend-peephole-op-flag?
+                    dst-flags
+                    compiler-backend-peephole-op-register-flag))
+                (>= (compiler-backend-peephole-desc-op-dst-reg line) 0)))
+            (return
+              (CompilerBackendPeepholeLineRecord
+                (struct-get line src)
+                span
+                (bit-or
+                  compiler-backend-sweep-line-kind-instruction
+                  (bit-or
+                    base-meta
+                    (bit-or
+                      compiler-backend-peephole-record-sweep-inert-bit
+                      (shl 8 compiler-backend-peephole-record-width-shift))))
+                none
+                none
+                0)))))
       (let
         [b0 : i64 (compiler-backend-peephole-byte-at data ms)]
         (begin

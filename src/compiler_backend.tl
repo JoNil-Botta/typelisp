@@ -59136,11 +59136,44 @@
                               (begin
                                 ;; frame-reference rewrite
                                 (let
+                                  [rbp-stop : i64 (- end 4)]
+                                  [first-paren : i64
+                                    (if (<= (+ m 5) end)
+                                      (compiler-backend-peephole-scan-byte-range
+                                        data
+                                        m
+                                        rbp-stop
+                                        40)
+                                      rbp-stop)]
                                   [p : i64
-                                    (compiler-backend-rsp-rebase-find-rbp
-                                      data
-                                      m
-                                      end)]
+                                    (if (>= first-paren rbp-stop)
+                                      -1
+                                      (if (and
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ first-paren 1))
+                                          37)
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ first-paren 2))
+                                          114)
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ first-paren 3))
+                                          98)
+                                        (=
+                                          (compiler-backend-peephole-byte-at
+                                            data
+                                            (+ first-paren 4))
+                                          112))
+                                        first-paren
+                                        (compiler-backend-rsp-rebase-find-rbp
+                                          data
+                                          (+ first-paren 1)
+                                          end)))]
                                   (if (< p 0)
                                     (set!
                                       buf

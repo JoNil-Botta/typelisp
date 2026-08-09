@@ -222,6 +222,71 @@
   "(import stdlib.core_macros as core)
 (define (check [flag : bool]) : bool (core/and flag true))")
 
+(define (selfhost-lint-stdlib-string-bare-helpers-source) : String
+  "(import stdlib.string)
+(define (main) : i64
+  (begin
+    (string-length \"abc\")
+    (string-ref \"abc\" 0)
+    (char-at \"abc\" 0)
+    (eq \"a\" \"b\")
+    (string-eq \"a\" \"b\")
+    (string=? \"a\" \"b\")
+    (string-append \"a\" \"b\")
+    (string-concat \"a\" \"b\")
+    42))")
+
+(define (selfhost-lint-stdlib-string-bare-explicit-alias-source) : String
+  "(import stdlib.string as s)
+(define (main) : i64 (string-length \"abc\"))")
+
+(define (selfhost-lint-stdlib-string-bare-top-level-shadow-source) : String
+  "(import stdlib.string)
+(define (string-length [text : String]) : i64 1)
+(define (main) : i64 (string-length \"abc\"))")
+
+(define (selfhost-lint-stdlib-string-bare-param-shadow-source) : String
+  "(import stdlib.string)
+(define (main [string-length : (-> String i64)]) : i64
+  (string-length \"abc\"))")
+
+(define (selfhost-lint-stdlib-string-bare-let-shadow-source) : String
+  "(import stdlib.string)
+(define (main) : i64
+  (let
+    [string-length : (-> String i64)
+      (lambda ([text : String]) : i64 1)]
+    (string-length \"abc\")))")
+
+(define (selfhost-lint-stdlib-string-bare-lambda-shadow-source) : String
+  "(import stdlib.string)
+(define (main) : i64
+  ((lambda ([string-length : (-> String i64)]) : i64
+    (string-length \"abc\"))
+   (lambda ([text : String]) : i64 1)))")
+
+(define (selfhost-lint-stdlib-string-bare-trim-source) : String
+  "(import stdlib.string)
+(define (main) : String (trim \" abc \"))")
+
+(define (selfhost-lint-stdlib-string-removed-bare-helper-source) : String
+  "(import stdlib.string)
+(define (main) : i64 (string->int \"42\"))")
+
+(define (selfhost-lint-stdlib-string-other-module-shadow-source) : String
+  "(module first)
+(import stdlib.string)
+(define (main) : i64 (string-length \"abc\"))
+(module second)
+(define (string-length) : i64 42)")
+
+(define (selfhost-lint-stdlib-string-other-module-use-source) : String
+  "(module first)
+(import stdlib.string)
+(define (main) : i64 42)
+(module second)
+(define (other) : i64 (string-length \"abc\"))")
+
 (define (selfhost-lint-suppressed-unused-import-source) : String
   ";; lint-allow: unused-import
 (import pkg.data)
@@ -724,6 +789,11 @@ end
       (lint_svec.new))
     rule-id))
 
+(define (selfhost-lint-source-unused-import-count [source : String]) : i64
+  (selfhost-lint-source-rule-count
+    source
+    (lint_core.lint-rule-unused-import-id)))
+
 (define (selfhost-lint-unused-import-finding-ok?
   [findings : lint_core.LintFindings]) : bool
   (match (lint_core.lint-findings-get findings 0)
@@ -807,6 +877,76 @@ end
               (selfhost-lint-used-import-macro-alias-source))
             0))
         43]
+      [(not
+          (=
+            (selfhost-lint-source-unused-import-count
+              (selfhost-lint-stdlib-string-bare-helpers-source))
+            0))
+        44]
+      [(not
+          (=
+            (selfhost-lint-source-unused-import-count
+              (selfhost-lint-stdlib-string-bare-explicit-alias-source))
+            0))
+        45]
+      [(not
+          (=
+            (selfhost-lint-source-unused-import-count
+              (selfhost-lint-stdlib-string-bare-top-level-shadow-source))
+            1))
+        46]
+      [(not
+          (=
+            (selfhost-lint-source-unused-import-count
+              (selfhost-lint-stdlib-string-bare-param-shadow-source))
+            1))
+        47]
+      [(not
+          (=
+            (selfhost-lint-source-unused-import-count
+              (selfhost-lint-stdlib-string-bare-let-shadow-source))
+            1))
+        48]
+      [(not
+          (=
+            (selfhost-lint-source-unused-import-count
+              (selfhost-lint-stdlib-string-bare-lambda-shadow-source))
+            1))
+        49]
+      [(not
+          (=
+            (selfhost-lint-source-unused-import-count
+              (selfhost-lint-stdlib-string-bare-trim-source))
+            1))
+        50]
+      [(not
+          (=
+            (selfhost-lint-source-unused-import-count
+              (selfhost-lint-stdlib-string-removed-bare-helper-source))
+            1))
+        51]
+      [(not
+          (=
+            (selfhost-lint-source-unused-import-count
+              (selfhost-lint-stdlib-string-other-module-shadow-source))
+            0))
+        52]
+      [(not
+          (=
+            (selfhost-lint-source-unused-import-count
+              (selfhost-lint-stdlib-string-other-module-use-source))
+            1))
+        53]
+      [(not
+          (and
+            (lint_core.lint-stdlib-string-module-name?
+              "C:/repo/stdlib/string.tl")
+            (lint_core.lint-stdlib-string-module-name?
+              "C:\\repo\\stdlib\\string.tl")
+            (not
+              (lint_core.lint-stdlib-string-module-name?
+                "C:/repo/other/string.tl"))))
+        54]
       [else 42])))
 
 (define (selfhost-lint-package-dead-code-fixture-decls

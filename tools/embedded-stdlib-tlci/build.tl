@@ -207,8 +207,8 @@
   [output : String]
   [build-hash : String]
   [windows-target : bool]
-  [rodata : (Array u8)]
-  [names : (Array String)]
+  [rodata : (__tl_dyn-array u8)]
+  [names : (__tl_dyn-array String)]
   [captures
     : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : i64
   (match (compiler_tlci_native_producer.embedded-native-emit-package
@@ -298,7 +298,8 @@
         (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
       (if (or (string.eq target "linux") (string.eq target "windows"))
         (let
-          [rodata : (Array u8) (byte_buf.to-array (io.read-file rodata-path))]
+          [rodata : (__tl_dyn-array u8)
+            (byte_buf.to-array (io.read-file rodata-path))]
           (begin
             (embedded-stdlib-tlci-collect-manifest!
               (byte_buf.to-string (io.read-file manifest-path))

@@ -96,7 +96,7 @@
           (compiler_ast_types.ast-node-pool-context-expr-push
             pools
             (compiler_ast_types.AstExpr.Var (ci.intern "xs")))]
-        [operands : (Array compiler_ctfe.CompilerCtfeValue)
+        [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
           (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
           (array-set!
@@ -149,7 +149,7 @@
           (compiler_ast_types.ast-node-pool-context-expr-push
             pools
             (compiler_ast_types.AstExpr.Var (ci.intern "xs")))]
-        [operands : (Array compiler_ctfe.CompilerCtfeValue)
+        [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
           (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
           (array-set!

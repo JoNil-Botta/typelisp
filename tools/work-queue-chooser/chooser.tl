@@ -69,20 +69,20 @@
 
 ;: Immutable contiguous candidates in source order (PRs first, then issues).
 (defstruct CandSeq
-  (slots (Array Candidate))
+  (slots (__tl_dyn-array Candidate))
   (len i64))
 
 ;: Capacity-doubling builder that appends candidates in source order.
 (defstruct CandBuilder
-  (slots (Array Candidate))
+  (slots (__tl_dyn-array Candidate))
   (len i64))
 
 (define (cand-builder-new) : CandBuilder
   (CandBuilder (make-array Candidate 4) 0))
 
 (define (cand-builder-copy-range!
-  [dst : (&mut dst (Array Candidate))]
-  [src : (& src (Array Candidate))]
+  [dst : (&mut dst (__tl_dyn-array Candidate))]
+  [src : (& src (__tl_dyn-array Candidate))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -98,7 +98,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array Candidate) (make-array Candidate new-cap)]
+    [bigger : (__tl_dyn-array Candidate) (make-array Candidate new-cap)]
     (begin
       (cand-builder-copy-range!
         (&mut bigger)

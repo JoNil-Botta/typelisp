@@ -330,8 +330,12 @@
 ;: Windows wait status and timeout constants.
 (define windows-wait-object-0 : u32
   (cast 0 : u32))
+
+;: Windows status returned when a finite wait reaches its deadline.
 (define windows-wait-timeout : u32
   (cast 258 : u32))
+
+;: Windows sentinel used only by the consuming blocking operations.
 (define windows-wait-infinite : u32
   (cast 4294967295 : u32))
 

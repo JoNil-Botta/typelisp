@@ -10705,8 +10705,8 @@
       count)))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
-  (if (< count 4)
-    8
+  (if (< count 5)
+    16
     (* count 2)))
 
 (define tc-env-cache-flag-default-shadow : i64
@@ -10717,8 +10717,36 @@
   4)
 (define tc-env-cache-flag-atomic-arena-owner : i64
   8)
-(define tc-env-cache-sidecar-position-scale : i64
+(define tc-env-cache-flag-signature-lifetime : i64
   16)
+(define tc-env-cache-sidecar-position-scale : i64
+  32)
+
+;; Environment name IDs are non-negative.  Negative derived keys let the
+;; existing relevance map index marker-owned lifetime spellings without
+;; colliding with ordinary bindings or allocating a second map per cache.
+(define (tc-env-cache-lifetime-marker-key [lifetime-id : i64]) : i64
+  (- -2 (* lifetime-id 2)))
+
+(define (tc-env-cache-arena-lifetime-marker-key [owner-id : i64]) : i64
+  (- -3 (* owner-id 2)))
+
+(define (tc-env-cache-lifetime-marker-lifetime-id
+  [name-id : i64]
+  [ty : ast.AstType]
+  [signature-marker-id : i64]
+  [region-marker-id : i64]
+  [ordinary-arena-marker-id : i64]
+  [atomic-arena-marker-id : i64]) : i64
+  (if (or
+    (= name-id signature-marker-id)
+    (= name-id region-marker-id)
+    (= name-id ordinary-arena-marker-id)
+    (= name-id atomic-arena-marker-id))
+    (match ty
+      [(ast.AstType.Var lifetime-id) lifetime-id]
+      [_ -1])
+    -1))
 
 (define (tc-env-cache-binding-sidecar-flags
   [rest-env : TcTypeEnv]
@@ -10820,6 +10848,49 @@
       true)
     false))
 
+(define (tc-env-cache-add-lifetime-marker!
+  [ids : (&mut ids tc_i64_i64_map.Map)]
+  [values : (__tl_dyn-array ast.AstType)]
+  [unsafe-flags : (__tl_dyn-array i64)]
+  [c-abi-fnptr-flags : (__tl_dyn-array i64)]
+  [shadow-flags : (__tl_dyn-array i64)]
+  [lifetime-id : i64]
+  [next : i64]
+  [ty : ast.AstType]
+  [signature : bool]
+  [arena-owner : bool]
+  [position : i64]) : bool
+  (if (< lifetime-id 0)
+    false
+    (let
+      [general-added : bool
+        (tc_i64_i64_map.insert-if-absent-ref!
+          ids
+          (tc-env-cache-lifetime-marker-key lifetime-id)
+          next)]
+      [arena-added : bool
+        (if arena-owner
+          (tc_i64_i64_map.insert-if-absent-ref!
+            ids
+            (tc-env-cache-arena-lifetime-marker-key lifetime-id)
+            next)
+          false)]
+      (if (or general-added arena-added)
+        (begin
+          (array-set! values next ty)
+          (array-set! unsafe-flags next 0)
+          (array-set! c-abi-fnptr-flags next 0)
+          (array-set!
+            shadow-flags
+            next
+            (+
+              (if signature
+                tc-env-cache-flag-signature-lifetime
+                0)
+              (* position tc-env-cache-sidecar-position-scale)))
+          true)
+        false))))
+
 (define (tc-env-cache-fill
   [env : TcTypeEnv]
   [ids : tc_i64_i64_map.Map (:consume)]
@@ -10834,6 +10905,8 @@
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
     [position : i64 0]
+    [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
+    [region-marker-id : i64 (tc-region-marker-id)]
     [cleanup-marker-id : i64 (tc-cleanup-owner-marker-id)]
     [ordinary-arena-marker-id : i64 (tc-ordinary-arena-owner-marker-id)]
     [atomic-arena-marker-id : i64 (tc-atomic-arena-owner-marker-id)]
@@ -10882,6 +10955,31 @@
                   position)
                   (set! next (+ next 1))
                   unit)
+                (let
+                  [marker-lifetime-id : i64
+                    (tc-env-cache-lifetime-marker-lifetime-id
+                      name-id
+                      ty
+                      signature-marker-id
+                      region-marker-id
+                      ordinary-arena-marker-id
+                      atomic-arena-marker-id)]
+                  (if (tc-env-cache-add-lifetime-marker!
+                    (&mut cur-ids)
+                    values
+                    unsafe-flags
+                    c-abi-fnptr-flags
+                    shadow-flags
+                    marker-lifetime-id
+                    next
+                    ty
+                    (= name-id signature-marker-id)
+                    (or
+                      (= name-id ordinary-arena-marker-id)
+                      (= name-id atomic-arena-marker-id))
+                    position)
+                    (set! next (+ next 1))
+                    unit))
                 (set! head (struct-get rest-env head))
                 (set! position (+ position 1))
                 (set! cur-above-boundary still-above)))]
@@ -10911,6 +11009,8 @@
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
     [position : i64 0]
+    [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
+    [region-marker-id : i64 (tc-region-marker-id)]
     [cleanup-marker-id : i64 (tc-cleanup-owner-marker-id)]
     [ordinary-arena-marker-id : i64 (tc-ordinary-arena-owner-marker-id)]
     [atomic-arena-marker-id : i64 (tc-atomic-arena-owner-marker-id)]
@@ -10956,6 +11056,31 @@
                   position)
                   (set! next (+ next 1))
                   unit)
+                (let
+                  [marker-lifetime-id : i64
+                    (tc-env-cache-lifetime-marker-lifetime-id
+                      name-id
+                      ty
+                      signature-marker-id
+                      region-marker-id
+                      ordinary-arena-marker-id
+                      atomic-arena-marker-id)]
+                  (if (tc-env-cache-add-lifetime-marker!
+                    (&mut cur-ids)
+                    values
+                    unsafe-flags
+                    c-abi-fnptr-flags
+                    shadow-flags
+                    marker-lifetime-id
+                    next
+                    ty
+                    (= name-id signature-marker-id)
+                    (or
+                      (= name-id ordinary-arena-marker-id)
+                      (= name-id atomic-arena-marker-id))
+                    position)
+                    (set! next (+ next 1))
+                    unit))
                 (set! left (- left 1))
                 (set! head (struct-get rest-env head))
                 (set! position (+ position 1))
@@ -16826,6 +16951,74 @@
         [_ false])]
     [else false]))
 
+;; 0 = no matching binding in this cache window, 1 = ordinary/region/arena
+;; binding, 2 = signature marker. Packed positions preserve the head-first
+;; lexical order when several binding forms spell the same lifetime.
+(define (tc-env-cache-lifetime-match-status
+  [cache-ptr : (Ptr TcTypeEnvCache)]
+  [lifetime-id : i64]) : i64
+  (let
+    [ids : tc_i64_i64_map.Map
+      (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
+    [sidecar-flags : (__tl_dyn-array i64)
+      (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
+    [ordinary-index : i64 (tc_i64_i64_map.get-value-or (& ids) lifetime-id -1)]
+    [marker-index : i64
+      (tc_i64_i64_map.get-value-or
+        (& ids)
+        (tc-env-cache-lifetime-marker-key lifetime-id)
+        -1)]
+    [owner-id : i64
+      (if (and
+        (>= lifetime-id (tc-arena-phase-structural-base))
+        (= (tc-arena-phase-structural-kind lifetime-id) 0))
+        (tc-arena-phase-structural-first-id lifetime-id)
+        -1)]
+    [owner-marker-index : i64
+      (if (>= owner-id 0)
+        (tc_i64_i64_map.get-value-or
+          (& ids)
+          (tc-env-cache-arena-lifetime-marker-key owner-id)
+          -1)
+        -1)]
+    [best-position : i64
+      (if (>= ordinary-index 0)
+        (/
+          (array-ref sidecar-flags ordinary-index)
+          tc-env-cache-sidecar-position-scale)
+        -1)]
+    [best-signature : bool false]
+    (begin
+      (if (>= marker-index 0)
+        (let
+          [flags : i64 (array-ref sidecar-flags marker-index)]
+          [position : i64 (/ flags tc-env-cache-sidecar-position-scale)]
+          (if (or (< best-position 0) (< position best-position))
+            (begin
+              (set! best-position position)
+              (set!
+                best-signature
+                (not (= (bit-and flags tc-env-cache-flag-signature-lifetime) 0))))
+            unit))
+        unit)
+      (if (>= owner-marker-index 0)
+        (let
+          [flags : i64 (array-ref sidecar-flags owner-marker-index)]
+          [position : i64 (/ flags tc-env-cache-sidecar-position-scale)]
+          (if (or (< best-position 0) (< position best-position))
+            (begin
+              (set! best-position position)
+              (set!
+                best-signature
+                (not (= (bit-and flags tc-env-cache-flag-signature-lifetime) 0))))
+            unit))
+        unit)
+      (if (< best-position 0)
+        0
+        (if best-signature
+          2
+          1)))))
+
 (define (tc-env-cache-covered-count [sidecar-flags : (__tl_dyn-array i64)]) : i64
   (array-ref sidecar-flags (- (array-length sidecar-flags) 1)))
 
@@ -16873,9 +17066,14 @@
   [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
-    [(TcTypeEnvView.Cache _ scan-through _ rest _)
+    [(TcTypeEnvView.Cache cache-ptr scan-through partial rest below)
       (if scan-through
-        (tc-lifetime-visible-scan-id? rest lifetime-id signature-marker-id)
+        (if partial
+          (or
+            (not
+              (= (tc-env-cache-lifetime-match-status cache-ptr lifetime-id) 0))
+            (tc-lifetime-visible-scan-id? below lifetime-id signature-marker-id))
+          (tc-lifetime-visible-scan-id? rest lifetime-id signature-marker-id))
         false)]
     [(TcTypeEnvView.Bind key ty rest)
       (if (tc-env-binding-matches-lifetime-id?
@@ -16892,12 +17090,24 @@
   [signature-marker-id : i64]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
-    [(TcTypeEnvView.Cache _ scan-through _ rest _)
+    [(TcTypeEnvView.Cache cache-ptr scan-through partial rest below)
       (if scan-through
-        (tc-lifetime-nearest-binding-signature-scan-id?
-          rest
-          lifetime-id
-          signature-marker-id)
+        (if partial
+          (let
+            [status : i64
+              (tc-env-cache-lifetime-match-status cache-ptr lifetime-id)]
+            (cond
+              [(= status 2) true]
+              [(= status 1) false]
+              [else
+                (tc-lifetime-nearest-binding-signature-scan-id?
+                  below
+                  lifetime-id
+                  signature-marker-id)]))
+          (tc-lifetime-nearest-binding-signature-scan-id?
+            rest
+            lifetime-id
+            signature-marker-id))
         false)]
     [(TcTypeEnvView.Bind key ty rest)
       (if (tc-env-binding-matches-lifetime-id?
@@ -16924,10 +17134,7 @@
       [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
       (or
         (>= (tc-ordinary-binding-rank-id-from env lifetime-id 0) 0)
-        (match (tc-type-env-view env)
-          [(TcTypeEnvView.Cache _ _ _ rest _)
-            (tc-lifetime-visible-scan-id? rest lifetime-id signature-marker-id)]
-          [_ (tc-lifetime-visible-scan-id? env lifetime-id signature-marker-id)])))))
+        (tc-lifetime-visible-scan-id? env lifetime-id signature-marker-id)))))
 
 (define (tc-lifetime-visible-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
   (if tc-type-env-scoped-runtime-active

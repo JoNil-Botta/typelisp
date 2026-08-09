@@ -3034,11 +3034,11 @@
   test
   (define (compiler-reg-remat-single-spill-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
     (reg.CompilerRegPlan.Plan
-      (reg.compiler-reg-assignment-cons
+      (reg.compiler-reg-assignments-prepend
         (reg.CompilerRegAssignment
           0
           (reg.CompilerRegLocation.Spill (reg.compiler-reg-stack-slot-offset 0)))
-        reg.CompilerRegAssignmentList.Nil)
+        (reg.compiler-reg-assignment-table-empty))
       (live.compiler-live-set-empty)
       (reg.compiler-reg-interval-seq-empty)
       (reg.compiler-reg-function-var-types func)
@@ -3049,15 +3049,15 @@
   test
   (define (compiler-reg-remat-conflict-plan [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
     (reg.CompilerRegPlan.Plan
-      (reg.compiler-reg-assignment-cons
+      (reg.compiler-reg-assignments-prepend
         (reg.CompilerRegAssignment
           0
           (reg.CompilerRegLocation.Spill (reg.compiler-reg-stack-slot-offset 0)))
-        (reg.compiler-reg-assignment-cons
+        (reg.compiler-reg-assignments-prepend
           (reg.CompilerRegAssignment
             1
             (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r9))
-          reg.CompilerRegAssignmentList.Nil))
+          (reg.compiler-reg-assignment-table-empty)))
       (live.compiler-live-set-empty)
       (reg.compiler-reg-interval-seq-empty)
       (reg.compiler-reg-function-var-types func)
@@ -3099,7 +3099,7 @@
                       out-vars
                       extra-assignments
                       extra-types))]
-                [rewritten-assignments : reg.CompilerRegAssignmentList
+                [rewritten-assignments : reg.CompilerRegAssignmentTable
                   (reg.compiler-reg-plan-assignments rewritten-plan)]
                 [rewritten-types : reg.CompilerRegVarTypes
                   (reg.compiler-reg-plan-types rewritten-plan)]
@@ -3874,12 +3874,12 @@
       (match (reg.compiler-reg-live-interval-selection func liveness)
         [(reg.CompilerRegIntervalSelection.Selection intervals _)
           (reg.CompilerRegPlan.Plan
-            (reg.compiler-reg-assignment-cons
+            (reg.compiler-reg-assignments-prepend
               (reg.CompilerRegAssignment
                 0
                 (reg.CompilerRegLocation.Spill
                   (reg.compiler-reg-stack-slot-offset 0)))
-              reg.CompilerRegAssignmentList.Nil)
+              (reg.compiler-reg-assignment-table-empty))
             (live.compiler-live-set-empty)
             intervals
             type-info
@@ -3897,17 +3897,17 @@
       (match (reg.compiler-reg-live-interval-selection func liveness)
         [(reg.CompilerRegIntervalSelection.Selection intervals _)
           (reg.CompilerRegPlan.Plan
-            (reg.compiler-reg-assignment-cons
+            (reg.compiler-reg-assignments-prepend
               (reg.CompilerRegAssignment
                 0
                 (reg.CompilerRegLocation.Spill
                   (reg.compiler-reg-stack-slot-offset 0)))
-              (reg.compiler-reg-assignment-cons
+              (reg.compiler-reg-assignments-prepend
                 (reg.CompilerRegAssignment
                   1
                   (reg.CompilerRegLocation.Spill
                     (reg.compiler-reg-stack-slot-offset 1)))
-                reg.CompilerRegAssignmentList.Nil))
+                (reg.compiler-reg-assignment-table-empty)))
             (live.compiler-live-set-empty)
             intervals
             type-info
@@ -3925,15 +3925,15 @@
       (match (reg.compiler-reg-live-interval-selection func liveness)
         [(reg.CompilerRegIntervalSelection.Selection intervals _)
           (reg.CompilerRegPlan.Plan
-            (reg.compiler-reg-assignment-cons
+            (reg.compiler-reg-assignments-prepend
               (reg.CompilerRegAssignment
                 0
                 (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
-              (reg.compiler-reg-assignment-cons
+              (reg.compiler-reg-assignments-prepend
                 (reg.CompilerRegAssignment
                   1
                   (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r8))
-                reg.CompilerRegAssignmentList.Nil))
+                (reg.compiler-reg-assignment-table-empty)))
             (live.compiler-live-set-empty)
             intervals
             type-info
@@ -4048,7 +4048,7 @@
                       raw-plan
                       extra-assignments
                       vars)]
-                  [assignments : reg.CompilerRegAssignmentList
+                  [assignments : reg.CompilerRegAssignmentTable
                     (reg.compiler-reg-plan-assignments rewritten-plan)]
                   [body : ir.CompilerIrInstrList
                     (compiler-reg-block-instr-list
@@ -4344,7 +4344,7 @@
                       (ir.compiler-ir-label "body"))]
                   [rewritten-plan : reg.CompilerRegPlan
                     (reg.compiler-reg-plan-with-call-save-rewrite plan rewrite)]
-                  [rewritten-assignments : reg.CompilerRegAssignmentList
+                  [rewritten-assignments : reg.CompilerRegAssignmentTable
                     (reg.compiler-reg-plan-assignments rewritten-plan)]
                   (and
                     (= out-vars (+ vars 1))
@@ -4397,7 +4397,7 @@
                       (ir.compiler-ir-label "body"))]
                   [rewritten-plan : reg.CompilerRegPlan
                     (reg.compiler-reg-plan-with-call-save-rewrite plan rewrite)]
-                  [rewritten-assignments : reg.CompilerRegAssignmentList
+                  [rewritten-assignments : reg.CompilerRegAssignmentTable
                     (reg.compiler-reg-plan-assignments rewritten-plan)]
                   [split0 : i64 vars]
                   [split1 : i64 (+ vars 1)]
@@ -5012,18 +5012,18 @@
       [list-func : ir.CompilerIrFunction (compiler-reg-mask-home-function)]
       [dense-func : ir.CompilerIrFunction
         (ir.compiler-ir-function-compact-blocks list-func)]
-      [list-assignments : reg.CompilerRegAssignmentList
+      [list-block-assignments : reg.CompilerRegAssignmentTable
         (reg.compiler-reg-plan-assignments
           (compiler-reg-plan-function-avx2 list-func))]
-      [dense-assignments : reg.CompilerRegAssignmentList
+      [dense-assignments : reg.CompilerRegAssignmentTable
         (reg.compiler-reg-plan-assignments
           (compiler-reg-plan-function-avx2 dense-func))]
       (and
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup list-assignments 0)
+          (reg.compiler-reg-assignment-lookup list-block-assignments 0)
           (cabi.compiler-abi-vector-register-id 6))
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup list-assignments 1)
+          (reg.compiler-reg-assignment-lookup list-block-assignments 1)
           (cabi.compiler-abi-vector-register-id 7))
         (reg.compiler-reg-location-register?
           (reg.compiler-reg-assignment-lookup dense-assignments 0)
@@ -6259,7 +6259,7 @@
     [_ false]))
 
 (define (compiler-reg-unassigned?
-  [assignments : reg.CompilerRegAssignmentList]
+  [assignments : reg.CompilerRegAssignmentTable]
   [var : i64]) : bool
   (match (reg.compiler-reg-assignment-lookup assignments var)
     [(reg.CompilerRegMaybeLocation.No) true]
@@ -6301,11 +6301,11 @@
 
 (define (compiler-reg-switch-scratch-test-plan) : reg.CompilerRegPlan
   (reg.CompilerRegPlan.Plan
-    (reg.compiler-reg-assignment-cons
+    (reg.compiler-reg-assignments-prepend
       (reg.CompilerRegAssignment
         0
         (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r9))
-      reg.CompilerRegAssignmentList.Nil)
+      (reg.compiler-reg-assignment-table-empty))
     (live.compiler-live-set-empty)
     (reg.compiler-reg-interval-seq-prepend
       (reg.CompilerRegInterval 0 0 1)
@@ -6395,15 +6395,15 @@
 
 (define (compiler-reg-memory-scratch-test-plan) : reg.CompilerRegPlan
   (reg.CompilerRegPlan.Plan
-    (reg.compiler-reg-assignment-cons
+    (reg.compiler-reg-assignments-prepend
       (reg.CompilerRegAssignment
         0
         (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r9))
-      (reg.compiler-reg-assignment-cons
+      (reg.compiler-reg-assignments-prepend
         (reg.CompilerRegAssignment
           1
           (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r10))
-        reg.CompilerRegAssignmentList.Nil))
+        (reg.compiler-reg-assignment-table-empty)))
     (live.compiler-live-set-empty)
     (reg.compiler-reg-interval-seq-prepend
       (reg.CompilerRegInterval 0 0 1)
@@ -9156,7 +9156,7 @@
               6)))])))
 
 (define (compiler-reg-same-location?
-  [assignments : reg.CompilerRegAssignmentList]
+  [assignments : reg.CompilerRegAssignmentTable]
   [left : i64]
   [right : i64]) : bool
   (match (reg.compiler-reg-assignment-lookup assignments left)
@@ -9168,7 +9168,7 @@
     [(reg.CompilerRegMaybeLocation.No) false]))
 
 (define (compiler-reg-different-location?
-  [assignments : reg.CompilerRegAssignmentList]
+  [assignments : reg.CompilerRegAssignmentTable]
   [left : i64]
   [right : i64]) : bool
   (match (reg.compiler-reg-assignment-lookup assignments left)
@@ -9179,13 +9179,13 @@
         [(reg.CompilerRegMaybeLocation.No) false])]
     [(reg.CompilerRegMaybeLocation.No) false]))
 
-(define (compiler-reg-indexed-lookups-ok?) : bool
+(define (compiler-reg-dense-lookups-ok?) : bool
   (let
-    [assignments : reg.CompilerRegAssignmentList
+    [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-insert
         (reg.compiler-reg-assignment-insert
           (reg.compiler-reg-assignment-insert
-            reg.CompilerRegAssignmentList.Nil
+            (reg.compiler-reg-assignment-table-empty)
             1
             (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
           4
@@ -9204,8 +9204,8 @@
             (reg.compiler-reg-interval-seq-prepend
               (reg.CompilerRegInterval 4 8 10)
               (reg.compiler-reg-interval-seq-empty)))))]
-    [assignment-index : reg.CompilerRegAssignmentIndex
-      (reg.compiler-reg-assignment-index-build assignments 5)]
+    [assignment-index : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignment-table-with-min-capacity assignments 5)]
     [assignment-table : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-insert
         (reg.compiler-reg-assignment-table-insert
@@ -9219,25 +9219,23 @@
             cabi.compiler-reg-id-r14))
         3
         (reg.CompilerRegLocation.Spill 24))]
-    [assignment-table-list : reg.CompilerRegAssignmentList
-      (reg.compiler-reg-assignment-table-to-list assignment-table)]
     [interval-index : reg.CompilerRegIntervalIndex
       (reg.compiler-reg-interval-index-build intervals 5)]
     [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
     [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
     [assignment-hit-ok : bool
-      (match (reg.compiler-reg-assignment-index-lookup assignment-index 1)
+      (match (reg.compiler-reg-assignment-table-lookup assignment-index 1)
         [(reg.CompilerRegMaybeLocation.Some location)
           (reg.compiler-reg-location-eq?
             location
             (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))]
         [(reg.CompilerRegMaybeLocation.No) false])]
     [assignment-miss-ok : bool
-      (match (reg.compiler-reg-assignment-index-lookup assignment-index 2)
+      (match (reg.compiler-reg-assignment-table-lookup assignment-index 2)
         [(reg.CompilerRegMaybeLocation.Some _) false]
         [(reg.CompilerRegMaybeLocation.No) true])]
     [assignment-oob-ok : bool
-      (match (reg.compiler-reg-assignment-index-lookup assignment-index -1)
+      (match (reg.compiler-reg-assignment-table-lookup assignment-index -1)
         [(reg.CompilerRegMaybeLocation.Some _) false]
         [(reg.CompilerRegMaybeLocation.No) true])]
     [table-hit-ok : bool
@@ -9255,13 +9253,13 @@
       (match (reg.compiler-reg-assignment-table-lookup assignment-table -1)
         [(reg.CompilerRegMaybeLocation.Some _) false]
         [(reg.CompilerRegMaybeLocation.No) true])]
-    [table-list-ok : bool
+    [table-direct-ok : bool
       (and
         (reg.compiler-reg-location-register?
-          (reg.compiler-reg-assignment-lookup assignment-table-list 1)
+          (reg.compiler-reg-assignment-lookup assignment-table 1)
           cabi.compiler-reg-id-r12)
         (reg.compiler-reg-location-eq?
-          (match (reg.compiler-reg-assignment-lookup assignment-table-list 3)
+          (match (reg.compiler-reg-assignment-lookup assignment-table 3)
             [(reg.CompilerRegMaybeLocation.Some location) location]
             [(reg.CompilerRegMaybeLocation.No)
               (reg.CompilerRegLocation.Spill -1)])
@@ -9333,16 +9331,16 @@
               cabi.compiler-reg-id-r13
               cabi.compiler-reg-id-r14)
             cabi.compiler-reg-id-r15))
-        (reg.compiler-reg-assignment-index-var-uses-register?
+        (reg.compiler-reg-assignment-table-var-uses-register?
           assignment-index
           1
           cabi.compiler-reg-id-r12)
-        (reg.compiler-reg-assignment-index-var-uses-register?
+        (reg.compiler-reg-assignment-table-var-uses-register?
           assignment-index
           4
           cabi.compiler-reg-id-r14)
         (=
-          (reg.compiler-reg-assignment-index-primary-register-home
+          (reg.compiler-reg-assignment-table-primary-register-home
             assignment-index
             4)
           cabi.compiler-reg-id-r13)
@@ -9358,14 +9356,14 @@
         (reg.compiler-reg-var-live-over-range? starts ends 1 5 7)
         (not (reg.compiler-reg-var-live-over-range? starts ends 1 6 7))
         (not
-          (reg.compiler-reg-assignment-index-register-free-at-point?
+          (reg.compiler-reg-assignment-table-register-free-at-point?
             starts
             ends
             assignment-index
             5
             3
             cabi.compiler-reg-id-r12))
-        (reg.compiler-reg-assignment-index-register-free-at-point?
+        (reg.compiler-reg-assignment-table-register-free-at-point?
           starts
           ends
           assignment-index
@@ -9373,7 +9371,7 @@
           6
           cabi.compiler-reg-id-r12)
         (not
-          (reg.compiler-reg-assignment-index-register-free-over-range?
+          (reg.compiler-reg-assignment-table-register-free-over-range?
             starts
             ends
             assignment-index
@@ -9381,7 +9379,7 @@
             3
             4
             cabi.compiler-reg-id-r14))
-        (reg.compiler-reg-assignment-index-register-free-over-range?
+        (reg.compiler-reg-assignment-table-register-free-over-range?
           starts
           ends
           assignment-index
@@ -9396,7 +9394,7 @@
       table-hit-ok
       table-miss-ok
       table-oob-ok
-      table-list-ok
+      table-direct-ok
       interval-hit-ok
       interval-miss-ok
       interval-first-ok
@@ -9404,6 +9402,44 @@
       conflict-ok
       table-conflict-ok
       shared-query-ok)))
+
+(define (compiler-reg-dense-assignment-snapshot-ok?) : bool
+  (let
+    [base : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignment-insert
+        (reg.compiler-reg-assignment-table-empty)
+        2
+        (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))]
+    [successor : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignment-table-override-copy
+        base
+        2
+        (reg.CompilerRegLocation.Spill 40))]
+    [expanded : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignment-table-override-copy
+        successor
+        9
+        (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r13))]
+    (and
+      (= (reg.compiler-reg-assignment-count base) 1)
+      (= (reg.compiler-reg-assignment-count successor) 1)
+      (= (reg.compiler-reg-assignment-count expanded) 2)
+      (>= (array-length (struct-get expanded present)) 10)
+      (reg.compiler-reg-location-register?
+        (reg.compiler-reg-assignment-lookup base 2)
+        cabi.compiler-reg-id-r12)
+      (match (reg.compiler-reg-assignment-lookup successor 2)
+        [(reg.CompilerRegMaybeLocation.Some location)
+          (reg.compiler-reg-location-eq?
+            location
+            (reg.CompilerRegLocation.Spill 40))]
+        [(reg.CompilerRegMaybeLocation.No) false])
+      (match (reg.compiler-reg-assignment-lookup base 9)
+        [(reg.CompilerRegMaybeLocation.Some _) false]
+        [(reg.CompilerRegMaybeLocation.No) true])
+      (reg.compiler-reg-location-register?
+        (reg.compiler-reg-assignment-lookup expanded 9)
+        cabi.compiler-reg-id-r13))))
 
 (define (compiler-reg-segmented-interference-ok?) : bool
   (let
@@ -10302,7 +10338,7 @@
 (define (compiler-reg-test-xmm-greedy-assignments
   [target-abi : cabi.CompilerRegTargetAbi]
   [vector : bool]
-  [spans-call : bool]) : reg.CompilerRegAssignmentList
+  [spans-call : bool]) : reg.CompilerRegAssignmentTable
   (let
     [intervals : reg.CompilerRegIntervalSeq
       (reg.compiler-reg-interval-seq-prepend
@@ -10336,32 +10372,31 @@
           (reg.compiler-reg-xmm-caller-register-count-for-abi target-abi))
         -1)]
     (match state
-      [(reg.CompilerRegAssignState.State _ assignments)
-        (reg.compiler-reg-assignment-table-to-list assignments)])))
+      [(reg.CompilerRegAssignState.State _ assignments) assignments])))
 
 (define (compiler-reg-xmm-abi-call-constraints-ok?) : bool
   (let
-    [sysv-float : reg.CompilerRegAssignmentList
+    [sysv-float : reg.CompilerRegAssignmentTable
       (compiler-reg-test-xmm-greedy-assignments
         cabi.CompilerRegTargetAbi.Linux
         false
         true)]
-    [win-float : reg.CompilerRegAssignmentList
+    [win-float : reg.CompilerRegAssignmentTable
       (compiler-reg-test-xmm-greedy-assignments
         cabi.CompilerRegTargetAbi.Windows
         false
         true)]
-    [sysv-vector : reg.CompilerRegAssignmentList
+    [sysv-vector : reg.CompilerRegAssignmentTable
       (compiler-reg-test-xmm-greedy-assignments
         cabi.CompilerRegTargetAbi.Linux
         true
         true)]
-    [win-vector : reg.CompilerRegAssignmentList
+    [win-vector : reg.CompilerRegAssignmentTable
       (compiler-reg-test-xmm-greedy-assignments
         cabi.CompilerRegTargetAbi.Windows
         true
         true)]
-    [sysv-leaf : reg.CompilerRegAssignmentList
+    [sysv-leaf : reg.CompilerRegAssignmentTable
       (compiler-reg-test-xmm-greedy-assignments
         cabi.CompilerRegTargetAbi.Linux
         false
@@ -10442,8 +10477,7 @@
           -1)
           [(reg.CompilerRegAssignState.State _ assignments)
             (let
-              [items : reg.CompilerRegAssignmentList
-                (reg.compiler-reg-assignment-table-to-list assignments)]
+              [items : reg.CompilerRegAssignmentTable assignments]
               (and
                 (reg.compiler-reg-location-register?
                   (reg.compiler-reg-assignment-lookup items 0)
@@ -10489,9 +10523,9 @@
           (reg.compiler-reg-assignment-table-lookup out 0)
           (cabi.compiler-abi-vector-register-id 6))])))
 
-(define (compiler-reg-color-register-assignments-to [last : i64]) : reg.CompilerRegAssignmentList
+(define (compiler-reg-color-register-assignments-to [last : i64]) : reg.CompilerRegAssignmentTable
   (if (< last 0)
-    reg.CompilerRegAssignmentList.Nil
+    (reg.compiler-reg-assignment-table-empty)
     (reg.compiler-reg-assignment-insert
       (compiler-reg-color-register-assignments-to (- last 1))
       last
@@ -10536,10 +10570,10 @@
                             ir.CompilerIrInstrList.Nil))))))))))
         ir.CompilerIrBlockList.Nil))))
 
-(define (compiler-reg-color-pointer-assignments) : reg.CompilerRegAssignmentList
+(define (compiler-reg-color-pointer-assignments) : reg.CompilerRegAssignmentTable
   (reg.compiler-reg-assignment-insert
     (reg.compiler-reg-assignment-insert
-      reg.CompilerRegAssignmentList.Nil
+      (reg.compiler-reg-assignment-table-empty)
       2
       (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
     5
@@ -10561,9 +10595,9 @@
     2
     (ast.AstType.U64)))
 
-(define (compiler-reg-color-spill-sharing-assignments [vars : i64]) : reg.CompilerRegAssignmentList
+(define (compiler-reg-color-spill-sharing-assignments [vars : i64]) : reg.CompilerRegAssignmentTable
   (if (< vars 1)
-    reg.CompilerRegAssignmentList.Nil
+    (reg.compiler-reg-assignment-table-empty)
     (reg.compiler-reg-assignment-insert
       (compiler-reg-color-spill-sharing-assignments (- vars 1))
       (- vars 1)
@@ -10750,9 +10784,9 @@
               (ast.AstType.I64)
               2)
             ir.CompilerIrParamList.Nil)))]
-    [assignments : reg.CompilerRegAssignmentList
+    [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-insert
-        reg.CompilerRegAssignmentList.Nil
+        (reg.compiler-reg-assignment-table-empty)
         1
         (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))]
     (match (reg.compiler-reg-color-stack-slots
@@ -10780,10 +10814,10 @@
           [active : i64 (array-ref remap 0)]
           [varying : i64 (array-ref remap 1)]
           [uniform : i64 (array-ref remap 2)]
-          [rebuilt : reg.CompilerRegAssignmentList
+          [rebuilt : reg.CompilerRegAssignmentTable
             (reg.compiler-reg-color-rebuild-assignments remap 3 assignments)]
-          [rebuilt-index : reg.CompilerRegAssignmentIndex
-            (reg.compiler-reg-assignment-index-build rebuilt 3)]
+          [rebuilt-index : reg.CompilerRegAssignmentTable
+            (reg.compiler-reg-assignment-table-with-min-capacity rebuilt 3)]
           (begin
             (compiler-regalloc-self-test-require!
               "AVX2 special parameter range reservation"
@@ -10796,7 +10830,7 @@
             (compiler-regalloc-self-test-require!
               "AVX2 special parameter assignment remap"
               (reg.compiler-reg-location-register?
-                (reg.compiler-reg-assignment-index-lookup rebuilt-index varying)
+                (reg.compiler-reg-assignment-table-lookup rebuilt-index varying)
                 cabi.compiler-reg-id-r12))
             (compiler-regalloc-self-test-require!
               "AVX2 emitted parameter id remap"
@@ -10918,7 +10952,7 @@
       (match (reg.compiler-reg-color-stack-slots
         (ast.ast-node-pool-reader-type-segment-bases)
         (reg.CompilerRegPlan.Plan
-          reg.CompilerRegAssignmentList.Nil
+          (reg.compiler-reg-assignment-table-empty)
           (live.compiler-live-set-empty)
           (reg.compiler-reg-interval-seq-prepend
             (reg.CompilerRegInterval 0 0 2)
@@ -11365,8 +11399,11 @@
       "compiler-reg-early-scratch-exclusion-rehomes-ok?"
       (compiler-reg-early-scratch-exclusion-rehomes-ok?))
     (compiler-regalloc-self-test-require!
-      "compiler-reg-indexed-lookups-ok?"
-      (compiler-reg-indexed-lookups-ok?))
+      "compiler-reg-dense-lookups-ok?"
+      (compiler-reg-dense-lookups-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-dense-assignment-snapshot-ok?"
+      (compiler-reg-dense-assignment-snapshot-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-stack-group-ok?"
       (compiler-reg-color-stack-group-ok?))

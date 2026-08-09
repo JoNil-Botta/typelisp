@@ -215,7 +215,7 @@
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
     (begin
-      (process.env-vec-append (&mut env) name value)
+      (process.env-vec-append! (&mut env) name value)
       env)))
 
 (define (process-api-env-vec2
@@ -226,8 +226,8 @@
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
     (begin
-      (process.env-vec-append (&mut env) name-a value-a)
-      (process.env-vec-append (&mut env) name-b value-b)
+      (process.env-vec-append! (&mut env) name-a value-a)
+      (process.env-vec-append! (&mut env) name-b value-b)
       env)))
 
 (define (process-api-bad-shape-env-vec) : process.ProcessEnvVec

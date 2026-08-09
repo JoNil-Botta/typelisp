@@ -105,9 +105,9 @@
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
     (begin
-      (process.env-vec-append (&mut env) "PATH" (tool-path tool))
-      (process.env-vec-append (&mut env) "LIB" (tool-lib tool))
-      (process.env-vec-append (&mut env) "INCLUDE" (tool-include tool))
+      (process.env-vec-append! (&mut env) "PATH" (tool-path tool))
+      (process.env-vec-append! (&mut env) "LIB" (tool-lib tool))
+      (process.env-vec-append! (&mut env) "INCLUDE" (tool-include tool))
       env)))
 
 ;: Render a discovery error as a diagnostic message.

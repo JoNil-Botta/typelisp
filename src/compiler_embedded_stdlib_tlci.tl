@@ -767,6 +767,29 @@
           name-id)
         (ast.AstType.Expr)))))
 
+;; Build a computed struct assignment from an already-resolved opaque syntax
+;; identity. Its CTFE result is unit-typed, matching the interpreted
+;; `ctfe-eval-expr-struct-set-call` path. Refs #5999.
+(define (compiler-comptime-host-build-struct-set-from-id!
+  [target-node : i64]
+  [name-id : i64]
+  [value-node : i64]) : i64
+  (begin
+    (set!
+      compiler-comptime-host-stack-len
+      (- compiler-comptime-host-stack-len 3))
+    (compiler-comptime-host-push!
+      (ctfe_support.CompilerCtfeValue.Expr
+        (ast.ast-expr-struct-set-id-with-pools
+          (array-ref
+            (compiler-comptime-host-global-shared-view
+              compiler-comptime-host-pools)
+            0)
+          target-node
+          name-id
+          value-node)
+        (ast.AstType.Unit)))))
+
 ;; Resolve a computed String/Name identity the same way the interpreted
 ;; pattern-variant builder does, then consume its payload list.
 (define (compiler-comptime-host-build-pattern-variant-from-name!
@@ -4851,6 +4874,76 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+;; Dynamic struct-set: pop the value expression after the computed field name
+;; and target expression. Name values preserve their structural source id;
+;; String values receive the same syntax identity as interpreted CTFE.
+(define (compiler-comptime-host-callback-expr-struct-set-from-value
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 3)
+            tlci.tlci-host-callback-status-bad-request
+            (let
+              [value-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 1))]
+              [name-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 2))]
+              [target-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 3))]
+              [value-node : i64 (compiler-comptime-host-value-node value-value)]
+              [target-node : i64
+                (compiler-comptime-host-value-node target-value)]
+              (if (or (< value-node 0) (< target-node 0))
+                tlci.tlci-host-callback-status-bad-request
+                (match name-value
+                  [(ctfe_support.CompilerCtfeValue.Name _ name-id)
+                    (compiler-comptime-host-build-struct-set-from-id!
+                      target-node
+                      name-id
+                      value-node)]
+                  [(ctfe_support.CompilerCtfeValue.String text string-id)
+                    (let
+                      [env : ctfe_support.CtfeEnv
+                        (ctfe_support.ctfe-env-empty-with-pools
+                          (array-ref
+                            (compiler-comptime-host-global-shared-view
+                              compiler-comptime-host-pools)
+                            0))]
+                      (compiler-comptime-host-build-struct-set-from-id!
+                        target-node
+                        (ctfe_support.ctfe-string-syntax-name-id
+                          (ctfe_support.ctfe-env-source-names env)
+                          text
+                          string-id)
+                        value-node))]
+                  [_ tlci.tlci-host-callback-status-bad-request]))))]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 ;; array-set!: pop the value, index, and target expressions and push the
 ;; node the parser produces.
 (define (compiler-comptime-host-callback-expr-array-set
@@ -8118,6 +8211,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-struct-get-from-value)
         compiler-comptime-host-callback-expr-struct-get-from-value)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-struct-set-from-value)
+        compiler-comptime-host-callback-expr-struct-set-from-value)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

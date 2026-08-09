@@ -2819,6 +2819,116 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
+;; Drive the computed expr-struct-set entry with the two interpreted field
+;; value kinds and with each malformed operand position. Modes 0/1 are a
+;; structural reflected Name and a generated String; modes 2/3/4 corrupt the
+;; field, target, and value respectively and must fail without committing.
+;; Refs #5999.
+(define (producer-test-dispatch-struct-set?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]
+  [mode : i64]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [target : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Var (ci.intern "struct-target")))]
+    [value : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Var (ci.intern "struct-value")))]
+    [source-name-id : i64 (ci.intern "name-field")]
+    [structural-name-id : i64
+      (+ (ci.intern-macro-global-structural-base) source-name-id)]
+    [string-value : compiler_ctfe.CompilerCtfeValue
+      (compiler_ctfe.ctfe-generated-string-value "string-field")]
+    [expected-string-id : i64
+      (match string-value
+        [(compiler_ctfe.CompilerCtfeValue.String text string-id)
+          (compiler_ctfe.ctfe-string-syntax-name-id
+            (compiler_ctfe.ctfe-env-source-names
+              (compiler_ctfe.ctfe-env-empty-with-pools pools))
+            text
+            string-id)]
+        [_ -1])]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
+    (begin
+      (array-set!
+        operands
+        0
+        (if (= mode 3)
+          (compiler_ctfe.CompilerCtfeValue.Bool false)
+          (compiler_ctfe.CompilerCtfeValue.Expr target (ast.AstType.Expr))))
+      (array-set!
+        operands
+        1
+        (cond
+          [(= mode 0)
+            (compiler_ctfe.CompilerCtfeValue.Name
+              "name-field"
+              structural-name-id)]
+          [(= mode 2) (compiler_ctfe.CompilerCtfeValue.Bool false)]
+          [else string-value]))
+      (array-set!
+        operands
+        2
+        (if (= mode 4)
+          (compiler_ctfe.CompilerCtfeValue.Bool false)
+          (compiler_ctfe.CompilerCtfeValue.Expr value (ast.AstType.Expr))))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        3
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci_loader.tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              (if (< mode 2)
+                (and
+                  (=
+                    (struct-get dispatch status)
+                    tlci.tlci-host-callback-status-ok)
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+                    [(compiler_ctfe.CompilerCtfeValue.Expr
+                        node
+                        (ast.AstType.Unit))
+                      (match (ast.ast-node-pool-context-expr-get pools node)
+                        [(ast.AstExpr.StructSet
+                            actual-target
+                            actual-field
+                            actual-value)
+                          (and
+                            (= actual-target target)
+                            (=
+                              actual-field
+                              (if (= mode 0)
+                                structural-name-id
+                                expected-string-id))
+                            (= actual-value value))]
+                        [_ false])]
+                    [_ false]))
+                (and
+                  (=
+                    (struct-get dispatch status)
+                    tlci.tlci-host-callback-status-bad-request)
+                  (not
+                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?))))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
 ;: Owner arena for the smoke's image loads. Every one of them releases the
 ;: image before returning, so the arena current at the load already
 ;: outlives it.
@@ -2981,7 +3091,7 @@
     [source : String
       (string.append
         source-base
-        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n")]
+        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n(defmacro (structset [target : Expr] [field : String] [value : Expr]) : Expr (comptime.expr-struct-set target field value))\n")]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
@@ -3039,13 +3149,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 36)
-                              (= (struct-get captures len) 36)
+                              (= (array-length name-array) 37)
+                              (= (struct-get captures len) 37)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
                                   0)
-                                35)
+                                36)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
@@ -3246,6 +3356,26 @@
                               (producer-test-dispatch-var-name-identity?
                                 (& loaded)
                                 "package.macros/nameidentity")
+                              (producer-test-dispatch-struct-set?
+                                (& loaded)
+                                "package.macros/structset"
+                                0)
+                              (producer-test-dispatch-struct-set?
+                                (& loaded)
+                                "package.macros/structset"
+                                1)
+                              (producer-test-dispatch-struct-set?
+                                (& loaded)
+                                "package.macros/structset"
+                                2)
+                              (producer-test-dispatch-struct-set?
+                                (& loaded)
+                                "package.macros/structset"
+                                3)
+                              (producer-test-dispatch-struct-set?
+                                (& loaded)
+                                "package.macros/structset"
+                                4)
                               (producer-test-dispatch-tuple-splice?
                                 (& loaded)
                                 "package.macros/tuplepack"

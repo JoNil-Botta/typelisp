@@ -422,6 +422,197 @@
         [_ false])]
     [_ false]))
 
+(define (comptime-host-smoke-result-struct-set?
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [target : i64]
+  [field-id : i64]
+  [value : i64]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr
+        node
+        (compiler_ast_types.AstType.Unit))
+      (match (compiler_ast_types.ast-node-pool-context-expr-get pools node)
+        [(compiler_ast_types.AstExpr.StructSet
+            actual-target
+            actual-field
+            actual-value)
+          (and
+            (= actual-target target)
+            (= actual-field field-id)
+            (= actual-value value))]
+        [_ false])]
+    [_ false]))
+
+;; Computed struct assignment accepts both structural Name identities and
+;; String values, and rejects every other field kind without producing a
+;; result. Exercise the callback independently of the embedded-package census.
+;; Refs #5999.
+(define (comptime-host-smoke-struct-set-from-value-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [target-node : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools
+        (compiler_ast_types.AstExpr.Var (ci.intern "target")))]
+    [value-node : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools
+        (compiler_ast_types.AstExpr.Var (ci.intern "value")))]
+    [name-id : i64 (ci.intern "name-field")]
+    [string-id : i64 (ci.intern "string-field")]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 5)]
+    (begin
+      (array-set!
+        operands
+        0
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          target-node
+          (compiler_ast_types.AstType.Expr)))
+      (array-set!
+        operands
+        1
+        (compiler_ctfe.CompilerCtfeValue.Name "name-field" name-id))
+      (array-set!
+        operands
+        2
+        (compiler_ctfe.CompilerCtfeValue.String "string-field" string-id))
+      (array-set!
+        operands
+        3
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          value-node
+          (compiler_ast_types.AstType.Expr)))
+      (array-set! operands 4 (compiler_ctfe.CompilerCtfeValue.Bool false))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        5
+        16
+        comptime-host-smoke-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [name-ok : bool
+          (and
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                0
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                1
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                3
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-struct-set-from-value
+                0
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (comptime-host-smoke-commit-result!)
+            (comptime-host-smoke-result-struct-set?
+              pools
+              target-node
+              name-id
+              value-node))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+            pools
+            operands
+            5
+            16
+            comptime-host-smoke-cookie
+            (compiler_ctfe.ctfe-reflect-info-list-empty))
+          (let
+            [string-ok : bool
+              (and
+                (=
+                  (comptime-host-smoke-invoke
+                    compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                    0
+                    0)
+                  tlci_core.tlci-host-callback-status-ok)
+                (=
+                  (comptime-host-smoke-invoke
+                    compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                    2
+                    0)
+                  tlci_core.tlci-host-callback-status-ok)
+                (=
+                  (comptime-host-smoke-invoke
+                    compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                    3
+                    0)
+                  tlci_core.tlci-host-callback-status-ok)
+                (=
+                  (comptime-host-smoke-invoke
+                    compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-struct-set-from-value
+                    0
+                    0)
+                  tlci_core.tlci-host-callback-status-ok)
+                (comptime-host-smoke-commit-result!)
+                (comptime-host-smoke-result-struct-set?
+                  pools
+                  target-node
+                  (compiler_ctfe.ctfe-string-syntax-name-id
+                    (compiler_ctfe.ctfe-env-source-names
+                      (compiler_ctfe.ctfe-env-empty-with-pools pools))
+                    "string-field"
+                    string-id)
+                  value-node))]
+            (begin
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+                pools
+                operands
+                5
+                16
+                comptime-host-smoke-cookie
+                (compiler_ctfe.ctfe-reflect-info-list-empty))
+              (let
+                [malformed-ok : bool
+                  (and
+                    (=
+                      (comptime-host-smoke-invoke
+                        compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                        0
+                        0)
+                      tlci_core.tlci-host-callback-status-ok)
+                    (=
+                      (comptime-host-smoke-invoke
+                        compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                        4
+                        0)
+                      tlci_core.tlci-host-callback-status-ok)
+                    (=
+                      (comptime-host-smoke-invoke
+                        compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                        3
+                        0)
+                      tlci_core.tlci-host-callback-status-ok)
+                    (=
+                      (comptime-host-smoke-invoke
+                        compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-struct-set-from-value
+                        0
+                        0)
+                      tlci_core.tlci-host-callback-status-bad-request)
+                    (not
+                      (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)))]
+                (begin
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+                  (and name-ok string-ok malformed-ok))))))))))
+
 (define (comptime-host-smoke-result-tuple-ref?
   [pools : compiler_ast_types.AstNodePoolContext]
   [target : i64]) : bool
@@ -1205,6 +1396,8 @@
       (io.panic "comptime host smoke: type-slice callback")]
     [(not (comptime-host-smoke-reflection-builders-ok?))
       (io.panic "comptime host smoke: reflection builders")]
+    [(not (comptime-host-smoke-struct-set-from-value-ok?))
+      (io.panic "comptime host smoke: computed struct set")]
     [(not (comptime-host-smoke-pattern-binding-fuel-ok?))
       (io.panic "comptime host smoke: pattern binding fuel")]
     [(not (comptime-host-smoke-expr-list-fold-hygiene-ok?))

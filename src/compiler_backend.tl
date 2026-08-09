@@ -967,6 +967,14 @@
 (defstruct CompilerBackendFunctionState
   (address i64))
 
+;; One borrowed register-sized argument carries the state and source facts used
+;; while parsing a group.  Keeping the hot parser below six machine arguments
+;; avoids spilling every line's newline/ownership flags through the stack.
+(defstruct CompilerBackendPeepholeParseContext
+  (backend-state-address i64)
+  (stream-address i64)
+  (data (Ptr u8)))
+
 (define (compiler-backend-state-size) : i64
   (comptime (size-of (type CompilerBackendState))))
 
@@ -1153,25 +1161,10 @@
           stream-state))
       (CompilerBackendStreamState address))))
 
-(define (compiler-backend-state-stream-state-active?
-  [backend-state : CompilerBackendState]) : bool
-  (not
-    (=
-      (struct-get
-        (compiler-backend-state-data backend-state)
-        stream-state-address)
-      0)))
-
 (define (compiler-backend-assembly-stream-home-arena-handle-value
   [stream : CompilerBackendStreamState]) : i64
   (arena.raw-handle
     (struct-get (compiler-backend-stream-state-data stream) assembly-home-arena)))
-
-(define (compiler-backend-stream-state-data-size) : i64
-  (comptime (size-of (type CompilerBackendStreamStateData))))
-
-(define (compiler-backend-state-data-size) : i64
-  (comptime (size-of (type CompilerBackendStateData))))
 
 (define (compiler-backend-stream-state-carry-capacity
   [stream : CompilerBackendStreamState]) : i64
@@ -2911,6 +2904,13 @@
 (define compiler-backend-peephole-carry-safe-bytes-capacity : i64
   16777216)
 
+;; A narrow borrowed lookup view keeps the hot label path independent of the
+;; 35-field owning stream aggregate. The arrays remain owned by the stream.
+(defstruct CompilerBackendPeepholeCarrySafeView
+  (offsets (__tl_dyn-array i64))
+  (lengths (__tl_dyn-array i64))
+  (bytes (__tl_dyn-array u8)))
+
 ;; The existing count cell packs both counters so the 35-field stream surface
 ;; stays unchanged: byte positions need 25 bits for the inclusive 16 MiB limit,
 ;; and the remaining high bits hold the table entry count. The latter drives a
@@ -2987,9 +2987,9 @@
     [old-lengths : (__tl_dyn-array i64) (struct-get data carry-safe-lengths)]
     [old-cap : i64 (array-length old-offsets)]
     [new-cap : i64
-      (if (> (* old-cap 2) compiler-backend-peephole-carry-safe-capacity)
+      (if (> (* old-cap 4) compiler-backend-peephole-carry-safe-capacity)
         compiler-backend-peephole-carry-safe-capacity
-        (* old-cap 2))]
+        (* old-cap 4))]
     (if (<= new-cap old-cap)
       false
       (let
@@ -3060,10 +3060,10 @@
         (set!
           new-cap
           (if (>
-            (* new-cap 2)
+            (* new-cap 4)
             compiler-backend-peephole-carry-safe-bytes-capacity)
             compiler-backend-peephole-carry-safe-bytes-capacity
-            (* new-cap 2))))
+            (* new-cap 4))))
       (if (< new-cap required)
         false
         (let
@@ -3117,7 +3117,7 @@
 ;; True iff arena bytes [off,off+len) equal `klen` bytes read from `data` at
 ;; `kstart` (byte-exact key comparison).
 (define (compiler-backend-peephole-carry-safe-bytes-eq?
-  [bytes : (__tl_dyn-array u8)]
+  [bytes : (& bytes (__tl_dyn-array u8))]
   [off : i64]
   [len : i64]
   [key-data : (Ptr u8)]
@@ -3222,7 +3222,7 @@
                     (return unit)))
                 (return unit)))
             (if (compiler-backend-peephole-carry-safe-bytes-eq?
-              bytes
+              (& bytes)
               off
               (array-ref lengths slot)
               key-data
@@ -3263,18 +3263,16 @@
 
 ;; True iff the key given by `klen` bytes at `data`+`kstart` (byte hash `hash`)
 ;; is in the set (exact byte match; an empty slot terminates the probe).
-(define (compiler-backend-peephole-carry-safe-contains-bytes?
-  [stream : CompilerBackendStreamState]
+(define (compiler-backend-peephole-carry-safe-contains-view?
+  [view : (& view CompilerBackendPeepholeCarrySafeView)]
   [key-data : (Ptr u8)]
   [kstart : i64]
   [klen : i64]
   [hash : i64]) : bool
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    [offsets : (__tl_dyn-array i64) (struct-get data carry-safe-offsets)]
-    [lengths : (__tl_dyn-array i64) (struct-get data carry-safe-lengths)]
-    [bytes : (__tl_dyn-array u8) (struct-get data carry-safe-bytes)]
+    [offsets : (__tl_dyn-array i64) (struct-get view offsets)]
+    [lengths : (__tl_dyn-array i64) (struct-get view lengths)]
+    [bytes : (__tl_dyn-array u8) (struct-get view bytes)]
     [cap : i64 (array-length offsets)]
     [slot : i64 (bit-and hash (- cap 1))]
     [walked : i64 0]
@@ -3285,7 +3283,7 @@
           (if (< off 0)
             (return false)
             (if (compiler-backend-peephole-carry-safe-bytes-eq?
-              bytes
+              (& bytes)
               off
               (array-ref lengths slot)
               key-data
@@ -3300,6 +3298,27 @@
                     (+ slot 1)))
                 (set! walked (+ walked 1)))))))
       false)))
+
+(define (compiler-backend-peephole-carry-safe-contains-bytes?
+  [stream : CompilerBackendStreamState]
+  [key-data : (Ptr u8)]
+  [kstart : i64]
+  [klen : i64]
+  [hash : i64]) : bool
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [view : CompilerBackendPeepholeCarrySafeView
+      (CompilerBackendPeepholeCarrySafeView
+        (struct-get data carry-safe-offsets)
+        (struct-get data carry-safe-lengths)
+        (struct-get data carry-safe-bytes))]
+    (compiler-backend-peephole-carry-safe-contains-view?
+      (& view)
+      key-data
+      kstart
+      klen
+      hash)))
 
 (define (compiler-backend-string-list-contains?
   [items : BackendStringSeq]
@@ -59461,9 +59480,9 @@
       (compiler-backend-stream-state-data stream)]
     [old-cap : i64 (array-length (struct-get data sweep-sym-off))]
     [new-cap : i64
-      (if (> (* old-cap 2) compiler-backend-sweep-capacity)
+      (if (> (* old-cap 4) compiler-backend-sweep-capacity)
         compiler-backend-sweep-capacity
-        (* old-cap 2))]
+        (* old-cap 4))]
     (if (<= new-cap old-cap)
       false
       (let
@@ -59542,9 +59561,9 @@
         (< new-cap compiler-backend-sweep-bytes-capacity))
         (set!
           new-cap
-          (if (> (* new-cap 2) compiler-backend-sweep-bytes-capacity)
+          (if (> (* new-cap 4) compiler-backend-sweep-bytes-capacity)
             compiler-backend-sweep-bytes-capacity
-            (* new-cap 2))))
+            (* new-cap 4))))
       (if (< new-cap required)
         false
         (let
@@ -70843,14 +70862,16 @@
         ok))))
 
 (define (compiler-backend-peephole-owner-global-key-range
-  [backend-state : CompilerBackendState]
-  [stream : CompilerBackendStreamState]
-  [operand : String]
-  [key-data : (Ptr u8)]
+  [context : (& context CompilerBackendPeepholeParseContext)]
   [operand-start : i64]
   [symbol-len : i64]) : i64
   (let
-    [hash : i64 (ci.intern-hash-slice operand operand-start symbol-len)]
+    [backend-state : CompilerBackendState
+      (CompilerBackendState (struct-get context backend-state-address))]
+    [stream : CompilerBackendStreamState
+      (CompilerBackendStreamState (struct-get context stream-address))]
+    [key-data : (Ptr u8) (struct-get context data)]
+    [hash : i64 (ci.intern-hash-words key-data operand-start symbol-len)]
     [state-data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     [offsets : (__tl_dyn-array i64)
@@ -70935,10 +70956,7 @@
         backend-state
         stream)
         (compiler-backend-peephole-owner-global-key-range
-          backend-state
-          stream
-          operand
-          key-data
+          context
           operand-start
           symbol-len)
         (compiler-backend-peephole-owner-key-unknown)))))
@@ -71053,14 +71071,12 @@
         compiler-backend-peephole-memory-base-none))))
 
 (define (compiler-backend-peephole-owner-key-from-range
-  [backend-state : CompilerBackendState]
-  [stream : CompilerBackendStreamState]
-  [operand : String]
-  [data : (Ptr u8)]
+  [context : (& context CompilerBackendPeepholeParseContext)]
   [start : i64]
   [end : i64]
   [memory-base : i64]) : i64
   (let
+    [data : (Ptr u8) (struct-get context data)]
     [prefix-end : i64 (- end 6)]
     (cond
       [(or
@@ -71093,10 +71109,7 @@
           (= memory-base compiler-backend-peephole-memory-base-rip)
           (> prefix-end start))
         (compiler-backend-peephole-owner-global-key-range
-          backend-state
-          stream
-          operand
-          data
+          context
           start
           (- prefix-end start))]
       [else (compiler-backend-peephole-owner-key-unknown)])))
@@ -72633,15 +72646,14 @@
       (or (= suffix 113) (= suffix 108)))))
 
 (define (compiler-backend-peephole-parse-line
-  [backend-state : CompilerBackendState]
-  [stream : CompilerBackendStreamState]
+  [context : (& context CompilerBackendPeepholeParseContext)]
   [src : String]
-  [data : (Ptr u8)]
   [start : i64]
   [end : i64]
   [newline : bool]
   [owned : bool]) : CompilerBackendPeepholeLine
   (let
+    [data : (Ptr u8) (struct-get context data)]
     [ms : i64 start]
     (begin
       (while (and (< ms end) (= (compiler-backend-peephole-byte-at data ms) 32))
@@ -72763,10 +72775,7 @@
             [src-key : i64
               (if is-movq
                 (compiler-backend-peephole-owner-key-from-range
-                  backend-state
-                  stream
-                  src
-                  data
+                  context
                   op-src-start
                   op-src-end
                   src-memory-base)
@@ -72774,10 +72783,7 @@
             [dst-key : i64
               (if is-movq
                 (compiler-backend-peephole-owner-key-from-range
-                  backend-state
-                  stream
-                  src
-                  data
+                  context
                   op-dst-start
                   op-dst-end
                   dst-memory-base)
@@ -72888,16 +72894,20 @@
   [stream : CompilerBackendStreamState]
   [line : String]
   [newline : bool]) : CompilerBackendPeepholeLine
-  (compiler-backend-peephole-parse-line
-    backend-state
-    stream
-    line
-    (unsafe
-      (string-data line))
-    0
-    (string.string-length line)
-    newline
-    true))
+  (let
+    [context : CompilerBackendPeepholeParseContext
+      (CompilerBackendPeepholeParseContext
+        (struct-get backend-state address)
+        (struct-get stream address)
+        (unsafe
+          (string-data line)))]
+    (compiler-backend-peephole-parse-line
+      (& context)
+      line
+      0
+      (string.string-length line)
+      newline
+      true)))
 
 (define (compiler-backend-peephole-empty-line) : CompilerBackendPeepholeLine
   (CompilerBackendPeepholeLine
@@ -73502,22 +73512,25 @@
 ;; in a small borrowed view while walking lines. Copying and writing the entire
 ;; 35-field stream aggregate for every line is prohibitively expensive in the
 ;; self-hosted compiler.
-(defstruct CompilerBackendPeepholeRecordSink
+(defstruct CompilerBackendPeepholeWalkState
+  (backend-state-address i64)
+  (stream-address i64)
+  (carry-safe CompilerBackendPeepholeCarrySafeView)
   (lines (__tl_dyn-array CompilerBackendPeepholeLineRecord))
   (live (__tl_dyn-array i64))
-  (len i64)
-  (stream-address i64))
+  (len i64))
 
 (define (compiler-backend-peephole-records-publish!
-  [stream : CompilerBackendStreamState]
-  [sink : CompilerBackendPeepholeRecordSink]) : unit
+  [walk : CompilerBackendPeepholeWalkState]) : unit
   (let
+    [stream : CompilerBackendStreamState
+      (CompilerBackendStreamState (struct-get walk stream-address))]
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set! (struct-get data records-lines) (struct-get sink lines))
-      (set! (struct-get data records-live) (struct-get sink live))
-      (set! (struct-get data records-len) (struct-get sink len))
+      (set! (struct-get data records-lines) (struct-get walk lines))
+      (set! (struct-get data records-live) (struct-get walk live))
+      (set! (struct-get data records-len) (struct-get walk len))
       (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-peephole-records-publish-len!
@@ -73531,14 +73544,13 @@
       (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-peephole-records-close
-  [stream : CompilerBackendStreamState]
-  [sink : CompilerBackendPeepholeRecordSink]) : CompilerBackendPeepholeLineVec
+  [walk : CompilerBackendPeepholeWalkState]) : CompilerBackendPeepholeLineVec
   (begin
-    (compiler-backend-peephole-records-publish! stream sink)
+    (compiler-backend-peephole-records-publish! walk)
     (CompilerBackendPeepholeLineVec
-      (struct-get sink lines)
-      (struct-get sink live)
-      (struct-get sink len))))
+      (struct-get walk lines)
+      (struct-get walk live)
+      (struct-get walk len))))
 
 (define (compiler-backend-peephole-records-retire!
   [stream : CompilerBackendStreamState]) : unit
@@ -73581,38 +73593,38 @@
       (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-peephole-records-grow!
-  [sink : (&mut sink CompilerBackendPeepholeRecordSink)]) : unit
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]) : unit
   (let
     [stream : CompilerBackendStreamState
-      (CompilerBackendStreamState (struct-get sink stream-address))]
+      (CompilerBackendStreamState (struct-get walk stream-address))]
     [_publish : unit
       (compiler-backend-peephole-records-publish-len!
         stream
-        (struct-get sink len))]
+        (struct-get walk len))]
     [_grow : unit (compiler-backend-peephole-records-state-grow! stream)]
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set! (struct-get sink lines) (struct-get data records-lines))
-      (set! (struct-get sink live) (struct-get data records-live)))))
+      (set! (struct-get walk lines) (struct-get data records-lines))
+      (set! (struct-get walk live) (struct-get data records-live)))))
 
 ;; Append one surviving line, compacted. Records are live until the sweep marks
 ;; them dead, and the arrays are never rebuilt.
 (define (compiler-backend-peephole-records-push!
-  [sink : (&mut sink CompilerBackendPeepholeRecordSink)]
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : CompilerBackendPeepholeLine]) : unit
   (let
-    [index : i64 (struct-get sink len)]
+    [index : i64 (struct-get walk len)]
     (begin
       (unless
-        (< index (array-length (struct-get sink lines)))
-        (compiler-backend-peephole-records-grow! sink))
+        (< index (array-length (struct-get walk lines)))
+        (compiler-backend-peephole-records-grow! walk))
       (array-set!
-        (struct-get sink lines)
+        (struct-get walk lines)
         index
         (compiler-backend-peephole-line-record line))
-      (array-set! (struct-get sink live) index 1)
-      (set! (struct-get sink len) (+ index 1)))))
+      (array-set! (struct-get walk live) index 1)
+      (set! (struct-get walk len) (+ index 1)))))
 
 ;; True iff the line [start,end) is a label (non-blank after leading spaces and
 ;; ends in ':'). Mirrors the label arm of line-clears-owners?.
@@ -73625,8 +73637,7 @@
 ;; byte offsets index into (the asm buffer or a rewritten pending line). The
 ;; label name is interned and looked up in the i64-id carry-safe set.
 (define (compiler-backend-peephole-label-carry-safe?
-  [stream : CompilerBackendStreamState]
-  [src : String]
+  [view : (& view CompilerBackendPeepholeCarrySafeView)]
   [data : (Ptr u8)]
   [start : i64]
   [end : i64]) : bool
@@ -73639,12 +73650,12 @@
         false
         (let
           [klen : i64 (- (- end 1) i)]
-          (compiler-backend-peephole-carry-safe-contains-bytes?
-            stream
+          (compiler-backend-peephole-carry-safe-contains-view?
+            view
             data
             i
             klen
-            (ci.intern-hash-slice src i klen)))))))
+            (ci.intern-hash-words data i klen)))))))
 
 ;; Per-destination owner invalidation for a non-movq line.
 ;;  * A NORETURN abort call (SCAV2): keep the map unchanged -- the fall-through is
@@ -73661,7 +73672,7 @@
 ;;    survives).
 ;;  * Otherwise fall back to the conservative whole-map clear.
 (define (compiler-backend-peephole-line-clobber-owners-desc
-  [stream : CompilerBackendStreamState]
+  [carry-safe : (& carry-safe CompilerBackendPeepholeCarrySafeView)]
   [owners : CompilerBackendPeepholeOwners]
   [line : CompilerBackendPeepholeLine]
   [prev-abort? : bool]) : CompilerBackendPeepholeOwners
@@ -73670,8 +73681,7 @@
     [(compiler-backend-peephole-desc-label? line)
       (if (or
         (compiler-backend-peephole-label-carry-safe?
-          stream
-          (struct-get line src)
+          carry-safe
           (struct-get line data)
           (compiler-backend-peephole-desc-start line)
           (compiler-backend-peephole-desc-end line))
@@ -73886,6 +73896,11 @@
               [asm-data : (Ptr u8)
                 (unsafe
                   (string-data asm))]
+              [context : CompilerBackendPeepholeParseContext
+                (CompilerBackendPeepholeParseContext
+                  (struct-get backend-state address)
+                  (struct-get stream address)
+                  asm-data)]
               ;; The line ends at its newline, or at the chunk end.
               [end : i64
                 (compiler-backend-peephole-scan-byte-range asm-data i n 10)]
@@ -73895,10 +73910,8 @@
                   end)]
               [line : CompilerBackendPeepholeLine
                 (compiler-backend-peephole-parse-line
-                  backend-state
-                  stream
+                  (& context)
                   asm
-                  asm-data
                   i
                   end
                   (< end n)
@@ -73937,8 +73950,7 @@
       (= result 1))))
 
 (define (compiler-backend-peephole-pair-action-desc
-  [backend-state : CompilerBackendState]
-  [stream : CompilerBackendStreamState]
+  [walk : (& walk CompilerBackendPeepholeWalkState)]
   [chunks : CompilerBackendPeepholeChunkArray]
   [chunk : i64]
   [pending : CompilerBackendPeepholeLine]
@@ -74056,8 +74068,10 @@
                         (string.string-length
                           (array-ref (struct-get chunks items) chunk))]
                       (compiler-backend-peephole-r10-dead-after-desc?
-                        backend-state
-                        stream
+                        (CompilerBackendState
+                          (struct-get walk backend-state-address))
+                        (CompilerBackendStreamState
+                          (struct-get walk stream-address))
                         chunks
                         chunk
                         (if (< nend nlen)
@@ -74125,83 +74139,93 @@
 ;; that already owns the slot pushes the synthesized `movq %rY, DST` line (whose
 ;; own sweep summary is extracted by the owned-line builder), everything else
 ;; pushes the parsed record unchanged.
-(define (compiler-backend-peephole-emit-line-desc-record
-  [backend-state : CompilerBackendState]
-  [stream : CompilerBackendStreamState]
-  [sink : (&mut sink CompilerBackendPeepholeRecordSink)]
+(define (compiler-backend-peephole-emit-movq-line-desc-record
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : CompilerBackendPeepholeLine]
-  [owners : CompilerBackendPeepholeOwners]
-  [prev-abort? : bool]) : CompilerBackendPeepholeOwners
-  (if (compiler-backend-peephole-desc-movq? line)
-    (let
-      [src-reg : i64 (compiler-backend-peephole-desc-op-src-reg line)]
-      [dst-reg : i64 (compiler-backend-peephole-desc-op-dst-reg line)]
-      [src-key : i64 (struct-get line op-src-key)]
-      [dst-key : i64 (struct-get line op-dst-key)]
-      [is-slot : bool (compiler-backend-peephole-owner-key-known? src-key)]
-      [dst-owns : bool
-        (and
-          is-slot
-          (compiler-backend-peephole-owner-key-eq?
-            (compiler-backend-peephole-owners-get-index owners dst-reg)
-            src-key))]
-      ;; P22-A1: dead spill store. `movq %rX, SLOT` where the owner map already
-      ;; records %rX as mirroring SLOT writes back the value SLOT already holds,
-      ;; so the store is a no-op. The invariant is exactly the one the reload
-      ;; elision above relies on: an owner entry survives only while neither the
-      ;; register nor the location has been written since the mirror was
-      ;; established (a location write runs `owners-clear-slot`, a register write
-      ;; clears that register, a call keeps only stack owners in callee-saved
-      ;; registers), so `owners[%rX] == SLOT` means memory at SLOT equals %rX.
-      ;; Restricted to packed stack keys, matching the store arm of the owner
-      ;; transfer: a global (SYM(%rip)) destination clears the whole map there
-      ;; and is deliberately not elided here either. This is what removes the
-      ;; emergency-scavenge `restore ... resave` pairs, which are separated by
-      ;; carry-safe block labels and so are invisible to the adjacent pair rules.
-      [src-mirrors-dst : bool
-        (and
-          (>= src-reg 0)
-          (compiler-backend-peephole-owner-key-stack? dst-key)
-          (compiler-backend-peephole-owner-key-eq?
-            (compiler-backend-peephole-owners-get-index owners src-reg)
-            dst-key))]
-      [ry : String
-        (if (and is-slot (not dst-owns) (>= dst-reg 0))
-          (compiler-backend-peephole-owners-find-reg-for-slot-index
-            owners
-            src-key
-            dst-reg)
-          "")]
-      [_pushed : unit
-        (cond
-          [dst-owns unit]
-          [src-mirrors-dst unit]
-          [(not (string.eq ry ""))
-            (compiler-backend-peephole-records-push!
-              sink
-              (compiler-backend-peephole-owned-line
-                backend-state
-                stream
-                (str_cat.str-cat
-                  "    movq "
-                  ry
-                  ", "
-                  (compiler-backend-peephole-line-op-dst-text line))
-                (compiler-backend-peephole-desc-newline? line)))]
-          [else (compiler-backend-peephole-records-push! sink line)])]
-      (compiler-backend-peephole-movq-owners-transfer-keyed-index
-        owners
-        src-reg
-        dst-reg
-        src-key
-        dst-key))
+  [owners : CompilerBackendPeepholeOwners]) : CompilerBackendPeepholeOwners
+  (let
+    [src-reg : i64 (compiler-backend-peephole-desc-op-src-reg line)]
+    [dst-reg : i64 (compiler-backend-peephole-desc-op-dst-reg line)]
+    [src-key : i64 (struct-get line op-src-key)]
+    [dst-key : i64 (struct-get line op-dst-key)]
+    [is-slot : bool (compiler-backend-peephole-owner-key-known? src-key)]
+    [dst-owns : bool
+      (and
+        is-slot
+        (compiler-backend-peephole-owner-key-eq?
+          (compiler-backend-peephole-owners-get-index owners dst-reg)
+          src-key))]
+    ;; P22-A1: dead spill store. `movq %rX, SLOT` where the owner map already
+    ;; records %rX as mirroring SLOT writes back the value SLOT already holds,
+    ;; so the store is a no-op. The invariant is exactly the one the reload
+    ;; elision above relies on: an owner entry survives only while neither the
+    ;; register nor the location has been written since the mirror was
+    ;; established (a location write runs `owners-clear-slot`, a register write
+    ;; clears that register, a call keeps only stack owners in callee-saved
+    ;; registers), so `owners[%rX] == SLOT` means memory at SLOT equals %rX.
+    ;; Restricted to packed stack keys, matching the store arm of the owner
+    ;; transfer: a global (SYM(%rip)) destination clears the whole map there
+    ;; and is deliberately not elided here either. This is what removes the
+    ;; emergency-scavenge `restore ... resave` pairs, which are separated by
+    ;; carry-safe block labels and so are invisible to the adjacent pair rules.
+    [src-mirrors-dst : bool
+      (and
+        (>= src-reg 0)
+        (compiler-backend-peephole-owner-key-stack? dst-key)
+        (compiler-backend-peephole-owner-key-eq?
+          (compiler-backend-peephole-owners-get-index owners src-reg)
+          dst-key))]
+    [ry : String
+      (if (and is-slot (not dst-owns) (>= dst-reg 0))
+        (compiler-backend-peephole-owners-find-reg-for-slot-index
+          owners
+          src-key
+          dst-reg)
+        "")]
+    [_pushed : unit
+      (cond
+        [dst-owns unit]
+        [src-mirrors-dst unit]
+        [(not (string.eq ry ""))
+          (compiler-backend-peephole-records-push!
+            walk
+            (compiler-backend-peephole-owned-line
+              (CompilerBackendState (struct-get walk backend-state-address))
+              (CompilerBackendStreamState (struct-get walk stream-address))
+              (str_cat.str-cat
+                "    movq "
+                ry
+                ", "
+                (compiler-backend-peephole-line-op-dst-text line))
+              (compiler-backend-peephole-desc-newline? line)))]
+        [else (compiler-backend-peephole-records-push! walk line)])]
+    (compiler-backend-peephole-movq-owners-transfer-keyed-index
+      owners
+      src-reg
+      dst-reg
+      src-key
+      dst-key)))
+
+;; Keep the common non-move path in its caller: it only appends the parsed
+;; record and applies the owner transition. Move rewrites stay in the helper
+;; above so their larger rule body is emitted once.
+(defmacro (compiler-backend-peephole-emit-line-desc-record
+  [walk : Expr]
+  [line : Expr]
+  [owners : Expr]
+  [prev-abort : Expr]) : Expr
+  `(if (compiler-backend-peephole-desc-movq? ,line)
+    (compiler-backend-peephole-emit-movq-line-desc-record
+      (&mut ,walk)
+      ,line
+      ,owners)
     (begin
-      (compiler-backend-peephole-records-push! sink line)
+      (compiler-backend-peephole-records-push! (&mut ,walk) ,line)
       (compiler-backend-peephole-line-clobber-owners-desc
-        stream
-        owners
-        line
-        prev-abort?))))
+        (& (struct-get ,walk carry-safe))
+        ,owners
+        ,line
+        ,prev-abort))))
 
 ;; SCAV2: true iff the pending line (owned String or asm byte range) is a
 ;; noreturn abort call. Threaded as `prev-abort?` so the guard-ok label emitted
@@ -74951,13 +74975,22 @@
     [sink-capacity : i64
       (compiler-backend-peephole-line-vec-capacity-for
         (struct-get chunks total))]
-    [sink : CompilerBackendPeepholeRecordSink
-      (CompilerBackendPeepholeRecordSink
+    [stream-data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [carry-safe : CompilerBackendPeepholeCarrySafeView
+      (CompilerBackendPeepholeCarrySafeView
+        (struct-get stream-data carry-safe-offsets)
+        (struct-get stream-data carry-safe-lengths)
+        (struct-get stream-data carry-safe-bytes))]
+    [walk : CompilerBackendPeepholeWalkState
+      (CompilerBackendPeepholeWalkState
+        (struct-get backend-state address)
+        (struct-get stream address)
+        carry-safe
         (array.make-array CompilerBackendPeepholeLineRecord sink-capacity)
         (array.make-array i64 sink-capacity)
-        0
-        (struct-get stream address))]
-    [_sink-open : unit (compiler-backend-peephole-records-publish! stream sink)]
+        0)]
+    [_walk-open : unit (compiler-backend-peephole-records-publish! walk)]
     [has-pending : bool false]
     [pending : CompilerBackendPeepholeLine
       (compiler-backend-peephole-empty-line)]
@@ -74988,6 +75021,11 @@
           [asm-data : (Ptr u8)
             (unsafe
               (string-data asm))]
+          [context : CompilerBackendPeepholeParseContext
+            (CompilerBackendPeepholeParseContext
+              (struct-get backend-state address)
+              (struct-get stream address)
+              asm-data)]
           [i : i64 0]
           (begin
             (while (< i n)
@@ -75002,10 +75040,8 @@
                 [line-newline : bool (< end n)]
                 [line : CompilerBackendPeepholeLine
                   (compiler-backend-peephole-parse-line
-                    backend-state
-                    stream
+                    (& context)
                     asm
-                    asm-data
                     i
                     end
                     line-newline
@@ -75046,9 +75082,7 @@
                         (set!
                           owners
                           (compiler-backend-peephole-emit-line-desc-record
-                            backend-state
-                            stream
-                            (&mut sink)
+                            walk
                             held-line
                             owners
                             prev-abort?))
@@ -75080,9 +75114,7 @@
                                   pending))]
                             [emit : CompilerBackendPeepholeOwners
                               (compiler-backend-peephole-emit-line-desc-record
-                                backend-state
-                                stream
-                                (&mut sink)
+                                walk
                                 pending
                                 (if restore-guard-owners?
                                   (compiler-backend-peephole-owners-copy
@@ -75112,8 +75144,7 @@
                         (let
                           [action : i64
                             (compiler-backend-peephole-pair-action-desc
-                              backend-state
-                              stream
+                              (& walk)
                               chunks
                               c
                               pending
@@ -75134,9 +75165,7 @@
                                   (set!
                                     owners
                                     (compiler-backend-peephole-emit-line-desc-record
-                                      backend-state
-                                      stream
-                                      (&mut sink)
+                                      walk
                                       pending
                                       owners
                                       prev-abort?))
@@ -75173,9 +75202,7 @@
                                       pending))]
                                 [emit : CompilerBackendPeepholeOwners
                                   (compiler-backend-peephole-emit-line-desc-record
-                                    backend-state
-                                    stream
-                                    (&mut sink)
+                                    walk
                                     pending
                                     (if restore-guard-owners?
                                       (compiler-backend-peephole-owners-copy
@@ -75243,9 +75270,7 @@
           (set!
             owners
             (compiler-backend-peephole-emit-line-desc-record
-              backend-state
-              stream
-              (&mut sink)
+              walk
               held-line
               owners
               prev-abort?))
@@ -75272,9 +75297,7 @@
                             pending))]
                       [emit : CompilerBackendPeepholeOwners
                         (compiler-backend-peephole-emit-line-desc-record
-                          backend-state
-                          stream
-                          (&mut sink)
+                          walk
                           pending
                           (if restore-guard-owners?
                             (compiler-backend-peephole-owners-copy guard-owners)
@@ -75302,14 +75325,12 @@
         (set!
           owners
           (compiler-backend-peephole-emit-line-desc-record
-            backend-state
-            stream
-            (&mut sink)
+            walk
             pending
             owners
             prev-abort?))
         unit)
-      (compiler-backend-peephole-records-close stream sink))))
+      (compiler-backend-peephole-records-close walk))))
 
 (define (compiler-backend-peephole-asm-once-records
   [backend-state : CompilerBackendState]

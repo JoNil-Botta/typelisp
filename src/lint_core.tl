@@ -3254,6 +3254,45 @@
     [(ast.AstImportKind.Macro _ _) false]
     [(ast.AstImportKind.MacroDecls _ _) false]))
 
+(define (lint-string-has-suffix-at?
+  [text : String]
+  [suffix : String]
+  [base : i64]
+  [index : i64]
+  [n : i64]) : bool
+  (if (>= index n)
+    true
+    (if (=
+      (cast (string.string-ref text (+ base index)) : i64)
+      (cast (string.string-ref suffix index) : i64))
+      (lint-string-has-suffix-at? text suffix base (+ index 1) n)
+      false)))
+
+(define (lint-string-has-suffix? [text : String] [suffix : String]) : bool
+  (let
+    [text-len : i64 (string.string-length text)]
+    [suffix-len : i64 (string.string-length suffix)]
+    (if (< text-len suffix-len)
+      false
+      (lint-string-has-suffix-at?
+        text
+        suffix
+        (- text-len suffix-len)
+        0
+        suffix-len))))
+
+(define (lint-stdlib-string-module-name? [module-name : String]) : bool
+  (or
+    (string.eq module-name "stdlib.string")
+    (string.eq module-name "stdlib/string")
+    (string.eq module-name "stdlib/string.tl")
+    (string.eq module-name "string")
+    (string.eq module-name "string.tl")
+    (lint-string-has-suffix? module-name "/stdlib/string.tl")
+    (lint-string-has-suffix? module-name "\\stdlib\\string.tl")
+    (lint-string-has-suffix? module-name "\\stdlib/string.tl")
+    (lint-string-has-suffix? module-name "/stdlib\\string.tl")))
+
 (define (lint-unused-import-finding
   [module-name : String]
   [alias : String]
@@ -3362,6 +3401,7 @@
 (define (lint-unused-import-add-if-needed
   [source : String]
   [all-decls : ast.AstDeclList]
+  [current-module-id : i64]
   [spec : ast.AstImportSpec]
   [acc : LintFindings]) : LintFindings
   (let
@@ -3379,10 +3419,17 @@
                 [(ast.AstMaybeImportAlias.Some alias)
                   (if (lint-underscore-prefixed? (ci.intern-str alias))
                     acc
-                    (if (lint-decl-list-uses-import?
-                      all-decls
-                      (ci.intern-str alias)
-                      (ci.intern-str module-name))
+                    (if (or
+                      (lint-decl-list-uses-import?
+                        all-decls
+                        (ci.intern-str alias)
+                        (ci.intern-str module-name))
+                      (and
+                        (lint-stdlib-string-module-name?
+                          (ci.intern-str module-name))
+                        (lint-decl-list-has-stdlib-string-bare-use?
+                          all-decls
+                          current-module-id)))
                       acc
                       (lint-findings-add
                         (lint-unused-import-finding
@@ -3396,18 +3443,39 @@
   [all-decls : ast.AstDeclList]
   [decls : ast.AstDeclList]
   [acc : LintFindings]) : LintFindings
+  (lint-unused-imports-in-decl-list-at
+    source
+    all-decls
+    decls
+    cbi.compiler-builtin-id-fix-empty
+    acc))
+
+(define (lint-unused-imports-in-decl-list-at
+  [source : String]
+  [all-decls : ast.AstDeclList]
+  [decls : ast.AstDeclList]
+  [current-module-id : i64]
+  [acc : LintFindings]) : LintFindings
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) acc]
     [(ast.AstDeclListStep.Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
-        (lint-unused-imports-in-decl-list
+        (lint-unused-imports-in-decl-list-at
           source
           all-decls
           rest
           (match decl
+            [(ast.AstDecl.Module module-id) module-id]
+            [_ current-module-id])
+          (match decl
             [(ast.AstDecl.Import decl-meta spec)
-              (lint-unused-import-add-if-needed source all-decls spec acc)]
+              (lint-unused-import-add-if-needed
+                source
+                all-decls
+                current-module-id
+                spec
+                acc)]
             [_ acc])))]))
 
 ;; Ordered name set with amortized append. `len` is also a snapshot boundary:
@@ -3520,31 +3588,47 @@
           (lint-name-set-add locals (ci.intern-str name))
           (+ index 1))])))
 
-;; Syntax-only classification for unused `(unsafe ...)` blocks. `requires`
-;; belongs to the nearest enclosing unsafe block; nested unsafe expressions do
-;; not propagate it. `candidate` records a block that still needs the typed
-;; fallback. Keeping both facts in one walk preserves nearest-block attribution
-;; without rerunning a context-free subtree scan.
+;; Scope-aware syntax classification shared by unused `(unsafe ...)` blocks and
+;; the narrow stdlib.string bare-helper import exception. `requires` belongs to
+;; the nearest enclosing unsafe block; nested unsafe expressions do not
+;; propagate it. `candidate` records a block that still needs the typed
+;; fallback. `stdlib-string-bare-use` records only an unshadowed catalogued call
+;; head, never an ordinary bare variable. Keeping the facts in one walk avoids
+;; a second binding-aware AST traversal.
 (defstruct LintUnsafeScan
   (requires bool)
-  (candidate bool))
+  (candidate bool)
+  (stdlib-string-bare-use bool))
 
 (defstruct LintUnsafeScope
   (shadowed LintNameSet)
   (ambiguous bool))
 
 (define (lint-unsafe-scan-empty) : LintUnsafeScan
-  (LintUnsafeScan false false))
+  (LintUnsafeScan false false false))
 
 (define (lint-unsafe-scan-combine
   [left : LintUnsafeScan]
   [right : LintUnsafeScan]) : LintUnsafeScan
   (LintUnsafeScan
     (or (struct-get left requires) (struct-get right requires))
-    (or (struct-get left candidate) (struct-get right candidate))))
+    (or (struct-get left candidate) (struct-get right candidate))
+    (or
+      (struct-get left stdlib-string-bare-use)
+      (struct-get right stdlib-string-bare-use))))
 
 (define (lint-unsafe-scan-require [children : LintUnsafeScan]) : LintUnsafeScan
-  (LintUnsafeScan true (struct-get children candidate)))
+  (LintUnsafeScan
+    true
+    (struct-get children candidate)
+    (struct-get children stdlib-string-bare-use)))
+
+(define (lint-unsafe-scan-note-stdlib-string-bare-use
+  [children : LintUnsafeScan]) : LintUnsafeScan
+  (LintUnsafeScan
+    (struct-get children requires)
+    (struct-get children candidate)
+    true))
 
 (define (lint-unsafe-scope-add-id [scope : LintUnsafeScope] [name-id : i64]) : LintUnsafeScope
   (LintUnsafeScope
@@ -3596,14 +3680,27 @@
         scope)
       (+ index 1))))
 
-(define (lint-unsafe-call-unshadowed? [name-id : i64] [scope : LintUnsafeScope]) : bool
+(define (lint-unsafe-scope-name-unshadowed?
+  [name-id : i64]
+  [scope : LintUnsafeScope]) : bool
   (and
     (not (struct-get scope ambiguous))
     (not
       (lint-name-set-contains?
         (struct-get scope shadowed)
-        (ci.intern-str name-id)))
+        (ci.intern-str name-id)))))
+
+(define (lint-unsafe-call-unshadowed? [name-id : i64] [scope : LintUnsafeScope]) : bool
+  (and
+    (lint-unsafe-scope-name-unshadowed? name-id scope)
     (cbi.compiler-builtin-typecheck-syntactic-unsafe-call-id? name-id)))
+
+(define (lint-stdlib-string-bare-call-unshadowed?
+  [name-id : i64]
+  [scope : LintUnsafeScope]) : bool
+  (and
+    (lint-unsafe-scope-name-unshadowed? name-id scope)
+    (cbi.compiler-builtin-typecheck-stdlib-string-bare-helper-id? name-id)))
 
 (define (lint-unsafe-scan-node [node-id : i64] [scope : LintUnsafeScope]) : LintUnsafeScan
   (lint-unsafe-scan-expr (ast.ast-node-get node-id) scope))
@@ -3714,9 +3811,14 @@
             (lint-unsafe-scan-expr-list args scope))]
         (match (ast.ast-expr-unspan (ast.ast-node-get func))
           [(ast.AstExpr.Var name)
-            (if (lint-unsafe-call-unshadowed? name scope)
-              (lint-unsafe-scan-require children)
-              children)]
+            (let
+              [with-string-use : LintUnsafeScan
+                (if (lint-stdlib-string-bare-call-unshadowed? name scope)
+                  (lint-unsafe-scan-note-stdlib-string-bare-use children)
+                  children)]
+              (if (lint-unsafe-call-unshadowed? name scope)
+                (lint-unsafe-scan-require with-string-use)
+                with-string-use))]
           [_ children]))]
     [(ast.AstExpr.If cond then-branch else-branch)
       (lint-unsafe-scan-three-nodes cond then-branch else-branch scope)]
@@ -3766,7 +3868,8 @@
         [inside : LintUnsafeScan (lint-unsafe-scan-expr-list items scope)]
         (LintUnsafeScan
           false
-          (or (not (struct-get inside requires)) (struct-get inside candidate))))]
+          (or (not (struct-get inside requires)) (struct-get inside candidate))
+          (struct-get inside stdlib-string-bare-use)))]
     [(ast.AstExpr.Set _ value) (lint-unsafe-scan-node value scope)]
     [(ast.AstExpr.Ann inner _) (lint-unsafe-scan-node inner scope)]
     [(ast.AstExpr.Cast inner _) (lint-unsafe-scan-node inner scope)]
@@ -4019,6 +4122,76 @@
   (match program
     [(ast.AstProgram.Program decls)
       (struct-get (lint-unsafe-scan-decl-list (box-get decls)) candidate)]))
+
+(define (lint-stdlib-string-decl-list-globals-at
+  [decls : ast.AstDeclList]
+  [target-module-id : i64]
+  [current-module-id : i64]
+  [names : LintNameSet]) : LintNameSet
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) names]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (match decl
+        [(ast.AstDecl.Module module-id)
+          (lint-stdlib-string-decl-list-globals-at
+            rest
+            target-module-id
+            module-id
+            names)]
+        [_
+          (lint-stdlib-string-decl-list-globals-at
+            rest
+            target-module-id
+            current-module-id
+            (if (= current-module-id target-module-id)
+              (lint-unsafe-decl-add-global decl names)
+              names))])]))
+
+(define (lint-stdlib-string-scan-decls-at
+  [decls : ast.AstDeclList]
+  [target-module-id : i64]
+  [current-module-id : i64]
+  [scope : LintUnsafeScope]) : LintUnsafeScan
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) (lint-unsafe-scan-empty)]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (match decl
+        [(ast.AstDecl.Module module-id)
+          (lint-stdlib-string-scan-decls-at
+            rest
+            target-module-id
+            module-id
+            scope)]
+        [_
+          (lint-unsafe-scan-combine
+            (if (= current-module-id target-module-id)
+              (lint-unsafe-scan-decl decl scope)
+              (lint-unsafe-scan-empty))
+            (lint-stdlib-string-scan-decls-at
+              rest
+              target-module-id
+              current-module-id
+              scope))])]))
+
+(define (lint-decl-list-has-stdlib-string-bare-use?
+  [decls : ast.AstDeclList]
+  [target-module-id : i64]) : bool
+  (let
+    [scope : LintUnsafeScope
+      (LintUnsafeScope
+        (lint-stdlib-string-decl-list-globals-at
+          decls
+          target-module-id
+          cbi.compiler-builtin-id-fix-empty
+          (lint-name-set-empty))
+        false)]
+    (struct-get
+      (lint-stdlib-string-scan-decls-at
+        decls
+        target-module-id
+        cbi.compiler-builtin-id-fix-empty
+        scope)
+      stdlib-string-bare-use)))
 
 (defstruct LintCopyOnUpdateStructShape
   (name String)

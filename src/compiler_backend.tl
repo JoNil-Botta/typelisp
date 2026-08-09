@@ -72755,8 +72755,18 @@
     [data : (Ptr u8) (struct-get context data)]
     [ms : i64 start]
     (begin
-      (while (and (< ms end) (= (compiler-backend-peephole-byte-at data ms) 32))
-        (set! ms (+ ms 1)))
+      (if (and
+        (< (+ start 4) end)
+        (= (compiler-backend-peephole-byte-at data start) 32)
+        (= (compiler-backend-peephole-byte-at data (+ start 1)) 32)
+        (= (compiler-backend-peephole-byte-at data (+ start 2)) 32)
+        (= (compiler-backend-peephole-byte-at data (+ start 3)) 32)
+        (not (= (compiler-backend-peephole-byte-at data (+ start 4)) 32)))
+        (set! ms (+ start 4))
+        (while (and
+          (< ms end)
+          (= (compiler-backend-peephole-byte-at data ms) 32))
+          (set! ms (+ ms 1))))
       (let
         [mlen : i64
           (- (compiler-backend-peephole-scan-byte-range data ms end 32) ms)]

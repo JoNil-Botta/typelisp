@@ -547,20 +547,29 @@
     (ptr-read
       (int->ptr (cast (struct-get state address) : u64) : (Ptr TcJobStateData)))))
 
+(defmacro (tc-job-state-field [state : Expr] [field : Expr] [_T : type]) : Expr
+  `(unsafe
+    (ptr-read
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast (struct-get ,state address) : u64) : (Ptr u8))
+          (comptime (offset-of (type TcJobStateData) ,field)))
+        : (Ptr ,_T)))))
+
 (define (tc-job-state-source-key-cache [state : TcJobState]) : TcSourceKeyCacheState
-  (struct-get (tc-job-state-data state) source-key-cache))
+  (tc-job-state-field state source-key-cache TcSourceKeyCacheState))
 
 (define (tc-job-state-topenv-membership [state : TcJobState]) : TcTopEnvMembershipState
-  (struct-get (tc-job-state-data state) topenv-membership))
+  (tc-job-state-field state topenv-membership TcTopEnvMembershipState))
 
 (define (tc-job-state-thread-name-kind [state : TcJobState]) : TcThreadNameKindState
-  (struct-get (tc-job-state-data state) thread-name-kind))
+  (tc-job-state-field state thread-name-kind TcThreadNameKindState))
 
 (define (tc-job-state-inlay-hints [state : TcJobState]) : TcInlayHintState
-  (struct-get (tc-job-state-data state) inlay-hints))
+  (tc-job-state-field state inlay-hints TcInlayHintState))
 
 (define (tc-job-state-macro-call-sites [state : TcJobState]) : TcMacroCallSiteState
-  (struct-get (tc-job-state-data state) macro-call-sites))
+  (tc-job-state-field state macro-call-sites TcMacroCallSiteState))
 
 (define (tc-job-state-scratch-arenas [state : TcJobState]) : TcScratchArenaState
   (struct-get (tc-job-state-data state) scratch-arenas))

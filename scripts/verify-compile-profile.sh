@@ -1622,7 +1622,8 @@ fi
 # Compile one public fixture through the embedded native catalog and through
 # forced source interpretation, require every named macro to execute on the
 # native route, and compare the resulting assembly byte-for-byte. This is the
-# route-level contract for the last string/computed-body residuals (#5606/#5627);
+# route-level contract for the last string/computed-body residuals
+# (#5606/#5627/#5999);
 # the image census alone cannot catch a callback returning the wrong syntax.
 verify_residual_route() {
     _residual_label=$1
@@ -1735,13 +1736,14 @@ if ! cmp -s "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" \
     fail "native and interpreted for diagnostics differ"
 fi
 
-echo "[compile-profile] verify json/serialize residual routing differential (#5606/#5627)"
+echo "[compile-profile] verify json/serialize residual routing differential (#5606/#5627/#5999)"
 verify_residual_route \
     serialize-json-residual \
     "$ROOT/tests/integration/stdlib_serialize_json.tl" \
     "stdlib.json/decode-int" \
     "stdlib.serialize/encode-value" \
     "stdlib.serialize/decode-value" \
+    "stdlib.serialize/decode-field" \
     "stdlib.serialize/enum-source-import" \
     "stdlib.serialize/nested-import-for-type" \
     "stdlib.serialize/encode-tuple-elements" \

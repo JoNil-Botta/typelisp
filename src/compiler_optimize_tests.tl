@@ -13206,8 +13206,10 @@
         compiler_ir_types.CompilerIrFunctionList.Nil))
     2))
 
-;; Two in-loop callers duplicate the leaf into both; a third reference puts the
-;; callee outside opt-inline-dup-max-refcount and all three sites keep the call.
+;; Two in-loop callers duplicate the leaf into both. The three-reference shape
+;; that used to sit here as the ceiling case moved to the hot-loop-leaf tests
+;; below: past the duplication ceiling a call-free cyclic leaf at in-loop
+;; sites is exactly what opt-inline-hot-loop-leaf-ok? now admits.
 (define (compiler-optimize-inline-dup-two-site-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -13215,11 +13217,6 @@
     [two : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-dup-optimized
         (opt-inline-dup-two-caller-names symbols)
-        callee-name
-        (opt-inline-dup-leaf-plain callee-name))]
-    [three : compiler_ir_types.CompilerIrFunctionList
-      (opt-inline-dup-optimized
-        (opt-inline-dup-three-caller-names symbols)
         callee-name
         (opt-inline-dup-leaf-plain callee-name))]
     (and
@@ -13231,22 +13228,7 @@
           two
           "inline_nonleaf"
           "inline_switch")
-        0)
-      (=
-        (opt-count-direct-call-name-function-list three "main" "inline_switch")
-        1)
-      (=
-        (opt-count-direct-call-name-function-list
-          three
-          "inline_nonleaf"
-          "inline_switch")
-        1)
-      (=
-        (opt-count-direct-call-name-function-list
-          three
-          "inline_loop"
-          "inline_switch")
-        1))))
+        0))))
 
 ;; The identical two-reference leaf, at two in-loop sites, one of whose callers
 ;; is itself a single-reference bounds-free function: that caller would lose its
@@ -13461,6 +13443,58 @@
                     compiler_ir_types.CompilerIrInstrList.Nil)))
               compiler_ir_types.CompilerIrBlockList.Nil)))))))
 
+;; The same cyclic body with one call in its `zero` case: refused by the
+;; accessor's call-free clause and by the hot loop leaf's (#6307).
+(define (opt-inline-shared-cyclic-calling-leaf
+  [callee-name : i64]
+  [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    5
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Switch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              0
+              (opt-inline-switch-cases
+                (compiler_ir_types.compiler-ir-label "zero")
+                (compiler_ir_types.compiler-ir-label "one"))
+              (compiler_ir_types.compiler-ir-label "loop"))
+            compiler_ir_types.CompilerIrInstrList.Nil))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "zero")
+            (opt-inline-dup-leaf-call-zero-instrs helper-name))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "one")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "join")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-inline-switch-loop-phi-instr)
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 3)))
+                    compiler_ir_types.CompilerIrInstrList.Nil)))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
 ;; Straight-line callers, for the site clause.
 (define (opt-inline-shared-flat-caller-chain
   [names : compiler_optimize.OptSlotList]
@@ -13595,9 +13629,12 @@
           (struct-get symbols external-helper)))]
     (= (opt-inline-shared-remaining-calls refused 5) 5)))
 
-;; A cyclic body at the same five in-loop sites stays refused: this admission is
-;; for the acyclic accessor, and a loop-bearing callee at five references is
-;; outside the absorb and duplicate census as well.
+;; A cyclic CALL-BEARING body at the same five in-loop sites stays refused:
+;; this admission is for the acyclic accessor, and the hot loop leaf's
+;; call-free clause (#6307) refuses the cyclic shape from the other side. A
+;; cyclic call-free leaf at these sites is no longer refused anywhere -- it is
+;; exactly what opt-inline-hot-loop-leaf-ok? admits, and that is covered by the
+;; hot-loop-leaf tests below.
 (define (compiler-optimize-inline-shared-accessor-acyclic-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -13607,7 +13644,9 @@
         symbols
         5
         true
-        (opt-inline-shared-cyclic-leaf callee-name))]
+        (opt-inline-shared-cyclic-calling-leaf
+          callee-name
+          (struct-get symbols external-helper)))]
     (= (opt-inline-shared-remaining-calls refused 5) 5)))
 
 ;; The identical leaf at five STRAIGHT-LINE sites stays refused: a boundary that
@@ -13623,6 +13662,517 @@
         false
         (opt-inline-shared-accessor-leaf callee-name))]
     (= (opt-inline-shared-remaining-calls refused 5) 5)))
+
+;; --- hot loop leaves ---------------------------------------------------------
+;;
+;; The callee under test is the cyclic bounds-carrying Switch leaf again, now
+;; past the duplication ceiling -- three references and up -- where admission
+;; used to stop. Every fixture below varies exactly one clause of
+;; opt-inline-hot-loop-leaf-ok?.
+;; Three in-loop callers of the call-free leaf: every site takes a copy, and
+;; the leaf stays in the program only while sites remain (here: none do).
+(define (compiler-optimize-inline-hot-loop-leaf-three-site-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-three-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-plain callee-name))]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "inline_switch")
+        0)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")
+        0)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_loop"
+          "inline_switch")
+        0))))
+
+;; The identical leaf with one call in its body stays out of line at all three
+;; sites: a clone is bounded by its own size only while nothing inside it can
+;; bring another body along, and the multiblock clone path miscompiles
+;; call-carrying clones (#6307).
+(define (compiler-optimize-inline-hot-loop-leaf-call-bearing-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-three-caller-names symbols)
+        callee-name
+        (opt-inline-dup-leaf-calling
+          callee-name
+          (struct-get symbols external-helper)))]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_loop"
+          "inline_switch")
+        1))))
+
+;; A pad chain for the too-big leaf: var 4 anchors it, each BinOp feeds the
+;; next, and the chain ends in the case block's jump.
+(define (opt-inline-hot-loop-big-leaf-pad-from
+  [var : i64]
+  [remaining : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (if (<= remaining 0)
+    tail
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        var
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var (- var 1))
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (opt-inline-hot-loop-big-leaf-pad-from (+ var 1) (- remaining 1) tail))))
+
+;; The same leaf shape at 135 body instructions -- one past
+;; opt-inline-hot-loop-leaf-max-body's measured band -- still call-free, still
+;; cyclic, still at three in-loop sites.
+(define (opt-inline-hot-loop-big-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-dup-leaf-named
+    callee-name
+    (+ 6 128)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        4
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (opt-inline-hot-loop-big-leaf-pad-from
+        5
+        128
+        (opt-inline-dup-leaf-jump-zero-instrs)))))
+
+(define (compiler-optimize-inline-hot-loop-leaf-too-big-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-three-caller-names symbols)
+        callee-name
+        (opt-inline-hot-loop-big-leaf callee-name))]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_loop"
+          "inline_switch")
+        1))))
+
+;; A big-tier leaf: 41 body instructions -- above the legacy 32/6 band, inside
+;; the hot-loop-leaf band -- still call-free and cyclic.
+(define (opt-inline-hot-loop-mid-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-dup-leaf-named
+    callee-name
+    (+ 6 34)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        4
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (opt-inline-hot-loop-big-leaf-pad-from
+        5
+        34
+        (opt-inline-dup-leaf-jump-zero-instrs)))))
+
+;; Three small in-loop callers of the big-tier leaf: a caller small enough
+;; that the imported loop effectively replaces its body takes the copy at an
+;; in-loop site (the gvn-facts-grow shape).
+(define (compiler-optimize-inline-hot-loop-leaf-in-loop-small-caller-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-three-caller-names symbols)
+        callee-name
+        (opt-inline-hot-loop-mid-leaf callee-name))]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "inline_switch")
+        0)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")
+        0)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_loop"
+          "inline_switch")
+        0))))
+
+;; A jump-block pad chain for the big caller: entry -> pad0 -> ... -> header.
+(define (opt-inline-hot-loop-pad-label [index : i64]) : i64
+  (compiler_ir_types.compiler-ir-label
+    (str_cat.str-cat "pad" (string.int->string index))))
+
+(define (opt-inline-hot-loop-pad-blocks-from
+  [index : i64]
+  [count : i64]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (if (>= index count)
+    tail
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (opt-inline-hot-loop-pad-label index)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (if (< (+ index 1) count)
+              (opt-inline-hot-loop-pad-label (+ index 1))
+              (compiler_ir_types.compiler-ir-label "header")))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (opt-inline-hot-loop-pad-blocks-from (+ index 1) count tail))))
+
+;; The in-loop caller shape, grown past opt-inline-hot-loop-leaf-max-caller-blocks
+;; by twelve jump blocks between entry and header: the call is still in the
+;; loop, but the caller's own working set dwarfs the import.
+(define (opt-inline-hot-loop-big-caller-function
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            3
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (opt-inline-hot-loop-pad-label 0))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (opt-inline-hot-loop-pad-blocks-from
+        0
+        12
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "header")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Phi
+                4
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (opt-inline-hot-loop-pad-label 11)
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    (compiler_ir_types.compiler-ir-label "latch")
+                    compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-inline-loop-site-call callee-name 5)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "latch"))
+                  compiler_ir_types.CompilerIrInstrList.Nil)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "header"))
+                  compiler_ir_types.CompilerIrInstrList.Nil))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "exit")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 4)))
+                    compiler_ir_types.CompilerIrInstrList.Nil))
+                compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-inline-hot-loop-big-caller-chain
+  [names : compiler_optimize.OptSlotList]
+  [callee-name : i64]
+  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  (match names
+    [(compiler_optimize.OptSlotList.Nil) tail]
+    [(compiler_optimize.OptSlotList.Cons name rest)
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-inline-hot-loop-big-caller-function name callee-name)
+        (opt-inline-hot-loop-big-caller-chain (box-get rest) callee-name tail))]))
+
+;; The same big-tier leaf at the same in-loop sites inside 17-block callers:
+;; above the caller-size cap the import would tax the caller loop's
+;; allocation (the pl-run-chunk shape), so every site keeps its call.
+(define (compiler-optimize-inline-hot-loop-leaf-in-loop-big-caller-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-hot-loop-big-caller-chain
+          (opt-inline-dup-three-caller-names symbols)
+          callee-name
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-hot-loop-mid-leaf callee-name)
+            compiler_ir_types.CompilerIrFunctionList.Nil))
+        2)]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_loop"
+          "inline_switch")
+        1))))
+
+;; Three STRAIGHT-LINE callers with no loop of their own: the imported loop
+;; becomes each caller's only one, so no caller loop's allocation is there to
+;; lengthen, and every site takes a copy.
+(define (compiler-optimize-inline-hot-loop-leaf-loop-free-site-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-shared-accessor-optimized
+        symbols
+        3
+        false
+        (opt-inline-dup-leaf-plain callee-name))]
+    (= (opt-inline-shared-remaining-calls optimized 3) 0)))
+
+;; A caller that loops, but whose call sits in the loop's EXIT block: no site
+;; tier fires -- the site is not in the loop, the caller is not loop-free, and
+;; the in-loop tier never sees the exit block -- so the import keeps its
+;; boundary at all three callers.
+(define (opt-inline-hot-loop-cold-site-caller
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    7
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-inline-loop-site-entry-instrs))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "header")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Mov
+                5
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "latch"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (opt-inline-loop-site-call callee-name 6)
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 6)))
+                    compiler_ir_types.CompilerIrInstrList.Nil)))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-hot-loop-cold-site-chain
+  [names : compiler_optimize.OptSlotList]
+  [callee-name : i64]
+  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  (match names
+    [(compiler_optimize.OptSlotList.Nil) tail]
+    [(compiler_optimize.OptSlotList.Cons name rest)
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-inline-hot-loop-cold-site-caller name callee-name)
+        (opt-inline-hot-loop-cold-site-chain (box-get rest) callee-name tail))]))
+
+(define (compiler-optimize-inline-hot-loop-leaf-cold-site-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-hot-loop-cold-site-chain
+          (opt-inline-dup-three-caller-names symbols)
+          callee-name
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-dup-leaf-plain callee-name)
+            compiler_ir_types.CompilerIrFunctionList.Nil))
+        2)]
+    (and
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "main"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_nonleaf"
+          "inline_switch")
+        1)
+      (=
+        (opt-count-direct-call-name-function-list
+          optimized
+          "inline_loop"
+          "inline_switch")
+        1))))
+
+;; Six straight-line call blocks in one loop-free caller, one call per block.
+;; Each copy of the five-block leaf costs the caller six blocks of block fuel,
+;; so five copies fit the per-caller budget and the sixth keeps its call.
+(define (opt-inline-hot-loop-budget-label [index : i64]) : i64
+  (compiler_ir_types.compiler-ir-label
+    (str_cat.str-cat "budget" (string.int->string index))))
+
+(define (opt-inline-hot-loop-budget-blocks-from
+  [callee-name : i64]
+  [index : i64]
+  [sites : i64]) : compiler_ir_types.CompilerIrBlockList
+  (if (>= index sites)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "budget_exit")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 3)))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      compiler_ir_types.CompilerIrBlockList.Nil)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (opt-inline-hot-loop-budget-label index)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (opt-inline-loop-site-call callee-name (+ 3 index))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (if (< (+ index 1) sites)
+                (opt-inline-hot-loop-budget-label (+ index 1))
+                (compiler_ir_types.compiler-ir-label "budget_exit")))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (opt-inline-hot-loop-budget-blocks-from callee-name (+ index 1) sites))))
+
+(define (compiler-optimize-inline-hot-loop-leaf-budget-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.CompilerIrFunction.Function
+            (struct-get symbols main)
+            (opt-inline-switch-params)
+            (compiler_ast_types.AstType.I64)
+            9
+            (opt-inline-hot-loop-budget-blocks-from callee-name 0 6))
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-dup-leaf-plain callee-name)
+            compiler_ir_types.CompilerIrFunctionList.Nil))
+        2)]
+    (=
+      (opt-count-direct-call-name-function-list
+        optimized
+        "main"
+        "inline_switch")
+      1)))
 
 (define (opt-inline-phi-span-ok-instr-seq-from?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]

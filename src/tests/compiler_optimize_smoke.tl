@@ -3554,7 +3554,7 @@
   inline-dup-two-site
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-dup-two-site-ok?)
-    "a two-reference call-free leaf is duplicated into both in-loop sites; three references stay out of line"))
+    "a two-reference call-free leaf is duplicated into both in-loop sites"))
 
 (test
   inline-dup-cascade-per-caller
@@ -3567,6 +3567,54 @@
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-dup-call-bearing-refusal-ok?)
     "a two-reference leaf carrying a call stays out of line at both sites"))
+
+(test
+  inline-hot-loop-leaf-three-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-three-site-ok?)
+    "a call-free cyclic leaf past the duplication ceiling is copied into every in-loop site"))
+
+(test
+  inline-hot-loop-leaf-call-bearing-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-call-bearing-refusal-ok?)
+    "a multi-reference loop leaf carrying a call stays out of line at every site (#6307)"))
+
+(test
+  inline-hot-loop-leaf-too-big-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-too-big-refusal-ok?)
+    "a multi-reference loop leaf one instruction past the band stays out of line"))
+
+(test
+  inline-hot-loop-leaf-in-loop-small-caller
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-in-loop-small-caller-ok?)
+    "a big-tier loop leaf is admitted at an in-loop site when the caller is small enough"))
+
+(test
+  inline-hot-loop-leaf-in-loop-big-caller-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-in-loop-big-caller-refusal-ok?)
+    "the same leaf at in-loop sites of callers past the size cap stays out of line"))
+
+(test
+  inline-hot-loop-leaf-loop-free-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-loop-free-site-ok?)
+    "a loop-free caller takes the loop leaf at a straight-line site: no caller loop is there to tax"))
+
+(test
+  inline-hot-loop-leaf-cold-site-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-cold-site-refusal-ok?)
+    "a call in a looping caller's exit block stays out of line: neither repayment clause fires"))
+
+(test
+  inline-hot-loop-leaf-budget-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-budget-refusal-ok?)
+    "five copies fit the per-caller block fuel; the sixth site keeps its call"))
 
 (test
   inline-shared-accessor-floor
@@ -3584,7 +3632,7 @@
   inline-shared-accessor-acyclic
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-acyclic-ok?)
-    "a cyclic body at the same shared sites stays out of line"))
+    "a cyclic call-bearing body at the same shared sites stays out of line: both gates refuse it"))
 
 (test
   inline-shared-accessor-in-loop-site

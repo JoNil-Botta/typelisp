@@ -30428,6 +30428,102 @@
 ;; canonical module-qualified top-env key. Keep bindings whose source spelling
 ;; cannot be recovered from that key (root/dotted names), plus bindings whose
 ;; source name must preserve module-overlay shadowing order.
+;;
+;; Seed the existing per-module `seen` set with compile-root value names once.
+;; A collision then takes the same LookupFound path as a repeated local name,
+;; avoiding a second symbol-table lookup for every imported declaration.
+(define (tc-module-local-root-shadow-name-note!
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [name-id : i64]) : unit
+  (tc_i64_i64_map.insert-ref! seen (tc-env-name-key-id name-id) 1))
+
+(define (tc-module-local-root-shadow-variants-note-at!
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [variants : (& variants ast.AstVariantDefList)]
+  [index : i64]) : unit
+  (if (>= index (struct-get variants len))
+    unit
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def name _ _)
+        (begin
+          (tc-module-local-root-shadow-name-note! seen name)
+          (tc-module-local-root-shadow-variants-note-at!
+            seen
+            variants
+            (+ index 1)))])))
+
+(define (tc-module-local-root-shadow-cleanup-note!
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [cleanup-name : ast.AstStructCleanup]) : unit
+  (match cleanup-name
+    [(ast.AstStructCleanup.No) unit]
+    [(ast.AstStructCleanup.Fn name)
+      (tc-module-local-root-shadow-name-note! seen name)]))
+
+(define (tc-module-local-root-shadow-enum-cleanup-note!
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [cleanup-name : ast.AstEnumCleanup]) : unit
+  (match cleanup-name
+    [(ast.AstEnumCleanup.No) unit]
+    [(ast.AstEnumCleanup.Fn name)
+      (tc-module-local-root-shadow-name-note! seen name)]))
+
+(define (tc-module-local-root-shadow-decl-note!
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [decl : ast.AstDecl]) : unit
+  (match decl
+    [(ast.AstDecl.Unsafe inner-box)
+      (tc-module-local-root-shadow-decl-note! seen (box-get inner-box))]
+    [(ast.AstDecl.Def _ name _ _)
+      (tc-module-local-root-shadow-name-note! seen name)]
+    [(ast.AstDecl.DefFn _ name _ _ _ _)
+      (tc-module-local-root-shadow-name-note! seen name)]
+    [(ast.AstDecl.DefDispatch _ name _)
+      (tc-module-local-root-shadow-name-note! seen name)]
+    [(ast.AstDecl.Extern _ name _ _ _)
+      (tc-module-local-root-shadow-name-note! seen name)]
+    [(ast.AstDecl.DefEnum _ _ cleanup variants)
+      (begin
+        (tc-module-local-root-shadow-enum-cleanup-note! seen cleanup)
+        (tc-module-local-root-shadow-variants-note-at! seen (& variants) 0))]
+    [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
+      (begin
+        (tc-module-local-root-shadow-enum-cleanup-note! seen cleanup)
+        (tc-module-local-root-shadow-variants-note-at! seen (& variants) 0))]
+    [(ast.AstDecl.DefStruct _ name _ cleanup _)
+      (begin
+        (tc-module-local-root-shadow-name-note! seen name)
+        (tc-module-local-root-shadow-cleanup-note! seen cleanup))]
+    [(ast.AstDecl.DefStructLifetimes _ name _ _ cleanup _)
+      (begin
+        (tc-module-local-root-shadow-name-note! seen name)
+        (tc-module-local-root-shadow-cleanup-note! seen cleanup))]
+    [_ unit]))
+
+(define (tc-module-local-root-shadow-names-note!
+  [decls : ast.AstDeclList]
+  [seen : (&mut seen tc_i64_i64_map.Map)]) : unit
+  (let
+    [slot : i64 (tc-module-decl-index-slot cbi.compiler-builtin-id-fix-empty)]
+    (if (< slot 0)
+      unit
+      (let
+        [j : i64 (array-ref tc-module-decl-index-starts slot)]
+        [end : i64 (array-ref tc-module-decl-index-ends slot)]
+        (while (< j end)
+          (begin
+            (tc-module-local-root-shadow-decl-note!
+              seen
+              (array-ref
+                (struct-get decls slots)
+                (+
+                  (struct-get decls offset)
+                  (array-ref tc-module-decl-index-positions j))))
+            (set! j (+ j 1))))))))
+
 (define (tc-module-local-name-should-bind!
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -30444,17 +30540,7 @@
         [(tc_i64_i64_map.LookupMissing)
           (begin
             (tc_i64_i64_map.insert-ref! seen key-id 1)
-            (or
-              ;; Explicit module caches deliberately stop the environment scan.
-              ;; The symbol index still exposes a compile-root collision in
-              ;; O(1), so retain the local binding that must shadow it.
-              (csym.compiler-symbols-handle-found?
-                (csym.compiler-symbols-lookup-value-in-module-id-or
-                  (tc-context-symbols ctx)
-                  (csym.compiler-symbol-root-module-id)
-                  name-id
-                  (csym.compiler-symbols-missing-handle)))
-              (tc-name-bound-before-hygiene-global-boundary-id? env key-id)))]))))
+            (tc-name-bound-before-hygiene-global-boundary-id? env key-id))]))))
 
 (define (tc-bind-struct-cleanup-local-shadowed!
   [ctx : TcContext]
@@ -30675,14 +30761,24 @@
   (let
     [_ensure : unit (tc-module-decl-index-ensure! decls)]
     [slot : i64 (tc-module-decl-index-slot target-module-id)]
+    [root-slot : i64
+      (tc-module-decl-index-slot cbi.compiler-builtin-id-fix-empty)]
     (if (< slot 0)
       (ResultTcEnv.Ok env)
       (let
         [j : i64 (array-ref tc-module-decl-index-starts slot)]
         [end : i64 (array-ref tc-module-decl-index-ends slot)]
+        [root-count : i64
+          (if (< root-slot 0)
+            0
+            (-
+              (array-ref tc-module-decl-index-ends root-slot)
+              (array-ref tc-module-decl-index-starts root-slot)))]
         [cur-env : TcTypeEnv env]
         [seen : tc_i64_i64_map.Map
-          (tc_i64_i64_map.with-capacity (+ (- end j) 1))]
+          (tc_i64_i64_map.with-capacity (+ (+ (- end j) root-count) 1))]
+        [_root-shadows : unit
+          (tc-module-local-root-shadow-names-note! decls (&mut seen))]
         [message : String ""]
         [ok : bool true]
         (begin

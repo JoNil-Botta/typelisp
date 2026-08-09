@@ -115,10 +115,11 @@
     [index : i64 (- digits 1)]
     (while (>= index 0)
       (let
-        [digit : i64 (- 0 (% cursor 10))]
+        [next : i64 (/ cursor 10)]
+        [digit : i64 (- (* next 10) cursor)]
         (begin
           (int->string-write-byte! dst (+ base index) (+ 48 digit))
-          (set! cursor (/ cursor 10))
+          (set! cursor next)
           (set! index (- index 1)))))))
 
 ;: Return the decimal spelling of `value` in fresh active-arena String storage.

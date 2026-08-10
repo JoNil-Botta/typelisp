@@ -46093,6 +46093,139 @@
         target-slot
         "\n"))))
 
+;; The same GAP2b hazard on the absolute (non-PIC) dispatch form, which has no
+;; table register to stash through and so was left splicing the inline restore
+;; straight into the sequence. That splice is correct for a conditional branch
+;; -- emergency-restore-before-jumps documents its precondition as "the
+;; scavenged scratch is dead after the compare, because the jumps read EFLAGS,
+;; not the register" -- and it is false here: `jmp *table(,index-reg,8)` reads
+;; the index register, and the `subq $base` that computed the index wrote it
+;; into the very register the restore overwrites. The emitted code then
+;; dispatches on the restored occupant.
+;;
+;; Same fix as the PIC path, one register short: the final target address is
+;; resolved into the index register itself -- the table entry when in range, a
+;; `leaq` of the default block when not -- stashed to the dedicated slot, and
+;; only then are the occupants restored and the slot-indirect jump taken. The
+;; index is dead from the stash onward, so every occupant is restored exactly
+;; once on the single path reaching the transfer.
+(define (compiler-backend-emit-switch-dispatch-absolute-emergency
+  [function : String]
+  [current-label : i64]
+  [default-label : i64]
+  [total-switch : bool]
+  [case-count : i64]
+  [base : i64]
+  [index-reg : String]
+  [load-index : String]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state backend-state)]
+    [target-idx : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-emergency-pending-count)]
+    [target-slot : String
+      (compiler-backend-frame-offset-with-backend-state
+        backend-state
+        (compiler-backend-emergency-reg-offset function-state target-idx))]
+    [_reserve-target-slot : unit
+      (if (<
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-emergency-used-count)
+        (+ target-idx 1))
+        (compiler-backend-function-scratch-set-i64!
+          function-state
+          compiler-backend-scratch-i64-emergency-used-count
+          (+ target-idx 1))
+        unit)]
+    [table-label : String
+      (compiler-backend-switch-table-label function current-label)]
+    [done-label : String
+      (compiler-backend-asm-label
+        function
+        (compiler_ir_types.compiler-ir-label
+          (str_cat.str-cat
+            (compiler_ir_types.compiler-ir-label-text current-label)
+            "_disp_j"
+            "")))]
+    [default-stub-label : String
+      (compiler-backend-asm-label
+        function
+        (compiler_ir_types.compiler-ir-label
+          (str_cat.str-cat
+            (compiler_ir_types.compiler-ir-label-text current-label)
+            "_disp_d"
+            "")))]
+    [rebase : String
+      (if (= base 0)
+        ""
+        (str_cat.str-cat
+          "    subq $"
+          (string.int->string base)
+          ", "
+          index-reg
+          "\n"
+          ""))]
+    ;; Emitted after the last read of index-reg, before the transfer.
+    [restore : String
+      (compiler-backend-emergency-restore-before-jumps backend-state)]
+    (if total-switch
+      (str_cat.str-cat
+        load-index
+        rebase
+        "    movq "
+        table-label
+        "(,"
+        index-reg
+        ",8), "
+        index-reg
+        "\n    movq "
+        index-reg
+        ", "
+        target-slot
+        "\n"
+        restore
+        "    jmp *"
+        target-slot
+        "\n")
+      (str_cat.str-cat
+        load-index
+        rebase
+        "    cmpq $"
+        (string.int->string (- case-count 1))
+        ", "
+        index-reg
+        "\n    ja "
+        default-stub-label
+        "\n    movq "
+        table-label
+        "(,"
+        index-reg
+        ",8), "
+        index-reg
+        "\n    jmp "
+        done-label
+        "\n"
+        default-stub-label
+        ":\n    leaq "
+        (compiler-backend-asm-label function default-label)
+        "(%rip), "
+        index-reg
+        "\n"
+        done-label
+        ":\n    movq "
+        index-reg
+        ", "
+        target-slot
+        "\n"
+        restore
+        "    jmp *"
+        target-slot
+        "\n"))))
+
 (define (compiler-backend-emit-switch-dispatch
   [backend-state : CompilerBackendState]
   [function : String]
@@ -46151,79 +46284,28 @@
       [(ResultCompilerBackend.Ok load-index)
         (ResultCompilerBackend.Ok
           ;; lint-allow: nested-if-ladder
-          (if (compiler-backend-state-absolute-switch-ok? backend-state)
-            ;; Absolute indexed form (non-PIC Linux): no table register at
-            ;; all, so the dispatch never borrows one. Pending emergency
-            ;; occupants from earlier borrows are restored before the compare
-            ;; (movq loads keep the ja flags intact), covering both edges.
-            (if total-switch
-              (str_cat.str-cat
-                load-index
-                (if (= base 0)
-                  ""
-                  (str_cat.str-cat
-                    "    subq $"
-                    (string.int->string base)
-                    ", "
-                    index-reg
-                    "\n"
-                    ""))
-                (if (compiler-backend-function-scratch-bool?
-                  (compiler-backend-state-function-state backend-state)
-                  compiler-backend-scratch-bool-emergency-pending)
-                  (compiler-backend-emergency-restore-before-jumps
-                    backend-state)
-                  "")
-                "    jmp *"
-                (compiler-backend-switch-table-label function current-label)
-                "(,"
-                index-reg
-                ",8)\n")
-              (str_cat.str-cat
-                load-index
-                (if (= base 0)
-                  ""
-                  (str_cat.str-cat
-                    "    subq $"
-                    (string.int->string base)
-                    ", "
-                    index-reg
-                    "\n"
-                    ""))
-                (if (compiler-backend-function-scratch-bool?
-                  (compiler-backend-state-function-state backend-state)
-                  compiler-backend-scratch-bool-emergency-pending)
-                  (compiler-backend-emergency-restore-before-jumps
-                    backend-state)
-                  "")
-                "    cmpq $"
-                (string.int->string (- case-count 1))
-                ", "
-                index-reg
-                "\n    ja "
-                (compiler-backend-asm-label function default-label)
-                "\n    jmp *"
-                (compiler-backend-switch-table-label function current-label)
-                "(,"
-                index-reg
-                ",8)\n"))
-            (if (compiler-backend-function-scratch-bool?
+          (if (and
+            (compiler-backend-state-absolute-switch-ok? backend-state)
+            (compiler-backend-function-scratch-bool?
               (compiler-backend-state-function-state backend-state)
-              compiler-backend-scratch-bool-emergency-pending)
-              ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant;
-              ;; a trailing restore after the indirect jmp is unreachable. Emit the
-              ;; slot-indirect form with the restore BEFORE the transfer.
-              (compiler-backend-emit-switch-dispatch-emergency
-                function
-                current-label
-                default-label
-                total-switch
-                case-count
-                base
-                index-reg
-                table-reg
-                load-index
-                backend-state)
+              compiler-backend-scratch-bool-emergency-pending))
+            ;; GAP2b on the absolute form: the index register is live through
+            ;; the indirect jump, so the restore cannot precede it.
+            (compiler-backend-emit-switch-dispatch-absolute-emergency
+              function
+              current-label
+              default-label
+              total-switch
+              case-count
+              base
+              index-reg
+              load-index
+              backend-state)
+            (if (compiler-backend-state-absolute-switch-ok? backend-state)
+              ;; Absolute indexed form (non-PIC Linux): no table register at
+              ;; all, so the dispatch never borrows one. Pending emergency
+              ;; occupants from earlier borrows take the slot-indirect form
+              ;; above; this arm has none to restore.
               (if total-switch
                 (str_cat.str-cat
                   load-index
@@ -46236,13 +46318,9 @@
                       index-reg
                       "\n"
                       ""))
-                  "    leaq "
+                  "    jmp *"
                   (compiler-backend-switch-table-label function current-label)
-                  "(%rip), "
-                  table-reg
-                  "\n    jmp *("
-                  table-reg
-                  ","
+                  "(,"
                   index-reg
                   ",8)\n")
                 (str_cat.str-cat
@@ -46262,15 +46340,75 @@
                   index-reg
                   "\n    ja "
                   (compiler-backend-asm-label function default-label)
-                  "\n    leaq "
+                  "\n    jmp *"
                   (compiler-backend-switch-table-label function current-label)
-                  "(%rip), "
-                  table-reg
-                  "\n    jmp *("
-                  table-reg
-                  ","
+                  "(,"
                   index-reg
-                  ",8)\n")))))]
+                  ",8)\n"))
+              (if (compiler-backend-function-scratch-bool?
+                (compiler-backend-state-function-state backend-state)
+                compiler-backend-scratch-bool-emergency-pending)
+                ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant;
+                ;; a trailing restore after the indirect jmp is unreachable. Emit the
+                ;; slot-indirect form with the restore BEFORE the transfer.
+                (compiler-backend-emit-switch-dispatch-emergency
+                  function
+                  current-label
+                  default-label
+                  total-switch
+                  case-count
+                  base
+                  index-reg
+                  table-reg
+                  load-index
+                  backend-state)
+                (if total-switch
+                  (str_cat.str-cat
+                    load-index
+                    (if (= base 0)
+                      ""
+                      (str_cat.str-cat
+                        "    subq $"
+                        (string.int->string base)
+                        ", "
+                        index-reg
+                        "\n"
+                        ""))
+                    "    leaq "
+                    (compiler-backend-switch-table-label function current-label)
+                    "(%rip), "
+                    table-reg
+                    "\n    jmp *("
+                    table-reg
+                    ","
+                    index-reg
+                    ",8)\n")
+                  (str_cat.str-cat
+                    load-index
+                    (if (= base 0)
+                      ""
+                      (str_cat.str-cat
+                        "    subq $"
+                        (string.int->string base)
+                        ", "
+                        index-reg
+                        "\n"
+                        ""))
+                    "    cmpq $"
+                    (string.int->string (- case-count 1))
+                    ", "
+                    index-reg
+                    "\n    ja "
+                    (compiler-backend-asm-label function default-label)
+                    "\n    leaq "
+                    (compiler-backend-switch-table-label function current-label)
+                    "(%rip), "
+                    table-reg
+                    "\n    jmp *("
+                    table-reg
+                    ","
+                    index-reg
+                    ",8)\n"))))))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-switch

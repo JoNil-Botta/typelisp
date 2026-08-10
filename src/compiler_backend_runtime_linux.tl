@@ -1,6 +1,6 @@
 ;; compiler_backend_runtime_linux.tl - Linux backend runtime leaf emitter.
 (import compiler_backend_runtime_common as runtime_common)
-(import stdlib.string)
+(cfg (any compiler-arena-debug test) (import stdlib.string))
 (import stdlib.str_cat_runtime as str_cat)
 
 (define (compiler-backend-runtime-arena-data [_arena-debug : bool]) : String
@@ -313,7 +313,7 @@ tl_alloc:
   "")
 
 (define (compiler-backend-runtime-linux-arena-functions-base [profile : bool]) : String
-  (string.append
+  (str_cat.str-cat
     "    .globl tl_thread_init
     .type tl_thread_init,@function
 tl_thread_init:
@@ -346,18 +346,15 @@ tl_thread_init:
     .type tl_arena_current,@function
 tl_arena_current:
 "
-    (string.append
-      (compiler-backend-current-arena-load "%rax")
-      (string.append
-        "    ret
+    (compiler-backend-current-arena-load "%rax")
+    "    ret
     .size tl_arena_current, . - tl_arena_current
 
     .globl tl_arena_set
     .type tl_arena_set,@function
 tl_arena_set:
 "
-        (string.append
-          "    testq %rdi, %rdi
+    "    testq %rdi, %rdi
     jz .L_tl_arena_set_store
     movq 40(%rdi), %rax
     testq %rax, %rax
@@ -365,10 +362,8 @@ tl_arena_set:
     movq %rax, %rdi
 .L_tl_arena_set_store:
 "
-          (string.append
-            (compiler-backend-current-arena-store "%rdi")
-            (string.append
-              "    ret
+    (compiler-backend-current-arena-store "%rdi")
+    "    ret
     .size tl_arena_set, . - tl_arena_set
 
     .globl tl_arena_poison_enable
@@ -472,12 +467,11 @@ tl_arena_destroy:
     jz .L_tl_arena_destroy_active_done
     movq 0(%rbx), %r8
 "
-              (string.append
-                (runtime_common.compiler-backend-runtime-profile-live-sub
-                  "%rbx"
-                  "%r10"
-                  profile)
-                "    push %r8
+    (runtime_common.compiler-backend-runtime-profile-live-sub
+      "%rbx"
+      "%r10"
+      profile)
+    "    push %r8
     cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_arena_destroy_unmap
     movq 8(%rbx), %rdi
@@ -525,7 +519,7 @@ tl_arena_destroy:
     ret
     .size tl_arena_destroy, . - tl_arena_destroy
 
-"))))))))
+"))
 
 (define (compiler-backend-runtime-linux-arena-debug-functions) : String
   ".L_tl_arena_debug_register_root:
@@ -614,7 +608,7 @@ tl_arena_debug_assert_pool_install:
     (cfg
       (any compiler-arena-debug test)
       (if _arena-debug
-        (string.append
+        (str_cat.str-cat
           (compiler-backend-runtime-linux-arena-debug-functions)
           (string.replace
             (string.replace
@@ -667,7 +661,7 @@ tl_arena_debug_assert_pool_install:
 ;; the atomic flag, which runs a 1/3 lock protocol and is left untouched);
 ;; tl_array_zero consults that bit to skip its fill only for virgin arenas.
 (define (compiler-backend-runtime-region-reset-functions-base [profile : bool]) : String
-  (string.append
+  (str_cat.str-cat
     "    .globl tl_region_reset
     .type tl_region_reset,@function
 tl_region_reset:
@@ -701,13 +695,11 @@ tl_region_reset:
     je .L_tl_region_reset_restore
     movq 0(%r9), %r10
 "
-    (string.append
-      (runtime_common.compiler-backend-runtime-profile-live-sub
-        "%r9"
-        "%r11"
-        profile)
-      (string.append
-        "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    (runtime_common.compiler-backend-runtime-profile-live-sub
+      "%r9"
+      "%r11"
+      profile)
+    "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     jne .L_tl_region_reset_drop_newer_poison
     movq 24(%r9), %rsi
     subq %r9, %rsi
@@ -732,14 +724,12 @@ tl_region_reset:
     jmp .L_tl_region_reset_drop_newer
 .L_tl_region_reset_restore:
 "
-        (string.append
-          (runtime_common.compiler-backend-runtime-profile-live-rewind
-            "%r8"
-            "%rbx"
-            "%r10"
-            profile)
-          (string.append
-            "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    (runtime_common.compiler-backend-runtime-profile-live-rewind
+      "%r8"
+      "%rbx"
+      "%r10"
+      profile)
+    "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_region_reset_restore_set
     movq 16(%r8), %rcx
     subq %rbx, %rcx
@@ -776,12 +766,11 @@ tl_region_reset:
     jz .L_tl_region_reset_all_retired
     movq 0(%r8), %r9
 "
-            (string.append
-              (runtime_common.compiler-backend-runtime-profile-live-sub
-                "%r8"
-                "%r10"
-                profile)
-              "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    (runtime_common.compiler-backend-runtime-profile-live-sub
+      "%r8"
+      "%r10"
+      profile)
+    "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_region_reset_all_unmap
     movq 8(%r8), %rdi
     movq 24(%r8), %rcx
@@ -829,7 +818,7 @@ tl_region_reset:
     jmp tl_region_abort
     .size tl_region_reset, . - tl_region_reset
 
-")))))))
+"))
 
 (define (compiler-backend-runtime-region-reset-functions
   [profile : bool]
@@ -1070,27 +1059,20 @@ tl_tlci_call_macro_entry:
         (compiler-backend-runtime-tlci-macro-entry-functions)
         "")]
     [runtime-front-asm : String
-      (string.append
+      (str_cat.str-cat
         memcpy-asm
-        (string.append
-          memchr-asm
-          (string.append
-            array-zero-asm
-            (string.append
-              mem-fill8-asm
-              (string.append
-                tlci-entry-asm
-                (string.append
-                  tlci-macro-entry-asm
-                  (string.append
-                    arena-asm
-                    (string.append
-                      profile-asm
-                      (str_cat.str-cat
-                        startup-profile-asm
-                        alloc-asm
-                        region-mark-asm
-                        region-reset-asm)))))))))]
+        memchr-asm
+        array-zero-asm
+        mem-fill8-asm
+        tlci-entry-asm
+        tlci-macro-entry-asm
+        arena-asm
+        profile-asm
+        (str_cat.str-cat
+          startup-profile-asm
+          alloc-asm
+          region-mark-asm
+          region-reset-asm))]
     [libc-shims-asm : String
       (compiler-backend-runtime-linux-libc-shim-functions)]
     [thread-asm : String ""]

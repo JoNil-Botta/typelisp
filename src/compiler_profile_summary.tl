@@ -1,4 +1,5 @@
 ;; compiler_profile_summary.tl - bounded deterministic job-owned reports.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_profile_state as profile_state)
 (import stdlib.hash)
 (import stdlib.io)
@@ -507,22 +508,20 @@
   [elapsed : i64]
   [calls : i64]) : unit
   (io.print-error
-    (string.concat5
+    (str_cat.str-cat
       "compile-profile-summary|"
       scope-name
       "|"
       kind
-      (string.concat5
-        "|"
-        (string.int->string rank)
-        "|"
-        name
-        (string.concat5
-          "|"
-          (string.int->string elapsed)
-          "|"
-          (string.int->string calls)
-          "\n")))))
+      "|"
+      (string.int->string rank)
+      "|"
+      name
+      "|"
+      (string.int->string elapsed)
+      "|"
+      (string.int->string calls)
+      "\n")))
 
 (define (compiler-profile-summary-emit
   [state : profile_state.CompilerProfileState]

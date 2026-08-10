@@ -10,6 +10,7 @@
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
 ;# metadata and the lint core verified by `compiler-lint-self-test` in the
 ;# `lint_core_tests.tl` companion (driver: `src/tests/lint_smoke.tl`).
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
@@ -947,9 +948,10 @@
 
 (define (lint-dead-code-finding [name : String] [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.append
+    (str_cat.str-cat
       "dead code: top-level declaration "
-      (string.append name " is unreachable from package entry/test roots"))
+      name
+      " is unreachable from package entry/test roots")
     (lint-rule-dead-code-id)
     0
     span))
@@ -958,9 +960,10 @@
   [name : String]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.append
+    (str_cat.str-cat
       "unused assignment: value assigned to "
-      (string.append name " is overwritten before it is read"))
+      name
+      " is overwritten before it is read")
     (lint-rule-unused-assignment-id)
     0
     span))
@@ -970,13 +973,12 @@
   [field : String]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.append
+    (str_cat.str-cat
       "copy-on-update struct mutation: "
-      (string.append
-        name
-        (string.append
-          " rebuilds the same struct to change field "
-          (string.append field "; use in-place field assignment"))))
+      name
+      " rebuilds the same struct to change field "
+      field
+      "; use in-place field assignment")
     (lint-rule-copy-on-update-struct-id)
     1
     span))
@@ -985,11 +987,10 @@
   [name : String]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.append
+    (str_cat.str-cat
       "single-element array scalar cell: "
-      (string.append
-        name
-        " is only read or written at index 0; prefer Box T, &mut, or returning the updated value"))
+      name
+      " is only read or written at index 0; prefer Box T, &mut, or returning the updated value")
     (lint-rule-single-element-array-cell-id)
     0
     span))
@@ -998,11 +999,10 @@
   [name : String]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.append
+    (str_cat.str-cat
       "hand-filled dynamic array: "
-      (string.append
-        name
-        " is initialized by consecutive array-set! calls; prefer (make-array v0 v1 ...)"))
+      name
+      " is initialized by consecutive array-set! calls; prefer (make-array v0 v1 ...)")
     (lint-rule-prefer-dynamic-array-literal-id)
     0
     span))
@@ -1011,7 +1011,7 @@
   [name : String]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.append "unused variable: " (string.append name " is never used"))
+    (str_cat.str-cat "unused variable: " name " is never used")
     (lint-rule-unused-variable-id)
     0
     span))
@@ -1035,13 +1035,13 @@
         (string.substring name (+ module-len 1) (- name-len (+ module-len 1)))
         name)]
     (LintFinding
-      (string.append
+      (str_cat.str-cat
         "redundant function name: "
-        (string.append
-          name
-          (string.append
-            " repeats module prefix "
-            (string.append module-name (string.append "; use " short-name)))))
+        name
+        " repeats module prefix "
+        module-name
+        "; use "
+        short-name)
       (lint-rule-redundant-function-name-id)
       0
       span)))
@@ -1232,20 +1232,20 @@
             name
             (+ index 1)
             end
-            (string.append out (string.substring name index 1))
+            (str_cat.str-cat out (string.substring name index 1))
             false)]
         [(lint-name-case-ascii-upper? c)
           (let
             [prefix : String
               (if (or at-word-start (string.eq out ""))
                 out
-                (string.append out "-"))]
+                (str_cat.str-cat out "-"))]
             [lower : String (lint-name-case-lower-char-string c)]
             (lint-name-case-lower-suggestion-from
               name
               (+ index 1)
               end
-              (string.append prefix lower)
+              (str_cat.str-cat prefix lower)
               false))]
         [(lint-name-case-ascii-digit? c)
           (if at-word-start
@@ -1254,7 +1254,7 @@
               name
               (+ index 1)
               end
-              (string.append out (string.substring name index 1))
+              (str_cat.str-cat out (string.substring name index 1))
               false))]
         [(or (= c '_') (= c '-'))
           (if (and
@@ -1267,7 +1267,7 @@
                 name
                 (+ index 2)
                 end
-                (string.append out "->")
+                (str_cat.str-cat out "->")
                 true))
             (lint-name-case-lower-suggestion-from
               name
@@ -1275,7 +1275,7 @@
               end
               (if at-word-start
                 out
-                (string.append out "-"))
+                (str_cat.str-cat out "-"))
               true))]
         [else ""]))))
 
@@ -1300,9 +1300,9 @@
       (let
         [with-unused : String
           (if unused
-            (string.append "_" body)
+            (str_cat.str-cat "_" body)
             body)]
-        (string.append with-unused suffix)))))
+        (str_cat.str-cat with-unused suffix)))))
 
 (define (lint-name-case-upper-camel-suggestion-from
   [name : String]
@@ -1323,7 +1323,7 @@
             (lint-name-case-upper-camel-suggestion-from
               name
               (+ index 1)
-              (string.append out piece)
+              (str_cat.str-cat out piece)
               false))]
         [(lint-name-case-ascii-digit? c)
           (if (string.eq out "")
@@ -1331,7 +1331,7 @@
             (lint-name-case-upper-camel-suggestion-from
               name
               (+ index 1)
-              (string.append out (string.substring name index 1))
+              (str_cat.str-cat out (string.substring name index 1))
               false))]
         [(or (= c '-') (= c '_'))
           (lint-name-case-upper-camel-suggestion-from name (+ index 1) out true)]
@@ -1349,11 +1349,11 @@
       (if (string.eq suggested "")
         "`"
         (let
-          [closed : String (string.append suggested "`")]
-          (string.append "`; consider `" closed)))]
-    [with-name : String (string.append name suffix)]
-    [detail : String (string.append ": `" with-name)]
-    (string.append base detail)))
+          [closed : String (str_cat.str-cat suggested "`")]
+          (str_cat.str-cat "`; consider `" closed)))]
+    [with-name : String (str_cat.str-cat name suffix)]
+    [detail : String (str_cat.str-cat ": `" with-name)]
+    (str_cat.str-cat base detail)))
 
 (define (lint-name-case-finding
   [name : String]
@@ -1624,9 +1624,11 @@
   [bare : String]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.append
+    (str_cat.str-cat
       "transitional core macro qualifier: use "
-      (string.append bare (string.append " instead of " qualified)))
+      bare
+      " instead of "
+      qualified)
     (lint-rule-transitional-core-macro-qualifier-id)
     0
     span))
@@ -1665,7 +1667,7 @@
         "true"
         "false")]
     [(ast.AstLiteral.String string-id)
-      (string.append "\"" (string.append (ci.intern-str string-id) "\""))]
+      (str_cat.str-cat "\"" (ci.intern-str string-id) "\"")]
     [(ast.AstLiteral.Unit) "unit"]
     [_ "<expr>"]))
 
@@ -1699,7 +1701,7 @@
 (define (lint-render-args-join [head : String] [tail : String]) : String
   (if (string.eq tail "")
     head
-    (string.append head (string.append " " tail))))
+    (str_cat.str-cat head " " tail)))
 
 (define (lint-expr-list-render [exprs : ast.AstExprList]) : String
   (lint-expr-list-render-at (& exprs) 0))
@@ -1718,10 +1720,8 @@
 
 (define (lint-parenthesized-call-render [callee : String] [args : String]) : String
   (if (string.eq args "")
-    (string.append "(" (string.append callee ")"))
-    (string.append
-      "("
-      (string.append callee (string.append " " (string.append args ")"))))))
+    (str_cat.str-cat "(" callee ")")
+    (str_cat.str-cat "(" callee " " args ")")))
 
 (define (lint-expr-render [expr : ast.AstExpr]) : String
   (match expr
@@ -1891,13 +1891,11 @@
   [args : ast.AstExprList]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.append
+    (str_cat.str-cat
       "cascading "
-      (string.append
-        op
-        (string.append
-          ": prefer flat n-ary form "
-          (lint-cascading-and-or-flat-call callee op args))))
+      op
+      ": prefer flat n-ary form "
+      (lint-cascading-and-or-flat-call callee op args))
     (lint-rule-cascading-and-or-id)
     (lint-cascading-and-or-flat-arg-count-list op args)
     span))
@@ -3298,13 +3296,12 @@
   [alias : String]
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.append
+    (str_cat.str-cat
       "unused import: module alias "
-      (string.append
-        alias
-        (string.append
-          " from "
-          (string.append module-name " is never referenced"))))
+      alias
+      " from "
+      module-name
+      " is never referenced")
     (lint-rule-unused-import-id)
     0
     span))
@@ -4434,7 +4431,7 @@
     [(ast.AstExpr.Var name)
       (string.eq
         (ci.intern-str name)
-        (string.append target-name (string.append "." field-name)))]
+        (str_cat.str-cat target-name "." field-name))]
     [_ false]))
 
 (define (lint-copy-on-update-arg-check-invalid) : LintCopyOnUpdateArgCheck
@@ -5102,7 +5099,7 @@
     [_ false]))
 
 (define (lint-prefer-dotted-field-dot [receiver : String] [field : String]) : String
-  (string.append receiver (string.append "." field)))
+  (str_cat.str-cat receiver "." field))
 
 (define (lint-prefer-dotted-field-read-finding
   [receiver : String]
@@ -5111,15 +5108,14 @@
   (let
     [dotted : String (lint-prefer-dotted-field-dot receiver field)]
     (LintFinding
-      (string.append
+      (str_cat.str-cat
         "prefer dotted field syntax: use "
-        (string.append
-          dotted
-          (string.append
-            " instead of (struct-get "
-            (string.append
-              receiver
-              (string.append " " (string.append field ")"))))))
+        dotted
+        " instead of (struct-get "
+        receiver
+        " "
+        field
+        ")")
       (lint-rule-prefer-dotted-field-id)
       0
       span)))
@@ -5131,15 +5127,14 @@
   (let
     [dotted : String (lint-prefer-dotted-field-dot receiver field)]
     (LintFinding
-      (string.append
+      (str_cat.str-cat
         "prefer dotted field syntax: use (set! "
-        (string.append
-          dotted
-          (string.append
-            " value) instead of (set! (struct-get "
-            (string.append
-              receiver
-              (string.append " " (string.append field ") value)"))))))
+        dotted
+        " value) instead of (set! (struct-get "
+        receiver
+        " "
+        field
+        ") value)")
       (lint-rule-prefer-dotted-field-id)
       1
       span)))
@@ -8770,7 +8765,7 @@
   [name : String]
   [function-head : bool]) : LintSourceNameSpan
   (let
-    [needle : String (string.append "(" form)]
+    [needle : String (str_cat.str-cat "(" form)]
     [n : i64 (string.string-length source)]
     [search : i64 cursor]
     [found : i64 (- 0 1)]
@@ -10990,7 +10985,7 @@
   [name : String]
   [fallback : ast.AstSourceSpan]) : i64
   (let
-    [needle : String (string.append prefix name)]
+    [needle : String (str_cat.str-cat prefix name)]
     [fallback-start : i64 (lint-source-span-start-index source fallback)]
     [found : i64 (- 0 1)]
     [cursor : i64 fallback-start]

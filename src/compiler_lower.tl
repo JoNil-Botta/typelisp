@@ -1961,7 +1961,7 @@
 (cfg
   compile-profile
   (define (compiler-lower-profile-field [value : i64]) : String
-    (string.append "|" (string.int->string value))))
+    (str_cat.str-cat "|" (string.int->string value))))
 
 (cfg
   compile-profile
@@ -1995,86 +1995,69 @@
         (- (profile.alloc-peak) compiler-lower-profile-start-live)]
       (begin
         (io.print-error
-          (string.append
+          (str_cat.str-cat
             "compile-profile|lower."
-            (string.append
-              phase
-              (string.append
-                (compiler-lower-profile-field
-                  (- end-ms compiler-lower-profile-start-ms))
-                (string.append
-                  (compiler-lower-profile-field
-                    (- end-total compiler-lower-profile-start-total))
-                  (string.append
-                    (compiler-lower-profile-field
-                      (- end-live compiler-lower-profile-start-live))
-                    (string.append
-                      (compiler-lower-profile-field peak-delta)
-                      "\n")))))))
+            phase
+            (compiler-lower-profile-field
+              (- end-ms compiler-lower-profile-start-ms))
+            (compiler-lower-profile-field
+              (- end-total compiler-lower-profile-start-total))
+            (compiler-lower-profile-field
+              (- end-live compiler-lower-profile-start-live))
+            (compiler-lower-profile-field peak-delta)
+            "\n"))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        (ci.intern-profile-intern-value)
-                        compiler-lower-profile-start-intern))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  (ci.intern-profile-intern-value)
+                  compiler-lower-profile-start-intern))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase.slice|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        (ci.intern-profile-slice-value)
-                        compiler-lower-profile-start-intern-slice))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  (ci.intern-profile-slice-value)
+                  compiler-lower-profile-start-intern-slice))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase.render|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        (ci.intern-profile-render-value)
-                        compiler-lower-profile-start-intern-render))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  (ci.intern-profile-render-value)
+                  compiler-lower-profile-start-intern-render))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.lower_phase.generated|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        (ci.intern-profile-generated-value)
-                        compiler-lower-profile-start-intern-generated))
-                    "\n"))))))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  (ci.intern-profile-generated-value)
+                  compiler-lower-profile-start-intern-generated))
+              "\n")))))))
 
 (cfg
   compile-profile
@@ -2094,15 +2077,14 @@
         unit
         (if (>= elapsed 1)
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|lower."
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string elapsed)
-                    (string.append "|" (string.append name "\n")))))))
+              phase
+              "|"
+              (string.int->string elapsed)
+              "|"
+              name
+              "\n"))
           unit)))))
 
 (cfg
@@ -2111,13 +2093,12 @@
   ;; extraction preserves them; the counter value lives in the live-delta slot.
   (define (compiler-lower-profile-counter [name : String] [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|lower."
-        (string.append
-          name
-          (string.append
-            "|0|0"
-            (string.append (compiler-lower-profile-field value) "|0\n")))))))
+        name
+        "|0|0"
+        (compiler-lower-profile-field value)
+        "|0\n"))))
 
 (cfg
   compile-profile
@@ -2244,28 +2225,28 @@
     [pools : ast.AstNodePoolContext]) : unit
     (begin
       (compiler-lower-profile-counter
-        (string.append "ast_expr_pool." (string.append point ".len"))
+        (str_cat.str-cat "ast_expr_pool." point ".len")
         (ast.ast-node-pool-context-expr-len pools))
       (compiler-lower-profile-counter
-        (string.append "ast_expr_pool." (string.append point ".capacity"))
+        (str_cat.str-cat "ast_expr_pool." point ".capacity")
         (ast.ast-node-pool-context-expr-capacity pools))
       (compiler-lower-profile-counter
-        (string.append "ast_expr_pool." (string.append point ".segments"))
+        (str_cat.str-cat "ast_expr_pool." point ".segments")
         (ast.ast-node-pool-context-expr-segment-count pools))
       (compiler-lower-profile-counter
-        (string.append "ast_expr_pool." (string.append point ".segment_bytes"))
+        (str_cat.str-cat "ast_expr_pool." point ".segment_bytes")
         (ast.ast-node-pool-context-expr-segment-bytes pools))
       (compiler-lower-profile-counter
-        (string.append "ast_type_pool." (string.append point ".len"))
+        (str_cat.str-cat "ast_type_pool." point ".len")
         (ast.ast-node-pool-context-type-len pools))
       (compiler-lower-profile-counter
-        (string.append "ast_type_pool." (string.append point ".capacity"))
+        (str_cat.str-cat "ast_type_pool." point ".capacity")
         (ast.ast-node-pool-context-type-capacity pools))
       (compiler-lower-profile-counter
-        (string.append "ast_type_pool." (string.append point ".segments"))
+        (str_cat.str-cat "ast_type_pool." point ".segments")
         (ast.ast-node-pool-context-type-segment-count pools))
       (compiler-lower-profile-counter
-        (string.append "ast_type_pool." (string.append point ".segment_bytes"))
+        (str_cat.str-cat "ast_type_pool." point ".segment_bytes")
         (ast.ast-node-pool-context-type-segment-bytes pools)))))
 
 (cfg
@@ -2284,12 +2265,10 @@
           [decls : ast.AstDeclList (box-get decls-box)]
           (begin
             (compiler-lower-profile-counter
-              (string.append "checked_program." (string.append point ".decls"))
+              (str_cat.str-cat "checked_program." point ".decls")
               (compiler-lower-profile-decl-list-count decls))
             (compiler-lower-profile-counter
-              (string.append
-                "checked_program."
-                (string.append point ".functions"))
+              (str_cat.str-cat "checked_program." point ".functions")
               (lower-function-decl-count decls))))])))
 
 (cfg
@@ -2301,20 +2280,20 @@
       [(ir.CompilerIrProgram.Program _ functions _)
         (begin
           (compiler-lower-profile-counter
-            (string.append "ir." (string.append point ".functions"))
+            (str_cat.str-cat "ir." point ".functions")
             (ir.compiler-ir-function-list-count functions))
           (compiler-lower-profile-counter
-            (string.append "ir." (string.append point ".blocks"))
+            (str_cat.str-cat "ir." point ".blocks")
             (ir.compiler-ir-function-list-block-count functions))
           (compiler-lower-profile-counter
-            (string.append "ir." (string.append point ".instructions"))
+            (str_cat.str-cat "ir." point ".instructions")
             (ir.compiler-ir-function-list-instruction-count functions)))])))
 
 (cfg
   compile-profile
   (define (compiler-lower-profile-ir-arena [point : String]) : unit
     (compiler-lower-profile-counter
-      (string.append "ir_arena." (string.append point ".active"))
+      (str_cat.str-cat "ir_arena." point ".active")
       (if (= lower-ir-arena 0)
         0
         1))))
@@ -3570,7 +3549,7 @@
   (match cache
     [(LowerTypeCache.No)
       (tc_core.ResultTcType.Err
-        (string.append "typecheck: unbound name " display-name))]
+        (str_cat.str-cat "typecheck: unbound name " display-name))]
     [(LowerTypeCache.Some ids values _ parent owner-address)
       (let
         [index : i64 (lower_i64_i64_map.get-value-or (& ids) name-id -1)]
@@ -3579,7 +3558,7 @@
           (match parent
             [(LowerTypeParent.None)
               (tc_core.ResultTcType.Err
-                (string.append "typecheck: unbound name " display-name))]
+                (str_cat.str-cat "typecheck: unbound name " display-name))]
             [(LowerTypeParent.Global)
               (lower-type-cache-lookup-id
                 (compiler-lower-state-read
@@ -4932,16 +4911,13 @@
             [(if drive-root
                 (= (string.string-length body) 0)
                 false)
-              (string.append (string.substring path 0 2) "/")]
-            [drive-root
-              (string.append
-                (string.substring path 0 2)
-                (string.append "/" body))]
+              (str_cat.str-cat (string.substring path 0 2) "/")]
+            [drive-root (str_cat.str-cat (string.substring path 0 2) "/" body)]
             [(if rooted
                 (= (string.string-length body) 0)
                 false)
               "/"]
-            [rooted (string.append "/" body)]
+            [rooted (str_cat.str-cat "/" body)]
             [(= (string.string-length body) 0) "."]
             [else body]))))))
 
@@ -4995,8 +4971,9 @@
       (lower-normalize-path lower-state decl-path)
       (lower-normalize-path lower-state entry-path)))
     "main"
-    (string.append
-      (string.append (lower-module-id lower-state entry-path decl-path) "::")
+    (str_cat.str-cat
+      (lower-module-id lower-state entry-path decl-path)
+      "::"
       source-name)))
 
 (define (lower-entry-main-module-active-current
@@ -13349,9 +13326,7 @@
           (LowerLabel.Label
             state
             (ir.compiler-ir-label
-              (string.append
-                (string.append prefix ".")
-                (string.int->string next-label))))))]))
+              (str_cat.str-cat prefix "." (string.int->string next-label))))))]))
 
 (define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
   (match state
@@ -13361,8 +13336,10 @@
         [function-text : String
           (ir.compiler-ir-symbol-text (struct-get (box-get data) function))]
         [lambda-name : String
-          (string.append
-            (string.append (string.append "__tl_lambda_" function-text) "_")
+          (str_cat.str-cat
+            "__tl_lambda_"
+            function-text
+            "_"
             (string.int->string next-lambda))]
         [lambda-id : i64 (ci.intern-generated-name lambda-name)]
         (begin
@@ -13827,9 +13804,7 @@
   [enum-name : String]
   [variant-name : String]) : i64
   (lower-derived-symbol-id
-    (string.append
-      "__enum_obj_"
-      (string.append enum-name (string.append "_" variant-name)))))
+    (str_cat.str-cat "__enum_obj_" enum-name "_" variant-name)))
 
 (define (lower-nullary-variant-globals
   [enum-name-id : i64]
@@ -13928,7 +13903,7 @@
       [(parser.ResultAstDecl.Err message)
         (parser.ResultAstFieldDefList.Err message)])
     (parser.ResultAstFieldDefList.Err
-      (string.append "lower: unknown struct " struct-name))))
+      (str_cat.str-cat "lower: unknown struct " struct-name))))
 
 (define (lower-struct-fields-id
   [ctx : tc_core.TcContext]
@@ -14681,7 +14656,7 @@
                 (ResultLowerExpr.Err
                   (box
                     (lower-diagnostic
-                      (string.append
+                      (str_cat.str-cat
                         "lower: inline struct layout missing field "
                         name-str))))
                 (match (lower-pack-word-field
@@ -15003,7 +14978,7 @@
                 (ResultLowerExpr.Err
                   (box
                     (lower-diagnostic
-                      (string.append
+                      (str_cat.str-cat
                         "lower: inline struct layout missing field "
                         name-str))))
                 (if (= (/ offset 8) word-index)
@@ -17079,7 +17054,7 @@
               (box
                 (lower-diagnostic-at-expr
                   origin
-                  (string.append
+                  (str_cat.str-cat
                     "lower: array-ref borrow requires array place, got "
                     (tc_core.tc-type-render
                       (tc_core.tc-type-strip-region
@@ -17394,7 +17369,7 @@
                 (ResultLowerState.Err
                   (box
                     (lower-diagnostic
-                      (string.append
+                      (str_cat.str-cat
                         "lower: inline struct layout missing field "
                         name-str))))
                 (match (tc_core.tc-inline-aggregate-type-layout ctx resolved)
@@ -17489,7 +17464,7 @@
             (ResultLowerState.Err
               (box
                 (lower-diagnostic
-                  (string.append
+                  (str_cat.str-cat
                     "lower: inline enum layout missing payload for "
                     variant-name))))
             (match (tc_core.tc-inline-aggregate-type-layout ctx resolved)
@@ -18116,7 +18091,7 @@
               (ResultLowerEnv.Err
                 (box
                   (lower-diagnostic
-                    (string.append
+                    (str_cat.str-cat
                       "lower: inline enum layout missing payload for "
                       variant-name))))
               (match pattern
@@ -18439,7 +18414,7 @@
                                 (ResultLowerEnv.Err
                                   (box
                                     (lower-diagnostic
-                                      (string.append
+                                      (str_cat.str-cat
                                         "lower: unknown nested variant "
                                         nested-name-str))))
                                 (match (csym.compiler-registries-variant-fields-indexed
@@ -18648,7 +18623,7 @@
             (ResultLowerEnv.Err
               (box
                 (lower-diagnostic
-                  (string.append
+                  (str_cat.str-cat
                     "lower: inline enum layout missing payload for "
                     variant-name))))
             (match pattern
@@ -18879,7 +18854,7 @@
                           (ResultLowerEnv.Err
                             (box
                               (lower-diagnostic
-                                (string.append
+                                (str_cat.str-cat
                                   "lower: unknown nested variant "
                                   nested-name-str))))
                           (match (csym.compiler-registries-variant-fields-indexed
@@ -19148,7 +19123,7 @@
     (ResultLowerFieldInfo.Err
       (box
         (lower-diagnostic
-          (string.append "lower: unknown struct field " field-name))))
+          (str_cat.str-cat "lower: unknown struct field " field-name))))
     (match (ast.ast-field-def-list-get
       fields
       index
@@ -19179,7 +19154,7 @@
     (ResultLowerFieldInfo.Err
       (box
         (lower-diagnostic
-          (string.append "lower: unknown struct field " field-name))))
+          (str_cat.str-cat "lower: unknown struct field " field-name))))
     (match (tc_core.tc-repr-c-field-layout-list-ref fields index)
       [(tc_core.TcReprCFieldLayout.Field name ty offset)
         (if (string.eq name field-name)
@@ -19243,7 +19218,7 @@
                       (ResultLowerFieldInfo.Err
                         (box
                           (lower-diagnostic
-                            (string.append
+                            (str_cat.str-cat
                               "lower: inline struct layout missing field "
                               field-name))))
                       (ResultLowerFieldInfo.Ok
@@ -20973,8 +20948,9 @@
           "while_header"
           "invalid_loop_label"))]
     (ir.compiler-ir-label
-      (string.append
-        (string.append prefix ".")
+      (str_cat.str-cat
+        prefix
+        "."
         (string.int->string (lower-private-name-value name-id))))))
 
 (define (lower-cleanup-metadata-type
@@ -21434,9 +21410,7 @@
     (box
       (lower-diagnostic-at-expr
         origin
-        (string.append
-          "typecheck: "
-          (string.append form " requires enclosing scalar while"))))))
+        (str_cat.str-cat "typecheck: " form " requires enclosing scalar while")))))
 
 (define (lower-loop-target-malformed [origin : ast.AstExpr]) : ResultLowerLoopTarget
   (ResultLowerLoopTarget.Err
@@ -21784,7 +21758,7 @@
           (ResultLowerState.Err
             (box
               (lower-diagnostic
-                (string.append "lower: unknown variant " err-name))))))]))
+                (str_cat.str-cat "lower: unknown variant " err-name))))))]))
 
 ;; The try tag/payload reads below address the operand as MEMORY. A
 ;; register-resident Result/Option (e.g. 16-byte (Ok i64)/(Err i64)) is carried
@@ -21912,7 +21886,7 @@
             (box
               (lower-diagnostic-at-expr
                 origin
-                (string.append "lower: unknown variant " ok-name))))))]))
+                (str_cat.str-cat "lower: unknown variant " ok-name))))))]))
 
 (define (lower-try
   [ctx : tc_core.TcContext]
@@ -22393,7 +22367,7 @@
       (ResultLowerExpr.Err
         (box
           (lower-diagnostic
-            (string.append
+            (str_cat.str-cat
               "lower: missing generated clone helper for "
               (tc_core.tc-nominal-name-id-display name-id)))))
       (match (lower-call-append-sret-arg
@@ -23052,7 +23026,7 @@
           (ResultLowerExpr.Err
             (box
               (lower-diagnostic
-                (string.append
+                (str_cat.str-cat
                   "lower: clone unsupported type "
                   (tc_core.tc-type-render clone-ty))))))])))
 
@@ -23680,7 +23654,7 @@
           (ResultLowerExpr.Err
             (box
               (lower-diagnostic
-                (string.append
+                (str_cat.str-cat
                   "lower: inline layout for struct is enum "
                   struct-name))))])]
     [(tc_core.ResultTcInlineAggregateLayout.Err message)
@@ -23730,7 +23704,7 @@
           (ResultLowerState.Err
             (box
               (lower-diagnostic
-                (string.append
+                (str_cat.str-cat
                   "lower: inline layout for struct is enum "
                   struct-name))))])]
     [(tc_core.ResultTcInlineAggregateLayout.Err message)
@@ -23815,7 +23789,7 @@
           (ResultLowerExpr.Err
             (box
               (lower-diagnostic
-                (string.append
+                (str_cat.str-cat
                   "lower: inline layout for enum is struct "
                   enum-name))))])]
     [(tc_core.ResultTcInlineAggregateLayout.Err message)
@@ -23865,7 +23839,7 @@
           (ResultLowerState.Err
             (box
               (lower-diagnostic
-                (string.append
+                (str_cat.str-cat
                   "lower: inline layout for enum is struct "
                   enum-name))))])]
     [(tc_core.ResultTcInlineAggregateLayout.Err message)
@@ -24039,7 +24013,7 @@
         (ResultLowerExpr.Err
           (box
             (lower-diagnostic
-              (string.append
+              (str_cat.str-cat
                 "lower: enum constructor result is not enum: "
                 variant-name))))])))
 
@@ -24136,7 +24110,7 @@
         (ResultLowerState.Err
           (box
             (lower-diagnostic
-              (string.append
+              (str_cat.str-cat
                 "lower: enum constructor result is not enum: "
                 variant-name))))])))
 
@@ -24494,7 +24468,7 @@
                         (ResultLowerExpr.Err
                           (box
                             (lower-diagnostic
-                              (string.append
+                              (str_cat.str-cat
                                 "lower: unknown variant "
                                 lookup-name))))))])))])]
       [(tc_core.ResultTcEnumDecl.Err message)
@@ -24614,7 +24588,7 @@
                         (ResultLowerState.Err
                           (box
                             (lower-diagnostic
-                              (string.append
+                              (str_cat.str-cat
                                 "lower: unknown variant "
                                 lookup-name))))))])))])]
       [(tc_core.ResultTcEnumDecl.Err message)
@@ -24673,7 +24647,7 @@
           (box
             (lower-diagnostic-at-expr
               origin
-              (string.append
+              (str_cat.str-cat
                 "lower: init unsupported type "
                 (tc_core.tc-type-render resolved)))))])))
 
@@ -24823,7 +24797,7 @@
             (box
               (lower-diagnostic-at-expr
                 origin
-                (string.append
+                (str_cat.str-cat
                   "lower: init unsupported type "
                   (tc_core.tc-type-render resolved)))))]))))
 
@@ -26783,7 +26757,7 @@
                 (box
                   (lower-diagnostic-at-expr
                     origin
-                    (string.append
+                    (str_cat.str-cat
                       "lower: assignment to unknown local "
                       name-text))))])))]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
@@ -27041,12 +27015,11 @@
                   (box
                     (lower-diagnostic-at-expr
                       origin
-                      (string.append
+                      (str_cat.str-cat
                         "type value "
-                        (string.append
-                          (tc_core.tc-type-render
-                            (tc_core.tc-resolve-type ctx ty))
-                          " is compile-time only")))))]
+                        (tc_core.tc-type-render
+                          (tc_core.tc-resolve-type ctx ty))
+                        " is compile-time only"))))]
               [(ctfe.CompilerCtfeValue.String _ _)
                 (ResultLowerExpr.Err
                   (box
@@ -27218,14 +27191,13 @@
         (box
           (lower-diagnostic-at-expr
             origin
-            (string.append
+            (str_cat.str-cat
               "type value "
-              (string.append
-                (tc_core.tc-type-render
-                  (tc_core.tc-resolve-type
-                    ctx
-                    (tc_core.tc-context-type-get ctx ty-id)))
-                " is compile-time only")))))]
+              (tc_core.tc-type-render
+                (tc_core.tc-resolve-type
+                  ctx
+                  (tc_core.tc-context-type-get ctx ty-id)))
+              " is compile-time only"))))]
     ;; `(ptr-null : T)` is a pointer-sized zero (pointer ABI size is 8);
     ;; `(ptr-null? p)` is `p == 0` producing a `bool`. No new IR/asm needed.
     [(ast.AstExpr.PtrNull _)
@@ -29670,29 +29642,26 @@
 (define (lower-c-abi-unsupported-message
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : String
-  (string.append
-    (string.append "lower: unsupported " (lower-c-abi-target-name mode))
-    (string.append
-      " C aggregate ABI for "
-      (string.append
-        (tc_core.tc-type-render ty)
-        (string.append
-          "; this slice supports "
-          (lower-c-abi-aggregate-size-message mode))))))
+  (str_cat.str-cat
+    "lower: unsupported "
+    (lower-c-abi-target-name mode)
+    " C aggregate ABI for "
+    (tc_core.tc-type-render ty)
+    "; this slice supports "
+    (lower-c-abi-aggregate-size-message mode)))
 
 (define (lower-internal-abi-unsupported-message
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : String
-  (string.append
-    (string.append "lower: unsupported " (lower-c-abi-target-name mode))
-    (string.append
-      " internal aggregate ABI for "
-      (string.append
-        (tc_core.tc-type-render ty)
-        "; tuple/fixed-array parameters and returns require a non-zero finite inline layout"))))
+  (str_cat.str-cat
+    "lower: unsupported "
+    (lower-c-abi-target-name mode)
+    " internal aggregate ABI for "
+    (tc_core.tc-type-render ty)
+    "; tuple/fixed-array parameters and returns require a non-zero finite inline layout"))
 
 (define (lower-c-abi-two-register-return-message [ty : ast.AstType]) : String
-  (string.append
+  (str_cat.str-cat
     "lower: unsupported linux-x86_64 C two-register aggregate return ABI for "
     (tc_core.tc-type-render ty)))
 
@@ -30694,17 +30663,21 @@
           [mask : i64 (lower-internal-group-mask-from-slots slots)]
           [key : String (lower-internal-aggregate-key ctx resolved)]
           [encoded : String
-            (string.append
+            (str_cat.str-cat
               "__tl_internal_abi_group_m"
-              (string.append (string.int->string mask) (string.append "__" key)))]
+              (string.int->string mask)
+              "__"
+              key)]
           (ast.AstType.Struct (lower-derived-symbol-id encoded))))]
     [(LowerCAbiAggregate.Memory size)
       (let
         [key : String (lower-internal-aggregate-key ctx resolved)]
         [encoded : String
-          (string.append
+          (str_cat.str-cat
             "__tl_internal_abi_mem_s"
-            (string.append (string.int->string size) (string.append "__" key)))]
+            (string.int->string size)
+            "__"
+            key)]
         (ast.AstType.Struct (lower-derived-symbol-id encoded)))]
     [(LowerCAbiAggregate.ByRef _) (ast.AstType.U64)]
     [(LowerCAbiAggregate.Sret _) (ast.AstType.U64)]
@@ -34484,11 +34457,10 @@
                             (box
                               (lower-diagnostic-at-expr
                                 origin
-                                (string.append
+                                (str_cat.str-cat
                                   "lower: "
-                                  (string.append
-                                    name
-                                    " is compile-time only; wrap it in (comptime ...)")))))]
+                                  name
+                                  " is compile-time only; wrap it in (comptime ...)"))))]
                         [(not
                             (= slice-call-kind tc_core.TcSliceViewCallKind.None))
                           (lower-slice-view-call
@@ -35606,7 +35578,7 @@
   (tc_core.tc-atomic-pointer-elem ctx name ptr-ty))
 
 (define (lower-atomic-pointer-load-arity-message [name : String]) : String
-  (string.append "lower: " (string.append name " expects exactly one argument")))
+  (str_cat.str-cat "lower: " name " expects exactly one argument"))
 
 (define (lower-atomic-pointer-update-arity-message [name : String]) : String
   (if (lower-atomic-pointer-volatile-name? name)
@@ -51356,7 +51328,7 @@
     (box
       (lower-diagnostic-at-expr
         expr
-        (string.append "lower: SPMD masked if does not support " detail)))))
+        (str_cat.str-cat "lower: SPMD masked if does not support " detail)))))
 
 ;; `No` is the proven all-active state for a full SIMD gang. Keep that proof
 ;; symbolic through masked lowering so parent-only memory operations can use
@@ -54917,7 +54889,7 @@
   [index : i64]) : String
   (if (>= index (ast.ast-spmd-param-class-list-len items))
     ""
-    (string.append
+    (str_cat.str-cat
       (lower-spmd-ast-param-class-code
         (ast.ast-spmd-param-class-list-get
           items
@@ -54988,7 +54960,7 @@
         index-param)]
     [hash : i64 (stdlib.hash.string-key (& identity))]
     [stable-name : String
-      (string.append "__tl_spmd_pkg_" (string.int->string hash))]
+      (str_cat.str-cat "__tl_spmd_pkg_" (string.int->string hash))]
     ;; The private AVX-512 ABI is selected by the function-name prefix in the
     ;; backend.  Keep the stable package hash intact after that prefix so the
     ;; archive and TLCI still share one deterministic logical identity.
@@ -54996,9 +54968,9 @@
       [(ir.CompilerIrSpmdBackend.Avx512)
         (if (string.eq result "v")
           (if (lower-type-bool? result-ty)
-            (string.append "__tl_spmd_ret_mask_" stable-name)
-            (string.append "__tl_spmd_ret_varying_" stable-name))
-          (string.append "__tl_spmd_ret_uniform_" stable-name))]
+            (str_cat.str-cat "__tl_spmd_ret_mask_" stable-name)
+            (str_cat.str-cat "__tl_spmd_ret_varying_" stable-name))
+          (str_cat.str-cat "__tl_spmd_ret_uniform_" stable-name))]
       [_ stable-name])))
 
 (define (lower-spmd-package-symbol-register [symbol : i64] [identity : String]) : LowerSpmdPackageSymbolRegistration
@@ -55011,7 +54983,7 @@
         (if (= previous identity-id)
           LowerSpmdPackageSymbolRegistration.Existing
           (LowerSpmdPackageSymbolRegistration.Collision
-            (string.append
+            (str_cat.str-cat
               "lower: :spmd-callable stable symbol collision for "
               (ir.compiler-ir-symbol-text symbol))))]
       [(lower_i64_i64_map.LookupMissing)
@@ -55242,18 +55214,18 @@
     [(ir.CompilerIrSpmdValueClass.Uniform) (tc_core.tc-env-key-name-text name)]
     [(ir.CompilerIrSpmdValueClass.Varying)
       (if (lower-mode-avx2? mode)
-        (string.append
+        (str_cat.str-cat
           "__tl_spmd_varying_arg_avx2_"
           (tc_core.tc-env-key-name-text name))
-        (string.append
+        (str_cat.str-cat
           "__tl_spmd_varying_arg_"
           (tc_core.tc-env-key-name-text name)))]
     [(ir.CompilerIrSpmdValueClass.Mask)
       (if (lower-mode-avx2? mode)
-        (string.append
+        (str_cat.str-cat
           "__tl_spmd_mask_arg_avx2_"
           (tc_core.tc-env-key-name-text name))
-        (string.append
+        (str_cat.str-cat
           "__tl_spmd_mask_arg_"
           (tc_core.tc-env-key-name-text name)))]))
 
@@ -55324,9 +55296,9 @@
     [private-name : String
       (if result-varying
         (if (lower-type-bool? result-ty)
-          (string.append "__tl_spmd_ret_mask_" hidden-text)
-          (string.append "__tl_spmd_ret_varying_" hidden-text))
-        (string.append "__tl_spmd_ret_uniform_" hidden-text))]
+          (str_cat.str-cat "__tl_spmd_ret_mask_" hidden-text)
+          (str_cat.str-cat "__tl_spmd_ret_varying_" hidden-text))
+        (str_cat.str-cat "__tl_spmd_ret_uniform_" hidden-text))]
     (ci.intern-generated-canonical-name private-name)))
 
 (define (lower-spmd-helper-index-param-at
@@ -59702,7 +59674,7 @@
           (ResultLowerExpr.Err
             (box
               (lower-diagnostic
-                (string.append "lower: unknown variant " variant-name))))))]))
+                (str_cat.str-cat "lower: unknown variant " variant-name))))))]))
 
 (define (lower-match-variant-body
   [ctx : tc_core.TcContext]
@@ -59942,7 +59914,7 @@
           (ResultLowerExpr.Err
             (box
               (lower-diagnostic
-                (string.append "lower: unknown variant " variant-name))))))]))
+                (str_cat.str-cat "lower: unknown variant " variant-name))))))]))
 
 (define (lower-match-literal-arm
   [ctx : tc_core.TcContext]
@@ -62069,7 +62041,7 @@
           (ResultLowerState.Err
             (box
               (lower-diagnostic
-                (string.append "lower: unknown variant " variant-name))))]
+                (str_cat.str-cat "lower: unknown variant " variant-name))))]
         [(LowerVariantArmResolution.FieldsErr message)
           (ResultLowerState.Err (box (lower-diagnostic message)))]
         [(LowerVariantArmResolution.Some
@@ -62201,7 +62173,7 @@
           (ResultLowerState.Err
             (box
               (lower-diagnostic
-                (string.append "lower: unknown variant " variant-name))))]
+                (str_cat.str-cat "lower: unknown variant " variant-name))))]
         [(LowerVariantArmResolution.FieldsErr message)
           (ResultLowerState.Err (box (lower-diagnostic message)))]
         [(LowerVariantArmResolution.Some
@@ -63131,7 +63103,7 @@
 
 (define (lower-global-init-function-name [global : i64]) : i64
   (ci.intern-generated-name
-    (string.append "__global_init_" (ir.compiler-ir-symbol-text global))))
+    (str_cat.str-cat "__global_init_" (ir.compiler-ir-symbol-text global))))
 
 (define (lower-top-decl-type-or-check
   [ctx : tc_core.TcContext]
@@ -63512,7 +63484,7 @@
                 (lower-struct-cleanup-qualified-id ctx struct-id cleanup-name))]
             [(ast.AstStructCleanup.No)
               (tc_core.ResultTcNameId.Err
-                (string.append
+                (str_cat.str-cat
                   "lower: owned cleanup field type has no cleanup function "
                   (tc_core.tc-nominal-name-id-display struct-id)))])])]
     [(tc_core.ResultTcStructDecl.Err message)
@@ -63531,7 +63503,7 @@
                 (lower-struct-cleanup-qualified-id ctx enum-id cleanup-name))]
             [(ast.AstEnumCleanup.No)
               (tc_core.ResultTcNameId.Err
-                (string.append
+                (str_cat.str-cat
                   "lower: owned cleanup payload type has no cleanup function "
                   (tc_core.tc-nominal-name-id-display enum-id)))])])]
     [(tc_core.ResultTcEnumDecl.Err message)
@@ -63551,7 +63523,7 @@
       [(ast.AstType.EnumArgs name _) (lower-enum-cleanup-id-for-enum ctx name)]
       [_
         (tc_core.ResultTcNameId.Err
-          (string.append
+          (str_cat.str-cat
             "lower: owned cleanup field type is not a cleanup-owning aggregate "
             (tc_core.tc-type-render resolved)))])))
 
@@ -63696,7 +63668,7 @@
 
 (define (lower-enum-cleanup-payload-id [index : i64]) : i64
   (ci.intern-generated-canonical-name
-    (string.append "__tl_cleanup_payload_" (string.int->string index))))
+    (str_cat.str-cat "__tl_cleanup_payload_" (string.int->string index))))
 
 (define (lower-enum-cleanup-call-expr
   [cleanup-name-id : i64]
@@ -63900,7 +63872,7 @@
         mode)]))
 
 (define (lower-dispatch-cache-name [logical-name : String]) : String
-  (string.append "__tl_dispatch_cache_" logical-name))
+  (str_cat.str-cat "__tl_dispatch_cache_" logical-name))
 
 (define (lower-dispatch-variant-prefix [isa : ast.AstDispatchIsa]) : String
   (match isa
@@ -63912,9 +63884,11 @@
   [dispatch-name : String]
   [isa : ast.AstDispatchIsa]
   [variant-name : String]) : String
-  (string.append
+  (str_cat.str-cat
     (lower-dispatch-variant-prefix isa)
-    (string.append dispatch-name (string.append "__" variant-name))))
+    dispatch-name
+    "__"
+    variant-name))
 
 (define (lower-dispatch-lower-mode
   [isa : ast.AstDispatchIsa]
@@ -63976,7 +63950,7 @@
     ir.CompilerIrParamList.Nil
     (ir.compiler-ir-param-cons
       (ir.CompilerIrParam.Param
-        (string.append "arg" (string.int->string idx))
+        (str_cat.str-cat "arg" (string.int->string idx))
         (tc_core.tc-type-without-regions
           (tc_core.tc-context-type-get
             ctx
@@ -64018,7 +63992,7 @@
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
       (ir.compiler-ir-param-cons
         (ir.CompilerIrParam.Param
-          (string.append "arg" (string.int->string index))
+          (str_cat.str-cat "arg" (string.int->string index))
           (lower-internal-param-physical-type ctx mode source-ty)
           idx)
         (lower-dispatch-physical-param-list-at
@@ -64158,10 +64132,10 @@
   (let
     [check-label : i64 (ir.compiler-ir-label (clone prefix))]
     [osxsave-label : i64
-      (ir.compiler-ir-label (string.append (clone prefix) "_osxsave"))]
+      (ir.compiler-ir-label (str_cat.str-cat (clone prefix) "_osxsave"))]
     [xcr0-label : i64
-      (ir.compiler-ir-label (string.append (clone prefix) "_xcr0"))]
-    [leaf7-label : i64 (ir.compiler-ir-label (string.append prefix "_leaf7"))]
+      (ir.compiler-ir-label (str_cat.str-cat (clone prefix) "_xcr0"))]
+    [leaf7-label : i64 (ir.compiler-ir-label (str_cat.str-cat prefix "_leaf7"))]
     [max-leaf-var : i64 base]
     [max-ok-var : i64 (+ base 1)]
     [leaf1-ecx-var : i64 (+ base 2)]
@@ -64581,7 +64555,7 @@
           (ResultLowerFunction.Err
             (box
               (lower-diagnostic
-                (string.append
+                (str_cat.str-cat
                   "lower: unknown defdispatch variant "
                   (tc_core.tc-env-key-name-text variant-name)))))))]))
 

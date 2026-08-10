@@ -2,6 +2,7 @@
 ;;
 ;; Keep target predicate aliases in one place so compiler emission and
 ;; non-emitting tooling parse exactly the same source configuration.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as target_cfg_svec)
@@ -32,9 +33,10 @@
       (ResultCompilerTargetCfg.Ok CompilerTargetCfg.Windows)]
     [else
       (ResultCompilerTargetCfg.Err
-        (string.append
+        (str_cat.str-cat
           "unknown target "
-          (string.append value "; expected linux-x86_64 or windows-x86_64")))]))
+          value
+          "; expected linux-x86_64 or windows-x86_64"))]))
 
 (define (compiler-target-enable-linux-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-enable

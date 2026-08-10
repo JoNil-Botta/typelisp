@@ -1,4 +1,5 @@
 ;; compiler_ast_types_smoke.tl - Runnable AST data-shape smoke.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
@@ -1036,9 +1037,9 @@
       (while (>= i 0)
         (let
           [suffix : String (string.int->string i)]
-          [module : String (string.append "m" suffix)]
+          [module : String (str_cat.str-cat "m" suffix)]
           [module-id : i64 (ci.intern-generated-name module)]
-          [path : String (string.append "p" suffix)]
+          [path : String (str_cat.str-cat "p" suffix)]
           (begin
             (set!
               decls

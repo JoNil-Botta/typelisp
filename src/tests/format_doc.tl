@@ -3,6 +3,7 @@
 ;; The formatter front end and rule traversal are separate issues. This module
 ;; owns the reusable layout engine: callers build `Doc` values, then render them
 ;; with deterministic width-aware grouping and indentation.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import format_render_buf as fmt_buf)
 
@@ -13,7 +14,7 @@
   (string.eq left right))
 
 (define (fmt-cat3 [left : String] [middle : String] [right : String]) : String
-  (string.concat3 left middle right))
+  (str_cat.str-cat left middle right))
 
 (defenum Doc
   (Empty)

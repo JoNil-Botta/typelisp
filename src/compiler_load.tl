@@ -1395,7 +1395,7 @@
           (if (= outcome 1)
             (begin
               (compiler-load-note-embedded-module!
-                (string.append "stdlib/" suffix))
+                (str_cat.str-cat "stdlib/" suffix))
               (set! compiler-load-embedded-provenance-noted true))
             unit))))))
 
@@ -1802,7 +1802,7 @@
   [import-path : String]) : String
   (if (compiler-load-absolute-path? import-path)
     import-path
-    (string.append (compiler-load-dirname importer-path) import-path)))
+    (str_cat.str-cat (compiler-load-dirname importer-path) import-path)))
 
 (define (compiler-load-normalize-path [path : String]) : String
   (fs.path-normalize (& path)))
@@ -1926,8 +1926,8 @@
       (let
         [last : char (string.string-ref root (- n 1))]
         (if (compiler-load-path-separator? last)
-          (string.append root suffix)
-          (string.append root (string.append "/" suffix)))))))
+          (str_cat.str-cat root suffix)
+          (str_cat.str-cat root "/" suffix))))))
 
 (define (compiler-load-string-vec-push-copy
   [roots : svec.Vec (:consume)]
@@ -2048,7 +2048,7 @@
 (define (compiler-load-embedded-stdlib-path [suffix : String]) : CompilerLoadMaybePath
   (match (compiler-load-embedded-stdlib-source suffix)
     [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource _)
-      (CompilerLoadSomePath (string.append "stdlib/" suffix))]
+      (CompilerLoadSomePath (str_cat.str-cat "stdlib/" suffix))]
     [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
       (CompilerLoadNoPath)]))
 
@@ -2166,12 +2166,12 @@
       (while (< i n)
         (begin
           (if (string.char-eq (string.string-ref module-name i) '.')
-            (set! out (string.concat3 out "/" ""))
+            (set! out (str_cat.str-cat out "/" ""))
             (set!
               out
-              (string.concat3 out (string.substring module-name i 1) "")))
+              (str_cat.str-cat out (string.substring module-name i 1) "")))
           (set! i (+ i 1))))
-      (string.concat3 out ".tl" ""))))
+      (str_cat.str-cat out ".tl" ""))))
 
 (define (compiler-load-session-state-dotted-module-path-id
   [state : CompilerLoadSessionState]
@@ -2379,13 +2379,11 @@
                 [(CompilerLoadSomePath dep-path)
                   (if (compiler-load-github-dependency-path? dep-path)
                     (ResultPkgResolve.Err
-                      (string.append
+                      (str_cat.str-cat
                         "compiler-load: GitHub dependency '"
-                        (string.append
-                          first
-                          (string.append
-                            "' requires fetch support: "
-                            import-path))))
+                        first
+                        "' requires fetch support: "
+                        import-path))
                     (ResultPkgResolve.Ok
                       (compiler-load-normalize-path
                         (compiler-load-join-root-path
@@ -2456,7 +2454,7 @@
                   (ResultPkgResolve.Ok root-path)]
                 [(CompilerLoadNoPath)
                   (ResultPkgResolve.Err
-                    (string.append
+                    (str_cat.str-cat
                       "compiler-load: dotted import missing module segment after package alias: "
                       module-name))])))
           (match (compiler-load-pkg-dep-lookup deps first)
@@ -2483,20 +2481,20 @@
                         ;; with a deps graph the name may be a vendored local
                         ;; source module.
                         (ResultPkgResolve.Err
-                          (string.append
+                          (str_cat.str-cat
                             "compiler-load: unknown package alias '"
-                            (string.append
-                              first
-                              (string.append "': pkg:" module-path))))
+                            first
+                            "': pkg:"
+                            module-path))
                         (ResultPkgResolve.Ok fallback))])])]
             [(CompilerLoadSomePath dep-path)
               (if (compiler-load-github-dependency-path? dep-path)
                 (ResultPkgResolve.Err
-                  (string.append
+                  (str_cat.str-cat
                     "compiler-load: GitHub dependency '"
-                    (string.append
-                      first
-                      (string.append "' requires fetch support: " module-name))))
+                    first
+                    "' requires fetch support: "
+                    module-name))
                 (ResultPkgResolve.Ok
                   (compiler-load-normalize-path
                     (compiler-load-join-root-path
@@ -2663,15 +2661,14 @@
   [resolved : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-at-start
     importer-path
-    (string.append
+    (str_cat.str-cat
       "compiler-load: cannot read include-str "
-      (string.append
-        include-path
-        (string.append
-          " from "
-          (string.append
-            importer-path
-            (string.append " (resolved " (string.append resolved ")"))))))))
+      include-path
+      " from "
+      importer-path
+      " (resolved "
+      resolved
+      ")")))
 
 (define (compiler-load-include-str-from-resolved
   [importer-path : String]
@@ -3472,11 +3469,11 @@
           (box
             (cdiag.compiler-diagnostic-at-start
               path
-              (string.append
+              (str_cat.str-cat
                 "compiler-load: import expected module "
-                (string.append
-                  (ci.intern-str want)
-                  (string.append " but loaded " actual)))))))]))
+                (ci.intern-str want)
+                " but loaded "
+                actual)))))]))
 
 (define (compiler-load-no-expected-module? [expected : ast.AstMaybeModuleName]) : bool
   (match expected
@@ -3527,10 +3524,10 @@
           [c : char (string.string-ref normalized i)]
           (begin
             (if (compiler-load-path-separator? c)
-              (set! out (string.concat3 out "." ""))
+              (set! out (str_cat.str-cat out "." ""))
               (set!
                 out
-                (string.concat3 out (string.substring normalized i 1) "")))
+                (str_cat.str-cat out (string.substring normalized i 1) "")))
             (set! i (+ i 1)))))
       out)))
 
@@ -3820,7 +3817,7 @@
         (box
           (cdiag.compiler-diagnostic-at-start
             path
-            (string.append
+            (str_cat.str-cat
               "compiler-load: duplicate module import alias "
               alias))))]))
 
@@ -4064,13 +4061,11 @@
                   (box
                     (cdiag.compiler-diagnostic-at-start
                       path
-                      (string.append
+                      (str_cat.str-cat
                         "compiler-load: import expected module "
-                        (string.append
-                          (ci.intern-str expected-id)
-                          (string.append
-                            " but loaded "
-                            (ci.intern-str module-id)))))))))]
+                        (ci.intern-str expected-id)
+                        " but loaded "
+                        (ci.intern-str module-id)))))))]
           [(ast.AstMaybeModuleName.No) unit])
         (if (match expected-module
           [(ast.AstMaybeModuleName.Some expected-id) (= module-id expected-id)]
@@ -4205,7 +4200,7 @@
             (box
               (cdiag.compiler-diagnostic-at-start
                 path
-                (string.append "compiler-load: cannot read import " path))))]))
+                (str_cat.str-cat "compiler-load: cannot read import " path))))]))
       [(parser.ResultAstProgramDiagnostic.Ok program)
         (match (compiler-load-surface-summary-build
           path
@@ -9460,7 +9455,9 @@
                   (box
                     (cdiag.compiler-diagnostic-at-start
                       path
-                      (string.append "compiler-load: cannot read import " path))))])))))))
+                      (str_cat.str-cat
+                        "compiler-load: cannot read import "
+                        path))))])))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
   [load-state : CompilerLoadSessionState]
@@ -9625,7 +9622,9 @@
                   (box
                     (cdiag.compiler-diagnostic-at-start
                       path
-                      (string.append "compiler-load: cannot read import " path))))])))))))
+                      (str_cat.str-cat
+                        "compiler-load: cannot read import "
+                        path))))])))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
   [path : String]
@@ -9712,7 +9711,7 @@
     [else "f"]))
 
 (define (compiler-load-package-hex-byte [n : i64]) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-load-package-hex-digit (/ n 16))
     (compiler-load-package-hex-digit (% n 16))))
 
@@ -9738,7 +9737,7 @@
     [(= c '>') "_gt"]
     [(= c ':') "_colon"]
     [else
-      (string.append
+      (str_cat.str-cat
         "_u"
         (compiler-load-package-hex-byte (compiler-load-char-code-at text idx)))]))
 
@@ -9764,12 +9763,12 @@
               (begin
                 (if pending-separator
                   (begin
-                    (set! out (string.concat3 out "_" ""))
+                    (set! out (str_cat.str-cat out "_" ""))
                     (set! pending-separator false))
                   unit)
                 (set!
                   out
-                  (string.concat3
+                  (str_cat.str-cat
                     out
                     (compiler-load-package-symbol-char name i c)
                     ""))
@@ -9796,12 +9795,12 @@
 (define (compiler-load-package-user-symbol [name : String]) : String
   (if (string.eq name "main")
     "main"
-    (string.append "_tl_" (compiler-load-package-asm-safe-symbol name))))
+    (str_cat.str-cat "_tl_" (compiler-load-package-asm-safe-symbol name))))
 
 (define (compiler-load-package-module-key [module : String] [name : String]) : String
   (if (= (string.string-length module) 0)
     name
-    (string.append module (string.append "/" name))))
+    (str_cat.str-cat module "/" name)))
 
 (define (compiler-load-package-module-id
   [entry-path : String]
@@ -9826,10 +9825,9 @@
       (compiler-load-normalize-path entry-path))
     (string.eq source-name "main"))
     "main"
-    (string.append
-      (string.append
-        (compiler-load-package-module-id entry-path decl-path)
-        "::")
+    (str_cat.str-cat
+      (compiler-load-package-module-id entry-path decl-path)
+      "::"
       source-name)))
 
 (define (compiler-load-package-entry-main?
@@ -9863,15 +9861,12 @@
     (if (= prefix-len 0)
       (if (compiler-load-absolute-path? path)
         path
-        (string.append
-          owner
-          (string.append "/" (compiler-load-normalize-path path))))
+        (str_cat.str-cat owner "/" (compiler-load-normalize-path path)))
       (if (compiler-load-path-under-root? path root)
-        (string.append
+        (str_cat.str-cat
           owner
-          (string.append
-            "/"
-            (string.substring path prefix-len (- path-len prefix-len))))
+          "/"
+          (string.substring path prefix-len (- path-len prefix-len)))
         path))))
 
 (define (compiler-load-stdlib-owner-root? [root : String]) : bool
@@ -9904,7 +9899,7 @@
               (set! found true)
               (set!
                 out
-                (string.append
+                (str_cat.str-cat
                   "stdlib/"
                   (string.substring path prefix-len (- path-len prefix-len)))))
             (set! i (+ i 1)))))
@@ -10406,7 +10401,7 @@
   (match (compiler-load-discover-manifest source-path)
     [(CompilerLoadNoPath)
       (ResultCompilerLoadPackageEntry.Err
-        (string.append
+        (str_cat.str-cat
           "compiler-load: dependency package manifest not found for "
           source-path))]
     [(CompilerLoadSomePath manifest-path)
@@ -10415,13 +10410,11 @@
         (compiler-load-read-file-text manifest-path))
         [(ResultCompilerPkgManifestDiagnostic.Err diag)
           (ResultCompilerLoadPackageEntry.Err
-            (string.append
+            (str_cat.str-cat
               "compiler-load: invalid dependency package manifest '"
-              (string.append
-                manifest-path
-                (string.append
-                  "': "
-                  (cdiag.compiler-diagnostic-message (box-get diag))))))]
+              manifest-path
+              "': "
+              (cdiag.compiler-diagnostic-message (box-get diag))))]
         [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
           (let
             [manifest-dir : String (compiler-load-dirname manifest-path)]
@@ -11300,7 +11293,7 @@
             (box
               (cdiag.compiler-diagnostic-at-start
                 path
-                (string.append "compiler-load: cannot read import " path))))]))))
+                (str_cat.str-cat "compiler-load: cannot read import " path))))]))))
 
 (define (compiler-load-package-file-with-paths-and-roots-expect-cache-current
   [path : String]
@@ -12697,7 +12690,7 @@
       [id : i64
         (with-scratch
           (let
-            [name : String (string.append "cache.floor." "transient")]
+            [name : String (str_cat.str-cat "cache.floor." "transient")]
             [interned : i64 (ci.intern name)]
             (begin
               (compiler-load-session-note-persistent!)
@@ -13928,11 +13921,10 @@
 
 (define (compiler-load-github-address-error [alias : String]) : ResultPkgString
   (ResultPkgString.Err
-    (string.append
+    (str_cat.str-cat
       "manifest dependency `"
-      (string.append
-        alias
-        "` github address must be `owner/repo` or `github.com/owner/repo`"))))
+      alias
+      "` github address must be `owner/repo` or `github.com/owner/repo`")))
 
 (define (compiler-load-normalize-github-address
   [alias : String]
@@ -13963,17 +13955,15 @@
             (compiler-load-github-address-error alias)]
           [else
             (ResultPkgString.Ok
-              (string.append
+              (str_cat.str-cat
                 "https://github.com/"
-                (string.append
-                  owner
-                  (string.append
-                    "/"
-                    (string.append
-                      repo
-                      (string.append
-                        ".git#"
-                        (string.append pin-kind (string.append "=" pin-value))))))))])))))
+                owner
+                "/"
+                repo
+                ".git#"
+                pin-kind
+                "="
+                pin-value))])))))
 
 (define (compiler-load-normal-relative-entry? [path : String]) : bool
   (compiler-load-safe-relative? path))
@@ -14003,19 +13993,19 @@
                 (compiler-load-manifest-owned-intern-text val-id))]
             [_
               (ResultPkgString.Err
-                (string.append
+                (str_cat.str-cat
                   "manifest field `"
-                  (string.append fname "` takes a single string value")))])]
+                  fname
+                  "` takes a single string value"))])]
         [_
           (ResultPkgString.Err
-            (string.append
+            (str_cat.str-cat
               "manifest field `"
-              (string.append fname "` must have a string value")))])]
+              fname
+              "` must have a string value"))])]
     [_
       (ResultPkgString.Err
-        (string.append
-          "manifest field `"
-          (string.append fname "` must have a string value")))]))
+        (str_cat.str-cat "manifest field `" fname "` must have a string value"))]))
 
 (define (compiler-load-manifest-github-pin
   [alias : String]
@@ -14037,11 +14027,10 @@
                           [pin-value : String (ci.intern-str pin-value-id)]
                           (if (string.eq pin-value "")
                             (ResultPkgString.Err
-                              (string.append
+                              (str_cat.str-cat
                                 "manifest dependency `"
-                                (string.append
-                                  alias
-                                  "` github pin must not be empty")))
+                                alias
+                                "` github pin must not be empty"))
                             (compiler-load-normalize-github-address
                               alias
                               address
@@ -14049,43 +14038,39 @@
                               pin-value)))]
                       [_
                         (ResultPkgString.Err
-                          (string.append
+                          (str_cat.str-cat
                             "manifest dependency `"
-                            (string.append
-                              alias
-                              "` github pin must be a single string value")))])]
+                            alias
+                            "` github pin must be a single string value"))])]
                   [_
                     (ResultPkgString.Err
-                      (string.append
+                      (str_cat.str-cat
                         "manifest dependency `"
-                        (string.append
-                          alias
-                          "` github pin must be a single string value")))])]
+                        alias
+                        "` github pin must be a single string value"))])]
               [_
                 (ResultPkgString.Err
-                  (string.append
+                  (str_cat.str-cat
                     "manifest dependency `"
-                    (string.append
-                      alias
-                      "` github pin must be a single string value")))])
+                    alias
+                    "` github pin must be a single string value"))])
             (ResultPkgString.Err
-              (string.append
+              (str_cat.str-cat
                 "manifest dependency `"
-                (string.append alias "` github pin must be rev, tag, or branch"))))]
+                alias
+                "` github pin must be rev, tag, or branch")))]
         [_
           (ResultPkgString.Err
-            (string.append
+            (str_cat.str-cat
               "manifest dependency `"
-              (string.append
-                alias
-                "` github source requires exactly one rev, tag, or branch pin")))])]
+              alias
+              "` github source requires exactly one rev, tag, or branch pin"))])]
     [_
       (ResultPkgString.Err
-        (string.append
+        (str_cat.str-cat
           "manifest dependency `"
-          (string.append
-            alias
-            "` github source requires exactly one rev, tag, or branch pin")))]))
+          alias
+          "` github source requires exactly one rev, tag, or branch pin"))]))
 
 (define (compiler-load-manifest-github-value
   [alias : String]
@@ -14103,32 +14088,28 @@
                     (compiler-load-manifest-github-pin alias address pin-form)]
                   [_
                     (ResultPkgString.Err
-                      (string.append
+                      (str_cat.str-cat
                         "manifest dependency `"
-                        (string.append
-                          alias
-                          "` github source requires exactly one rev, tag, or branch pin")))])]
+                        alias
+                        "` github source requires exactly one rev, tag, or branch pin"))])]
               [_
                 (ResultPkgString.Err
-                  (string.append
+                  (str_cat.str-cat
                     "manifest dependency `"
-                    (string.append
-                      alias
-                      "` github source requires exactly one rev, tag, or branch pin")))]))]
+                    alias
+                    "` github source requires exactly one rev, tag, or branch pin"))]))]
         [_
           (ResultPkgString.Err
-            (string.append
+            (str_cat.str-cat
               "manifest dependency `"
-              (string.append
-                alias
-                "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`")))])]
+              alias
+              "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`"))])]
     [_
       (ResultPkgString.Err
-        (string.append
+        (str_cat.str-cat
           "manifest dependency `"
-          (string.append
-            alias
-            "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`")))]))
+          alias
+          "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`"))]))
 
 (define (compiler-load-manifest-dependency-value
   [etail : reader.Sexpr]
@@ -14149,37 +14130,34 @@
                     "github")
                     (compiler-load-manifest-github-value alias source-tail)
                     (ResultPkgString.Err
-                      (string.append
+                      (str_cat.str-cat
                         "manifest dependency `"
-                        (string.append
-                          alias
-                          "` must be a path string or github source"))))]
+                        alias
+                        "` must be a path string or github source")))]
                 [_
                   (ResultPkgString.Err
-                    (string.append
+                    (str_cat.str-cat
                       "manifest dependency `"
-                      (string.append
-                        alias
-                        "` must be a path string or github source")))])]
+                      alias
+                      "` must be a path string or github source"))])]
             [_
               (ResultPkgString.Err
-                (string.append
+                (str_cat.str-cat
                   "manifest dependency `"
-                  (string.append
-                    alias
-                    "` must be a path string or github source")))])]
+                  alias
+                  "` must be a path string or github source"))])]
         [_
           (ResultPkgString.Err
-            (string.append
+            (str_cat.str-cat
               "manifest dependency `"
-              (string.append
-                alias
-                "` takes a single path string or github source")))])]
+              alias
+              "` takes a single path string or github source"))])]
     [_
       (ResultPkgString.Err
-        (string.append
+        (str_cat.str-cat
           "manifest dependency `"
-          (string.append alias "` must be a path string or github source")))]))
+          alias
+          "` must be a path string or github source"))]))
 
 (define (compiler-load-manifest-kind-token [val : String]) : ResultCompilerPkgKind
   (if (string.eq val "bin")
@@ -14222,18 +14200,17 @@
         "dependency alias may only contain ASCII letters, digits, '-' and '_'")]
     [(string.eq path "")
       (ResultCompilerPkgDeps.Err
-        (string.append
+        (str_cat.str-cat
           "manifest dependency `"
-          (string.append alias "` path must not be empty")))]
+          alias
+          "` path must not be empty"))]
     [else
       (match (compiler-load-manifest-parse-deps rest)
         [(ResultCompilerPkgDeps.Err m) (ResultCompilerPkgDeps.Err m)]
         [(ResultCompilerPkgDeps.Ok tail-deps)
           (if (compiler-pkg-deps-alias-seen? tail-deps alias)
             (ResultCompilerPkgDeps.Err
-              (string.append
-                "duplicate dependency alias `"
-                (string.append alias "`")))
+              (str_cat.str-cat "duplicate dependency alias `" alias "`"))
             (ResultCompilerPkgDeps.Ok
               (compiler-pkg-deps-cons alias path tail-deps)))])]))
 
@@ -14381,9 +14358,10 @@
     [(reader.SexprView.Nil)
       (if (= (fs.string-vector-len (& acc)) 0)
         (ResultPkgStrVec.Err
-          (string.append
+          (str_cat.str-cat
             "`link` field `"
-            (string.append fname "` requires at least one value")))
+            fname
+            "` requires at least one value"))
         (ResultPkgStrVec.Ok acc))]
     [(reader.SexprView.Cons vhead vrest)
       (match (reader.sexpr-view vhead)
@@ -14392,9 +14370,10 @@
             [val : String (ci.intern-str val-id)]
             (if (string.eq val "")
               (ResultPkgStrVec.Err
-                (string.append
+                (str_cat.str-cat
                   "`link` field `"
-                  (string.append fname "` values must not be empty")))
+                  fname
+                  "` values must not be empty"))
               (let
                 [out : fs.FsStringVector acc]
                 (begin
@@ -14404,14 +14383,13 @@
                   (compiler-load-manifest-link-values vrest fname out)))))]
         [_
           (ResultPkgStrVec.Err
-            (string.append
-              "`link` field `"
-              (string.append fname "` values must be strings")))])]
+            (str_cat.str-cat "`link` field `" fname "` values must be strings"))])]
     [_
       (ResultPkgStrVec.Err
-        (string.append
+        (str_cat.str-cat
           "`link` field `"
-          (string.append fname "` must be a list of string values")))]))
+          fname
+          "` must be a list of string values"))]))
 
 ;: Store one parsed sub-field into the accumulating link section, rejecting
 ;: unknown field names and a field that was already provided.
@@ -14424,12 +14402,12 @@
     [cat : i64 (compiler-load-link-field-category fname)]
     (if (or (< scope 0) (< cat 0))
       (ResultCompilerPkgLink.Err
-        (string.append "unknown `link` field `" (string.append fname "`")))
+        (str_cat.str-cat "unknown `link` field `" fname "`"))
       (let
         [existing : fs.FsStringVector (compiler-pkg-link-get-vec acc scope cat)]
         (if (> (fs.string-vector-len (& existing)) 0)
           (ResultCompilerPkgLink.Err
-            (string.append "duplicate `link` field `" (string.append fname "`")))
+            (str_cat.str-cat "duplicate `link` field `" fname "`"))
           (ResultCompilerPkgLink.Ok
             (compiler-pkg-link-set-vec acc scope cat values)))))))
 
@@ -14683,9 +14661,10 @@
                           link)]))]
                 [else
                   (ResultCompilerPkgManifest.Err
-                    (string.append
+                    (str_cat.str-cat
                       "unknown manifest field `"
-                      (string.append (compiler-load-symbol-text fname) "`")))])]
+                      (compiler-load-symbol-text fname)
+                      "`"))])]
             [_
               (ResultCompilerPkgManifest.Err
                 "package fields must start with a field name")])]
@@ -14718,9 +14697,10 @@
               false
               (compiler-pkg-link-empty))
             (ResultCompilerPkgManifest.Err
-              (string.append
+              (str_cat.str-cat
                 "expected `package` form, got `"
-                (string.append (compiler-load-symbol-text s) "`"))))]
+                (compiler-load-symbol-text s)
+                "`")))]
         [_ (ResultCompilerPkgManifest.Err "manifest must start with `package`")])]
     [_
       (ResultCompilerPkgManifest.Err "manifest must be a `(package ...)` form")]))
@@ -14795,7 +14775,7 @@
   (cdiag.compiler-diagnostic-from-span
     path
     (token.source-error-span err)
-    (string.append "manifest: " (token.source-error-message err))))
+    (str_cat.str-cat "manifest: " (token.source-error-message err))))
 
 (define (compiler-load-manifest-validation-diagnostic
   [path : String]
@@ -15472,7 +15452,7 @@
       (compiler-load-slash-index-from body 0 (string.string-length body))]
     (if (< slash 0)
       (ResultPkgResolve.Err
-        (string.append
+        (str_cat.str-cat
           "compiler-load: pkg import missing '/' after alias: "
           import-path))
       (let
@@ -15484,28 +15464,30 @@
             (- (string.string-length body) (+ slash 1)))]
         (if (= (string.string-length alias) 0)
           (ResultPkgResolve.Err
-            (string.append
+            (str_cat.str-cat
               "compiler-load: pkg import has empty alias: "
               import-path))
           (match (compiler-load-pkg-dep-lookup deps alias)
             [(CompilerLoadNoPath)
               (ResultPkgResolve.Err
-                (string.append
+                (str_cat.str-cat
                   "compiler-load: unknown package alias '"
-                  (string.append alias (string.append "': " import-path))))]
+                  alias
+                  "': "
+                  import-path))]
             [(CompilerLoadSomePath dep-path)
               (if (compiler-load-github-dependency-path? dep-path)
                 (ResultPkgResolve.Err
-                  (string.append
+                  (str_cat.str-cat
                     "compiler-load: GitHub dependency '"
-                    (string.append
-                      alias
-                      (string.append "' requires fetch support: " import-path))))
+                    alias
+                    "' requires fetch support: "
+                    import-path))
                 (let
                   [norm-rest : String (compiler-load-normalize-path rest)]
                   (if (compiler-load-path-escapes? norm-rest)
                     (ResultPkgResolve.Err
-                      (string.append
+                      (str_cat.str-cat
                         "compiler-load: pkg import escapes package root: "
                         import-path))
                     (ResultPkgResolve.Ok
@@ -15538,7 +15520,7 @@
   (if (<= fuel 0)
     (CompilerLoadNoPath)
     (let
-      [candidate : String (string.append dir "typelisp.pkg")]
+      [candidate : String (str_cat.str-cat dir "typelisp.pkg")]
       (if (io.file-exists? candidate)
         (CompilerLoadSomePath candidate)
         (match (compiler-load-parent-dir dir)

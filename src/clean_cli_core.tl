@@ -322,7 +322,7 @@
   (let
     [output-dir : String
       (build_cli_core.build-package-output-dir manifest-dir name)]
-    [output-prefix : String (string.append output-dir "/")]
+    [output-prefix : String (str_cat.str-cat output-dir "/")]
     (and
       (not (clean-dangerous-path? path))
       (or (string.eq path output-dir) (clean-string-prefix? path output-prefix)))))
@@ -368,7 +368,7 @@
   (match (build_cli_core.build-load-manifest manifest-path)
     [(build_cli_core.ResultBuildManifest.Err message)
       (begin
-        (io.print-error (string.append "Error: " message))
+        (io.print-error (str_cat.str-cat "Error: " message))
         1)]
     [(build_cli_core.ResultBuildManifest.Ok manifest)
       (let
@@ -523,7 +523,7 @@
   (match (build_cli_core.build-load-manifest manifest-path)
     [(build_cli_core.ResultBuildManifest.Err message)
       (begin
-        (io.print-error (string.append "Error: " message))
+        (io.print-error (str_cat.str-cat "Error: " message))
         1)]
     [(build_cli_core.ResultBuildManifest.Ok _)
       (let
@@ -626,7 +626,8 @@
                 experiments
                 dry-run)))]
         [(clean-flag? current)
-          (ResultCleanConfig.Err (string.append "clean: unknown flag " current))]
+          (ResultCleanConfig.Err
+            (str_cat.str-cat "clean: unknown flag " current))]
         [has-source
           (ResultCleanConfig.Err "clean: accepts only one source file")]
         [else

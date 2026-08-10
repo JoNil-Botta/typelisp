@@ -1,4 +1,5 @@
 ;; compiler_ir_types_smoke.tl - Runnable IR type/effect smoke.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.arena)
 (import stdlib.string)
 (import compiler_ir_types)
@@ -752,9 +753,10 @@
         "(& macro-local-life i64)")
       (string.eq
         (compiler_ir_types.compiler-ir-type-render bases invalid)
-        (string.append
+        (str_cat.str-cat
           "(& <id:"
-          (string.append (string.int->string (ci.intern-capacity)) "> i64)"))))))
+          (string.int->string (ci.intern-capacity))
+          "> i64)")))))
 
 ;; The derived-symbol table exists because the fixed intern pool ran out of
 ;; generated ids on a whole-program self-compile (refs #6293), so what has to
@@ -849,7 +851,7 @@
           (set!
             last-grown
             (compiler_ir_types.compiler-ir-symbol
-              (string.append "ir-smoke/grow-" (string.int->string index))))
+              (str_cat.str-cat "ir-smoke/grow-" (string.int->string index))))
           (set! index (+ index 1))))
       (unless
         (=

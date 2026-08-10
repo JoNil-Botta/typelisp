@@ -164,7 +164,7 @@
       (string.eq value "windows-x86_64")
       (string.eq value "windows_x86_64"))
       (ResultSourceToolTarget.Ok (backend.CompilerBackendTarget.Windows))
-      (ResultSourceToolTarget.Err (string.append "unknown target " value)))))
+      (ResultSourceToolTarget.Err (str_cat.str-cat "unknown target " value)))))
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
   (cond
@@ -638,7 +638,7 @@
 
 (define (source-tool-windows-exe-candidate [candidate : String]) : String
   (if (source-tool-windows-host?)
-    (string.append candidate ".exe")
+    (str_cat.str-cat candidate ".exe")
     candidate))
 
 (define (source-tool-find-command-on-path-from
@@ -1060,7 +1060,7 @@
     (if (backend.compiler-backend-target-linux? target)
       (if (string.contains (& haystack) (& needle))
         haystack
-        (string.append haystack (source-tool-noexecstack-note)))
+        (str_cat.str-cat haystack (source-tool-noexecstack-note)))
       haystack)))
 
 (define (source-tool-write-file
@@ -1246,7 +1246,7 @@
       (process.args-cons
         obj-path
         (process.args-cons
-          (string.append "/OUT:" bin-path)
+          (str_cat.str-cat "/OUT:" bin-path)
           (process.args-cons
             "/SUBSYSTEM:CONSOLE"
             (process.args-cons
@@ -1443,7 +1443,7 @@
     (process.args-cons
       "/Brepro"
       (process.args-cons
-        (string.append "/OUT:" archive-path)
+        (str_cat.str-cat "/OUT:" archive-path)
         (process.args-cons obj-path (process.args-empty))))))
 
 (define (source-tool-windows-llvm-archiver-args
@@ -2017,8 +2017,7 @@
                 1)]
             [(SourceToolCommandStatus.Ok)
               (begin
-                (io.print-string
-                  (string.append "Built " (string.append bin-path "\n")))
+                (io.print-string (str_cat.str-cat "Built " bin-path "\n"))
                 (source-tool-clean-temp
                   temp-dir
                   asm-path
@@ -2051,7 +2050,7 @@
     [(ResultSourceToolString.Err message)
       (begin
         (io.print-error
-          (string.append "build: failed to create temp dir: " message))
+          (str_cat.str-cat "build: failed to create temp dir: " message))
         1)]))
 
 (define (source-tool-run-executable
@@ -2193,5 +2192,5 @@
     [(ResultSourceToolString.Err message)
       (begin
         (io.print-error
-          (string.append "run: failed to create temp dir: " message))
+          (str_cat.str-cat "run: failed to create temp dir: " message))
         1)]))

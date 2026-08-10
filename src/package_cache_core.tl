@@ -5,6 +5,7 @@
 ;; partial/corrupt. It does not fetch, resolve tag/branch pins, or update
 ;; lockfiles itself; build_cli_core.tl consumes these helpers for package build
 ;; cache reuse/refetch and lockfile integration.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.fs)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -81,7 +82,7 @@
       (ResultPackageCachePinKind.Ok (PackageCachePinKind.Branch))]
     [else
       (ResultPackageCachePinKind.Err
-        (string.concat3
+        (str_cat.str-cat
           "package-cache: unsupported remote pin kind '"
           value
           "'"))]))
@@ -144,7 +145,7 @@
               (PackageCacheKey (struct-get spec url) commit))))]
       [_
         (ResultPackageCacheKey.Err
-          (string.concat3
+          (str_cat.str-cat
             "package-cache: cache key requires exact rev pin, got "
             (package-cache-pin-kind-name kind)
             ""))])))
@@ -187,10 +188,11 @@
     [byte : i64 (% code 256)]
     [hi : i64 (/ byte 16)]
     [lo : i64 (% byte 16)]
-    (string.concat3
+    (str_cat.str-cat
       "_x"
       (package-cache-hex-digit hi)
-      (string.append (package-cache-hex-digit lo) "_"))))
+      (package-cache-hex-digit lo)
+      "_")))
 
 (define (package-cache-escape-component [text : (& text str)]) : String
   (let
@@ -203,10 +205,10 @@
           [code : i64 (cast (string.string-ref text i) : i64)]
           (begin
             (if (package-cache-safe-code? code)
-              (set! out (string.concat3 out (string.substring text i 1) ""))
+              (set! out (str_cat.str-cat out (string.substring text i 1) ""))
               (set!
                 out
-                (string.concat3 out (package-cache-escape-code code) "")))
+                (str_cat.str-cat out (package-cache-escape-code code) "")))
             (set! i (+ i 1)))))
       out)))
 
@@ -275,9 +277,7 @@
     [commit-dir : String
       (package-cache-escape-component (& (struct-get key commit)))]
     [staged-name : String
-      (string.append
-        commit-dir
-        (string.append ".tmp." (string.int->string attempt)))]
+      (str_cat.str-cat commit-dir ".tmp." (string.int->string attempt))]
     (fs.path-join-owned-pair rev-dir staged-name)))
 
 (define (package-cache-metadata-path [entry-path : (& entry_path str)]) : String
@@ -294,11 +294,12 @@
   (let
     [url : String (string.copy (& (struct-get key url)))]
     [commit : String (string.copy (& (struct-get key commit)))]
-    (string.append
+    (str_cat.str-cat
       "typelisp-package-cache-v1\nurl="
-      (string.append
-        url
-        (string.append "\ncommit=" (string.append commit "\n"))))))
+      url
+      "\ncommit="
+      commit
+      "\n")))
 
 (define (package-cache-complete-marker-content) : String
   "typelisp-package-cache-v1 complete\n")
@@ -333,7 +334,9 @@
           [(io.ErrIoBytes error)
             (PackageCacheEntryState.PartialOrCorrupt
               (string.copy entry-path)
-              (string.append "metadata read failed: " (io.error-message error)))]
+              (str_cat.str-cat
+                "metadata read failed: "
+                (io.error-message error)))]
           [(io.OkIoBytes metadata)
             (if (not
               (string.eq
@@ -346,7 +349,7 @@
                 [(io.ErrIoBytes error)
                   (PackageCacheEntryState.PartialOrCorrupt
                     (string.copy entry-path)
-                    (string.append
+                    (str_cat.str-cat
                       "completion marker read failed: "
                       (io.error-message error)))]
                 [(io.OkIoBytes marker)
@@ -481,14 +484,14 @@
   (match result
     [(io.OkIoUnit) unit]
     [(io.ErrIoUnit error)
-      (io.panic (string.append message (io.error-message error)))]))
+      (io.panic (str_cat.str-cat message (io.error-message error)))]))
 
 (define (package-cache-expect-temp [result : io.ResultIoString]) : String
   (match result
     [(io.OkIoString value) value]
     [(io.ErrIoString error)
       (io.panic
-        (string.append
+        (str_cat.str-cat
           "package-cache: temp dir failed: "
           (io.error-message error)))]))
 

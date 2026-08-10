@@ -1297,6 +1297,12 @@ fi
 # the next type-pool typecheck boundary from 8 to 9 segments: the authoritative
 # Windows CI probe measured 8193 used nodes, 9216 capacity, and 221184 physical
 # payload bytes.
+# #5682's source-wide deprecated-concat migration crossed
+# ast_expr_pool.macro_expand from 53 to 54 segments; the authoritative Windows
+# CI probe measured 3,508,812 used nodes, 3,538,944 capacity, and 113,246,208
+# physical payload bytes. The same migration's simpler concat expansions brought
+# ast_type_pool.typecheck back from 9 to 8 segments: 8,030 used nodes, 8,192
+# capacity, and 196,608 physical payload bytes.
 # #6293's derived-symbol table (moving ~50k generated spellings out of the
 # pinned intern pool, plus its tests) crossed the expr typecheck boundary
 # from 29 to 30 segments: the authoritative Windows probe measured 1,902,698
@@ -1456,7 +1462,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 53 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 54 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
@@ -1465,7 +1471,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 9 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 8 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

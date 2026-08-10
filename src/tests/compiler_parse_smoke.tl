@@ -1,4 +1,5 @@
 ;; compiler_parse_smoke.tl - Runnable structural smoke for compiler_parse_core.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_parse_core)
 (import compiler_ast_types as ast)
 (import read as reader)
@@ -162,7 +163,7 @@
   ;; Keep the inline-test discovery marker split: this source is parser input,
   ;; not an inline test declaration in this file.
   (match (compiler_parse_core.parse-ast-source
-    (string.concat3
+    (str_cat.str-cat
       "(module parsed.module)
 (defstruct ParsedType (parsed-field i64))
 (define (parsed-fn [parsed-param : ParsedType]) : ParsedType parsed-param)
@@ -275,7 +276,7 @@
     (if (or (< start 0) (< end start))
       CompilerDiagnosticNoString
       (CompilerDiagnosticSomeString
-        (string.concat3
+        (str_cat.str-cat
           (string.substring source 0 start)
           (diagnostic.compiler-diagnostic-text-edit-replacement edit)
           (string.substring source end (- source-len end)))))))

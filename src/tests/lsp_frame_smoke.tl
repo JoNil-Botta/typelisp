@@ -626,13 +626,11 @@
         "")]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
-      (string.append
+      (str_cat.str-cat
         (lsp-transcript-frame initialize)
-        (string.append
-          (lsp-transcript-frame open)
-          (string.append
-            (lsp-transcript-frame inlay)
-            (lsp-transcript-frame exit))))]
+        (lsp-transcript-frame open)
+        (lsp-transcript-frame inlay)
+        (lsp-transcript-frame exit))]
     [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [expected : String
       "\"id\":71,\"result\":[{\"position\":{\"line\":2,\"character\":53},\"label\":\": i32\""]

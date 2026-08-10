@@ -5,7 +5,9 @@
 ;# pattern (masked into a small
 ;# non-negative range), sorts it in place with a Lomuto-partition quicksort, and
 ;# folds an order-sensitive rolling hash of the sorted array into a wrapping
-;# accumulator. Exercises non-tail recursion, array bounds-checked indexing, and
+;# accumulator. The element and accumulator types are u64, mirroring the C
+;# baseline's uint64_t so the two programs are semantically equivalent
+;# operation for operation (the C modulo is unsigned; so is ours). Exercises non-tail recursion, array bounds-checked indexing, and
 ;# in-place swaps. The array size and round count are runtime arguments, so the
 ;# whole computation cannot be constant-folded. Results stay in `[0, prime)` so
 ;# the printed decimal matches the C baseline's `%lld`.
@@ -13,25 +15,25 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
-(import (vector.vector i64) as i64vec)
+(import (vector.vector u64) as u64vec)
 
-(define qs-modulus : i64
+(define qs-modulus : u64
   1000000007)
-(define qs-mask : i64
+(define qs-mask : u64
   2147483647)
 
-(define (qs-swap [xs : (&mut xs i64vec.Vec)] [i : i64] [j : i64]) : unit
+(define (qs-swap [xs : (&mut xs u64vec.Vec)] [i : i64] [j : i64]) : unit
   (let
-    [slots (i64vec.slots-mut xs)]
-    [tmp : i64 (array-ref slots i)]
+    [slots (u64vec.slots-mut xs)]
+    [tmp : u64 (array-ref slots i)]
     (begin
       (array-set! slots i (array-ref slots j))
       (array-set! slots j tmp))))
 
-(define (qs-partition [xs : (&mut xs i64vec.Vec)] [lo : i64] [hi : i64]) : i64
+(define (qs-partition [xs : (&mut xs u64vec.Vec)] [lo : i64] [hi : i64]) : i64
   (let
-    [slots (i64vec.slots-mut xs)]
-    [pivot : i64 (array-ref slots hi)]
+    [slots (u64vec.slots-mut xs)]
+    [pivot : u64 (array-ref slots hi)]
     [store : i64 lo]
     [scan : i64 lo]
     (begin
@@ -40,7 +42,7 @@
           (if (< (array-ref slots scan) pivot)
             (begin
               (let
-                [tmp : i64 (array-ref slots store)]
+                [tmp : u64 (array-ref slots store)]
                 (begin
                   (array-set! slots store (array-ref slots scan))
                   (array-set! slots scan tmp)))
@@ -48,13 +50,13 @@
             unit)
           (set! scan (+ scan 1))))
       (let
-        [tmp : i64 (array-ref slots store)]
+        [tmp : u64 (array-ref slots store)]
         (begin
           (array-set! slots store (array-ref slots hi))
           (array-set! slots hi tmp)))
       store)))
 
-(define (qs-sort [xs : (&mut xs i64vec.Vec)] [lo : i64] [hi : i64]) : unit
+(define (qs-sort [xs : (&mut xs u64vec.Vec)] [lo : i64] [hi : i64]) : unit
   (if (< lo hi)
     (let
       [pivot-index : i64 (qs-partition xs lo hi)]
@@ -63,11 +65,11 @@
         (qs-sort xs (+ pivot-index 1) hi)))
     unit))
 
-(define (qs-fill [xs : (&mut xs i64vec.Vec)] [n : i64] [seed : i64]) : i64
+(define (qs-fill [xs : (&mut xs u64vec.Vec)] [n : i64] [seed : u64]) : u64
   (let
-    [slots (i64vec.slots-mut xs)]
+    [slots (u64vec.slots-mut xs)]
     [i : i64 0]
-    [state : i64 seed]
+    [state : u64 seed]
     (begin
       (while (< i n)
         (begin
@@ -76,11 +78,11 @@
           (set! i (+ i 1))))
       state)))
 
-(define (qs-checksum [xs : (&mut xs i64vec.Vec)] [n : i64]) : i64
+(define (qs-checksum [xs : (&mut xs u64vec.Vec)] [n : i64]) : u64
   (let
-    [slots (i64vec.slots-mut xs)]
+    [slots (u64vec.slots-mut xs)]
     [i : i64 0]
-    [hash : i64 0]
+    [hash : u64 0]
     (begin
       (while (< i n)
         (begin
@@ -88,16 +90,16 @@
           (set! i (+ i 1))))
       hash)))
 
-(define (qs-bench [n : i64] [rounds : i64]) : i64
+(define (qs-bench [n : i64] [rounds : i64]) : u64
   (let
-    [xs : i64vec.Vec (i64vec.Vec (array.make-array i64 n) n)]
+    [xs : u64vec.Vec (u64vec.Vec (array.make-array u64 n) n)]
     [round : i64 0]
-    [acc : i64 0]
-    [seed : i64 1]
+    [acc : u64 0]
+    [seed : u64 1]
     (begin
       (while (< round rounds)
         (begin
-          (set! seed (qs-fill (&mut xs) n (+ seed (* round 2654435761))))
+          (set! seed (qs-fill (&mut xs) n (+ seed (* (cast round : u64) 2654435761))))
           (qs-sort (&mut xs) 0 (- n 1))
           (set! acc (% (+ acc (qs-checksum (&mut xs) n)) qs-modulus))
           (set! round (+ round 1))))
@@ -108,5 +110,5 @@
     [n : i64 (string.>int (io.arg 1))]
     [rounds : i64 (string.>int (io.arg 2))]
     (begin
-      (io.print (qs-bench n rounds))
+      (io.print (cast (qs-bench n rounds) : i64))
       0)))

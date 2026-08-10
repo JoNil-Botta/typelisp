@@ -17,7 +17,7 @@ benchmark/typelisp/opt_bytecode_vm	712000810
 benchmark/c-scalar/opt_bytecode_vm	716006209
 benchmark/typelisp/opt_crc32	325526120
 benchmark/c-scalar/opt_crc32	400704123
-benchmark/typelisp/opt_quicksort	451819713
+benchmark/typelisp/opt_quicksort	436307713
 benchmark/c-scalar/opt_quicksort	398372863
 benchmark/typelisp/spmd_reduce	1477213867
 benchmark/c-scalar/spmd_reduce	3381322973

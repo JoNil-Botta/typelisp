@@ -73253,30 +73253,31 @@
             out
             (match (tc-borrow-check-lending-binding (tc-moved-paths out) path)
               [(TcMaybeNameId.Some lending-binding-id)
-                (if (not
-                  (tc-borrow-check-lending-binding-used-at?
-                    (tc-moved-paths out)
-                    path
-                    lending-binding-id))
-                  out
-                  (if (tc-expr-list-uses-free-name?
-                    expr-bases
-                    exprs
-                    (tc-env-key-name-text lending-binding-id)
-                    TcStringList.Nil)
-                    out
-                    (if (tc-borrow-check-lifetime-used-in-exprs?
+                (cond
+                  [(not
+                      (tc-borrow-check-lending-binding-used-at?
+                        (tc-moved-paths out)
+                        path
+                        lending-binding-id))
+                    out]
+                  [(tc-expr-list-uses-free-name?
+                      expr-bases
+                      exprs
+                      (tc-env-key-name-text lending-binding-id)
+                      TcStringList.Nil)
+                    out]
+                  [(tc-borrow-check-lifetime-used-in-exprs?
                       expr-bases
                       ctx
                       env
                       locals
                       exprs
                       (tc-borrow-check-path-lifetime ctx env path))
-                      (tc-moved-remove-path-kind
-                        out
-                        path
-                        (TcMovedPathKind.BorrowLending lending-binding-id))
-                      (tc-borrow-check-remove-borrow-path out path))))]
+                    (tc-moved-remove-path-kind
+                      out
+                      path
+                      (TcMovedPathKind.BorrowLending lending-binding-id))]
+                  [else (tc-borrow-check-remove-borrow-path out path)])]
               [(TcMaybeNameId.No)
                 (if (tc-borrow-check-lifetime-used-in-exprs?
                   expr-bases

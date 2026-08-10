@@ -18363,7 +18363,10 @@
 ;; 1,299,265,156 with the term, 1,306,531,147 without it against a
 ;; 1,306,562,712 baseline -- while buying peephole_lines a further 7.59M
 ;; (849,990,762 vs 857,577,638). cfg_domloops and the remaining rows are
-;; identical either way, so the call-free gate stays.
+;; identical either way, so the call-free gate stays. `any-call?` no longer
+;; counts the non-returning trap helpers: nothing is live across a call the
+;; continuing path never returns from, so an abort has none of the spill
+;; staging cost this gate is pricing (opt-licm-store-state-direct-call).
 (define (opt-licm-globals-clean?
   [raw-legacy-summary : OptLicmStoreSummary]
   [any-call? : bool]) : bool
@@ -18415,6 +18418,46 @@
     [(ir.CompilerIrEffect.Unknown) (opt-licm-store-summary-call-or-unknown)]
     [_ (opt-licm-store-summary-empty)]))
 
+;; The runtime's NON-RETURNING trap helpers: tl_oob_abort (the callee the
+;; backend renders as `tl_oob_abort_at` when abort sites are active),
+;; tl_div_abort, tl_shift_abort, and the .L_tl_abort prelude label. The IR
+;; already carries this classification on the callee identity --
+;; compiler-ir-runtime-control-flow-id? IS the recognized set, and giving a
+;; direct call the `ControlFlow` effect is the only thing it does -- so every
+;; consumer here asks that one predicate instead of re-deriving a name set.
+;; Ordinary direct callees classify Unknown; the memory-classified runtime
+;; helpers classify MemoryRead/MemoryWrite.
+;;
+;; SOUNDNESS (why an abort call is not a call for INVARIANCE purposes).
+;; Control never returns from these helpers: they are declared `: never` and
+;; end the process. Every invariance question the loop passes ask is a question
+;; about the CONTINUING path -- "can this instruction, executed once in the
+;; preheader, still read what each iteration would have read?", "can anything
+;; here write the cell this `Global` operand reads before a later read observes
+;; it?". An execution that reaches an abort has no continuing path: no later
+;; iteration, no later load, no observation of any cell the helper touched on
+;; its way out. So whatever the helper does to memory is unobservable to the
+;; code these analyses reason about, exactly like a callee that writes nothing.
+;; The abort's own diagnostic is produced from what the helper receives at the
+;; call, which this classification does not touch.
+;;
+;; SCOPE. Invariance only. Nothing here moves, removes, reorders, or re-guards
+;; a check or an abort -- checks stay where they are and still trap with the
+;; same diagnostic. It does, deliberately, drop these calls from the
+;; `any-call?` boundary the P6/R7 hoist-vs-allocate interlock keys on. That
+;; gate exists because a loop-spanning live range that crosses a call costs
+;; more in spill staging than the reloads it saves; an abort call imposes no
+;; such cost, because nothing is live across it -- the continuing path never
+;; resumes after it, so the register allocator never has to preserve anything
+;; over it. It is a call boundary in the emitted asm and in nothing the
+;; interlock is pricing.
+(define (opt-direct-call-noreturn? [name : i64]) : bool
+  (ir.compiler-ir-runtime-control-flow-id? name))
+
+;; Direct callees that DO return. opt-licm-store-state-direct-call filters the
+;; non-returning trap helpers out ahead of this, so a ControlFlow effect never
+;; reaches the match below and the `_` arm keeps its old meaning: an ordinary
+;; direct call of unknown effect.
 (define (opt-licm-store-summary-for-direct-call
   [direct-call-clean : opt_i64_i64_map.Map]
   [name : i64]) : OptLicmStoreSummary
@@ -18817,6 +18860,22 @@
     (struct-get state store-roots)
     true))
 
+;; Fold a DIRECT call (`Call` or `TailCall`) into the body state: the call
+;; boundary plus the callee's store facts. A non-returning trap helper
+;; contributes NEITHER -- see opt-direct-call-noreturn? for the full argument.
+;; It is not a call boundary for `any-call?`, and it adds no store summary, so
+;; a loop whose only call is a bounds/divide/shift trap reads as call-free to
+;; every invariance question the loop passes ask.
+(define (opt-licm-store-state-direct-call
+  [state : OptLicmStoreState]
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [name : i64]) : OptLicmStoreState
+  (if (opt-direct-call-noreturn? name)
+    state
+    (opt-licm-store-state-add-summary
+      (opt-licm-store-state-mark-call state)
+      (opt-licm-store-summary-for-direct-call direct-call-clean name))))
+
 (define (opt-licm-store-state-invalidate-ptr-def
   [state : OptLicmStoreState]
   [var : i64]) : OptLicmStoreState
@@ -18922,9 +18981,7 @@
         state)]
     (match instr
       [(ir.CompilerIrInstr.Call _ name _ _)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-for-direct-call direct-call-clean name))]
+        (opt-licm-store-state-direct-call provenance direct-call-clean name)]
       [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
         (opt-licm-store-state-add-summary
           (opt-licm-store-state-mark-call provenance)
@@ -18946,9 +19003,7 @@
           (opt-licm-store-state-mark-call provenance)
           (opt-licm-store-summary-call-or-unknown))]
       [(ir.CompilerIrInstr.TailCall name _ _)
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-call provenance)
-          (opt-licm-store-summary-for-direct-call direct-call-clean name))]
+        (opt-licm-store-state-direct-call provenance direct-call-clean name)]
       [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
         (opt-licm-store-state-add-summary
           (opt-licm-store-state-mark-call provenance)
@@ -74189,14 +74244,18 @@
 ;;       exactly Store targets and GlobalAddr operands, arm-for-arm so a new IR
 ;;       instruction fails to compile until handled -- minus this program's
 ;;       Store targets, so it is exactly the address-taken globals;
-;;   (c) the function contains no Call/TailCall/indirect-call/SpmdCall: any
-;;       callee could set! G. v1 deliberately treats the whole call family as
-;;       opaque; a callgraph refinement (block only callees that may set! G) is
-;;       a later packet. Passes after this one only rewrite or clone existing
-;;       instructions -- the inliner, the pipeline's only call producer, has
-;;       already run -- so the no-call fact cannot be invalidated downstream.
-;;       Trapping operations like BoundsCheck are not calls, and explicit
-;;       panic paths diverge before any write could interleave.
+;;   (c) the function contains no Call/TailCall/indirect-call/SpmdCall that can
+;;       RETURN: any such callee could set! G. v1 deliberately treats the whole
+;;       returning call family as opaque; a callgraph refinement (block only
+;;       callees that may set! G) is a later packet. Passes after this one only
+;;       rewrite or clone existing instructions -- the inliner, the pipeline's
+;;       only call producer, has already run -- so the no-call fact cannot be
+;;       invalidated downstream. Trapping operations like BoundsCheck are not
+;;       calls, and explicit panic paths diverge before any write could
+;;       interleave -- which is exactly why a direct call to a non-returning
+;;       trap helper is excluded from (c) as well: control never returns from
+;;       it, so no use of `%g` runs after it and nothing it could write is ever
+;;       read (opt-global-cell-scan-direct-call, opt-direct-call-noreturn?).
 ;; A set! in ANOTHER function (the loader pattern) cannot interleave with this
 ;; activation because (c) rules out the call that would reach it, and the
 ;; entry load observes any set! made before this activation -- exactly what a
@@ -74261,6 +74320,23 @@
       (struct-get scan ref-list)
       (struct-get scan stores)
       true)))
+
+;; Condition (c) rejects a function that may transfer control to a callee that
+;; could `set! G` between the entry load and a use of `%g`. A non-returning
+;; trap helper cannot: control never comes back from it, so NO use of `%g`
+;; executes after it on any path, and no value it could write is ever read.
+;; That is the same argument opt-direct-call-noreturn? states in full, and the
+;; same one the pass header already makes for BoundsCheck and explicit panic
+;; paths ("diverge before any write could interleave") -- a `call tl_oob_abort`
+;; is exactly that panic path after the backend has expanded a check, or after
+;; a stdlib range guard has been inlined here. Counting it would disqualify
+;; every otherwise call-free function that inlines one.
+(define (opt-global-cell-scan-direct-call
+  [scan : OptGlobalCellScan]
+  [name : i64]) : OptGlobalCellScan
+  (if (opt-direct-call-noreturn? name)
+    scan
+    (opt-global-cell-scan-call scan)))
 
 (define (opt-global-cell-scan-value
   [scan : OptGlobalCellScan]
@@ -74340,7 +74416,9 @@
         (box-get rest))]))
 
 ;; Per-function fact scan: global-ref operand uses (refs), direct set! targets
-;; (stores), and whether any call-family instruction remains (calls). Mirrors
+;; (stores), and whether any RETURNING call-family instruction remains (calls;
+;; a direct call to a non-returning trap helper is not one -- see
+;; opt-global-cell-scan-direct-call). Mirrors
 ;; opt-const-globals-disq-instr arm-for-arm (no wildcard): a new IR instruction
 ;; fails to compile until classified here, so a new call-like or store-like
 ;; operand position can never silently escape the (a)/(c) checks. Pack words
@@ -74480,8 +74558,10 @@
         subleaf)]
     [(ir.CompilerIrInstr.Xgetbv _ idx) (opt-global-cell-scan-value scan idx)]
     [(ir.CompilerIrInstr.Syscall _ args) (opt-global-cell-scan-args scan args)]
-    [(ir.CompilerIrInstr.Call _ _ args _)
-      (opt-global-cell-scan-args (opt-global-cell-scan-call scan) args)]
+    [(ir.CompilerIrInstr.Call _ name args _)
+      (opt-global-cell-scan-args
+        (opt-global-cell-scan-direct-call scan name)
+        args)]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
         [base (struct-get (box-get payload-box) base)]
@@ -74516,8 +74596,10 @@
             (opt-global-cell-scan-value (opt-global-cell-scan-call scan) base)
             func)
           args))]
-    [(ir.CompilerIrInstr.TailCall _ args _)
-      (opt-global-cell-scan-args (opt-global-cell-scan-call scan) args)]
+    [(ir.CompilerIrInstr.TailCall name args _)
+      (opt-global-cell-scan-args
+        (opt-global-cell-scan-direct-call scan name)
+        args)]
     [(ir.CompilerIrInstr.Store name value _)
       (opt-global-cell-scan-value
         (opt-global-cell-scan-store scan (ir.compiler-ir-symbol-id name))
@@ -74795,7 +74877,9 @@
 ;; `@G` read to it, so it is correct exactly when no `set! G` this function
 ;; performs can be observed by one of those reads. Conditions (b) and (c)
 ;; already exclude every OTHER writer -- no address-taken cell can be reached
-;; through a pointer, and a function containing any call is rejected outright --
+;; through a pointer, and a function containing any RETURNING call is rejected
+;; outright, while the non-returning trap calls (c) still admits can make no
+;; store observable at all (nothing runs after them) --
 ;; so only this function's own `Store G` instructions matter. A `Store G` at
 ;; block B, instruction index k, is observable exactly when some `@G` read runs
 ;; after it on some execution path, i.e. when either

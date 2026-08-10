@@ -22059,7 +22059,9 @@
 ;; R7: a `Global` operand is a hidden rip-relative load of that global's cell,
 ;; so the descriptor chain rooted at one is loop-invariant exactly when the body
 ;; cannot write the cell. `tail` selects what else the body does: 0 nothing,
-;; 1 a `Store` back into the same global, 2 a call whose effects are unknown.
+;; 1 a `Store` back into the same global, 2 a call whose effects are unknown,
+;; 3 a call to the NON-RETURNING oob-abort helper -- which must read exactly
+;; like 0, because nothing it could do is observable on the continuing path.
 (define (opt-licm-global-cell-load-blocks
   [symbols : OptLicmTestSymbols]
   [cell : i64]
@@ -22091,6 +22093,14 @@
                 (struct-get symbols touch)
                 (compiler_ir_types.CompilerIrCallArgs.Nil)
                 (compiler_ast_types.AstType.I64))
+              (opt-licm-loop-finish-instrs))]
+          [(= tail 3)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Call
+                12
+                cbi.compiler-builtin-id-tl-oob-abort
+                (compiler_ir_types.CompilerIrCallArgs.Nil)
+                (compiler_ast_types.AstType.Unit))
               (opt-licm-loop-finish-instrs))]
           [else (opt-licm-loop-finish-instrs)])))
     8))
@@ -23084,6 +23094,11 @@
         (opt-licm-global-cell-load-blocks symbols global-cell 2))]
     [global-call : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks global-call-func)]
+    [global-abort-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-late-optimized-function
+        (opt-licm-global-cell-load-blocks symbols global-cell 3))]
+    [global-abort : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks global-abort-func)]
     [clean-summary : compiler_optimize.OptLicmStoreSummary
       (opt-licm-summary-for-instr
         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -23381,6 +23396,56 @@
               (compiler_ir_types.compiler-ir-label "loop"))
             1))
         141]
+      ;; A call to a NON-RETURNING trap helper does not: control never returns
+      ;; from it, so it can neither write the cell observably nor stand between
+      ;; the preheader copy and a use. The chain moves out exactly as in the
+      ;; call-free body (variant 0). The abort call itself stays put in the
+      ;; loop -- this is an invariance classification, not check motion.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function global-abort-func)))
+        142]
+      [(not
+          (=
+            (opt-count-gep-label-blocks
+              global-abort
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        143]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              global-abort
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        144]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              global-abort
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        145]
+      ;; The recognized non-returning set, pinned: the runtime trap helpers and
+      ;; nothing else.
+      [(not
+          (compiler_optimize.opt-direct-call-noreturn?
+            cbi.compiler-builtin-id-tl-oob-abort))
+        146]
+      [(not
+          (compiler_optimize.opt-direct-call-noreturn?
+            cbi.compiler-builtin-id-tl-div-abort))
+        147]
+      [(not
+          (compiler_optimize.opt-direct-call-noreturn?
+            cbi.compiler-builtin-id-tl-shift-abort))
+        148]
+      [(not
+          (compiler_optimize.opt-direct-call-noreturn?
+            cbi.compiler-builtin-id-tl-abort-label))
+        149]
+      [(compiler_optimize.opt-direct-call-noreturn? (struct-get symbols touch))
+        150]
       [(not (compiler_optimize.opt-licm-store-summary-clean? clean-summary)) 27]
       [(compiler_optimize.opt-licm-store-summary-clean? store-summary) 28]
       [(not (struct-get store-summary header-or-unknown-store?)) 29]
@@ -42198,21 +42263,26 @@
           (compiler_ir_types.CompilerIrValue.Unit))
         compiler_ir_types.CompilerIrGlobalList.Nil))))
 
+;; `call-mode`: 0 no call, 1 an ordinary RETURNING call (condition (c) rejects
+;; the function), 2 a call to the NON-RETURNING oob-abort helper (condition (c)
+;; admits it -- nothing runs after it, so no callee write can reach a use).
 (define (opt-gc-test-reader-tail
   [symbols : OptGcTestSymbols]
   [store-k? : bool]
-  [call? : bool]) : compiler_ir_types.CompilerIrInstrList
+  [call-mode : i64]) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
     (compiler_ir_types.CompilerIrInstr.Mov
       6
       (compiler_ir_types.CompilerIrValue.Global (struct-get symbols agg))
       (compiler_ast_types.AstType.Struct (struct-get symbols agg)))
     (cond
-      [call?
+      [(> call-mode 0)
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             9
-            (struct-get symbols callee)
+            (if (= call-mode 2)
+              cbi.compiler-builtin-id-tl-oob-abort
+              (struct-get symbols callee))
             (compiler_ir_types.CompilerIrCallArgs.One
               (compiler_ir_types.CompilerIrValue.Var 3))
             (compiler_ast_types.AstType.I64))
@@ -42244,7 +42314,7 @@
 (define (opt-gc-test-reader-blocks
   [symbols : OptGcTestSymbols]
   [store-k? : bool]
-  [call? : bool]) : compiler_ir_types.CompilerIrBlockList
+  [call-mode : i64]) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.compiler-ir-block
       (compiler_ir_types.compiler-ir-label "entry")
@@ -42287,21 +42357,21 @@
                     (compiler_ir_types.CompilerIrValue.Var 3)
                     (compiler_ir_types.CompilerIrValue.Var 4)
                     (compiler_ast_types.AstType.I64))
-                  (opt-gc-test-reader-tail symbols store-k? call?)))))))
+                  (opt-gc-test-reader-tail symbols store-k? call-mode)))))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
 (define (opt-gc-test-reader-function
   [symbols : OptGcTestSymbols]
   [store-k? : bool]
-  [call? : bool]) : compiler_ir_types.CompilerIrFunction
+  [call-mode : i64]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (struct-get symbols reader)
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
-    (if call?
+    (if (> call-mode 0)
       10
       7)
-    (opt-gc-test-reader-blocks symbols store-k? call?)))
+    (opt-gc-test-reader-blocks symbols store-k? call-mode)))
 
 ;; takes the address of gc_arr (disqualifies it program-wide, mechanism (b))
 (define (opt-gc-test-other-function [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrFunction
@@ -42590,19 +42660,59 @@
       [(not (= (opt-gc-test-stray-blocks blocks true 0) 1)) 9]
       [else 42])))
 
+;; Same shape as opt-gc-test-plain-hoist-ok?, for the fixture whose only call
+;; is the NON-RETURNING oob-abort helper. That fixture's frame starts at 10
+;; (the call defines var 9), so the two fresh hoist vars are 10 and 11.
+(define (opt-gc-test-abort-hoist-ok?
+  [out : compiler_ir_types.CompilerIrFunction]) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks out)]
+    (cond
+      [(not (= (compiler_optimize.opt-function-frame out) 12)) 1]
+      [(not (= (opt-gc-test-block-instr-count blocks 0) 3)) 2]
+      [(match (opt-gc-test-instr-at blocks 0 0)
+          [(compiler_ir_types.CompilerIrInstr.Mov d src _)
+            (not (and (= d 10) (opt-gc-test-is-global-named? src "gc_k")))]
+          [_ true])
+        3]
+      [(match (opt-gc-test-instr-at blocks 0 1)
+          [(compiler_ir_types.CompilerIrInstr.Mov d src _)
+            (not (and (= d 11) (opt-gc-test-is-global-named? src "gc_arr")))]
+          [_ true])
+        4]
+      [(match (opt-gc-test-instr-at blocks 1 0)
+          [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
+            (not (opt-gc-test-is-var? base 11))]
+          [_ true])
+        5]
+      [(match (opt-gc-test-instr-at blocks 1 2)
+          [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ rhs _)
+            (not (opt-gc-test-is-var? rhs 10))]
+          [_ true])
+        6]
+      ;; the abort call itself is untouched -- this is a classification, not
+      ;; check or trap motion
+      [(match (opt-gc-test-instr-at blocks 1 6)
+          [(compiler_ir_types.CompilerIrInstr.Call _ callee _ _)
+            (not (= callee cbi.compiler-builtin-id-tl-oob-abort))]
+          [_ true])
+        7]
+      [else 42])))
+
 (define (compiler-optimize-global-cell-self-test) : i64
   (let
     [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
     ;; fixture A: plain hoist of gc_k + gc_arr
     [reader-a : compiler_ir_types.CompilerIrFunction
-      (opt-gc-test-reader-function symbols false false)]
+      (opt-gc-test-reader-function symbols false 0)]
     [summaries-a : compiler_optimize.OptLoopBceSummaries
       (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-a))]
     [out-a : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-global-cell-function summaries-a reader-a)]
     ;; fixture B: the function stores gc_k itself -> gc_k stays direct (a)
     [reader-b : compiler_ir_types.CompilerIrFunction
-      (opt-gc-test-reader-function symbols true false)]
+      (opt-gc-test-reader-function symbols true 0)]
     [summaries-b : compiler_optimize.OptLoopBceSummaries
       (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-b))]
     [out-b : compiler_ir_types.CompilerIrFunction
@@ -42611,7 +42721,7 @@
       (compiler_optimize.opt-function-blocks out-b)]
     ;; fixture C: a remaining call excludes the whole function (c)
     [reader-c : compiler_ir_types.CompilerIrFunction
-      (opt-gc-test-reader-function symbols false true)]
+      (opt-gc-test-reader-function symbols false 1)]
     [summaries-c : compiler_optimize.OptLoopBceSummaries
       (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-c))]
     [out-c : compiler_ir_types.CompilerIrFunction
@@ -42621,7 +42731,7 @@
     ;; fixture D: gc_arr's address is taken in another function -> gc_arr
     ;; stays direct (b), gc_k still hoists
     [reader-d : compiler_ir_types.CompilerIrFunction
-      (opt-gc-test-reader-function symbols false false)]
+      (opt-gc-test-reader-function symbols false 0)]
     [summaries-d : compiler_optimize.OptLoopBceSummaries
       (opt-gc-test-summaries
         symbols
@@ -42633,13 +42743,21 @@
     ;; fixture E: gc_k is stored in ANOTHER function (loader pattern) -> the
     ;; call-free reader still hoists gc_k
     [reader-e : compiler_ir_types.CompilerIrFunction
-      (opt-gc-test-reader-function symbols false false)]
+      (opt-gc-test-reader-function symbols false 0)]
     [summaries-e : compiler_optimize.OptLoopBceSummaries
       (opt-gc-test-summaries
         symbols
         (opt-gc-test-functions2 reader-e (opt-gc-test-writer-function symbols)))]
     [out-e : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-global-cell-function summaries-e reader-e)]
+    ;; fixture G: the only call is the NON-RETURNING oob-abort helper -> (c)
+    ;; admits the function and both word cells hoist, exactly as in A
+    [reader-g : compiler_ir_types.CompilerIrFunction
+      (opt-gc-test-reader-function symbols false 2)]
+    [summaries-g : compiler_optimize.OptLoopBceSummaries
+      (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader-g))]
+    [out-g : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-global-cell-function summaries-g reader-g)]
     ;; fixture F: idempotence -- a second run over A's output adds nothing
     [out-f : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-global-cell-function summaries-a out-a)]
@@ -42710,6 +42828,9 @@
       [(not (= (opt-gc-test-stray-blocks blocks-d true 0) 2)) 44]
       ;; fixture E: loader pattern hoists exactly like fixture A
       [(not (= (opt-gc-test-plain-hoist-ok? out-e) 42)) 50]
+      ;; fixture G: a NON-RETURNING abort call is not a (c) call -- the
+      ;; function hoists both word cells and the abort stays where it was
+      [(not (= (opt-gc-test-abort-hoist-ok? out-g) 42)) 55]
       ;; fixture F: second run is a no-op
       [(not (= (compiler_optimize.opt-function-frame out-f) 9)) 60]
       [(not (= (opt-gc-test-block-instr-count blocks-f 0) 3)) 61]

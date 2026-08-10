@@ -878,6 +878,65 @@
     (compiler-diagnostic-notes diag)
     (compiler-diagnostic-fixes diag)))
 
+(define (compiler-diagnostic-maybe-string-eq?
+  [left : CompilerDiagnosticMaybeString]
+  [right : CompilerDiagnosticMaybeString]) : bool
+  (match left
+    [CompilerDiagnosticNoString
+      (match right
+        [CompilerDiagnosticNoString true]
+        [(CompilerDiagnosticSomeString _) false])]
+    [(CompilerDiagnosticSomeString left-text)
+      (match right
+        [(CompilerDiagnosticSomeString right-text)
+          (string.eq left-text right-text)]
+        [CompilerDiagnosticNoString false])]))
+
+(define (compiler-diagnostic-span-eq?
+  [left : (& left CompilerDiagnosticSpan)]
+  [right : (& right CompilerDiagnosticSpan)]) : bool
+  (and
+    (string.eq (struct-get left path) (struct-get right path))
+    (= (struct-get left start-line) (struct-get right start-line))
+    (= (struct-get left start-col) (struct-get right start-col))
+    (= (struct-get left end-line) (struct-get right end-line))
+    (= (struct-get left end-col) (struct-get right end-col))))
+
+(define (compiler-diagnostic-secondary-present?
+  [diag : CompilerDiagnostic]
+  [span : CompilerDiagnosticSpan]
+  [label : CompilerDiagnosticMaybeString]) : bool
+  (let
+    [labels : CompilerDiagnosticLabelList
+      (compiler-diagnostic-secondary-spans diag)]
+    [count : i64 (compiler-diagnostic-label-list-count labels)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (let
+          [entry : CompilerDiagnosticLabel
+            (compiler-diagnostic-label-list-get labels index)]
+          [entry-span : CompilerDiagnosticSpan (struct-get entry span)]
+          (begin
+            (if (and
+              (compiler-diagnostic-span-eq? (& entry-span) (& span))
+              (compiler-diagnostic-maybe-string-eq?
+                (struct-get entry label)
+                label))
+              (set! found true)
+              unit)
+            (set! index (+ index 1)))))
+      found)))
+
+(define (compiler-diagnostic-with-secondary-if-new
+  [diag : CompilerDiagnostic]
+  [span : CompilerDiagnosticSpan]
+  [label : CompilerDiagnosticMaybeString]) : CompilerDiagnostic
+  (if (compiler-diagnostic-secondary-present? diag span label)
+    diag
+    (compiler-diagnostic-with-secondary diag span label)))
+
 (define (compiler-diagnostic-with-note
   [diag : CompilerDiagnostic]
   [note : String]) : CompilerDiagnostic
@@ -1001,19 +1060,70 @@
           (set! index (+ index 1))))
       out)))
 
+(define (compiler-diagnostic-render-flat-secondary
+  [primary-path : String]
+  [entry : CompilerDiagnosticLabel]) : String
+  (let
+    [span : CompilerDiagnosticSpan (struct-get entry span)]
+    [path : String (compiler-diagnostic-span-path (& span))]
+    [label : String
+      (match (struct-get entry label)
+        [(CompilerDiagnosticSomeString text) text]
+        [(CompilerDiagnosticNoString) "related location"])]
+    (string.append
+      "\nrelated: "
+      (string.append
+        (if (string.eq path "")
+          primary-path
+          path)
+        (string.append
+          ":"
+          (string.append
+            (string.int->string (compiler-diagnostic-span-start-line (& span)))
+            (string.append
+              ":"
+              (string.append
+                (string.int->string
+                  (compiler-diagnostic-span-start-col (& span)))
+                (string.append ": " label)))))))))
+
+(define (compiler-diagnostic-render-flat-secondaries
+  [primary-path : String]
+  [labels : CompilerDiagnosticLabelList]) : String
+  (let
+    [count : i64 (compiler-diagnostic-label-list-count labels)]
+    [index : i64 0]
+    [out : String ""]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (string.append
+              out
+              (compiler-diagnostic-render-flat-secondary
+                primary-path
+                (compiler-diagnostic-label-list-get labels index))))
+          (set! index (+ index 1))))
+      out)))
+
 (define (compiler-diagnostic-render [diag : CompilerDiagnostic]) : String
   (string.append
     (string.append
-      (compiler-diagnostic-path diag)
       (string.append
-        ":"
+        (compiler-diagnostic-path diag)
         (string.append
-          (string.int->string (compiler-diagnostic-line diag))
+          ":"
           (string.append
-            ":"
+            (string.int->string (compiler-diagnostic-line diag))
             (string.append
-              (string.int->string (compiler-diagnostic-col diag))
-              (string.append ": " (compiler-diagnostic-message diag)))))))
+              ":"
+              (string.append
+                (string.int->string (compiler-diagnostic-col diag))
+                (string.append ": " (compiler-diagnostic-message diag)))))))
+      (compiler-diagnostic-render-flat-secondaries
+        (compiler-diagnostic-path diag)
+        (compiler-diagnostic-secondary-spans diag)))
     (compiler-diagnostic-render-notes (compiler-diagnostic-notes diag))))
 
 (define (compiler-diagnostic-level-render [level : CompilerDiagnosticLevel]) : String

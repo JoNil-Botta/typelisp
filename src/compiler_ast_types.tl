@@ -787,7 +787,16 @@
   ;; clone graph makes surface pruning retain unrelated helper families during
   ;; self-hosting.
   (ForOwnedState AstExprList)
-  (ForOwnedStep AstExprList))
+  (ForOwnedStep AstExprList)
+  ;; Sparse diagnostic provenance retained across macro expansion. The wrapper
+  ;; is transparent to language semantics: `inner` is the produced expression,
+  ;; while the provenance intern ID packs the caller path (-1 means inherit)
+  ;; and primary-origin path, followed by the user-facing macro name. A negative
+  ;; macro name marks caller-origin syntax without adding an expansion label.
+  ;; The enclosing `Spanned` node supplies the invocation span. Keeping this
+  ;; append-only preserves every established AstExpr tag and costs one node only
+  ;; at an actual expansion boundary.
+  (MacroExpansion i64 i64 i64))
 
 ;; Tuple-place writes reuse `StructSet` internally so the public place syntax
 ;; can land without changing the serialized AstExpr ABI. Interned struct field
@@ -5398,6 +5407,12 @@
 (define (ast-expr-spanned [inner : i64] [span : AstSourceSpan]) : i64
   (ast-node-push (AstExpr.Spanned inner span)))
 
+(define (ast-expr-macro-expansion
+  [inner : i64]
+  [provenance-id : i64]
+  [macro-name-id : i64]) : i64
+  (ast-node-push (AstExpr.MacroExpansion inner provenance-id macro-name-id)))
+
 (define (ast-expr-binary [op : AstBinOp] [left : i64] [right : i64]) : i64
   (ast-node-push (AstExpr.Binary op left right)))
 
@@ -8074,6 +8089,11 @@
   (match expr
     [(AstExpr.Spanned inner span)
       (AstExpr.Spanned (ast-compaction-remap-expr-id remap inner) span)]
+    [(AstExpr.MacroExpansion inner provenance-id macro-name-id)
+      (AstExpr.MacroExpansion
+        (ast-compaction-remap-expr-id remap inner)
+        provenance-id
+        macro-name-id)]
     [(AstExpr.Literal lit) (AstExpr.Literal (ast-compaction-remap-literal lit))]
     [(AstExpr.Var name) (AstExpr.Var name)]
     [(AstExpr.Binary op left right)
@@ -8814,6 +8834,7 @@
     [(AstExpr.While _ _) 17]
     [(AstExpr.ForOwnedState _) 77]
     [(AstExpr.ForOwnedStep _) 78]
+    [(AstExpr.MacroExpansion _ _ _) 79]
     [(AstExpr.Begin _) 18]
     [(AstExpr.Unsafe _) 32]
     [(AstExpr.Set _ _) 19]
@@ -8877,6 +8898,8 @@
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr
     [(AstExpr.Spanned inner-id _) (ast-expr-unspan (ast-node-get inner-id))]
+    [(AstExpr.MacroExpansion inner-id _ _)
+      (ast-expr-unspan (ast-node-get inner-id))]
     [_ expr]))
 
 (define (ast-expr-unspan-with-pools
@@ -8884,6 +8907,10 @@
   [expr : AstExpr]) : AstExpr
   (match expr
     [(AstExpr.Spanned inner-id _)
+      (ast-expr-unspan-with-pools
+        pools
+        (ast-node-pool-context-expr-get pools inner-id))]
+    [(AstExpr.MacroExpansion inner-id _ _)
       (ast-expr-unspan-with-pools
         pools
         (ast-node-pool-context-expr-get pools inner-id))]

@@ -7366,7 +7366,15 @@
   (tc_core.compiler-typecheck-reset-intern-owned-state!))
 
 (define (lower-context-expr-get [ctx : tc_core.TcContext] [id : i64]) : ast.AstExpr
-  (tc_core.tc-context-expr-get ctx id))
+  (let
+    [expr : ast.AstExpr (tc_core.tc-context-expr-get ctx id)]
+    ;; Expansion provenance has served its diagnostic purpose by the time a
+    ;; fully typechecked program reaches lowering. Keep it transparent here so
+    ;; every lowering analysis sees exactly the generated expression shape.
+    (match expr
+      [(ast.AstExpr.MacroExpansion inner _ _)
+        (lower-context-expr-get ctx inner)]
+      [_ expr])))
 
 (define (lower-context-expr-push [ctx : tc_core.TcContext] [expr : ast.AstExpr]) : i64
   (ast.ast-node-pool-context-expr-push (tc_core.tc-context-pools ctx) expr))
@@ -9610,6 +9618,13 @@
         [inner : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools inner-box)]
         (lower-reach-expr pools all-functions names state inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (lower-reach-expr
+        pools
+        all-functions
+        names
+        state
+        (ast.ast-node-pool-context-expr-get pools inner-box))]
     [(ast.AstExpr.Literal _) state]
     [(ast.AstExpr.Var name)
       (lower-reach-add-source-id all-functions names state name)]
@@ -11581,6 +11596,8 @@
   [expr : ast.AstExpr]) : lower_i64_i64_map.Map
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (lower-used-types-add-expr-id pools used module inner-box)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (lower-used-types-add-expr-id pools used module inner-box)]
     [(ast.AstExpr.Literal _) used]
     [(ast.AstExpr.Var _) used]
@@ -25690,6 +25707,13 @@
                 (tc_core.ResultTcType.Ok ty))]
             [(tc_core.ResultTcType.Err message)
               (tc_core.ResultTcType.Err message)])))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (lower-expr-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Literal lit)
       (tc_core.ResultTcType.Ok (tc_core.tc-literal-type lit))]
     [(ast.AstExpr.BinaryData _)
@@ -26191,6 +26215,10 @@
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-expr-origin ctx state env type-env inner origin))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-expr-origin ctx state env type-env inner origin))]
     [(ast.AstExpr.Literal lit)
       (lower-expr-with-type
         ctx
@@ -26366,6 +26394,10 @@
   [expr-ty : ast.AstType]) : ResultLowerExpr
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-expr-with-type ctx state env type-env inner origin expr-ty))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-expr-with-type ctx state env type-env inner origin expr-ty))]
@@ -27554,6 +27586,10 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-expr-expected ctx state env type-env inner expected-ty origin))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-expr-expected ctx state env type-env inner expected-ty origin))]
@@ -63089,6 +63125,10 @@
   [ty : ast.AstType]) : ResultLowerValue
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-global-value ctx names inner ty))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-global-value ctx names inner ty))]

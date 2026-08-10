@@ -1534,6 +1534,8 @@
   (match expr
     [(ast.AstExpr.Spanned inner-id _)
       (ctfe-expr-unspan env (ctfe-ast-get env inner-id))]
+    [(ast.AstExpr.MacroExpansion inner-id _ _)
+      (ctfe-expr-unspan env (ctfe-ast-get env inner-id))]
     [_ expr]))
 
 (define (ctfe-ty-get [env : CtfeEnv] [id : i64]) : ast.AstType
@@ -2240,6 +2242,7 @@
 (define (ctfe-describe-expr [expr : ast.AstExpr]) : String
   (match expr
     [(ast.AstExpr.Spanned _ _) "expression"]
+    [(ast.AstExpr.MacroExpansion _ _ _) "macro expansion"]
     [(ast.AstExpr.Literal _) "literal"]
     [(ast.AstExpr.Var _) "variable reference"]
     [(ast.AstExpr.Binary _ _ _) "binary operation"]
@@ -3058,6 +3061,8 @@
   [env : CtfeEnv]) : ast.AstType
   (match inner
     [(ast.AstExpr.Spanned inner-box _)
+      (ctfe-cast-source-type (ctfe-ast-get env inner-box) value env)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (ctfe-cast-source-type (ctfe-ast-get env inner-box) value env)]
     [(ast.AstExpr.Ann _ ty-id) (ctfe-ty-get env ty-id)]
     [(ast.AstExpr.Cast _ ty-id) (ctfe-ty-get env ty-id)]
@@ -3976,6 +3981,10 @@
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (compiler-ctfe-eval inner env fuel))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (compiler-ctfe-eval inner env fuel))]
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
@@ -4339,6 +4348,10 @@
 (define (ctfe-offset-field-name [expr : ast.AstExpr] [env : CtfeEnv]) : CtfeMaybeFieldName
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (ctfe-offset-field-name inner env))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-offset-field-name inner env))]
@@ -6901,6 +6914,8 @@
         fuel)]
     [(ast.AstExpr.Spanned inner _)
       (ctfe-eval-expr-list-type-node pools inner expr fuel)]
+    [(ast.AstExpr.MacroExpansion inner _ _)
+      (ctfe-eval-expr-list-type-node pools inner expr fuel)]
     [_
       (ResultCtfe.Err
         (box
@@ -8905,6 +8920,10 @@
   [fuel : i64]) : ResultCtfe
   (match func
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (ctfe-eval-call inner args expr env fuel))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-eval-call inner args expr env fuel))]
@@ -11342,6 +11361,18 @@
                 (ast.ast-expr-spanned-with-pools (ctfe-env-pools env) node span)
                 ty
                 next-fuel))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
+    [(ast.AstExpr.MacroExpansion inner-box provenance-id macro-name-id)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (match (ctfe-quote-expr inner env fuel quasiquote)
+          [(ResultCtfeQuoteExpr.Ok node ty next-fuel)
+            (ResultCtfeQuoteExpr.Ok
+              (ctfe-ast-push
+                env
+                (ast.AstExpr.MacroExpansion node provenance-id macro-name-id))
+              ty
+              next-fuel)]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(ast.AstExpr.Literal lit)
       (ResultCtfeQuoteExpr.Ok

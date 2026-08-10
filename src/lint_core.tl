@@ -2346,6 +2346,8 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (lint-expr-uses-import? (ast.ast-node-get inner-box) alias module-name)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (lint-expr-uses-import? (ast.ast-node-get inner-box) alias module-name)]
     [(ast.AstExpr.Literal _) false]
     [(ast.AstExpr.Var name) (lint-name-id-uses-import? name alias module-name)]
     [(ast.AstExpr.Binary _ left right)
@@ -3798,6 +3800,7 @@
 (define (lint-unsafe-scan-expr [expr : ast.AstExpr] [scope : LintUnsafeScope]) : LintUnsafeScan
   (match expr
     [(ast.AstExpr.Spanned inner _) (lint-unsafe-scan-node inner scope)]
+    [(ast.AstExpr.MacroExpansion inner _ _) (lint-unsafe-scan-node inner scope)]
     [(ast.AstExpr.Literal _) (lint-unsafe-scan-empty)]
     [(ast.AstExpr.Var _) (lint-unsafe-scan-empty)]
     [(ast.AstExpr.Binary _ left right)
@@ -7041,6 +7044,8 @@
   (match expr
     [(ast.AstExpr.Spanned inner _)
       (lint-single-element-array-expr (ast.ast-node-get inner) state)]
+    [(ast.AstExpr.MacroExpansion inner _ _)
+      (lint-single-element-array-expr (ast.ast-node-get inner) state)]
     [(ast.AstExpr.Literal _) state]
     [(ast.AstExpr.Var name)
       (lint-single-element-array-note-var state (ci.intern-str name))]
@@ -7615,6 +7620,8 @@
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (lint-unused-assignment-note-reads (ast.ast-node-get inner-box) state)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (lint-unused-assignment-note-reads (ast.ast-node-get inner-box) state)]
     [(ast.AstExpr.Literal _) state]
     [(ast.AstExpr.Var name) (lint-unused-assignment-read-id state name)]
@@ -10553,6 +10560,8 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box inner-span)
       (lint-unused-variable-expr (ast.ast-node-get inner-box) state inner-span)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (lint-unused-variable-expr (ast.ast-node-get inner-box) state span)]
     [(ast.AstExpr.Literal _) state]
     [(ast.AstExpr.Var name)
       (begin
@@ -12026,6 +12035,8 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match expr
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (lint-walk-expr (ast.ast-node-get inner-box) threshold acc)]
     [(ast.AstExpr.Spanned inner-box span)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]

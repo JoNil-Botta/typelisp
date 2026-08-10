@@ -5423,12 +5423,15 @@
     [macro-name : (& macro-name str)]
     [arity : i64]
     [calls : i64]) : String
-    (str_cat.str-cat
-      macro-name
-      " arity="
-      (string.int->string arity)
-      " calls="
-      (string.int->string calls))))
+    (let
+      [arity-text : String (string.int->string arity)]
+      [calls-text : String (string.int->string calls)]
+      (str_cat.str-cat-scoped
+        macro-name
+        " arity="
+        arity-text
+        " calls="
+        calls-text))))
 
 (cfg
   compile-profile

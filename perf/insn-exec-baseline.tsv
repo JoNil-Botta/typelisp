@@ -27,7 +27,7 @@ benchmark/typelisp/gvn_table	1240636330
 benchmark/c-scalar/gvn_table	625075892
 benchmark/typelisp/intern_table	635469933
 benchmark/c-scalar/intern_table	296287351
-benchmark/typelisp/lex_source	684988760
+benchmark/typelisp/lex_source	592827816
 benchmark/c-scalar/lex_source	481142664
 benchmark/typelisp/liveness_scan	624344080
 benchmark/c-scalar/liveness_scan	433553439

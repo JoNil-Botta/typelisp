@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)][string]$Batch,
     [string]$OutputDir = "target/compile-batch-memory/windows",
     [string]$Target = "windows-x86_64",
-    [string[]]$StdlibRoot = @("stdlib")
+    [string[]]$StdlibRoot = @("stdlib"),
+    [switch]$NoStdlibRoot,
+    [int]$OptLevel = -1
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,9 +50,15 @@ $startInfo.RedirectStandardError = $true
 foreach ($argument in @("compile", "--batch", $batchPath, "--target", $Target)) {
     $startInfo.ArgumentList.Add($argument)
 }
-foreach ($root in $StdlibRoot) {
-    $startInfo.ArgumentList.Add("--stdlib-root")
-    $startInfo.ArgumentList.Add([System.IO.Path]::GetFullPath($root))
+if (-not $NoStdlibRoot) {
+    foreach ($root in $StdlibRoot) {
+        $startInfo.ArgumentList.Add("--stdlib-root")
+        $startInfo.ArgumentList.Add([System.IO.Path]::GetFullPath($root))
+    }
+}
+if ($OptLevel -ge 0) {
+    $startInfo.ArgumentList.Add("--opt-level")
+    $startInfo.ArgumentList.Add($OptLevel.ToString())
 }
 
 $process = [System.Diagnostics.Process]::new()
@@ -126,6 +134,7 @@ while (-not $process.HasExited -or -not $stderrClosed) {
     Start-Sleep -Milliseconds 20
 }
 $process.WaitForExit()
+$started.Stop()
 $stdout = $stdoutTask.GetAwaiter().GetResult()
 $stderrWriter.Dispose()
 [System.IO.File]::WriteAllText($stdoutPath, $stdout, [System.Text.UTF8Encoding]::new($false))
@@ -143,5 +152,10 @@ foreach ($sample in $markerSamples) {
         Add-Content -LiteralPath $telemetryPath -NoNewline -Encoding utf8
 }
 
+$summaryPath = Join-Path $outputPath "summary.tsv"
+"wall_ms`tworking_set_peak_bytes`tprivate_peak_bytes`texit_code`n$($started.ElapsedMilliseconds)`t$workingPeak`t$privatePeak`t$($process.ExitCode)`n" |
+    Set-Content -LiteralPath $summaryPath -NoNewline -Encoding utf8
+
 Write-Output "[compile-batch-memory] wrote $telemetryPath"
 Write-Output "[compile-batch-memory] ordinal map $mapPath"
+Write-Output "[compile-batch-memory] summary $summaryPath"

@@ -118,3 +118,11 @@ jobs:
           name: ci-timing-${{ runner.os }}
           path: target/ci-timing/*.tsv
           if-no-files-found: error
+
+      - name: Upload TLCI native route stress evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlci-native-route-stress-${{ runner.os }}
+          path: target/tlci-native-route-stress/**
+          if-no-files-found: warn

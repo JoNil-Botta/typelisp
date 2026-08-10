@@ -11411,12 +11411,111 @@
   (Nil)
   (Cons i64 OptLabelSet (__tl_dyn-array bool) (Box OptSsaVarBlocks)))
 
-(defenum OptSsaPhiSite
-  (Site i64 i64 ast.AstType i64))
-
-(defenum OptSsaPhiSites
+(defenum OptSsaRenameEnv
   (Nil)
-  (Cons OptSsaPhiSite (Box OptSsaPhiSites)))
+  (Cons i64 i64 (Box OptSsaRenameEnv)))
+
+(defenum OptSsaDenseEntry
+  (PhiSite i64 i64 ast.AstType i64)
+  (RenameBlock i64 ir.CompilerIrInstrList)
+  (BlockOut i64 OptSsaRenameEnv))
+
+(import (vector.vector OptSsaDenseEntry core) as opt_ssa_dense_vec)
+
+(defstruct OptSsaPhiSites
+  (items opt_ssa_dense_vec.Vec))
+
+(defstruct OptSsaRenameBlocks
+  (items opt_ssa_dense_vec.Vec))
+
+(defstruct OptSsaBlockOuts
+  (items opt_ssa_dense_vec.Vec))
+
+;; These three SSA sequences share one generated dense backend. Physical push
+;; is logical Cons/prepend, so indexed consumers read from the live end toward
+;; zero and retain the old newest-first lookup and phi emission order.
+(define (opt-ssa-phi-sites-new) : OptSsaPhiSites
+  (OptSsaPhiSites (opt_ssa_dense_vec.with-capacity 4)))
+
+(define (opt-ssa-phi-sites-count [sites : OptSsaPhiSites]) : i64
+  (opt_ssa_dense_vec.len (& (struct-get sites items))))
+
+(define (opt-ssa-phi-sites-prepend
+  [sites : OptSsaPhiSites (:consume)]
+  [var : i64]
+  [label : i64]
+  [ty : ast.AstType]
+  [phi-var : i64]) : OptSsaPhiSites
+  (let
+    [items : opt_ssa_dense_vec.Vec (struct-get sites items)]
+    (begin
+      (opt_ssa_dense_vec.push
+        (&mut items)
+        (OptSsaDenseEntry.PhiSite var label ty phi-var))
+      (OptSsaPhiSites items))))
+
+(define (opt-ssa-phi-sites-ref [sites : OptSsaPhiSites] [index : i64]) : OptSsaDenseEntry
+  (let
+    [items : opt_ssa_dense_vec.Vec (struct-get sites items)]
+    (array-ref
+      (opt_ssa_dense_vec.slots (& items))
+      (- (- (opt_ssa_dense_vec.len (& items)) index) 1))))
+
+(define (opt-ssa-rename-blocks-new) : OptSsaRenameBlocks
+  (OptSsaRenameBlocks (opt_ssa_dense_vec.with-capacity 4)))
+
+(define (opt-ssa-rename-blocks-with-capacity [capacity : i64]) : OptSsaRenameBlocks
+  (OptSsaRenameBlocks (opt_ssa_dense_vec.with-capacity capacity)))
+
+(define (opt-ssa-rename-blocks-count [blocks : OptSsaRenameBlocks]) : i64
+  (opt_ssa_dense_vec.len (& (struct-get blocks items))))
+
+(define (opt-ssa-rename-blocks-prepend
+  [blocks : OptSsaRenameBlocks (:consume)]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrList]) : OptSsaRenameBlocks
+  (let
+    [items : opt_ssa_dense_vec.Vec (struct-get blocks items)]
+    (begin
+      (opt_ssa_dense_vec.push
+        (&mut items)
+        (OptSsaDenseEntry.RenameBlock label instrs))
+      (OptSsaRenameBlocks items))))
+
+(define (opt-ssa-rename-blocks-ref [blocks : OptSsaRenameBlocks] [index : i64]) : OptSsaDenseEntry
+  (let
+    [items : opt_ssa_dense_vec.Vec (struct-get blocks items)]
+    (array-ref
+      (opt_ssa_dense_vec.slots (& items))
+      (- (- (opt_ssa_dense_vec.len (& items)) index) 1))))
+
+(define (opt-ssa-block-outs-new) : OptSsaBlockOuts
+  (OptSsaBlockOuts (opt_ssa_dense_vec.with-capacity 4)))
+
+(define (opt-ssa-block-outs-with-capacity [capacity : i64]) : OptSsaBlockOuts
+  (OptSsaBlockOuts (opt_ssa_dense_vec.with-capacity capacity)))
+
+(define (opt-ssa-block-outs-count [outs : OptSsaBlockOuts]) : i64
+  (opt_ssa_dense_vec.len (& (struct-get outs items))))
+
+(define (opt-ssa-block-outs-prepend
+  [outs : OptSsaBlockOuts (:consume)]
+  [label : i64]
+  [env : OptSsaRenameEnv]) : OptSsaBlockOuts
+  (let
+    [items : opt_ssa_dense_vec.Vec (struct-get outs items)]
+    (begin
+      (opt_ssa_dense_vec.push
+        (&mut items)
+        (OptSsaDenseEntry.BlockOut label env))
+      (OptSsaBlockOuts items))))
+
+(define (opt-ssa-block-outs-ref [outs : OptSsaBlockOuts] [index : i64]) : OptSsaDenseEntry
+  (let
+    [items : opt_ssa_dense_vec.Vec (struct-get outs items)]
+    (array-ref
+      (opt_ssa_dense_vec.slots (& items))
+      (- (- (opt_ssa_dense_vec.len (& items)) index) 1))))
 
 (defenum OptSsaPhiInsertState
   (State
@@ -11425,24 +11524,6 @@
     OptLabelSet
     (__tl_dyn-array bool)
     (__tl_dyn-array bool)))
-
-(defenum OptSsaRenameEnv
-  (Nil)
-  (Cons i64 i64 (Box OptSsaRenameEnv)))
-
-(defenum OptSsaRenameBlock
-  (Block i64 ir.CompilerIrInstrList))
-
-(defenum OptSsaRenameBlocks
-  (Nil)
-  (Cons OptSsaRenameBlock (Box OptSsaRenameBlocks)))
-
-(defenum OptSsaBlockOut
-  (Out i64 OptSsaRenameEnv))
-
-(defenum OptSsaBlockOuts
-  (Nil)
-  (Cons OptSsaBlockOut (Box OptSsaBlockOuts)))
 
 (defenum OptSsaRenameState
   (State OptSsaRenameBlocks OptSsaBlockOuts i64))
@@ -11928,9 +12009,7 @@
             (begin
               (array-set! site-members id true)
               (OptSsaPhiInsertState.State
-                (OptSsaPhiSites.Cons
-                  (OptSsaPhiSite.Site var label ty next-var)
-                  (box sites))
+                (opt-ssa-phi-sites-prepend sites var label ty next-var)
                 (+ next-var 1)
                 (if (opt-ssa-label-member? work-members id)
                   worklist
@@ -12073,7 +12152,7 @@
           (opt-ssa-def-blocks-from-function index facts params blocks)
           types
           (OptSsaPhiInsertState.State
-            (OptSsaPhiSites.Nil)
+            (opt-ssa-phi-sites-new)
             frame
             (OptLabelSet.Nil)
             work-members
@@ -12112,21 +12191,29 @@
               (opt-ssa-env-bind env var var)
               env))])]))
 
+(define (opt-ssa-env-bind-phis-from
+  [sites : OptSsaPhiSites]
+  [label : i64]
+  [env : OptSsaRenameEnv]
+  [index : i64]) : OptSsaRenameEnv
+  (if (>= index (opt-ssa-phi-sites-count sites))
+    env
+    (match (opt-ssa-phi-sites-ref sites index)
+      [(OptSsaDenseEntry.PhiSite var site-label _ phi-var)
+        (opt-ssa-env-bind-phis-from
+          sites
+          label
+          (if (= label site-label)
+            (opt-ssa-env-bind env var phi-var)
+            env)
+          (+ index 1))]
+      [_ (string.tl_oob_abort)])))
+
 (define (opt-ssa-env-bind-phis
   [sites : OptSsaPhiSites]
   [label : i64]
   [env : OptSsaRenameEnv]) : OptSsaRenameEnv
-  (match sites
-    [(OptSsaPhiSites.Nil) env]
-    [(OptSsaPhiSites.Cons site rest)
-      (match site
-        [(OptSsaPhiSite.Site var site-label _ phi-var)
-          (opt-ssa-env-bind-phis
-            (box-get rest)
-            label
-            (if (= label site-label)
-              (opt-ssa-env-bind env var phi-var)
-              env))])]))
+  (opt-ssa-env-bind-phis-from sites label env 0))
 
 (define (opt-ssa-rewrite-value
   [env : OptSsaRenameEnv]
@@ -12814,39 +12901,57 @@
               out-env
               out-next)])])))
 
+(define (opt-ssa-rename-blocks-contains-from?
+  [blocks : OptSsaRenameBlocks]
+  [label : i64]
+  [index : i64]) : bool
+  (if (>= index (opt-ssa-rename-blocks-count blocks))
+    false
+    (match (opt-ssa-rename-blocks-ref blocks index)
+      [(OptSsaDenseEntry.RenameBlock block-label _)
+        (if (= block-label label)
+          true
+          (opt-ssa-rename-blocks-contains-from? blocks label (+ index 1)))]
+      [_ (string.tl_oob_abort)])))
+
 (define (opt-ssa-rename-blocks-contains?
   [blocks : OptSsaRenameBlocks]
   [label : i64]) : bool
-  (match blocks
-    [(OptSsaRenameBlocks.Nil) false]
-    [(OptSsaRenameBlocks.Cons block rest)
-      (match block
-        [(OptSsaRenameBlock.Block block-label _)
-          (if (= block-label label)
-            true
-            (opt-ssa-rename-blocks-contains? (box-get rest) label))])]))
+  (opt-ssa-rename-blocks-contains-from? blocks label 0))
+
+(define (opt-ssa-rename-blocks-lookup-from
+  [blocks : OptSsaRenameBlocks]
+  [label : i64]
+  [index : i64]) : ir.CompilerIrInstrList
+  (if (>= index (opt-ssa-rename-blocks-count blocks))
+    (ir.CompilerIrInstrList.Nil)
+    (match (opt-ssa-rename-blocks-ref blocks index)
+      [(OptSsaDenseEntry.RenameBlock block-label instrs)
+        (if (= block-label label)
+          instrs
+          (opt-ssa-rename-blocks-lookup-from blocks label (+ index 1)))]
+      [_ (string.tl_oob_abort)])))
 
 (define (opt-ssa-rename-blocks-lookup
   [blocks : OptSsaRenameBlocks]
   [label : i64]) : ir.CompilerIrInstrList
-  (match blocks
-    [(OptSsaRenameBlocks.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(OptSsaRenameBlocks.Cons block rest)
-      (match block
-        [(OptSsaRenameBlock.Block block-label instrs)
-          (if (= block-label label)
-            instrs
-            (opt-ssa-rename-blocks-lookup (box-get rest) label))])]))
+  (opt-ssa-rename-blocks-lookup-from blocks label 0))
+
+(define (opt-ssa-block-out-lookup-from
+  [outs : OptSsaBlockOuts]
+  [label : i64]
+  [index : i64]) : OptSsaRenameEnv
+  (if (>= index (opt-ssa-block-outs-count outs))
+    (OptSsaRenameEnv.Nil)
+    (match (opt-ssa-block-outs-ref outs index)
+      [(OptSsaDenseEntry.BlockOut out-label env)
+        (if (= out-label label)
+          env
+          (opt-ssa-block-out-lookup-from outs label (+ index 1)))]
+      [_ (string.tl_oob_abort)])))
 
 (define (opt-ssa-block-out-lookup [outs : OptSsaBlockOuts] [label : i64]) : OptSsaRenameEnv
-  (match outs
-    [(OptSsaBlockOuts.Nil) (OptSsaRenameEnv.Nil)]
-    [(OptSsaBlockOuts.Cons out rest)
-      (match out
-        [(OptSsaBlockOut.Out out-label env)
-          (if (= out-label label)
-            env
-            (opt-ssa-block-out-lookup (box-get rest) label))])]))
+  (opt-ssa-block-out-lookup-from outs label 0))
 
 (define (opt-ssa-rename-state-add-block
   [state : OptSsaRenameState]
@@ -12857,10 +12962,8 @@
   (match state
     [(OptSsaRenameState.State blocks outs _)
       (OptSsaRenameState.State
-        (OptSsaRenameBlocks.Cons
-          (OptSsaRenameBlock.Block label instrs)
-          (box blocks))
-        (OptSsaBlockOuts.Cons (OptSsaBlockOut.Out label env) (box outs))
+        (opt-ssa-rename-blocks-prepend blocks label instrs)
+        (opt-ssa-block-outs-prepend outs label env)
         next-var)]))
 
 (define (opt-ssa-rename-id
@@ -12995,6 +13098,7 @@
       (opt-ssa-env-from-params facts params (OptSsaRenameEnv.Nil))]
     [entry-label : i64 (opt-cfg-entry-label blocks)]
     [index : OptCfgIndex (struct-get context index)]
+    [block-capacity : i64 (opt-cfg-index-block-count index)]
     (begin
       (opt-cfg-index-refresh-blocks! index blocks)
       (match (opt-cfg-index-id index entry-label)
@@ -13012,13 +13116,13 @@
               entry-id
               initial-env
               (OptSsaRenameState.State
-                (OptSsaRenameBlocks.Nil)
-                (OptSsaBlockOuts.Nil)
+                (opt-ssa-rename-blocks-with-capacity block-capacity)
+                (opt-ssa-block-outs-with-capacity block-capacity)
                 frame)))]
         [(option_i64.None)
           (OptSsaRenameState.State
-            (OptSsaRenameBlocks.Nil)
-            (OptSsaBlockOuts.Nil)
+            (opt-ssa-rename-blocks-with-capacity block-capacity)
+            (opt-ssa-block-outs-with-capacity block-capacity)
             frame)]))))
 
 ;; Dead-path phi input: a candidate var can reach a phi over an edge on which
@@ -13065,36 +13169,46 @@
 ;; phi; pushing on the way down produces it directly. `opt-ssa-phi-inputs` is a
 ;; pure lookup over `pred-map`/`outs`, so evaluating it in forward site order
 ;; rather than reverse changes nothing it returns.
+(define (opt-ssa-push-phis-for-label-from!
+  [pred-map : OptPredMap]
+  [outs : OptSsaBlockOuts]
+  [sites : OptSsaPhiSites]
+  [label : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [index : i64]) : unit
+  (if (>= index (opt-ssa-phi-sites-count sites))
+    unit
+    (begin
+      (match (opt-ssa-phi-sites-ref sites index)
+        [(OptSsaDenseEntry.PhiSite var site-label ty phi-var)
+          (if (= site-label label)
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.CompilerIrInstr.Phi
+                phi-var
+                (opt-ssa-phi-inputs
+                  (opt-pred-map-lookup pred-map label)
+                  outs
+                  var
+                  ty)
+                ty))
+            unit)]
+        [_ (string.tl_oob_abort)])
+      (opt-ssa-push-phis-for-label-from!
+        pred-map
+        outs
+        sites
+        label
+        (&mut builder)
+        (+ index 1)))))
+
 (define (opt-ssa-push-phis-for-label!
   [pred-map : OptPredMap]
   [outs : OptSsaBlockOuts]
   [sites : OptSsaPhiSites]
   [label : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match sites
-    [(OptSsaPhiSites.Nil) unit]
-    [(OptSsaPhiSites.Cons site rest)
-      (begin
-        (match site
-          [(OptSsaPhiSite.Site var site-label ty phi-var)
-            (if (= site-label label)
-              (ir.compiler-ir-instr-builder-push!
-                (&mut builder)
-                (ir.CompilerIrInstr.Phi
-                  phi-var
-                  (opt-ssa-phi-inputs
-                    (opt-pred-map-lookup pred-map label)
-                    outs
-                    var
-                    ty)
-                  ty))
-              unit)])
-        (opt-ssa-push-phis-for-label!
-          pred-map
-          outs
-          (box-get rest)
-          label
-          (&mut builder)))]))
+  (opt-ssa-push-phis-for-label-from! pred-map outs sites label (&mut builder) 0))
 
 (define (opt-ssa-materialize-blocks
   [blocks : ir.CompilerIrBlockList]

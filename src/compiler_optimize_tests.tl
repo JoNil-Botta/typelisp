@@ -269,6 +269,100 @@
           (compiler_optimize.opt-gvn-lookup type-segment-bases table last-key)
           (- 0 1))))))
 
+(define (opt-dense-test-ssa-sites
+  [sites : compiler_optimize.OptSsaPhiSites (:consume)]
+  [next : i64]
+  [last : i64]) : compiler_optimize.OptSsaPhiSites
+  (if (> next last)
+    sites
+    (opt-dense-test-ssa-sites
+      (compiler_optimize.opt-ssa-phi-sites-prepend
+        sites
+        next
+        (+ 100 next)
+        (compiler_ast_types.AstType.I64)
+        (+ 200 next))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-ssa-site-is?
+  [sites : compiler_optimize.OptSsaPhiSites]
+  [index : i64]
+  [expected : i64]) : bool
+  (match (compiler_optimize.opt-ssa-phi-sites-ref sites index)
+    [(compiler_optimize.OptSsaDenseEntry.PhiSite var label _ phi-var)
+      (and
+        (= var expected)
+        (= label (+ 100 expected))
+        (= phi-var (+ 200 expected)))]
+    [_ false]))
+
+(define (opt-dense-test-ssa-rename-blocks
+  [blocks : compiler_optimize.OptSsaRenameBlocks (:consume)]
+  [next : i64]
+  [last : i64]) : compiler_optimize.OptSsaRenameBlocks
+  (if (> next last)
+    blocks
+    (opt-dense-test-ssa-rename-blocks
+      (compiler_optimize.opt-ssa-rename-blocks-prepend
+        blocks
+        next
+        (compiler_ir_types.CompilerIrInstrList.Nil))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-ssa-rename-block-newest?
+  [blocks : compiler_optimize.OptSsaRenameBlocks]) : bool
+  (match (compiler_optimize.opt-ssa-rename-blocks-lookup blocks 4)
+    [(compiler_ir_types.CompilerIrInstrList.Cons instr _)
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.Return _) true]
+        [_ false])]
+    [_ false]))
+
+(define (opt-dense-test-ssa-rename-block-is?
+  [blocks : compiler_optimize.OptSsaRenameBlocks]
+  [index : i64]
+  [expected-label : i64]) : bool
+  (match (compiler_optimize.opt-ssa-rename-blocks-ref blocks index)
+    [(compiler_optimize.OptSsaDenseEntry.RenameBlock label _)
+      (= label expected-label)]
+    [_ false]))
+
+(define (opt-dense-test-ssa-block-outs
+  [outs : compiler_optimize.OptSsaBlockOuts (:consume)]
+  [next : i64]
+  [last : i64]) : compiler_optimize.OptSsaBlockOuts
+  (if (> next last)
+    outs
+    (opt-dense-test-ssa-block-outs
+      (compiler_optimize.opt-ssa-block-outs-prepend
+        outs
+        next
+        (compiler_optimize.opt-ssa-env-bind
+          (compiler_optimize.OptSsaRenameEnv.Nil)
+          next
+          (+ 1000 next)))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-ssa-block-out-newest?
+  [outs : compiler_optimize.OptSsaBlockOuts]) : bool
+  (match (compiler_optimize.opt-ssa-env-lookup
+    (compiler_optimize.opt-ssa-block-out-lookup outs 4)
+    99)
+    [(option_i64.Some current) (= current 123)]
+    [(option_i64.None) false]))
+
+(define (opt-dense-test-ssa-block-out-is?
+  [outs : compiler_optimize.OptSsaBlockOuts]
+  [index : i64]
+  [expected-label : i64]) : bool
+  (match (compiler_optimize.opt-ssa-block-outs-ref outs index)
+    [(compiler_optimize.OptSsaDenseEntry.BlockOut label _)
+      (= label expected-label)]
+    [_ false]))
+
 (define (compiler-optimize-dense-storage-self-test) : i64
   (let
     [type-segment-bases : i64
@@ -339,6 +433,41 @@
         (compiler_optimize.opt-global-pack-word-facts-new)
         1
         8)]
+    [ssa-sites : compiler_optimize.OptSsaPhiSites
+      (compiler_optimize.opt-ssa-phi-sites-prepend
+        (opt-dense-test-ssa-sites (compiler_optimize.opt-ssa-phi-sites-new) 1 8)
+        4
+        104
+        (compiler_ast_types.AstType.I64)
+        204)]
+    [ssa-sites-empty : compiler_optimize.OptSsaPhiSites
+      (compiler_optimize.opt-ssa-phi-sites-new)]
+    [ssa-renamed-independent : compiler_optimize.OptSsaRenameBlocks
+      (compiler_optimize.opt-ssa-rename-blocks-new)]
+    [ssa-renamed : compiler_optimize.OptSsaRenameBlocks
+      (compiler_optimize.opt-ssa-rename-blocks-prepend
+        (opt-dense-test-ssa-rename-blocks
+          (compiler_optimize.opt-ssa-rename-blocks-new)
+          1
+          8)
+        4
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.No))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))]
+    [ssa-outs-independent : compiler_optimize.OptSsaBlockOuts
+      (compiler_optimize.opt-ssa-block-outs-new)]
+    [ssa-outs : compiler_optimize.OptSsaBlockOuts
+      (compiler_optimize.opt-ssa-block-outs-prepend
+        (opt-dense-test-ssa-block-outs
+          (compiler_optimize.opt-ssa-block-outs-new)
+          1
+          8)
+        4
+        (compiler_optimize.opt-ssa-env-bind
+          (compiler_optimize.OptSsaRenameEnv.Nil)
+          99
+          123))]
     [var-defs : (__tl_dyn-array compiler_optimize.OptMaybeVarDef)
       (compiler_optimize.opt-var-defs-index
         (compiler_ir_types.compiler-ir-param-cons
@@ -500,6 +629,46 @@
           [(compiler_ir_types.CompilerIrMaybeValue.No) true])
         30]
       [(not (opt-dense-test-gvn-scope-rollback? type-segment-bases)) 31]
+      [(not (= (compiler_optimize.opt-ssa-phi-sites-count ssa-sites-empty) 0))
+        32]
+      [(not (= (compiler_optimize.opt-ssa-phi-sites-count ssa-sites) 9)) 33]
+      [(not (opt-dense-test-ssa-site-is? ssa-sites 0 4)) 34]
+      [(not (opt-dense-test-ssa-site-is? ssa-sites 1 8)) 35]
+      [(not (opt-dense-test-ssa-site-is? ssa-sites 8 1)) 36]
+      [(not (= (compiler_optimize.opt-ssa-rename-blocks-count ssa-renamed) 9))
+        37]
+      [(not
+          (=
+            (compiler_optimize.opt-ssa-rename-blocks-count
+              ssa-renamed-independent)
+            0))
+        38]
+      [(compiler_optimize.opt-ssa-rename-blocks-contains?
+          ssa-renamed-independent
+          1)
+        39]
+      [(not (compiler_optimize.opt-ssa-rename-blocks-contains? ssa-renamed 1))
+        40]
+      [(not (compiler_optimize.opt-ssa-rename-blocks-contains? ssa-renamed 8))
+        41]
+      [(not (opt-dense-test-ssa-rename-block-newest? ssa-renamed)) 43]
+      [(not (opt-dense-test-ssa-rename-block-is? ssa-renamed 1 8)) 44]
+      [(not (opt-dense-test-ssa-rename-block-is? ssa-renamed 8 1)) 45]
+      [(not (= (compiler_optimize.opt-ssa-block-outs-count ssa-outs) 9)) 46]
+      [(not
+          (=
+            (compiler_optimize.opt-ssa-block-outs-count ssa-outs-independent)
+            0))
+        47]
+      [(not (opt-dense-test-ssa-block-out-newest? ssa-outs)) 48]
+      [(not (opt-dense-test-ssa-block-out-is? ssa-outs 1 8)) 49]
+      [(not (opt-dense-test-ssa-block-out-is? ssa-outs 8 1)) 50]
+      [(match (compiler_optimize.opt-ssa-env-lookup
+          (compiler_optimize.opt-ssa-block-out-lookup ssa-outs-independent 1)
+          1)
+          [(option_i64.Some _) true]
+          [(option_i64.None) false])
+        51]
       [else 42])))
 
 ;; --- self-test ---------------------------------------------------------------

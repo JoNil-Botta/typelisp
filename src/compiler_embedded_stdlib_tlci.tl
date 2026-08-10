@@ -67,6 +67,54 @@
 (define compiler-embedded-stdlib-tlci-session-error : (__tl_dyn-array String)
   (make-array ""))
 
+;; #5926: bounded lifecycle evidence for the production-route stress compiler.
+;; These cells are absent from ordinary/published builds. They count successful
+;; image maps, releases, and callback-host sessions across compile --batch pool
+;; resets; paired canaries make the durable checkpoint fail closed if the old
+;; sustained-dispatch corruption reaches adjacent compiler globals.
+(cfg
+  tlci-native-route-stress
+  (define compiler-embedded-stdlib-tlci-stress-image-generations : i64
+    0))
+(cfg
+  tlci-native-route-stress
+  (define compiler-embedded-stdlib-tlci-stress-release-generations : i64
+    0))
+(cfg
+  tlci-native-route-stress
+  (define compiler-embedded-stdlib-tlci-stress-session-generations : i64
+    0))
+(cfg
+  tlci-native-route-stress
+  (define compiler-embedded-stdlib-tlci-stress-canary-a : i64
+    610839776))
+(cfg
+  tlci-native-route-stress
+  (define compiler-embedded-stdlib-tlci-stress-canary-b : i64
+    270544960))
+
+(cfg
+  tlci-native-route-stress
+  (define (compiler-embedded-stdlib-tlci-stress-image-generation) : i64
+    compiler-embedded-stdlib-tlci-stress-image-generations))
+
+(cfg
+  tlci-native-route-stress
+  (define (compiler-embedded-stdlib-tlci-stress-release-generation) : i64
+    compiler-embedded-stdlib-tlci-stress-release-generations))
+
+(cfg
+  tlci-native-route-stress
+  (define (compiler-embedded-stdlib-tlci-stress-session-generation) : i64
+    compiler-embedded-stdlib-tlci-stress-session-generations))
+
+(cfg
+  tlci-native-route-stress
+  (define (compiler-embedded-stdlib-tlci-stress-canaries-ok?) : bool
+    (and
+      (= compiler-embedded-stdlib-tlci-stress-canary-a 610839776)
+      (= compiler-embedded-stdlib-tlci-stress-canary-b 270544960))))
+
 (define (compiler-embedded-stdlib-tlci-session-image-shared-view) : (__tl_dyn-array
     loader.TlciLoadedImage)
   (cfg
@@ -228,6 +276,11 @@
                   compiler-embedded-stdlib-tlci-session-image
                   0
                   loaded)
+                (cfg
+                  tlci-native-route-stress
+                  (set!
+                    compiler-embedded-stdlib-tlci-stress-image-generations
+                    (+ compiler-embedded-stdlib-tlci-stress-image-generations 1)))
                 (array-set! compiler-embedded-stdlib-tlci-session-state 0 1)
                 true)]))])))
 
@@ -283,12 +336,18 @@
       (array-set! compiler-embedded-stdlib-tlci-session-state 0 0)
       (array-set! compiler-embedded-stdlib-tlci-session-error 0 "")
       (if (= state 1)
-        (match (loader.tlci-loader-release
-          (array-ref
-            (compiler-embedded-stdlib-tlci-session-image-shared-view)
-            0))
-          [(loader.ResultTlciLoaderUnit.Ok) unit]
-          [(loader.ResultTlciLoaderUnit.Err _) unit])
+        (begin
+          (match (loader.tlci-loader-release
+            (array-ref
+              (compiler-embedded-stdlib-tlci-session-image-shared-view)
+              0))
+            [(loader.ResultTlciLoaderUnit.Ok) unit]
+            [(loader.ResultTlciLoaderUnit.Err _) unit])
+          (cfg
+            tlci-native-route-stress
+            (set!
+              compiler-embedded-stdlib-tlci-stress-release-generations
+              (+ compiler-embedded-stdlib-tlci-stress-release-generations 1))))
         unit))))
 
 ;; Map the embedded image through the production W^X loader, execute its image
@@ -428,6 +487,11 @@
   [cookie : i64]
   [reflections : ctfe_support.CtfeReflectInfoList]) : unit
   (begin
+    (cfg
+      tlci-native-route-stress
+      (set!
+        compiler-embedded-stdlib-tlci-stress-session-generations
+        (+ compiler-embedded-stdlib-tlci-stress-session-generations 1)))
     (array-set! compiler-comptime-host-pools 0 pools)
     (array-set! compiler-comptime-host-reflections 0 reflections)
     (let

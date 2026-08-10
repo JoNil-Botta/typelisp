@@ -3461,19 +3461,22 @@
     [(ast.AstMaybeModuleName.No)
       (ResultCompilerLoadModuleId.Ok actual actual-id)]
     [(ast.AstMaybeModuleName.Some want)
-      (if (if (>= actual-id 0)
-        (= want actual-id)
-        (string.eq (ci.intern-str want) actual))
-        (ResultCompilerLoadModuleId.Ok actual actual-id)
-        (ResultCompilerLoadModuleId.Err
-          (box
-            (cdiag.compiler-diagnostic-at-start
-              path
-              (str_cat.str-cat
-                "compiler-load: import expected module "
-                (ci.intern-str want)
-                " but loaded "
-                actual)))))]))
+      (let
+        [checked-actual-id : i64
+          (if (>= actual-id 0)
+            actual-id
+            (compiler-load-parse-context-name-id actual))]
+        (if (= want checked-actual-id)
+          (ResultCompilerLoadModuleId.Ok actual checked-actual-id)
+          (ResultCompilerLoadModuleId.Err
+            (box
+              (cdiag.compiler-diagnostic-at-start
+                path
+                (str_cat.str-cat
+                  "compiler-load: import expected module "
+                  (ci.intern-str want)
+                  " but loaded "
+                  actual))))))]))
 
 (define (compiler-load-no-expected-module? [expected : ast.AstMaybeModuleName]) : bool
   (match expected
@@ -3483,12 +3486,14 @@
 (define (compiler-load-module-fallback-id-for-parse
   [fallback : String]
   [expected : ast.AstMaybeModuleName]) : i64
-  (match expected
-    [(ast.AstMaybeModuleName.Some module-id)
-      (if (string.eq (ci.intern-str module-id) fallback)
-        module-id
-        (compiler-load-parse-context-name-id fallback))]
-    [(ast.AstMaybeModuleName.No) (compiler-load-parse-context-name-id fallback)]))
+  (let
+    [fallback-id : i64 (compiler-load-parse-context-name-id fallback)]
+    (match expected
+      [(ast.AstMaybeModuleName.Some module-id)
+        (if (= module-id fallback-id)
+          module-id
+          fallback-id)]
+      [(ast.AstMaybeModuleName.No) fallback-id])))
 
 (define (compiler-load-parse-identity
   [path : String]
@@ -3646,9 +3651,9 @@
           (set! index (+ index 1))))
       found)))
 
-(define (compiler-load-decl-list-has-module-name?
+(define (compiler-load-decl-list-has-module-id?
   [decls : ast.AstDeclList]
-  [want : String]) : bool
+  [want : i64]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
     [(ast.AstDeclListStep.Cons decl rest)
@@ -3656,18 +3661,16 @@
         [rest : ast.AstDeclList rest]
         (match decl
           [(ast.AstDecl.Module name)
-            (if (string.eq (ci.intern-str name) want)
+            (if (= name want)
               true
-              (compiler-load-decl-list-has-module-name? rest want))]
+              (compiler-load-decl-list-has-module-id? rest want))]
           [(ast.AstDecl.ModuleBody name body-box)
-            (if (string.eq (ci.intern-str name) want)
+            (if (= name want)
               true
               (or
-                (compiler-load-decl-list-has-module-name?
-                  (box-get body-box)
-                  want)
-                (compiler-load-decl-list-has-module-name? rest want)))]
-          [_ (compiler-load-decl-list-has-module-name? rest want)]))]))
+                (compiler-load-decl-list-has-module-id? (box-get body-box) want)
+                (compiler-load-decl-list-has-module-id? rest want)))]
+          [_ (compiler-load-decl-list-has-module-id? rest want)]))]))
 
 (define (compiler-load-decl-list-has-extern-symbol?
   [decls : ast.AstDeclList]
@@ -7719,8 +7722,8 @@
               [target-module : String (ci.intern-str target-module-id)]
               [body : ast.AstDeclList (box-get body-box)]
               (if (or
-                (compiler-load-decl-list-has-module-name? body target-module)
-                (compiler-load-decl-list-has-module-name? rest target-module))
+                (compiler-load-decl-list-has-module-id? body target-module-id)
+                (compiler-load-decl-list-has-module-id? rest target-module-id))
                 (ResultCompilerLoadWithPaths.Err
                   (box
                     (cdiag.compiler-diagnostic-at-start
@@ -12904,8 +12907,12 @@
       (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
-          (compiler-load-decl-list-has-module-name? decls "root_leaf")
-          (compiler-load-decl-list-has-module-name? decls "nested.dep")
+          (compiler-load-decl-list-has-module-id?
+            decls
+            (compiler-load-parse-context-name-id "root_leaf"))
+          (compiler-load-decl-list-has-module-id?
+            decls
+            (compiler-load-parse-context-name-id "nested.dep"))
           (compiler-load-decl-list-has-import-alias? decls "nested.dep" "dep")
           (compiler-load-test-seen-contains? seen "root_leaf")
           (compiler-load-test-seen-contains? seen "nested.dep"))]

@@ -3461,6 +3461,10 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-nest-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-reject-skip-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-reject-skip-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-pipeline-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-pipeline-self-test)
       42)
@@ -3762,6 +3766,13 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-nest-self-test)
     42
     "multi-block versioning admits loop nests under the nest budget"))
+
+(test
+  bce-version-rejection-retires-one-loop
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-reject-skip-self-test)
+    42
+    "a refused versioning retires that loop, not the function's other loops"))
 
 (test
   bce-version-multiblock-pipeline

@@ -49950,34 +49950,64 @@
             (opt-unroll-clone-dst remap cell dst)
             (opt-bce-version-alloc-other-phis remap cell (box-get rest)))])]))
 
+;; A scan's outcome, plus WHICH loop it applied to: the header (single-block
+;; loop label / multi-block loop header) the rewrite belongs to, or
+;; `ir.compiler-ir-label-none` when nothing applied. The driver needs that
+;; label to retire exactly the loop whose rewrite its post-application verify
+;; refused, instead of giving up on the whole function.
+(defenum OptBceVersionScan
+  (Scan ir.CompilerIrBlockList i64 bool i64))
+
 ;; One scan applies at most one versioning; the driver repeats the scan while
 ;; the invocation's budget (opt-loop-apply-budget) lasts, like the unroller.
+;; `rejected` holds the loops this invocation already retired (their rewrite
+;; failed verification); the scan skips them and offers the next candidate.
 (define (opt-bce-version-blocks-scan
   [blocks : ir.CompilerIrBlockList]
   [remaining : ir.CompilerIrBlockList]
   [entry-label : i64]
-  [frame : i64]) : OptUnrollResult
+  [rejected : OptLabelSet]
+  [frame : i64]) : OptBceVersionScan
   (match remaining
-    [(ir.CompilerIrBlockList.Nil) (OptUnrollResult.Result blocks frame false)]
+    [(ir.CompilerIrBlockList.Nil)
+      (OptBceVersionScan.Scan blocks frame false (ir.compiler-ir-label-none))]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (opt-bce-version-block-shape blocks entry-label block)
         [(OptUnrollMaybeShape.Some shape)
-          (match (opt-bce-version-apply blocks block shape frame)
-            [(OptUnrollResult.Result next-blocks next-frame changed)
-              (if changed
-                (OptUnrollResult.Result next-blocks next-frame true)
-                (opt-bce-version-blocks-scan
-                  blocks
-                  (box-get rest)
-                  entry-label
-                  frame))])]
+          (if (opt-label-contains rejected (struct-get shape loop-label))
+            (opt-bce-version-blocks-scan
+              blocks
+              (box-get rest)
+              entry-label
+              rejected
+              frame)
+            (match (opt-bce-version-apply blocks block shape frame)
+              [(OptUnrollResult.Result next-blocks next-frame changed)
+                (if changed
+                  (OptBceVersionScan.Scan
+                    next-blocks
+                    next-frame
+                    true
+                    (struct-get shape loop-label))
+                  (opt-bce-version-blocks-scan
+                    blocks
+                    (box-get rest)
+                    entry-label
+                    rejected
+                    frame))]))]
         [(OptUnrollMaybeShape.No)
-          (opt-bce-version-blocks-scan blocks (box-get rest) entry-label frame)])]
+          (opt-bce-version-blocks-scan
+            blocks
+            (box-get rest)
+            entry-label
+            rejected
+            frame)])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-version-blocks-scan
         blocks
         (ir.compiler-ir-block-seq-to-list seq)
         entry-label
+        rejected
         frame)]))
 
 ;; Cheap prescan: a candidate is a self-loop block that starts with a Phi,
@@ -55414,7 +55444,8 @@
 
 ;; One scan applies at most one multi-block versioning; the driver repeats the
 ;; scan while its invocation budget (opt-loop-apply-budget) lasts, like the
-;; single-block pass.
+;; single-block pass. `rejected` retires the loops whose rewrite this
+;; invocation's verify already refused, keyed by header label.
 (define (opt-bce-mb-loops-scan
   [descriptor : OptBceMbDescriptor]
   [pred-map : OptPredMap]
@@ -55423,35 +55454,54 @@
   [loops : OptNaturalLoopList]
   [entry-label : i64]
   [nested? : bool]
-  [frame : i64]) : OptUnrollResult
+  [rejected : OptLabelSet]
+  [frame : i64]) : OptBceVersionScan
   (match loops
-    [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
+    [(OptNaturalLoopList.Nil)
+      (OptBceVersionScan.Scan blocks frame false (ir.compiler-ir-label-none))]
     [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-bce-mb-loop-shape blocks all-loops entry-label nested? loop)
-        [(OptBceMbMaybeShape.Some shape)
-          (match (opt-bce-mb-apply descriptor pred-map blocks shape frame)
-            [(OptUnrollResult.Result next-blocks next-frame changed)
-              (if changed
-                (OptUnrollResult.Result next-blocks next-frame true)
-                (opt-bce-mb-loops-scan
-                  descriptor
-                  pred-map
-                  blocks
-                  all-loops
-                  (box-get rest)
-                  entry-label
-                  nested?
-                  frame))])]
-        [(OptBceMbMaybeShape.No)
-          (opt-bce-mb-loops-scan
-            descriptor
-            pred-map
-            blocks
-            all-loops
-            (box-get rest)
-            entry-label
-            nested?
-            frame)])]))
+      (if (opt-label-contains rejected (opt-natural-loop-header loop))
+        (opt-bce-mb-loops-scan
+          descriptor
+          pred-map
+          blocks
+          all-loops
+          (box-get rest)
+          entry-label
+          nested?
+          rejected
+          frame)
+        (match (opt-bce-mb-loop-shape blocks all-loops entry-label nested? loop)
+          [(OptBceMbMaybeShape.Some shape)
+            (match (opt-bce-mb-apply descriptor pred-map blocks shape frame)
+              [(OptUnrollResult.Result next-blocks next-frame changed)
+                (if changed
+                  (OptBceVersionScan.Scan
+                    next-blocks
+                    next-frame
+                    true
+                    (struct-get shape header))
+                  (opt-bce-mb-loops-scan
+                    descriptor
+                    pred-map
+                    blocks
+                    all-loops
+                    (box-get rest)
+                    entry-label
+                    nested?
+                    rejected
+                    frame))])]
+          [(OptBceMbMaybeShape.No)
+            (opt-bce-mb-loops-scan
+              descriptor
+              pred-map
+              blocks
+              all-loops
+              (box-get rest)
+              entry-label
+              nested?
+              rejected
+              frame)]))]))
 
 ;; Flat loops first, loop NESTS second. Both phases version the same way (the
 ;; clone group is the natural loop's whole block set, so an inner loop simply
@@ -55468,7 +55518,8 @@
   [blocks : ir.CompilerIrBlockList]
   [all-loops : OptNaturalLoopList]
   [entry-label : i64]
-  [frame : i64]) : OptUnrollResult
+  [rejected : OptLabelSet]
+  [frame : i64]) : OptBceVersionScan
   (match (opt-bce-mb-loops-scan
     descriptor
     pred-map
@@ -55477,10 +55528,11 @@
     all-loops
     entry-label
     false
+    rejected
     frame)
-    [(OptUnrollResult.Result flat-blocks flat-frame flat-changed)
+    [(OptBceVersionScan.Scan flat-blocks flat-frame flat-changed flat-applied)
       (if flat-changed
-        (OptUnrollResult.Result flat-blocks flat-frame true)
+        (OptBceVersionScan.Scan flat-blocks flat-frame true flat-applied)
         (opt-bce-mb-loops-scan
           descriptor
           pred-map
@@ -55489,6 +55541,7 @@
           all-loops
           entry-label
           true
+          rejected
           frame))]))
 
 ;; --- prescan ---------------------------------------------------------------------
@@ -55515,21 +55568,47 @@
 (define (opt-bce-mb-blocks-have-candidate? [blocks : ir.CompilerIrBlockList]) : bool
   (and (opt-bce-mb-blocks-have-check? blocks) (opt-ssa-blocks-have-phi? blocks)))
 
+;; The budgeted driver's post-application verdict. `reject-probe` is
+;; `ir.compiler-ir-label-none` on every production path and no real label
+;; equals it, so this is exactly `opt-verify-function-with-context` there. The
+;; optimizer tests pass one loop's label to force that loop's application to
+;; be refused: both versioners emit rewrites that are correct by construction
+;; (every generated label is proved fresh before the shape is admitted, every
+;; guard operand is proved loop-invariant, and the only new edges are the
+;; guard's and the clone's, whose exit phis the rewrite extends), so the
+;; rejection path has no reachable trigger to exercise it with.
+(define (opt-bce-version-apply-verdict
+  [reject-probe : i64]
+  [applied : i64]
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]) : ResultCompilerOptimizeVerify
+  (if (= reject-probe applied)
+    (ResultCompilerOptimizeVerify.Err
+      "optimizer verify: forced versioning rejection")
+    (opt-verify-function-with-context func context)))
+
 ;; Budgeted multi-application, like the unroller: the single-block scan runs
 ;; first each round and spends from its own budget; when it finds nothing, the
 ;; multi-block scan runs over the natural-loop records with its own budget.
 ;; Every application rebuilds the function around the rewrite and is verified
-;; on its own; a verifier rejection stops the pass with the last verified
-;; state, so a failed loop rolls back whole and never consumes the run (the
-;; single-slot fallback, applied per loop). The generated `__bce_guard` /
-;; `__bce_fast` labels make a versioned loop ineligible to both scans, so
-;; later rounds never re-process it.
+;; on its own; a verifier rejection keeps the last verified state and retires
+;; THAT ONE LOOP for the rest of the invocation (`rejected`, keyed by loop
+;; label / loop header), then rescans. A loop the verifier refuses costs the
+;; function's remaining loops nothing -- which is what merged bodies need,
+;; where one bad loop used to suppress every later one -- and, since a
+;; rejected application consumes no budget, the run still gets its full quota
+;; of accepted rewrites. Each rejection adds a label the scans then skip, so
+;; the retry sequence is bounded by the block count. The generated
+;; `__bce_guard` / `__bce_fast` labels make a versioned loop ineligible to
+;; both scans, so later rounds never re-process it.
 (define (opt-bce-version-function-budget-result
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]
   [single-budget : i64]
-  [mb-budget : i64]) : OptFunctionCtxResult
+  [mb-budget : i64]
+  [rejected : OptLabelSet]
+  [reject-probe : i64]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s current blocks.
   (match func
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -55538,8 +55617,9 @@
           blocks
           blocks
           (opt-cfg-entry-label blocks)
+          rejected
           frame)
-          [(OptUnrollResult.Result next-blocks next-frame changed)
+          [(OptBceVersionScan.Scan next-blocks next-frame changed applied)
             (if changed
               (let
                 [next : ir.CompilerIrFunction
@@ -55551,16 +55631,32 @@
                     next-blocks)]
                 [next-context : OptCfgContext
                   (opt-cfg-context-build next-blocks)]
-                (match (opt-verify-function-with-context next next-context)
+                (match (opt-bce-version-apply-verdict
+                  reject-probe
+                  applied
+                  next
+                  next-context)
                   [(ResultCompilerOptimizeVerify.Ok)
                     (opt-bce-version-function-budget-result
                       type-segment-bases
                       next-context
                       next
                       (- single-budget 1)
-                      mb-budget)]
+                      mb-budget
+                      rejected
+                      reject-probe)]
                   [(ResultCompilerOptimizeVerify.Err _)
-                    (OptFunctionCtxResult.Result func context)]))
+                    ;; Last verified state, minus this one loop: the scan
+                    ;; skips `applied` from here on and offers the next
+                    ;; candidate against the same budget.
+                    (opt-bce-version-function-budget-result
+                      type-segment-bases
+                      context
+                      func
+                      single-budget
+                      mb-budget
+                      (opt-label-add rejected applied)
+                      reject-probe)]))
               ;; no single-block self-loop matched: try multi-block counted
               ;; loops over the natural-loop back edges.
               (opt-bce-mb-function-budget-result
@@ -55568,20 +55664,26 @@
                 context
                 func
                 single-budget
-                mb-budget))])
+                mb-budget
+                rejected
+                reject-probe))])
         (opt-bce-mb-function-budget-result
           type-segment-bases
           context
           func
           single-budget
-          mb-budget))]))
+          mb-budget
+          rejected
+          reject-probe))]))
 
 (define (opt-bce-mb-function-budget-result
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]
   [single-budget : i64]
-  [mb-budget : i64]) : OptFunctionCtxResult
+  [mb-budget : i64]
+  [rejected : OptLabelSet]
+  [reject-probe : i64]) : OptFunctionCtxResult
   (if (<= mb-budget 0)
     (OptFunctionCtxResult.Result func context)
     (match func
@@ -55607,8 +55709,9 @@
             blocks
             loops
             (opt-cfg-entry-label blocks)
+            rejected
             frame)
-            [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
+            [(OptBceVersionScan.Scan mb-blocks mb-frame mb-changed mb-applied)
               (if mb-changed
                 (let
                   [next : ir.CompilerIrFunction
@@ -55620,7 +55723,11 @@
                       mb-blocks)]
                   [next-context : OptCfgContext
                     (opt-cfg-context-build mb-blocks)]
-                  (match (opt-verify-function-with-context next next-context)
+                  (match (opt-bce-version-apply-verdict
+                    reject-probe
+                    mb-applied
+                    next
+                    next-context)
                     [(ResultCompilerOptimizeVerify.Ok)
                       ;; The next round retries the single-block scan first,
                       ;; like the next pipeline iteration would.
@@ -55629,9 +55736,22 @@
                         next-context
                         next
                         single-budget
-                        (- mb-budget 1))]
+                        (- mb-budget 1)
+                        rejected
+                        reject-probe)]
                     [(ResultCompilerOptimizeVerify.Err _)
-                      (OptFunctionCtxResult.Result func context)]))
+                      ;; Retire this loop and rescan the rest. The single-block
+                      ;; scan already came up empty for this `rejected` set and
+                      ;; a retired multi-block header cannot unlock it, so the
+                      ;; retry stays in the multi-block phase.
+                      (opt-bce-mb-function-budget-result
+                        type-segment-bases
+                        context
+                        func
+                        single-budget
+                        mb-budget
+                        (opt-label-add rejected mb-applied)
+                        reject-probe)]))
                 (OptFunctionCtxResult.Result func context))]))])))
 
 (define (opt-bce-version-function-verified-with-context-result
@@ -55646,7 +55766,9 @@
         context
         func
         (opt-loop-apply-budget)
-        (opt-loop-apply-budget))]
+        (opt-loop-apply-budget)
+        (OptLabelSet.Nil)
+        (ir.compiler-ir-label-none))]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -55679,6 +55801,32 @@
         false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
+
+;; Test-only driver: `opt-bce-version-function` with ONE loop's application
+;; forced to fail verification (see `opt-bce-version-apply-verdict`). `probe`
+;; names the loop to refuse; `ir.compiler-ir-label-none` refuses nothing and
+;; reproduces `opt-bce-version-function` exactly. This is what lets the
+;; optimizer tests observe that a refused loop retires alone and the
+;; function's remaining loops still version.
+(define (opt-bce-version-function-reject-probe
+  [func : ir.CompilerIrFunction]
+  [probe : i64]) : ir.CompilerIrFunction
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (let
+        [context : OptCfgContext (opt-cfg-context-build blocks)]
+        (match (opt-verify-function-with-context func context)
+          [(ResultCompilerOptimizeVerify.Ok)
+            (match (opt-bce-version-function-budget-result
+              (- 0 1)
+              context
+              func
+              (opt-loop-apply-budget)
+              (opt-loop-apply-budget)
+              (OptLabelSet.Nil)
+              probe)
+              [(OptFunctionCtxResult.Result next _) next])]
+          [(ResultCompilerOptimizeVerify.Err _) func]))]))
 
 ;; Test entry with type-pool access: descriptor-length recognition is live.
 (define (opt-bce-version-function-with-types

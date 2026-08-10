@@ -29742,6 +29742,276 @@
         18]
       [else 42])))
 
+;; One versioning-shaped self-loop, parameterized so the rejection fixture can
+;; hold two independent ones: counter phi, accumulator phi, one derivable
+;; BoundsCheck on the counter, literal step 1, invariant bound. This is the
+;; `opt-bce-version-test-blocks` variant-1 body, minus the variant switches.
+(define (opt-bce-version-reject-test-loop-block
+  [label : i64]
+  [pred-label : i64]
+  [exit-label : i64]
+  [counter : i64]
+  [acc : i64]
+  [sum : i64]
+  [next : i64]
+  [cond-var : i64]
+  [seed : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        counter
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          pred-label
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var next)
+            label
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          acc
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            seed
+            pred-label
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var sum)
+              label
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            sum
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var acc)
+            (compiler_ir_types.CompilerIrValue.Var counter)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var counter)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "bce_version_ok"))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                next
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var counter)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  cond-var
+                  (compiler_ir_types.CompilerIrBinOp.Lt)
+                  (compiler_ir_types.CompilerIrValue.Var next)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ast_types.AstType.Bool))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var cond-var)
+                    label
+                    exit-label)
+                  (compiler_ir_types.CompilerIrInstrList.Nil))))))))))
+
+;; entry -> reject_loop_a -> reject_mid -> reject_loop_b -> reject_done: two
+;; independent self-loops, each versionable on its own, chained through a
+;; merge block that carries the first loop's accumulator into the second.
+(define (opt-bce-version-reject-test-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "reject_loop_a"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bce-version-reject-test-loop-block
+        (compiler_ir_types.compiler-ir-label "reject_loop_a")
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-label "reject_mid")
+        3
+        4
+        5
+        6
+        7
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "reject_mid")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              8
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "reject_loop_a")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "reject_loop_b"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-version-reject-test-loop-block
+            (compiler_ir_types.compiler-ir-label "reject_loop_b")
+            (compiler_ir_types.compiler-ir-label "reject_mid")
+            (compiler_ir_types.compiler-ir-label "reject_done")
+            9
+            10
+            11
+            12
+            13
+            (compiler_ir_types.CompilerIrValue.Var 8))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "reject_done")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Phi
+                  14
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Var 11)
+                    (compiler_ir_types.compiler-ir-label "reject_loop_b")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 14)))
+                  (compiler_ir_types.CompilerIrInstrList.Nil))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-bce-version-reject-test-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_reject_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    15
+    (opt-bce-version-reject-test-blocks)))
+
+;; A verifier rejection retires ONE loop, not the function.
+;;
+;; Both versioners rebuild the function around each rewrite and verify it on
+;; its own. A refusal used to return the last verified state AND stop, which
+;; cost every remaining loop in the function its versioning -- exactly the
+;; wrong trade in a big merged body. It now retires the refused loop for the
+;; rest of the invocation and rescans, spending no budget on the refusal.
+;;
+;; Every rewrite these passes emit is verified by construction (generated
+;; labels are proved fresh before a shape is admitted, guard operands are
+;; proved loop-invariant, and the only new edges are the guard's and the
+;; clone's, whose exit phis the rewrite extends), so the refusal is forced
+;; here through `opt-bce-version-function-reject-probe`, which names one loop
+;; whose application the driver must refuse.
+(define (compiler-optimize-bce-version-reject-skip-self-test) : i64
+  (let
+    [none : i64 (compiler_ir_types.compiler-ir-label-none)]
+    [loop-a : i64 (compiler_ir_types.compiler-ir-label "reject_loop_a")]
+    [loop-b : i64 (compiler_ir_types.compiler-ir-label "reject_loop_b")]
+    [fast-a : i64
+      (compiler_ir_types.compiler-ir-label "reject_loop_a__bce_fast")]
+    [fast-b : i64
+      (compiler_ir_types.compiler-ir-label "reject_loop_b__bce_fast")]
+    ;; No probe: the driver behaves exactly as the production entry does.
+    [both : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function-reject-probe
+        (opt-bce-version-reject-test-function)
+        none)]
+    [both-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks both)]
+    [plain-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-version-reject-test-function)))]
+    ;; The FIRST loop's application is refused: the second must still version.
+    [skip-a : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function-reject-probe
+        (opt-bce-version-reject-test-function)
+        loop-a)]
+    [skip-a-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks skip-a)]
+    ;; ... and symmetrically for the second loop.
+    [skip-b : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function-reject-probe
+        (opt-bce-version-reject-test-function)
+        loop-b)]
+    [skip-b-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks skip-b)]
+    ;; The multi-block arm, on the nest fixture whose inner loop versions
+    ;; first: refusing the inner loop must hand the slot to the outer nest,
+    ;; which is versionable exactly because the inner one did not take it.
+    [nest-inner : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function-reject-probe
+          (opt-bce-mb-test-nest-function 1 0)
+          none))]
+    [nest-skip : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function-reject-probe
+        (opt-bce-mb-test-nest-function 1 0)
+        (compiler_ir_types.compiler-ir-label "inner_header"))]
+    [nest-skip-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks nest-skip)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function both)))
+        1]
+      ;; entry + two guards + two fast clones + two slow loops + mid + done
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count both-out) 9)) 2]
+      [(not (opt-block-list-has-label? both-out fast-a)) 3]
+      [(not (opt-block-list-has-label? both-out fast-b)) 4]
+      ;; an unprobed run is the production entry, block for block
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count plain-out) 9)) 5]
+      [(not (opt-block-list-has-label? plain-out fast-a)) 6]
+      [(not (opt-block-list-has-label? plain-out fast-b)) 7]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function skip-a)))
+        8]
+      ;; the refused loop is untouched ...
+      [(opt-block-list-has-label? skip-a-out fast-a) 9]
+      [(not (= (opt-bce-version-test-block-checks skip-a-out loop-a) 1)) 10]
+      ;; ... and the OTHER loop still versioned: the whole point.
+      [(not (opt-block-list-has-label? skip-a-out fast-b)) 11]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count skip-a-out) 7))
+        12]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function skip-b)))
+        13]
+      [(opt-block-list-has-label? skip-b-out fast-b) 14]
+      [(not (opt-block-list-has-label? skip-b-out fast-a)) 15]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count skip-b-out) 7))
+        16]
+      ;; unprobed multi-block control: the inner loop takes the slot.
+      [(not
+          (opt-block-list-has-label?
+            nest-inner
+            (compiler_ir_types.compiler-ir-label "inner_header__bce_guard")))
+        17]
+      [(opt-block-list-has-label?
+          nest-inner
+          (compiler_ir_types.compiler-ir-label "body__bce_guard"))
+        18]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function nest-skip)))
+        19]
+      [(opt-block-list-has-label?
+          nest-skip-out
+          (compiler_ir_types.compiler-ir-label "inner_header__bce_guard"))
+        20]
+      ;; the refused inner loop did not cost the enclosing nest its versioning
+      [(not
+          (opt-block-list-has-label?
+            nest-skip-out
+            (compiler_ir_types.compiler-ir-label "body__bce_guard")))
+        21]
+      [(not
+          (opt-block-list-has-label?
+            nest-skip-out
+            (compiler_ir_types.compiler-ir-label "inner_header__bce_fast")))
+        22]
+      [else 42])))
+
 ;; Partial versioning: the swap check's store+1 index does not derive, but the
 ;; body's counter check does -- the loop versions, the fast clone drops only
 ;; the counter check and KEEPS the swap check (remapped).

@@ -1151,9 +1151,14 @@ fi
 # brings the combined tree back to 31 segments: the authoritative Windows probe
 # measured 2,008,157 used nodes, 2,031,616 capacity, and 65,011,712 physical
 # payload bytes.
-# #6277's function-owned backend scratch context crossed that boundary from 31
-# to 32 segments: the authoritative Windows CI probe measured 2,031,667 used
-# nodes, 2,097,152 capacity, and 67,108,864 physical payload bytes.
+# #6277's function-owned backend scratch context crossed the expr typecheck
+# boundary from 31 to 32 segments: the authoritative Windows CI probe measured
+# 2,031,667 used nodes, 2,097,152 capacity, and 67,108,864 physical payload
+# bytes.
+# #5493's removal of the splice-tail rebuild plans and filtered-environment
+# walkers brings ast_type_pool.macro_expand back from 24 to 23 segments: the
+# authoritative Windows probe measured 22,788 used nodes, 23,552 capacity, and
+# 565,248 physical payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1203,6 +1208,55 @@ if [ "$NL_HOST_OS" = windows ]; then
         1 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    # The marker path used to rebuild 51 filtered source tails and allocate
+    # about 39 MiB on this probe. Every marker batch now flushes a delta cache
+    # plus its unresolved-signature index; no tail build or conservative
+    # fallback may hide equivalent work.
+    assert_profile_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_sp_envbuild_calls" \
+        0 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_sp_envbuild_alloc_kb" \
+        0 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_splice_env_fallbacks" \
+        0 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_counter_at_least_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_sp_reresolve_calls" \
+        1 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_counter_at_least_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_splice_env_reresolve_updates" \
+        1 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    # The cache-local candidate scan revisits only unresolved signatures, and
+    # direct signature reconstruction stays below the removed ~39 MiB
+    # tail-build bucket.
+    assert_profile_counter_at_least_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_splice_env_reresolve_candidates" \
+        1 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_counter_at_most_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_sp_reresolve_alloc_kb" \
+        25000 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
     # are derived, so a source-size step is a one-number edit and the three
     # views cannot drift apart. Expr nodes are 32 bytes in segments of 65536
@@ -1221,7 +1275,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool typecheck 8 1024 24 \
@@ -2703,6 +2757,28 @@ assert_profile_counter_at_least_in \
 assert_profile_counter_eq_in \
     "$CTFE_SPLICE_STDERR" \
     "typecheck.macro.walk_splice_ctfe_cache_unavailable" \
+    0 \
+    "$CTFE_SPLICE_STDOUT" \
+    "$CTFE_SPLICE_STDERR"
+# Top-env maintenance follows the same additive splice contract. The fixture
+# covers ordinary Decls, a generated Module, and a materialized source file;
+# each must use the cache-local unresolved-signature index and never take a
+# whole-tail fallback.
+assert_profile_counter_at_least_in \
+    "$CTFE_SPLICE_STDERR" \
+    "typecheck.macro.walk_splice_env_reresolve_calls" \
+    1 \
+    "$CTFE_SPLICE_STDOUT" \
+    "$CTFE_SPLICE_STDERR"
+assert_profile_counter_at_least_in \
+    "$CTFE_SPLICE_STDERR" \
+    "typecheck.macro.walk_splice_env_reresolve_candidates" \
+    1 \
+    "$CTFE_SPLICE_STDOUT" \
+    "$CTFE_SPLICE_STDERR"
+assert_profile_counter_eq_in \
+    "$CTFE_SPLICE_STDERR" \
+    "typecheck.macro.walk_splice_env_fallbacks" \
     0 \
     "$CTFE_SPLICE_STDOUT" \
     "$CTFE_SPLICE_STDERR"

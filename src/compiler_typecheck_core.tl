@@ -105,6 +105,11 @@
   (chain-prev (__tl_dyn-array i64))
   (ids tc_i64_i64_map.Map)
   (values (__tl_dyn-array ast.AstType))
+  ;; Only top-env signatures that still contain Var/VarArgs can change after
+  ;; an additive splice. Explicit layers fuse that shrinking candidate-name
+  ;; list into the tail of `unsafe-flags`: [flags x capacity, live count,
+  ;; names x capacity]. The existing `ids` map recovers each value slot. This
+  ;; keeps the hot cache record at its original width.
   (unsafe-flags (__tl_dyn-array i64))
   (c-abi-fnptr-flags (__tl_dyn-array i64))
   (shadow-flags (__tl_dyn-array i64))
@@ -4185,8 +4190,8 @@
   (define (compiler-tc-walk-decl-sample-note! [kind : i64]) : unit
     (set! compiler-tc-walk-decl-sample-kind kind)))
 
-;; Splice sub-kind buckets: 4 = marker-only import with deferred refresh,
-;; 5 = marker-only import with the full top-env refresh, 6 = forced inline
+;; Splice sub-kind buckets: 4 = marker-only import batched without a cache,
+;; 5 = marker-only import that flushes the additive cache batch, 6 = forced inline
 ;; splice, 7 = generated-normal-import materialization. Kind 3 remains the
 ;; placeholder arm's default (empty expansions and any path that noted
 ;; nothing more specific).
@@ -4367,38 +4372,63 @@
   (define compiler-tc-walk-splice-ctfe-clear-file : i64
     0))
 
+;; Additive top-env splice accounting. Candidates are unresolved cache entries
+;; revisited against a new symbol surface, updates are entries whose type
+;; changed, and remaining is the unresolved set retained for a later surface.
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-env-reresolve-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-env-reresolve-candidates : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-env-reresolve-updates : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-env-reresolve-remaining : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-env-fallbacks : i64
+    0))
+
 ;; Marker-path sub-probe: 0 = whole-program list copies + context build,
 ;; 1 = macro-extend-top-env-with-module-marker, 2 = the env cache layer,
-;; 3 = tc-build-top-env-list-explicit-in-module. Array-indexed accumulators
+;; 3 = bounded fallback tail build, 4 = unresolved-signature re-resolution.
+;; Array-indexed accumulators
 ;; (plain globals, allocated at process init like the reinfer site arrays).
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-ns : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-alloc : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-live : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-calls : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-start-ns : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-start-alloc : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-start-live : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 
 (cfg
   compile-profile
@@ -6179,7 +6209,12 @@
       (set! compiler-tc-walk-splice-ctfe-capacity-grows 0)
       (set! compiler-tc-walk-splice-ctfe-cache-unavailable 0)
       (set! compiler-tc-walk-splice-ctfe-clear-ordinary 0)
-      (set! compiler-tc-walk-splice-ctfe-clear-file 0))))
+      (set! compiler-tc-walk-splice-ctfe-clear-file 0)
+      (set! compiler-tc-walk-splice-env-reresolve-calls 0)
+      (set! compiler-tc-walk-splice-env-reresolve-candidates 0)
+      (set! compiler-tc-walk-splice-env-reresolve-updates 0)
+      (set! compiler-tc-walk-splice-env-reresolve-remaining 0)
+      (set! compiler-tc-walk-splice-env-fallbacks 0))))
 
 (cfg
   compile-profile
@@ -7100,28 +7135,28 @@
         "walk_rewalk_provenance_skips"
         compiler-tc-walk-rewalk-provenance-skips)
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_defer_us"
+        "walk_decl_sp_batch_us"
         (/ compiler-tc-walk-decl-sp-defer-ns 1000))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_defer_alloc_kb"
+        "walk_decl_sp_batch_alloc_kb"
         (/ compiler-tc-walk-decl-sp-defer-alloc 1024))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_defer_live_kb"
+        "walk_decl_sp_batch_live_kb"
         (/ compiler-tc-walk-decl-sp-defer-live 1024))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_defer_count"
+        "walk_decl_sp_batch_count"
         compiler-tc-walk-decl-sp-defer-count)
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_refresh_us"
+        "walk_decl_sp_flush_us"
         (/ compiler-tc-walk-decl-sp-refresh-ns 1000))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_refresh_alloc_kb"
+        "walk_decl_sp_flush_alloc_kb"
         (/ compiler-tc-walk-decl-sp-refresh-alloc 1024))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_refresh_live_kb"
+        "walk_decl_sp_flush_live_kb"
         (/ compiler-tc-walk-decl-sp-refresh-live 1024))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_refresh_count"
+        "walk_decl_sp_flush_count"
         compiler-tc-walk-decl-sp-refresh-count)
       (compiler-tc-macro-counter-profile-line
         "walk_decl_sp_inline_us"
@@ -7214,6 +7249,21 @@
         "walk_splice_prescan_resets"
         compiler-tc-walk-splice-prescan-resets)
       (compiler-tc-macro-counter-profile-line
+        "walk_splice_env_reresolve_calls"
+        compiler-tc-walk-splice-env-reresolve-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_env_reresolve_candidates"
+        compiler-tc-walk-splice-env-reresolve-candidates)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_env_reresolve_updates"
+        compiler-tc-walk-splice-env-reresolve-updates)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_env_reresolve_remaining"
+        compiler-tc-walk-splice-env-reresolve-remaining)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_env_fallbacks"
+        compiler-tc-walk-splice-env-fallbacks)
+      (compiler-tc-macro-counter-profile-line
         "walk_sp_copy_us"
         (/ (array-ref compiler-tc-walk-sp-probe-ns 0) 1000))
       (compiler-tc-macro-counter-profile-line
@@ -7261,6 +7311,18 @@
       (compiler-tc-macro-counter-profile-line
         "walk_sp_envbuild_calls"
         (array-ref compiler-tc-walk-sp-probe-calls 3))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_reresolve_us"
+        (/ (array-ref compiler-tc-walk-sp-probe-ns 4) 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_reresolve_alloc_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-alloc 4) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_reresolve_live_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-live 4) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_reresolve_calls"
+        (array-ref compiler-tc-walk-sp-probe-calls 4))
       (compiler-tc-reinfer-profile-emit)
       (compiler-tc-body-fact-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
@@ -7927,10 +7989,11 @@
     (ptr-read ,cache-ptr)))
 
 ;; Physical byte offsets in TcTypeEnvCache after the four-word chain prefix:
-;; ids=32 (the map is inline and 24 bytes), values=56, scalar lanes=64/72/80,
-;; flags=88/89, and rest/below=96/104.  Keep these literals paired with the
-;; raw-layout smoke and cache behavior tests; `offset-of` currently treats the
-;; inline map as one word and therefore under-reports every following field.
+;; ids=32 (the map is inline and 24 bytes), values=56, sidecar arrays=64/72/80,
+;; flags=88/89, and rest/below=96/104. Keep these literals paired with the
+;; raw-layout smoke and
+;; cache behavior tests; `offset-of` currently treats the inline map as one word
+;; and therefore under-reports every following field.
 (defmacro (tc-type-env-cache-field-at
   [cache-ptr : comptime.Expr]
   [byte-offset : comptime.Expr]
@@ -10895,6 +10958,7 @@
   [env : TcTypeEnv]
   [ids : tc_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array ast.AstType)]
+  [track-resolution : bool]
   [unsafe-flags : (__tl_dyn-array i64)]
   [c-abi-fnptr-flags : (__tl_dyn-array i64)]
   [shadow-flags : (__tl_dyn-array i64)]
@@ -10904,6 +10968,7 @@
     [head : i64 (struct-get env head)]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
+    [resolution-next : i64 0]
     [position : i64 0]
     [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
     [region-marker-id : i64 (tc-region-marker-id)]
@@ -10953,7 +11018,16 @@
                     ordinary-arena-marker-id
                     atomic-arena-marker-id)
                   position)
-                  (set! next (+ next 1))
+                  (begin
+                    (if (and track-resolution (tc-type-needs-resolution? ty))
+                      (begin
+                        (array-set!
+                          unsafe-flags
+                          (+ (array.length values) 1 resolution-next)
+                          name-id)
+                        (set! resolution-next (+ resolution-next 1)))
+                      unit)
+                    (set! next (+ next 1)))
                   unit)
                 (let
                   [marker-lifetime-id : i64
@@ -10991,6 +11065,11 @@
                     store-handle
                     (tc-type-env-cache-index head)))]
               (set! head (struct-get cache rest)))]))
+      ;; The final slot is a construction-only handoff to the cache node. It
+      ;; avoids a second result aggregate around the consuming map.
+      (if track-resolution
+        (array-set! unsafe-flags (array.length values) resolution-next)
+        unit)
       cur-ids)))
 
 (define (tc-env-cache-fill-prefix
@@ -10998,6 +11077,7 @@
   [remaining : i64]
   [ids : tc_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array ast.AstType)]
+  [track-resolution : bool]
   [unsafe-flags : (__tl_dyn-array i64)]
   [c-abi-fnptr-flags : (__tl_dyn-array i64)]
   [shadow-flags : (__tl_dyn-array i64)]
@@ -11008,6 +11088,7 @@
     [left : i64 remaining]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
+    [resolution-next : i64 0]
     [position : i64 0]
     [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
     [region-marker-id : i64 (tc-region-marker-id)]
@@ -11054,7 +11135,16 @@
                     ordinary-arena-marker-id
                     atomic-arena-marker-id)
                   position)
-                  (set! next (+ next 1))
+                  (begin
+                    (if (and track-resolution (tc-type-needs-resolution? ty))
+                      (begin
+                        (array-set!
+                          unsafe-flags
+                          (+ (array.length values) 1 resolution-next)
+                          name-id)
+                        (set! resolution-next (+ resolution-next 1)))
+                      unit)
+                    (set! next (+ next 1)))
                   unit)
                 (let
                   [marker-lifetime-id : i64
@@ -11101,12 +11191,15 @@
                 (set! head (struct-get cache rest))
                 (set! done true)))]
           [else (set! done true)]))
+      (if track-resolution
+        (array-set! unsafe-flags (array.length values) resolution-next)
+        unit)
       cur-ids)))
 
 ;; --- structural index over the explicit top-env layer forest -----------------
 ;;
-;; `tc-env-with-cache-layer-over-explicit` pushes one immutable explicit layer
-;; per module extension / splice refresh, each layer's `below` being the layer
+;; `tc-env-with-cache-layer-over-explicit` pushes one explicit layer per module
+;; extension / additive splice, each layer's `below` being the layer
 ;; it extends. A self-compile builds 343 such layers over 2 explicit roots, and
 ;; because splices and module extensions re-extend older base snapshots the
 ;; result is a FOREST, not a stack (measured: 214 of 343 pushes did not sit on
@@ -11134,7 +11227,7 @@
 ;;
 ;; No value is ever copied into the index: a reference is (layer node address,
 ;; slot), and every payload read goes to that layer's live arrays. This is what
-;; keeps `tc-top-env-reresolve-cache-layer!` (issue #6268) sound -- it rewrites
+;; keeps `tc-top-env-reresolve-cache-node!` (issue #5493) sound -- it rewrites
 ;; `values` in place and never touches `ids`, so a re-resolved signature is
 ;; observed identically through the index and through the walk. The index is
 ;; append-only and is extended only where a layer is created, so nothing has to
@@ -11514,7 +11607,12 @@
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (__tl_dyn-array ast.AstType)
         (array.make-array ast.AstType capacity)]
-      [unsafe-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [unsafe-flags : (__tl_dyn-array i64)
+        (array.make-array
+          i64
+          (if scan-through
+            capacity
+            (+ (* capacity 2) 1)))]
       [c-abi-fnptr-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
@@ -11522,6 +11620,7 @@
           env
           (tc_i64_i64_map.with-capacity capacity)
           values
+          (not scan-through)
           unsafe-flags
           c-abi-fnptr-flags
           shadow-flags
@@ -11576,7 +11675,12 @@
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (__tl_dyn-array ast.AstType)
         (array.make-array ast.AstType capacity)]
-      [unsafe-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [unsafe-flags : (__tl_dyn-array i64)
+        (array.make-array
+          i64
+          (if scan-through
+            capacity
+            (+ (* capacity 2) 1)))]
       [c-abi-fnptr-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
@@ -11585,6 +11689,7 @@
           count
           (tc_i64_i64_map.with-capacity capacity)
           values
+          (not scan-through)
           unsafe-flags
           c-abi-fnptr-flags
           shadow-flags
@@ -31177,7 +31282,7 @@
     ;; A whole-program rebuild replaces the active declaration view. Rebuild
     ;; the compact value-signature index from that same view so declarations
     ;; removed by a non-inert splice cannot survive as stale reflection hits.
-    ;; Incremental Extend/Refresh plans bypass this entry and update the index
+    ;; Incremental Extend plans bypass this entry and update the index
     ;; as they bind only their additive/refreshed declarations.
     (ctfe_support.ctfe-module-value-reset!)
     ;; Expanded declarations retain their source aliases after lazy imports are
@@ -31250,7 +31355,9 @@
 ;; Append-only env extension (plan P2). Given the live top-env and a materialized
 ;; module's export-summary (its decl list: `(module NAME)` header + generated
 ;; body, as recorded in the P1 memo), fold that module's exported symbols into the
-;; env without a whole-program rebuild. This is the incremental counterpart of
+;; env without a whole-program rebuild. The caller folds the generated module's
+;; import marker into the same raw prefix and publishes one cache layer for the
+;; combined delta. This is the incremental counterpart of
 ;; tc-build-top-env: because generated splices are additive/inert (they introduce
 ;; new names in their own module namespace and never redefine existing ones, see
 ;; macro-decl-cannot-fire? / the inert-splice arm), extending the env with a module
@@ -31270,8 +31377,7 @@
         top-env
         ""
         cbi.compiler-builtin-id-fix-empty)
-        [(ResultTcEnv.Ok next-env)
-          (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit next-env))]
+        [(ResultTcEnv.Ok next-env) (ResultTcEnv.Ok next-env)]
         [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
 
 ;; Most module-owned values are uniquely named and can resolve through their
@@ -77243,16 +77349,14 @@
   (Ok TcContext TcTypeEnv)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-;; A generated module is additive: its canonical declarations live in a fresh
-;; module namespace and its trailing marker only imports that module into the
-;; caller. Keep the already-built top env and fold those two pieces into it.
-;; Arbitrary Decls splices re-resolve stale cached signatures and refresh their
-;; local source tail. Freshly loaded files retain the conservative whole-program
-;; rebuild because their imports can alter arbitrary module alias surfaces.
+;; Every forced splice is additive. Ordinary Decls and loaded-file deltas bind
+;; only their new declarations; generated modules additionally bind their
+;; isolated summary and trailing import marker. Existing unresolved signatures
+;; are re-resolved through the cache-local candidate index before one delta
+;; cache layer is published. No plan carries or scans the remaining source tail.
 (defenum MacroSpliceEnvPlan
-  (Rebuild)
-  (Refresh TcTypeEnv ast.AstDeclList ast.AstDeclList)
-  (Extend TcTypeEnv ast.AstDeclList ast.AstDeclList ast.AstDeclList))
+  (Extend TcTypeEnv ast.AstDeclList)
+  (ExtendGeneratedModule TcTypeEnv ast.AstDeclList ast.AstDeclList))
 
 (defenum MacroMaybeGeneratedModuleExtension
   (No)
@@ -79654,48 +79758,6 @@
               (arena.tl_arena_set enclosing))
             program))))
     (ast.ast-program decls)))
-
-;; R3-P2: the per-splice refresh list is a `|rest|`-sized declaration copy that
-;; is read exactly once, by the top-env rebuild of the splice that built it, so
-;; it belongs in the splice-view generation like every other per-splice backing
-;; array. All four call sites run after their splice's
-;; `macro-splice-view-arena-begin!`, so the list is released two splices later,
-;; long after its only consumer has returned. Built into the NON-generational
-;; `macro-expand-scratch-arena` instead, these copies accumulated for the whole
-;; walk: 25.9 MB still resident at `typecheck.macro_scratch_release` on the
-;; opt1 self-compile, over 94 splices.
-;;
-;; The consumers (`tc-build-top-env-list-explicit-in-module` and
-;; `tc-refresh-top-env-for-splice`) read declarations out of the list and bind
-;; types resolved through POOL ids; nothing they retain points at this slot
-;; array. They also run with the enclosing arena restored, so the env spines
-;; they build still land in the macro arena, not in the view generation.
-(define (macro-scratch-decl-list-filter-path
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [wanted-path : String]) : ast.AstDeclList
-  (if macro-expand-scratch-enabled
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64
-        (if (= macro-splice-view-arena 0)
-          (macro-expand-scratch-arena-get)
-          macro-splice-view-arena)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
-        (let
-          [out : ast.AstDeclList
-            (macro-decl-list-filter-path decls paths wanted-path)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (if (= macro-splice-view-arena 0)
-              (set! macro-expand-scratch-arena storage-head)
-              (set! macro-splice-view-arena storage-head))
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))
-    (macro-decl-list-filter-path decls paths wanted-path)))
 
 (define macro-active-decl-owner-id : i64
   -1)
@@ -93292,36 +93354,6 @@
         false)]
     [(ast.AstDeclListStep.Nil) false]))
 
-(define (macro-decl-list-filter-path
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [wanted-path : String]) : ast.AstDeclList
-  ;; Index cursor rather than `ast-decl-list-step`: the filter never inspects a
-  ;; declaration, it only copies the retained rows into the builder, so the step
-  ;; result's 144 B (and the paths cursor's two steps per element) are pure
-  ;; overhead. Running off the end of the paths list still yields "", as the
-  ;; exhausted cursor did.
-  (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-    [index : i64 0]
-    [out-rev : ast.AstDeclList (ast.ast-decl-list-new)]
-    (begin
-      (while (< index count)
-        (let
-          [decl-path : String (ast.ast-decl-path-list-get (& paths) index "")]
-          (begin
-            (if (string.eq decl-path wanted-path)
-              (set!
-                out-rev
-                (ast.ast-decl-list-prepend-builder
-                  (array-ref decl-slots (+ decl-offset index))
-                  out-rev))
-              unit)
-            (set! index (+ index 1)))))
-      (macro-decl-list-reverse out-rev))))
-
 (define (macro-extend-top-env-with-module-marker
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -96242,12 +96274,11 @@
 
 ;; A forced splice installs the current live symbols/registries in a new
 ;; context. Generated modules append to those tables; arbitrary splices and
-;; materialized files rebuild them. The top env follows the narrowest correct
-;; plan: generated
-;; modules append an isolated namespace, arbitrary Decls refresh unresolved
-;; cached signatures plus their source-local tail, and newly loaded files keep
-;; the conservative whole-program rebuild because imports can alter unrelated
-;; alias surfaces. `module` is the active namespace at the splice site.
+;; materialized files rebuild them. Every top-env plan is additive: it revisits
+;; only cached signatures that remain unresolved, binds the splice delta, and
+;; publishes one explicit cache layer. Generated modules add their isolated
+;; summary and marker through the same contract. `module` is the active
+;; namespace at the splice site.
 (define (tc-top-env-binding-context [ctx : TcContext] [name-id : i64]) : TcContext
   (if (tc-name-qualified-id? name-id)
     (let
@@ -96257,79 +96288,125 @@
         ctx))
     (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)))
 
-;; A splice updates symbols before it rebuilds the type env. Most cached
-;; bindings are already final nominal/scalar types; only signatures that still
-;; contain `Var`/`VarArgs` nodes can change when the new symbols appear. Walk
-;; each cache's retained binding keys until every indexed value has been seen,
-;; and re-resolve just those values in the binding's module context. The seen
-;; array preserves the cache's head-most binding when a raw spine contains
-;; shadowed duplicates.
-(define (tc-top-env-reresolve-cache-layer!
+;; A splice updates symbols before it updates the type env. Final
+;; nominal/scalar bindings cannot change; only signatures that still contain
+;; Var/VarArgs nodes are candidates. Every cache records that candidate set at
+;; construction, and this walk compacts it in place as names become resolvable.
+;; The fixed-width scan is proportional to unresolved signatures, never the
+;; retained top-env spine or source tail.
+(define (tc-top-env-reresolve-cache-node!
   [ctx : TcContext]
-  [ids : tc_i64_i64_map.Map]
-  [values : (__tl_dyn-array ast.AstType)]
-  [env : TcTypeEnv]) : unit
+  [cache-ptr : (Ptr TcTypeEnvCache)]) : i64
   (let
-    [seen : (__tl_dyn-array i64) (array.make-array i64 (array.length values))]
-    [remaining : i64 (tc_i64_i64_map.len (& ids))]
-    [cur : TcTypeEnv env]
-    [done : bool false]
-    (while (and (not done) (> remaining 0))
-      (match (tc-type-env-view cur)
-        [(TcTypeEnvView.Nil) (set! done true)]
-        [(TcTypeEnvView.Cache _ _ _ rest _) (set! cur rest)]
-        [(TcTypeEnvView.Bind name-id _ rest)
+    [cache : TcTypeEnvCache
+      (unsafe
+        (ptr-read cache-ptr))]
+    [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+    [values : (__tl_dyn-array ast.AstType) (struct-get cache values)]
+    [sidecar : (__tl_dyn-array i64) (struct-get cache unsafe-flags)]
+    [capacity : i64 (array.length values)]
+    [count : i64 (array-ref sidecar capacity)]
+    [read-index : i64 0]
+    [write-index : i64 0]
+    (begin
+      (while (< read-index count)
+        (let
+          [name-id : i64 (array-ref sidecar (+ capacity 1 read-index))]
+          [value-slot : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
           (begin
-            (let
-              [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
-              (if (>= index 0)
-                (if (< index (array.length values))
-                  (if (= (array-ref seen index) 0)
-                    (let
-                      [ty : ast.AstType (array-ref values index)]
-                      (begin
-                        (if (tc-type-needs-resolution? ty)
+            (if (and (>= value-slot 0) (< value-slot (array.length values)))
+              (let
+                [before : ast.AstType (array-ref values value-slot)]
+                (if (tc-type-needs-resolution? before)
+                  (let
+                    [binding-ctx : TcContext
+                      (tc-top-env-binding-context ctx name-id)]
+                    [after : ast.AstType (tc-resolve-type binding-ctx before)]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (set!
+                          compiler-tc-walk-splice-env-reresolve-candidates
+                          (+ compiler-tc-walk-splice-env-reresolve-candidates 1)))
+                      (if (ast.ast-type-eq? before after)
+                        unit
+                        (begin
+                          (array-set! values value-slot after)
+                          (cfg
+                            compile-profile
+                            (set!
+                              compiler-tc-walk-splice-env-reresolve-updates
+                              (+
+                                compiler-tc-walk-splice-env-reresolve-updates
+                                1)))))
+                      (if (tc-type-needs-resolution? after)
+                        (begin
                           (array-set!
-                            values
-                            index
-                            (tc-resolve-type
-                              (tc-top-env-binding-context ctx name-id)
-                              ty))
-                          unit)
-                        (array-set! seen index 1)
-                        (set! remaining (- remaining 1))))
-                    unit)
-                  (io.panic
+                            sidecar
+                            (+ capacity 1 write-index)
+                            name-id)
+                          (set! write-index (+ write-index 1)))
+                        unit)))
+                  unit))
+              (io.panic
+                (string.append
+                  "typecheck: top-env resolution slot out of bounds: "
+                  (string.append
+                    (string.int->string value-slot)
                     (string.append
-                      "typecheck: top-env cache index out of bounds: "
-                      (string.append
-                        (string.int->string index)
-                        (string.append
-                          " / "
-                          (string.int->string (array.length values)))))))
-                unit))
-            (set! cur rest))]))))
+                      " / "
+                      (string.int->string (array.length values)))))))
+            (set! read-index (+ read-index 1)))))
+      (array-set! sidecar capacity write-index)
+      (cfg
+        compile-profile
+        (set!
+          compiler-tc-walk-splice-env-reresolve-remaining
+          (+ compiler-tc-walk-splice-env-reresolve-remaining write-index)))
+      write-index)))
 
 (define (tc-top-env-reresolve-caches! [ctx : TcContext] [env : TcTypeEnv]) : unit
-  (match (tc-type-env-view env)
-    [(TcTypeEnvView.Cache cache-ptr _ partial rest below)
-      (let
-        [ids : tc_i64_i64_map.Map
-          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
-        [values : (__tl_dyn-array ast.AstType)
-          (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
-        (begin
-          (tc-top-env-reresolve-cache-layer! ctx ids values rest)
-          (if partial
-            (tc-top-env-reresolve-caches! ctx below)
-            unit)))]
-    [_ unit]))
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    [done : bool false]
+    (begin
+      (cfg
+        compile-profile
+        (set!
+          compiler-tc-walk-splice-env-reresolve-calls
+          (+ compiler-tc-walk-splice-env-reresolve-calls 1)))
+      ;; A batch of consecutive module markers can leave a small raw prefix.
+      ;; Skip it to the first explicit layer, then follow only partial `below`
+      ;; links, exactly like the lookup chain being invalidated.
+      (while (not done)
+        (cond
+          [(= head -1) (set! done true)]
+          [(>= head 0)
+            (set!
+              head
+              (tc-type-env-binding-parent-at
+                (tc-type-env-binding-ptr store-handle head)))]
+          [else
+            (let
+              [cache-ptr : (Ptr TcTypeEnvCache)
+                (unsafe
+                  (int->ptr
+                    (cast (tc-type-env-cache-index head) : u64)
+                    : (Ptr TcTypeEnvCache)))]
+              [cache : TcTypeEnvCache
+                (unsafe
+                  (ptr-read (ptr-cast cache-ptr : (Ptr TcTypeEnvCache))))]
+              (begin
+                (tc-top-env-reresolve-cache-node! ctx cache-ptr)
+                (if (struct-get cache partial)
+                  (set! head (struct-get cache below))
+                  (set! done true))))])))))
 
-(define (tc-refresh-top-env-for-splice
+(define (tc-extend-top-env-for-splice
   [ctx : TcContext]
   [base-env : TcTypeEnv]
   [splice : ast.AstDeclList]
-  [refresh-decls : ast.AstDeclList]
   [module : String]
   [module-id : i64]) : ResultTcEnv
   (begin
@@ -96341,36 +96418,20 @@
       module
       module-id)
       [(ResultTcEnv.Ok splice-env)
-        (match (tc-build-top-env-list-explicit-in-module
-          ctx
-          refresh-decls
-          splice-env
-          module
-          module-id)
-          [(ResultTcEnv.Ok refreshed-env)
-            (ResultTcEnv.Ok
-              (tc-env-with-cache-layer-over-explicit refreshed-env))]
-          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
+        (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit splice-env))]
       [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))
 
 (define (macro-splice-top-env
   [ctx : TcContext]
-  [program : ast.AstProgram]
+  [_program : ast.AstProgram]
   [decls : ast.AstDeclList]
   [module : String]
   [module-id : i64]
   [plan : MacroSpliceEnvPlan]) : ResultTcEnv
   (match plan
-    [(MacroSpliceEnvPlan.Rebuild) (tc-build-top-env ctx program)]
-    [(MacroSpliceEnvPlan.Refresh base-env splice refresh-decls)
-      (tc-refresh-top-env-for-splice
-        ctx
-        base-env
-        splice
-        refresh-decls
-        module
-        module-id)]
-    [(MacroSpliceEnvPlan.Extend base-env summary marker refresh-decls)
+    [(MacroSpliceEnvPlan.Extend base-env splice)
+      (tc-extend-top-env-for-splice ctx base-env splice module module-id)]
+    [(MacroSpliceEnvPlan.ExtendGeneratedModule base-env summary marker)
       (match (env-extend-with-module ctx base-env summary)
         [(ResultTcEnv.Ok module-env)
           (match (macro-extend-top-env-with-module-marker
@@ -96381,16 +96442,13 @@
             module
             module-id)
             [(ResultTcEnv.Ok marker-env)
-              (match (tc-build-top-env-list-explicit-in-module
-                ctx
-                refresh-decls
-                marker-env
-                module
-                module-id)
-                [(ResultTcEnv.Ok refreshed-env)
-                  (ResultTcEnv.Ok
-                    (tc-env-with-cache-layer-over-explicit refreshed-env))]
-                [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
+              (begin
+                ;; The marker records a named lazy-import surface before old
+                ;; unresolved signatures are revisited. The combined summary
+                ;; + marker prefix is then cached once.
+                (tc-top-env-reresolve-caches! ctx marker-env)
+                (ResultTcEnv.Ok
+                  (tc-env-with-cache-layer-over-explicit marker-env)))]
             [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
         [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
 
@@ -96675,18 +96733,12 @@
                                           cur-ctx
                                           (macro-splice-view-program
                                             next-decls-for-ctx))]
-                                      ;; R3-P2: the refresh list is built at
-                                      ;; its only use site, on the non-deferred
-                                      ;; branch below. Built here it was a
-                                      ;; `|rest|`-sized copy that the deferred
-                                      ;; branch threw away unread -- 9 of the 94
-                                      ;; splices on the opt1 self-compile.
-                                      ;; `macro-decl-list-filter-path` is a pure
-                                      ;; filter over `rest` / `rest-paths`,
-                                      ;; neither of which the env extend below
-                                      ;; touches, so moving the call past it is
-                                      ;; order-independent.
-                                      [defer-refresh? : bool
+                                      ;; Consecutive markers can share one raw
+                                      ;; delta prefix. Lookups still see every
+                                      ;; imported binding, but the explicit cache
+                                      ;; and unresolved-signature pass are paid
+                                      ;; once when the marker batch ends.
+                                      [defer-cache? : bool
                                         (macro-decls-start-with-module-import-placeholder?
                                           rest)]
                                       [_sp-probe-copy-finish : unit
@@ -96719,11 +96771,30 @@
                                               (macro-alias-derived-cache-reset!)
                                               (tc-job-state-reset-derived-caches!
                                                 (tc-context-job-state cur-ctx))
-                                              (if defer-refresh?
+                                              (if defer-cache?
                                                 (begin
                                                   (cfg
                                                     compile-profile
                                                     (compiler-tc-walk-decl-sample-note!
+                                                      4))
+                                                  (set!
+                                                    cur-top-env
+                                                    next-top-env))
+                                                (begin
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-decl-sample-note!
+                                                      5))
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-start!
+                                                      4))
+                                                  (tc-top-env-reresolve-caches!
+                                                    next-ctx
+                                                    next-top-env)
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-finish!
                                                       4))
                                                   (cfg
                                                     compile-profile
@@ -96736,96 +96807,21 @@
                                                   (cfg
                                                     compile-profile
                                                     (compiler-tc-walk-sp-probe-finish!
-                                                      2))
-                                                  (set!
-                                                    cur-orig-decls
-                                                    next-decls)
-                                                  (set! cur-ctx next-ctx)
-                                                  (set!
-                                                    out-rev
-                                                    (macro-decl-list-reverse-into
-                                                      expanded
-                                                      out-rev))
-                                                  (set!
-                                                    out-paths-rev
-                                                    (macro-decl-path-list-reverse-into
-                                                      expanded-paths
-                                                      out-paths-rev))
-                                                  (set! cur-decls marker-rest)
-                                                  (set!
-                                                    cur-paths
-                                                    marker-rest-paths))
-                                                (begin
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-walk-sp-probe-start!
-                                                      3))
-                                                  (match (let
-                                                    [refresh-result : ResultTcEnv
-                                                      (tc-build-top-env-list-explicit-in-module
-                                                        next-ctx
-                                                        (macro-scratch-decl-list-filter-path
-                                                          rest
-                                                          rest-paths
-                                                          decl-path)
-                                                        next-top-env
-                                                        cur-module
-                                                        cur-module-id)]
-                                                    (begin
-                                                      (cfg
-                                                        compile-profile
-                                                        (compiler-tc-walk-sp-probe-finish!
-                                                          3))
-                                                      refresh-result))
-                                                    [(ResultTcEnv.Ok
-                                                        refreshed-top-env)
-                                                      (begin
-                                                        (cfg
-                                                          compile-profile
-                                                          (compiler-tc-walk-decl-sample-note!
-                                                            5))
-                                                        (cfg
-                                                          compile-profile
-                                                          (compiler-tc-walk-sp-probe-start!
-                                                            2))
-                                                        (set!
-                                                          cur-top-env
-                                                          (tc-env-with-cache-layer-over-explicit
-                                                            refreshed-top-env))
-                                                        (cfg
-                                                          compile-profile
-                                                          (compiler-tc-walk-sp-probe-finish!
-                                                            2))
-                                                        (set!
-                                                          cur-orig-decls
-                                                          next-decls)
-                                                        (set! cur-ctx next-ctx)
-                                                        (set!
-                                                          out-rev
-                                                          (macro-decl-list-reverse-into
-                                                            expanded
-                                                            out-rev))
-                                                        (set!
-                                                          out-paths-rev
-                                                          (macro-decl-path-list-reverse-into
-                                                            expanded-paths
-                                                            out-paths-rev))
-                                                        (set!
-                                                          cur-decls
-                                                          marker-rest)
-                                                        (set!
-                                                          cur-paths
-                                                          marker-rest-paths))]
-                                                    [(ResultTcEnv.Err
-                                                        refresh-message)
-                                                      (begin
-                                                        (set!
-                                                          result
-                                                          (ResultMacroDeclsWithPaths.Err
-                                                            (box
-                                                              (tc-diag-at-start
-                                                                refresh-message))))
-                                                        (set! done true))]))))]
+                                                      2))))
+                                              (set! cur-orig-decls next-decls)
+                                              (set! cur-ctx next-ctx)
+                                              (set!
+                                                out-rev
+                                                (macro-decl-list-reverse-into
+                                                  expanded
+                                                  out-rev))
+                                              (set!
+                                                out-paths-rev
+                                                (macro-decl-path-list-reverse-into
+                                                  expanded-paths
+                                                  out-paths-rev))
+                                              (set! cur-decls marker-rest)
+                                              (set! cur-paths marker-rest-paths))]
                                           [(ResultTcEnv.Err message)
                                             (begin
                                               (set!
@@ -96836,11 +96832,11 @@
                                               (set! done true))])
                                         unit))
                                     ;; Force the splice inline: append the generated
-                                    ;; symbols/registries and rebuild the context/env
-                                    ;; over the spliced whole-program view so the
-                                    ;; generated names resolve, and continue the
-                                    ;; walk over the spliced body itself (its nested
-                                    ;; placeholders and generated file imports included).
+                                    ;; symbols/registries and rebuild the context over
+                                    ;; the spliced whole-program view. The top env takes
+                                    ;; only the declaration delta, then the walk continues
+                                    ;; over the spliced body itself (nested placeholders
+                                    ;; and generated file imports included).
                                     (let
                                       [_update-materialize-seen : unit
                                         (set!
@@ -97004,24 +97000,16 @@
                                           cur-module-id
                                           (match generated-ext
                                             [(MacroMaybeGeneratedModuleExtension.No)
-                                              (MacroSpliceEnvPlan.Refresh
+                                              (MacroSpliceEnvPlan.Extend
                                                 cur-top-env
-                                                expanded
-                                                (macro-scratch-decl-list-filter-path
-                                                  rest
-                                                  rest-paths
-                                                  decl-path))]
+                                                expanded)]
                                             [(MacroMaybeGeneratedModuleExtension.Some
                                                 summary
                                                 marker)
-                                              (MacroSpliceEnvPlan.Extend
+                                              (MacroSpliceEnvPlan.ExtendGeneratedModule
                                                 cur-top-env
                                                 summary
-                                                marker
-                                                (macro-scratch-decl-list-filter-path
-                                                  rest
-                                                  rest-paths
-                                                  decl-path))]))
+                                                marker)]))
                                           [(ResultMacroSpliceRebuild.Ok
                                               next-ctx
                                               next-top-env)
@@ -97181,13 +97169,9 @@
                                       next-paths
                                       cur-module
                                       cur-module-id
-                                      (MacroSpliceEnvPlan.Refresh
+                                      (MacroSpliceEnvPlan.Extend
                                         cur-top-env
-                                        materialized-decls
-                                        (macro-scratch-decl-list-filter-path
-                                          rest
-                                          rest-paths
-                                          decl-path)))
+                                        materialized-decls))
                                       [(ResultMacroSpliceRebuild.Ok
                                           next-ctx
                                           next-top-env)

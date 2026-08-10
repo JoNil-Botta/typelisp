@@ -4158,6 +4158,233 @@
   (define compiler-tc-walk-decl-fire-count : i64
     0))
 
+;; Fired-declaration ownership attribution.  Survivor bytes are allocations
+;; made while the exhaustive generation copy-out persists the returned graph
+;; (including declaration/path shells and vector/list/string backing payload).
+;; Superseded bytes are bump storage added to the declaration generation; the
+;; ring's later destroy is reported separately so the signed non-output live
+;; contribution can reconcile the existing fired-decl live lane.
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-attributed-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-survivor-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-survivor-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-superseded-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-superseded-released-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-committed-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-post-boundary-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-boundary-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-boundary-pending : bool
+    false))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-source-shared-expr-refs : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-source-shared-type-refs : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-survivor-expr-nodes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-survivor-type-nodes : i64
+    0))
+
+;; Union of the two nested fired-decl lanes.  Hygiene can run inside a
+;; produced-node rewalk, so subtracting the two existing totals independently
+;; double-counts their overlap.  This depth counts outer lane activations and
+;; times their union once; fired self time is fire total minus this value.
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-child-depth : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-child-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-child-ns : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-fire-child-enter!) : unit
+    (if (= compiler-tc-walk-decl-sample-kind 2)
+      (begin
+        (if (= compiler-tc-walk-decl-fire-child-depth 0)
+          (set!
+            compiler-tc-walk-decl-fire-child-start-ns
+            (compiler-tc-walk-now-ns))
+          unit)
+        (set!
+          compiler-tc-walk-decl-fire-child-depth
+          (+ compiler-tc-walk-decl-fire-child-depth 1)))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-fire-child-leave!) : unit
+    (if (> compiler-tc-walk-decl-fire-child-depth 0)
+      (begin
+        (set!
+          compiler-tc-walk-decl-fire-child-depth
+          (- compiler-tc-walk-decl-fire-child-depth 1))
+        (if (= compiler-tc-walk-decl-fire-child-depth 0)
+          (set!
+            compiler-tc-walk-decl-fire-child-ns
+            (+
+              compiler-tc-walk-decl-fire-child-ns
+              (-
+                (compiler-tc-walk-now-ns)
+                compiler-tc-walk-decl-fire-child-start-ns)))
+          unit))
+      unit)))
+
+;; Return bytes allocated in an arena since a cursor mark.  The active chain is
+;; newest-first, so the common case (one declaration stays in its current
+;; segment) is one iteration.  Unlike a whole-arena census this work is bounded
+;; by segments grown by this declaration and runs only after a macro actually
+;; fired, keeping the profiler from becoming a material compiler workload.
+(cfg
+  compile-profile
+  (define (compiler-tc-profile-arena-bytes-since
+    [arena-handle : i64]
+    [mark : i64]) : i64
+    (if (or (= arena-handle 0) (= mark 0))
+      0
+      (let
+        [root-candidate : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr arena-handle : (Ptr i64)) 5)))]
+        [root : i64
+          (if (= root-candidate 0)
+            arena-handle
+            root-candidate)]
+        [active : i64
+          (let
+            [current : i64
+              (unsafe
+                (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+            (if (= current 0)
+              root
+              current))]
+        [used : i64 0]
+        [cursor : i64 active]
+        [done : bool false]
+        (begin
+          (while (and (not done) (not (= cursor 0)))
+            (let
+              [base : i64
+                (unsafe
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1)))]
+              [end : i64
+                (unsafe
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))]
+              (begin
+                (if (and (>= mark base) (<= mark end))
+                  (begin
+                    (set! used (+ used (- end mark)))
+                    (set! done true))
+                  (begin
+                    (if (> end base)
+                      (set! used (+ used (- end base)))
+                      unit)
+                    (set!
+                      cursor
+                      (unsafe
+                        (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 0)))))))))
+          used)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-fire-attribution-note!
+    [survivor-alloc : i64]
+    [survivor-live : i64]
+    [superseded-alloc : i64]
+    [superseded-released : i64]
+    [committed-live : i64]
+    [boundary-live : i64]
+    [source-expr-refs : i64]
+    [source-type-refs : i64]
+    [survivor-expr-nodes : i64]
+    [survivor-type-nodes : i64]) : unit
+    (begin
+      (set!
+        compiler-tc-walk-decl-fire-attributed-calls
+        (+ compiler-tc-walk-decl-fire-attributed-calls 1))
+      (set!
+        compiler-tc-walk-decl-fire-survivor-alloc-bytes
+        (+ compiler-tc-walk-decl-fire-survivor-alloc-bytes survivor-alloc))
+      (set!
+        compiler-tc-walk-decl-fire-survivor-live-bytes
+        (+ compiler-tc-walk-decl-fire-survivor-live-bytes survivor-live))
+      (set!
+        compiler-tc-walk-decl-fire-superseded-alloc-bytes
+        (+ compiler-tc-walk-decl-fire-superseded-alloc-bytes superseded-alloc))
+      (set!
+        compiler-tc-walk-decl-fire-superseded-released-bytes
+        (+
+          compiler-tc-walk-decl-fire-superseded-released-bytes
+          superseded-released))
+      (set!
+        compiler-tc-walk-decl-fire-committed-live-bytes
+        (+ compiler-tc-walk-decl-fire-committed-live-bytes committed-live))
+      (set! compiler-tc-walk-decl-fire-boundary-live boundary-live)
+      (set! compiler-tc-walk-decl-fire-boundary-pending true)
+      (set!
+        compiler-tc-walk-decl-fire-source-shared-expr-refs
+        (+ compiler-tc-walk-decl-fire-source-shared-expr-refs source-expr-refs))
+      (set!
+        compiler-tc-walk-decl-fire-source-shared-type-refs
+        (+ compiler-tc-walk-decl-fire-source-shared-type-refs source-type-refs))
+      (set!
+        compiler-tc-walk-decl-fire-survivor-expr-nodes
+        (+ compiler-tc-walk-decl-fire-survivor-expr-nodes survivor-expr-nodes))
+      (set!
+        compiler-tc-walk-decl-fire-survivor-type-nodes
+        (+ compiler-tc-walk-decl-fire-survivor-type-nodes survivor-type-nodes)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-fire-attribution-flush! [fired : bool]) : unit
+    (begin
+      (if (and fired compiler-tc-walk-decl-fire-boundary-pending)
+        (set!
+          compiler-tc-walk-decl-fire-post-boundary-live-bytes
+          (+
+            compiler-tc-walk-decl-fire-post-boundary-live-bytes
+            (- (profile.alloc-live) compiler-tc-walk-decl-fire-boundary-live)))
+        unit)
+      (set! compiler-tc-walk-decl-fire-boundary-pending false))))
+
 ;; R3-P1 observability: how many firing declarations got their own arena
 ;; generation, how many fell back to the ambient arena (no scratch pipeline or
 ;; no installed pool context), and how many expression rows the per-declaration
@@ -4972,28 +5199,32 @@
 (cfg
   compile-profile
   (define (compiler-tc-walk-decl-sample-flush!) : unit
-    (begin
-      (if (= compiler-tc-walk-decl-sample-kind 0)
-        unit
-        (compiler-tc-walk-decl-sample-add!
-          compiler-tc-walk-decl-sample-kind
-          (- (compiler-tc-walk-now-ns) compiler-tc-walk-decl-sample-start-ns)
-          (- (profile.alloc-total) compiler-tc-walk-decl-sample-start-alloc)
-          (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live)
-          (>
-            (+
-              compiler-tc-macro-walk-bind-params-calls
-              compiler-tc-macro-walk-direct-marshal-calls)
-            compiler-tc-walk-decl-sample-start-captures)))
-      (set! compiler-tc-walk-decl-sample-kind 0)
-      (set! compiler-tc-walk-decl-sample-start-ns (compiler-tc-walk-now-ns))
-      (set! compiler-tc-walk-decl-sample-start-alloc (profile.alloc-total))
-      (set! compiler-tc-walk-decl-sample-start-live (profile.alloc-live))
-      (set!
-        compiler-tc-walk-decl-sample-start-captures
-        (+
-          compiler-tc-macro-walk-bind-params-calls
-          compiler-tc-macro-walk-direct-marshal-calls)))))
+    (let
+      [fired : bool
+        (>
+          (+
+            compiler-tc-macro-walk-bind-params-calls
+            compiler-tc-macro-walk-direct-marshal-calls)
+          compiler-tc-walk-decl-sample-start-captures)]
+      (begin
+        (compiler-tc-walk-decl-fire-attribution-flush! fired)
+        (if (= compiler-tc-walk-decl-sample-kind 0)
+          unit
+          (compiler-tc-walk-decl-sample-add!
+            compiler-tc-walk-decl-sample-kind
+            (- (compiler-tc-walk-now-ns) compiler-tc-walk-decl-sample-start-ns)
+            (- (profile.alloc-total) compiler-tc-walk-decl-sample-start-alloc)
+            (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live)
+            fired))
+        (set! compiler-tc-walk-decl-sample-kind 0)
+        (set! compiler-tc-walk-decl-sample-start-ns (compiler-tc-walk-now-ns))
+        (set! compiler-tc-walk-decl-sample-start-alloc (profile.alloc-total))
+        (set! compiler-tc-walk-decl-sample-start-live (profile.alloc-live))
+        (set!
+          compiler-tc-walk-decl-sample-start-captures
+          (+
+            compiler-tc-macro-walk-bind-params-calls
+            compiler-tc-macro-walk-direct-marshal-calls))))))
 
 ;; Hygiene-rebuild and transformer-output-rewalk regions. Both re-enter
 ;; themselves (hygiene through its own recursion, the output re-walk through
@@ -5067,6 +5298,7 @@
       (set! compiler-tc-walk-hygiene-depth (+ compiler-tc-walk-hygiene-depth 1))
       (if (= compiler-tc-walk-hygiene-depth 1)
         (begin
+          (compiler-tc-walk-decl-fire-child-enter!)
           (set! compiler-tc-walk-hygiene-start-ns (compiler-tc-walk-now-ns))
           (set! compiler-tc-walk-hygiene-start-alloc (profile.alloc-total))
           (set! compiler-tc-walk-hygiene-start-live (profile.alloc-live)))
@@ -5095,7 +5327,8 @@
               (- (profile.alloc-live) compiler-tc-walk-hygiene-start-live)))
           (set!
             compiler-tc-walk-hygiene-calls
-            (+ compiler-tc-walk-hygiene-calls 1)))
+            (+ compiler-tc-walk-hygiene-calls 1))
+          (compiler-tc-walk-decl-fire-child-leave!))
         unit)
       (set! compiler-tc-walk-hygiene-depth (- compiler-tc-walk-hygiene-depth 1)))))
 
@@ -5163,6 +5396,7 @@
       (set! compiler-tc-walk-rewalk-depth (+ compiler-tc-walk-rewalk-depth 1))
       (if (= compiler-tc-walk-rewalk-depth 1)
         (begin
+          (compiler-tc-walk-decl-fire-child-enter!)
           (set! compiler-tc-walk-rewalk-start-ns (compiler-tc-walk-now-ns))
           (set! compiler-tc-walk-rewalk-start-alloc (profile.alloc-total))
           (set! compiler-tc-walk-rewalk-start-live (profile.alloc-live)))
@@ -5191,7 +5425,8 @@
               (- (profile.alloc-live) compiler-tc-walk-rewalk-start-live)))
           (set!
             compiler-tc-walk-rewalk-calls
-            (+ compiler-tc-walk-rewalk-calls 1)))
+            (+ compiler-tc-walk-rewalk-calls 1))
+          (compiler-tc-walk-decl-fire-child-leave!))
         unit)
       (set! compiler-tc-walk-rewalk-depth (- compiler-tc-walk-rewalk-depth 1)))))
 
@@ -7290,8 +7525,105 @@
         "walk_decl_fire_live_kb"
         (/ compiler-tc-walk-decl-fire-live 1024))
       (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_live_bytes"
+        compiler-tc-walk-decl-fire-live)
+      (compiler-tc-macro-counter-profile-line
         "walk_decl_fire_count"
         compiler-tc-walk-decl-fire-count)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_self_us"
+        (/
+          (if (>
+            compiler-tc-walk-decl-fire-ns
+            compiler-tc-walk-decl-fire-child-ns)
+            (-
+              compiler-tc-walk-decl-fire-ns
+              compiler-tc-walk-decl-fire-child-ns)
+            0)
+          1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_nested_us"
+        (/ compiler-tc-walk-decl-fire-child-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_attributed_calls"
+        compiler-tc-walk-decl-fire-attributed-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_alloc_bytes"
+        compiler-tc-walk-decl-fire-survivor-alloc-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_live_bytes"
+        compiler-tc-walk-decl-fire-survivor-live-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_pool_node_bytes"
+        (+
+          (*
+            compiler-tc-walk-decl-fire-survivor-expr-nodes
+            (ast.ast-expr-node-bytes))
+          (*
+            compiler-tc-walk-decl-fire-survivor-type-nodes
+            (ast.ast-type-node-bytes))))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_bytes"
+        (+
+          compiler-tc-walk-decl-fire-survivor-alloc-bytes
+          (+
+            (*
+              compiler-tc-walk-decl-fire-survivor-expr-nodes
+              (ast.ast-expr-node-bytes))
+            (*
+              compiler-tc-walk-decl-fire-survivor-type-nodes
+              (ast.ast-type-node-bytes)))))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_superseded_alloc_bytes"
+        compiler-tc-walk-decl-fire-superseded-alloc-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_superseded_released_bytes"
+        compiler-tc-walk-decl-fire-superseded-released-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_nonoutput_live_bytes"
+        (-
+          compiler-tc-walk-decl-fire-superseded-alloc-bytes
+          compiler-tc-walk-decl-fire-superseded-released-bytes))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_residual_live_bytes"
+        (-
+          compiler-tc-walk-decl-fire-live
+          (+
+            compiler-tc-walk-decl-fire-survivor-live-bytes
+            (-
+              compiler-tc-walk-decl-fire-superseded-alloc-bytes
+              compiler-tc-walk-decl-fire-superseded-released-bytes))))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_residual_committed_live_bytes"
+        compiler-tc-walk-decl-fire-committed-live-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_residual_post_boundary_live_bytes"
+        compiler-tc-walk-decl-fire-post-boundary-live-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_residual_unattributed_live_bytes"
+        (-
+          compiler-tc-walk-decl-fire-live
+          (+
+            compiler-tc-walk-decl-fire-survivor-live-bytes
+            (+
+              (-
+                compiler-tc-walk-decl-fire-superseded-alloc-bytes
+                compiler-tc-walk-decl-fire-superseded-released-bytes)
+              (+
+                compiler-tc-walk-decl-fire-committed-live-bytes
+                compiler-tc-walk-decl-fire-post-boundary-live-bytes)))))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_source_shared_expr_refs"
+        compiler-tc-walk-decl-fire-source-shared-expr-refs)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_source_shared_type_refs"
+        compiler-tc-walk-decl-fire-source-shared-type-refs)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_expr_nodes"
+        compiler-tc-walk-decl-fire-survivor-expr-nodes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_type_nodes"
+        compiler-tc-walk-decl-fire-survivor-type-nodes)
       (compiler-tc-macro-counter-profile-line
         "walk_decl_generations"
         compiler-tc-walk-decl-generations)
@@ -96227,10 +96559,22 @@
       [enclosing : i64 (arena.tl_arena_current)]
       [entry-base-arena : i64 (ast.ast-node-pool-base-arena-handle)]
       [entry-expr-len : i64 (ast.ast-node-pool-len)]
+      [_profile-entry-type-len : i64 (ast.ty-node-pool-len)]
+      [_profile-live-before-enter : i64
+        (cfg compile-profile (profile.alloc-live) 0)]
+      [_profile-captures-before : i64
+        (cfg
+          compile-profile
+          (+
+            compiler-tc-macro-walk-bind-params-calls
+            compiler-tc-macro-walk-direct-marshal-calls)
+          0)]
       [generation : i64
         (if splice?
           (macro-splice-generation-enter!)
           (macro-decl-generation-enter!))]
+      [_profile-live-after-enter : i64
+        (cfg compile-profile (profile.alloc-live) 0)]
       ;; R3-P2b: whatever this expansion records in a splice memo is noted and
       ;; re-persisted below. The window is exactly the expansion call -- a memo
       ;; put from anywhere else already lands in a long-lived arena and must not
@@ -96239,6 +96583,10 @@
       [_enter : unit
         (unsafe
           (arena.tl_arena_set generation))]
+      [_profile-generation-mark : i64
+        (cfg compile-profile (arena.tl_region_mark) 0)]
+      [_profile-raw-start-live : i64
+        (cfg compile-profile (profile.alloc-live) 0)]
       [_escape-open : unit (set! macro-decl-generation-active true)]
       ;; R3-P2c: publish which generation is live, so anything that installs a
       ;; pool context from inside this expansion is repaired at the destroy.
@@ -96254,6 +96602,25 @@
           module-id
           decl
           decl-path)]
+      [_profile-fired : bool
+        (cfg
+          compile-profile
+          (>
+            (+
+              compiler-tc-macro-walk-bind-params-calls
+              compiler-tc-macro-walk-direct-marshal-calls)
+            _profile-captures-before)
+          false)]
+      [_profile-raw-end-live : i64 (cfg compile-profile (profile.alloc-live) 0)]
+      [_profile-generation-raw-bytes : i64
+        (cfg
+          compile-profile
+          (if _profile-fired
+            (compiler-tc-profile-arena-bytes-since
+              generation
+              _profile-generation-mark)
+            0)
+          0)]
       [_escape-close : unit (set! macro-decl-generation-active false)]
       [_witness-off : unit (ast.ast-node-pool-context-transient-witness! 0)]
       ;; Clamped: the walk never truncates the pool below the length it entered
@@ -96269,7 +96636,21 @@
       [expr-map : (__tl_dyn-array i32)
         (ast.ast-compaction-id-map-create
           (- (ast.ast-node-pool-len) shared-expr-base))]
-      [type-map : (__tl_dyn-array i32) (ast.ast-compaction-id-map-create 0)]
+      [type-map : (__tl_dyn-array i32)
+        (ast.ast-compaction-id-map-create
+          (cfg
+            compile-profile
+            (- (ast.ty-node-pool-len) _profile-entry-type-len)
+            0))]
+      [_profile-generation-used-end : i64
+        (cfg
+          compile-profile
+          (if _profile-fired
+            (compiler-tc-profile-arena-bytes-since
+              generation
+              _profile-generation-mark)
+            0)
+          0)]
       ;; The generation is reused by the rest of its batch, so its newest head
       ;; has to be published before the arena is switched away -- keeping the
       ;; `make` root would restart the next declaration on a filled segment and
@@ -96291,6 +96672,17 @@
           enclosing
           entry-base-arena
           (ast.ast-node-pool-context-base-arena pools))]
+      [_profile-copy-start-total : i64
+        (cfg compile-profile (profile.alloc-total) 0)]
+      [_profile-copy-start-live : i64
+        (cfg compile-profile (profile.alloc-live) 0)]
+      [_profile-census-start : unit
+        (cfg
+          compile-profile
+          (if (and (not splice?) _profile-fired)
+            (ast.ast-compaction-profile-start! _profile-entry-type-len type-map)
+            unit)
+          unit)]
       [_copy-start-len : i64 (ast.ast-node-pool-context-expr-len pools)]
       ;; Every existing type id is shared, so the copy-out and the escape pass
       ;; push no type node at all. Read once so both passes see the same base.
@@ -96311,6 +96703,38 @@
           expr-map
           type-map
           splice?)]
+      [_profile-copy-end-total : i64
+        (cfg compile-profile (profile.alloc-total) 0)]
+      [_profile-copy-end-live : i64
+        (cfg compile-profile (profile.alloc-live) 0)]
+      [_profile-attribution : unit
+        (cfg
+          compile-profile
+          (if (and (not splice?) _profile-fired)
+            (let
+              [committed-live : i64
+                (-
+                  (- _profile-raw-end-live _profile-raw-start-live)
+                  _profile-generation-raw-bytes)]
+              [released : i64
+                (- _profile-live-before-enter _profile-live-after-enter)]
+              (begin
+                (ast.ast-compaction-profile-finish!)
+                (compiler-tc-walk-decl-fire-attribution-note!
+                  (- _profile-copy-end-total _profile-copy-start-total)
+                  (- _profile-copy-end-live _profile-copy-start-live)
+                  _profile-generation-used-end
+                  (if (> released 0)
+                    released
+                    0)
+                  committed-live
+                  _profile-copy-end-live
+                  (ast.ast-compaction-profile-source-shared-expr-ref-count)
+                  (ast.ast-compaction-profile-source-shared-type-ref-count)
+                  (ast.ast-compaction-profile-survivor-expr-node-count)
+                  (ast.ast-compaction-profile-survivor-type-node-count))))
+            unit)
+          unit)]
       (begin
         (cfg
           compile-profile

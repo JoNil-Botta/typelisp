@@ -99,7 +99,9 @@
     (begin
       (while (< round rounds)
         (begin
-          (set! seed (qs-fill (&mut xs) n (+ seed (* (cast round : u64) 2654435761))))
+          (set!
+            seed
+            (qs-fill (&mut xs) n (+ seed (* (cast round : u64) 2654435761))))
           (qs-sort (&mut xs) 0 (- n 1))
           (set! acc (% (+ acc (qs-checksum (&mut xs) n)) qs-modulus))
           (set! round (+ round 1))))

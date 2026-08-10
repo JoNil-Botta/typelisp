@@ -4524,6 +4524,220 @@
 
 (cfg
   test
+  ;; N-BLOCK loop-invariant region (SplitKit step 1 lifted past the 2-block
+  ;; bound). `loop` is the header, `body1`+`body2` the body, so the natural loop
+  ;; spans THREE blocks; every use of var 0 sits in `body1` while the back-edge
+  ;; block `body2` mentions nothing, so no SINGLE block is a profitable region
+  ;; and only the multi-block region can home it. Every body block is entered
+  ;; from inside the region, so the region is single-entry at `loop`.
+  (define (compiler-reg-loop-split-nblock-invariant-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "loop_split_nblock_invariant")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      1
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
+              ir.CompilerIrInstrList.Nil)))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "loop")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Bool false)
+                (ir.compiler-ir-label "body1")
+                (ir.compiler-ir-label "exit"))
+              ir.CompilerIrInstrList.Nil))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "body1")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Store
+                  (ir.compiler-ir-test-symbol "hot0")
+                  (ir.CompilerIrValue.Var 0)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Store
+                    (ir.compiler-ir-test-symbol "hot1")
+                    (ir.CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body2"))
+                    ir.CompilerIrInstrList.Nil))))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "body2")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
+                  ir.CompilerIrInstrList.Nil))
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  (ir.compiler-ir-label "exit")
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Return
+                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
+                    ir.CompilerIrInstrList.Nil))
+                ir.CompilerIrBlockList.Nil))))))))
+
+(cfg
+  test
+  ;; Same natural loop, but `side` branches from OUTSIDE the region straight into
+  ;; the body block `body2`. The region is then multi-entry, its entry edge is not
+  ;; the header edge, and the INTO copy could land after a phi that already read
+  ;; the region register -- so the single-entry gate must refuse it and the whole
+  ;; loop-split rewrite must be a no-op.
+  (define (compiler-reg-loop-split-nblock-outside-entry-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "loop_split_nblock_outside_entry")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      1
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Bool false)
+                (ir.compiler-ir-label "loop")
+                (ir.compiler-ir-label "side"))
+              ir.CompilerIrInstrList.Nil)))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "side")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body2"))
+              ir.CompilerIrInstrList.Nil))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "loop")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Bool false)
+                  (ir.compiler-ir-label "body1")
+                  (ir.compiler-ir-label "exit"))
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "body1")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Store
+                    (ir.compiler-ir-test-symbol "hot0")
+                    (ir.CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Store
+                      (ir.compiler-ir-test-symbol "hot1")
+                      (ir.CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body2"))
+                      ir.CompilerIrInstrList.Nil))))
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  (ir.compiler-ir-label "body2")
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))
+                    ir.CompilerIrInstrList.Nil))
+                (ir.compiler-ir-block-cons
+                  (ir.compiler-ir-block
+                    (ir.compiler-ir-label "exit")
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Return
+                        (ir.CompilerIrMaybeValue.Some
+                          (ir.CompilerIrValue.Var 0)))
+                      ir.CompilerIrInstrList.Nil))
+                  ir.CompilerIrBlockList.Nil)))))))))
+
+(cfg
+  test
+  ;; The N-block region is admitted, homed in the first clobber-free candidate
+  ;; (%r8 -- the region has no call), and the boundary copies land on the right
+  ;; EDGES: the IN copy in the preheader `entry` (PredEnd, its only successor is
+  ;; the header) and the OUT copy at the top of `exit` (SuccEntry, its only
+  ;; predecessor is the header). Both body blocks read the homed register, and
+  ;; no use of the original spilled var 0 survives inside the region.
+  (define (compiler-reg-loop-split-nblock-invariant-rewrite-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-loop-split-nblock-invariant-function)]
+      [plan : reg.CompilerRegPlan (compiler-reg-loop-split-plan func)]
+      (match func
+        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+          (let
+            [rewrite : reg.CompilerRegCallSaveRewrite
+              (reg.compiler-reg-loop-split-rewrite-blocks
+                (ast.ast-node-pool-reader-type-segment-bases)
+                func
+                blocks
+                vars
+                (reg.compiler-reg-function-var-types func)
+                plan)]
+            (match rewrite
+              [(reg.CompilerRegCallSaveRewrite.Rewrite
+                  rewritten
+                  _
+                  out-vars
+                  extra-assignments
+                  _)
+                (let
+                  [entry-instrs : ir.CompilerIrInstrList
+                    (compiler-reg-block-instr-list
+                      rewritten
+                      (ir.compiler-ir-label "entry"))]
+                  [body1 : ir.CompilerIrInstrList
+                    (compiler-reg-block-instr-list
+                      rewritten
+                      (ir.compiler-ir-label "body1"))]
+                  [exit-instrs : ir.CompilerIrInstrList
+                    (compiler-reg-block-instr-list
+                      rewritten
+                      (ir.compiler-ir-label "exit"))]
+                  [rewritten-assignments : reg.CompilerRegAssignmentTable
+                    (reg.compiler-reg-plan-assignments
+                      (reg.compiler-reg-plan-with-call-save-rewrite
+                        plan
+                        rewrite))]
+                  (and
+                    (= out-vars (+ vars 1))
+                    (= (reg.compiler-reg-assignment-count extra-assignments) 1)
+                    (reg.compiler-reg-location-register?
+                      (reg.compiler-reg-assignment-lookup
+                        rewritten-assignments
+                        vars)
+                      cabi.compiler-reg-id-r8)
+                    ;; IN copy on the loop-entry edge, in the preheader.
+                    (compiler-reg-instr-list-has-mov-var? entry-instrs vars 0)
+                    ;; OUT copy on the live loop-exit edge, at the exit block top.
+                    (compiler-reg-instr-list-has-mov-var? exit-instrs 0 vars)
+                    ;; Region uses read the homed register, not the slot.
+                    (compiler-reg-instr-list-has-store-var? body1 "hot0" vars)
+                    (compiler-reg-instr-list-has-store-var? body1 "hot1" vars)
+                    (not
+                      (compiler-reg-instr-list-has-store-var? body1 "hot0" 0))
+                    (not
+                      (compiler-reg-instr-list-has-store-var? body1 "hot1" 0))))]))]))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-nblock-outside-entry-refused-ok?) : bool
+    (compiler-reg-loop-split-noop-for?
+      (compiler-reg-loop-split-nblock-outside-entry-function))))
+
+(cfg
+  test
   (define (compiler-reg-loop-split-clobber-scan-function) : ir.CompilerIrFunction
     (ir.CompilerIrFunction.Function
       (ir.compiler-ir-test-symbol "loop_split_clobber_scan")
@@ -11323,6 +11537,12 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-split-fixed-clobber-scan-ok?"
       (cfg test (compiler-reg-loop-split-fixed-clobber-scan-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-split-nblock-invariant-rewrite-ok?"
+      (cfg test (compiler-reg-loop-split-nblock-invariant-rewrite-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-loop-split-nblock-outside-entry-refused-ok?"
+      (cfg test (compiler-reg-loop-split-nblock-outside-entry-refused-ok?) true))
     true))
 
 (define (compiler-regalloc-storage-self-test?) : bool

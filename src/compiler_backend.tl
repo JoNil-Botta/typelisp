@@ -46032,6 +46032,139 @@
         target-slot
         "\n"))))
 
+;; The same GAP2b hazard on the absolute (non-PIC) dispatch form, which has no
+;; table register to stash through and so was left splicing the inline restore
+;; straight into the sequence. That splice is correct for a conditional branch
+;; -- emergency-restore-before-jumps documents its precondition as "the
+;; scavenged scratch is dead after the compare, because the jumps read EFLAGS,
+;; not the register" -- and it is false here: `jmp *table(,index-reg,8)` reads
+;; the index register, and the `subq $base` that computed the index wrote it
+;; into the very register the restore overwrites. The emitted code then
+;; dispatches on the restored occupant.
+;;
+;; Same fix as the PIC path, one register short: the final target address is
+;; resolved into the index register itself -- the table entry when in range, a
+;; `leaq` of the default block when not -- stashed to the dedicated slot, and
+;; only then are the occupants restored and the slot-indirect jump taken. The
+;; index is dead from the stash onward, so every occupant is restored exactly
+;; once on the single path reaching the transfer.
+(define (compiler-backend-emit-switch-dispatch-absolute-emergency
+  [function : String]
+  [current-label : i64]
+  [default-label : i64]
+  [total-switch : bool]
+  [case-count : i64]
+  [base : i64]
+  [index-reg : String]
+  [load-index : String]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state backend-state)]
+    [target-idx : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-emergency-pending-count)]
+    [target-slot : String
+      (compiler-backend-frame-offset-with-backend-state
+        backend-state
+        (compiler-backend-emergency-reg-offset function-state target-idx))]
+    [_reserve-target-slot : unit
+      (if (<
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-emergency-used-count)
+        (+ target-idx 1))
+        (compiler-backend-function-scratch-set-i64!
+          function-state
+          compiler-backend-scratch-i64-emergency-used-count
+          (+ target-idx 1))
+        unit)]
+    [table-label : String
+      (compiler-backend-switch-table-label function current-label)]
+    [done-label : String
+      (compiler-backend-asm-label
+        function
+        (compiler_ir_types.compiler-ir-label
+          (str_cat.str-cat
+            (compiler_ir_types.compiler-ir-label-text current-label)
+            "_disp_j"
+            "")))]
+    [default-stub-label : String
+      (compiler-backend-asm-label
+        function
+        (compiler_ir_types.compiler-ir-label
+          (str_cat.str-cat
+            (compiler_ir_types.compiler-ir-label-text current-label)
+            "_disp_d"
+            "")))]
+    [rebase : String
+      (if (= base 0)
+        ""
+        (str_cat.str-cat
+          "    subq $"
+          (string.int->string base)
+          ", "
+          index-reg
+          "\n"
+          ""))]
+    ;; Emitted after the last read of index-reg, before the transfer.
+    [restore : String
+      (compiler-backend-emergency-restore-before-jumps backend-state)]
+    (if total-switch
+      (str_cat.str-cat
+        load-index
+        rebase
+        "    movq "
+        table-label
+        "(,"
+        index-reg
+        ",8), "
+        index-reg
+        "\n    movq "
+        index-reg
+        ", "
+        target-slot
+        "\n"
+        restore
+        "    jmp *"
+        target-slot
+        "\n")
+      (str_cat.str-cat
+        load-index
+        rebase
+        "    cmpq $"
+        (string.int->string (- case-count 1))
+        ", "
+        index-reg
+        "\n    ja "
+        default-stub-label
+        "\n    movq "
+        table-label
+        "(,"
+        index-reg
+        ",8), "
+        index-reg
+        "\n    jmp "
+        done-label
+        "\n"
+        default-stub-label
+        ":\n    leaq "
+        (compiler-backend-asm-label function default-label)
+        "(%rip), "
+        index-reg
+        "\n"
+        done-label
+        ":\n    movq "
+        index-reg
+        ", "
+        target-slot
+        "\n"
+        restore
+        "    jmp *"
+        target-slot
+        "\n"))))
+
 (define (compiler-backend-emit-switch-dispatch
   [backend-state : CompilerBackendState]
   [function : String]
@@ -46090,79 +46223,28 @@
       [(ResultCompilerBackend.Ok load-index)
         (ResultCompilerBackend.Ok
           ;; lint-allow: nested-if-ladder
-          (if (compiler-backend-state-absolute-switch-ok? backend-state)
-            ;; Absolute indexed form (non-PIC Linux): no table register at
-            ;; all, so the dispatch never borrows one. Pending emergency
-            ;; occupants from earlier borrows are restored before the compare
-            ;; (movq loads keep the ja flags intact), covering both edges.
-            (if total-switch
-              (str_cat.str-cat
-                load-index
-                (if (= base 0)
-                  ""
-                  (str_cat.str-cat
-                    "    subq $"
-                    (string.int->string base)
-                    ", "
-                    index-reg
-                    "\n"
-                    ""))
-                (if (compiler-backend-function-scratch-bool?
-                  (compiler-backend-state-function-state backend-state)
-                  compiler-backend-scratch-bool-emergency-pending)
-                  (compiler-backend-emergency-restore-before-jumps
-                    backend-state)
-                  "")
-                "    jmp *"
-                (compiler-backend-switch-table-label function current-label)
-                "(,"
-                index-reg
-                ",8)\n")
-              (str_cat.str-cat
-                load-index
-                (if (= base 0)
-                  ""
-                  (str_cat.str-cat
-                    "    subq $"
-                    (string.int->string base)
-                    ", "
-                    index-reg
-                    "\n"
-                    ""))
-                (if (compiler-backend-function-scratch-bool?
-                  (compiler-backend-state-function-state backend-state)
-                  compiler-backend-scratch-bool-emergency-pending)
-                  (compiler-backend-emergency-restore-before-jumps
-                    backend-state)
-                  "")
-                "    cmpq $"
-                (string.int->string (- case-count 1))
-                ", "
-                index-reg
-                "\n    ja "
-                (compiler-backend-asm-label function default-label)
-                "\n    jmp *"
-                (compiler-backend-switch-table-label function current-label)
-                "(,"
-                index-reg
-                ",8)\n"))
-            (if (compiler-backend-function-scratch-bool?
+          (if (and
+            (compiler-backend-state-absolute-switch-ok? backend-state)
+            (compiler-backend-function-scratch-bool?
               (compiler-backend-state-function-state backend-state)
-              compiler-backend-scratch-bool-emergency-pending)
-              ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant;
-              ;; a trailing restore after the indirect jmp is unreachable. Emit the
-              ;; slot-indirect form with the restore BEFORE the transfer.
-              (compiler-backend-emit-switch-dispatch-emergency
-                function
-                current-label
-                default-label
-                total-switch
-                case-count
-                base
-                index-reg
-                table-reg
-                load-index
-                backend-state)
+              compiler-backend-scratch-bool-emergency-pending))
+            ;; GAP2b on the absolute form: the index register is live through
+            ;; the indirect jump, so the restore cannot precede it.
+            (compiler-backend-emit-switch-dispatch-absolute-emergency
+              function
+              current-label
+              default-label
+              total-switch
+              case-count
+              base
+              index-reg
+              load-index
+              backend-state)
+            (if (compiler-backend-state-absolute-switch-ok? backend-state)
+              ;; Absolute indexed form (non-PIC Linux): no table register at
+              ;; all, so the dispatch never borrows one. Pending emergency
+              ;; occupants from earlier borrows take the slot-indirect form
+              ;; above; this arm has none to restore.
               (if total-switch
                 (str_cat.str-cat
                   load-index
@@ -46175,13 +46257,9 @@
                       index-reg
                       "\n"
                       ""))
-                  "    leaq "
+                  "    jmp *"
                   (compiler-backend-switch-table-label function current-label)
-                  "(%rip), "
-                  table-reg
-                  "\n    jmp *("
-                  table-reg
-                  ","
+                  "(,"
                   index-reg
                   ",8)\n")
                 (str_cat.str-cat
@@ -46201,15 +46279,75 @@
                   index-reg
                   "\n    ja "
                   (compiler-backend-asm-label function default-label)
-                  "\n    leaq "
+                  "\n    jmp *"
                   (compiler-backend-switch-table-label function current-label)
-                  "(%rip), "
-                  table-reg
-                  "\n    jmp *("
-                  table-reg
-                  ","
+                  "(,"
                   index-reg
-                  ",8)\n")))))]
+                  ",8)\n"))
+              (if (compiler-backend-function-scratch-bool?
+                (compiler-backend-state-function-state backend-state)
+                compiler-backend-scratch-bool-emergency-pending)
+                ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant;
+                ;; a trailing restore after the indirect jmp is unreachable. Emit the
+                ;; slot-indirect form with the restore BEFORE the transfer.
+                (compiler-backend-emit-switch-dispatch-emergency
+                  function
+                  current-label
+                  default-label
+                  total-switch
+                  case-count
+                  base
+                  index-reg
+                  table-reg
+                  load-index
+                  backend-state)
+                (if total-switch
+                  (str_cat.str-cat
+                    load-index
+                    (if (= base 0)
+                      ""
+                      (str_cat.str-cat
+                        "    subq $"
+                        (string.int->string base)
+                        ", "
+                        index-reg
+                        "\n"
+                        ""))
+                    "    leaq "
+                    (compiler-backend-switch-table-label function current-label)
+                    "(%rip), "
+                    table-reg
+                    "\n    jmp *("
+                    table-reg
+                    ","
+                    index-reg
+                    ",8)\n")
+                  (str_cat.str-cat
+                    load-index
+                    (if (= base 0)
+                      ""
+                      (str_cat.str-cat
+                        "    subq $"
+                        (string.int->string base)
+                        ", "
+                        index-reg
+                        "\n"
+                        ""))
+                    "    cmpq $"
+                    (string.int->string (- case-count 1))
+                    ", "
+                    index-reg
+                    "\n    ja "
+                    (compiler-backend-asm-label function default-label)
+                    "\n    leaq "
+                    (compiler-backend-switch-table-label function current-label)
+                    "(%rip), "
+                    table-reg
+                    "\n    jmp *("
+                    table-reg
+                    ","
+                    index-reg
+                    ",8)\n"))))))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-switch
@@ -50232,7 +50370,775 @@
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)]))])))
 
+;; --------------------------------------------------------------------------
+;; M6: fold a single-use load into the comparing instruction's memory operand.
+;;
+;; TL emitted the load and the compare separately -- `movq 8(%rax), %rdi ;
+;; cmpq %rdi, %rsi` -- where C folds the load into the compare's memory
+;; operand: `cmpq 8(%rax), %rsi`, one instruction and one live register fewer.
+;; GAP9 already folds the CONST-offset gep+load whose value is the compare's
+;; LHS and whose compare feeds a branch. The M6 shapes below are the rest of
+;; that family, reached through the same gep fusion cluster:
+;;
+;;   M6-A  the LENGTH operand of an immediately following bounds check
+;;         (`movq 8(%rax),%rdi ; cmpq %rdi,%rsi ; jb ok` -> `cmpq 8(%rax),%rsi ;
+;;         jb ok`), including the dynamic SIB-index address GAP9 declines.
+;;   M6-B  a compare+branch with the loaded value on EITHER side, and the
+;;         dynamic SIB-index address, which GAP9 declines on both counts.
+;;   M6-C  a NARROW (byte/word/long) load whose widening cast feeds an equality
+;;         compare: `movzbq (%r9,%rsi,1),%rsi ; cmpq $46,%rsi` -> `cmpb $46,
+;;         (%r9,%rsi,1)`.
+;;
+;; Every M6 probe is PURE: it only spells an address out of register homes the
+;; allocator already chose, so a declined fold performs no scavenge and leaks
+;; no emergency-pending register (the M-D lesson recorded on the GAP8 probe).
+;; That is why each shape requires its address components -- and the compare's
+;; other operand -- to be register-homed or immediate; a spilled component
+;; declines back to the existing emission instead of staging.
+;;
+;; The loaded value's own home register is simply never written when a fold
+;; fires. That is sound exactly because every shape is gated on
+;; `compiler-backend-var-single-use?` for the load destination (and for the
+;; cast/compare destinations it chains through): nothing else can read the
+;; home, so leaving its previous contents in place is unobservable.
+(define (compiler-backend-gep-load-cmp-address
+  [backend-state : CompilerBackendState]
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [gep-disp : i64]) : String
+  ;; %rbp is excluded from the BASE slot on BOTH arms, not just the dynamic arm
+  ;; address-base-filter already guards: the `disp(,%rbp,1)` spelling the const
+  ;; arm would otherwise use is re-read by the bounds-abort tail after a `pushq`
+  ;; has moved %rsp, and it is the exact shape the FPO rsp-rebase pass rewrites.
+  (let
+    [base-home : String
+      (compiler-backend-address-base-filter
+        (compiler-backend-value-scalar-register backend-state assignments base))]
+    (if (string.eq base-home "")
+      ""
+      (match (compiler-backend-value-as-i64 offset)
+        [(option_i64.Some n)
+          (let
+            [disp : i64
+              (+
+                (* n (compiler-backend-type-size type-segment-bases elem-ty))
+                gep-disp)]
+            (if (compiler-backend-imm32? disp)
+              (compiler-backend-base-address disp base-home)
+              ""))]
+        [(option_i64.None)
+          (let
+            [scale : i64
+              (compiler-backend-type-size type-segment-bases elem-ty)]
+            [index-home : String
+              (compiler-backend-value-scalar-register
+                backend-state
+                assignments
+                offset)]
+            (if (and
+              (compiler-backend-gep-sib-scale? scale)
+              (not (string.eq index-home ""))
+              (not (string.eq index-home "%rbp"))
+              (compiler-backend-imm32? gep-disp))
+              (compiler-backend-gep-index-address-disp
+                gep-disp
+                base-home
+                scale
+                index-home)
+              ""))]))))
+
+;; True when the instruction would emit the LOCATED runtime-abort tail
+;; (`tl_oob_abort_at`), which re-reads both compare operands through `pushq`
+;; after %rsp has already moved. M6-A keeps that tail on the register form it
+;; was validated with and declines instead. Pure: it mirrors the predicate
+;; compiler-backend-runtime-abort-site-install! uses without mutating the
+;; function state the dispatch seam installs for the instruction it is really
+;; emitting.
+(define (compiler-backend-abort-site-would-activate?
+  [ctx : CompilerBackendEmissionContext]
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (and
+    (compiler-backend-runtime-abort-site-instr? ctx.backend-state instr)
+    (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
+      ctx.spans
+      ctx.source-function
+      instr)
+      [(compiler_ir_types.CompilerMaybeSourceLocation.No) false]
+      [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)
+        (> location.path-id 0)])))
+
+;; Follow the fused load's value forward to the instruction that consumes it,
+;; stepping over the width-preserving casts TL's typed surface leaves between a
+;; `.len` load and the bounds check that uses it (`%17 = cast %15 : i64 to u64`
+;; with `%16 = cast %0 : i64 to u64` for the index sitting beside it). Two kinds
+;; of step are admitted, and BOTH emit nothing on the machine:
+;;
+;;   - a size-preserving non-float cast OF the tracked value whose destination
+;;     is single-use: it renames the value and is folded away with the load;
+;;   - a size-preserving non-float cast of some OTHER value whose source and
+;;     destination already share one register home: the allocator has made it a
+;;     self-move, so skipping it neither drops work nor writes any register --
+;;     in particular it cannot clobber the address registers the folded compare
+;;     now reads at the consumer instead of at the load.
+;;
+;; Anything else ends the walk at that instruction; `fuel` bounds the scan.
+;; The result carries the tracked value var and the index it stopped at.
+(defenum CompilerBackendCmpFoldWalk
+  (No)
+  (Some i64 i64))
+
+(define (compiler-backend-cmp-fold-walk
+  [ctx : CompilerBackendEmissionContext]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [value-var : i64]
+  [fuel : i64]) : CompilerBackendCmpFoldWalk
+  (if (>= index instrs.len)
+    (CompilerBackendCmpFoldWalk.No)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Cast cast-dst cast-src from-ty to-ty)
+        (if (or
+          (<= fuel 0)
+          (compiler-backend-float-type? from-ty)
+          (compiler-backend-float-type? to-ty)
+          (not
+            (=
+              (compiler-backend-type-size ctx.type-segment-bases from-ty)
+              (compiler-backend-type-size ctx.type-segment-bases to-ty))))
+          (CompilerBackendCmpFoldWalk.Some value-var index)
+          (if (compiler-backend-branch-uses-var? cast-src value-var)
+            (if (compiler-backend-var-single-use? ctx.use-counts cast-dst)
+              (compiler-backend-cmp-fold-walk
+                ctx
+                instrs
+                (+ index 1)
+                cast-dst
+                (- fuel 1))
+              (CompilerBackendCmpFoldWalk.Some value-var index))
+            (let
+              [src-home : String
+                (compiler-backend-value-scalar-register
+                  ctx.backend-state
+                  ctx.assignments
+                  cast-src)]
+              [dst-home : String
+                (compiler-backend-var-register-home
+                  ctx.backend-state
+                  ctx.assignments
+                  cast-dst)]
+              (if (and
+                (not (string.eq src-home ""))
+                (string.eq src-home dst-home))
+                (compiler-backend-cmp-fold-walk
+                  ctx
+                  instrs
+                  (+ index 1)
+                  value-var
+                  (- fuel 1))
+                (CompilerBackendCmpFoldWalk.Some value-var index)))))]
+      [_ (CompilerBackendCmpFoldWalk.Some value-var index)])))
+
+(define compiler-backend-cmp-fold-walk-fuel : i64
+  4)
+
+;; M6-A: length memory operand, index register operand, ok-label, resume index.
+(defenum CompilerBackendGepLoadBoundsFold
+  (No)
+  (Some String String i64 i64))
+
+(define (compiler-backend-gep-load-bounds-probe
+  [ctx : CompilerBackendEmissionContext]
+  [addr : String]
+  [load-dst : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendGepLoadBoundsFold
+  ;; The bounds compare is a 64-bit unsigned `cmpq len, idx`, so the loaded
+  ;; length must be a full word: no narrow width and no float ever reaches here.
+  ;; Size-preserving casts on the way leave that word's bit pattern alone, so
+  ;; the walk may cross them.
+  (if (or
+    (string.eq addr "")
+    (compiler-backend-float-type? load-ty)
+    (not (= (compiler-backend-type-size ctx.type-segment-bases load-ty) 8))
+    (not (compiler-backend-var-single-use? ctx.use-counts load-dst)))
+    (CompilerBackendGepLoadBoundsFold.No)
+    (match (compiler-backend-cmp-fold-walk
+      ctx
+      instrs
+      index
+      load-dst
+      compiler-backend-cmp-fold-walk-fuel)
+      [(CompilerBackendCmpFoldWalk.No) (CompilerBackendGepLoadBoundsFold.No)]
+      [(CompilerBackendCmpFoldWalk.Some length-var stop)
+        (let
+          [next : compiler_ir_types.CompilerIrInstr
+            (compiler_ir_types.compiler-ir-instr-seq-ref instrs stop)]
+          (match next
+            [(compiler_ir_types.CompilerIrInstr.BoundsCheck
+                bc-index
+                bc-length
+                ok-label)
+              (let
+                [index-reg : String
+                  (compiler-backend-value-scalar-register-home
+                    ctx.backend-state
+                    ctx.assignments
+                    bc-index)]
+                ;; A register-homed INDEX is required: the folded length already
+                ;; occupies the compare's memory operand and `cmp mem, mem` is
+                ;; illegal, so a spilled or constant index declines to the
+                ;; ordinary path (which owns its own index staging and its
+                ;; GAP6d const form).
+                (if (and
+                  (compiler-backend-branch-uses-var? bc-length length-var)
+                  (not (compiler-backend-branch-uses-var? bc-index length-var))
+                  (not (string.eq index-reg ""))
+                  (not (compiler-backend-abort-site-would-activate? ctx next)))
+                  (CompilerBackendGepLoadBoundsFold.Some
+                    addr
+                    index-reg
+                    ok-label
+                    (+ stop 1))
+                  (CompilerBackendGepLoadBoundsFold.No)))]
+            [_ (CompilerBackendGepLoadBoundsFold.No)]))])))
+
+;; The M6-A mirror of compiler-backend-rest-starts-load-compare-branch?: the
+;; adjacent-load PAIR rule declines when the second load is the length operand
+;; of the bounds check right behind it, so that gep+load re-enters the fusion
+;; cluster on its own and M6-A can put the length straight in the compare.
+;; Unlike the compare-branch predicate this one runs the real probe, because
+;; declining the pair for a fold that then refuses would leave two independent
+;; single loads where the pair rule had one shared base. The displacement is
+;; taken as 0: the pair arm is constant-offset-only, and a constant offset
+;; contributes nothing to the GAP9 fold (whose ordinal must not be consumed by
+;; a predicate anyway).
+(define (compiler-backend-gep-load-bounds-foldable?
+  [ctx : CompilerBackendEmissionContext]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [load-dst : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (match (compiler-backend-gep-load-bounds-probe
+    ctx
+    (compiler-backend-gep-load-cmp-address
+      ctx.backend-state
+      ctx.type-segment-bases
+      ctx.assignments
+      base
+      offset
+      elem-ty
+      0)
+    load-dst
+    load-ty
+    instrs
+    index)
+    [(CompilerBackendGepLoadBoundsFold.Some _ _ _ _) true]
+    [(CompilerBackendGepLoadBoundsFold.No) false]))
+
+(define (compiler-backend-emit-gep-load-bounds-fold
+  [ctx : CompilerBackendEmissionContext]
+  [length-operand : String]
+  [index-operand : String]
+  [ok-label : i64]) : ResultCompilerBackend
+  (ResultCompilerBackend.Ok
+    (compiler-backend-bounds-check-asm
+      ""
+      ""
+      length-operand
+      index-operand
+      (compiler-backend-call-arg-space
+        ctx.target
+        (compiler_ir_types.CompilerIrCallArgs.Nil)
+        (compiler_ast_types.ast-type-list-new)
+        false
+        ctx.program-index)
+      (compiler-backend-asm-label ctx.function ok-label)
+      ctx.plan
+      ctx.program-index)))
+
+;; `cmp`/`test` with one memory operand, at an explicit width. `src` is the
+;; AT&T source operand and `dst` the destination one: exactly one of them is
+;; the folded memory address, and which one depends on where the loaded value
+;; sat in the IR compare (`lhs OP rhs` renders as `cmp rhs, lhs`).
+(define (compiler-backend-cmp-mem-operands-asm
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [suffix : String]
+  [src-operand : String]
+  [dst-operand : String]) : String
+  (str_cat.str-cat
+    "    "
+    (if (compiler-backend-bit-test-op? op)
+      "test"
+      "cmp")
+    suffix
+    " "
+    src-operand
+    ", "
+    dst-operand
+    "\n"))
+
+;; M6-C width/signedness table. The narrow fold replaces
+;;
+;;     mov{z,s}<W>q MEM, %r      ; 64-bit value = ext(MEM)
+;;     cmpq $K, %r               ; equality at 64 bits
+;;
+;; with `cmp<W> $K, MEM` -- a comparison at W BYTES. Equality at the narrow
+;; width agrees with equality at 64 bits exactly when the literal survives the
+;; load's own extension unchanged, i.e. when K is in the range the extension
+;; can produce:
+;;
+;;     width  load       extension     admitted K
+;;     -----  ---------  ------------  --------------------------
+;;     1      movzbq     zero          0 .. 255
+;;     1      movsbq     sign          -128 .. 127
+;;     2      movzwq     zero          0 .. 65535
+;;     2      movswq     sign          -32768 .. 32767
+;;     4      movl       zero          0 .. 2147483647
+;;     4      movslq     sign          -2147483648 .. 2147483647
+;;
+;; Outside that range `ext(MEM) == K` is a CONSTANT (no W-byte value extends to
+;; K), so the fold declines rather than inventing a comparison. The W=4
+;; unsigned row stops at imm32's signed maximum on purpose: `cmpl $K, MEM`
+;; renders K as a 32-bit immediate, and the values above that would have to be
+;; spelled as their negative two's-complement twin.
+;;
+;; ORDERED narrow comparisons are NOT folded: a zero-extended byte compared
+;; with `jl`/`jg` at 64 bits is a comparison of a non-negative value, which the
+;; 8-bit signed compare does not reproduce (byte 200 is -56 there), and a
+;; sign-extended byte compared unsigned is wrong the other way. Only Eq/Ne
+;; reach the narrow arm, and their jcc (je/jne) is width- and sign-agnostic.
+(define (compiler-backend-narrow-cmp-literal-ok?
+  [width : i64]
+  [signed? : bool]
+  [k : i64]) : bool
+  (cond
+    [(= width 1)
+      (if signed?
+        (and (>= k (- 0 128)) (<= k 127))
+        (and (>= k 0) (<= k 255)))]
+    [(= width 2)
+      (if signed?
+        (and (>= k (- 0 32768)) (<= k 32767))
+        (and (>= k 0) (<= k 65535)))]
+    [(= width 4)
+      (if signed?
+        (compiler-backend-imm32? k)
+        (and (>= k 0) (<= k 2147483647)))]
+    [else false]))
+
+;; Equality-shaped compares set ZF symmetrically, so their operands may be
+;; exchanged without touching the jcc. That is what lets the narrow arm always
+;; put the literal in the source slot, and what lets the wide arm accept an
+;; immediate on the side the memory operand does not occupy.
+(define (compiler-backend-compare-operands-commute?
+  [op : compiler_ir_types.CompilerIrBinOp]) : bool
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Eq) true]
+    [(compiler_ir_types.CompilerIrBinOp.Ne) true]
+    [(compiler_ir_types.CompilerIrBinOp.BitTestEq) true]
+    [(compiler_ir_types.CompilerIrBinOp.BitTestNe) true]
+    [_ false]))
+
+;; M6-B/M6-C: compare asm, true jcc, false jcc, true label, false label,
+;; resume index.
+(defenum CompilerBackendGepLoadCmpBranchFold
+  (No)
+  (Some String String String i64 i64 i64))
+
+;; The compare's own source operand: the loaded value has been folded into the
+;; memory operand, so the OTHER side must already be an immediate or a register
+;; home. "" declines.
+(define (compiler-backend-gep-load-cmp-other-operand
+  [ctx : CompilerBackendEmissionContext]
+  [value : compiler_ir_types.CompilerIrValue]) : String
+  (match (compiler-backend-immediate-operand ctx.backend-state value)
+    [(CompilerBackendMaybeImmediate.Some imm) imm]
+    [(CompilerBackendMaybeImmediate.No)
+      (compiler-backend-value-scalar-register
+        ctx.backend-state
+        ctx.assignments
+        value)]))
+
+;; The narrow (M6-C) arm: `Load` of a 1/2/4-byte element, its widening `Cast`,
+;; then an equality compare against a literal. Returns "" when the shape or the
+;; literal is not admitted.
+(define (compiler-backend-gep-load-narrow-cmp-asm
+  [ctx : CompilerBackendEmissionContext]
+  [addr : String]
+  [load-ty : compiler_ast_types.AstType]
+  [from-ty : compiler_ast_types.AstType]
+  [to-ty : compiler_ast_types.AstType]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [other : compiler_ir_types.CompilerIrValue]) : String
+  (let
+    [width : i64 (compiler-backend-type-size ctx.type-segment-bases load-ty)]
+    (if (or
+      (not (compiler-backend-compare-operands-commute? op))
+      (compiler-backend-bit-test-op? op)
+      (compiler-backend-float-type? from-ty)
+      (compiler-backend-float-type? to-ty)
+      ;; The register value the compare would have read is the LOAD's own
+      ;; extension, so the cast must be exactly that extension: same source
+      ;; width, same source signedness, widened to a full word.
+      (not
+        (= (compiler-backend-type-size ctx.type-segment-bases from-ty) width))
+      (not (= (compiler-backend-type-size ctx.type-segment-bases to-ty) 8))
+      (not
+        (=
+          (if (compiler-backend-type-signed? from-ty)
+            1
+            0)
+          (if (compiler-backend-type-signed? load-ty)
+            1
+            0))))
+      ""
+      (match (compiler-backend-value-as-i64 other)
+        [(option_i64.Some k)
+          (if (compiler-backend-narrow-cmp-literal-ok?
+            width
+            (compiler-backend-type-signed? load-ty)
+            k)
+            (compiler-backend-cmp-mem-operands-asm
+              op
+              (compiler-backend-int-instruction-suffix
+                ctx.type-segment-bases
+                load-ty)
+              (str_cat.str-cat "$" (string.int->string k))
+              addr)
+            "")]
+        [(option_i64.None) ""]))))
+
+;; The wide (M6-B) arm: a full-word load feeding a compare from EITHER side.
+;; `mem-is-lhs?` says the loaded value was the IR compare's left operand, which
+;; is the AT&T DESTINATION slot; the mirrored case puts the address in the
+;; source slot instead, and only an equality compare may swap them.
+(define (compiler-backend-gep-load-wide-cmp-asm
+  [ctx : CompilerBackendEmissionContext]
+  [addr : String]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [mem-is-lhs? : bool]
+  [other : compiler_ir_types.CompilerIrValue]) : String
+  ;; When the address occupies the SOURCE slot the other operand has to be a
+  ;; legal destination: a register. An immediate destination is only reachable
+  ;; by exchanging the operands, which only equality-shaped compares permit.
+  (let
+    [other-operand : String
+      (compiler-backend-gep-load-cmp-other-operand ctx other)]
+    (cond
+      [(string.eq other-operand "") ""]
+      [mem-is-lhs?
+        (compiler-backend-cmp-mem-operands-asm op "q" other-operand addr)]
+      [(compiler-backend-string-prefix-at? other-operand "%" 0)
+        (compiler-backend-cmp-mem-operands-asm op "q" addr other-operand)]
+      [(compiler-backend-compare-operands-commute? op)
+        (compiler-backend-cmp-mem-operands-asm op "q" other-operand addr)]
+      [else ""])))
+
+;; Walk `Load ; [Cast] ; BinOp compare ; Branch` and produce the folded
+;; compare. Every destination in the chain is required to be single-use, which
+;; is what makes dropping the load (and the cast the load already performed)
+;; unobservable; the instructions are consumed as a contiguous run, so nothing
+;; can write memory, the address registers or the flags in between.
+(define (compiler-backend-gep-load-cmp-branch-probe
+  [ctx : CompilerBackendEmissionContext]
+  [addr : String]
+  [load-dst : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendGepLoadCmpBranchFold
+  (match (compiler-backend-cmp-fold-walk
+    ctx
+    instrs
+    index
+    load-dst
+    compiler-backend-cmp-fold-walk-fuel)
+    [(CompilerBackendCmpFoldWalk.No) (CompilerBackendGepLoadCmpBranchFold.No)]
+    [(CompilerBackendCmpFoldWalk.Some value-var stop)
+      (compiler-backend-gep-load-cmp-branch-probe-at
+        ctx
+        addr
+        load-dst
+        load-ty
+        value-var
+        instrs
+        stop)]))
+
+(define (compiler-backend-gep-load-cmp-branch-probe-at
+  [ctx : CompilerBackendEmissionContext]
+  [addr : String]
+  [load-dst : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [value-var : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendGepLoadCmpBranchFold
+  (let
+    [maybe-cast : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+    [narrow? : bool
+      (match maybe-cast
+        [(compiler_ir_types.CompilerIrInstr.Cast cast-dst cast-src _ _)
+          (and
+            ;; The narrow arm reads the LOAD's own extension out of load-ty, so
+            ;; the widening cast has to sit directly on the loaded value: a
+            ;; size-preserving cast crossed on the way could have flipped the
+            ;; signedness the width table depends on.
+            (= value-var load-dst)
+            (compiler-backend-branch-uses-var? cast-src load-dst)
+            (compiler-backend-var-single-use? ctx.use-counts cast-dst))]
+        [_ false])]
+    [cmp-index : i64
+      (if narrow?
+        (+ index 1)
+        index)]
+    [cmp-var : i64
+      (match maybe-cast
+        [(compiler_ir_types.CompilerIrInstr.Cast cast-dst _ _ _)
+          (if narrow?
+            cast-dst
+            value-var)]
+        [_ value-var])]
+    ;; The wide arm needs a full-word load; the narrow arm needs the cast (and
+    ;; checks its own admitted widths below).
+    (if (or
+      (and
+        (not narrow?)
+        (not (= (compiler-backend-type-size ctx.type-segment-bases load-ty) 8)))
+      (>= (+ cmp-index 1) instrs.len))
+      (CompilerBackendGepLoadCmpBranchFold.No)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs cmp-index)
+        [(compiler_ir_types.CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
+          (let
+            [mem-is-lhs? : bool
+              (and
+                (compiler-backend-branch-uses-var? lhs cmp-var)
+                (not (compiler-backend-branch-uses-var? rhs cmp-var)))]
+            [mem-is-rhs? : bool
+              (and
+                (compiler-backend-branch-uses-var? rhs cmp-var)
+                (not (compiler-backend-branch-uses-var? lhs cmp-var)))]
+            [other : compiler_ir_types.CompilerIrValue
+              (if mem-is-lhs?
+                rhs
+                lhs)]
+            (if (and
+              (compiler-backend-compare-op? op)
+              (compiler-backend-var-single-use? ctx.use-counts cmp-dst)
+              (or mem-is-lhs? mem-is-rhs?)
+              ;; The wide arm renders `cmpq`, so the comparison itself must be
+              ;; at full word width; the narrow arm carries its own width table.
+              (or
+                narrow?
+                (= (compiler-backend-type-size ctx.type-segment-bases cmp-ty) 8))
+              (not
+                (compiler-backend-binop-f64?
+                  ctx.types
+                  ctx.global-types
+                  lhs
+                  rhs
+                  cmp-ty)))
+              (match (compiler_ir_types.compiler-ir-instr-scalar-fact
+                (compiler_ir_types.compiler-ir-instr-seq-ref
+                  instrs
+                  (+ cmp-index 1)))
+                [(compiler_ir_types.CompilerIrInstrScalarFact.Branch
+                    cond
+                    true-label
+                    false-label)
+                  (let
+                    [cmp-asm : String
+                      (if narrow?
+                        (match maybe-cast
+                          [(compiler_ir_types.CompilerIrInstr.Cast
+                              _
+                              _
+                              from-ty
+                              to-ty)
+                            (compiler-backend-gep-load-narrow-cmp-asm
+                              ctx
+                              addr
+                              load-ty
+                              from-ty
+                              to-ty
+                              op
+                              other)]
+                          [_ ""])
+                        (compiler-backend-gep-load-wide-cmp-asm
+                          ctx
+                          addr
+                          op
+                          mem-is-lhs?
+                          other))]
+                    [jcc-ty : compiler_ast_types.AstType
+                      (if narrow?
+                        load-ty
+                        cmp-ty)]
+                    [true-jcc : String
+                      (compiler-backend-compare-true-jcc op jcc-ty)]
+                    [false-jcc : String
+                      (compiler-backend-compare-false-jcc op jcc-ty)]
+                    (if (and
+                      (not (string.eq cmp-asm ""))
+                      (not (string.eq true-jcc ""))
+                      (compiler-backend-branch-uses-var? cond cmp-dst)
+                      ;; Phi-edge copies would have to be threaded through the
+                      ;; branch (and would need their own cycle scratch); the
+                      ;; fold declines and the ordinary path emits them.
+                      (not
+                        (compiler-backend-branch-needs-phi-copies?
+                          (compiler-backend-state-function-state
+                            ctx.backend-state)
+                          true-label
+                          false-label)))
+                      (CompilerBackendGepLoadCmpBranchFold.Some
+                        cmp-asm
+                        true-jcc
+                        false-jcc
+                        true-label
+                        false-label
+                        (+ cmp-index 2))
+                      (CompilerBackendGepLoadCmpBranchFold.No)))]
+                [_ (CompilerBackendGepLoadCmpBranchFold.No)])
+              (CompilerBackendGepLoadCmpBranchFold.No)))]
+        [_ (CompilerBackendGepLoadCmpBranchFold.No)]))))
+
+(defenum CompilerBackendMaybeGepLoadCmpEmission
+  (No)
+  (Some ResultCompilerBackend))
+
+(define (compiler-backend-gep-load-cmp-fold-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [addr : String]
+  [load-dst : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeGepLoadCmpEmission
+  (if (or
+    (string.eq addr "")
+    (compiler-backend-float-type? load-ty)
+    (not (compiler-backend-var-single-use? ctx.use-counts load-dst))
+    (>= index instrs.len))
+    (CompilerBackendMaybeGepLoadCmpEmission.No)
+    (match (compiler-backend-gep-load-bounds-probe
+      ctx
+      addr
+      load-dst
+      load-ty
+      instrs
+      index)
+      [(CompilerBackendGepLoadBoundsFold.Some
+          length-operand
+          index-operand
+          ok-label
+          after-bounds)
+        (CompilerBackendMaybeGepLoadCmpEmission.Some
+          (compiler-backend-emit-fused-result-rest
+            ctx
+            fallthrough
+            (compiler-backend-emit-gep-load-bounds-fold
+              ctx
+              length-operand
+              index-operand
+              ok-label)
+            instrs
+            after-bounds
+            out))]
+      [(CompilerBackendGepLoadBoundsFold.No)
+        (match (compiler-backend-gep-load-cmp-branch-probe
+          ctx
+          addr
+          load-dst
+          load-ty
+          instrs
+          index)
+          [(CompilerBackendGepLoadCmpBranchFold.Some
+              cmp-asm
+              true-jcc
+              false-jcc
+              true-label
+              false-label
+              after-branch)
+            (CompilerBackendMaybeGepLoadCmpEmission.Some
+              (compiler-backend-emit-fused-result-rest
+                ctx
+                fallthrough
+                (ResultCompilerBackend.Ok
+                  (str_cat.str-cat
+                    cmp-asm
+                    (compiler-backend-emit-compare-branch-jumps
+                      ctx.function
+                      true-label
+                      false-label
+                      (compiler-backend-fused-compare-fallthrough
+                        instrs
+                        after-branch
+                        fallthrough)
+                      true-jcc
+                      false-jcc
+                      ctx.backend-state)))
+                instrs
+                after-branch
+                out))]
+          [(CompilerBackendGepLoadCmpBranchFold.No)
+            (CompilerBackendMaybeGepLoadCmpEmission.No)])])))
+
 (define (compiler-backend-emit-fused-gep-load-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [_gep-dst : i64]
+  [gep-fold-disp : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [load-dst : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
+  ;; M6 first: its probes are pure, and the shapes they claim (bounds-check
+  ;; length, compare+branch, narrow compare) are disjoint from the GAP8 ALU
+  ;; shapes below, so the order only decides which rule sees the instruction.
+  (match (compiler-backend-gep-load-cmp-fold-rest
+    ctx
+    fallthrough
+    (compiler-backend-gep-load-cmp-address
+      ctx.backend-state
+      ctx.type-segment-bases
+      ctx.assignments
+      base
+      offset
+      elem-ty
+      gep-fold-disp)
+    load-dst
+    load-ty
+    instrs
+    index
+    out)
+    [(CompilerBackendMaybeGepLoadCmpEmission.Some result) result]
+    [(CompilerBackendMaybeGepLoadCmpEmission.No)
+      (compiler-backend-emit-fused-gep-load-rest-tail
+        ctx
+        fallthrough
+        _gep-dst
+        gep-fold-disp
+        base
+        offset
+        elem-ty
+        load-dst
+        load-ty
+        instrs
+        index
+        out)]))
+
+(define (compiler-backend-emit-fused-gep-load-rest-tail
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [_gep-dst : i64]
@@ -50369,13 +51275,27 @@
                                   (compiler-backend-var-single-use?
                                     ctx.use-counts
                                     load-dst2)
-                                  (compiler-backend-rest-starts-load-compare-branch?
-                                    instrs
-                                    after-load2
-                                    load-dst2
-                                    ctx.types
-                                    ctx.global-types
-                                    ctx.use-counts))))
+                                  (or
+                                    (compiler-backend-rest-starts-load-compare-branch?
+                                      instrs
+                                      after-load2
+                                      load-dst2
+                                      ctx.types
+                                      ctx.global-types
+                                      ctx.use-counts)
+                                    ;; M6-A: `.ptr` and `.len` of the same
+                                    ;; string/vector are the canonical pair, and
+                                    ;; `.len` is almost always the bounds
+                                    ;; check's length operand right behind it.
+                                    (compiler-backend-gep-load-bounds-foldable?
+                                      ctx
+                                      base
+                                      offset2
+                                      elem-ty2
+                                      load-dst2
+                                      load-ty2
+                                      instrs
+                                      after-load2)))))
                               (let
                                 ;; GAP9: the pair consumes a SECOND gep;
                                 ;; advance its ordinal before either pair path.

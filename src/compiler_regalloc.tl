@@ -12928,10 +12928,16 @@
 ;; phi-correctness gate (every header-phi input is in the group) guarantees that,
 ;; so the INTO copy cannot race a real phi-lowering move.
 ;;
-;; BOUNDED to a 2-block natural loop (header H + single body B = H+1) where B is
-;; entered ONLY from H (pred-count 1): a clean single-entry loop whose only external
-;; entry is H's preheader edge, so soundness matches the single-block case. Wider
-;; natural-loop bodies (>2 blocks) are the next slice.
+;; ADMITTED SHAPE: a natural loop [H..E] (E = loop-ends[H], the highest block with
+;; a back-edge to H) whose BODY blocks (H..E] are each entered only from inside the
+;; region, so the region's ONLY entry is H. That is the soundness witness the
+;; INTO copy needs: the planner places a header-edge INTO copy at PredEnd (H has
+;; >1 predecessor, so SuccEntry is unavailable and a multi-successor preheader is
+;; refused as critical), which puts the `R = slot` load AHEAD of the lowered
+;; header-phi moves. A body-block entry edge would instead place the load at
+;; SuccEntry -- after the phis -- and a phi reading a remapped group member from
+;; the outside predecessor would read an undefined R. E == H+1 with pred-count 1
+;; on the body is the 2-block special case this started as, and stays bit-identical.
 ;; ===========================================================================
 ;; Start point (doubled instruction index, matching select-blocks) of each block;
 ;; length n+1 so points[n] is the end point of the last block.
@@ -12995,6 +13001,56 @@
           (compiler-reg-loop-split-seq-has-call-or-syscall? instrs)])
       (compiler-reg-loop-phi-mb-region-has-call? block-array (+ s 1) e))))
 
+;; Does any instruction in `instrs` DEFINE `var`? (region read-only test)
+(define (compiler-reg-loop-phi-mb-seq-defines?
+  [instrs : ir.CompilerIrInstrSeq]
+  [var : i64]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (begin
+      (while (< index count)
+        (begin
+          (when
+            (live.compiler-live-set-contains?
+              (live.compiler-live-instr-defs
+                (ir.compiler-ir-instr-seq-ref instrs index))
+              var)
+            (return true))
+          (set! index (+ index 1))))
+      false)))
+
+;; Is `var` written anywhere in region blocks [s..e]? A LOOP-INVARIANT home is
+;; only sound when it is not: the var's slot stays authoritative for every
+;; out-of-region read, so the boundary plan needs the INTO copy alone.
+(define (compiler-reg-loop-phi-mb-region-defines?
+  [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
+  [s : i64]
+  [e : i64]
+  [var : i64]) : bool
+  (if (or (> s e) (>= s (array-length block-array)))
+    false
+    (or
+      (match (array-ref block-array s)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (compiler-reg-loop-phi-mb-seq-defines? instrs var)])
+      (compiler-reg-loop-phi-mb-region-defines? block-array (+ s 1) e var))))
+
+;; Sum single-var mentions across region blocks [s..e] (hot-benefit input for
+;; the loop-invariant class, whose home is one var rather than a coalesce group).
+(define (compiler-reg-loop-phi-mb-region-var-mentions
+  [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
+  [s : i64]
+  [e : i64]
+  [var : i64]) : i64
+  (if (or (> s e) (>= s (array-length block-array)))
+    0
+    (+
+      (match (array-ref block-array s)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (compiler-reg-loop-split-mention-count instrs var)])
+      (compiler-reg-loop-phi-mb-region-var-mentions block-array (+ s 1) e var))))
+
 ;; Sum group mentions across region blocks [s..e] (hot-benefit input).
 (define (compiler-reg-loop-phi-mb-region-mentions
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
@@ -13009,7 +13065,90 @@
           (compiler-reg-loop-split-mention-count-group instrs members)])
       (compiler-reg-loop-phi-mb-region-mentions block-array (+ s 1) e members))))
 
-;; Try to home coalesce-root `var`'s phi-carried group across the 2-block region.
+;; Per-block predecessor index RANGE, packed two entries per block:
+;; ranges[2b] = lowest predecessor block index (block count when b has none),
+;; ranges[2b+1] = highest predecessor block index (-1 when b has none). One
+;; successor scan answers "are ALL of b's predecessors inside [lo..hi]?" for
+;; every region the header scan tries, which keeps the single-entry test O(1)
+;; per body block instead of a fresh CFG walk per candidate header.
+(define (compiler-reg-loop-phi-mb-record-pred-range!
+  [liveness : live.CompilerFunctionLiveness]
+  [ranges : (__tl_dyn-array i64)]
+  [from : i64]
+  [succs : live.CompilerLiveLabelSet]) : unit
+  (match succs
+    [(live.CompilerLiveLabelSet.Nil) unit]
+    [(live.CompilerLiveLabelSet.Dense _ _)
+      (begin
+        (let
+          [to : i64
+            (live.compiler-live-function-block-index
+              liveness
+              (live.compiler-live-label-set-ref succs 0))]
+          (if (and (>= to 0) (< (* 2 to) (array-length ranges)))
+            (begin
+              (when
+                (< from (array-ref ranges (* 2 to)))
+                (set! (array-ref ranges (* 2 to)) from))
+              (when
+                (> from (array-ref ranges (+ (* 2 to) 1)))
+                (set! (array-ref ranges (+ (* 2 to) 1)) from)))
+            unit))
+        (compiler-reg-loop-phi-mb-record-pred-range!
+          liveness
+          ranges
+          from
+          (live.compiler-live-label-set-tail succs)))]))
+
+(define (compiler-reg-loop-phi-mb-pred-ranges
+  [liveness : live.CompilerFunctionLiveness]
+  [live-blocks : (__tl_dyn-array live.CompilerLiveBlock)]) : (__tl_dyn-array
+    i64)
+  (let
+    [n : i64 (array-length live-blocks)]
+    [ranges : (__tl_dyn-array i64) (array.make-array i64 (* 2 n))]
+    [b : i64 0]
+    (begin
+      (while (< b n)
+        (begin
+          (set! (array-ref ranges (* 2 b)) n)
+          (set! (array-ref ranges (+ (* 2 b) 1)) (- 0 1))
+          (set! b (+ b 1))))
+      (set! b 0)
+      (while (< b n)
+        (begin
+          (compiler-reg-loop-phi-mb-record-pred-range!
+            liveness
+            ranges
+            b
+            (compiler-reg-live-block-succs (array-ref live-blocks b)))
+          (set! b (+ b 1))))
+      ranges)))
+
+;; Single-entry gate for the region [h..end]: every BODY block (h..end] has ALL
+;; of its predecessors inside the region, so the only way in is the header h.
+;; With end == h+1 and a body whose one predecessor is h this is exactly the
+;; original 2-block `pred-counts[h+1] == 1` test.
+(define (compiler-reg-loop-phi-mb-body-entered-inside?
+  [ranges : (__tl_dyn-array i64)]
+  [body : i64]
+  [end : i64]
+  [h : i64]) : bool
+  (let
+    [b : i64 body]
+    (begin
+      (while (<= b end)
+        (begin
+          (unless
+            (and
+              (< (+ (* 2 b) 1) (array-length ranges))
+              (>= (array-ref ranges (* 2 b)) h)
+              (<= (array-ref ranges (+ (* 2 b) 1)) end))
+            (return false))
+          (set! b (+ b 1))))
+      true)))
+
+;; Try to home coalesce-root `var`'s phi-carried group across the region.
 (define (compiler-reg-loop-phi-mb-try-var
   [_func : ir.CompilerIrFunction]
   [liveness : live.CompilerFunctionLiveness]
@@ -13117,10 +13256,130 @@
         (CompilerRegLoopSplitCandidate.NoCandidate)])
     (CompilerRegLoopSplitCandidate.NoCandidate)))
 
+;; SplitKit step 1, MULTI-BLOCK: home a spilled LOOP-INVARIANT value (live into
+;; the loop header, never written anywhere in the region) in a register across the
+;; whole natural loop. The single-block read-only path (loop-split-select-var) can
+;; only do this when the entire loop is ONE block, so every invariant carried
+;; through a real header+body loop -- a descriptor handle, a bound, a base pointer
+;; -- spills whole and is reloaded on every use. The region here is the same
+;; single-entry natural loop the phi-carried path uses, and the soundness argument
+;; is the read-only one: the var is never redefined inside, so its slot stays
+;; authoritative and the boundary plan needs only the INTO copy (OUT copies the
+;; planner still emits on live exit edges are redundant stores of an unchanged
+;; value, not correctness-carrying). Non-singleton coalesce members are excluded
+;; exactly as the single-block read-only path excludes them, which keeps the
+;; read-only argument anchored on ONE var: widening this to whole coalesce groups
+;; (region-invariant iff no MEMBER is written inside, group-aware boundary plan)
+;; was built and measured on both corpora and moved no benchmark row, so the
+;; narrow form is kept.
+(define (compiler-reg-loop-phi-mb-try-invariant-var
+  [liveness : live.CompilerFunctionLiveness]
+  [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
+  [header-block : live.CompilerLiveBlock]
+  [h : i64]
+  [end-idx : i64]
+  [region-labels : CompilerRegLabelSeq]
+  [region-start : i64]
+  [region-end : i64]
+  [depth : i64]
+  [candidate-regs : CompilerRegIdSeq]
+  [vars : i64]
+  [var : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentTable]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : live.CompilerLiveI64Set]
+  [parents : (__tl_dyn-array i64)]
+  [merged-roots : live.CompilerLiveI64Set]
+  [weights : (__tl_dyn-array i64)]) : CompilerRegLoopSplitCandidate
+  (if (and
+    (live.compiler-live-set-contains?
+      (live.compiler-live-block-live-in header-block)
+      var)
+    (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var))
+    (compiler-reg-interval-index-var-has-segments? intervals var)
+    (not (compiler-reg-loop-phi-mb-region-defines? block-array h end-idx var)))
+    (match (compiler-reg-assignment-lookup assignments var)
+      [(CompilerRegMaybeLocation.Some location)
+        (match location
+          [(CompilerRegLocation.Spill _)
+            (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
+              [(CompilerRegMaybeType.Some ty)
+                (let
+                  [mentions : i64
+                    (compiler-reg-loop-phi-mb-region-var-mentions
+                      block-array
+                      h
+                      end-idx
+                      var)]
+                  [region-intervals : CompilerRegIntervalSeq
+                    (compiler-reg-loop-split-region-interval
+                      vars
+                      region-start
+                      region-end)]
+                  (match (compiler-reg-edge-copy-plan-for-region-with-liveness
+                    liveness
+                    region-labels
+                    var
+                    vars
+                    ty)
+                    [(CompilerRegEdgeCopyPlan.Plan copies)
+                      (if (and
+                        (compiler-reg-loop-split-direction-present? copies true)
+                        (compiler-reg-loop-split-hot-benefit?
+                          mentions
+                          depth
+                          (compiler-reg-edge-copy-list-count copies)))
+                        (match (compiler-reg-loop-split-first-register
+                          candidate-regs
+                          assignments
+                          intervals
+                          region-intervals
+                          var)
+                          [(CompilerRegMaybeId.Some reg)
+                            (CompilerRegLoopSplitCandidate.Candidate
+                              var
+                              region-labels
+                              ty
+                              reg
+                              copies
+                              (- 0 1))]
+                          [(CompilerRegMaybeId.No)
+                            (match (compiler-reg-loop-split-first-register-evict
+                              candidate-regs
+                              assignments
+                              intervals
+                              region-intervals
+                              var
+                              weights
+                              (if (< var (array-length weights))
+                                (array-ref weights var)
+                                0))
+                              [(CompilerRegLoopSplitEvict ereg evar)
+                                (CompilerRegLoopSplitCandidate.Candidate
+                                  var
+                                  region-labels
+                                  ty
+                                  ereg
+                                  copies
+                                  evar)]
+                              [(CompilerRegLoopSplitEvictNone)
+                                (CompilerRegLoopSplitCandidate.NoCandidate)])])
+                        (CompilerRegLoopSplitCandidate.NoCandidate))]
+                    [(CompilerRegEdgeCopyPlan.Refused _)
+                      (CompilerRegLoopSplitCandidate.NoCandidate)]))]
+              [(CompilerRegMaybeType.No)
+                (CompilerRegLoopSplitCandidate.NoCandidate)])]
+          [_ (CompilerRegLoopSplitCandidate.NoCandidate)])]
+      [(CompilerRegMaybeLocation.No)
+        (CompilerRegLoopSplitCandidate.NoCandidate)])
+    (CompilerRegLoopSplitCandidate.NoCandidate)))
+
 (define (compiler-reg-loop-phi-mb-select-var
   [func : ir.CompilerIrFunction]
   [liveness : live.CompilerFunctionLiveness]
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
+  [header-block : live.CompilerLiveBlock]
   [h : i64]
   [end-idx : i64]
   [header-instrs : ir.CompilerIrInstrSeq]
@@ -13136,10 +13395,11 @@
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
+  [merged-roots : live.CompilerLiveI64Set]
   [weights : (__tl_dyn-array i64)]) : CompilerRegLoopSplitCandidate
   (if (>= var vars)
     (CompilerRegLoopSplitCandidate.NoCandidate)
-    (match (compiler-reg-loop-phi-mb-try-var
+    (match (match (compiler-reg-loop-phi-mb-try-var
       func
       liveness
       block-array
@@ -13159,11 +13419,37 @@
       group-vars
       parents
       weights)
+      ;; Phi-carried first (unchanged priority), then the loop-invariant class:
+      ;; a var live into the header that is never written inside the region.
+      [(CompilerRegLoopSplitCandidate.NoCandidate)
+        (compiler-reg-loop-phi-mb-try-invariant-var
+          liveness
+          block-array
+          header-block
+          h
+          end-idx
+          region-labels
+          region-start
+          region-end
+          depth
+          candidate-regs
+          vars
+          var
+          type-info
+          assignments
+          intervals
+          group-vars
+          parents
+          merged-roots
+          weights)]
+      [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
+        (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)])
       [(CompilerRegLoopSplitCandidate.NoCandidate)
         (compiler-reg-loop-phi-mb-select-var
           func
           liveness
           block-array
+          header-block
           h
           end-idx
           header-instrs
@@ -13179,21 +13465,24 @@
           intervals
           group-vars
           parents
+          merged-roots
           weights)]
       [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
         (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)])))
 
-;; Scan block indices for a 2-block natural-loop header (loop-ends[h]==h+1) whose
-;; body B=h+1 is entered ONLY from h (pred-count 1) and at loop depth>0, then try
-;; to home one of its phi-carried groups.
+;; Scan block indices for a natural-loop header (loop-ends[h] > h) at loop
+;; depth>0 whose body blocks (h..loop-ends[h]] are each entered from inside the
+;; region only, then try to home one of its phi-carried groups or, failing that,
+;; one of its spilled loop invariants.
 (define (compiler-reg-loop-phi-mb-select-headers
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [liveness : live.CompilerFunctionLiveness]
+  [live-blocks : (__tl_dyn-array live.CompilerLiveBlock)]
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]
   [points : (__tl_dyn-array i64)]
   [loop-ends : (__tl_dyn-array i64)]
-  [pred-counts : (__tl_dyn-array i64)]
+  [pred-ranges : (__tl_dyn-array i64)]
   [depths : (__tl_dyn-array i64)]
   [h : i64]
   [vars : i64]
@@ -13202,6 +13491,7 @@
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
+  [merged-roots : live.CompilerLiveI64Set]
   [weights : (__tl_dyn-array i64)]) : CompilerRegLoopSplitCandidate
   (if (>= h (array-length block-array))
     (CompilerRegLoopSplitCandidate.NoCandidate)
@@ -13212,12 +13502,16 @@
           (- 0 1))]
       [body : i64 (+ h 1)]
       (if (and
-        (= end-idx body)
-        (< body (array-length block-array))
+        (>= end-idx body)
+        (< end-idx (array-length block-array))
         (< h (array-length depths))
+        (< h (array-length live-blocks))
         (> (array-ref depths h) 0)
-        (< body (array-length pred-counts))
-        (= (array-ref pred-counts body) 1))
+        (compiler-reg-loop-phi-mb-body-entered-inside?
+          pred-ranges
+          body
+          end-idx
+          h))
         (let
           [region-start : i64 (array-ref points h)]
           [region-end : i64 (array-ref points (+ end-idx 1))]
@@ -13242,6 +13536,7 @@
             func
             liveness
             block-array
+            (array-ref live-blocks h)
             h
             end-idx
             (match (array-ref block-array h)
@@ -13258,16 +13553,18 @@
             intervals
             group-vars
             parents
+            merged-roots
             weights)
             [(CompilerRegLoopSplitCandidate.NoCandidate)
               (compiler-reg-loop-phi-mb-select-headers
                 type-segment-bases
                 func
                 liveness
+                live-blocks
                 block-array
                 points
                 loop-ends
-                pred-counts
+                pred-ranges
                 depths
                 (+ h 1)
                 vars
@@ -13276,6 +13573,7 @@
                 intervals
                 group-vars
                 parents
+                merged-roots
                 weights)]
             [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
               (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)]))
@@ -13283,10 +13581,11 @@
           type-segment-bases
           func
           liveness
+          live-blocks
           block-array
           points
           loop-ends
-          pred-counts
+          pred-ranges
           depths
           (+ h 1)
           vars
@@ -13295,10 +13594,11 @@
           intervals
           group-vars
           parents
+          merged-roots
           weights)))))
 
 ;; Top-level multi-block phi selector: build block array / points / loop-ends /
-;; pred-counts and scan headers. Returns a candidate (with multi-block region
+;; pred ranges and scan headers. Returns a candidate (with multi-block region
 ;; labels) or NoCandidate. Called as the fallback after the single-block
 ;; select-blocks finds nothing, so the single-block paths stay byte-identical.
 (define (compiler-reg-loop-phi-mb-select
@@ -13314,6 +13614,7 @@
   [intervals : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [parents : (__tl_dyn-array i64)]
+  [merged-roots : live.CompilerLiveI64Set]
   [weights : (__tl_dyn-array i64)]) : CompilerRegLoopSplitCandidate
   (let
     [seq : ir.CompilerIrBlockSeq
@@ -13326,10 +13627,11 @@
         type-segment-bases
         func
         liveness
+        live-blocks
         block-array
         (compiler-reg-loop-phi-mb-block-points block-array)
         (compiler-reg-preheader-loop-ends-seq seq count)
-        (compiler-reg-edge-copy-pred-counts liveness live-blocks)
+        (compiler-reg-loop-phi-mb-pred-ranges liveness live-blocks)
         depths
         0
         vars
@@ -13338,6 +13640,7 @@
         intervals
         group-vars
         parents
+        merged-roots
         weights))))
 
 ;; A leaf can still exhaust the caller-saved bank inside a hot loop even when a
@@ -14509,6 +14812,7 @@
                       intervals
                       group-vars
                       parents
+                      merged-roots
                       (compiler-reg-function-spill-weights func))]
                   [(CompilerRegLoopSplitCandidate.Candidate
                       sv

@@ -3463,6 +3463,22 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-fold-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-fold-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-fold-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-fold-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-nest-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-nest-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-reject-skip-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-reject-skip-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-pipeline-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-pipeline-self-test)
       42)
@@ -3660,6 +3676,30 @@
     "the same accessor at straight-line sites stays out of line"))
 
 (test
+  inline-shared-accessor-dominant-floor
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-dominant-floor-ok?)
+    "an accessor at the dominant reference floor is taken at every straight-line site; one reference short keeps every call"))
+
+(test
+  inline-shared-accessor-dominant-call-free
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-dominant-call-free-ok?)
+    "a call-bearing body at the dominant floor stays out of line at every straight-line site"))
+
+(test
+  inline-branch-chain-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-branch-chain-site-ok?)
+    "a bounds-free acyclic decision chain past the block cap is taken at both in-loop sites"))
+
+(test
+  inline-branch-chain-merge-web
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-branch-chain-merge-web-ok?)
+    "the same block count with one working block stays out of line: the chain gate prices blocks, not shapes"))
+
+(test
   inline-vm-run-bounds-loop-span-positive
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-switch-span-case-code
@@ -3719,6 +3759,34 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
     42
     "multi-block versioning rejections"))
+
+(test
+  bce-version-guard-dominated-fold
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-fold-self-test)
+    42
+    "versioning guard facts fold dominated compares in the fast clone"))
+
+(test
+  bce-version-guard-dominated-fold-refusals
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-fold-refusal-self-test)
+    42
+    "guard-dominated compare folding refuses everything past its two rules"))
+
+(test
+  bce-version-multiblock-loop-nest
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-nest-self-test)
+    42
+    "multi-block versioning admits loop nests under the nest budget"))
+
+(test
+  bce-version-rejection-retires-one-loop
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-reject-skip-self-test)
+    42
+    "a refused versioning retires that loop, not the function's other loops"))
 
 (test
   bce-version-multiblock-pipeline

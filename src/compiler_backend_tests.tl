@@ -24172,6 +24172,7 @@
       (compiler-backend-gep-fold-builders-ok?))
     (compiler-backend-gep-fold-drift-detected-ok?)
     (compiler-backend-chained-gep-same-home-ok?)
+    (compiler-backend-cmp-mem-fold-shapes-ok?)
     (compiler-backend-gep-store-fold-shapes-ok?)))
 
 ;; When a variable-index Gep and its constant-offset consumer share the same
@@ -24594,6 +24595,383 @@
               asm
               "    addq (%r12")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+;; M6: folding a single-use load into the comparing instruction's memory
+;; operand. Shared homes for the fixtures below: base %r12, gep index %r8, the
+;; loaded value %r13, the compare's other operand %r14, a width-preserving cast
+;; of that other operand %r14 again (so the cast is a self-move the walk may
+;; step over), the widening cast result %r9 and the compare result %r15.
+(define (compiler-backend-cmp-mem-fold-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        compiler_abi.compiler-reg-id-r12))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r8))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          3
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r13))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            4
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r14))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              5
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-r15))
+            (compiler_regalloc.compiler-reg-assignments-prepend
+              (compiler_regalloc.CompilerRegAssignment
+                6
+                (compiler_regalloc.CompilerRegLocation.Register
+                  compiler_abi.compiler-reg-id-r9))
+              (compiler_regalloc.compiler-reg-assignments-prepend
+                (compiler_regalloc.CompilerRegAssignment
+                  7
+                  (compiler_regalloc.CompilerRegLocation.Register
+                    compiler_abi.compiler-reg-id-r14))
+                (compiler_regalloc.compiler-reg-assignment-table-empty)))))))))
+
+;; `gep(elem, base + index) ; load ; cast to i64 ; compare with a literal ;
+;; branch` -- the M6-C narrow shape.
+(define (compiler-backend-cmp-mem-narrow-asm
+  [elem-ty : compiler_ast_types.AstType]
+  [load-ty : compiler_ast_types.AstType]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [literal : i64]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        elem-ty)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          load-ty)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Cast
+            6
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            load-ty
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              op
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ir_types.CompilerIrValue.I64 literal)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "hit")
+                (compiler_ir_types.compiler-ir-label "miss"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))))
+    (compiler-backend-cmp-mem-fold-assignments)
+    8))
+
+;; A zero-extending byte load whose literal is inside `0 .. 255` folds to a
+;; BYTE compare: `movzbq (mem), %r ; cmpq $10, %r` becomes `cmpb $10, (mem)`.
+(define (compiler-backend-cmp-mem-byte-fold-shape-ok?) : bool
+  (match (compiler-backend-cmp-mem-narrow-asm
+    (compiler_ast_types.AstType.U8)
+    (compiler_ast_types.AstType.U8)
+    (compiler_ir_types.CompilerIrBinOp.Eq)
+    10)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpb $10, (%r12,%r8,1)\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains? asm "    movzbq ")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; The same at WORD width, and with a literal above the byte range so the width
+;; is load-bearing rather than incidental.
+(define (compiler-backend-cmp-mem-word-fold-shape-ok?) : bool
+  (match (compiler-backend-cmp-mem-narrow-asm
+    (compiler_ast_types.AstType.U16)
+    (compiler_ast_types.AstType.U16)
+    (compiler_ir_types.CompilerIrBinOp.Eq)
+    300)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpw $300, (%r12,%r8,2)\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains? asm "    movzwq ")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; Signedness/width refusal: a SIGN-extending byte load cannot produce 200, so
+;; `ext(mem) == 200` is constant-false while `cmpb $200, (mem)` would be true
+;; for the byte 0xC8. The fold declines and the widening load stays.
+(define (compiler-backend-cmp-mem-narrow-rejects-signed-literal-ok?) : bool
+  (match (compiler-backend-cmp-mem-narrow-asm
+    (compiler_ast_types.AstType.I8)
+    (compiler_ast_types.AstType.I8)
+    (compiler_ir_types.CompilerIrBinOp.Eq)
+    200)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movsbq (%r12,%r8,1), %r13\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains? asm "    cmpb ")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; Ordered narrow comparisons are refused outright: a zero-extended byte
+;; compared with `jl` at 64 bits is a comparison of a non-negative value, which
+;; an 8-bit SIGNED compare does not reproduce.
+(define (compiler-backend-cmp-mem-narrow-rejects-ordered-ok?) : bool
+  (match (compiler-backend-cmp-mem-narrow-asm
+    (compiler_ast_types.AstType.U8)
+    (compiler_ast_types.AstType.U8)
+    (compiler_ir_types.CompilerIrBinOp.Lt)
+    10)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movzbq (%r12,%r8,1), %r13\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains? asm "    cmpb ")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; M6-A: `gep(i64, base + 1) ; load ; bounds_check(index, load)`. `tail` lets a
+;; fixture add a SECOND use of the loaded value behind the check.
+(define (compiler-backend-cmp-mem-bounds-asm
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.compiler-ir-label "ok"))
+          tail)))
+    (compiler-backend-cmp-mem-fold-assignments)
+    8))
+
+(define (compiler-backend-cmp-mem-bounds-fold-shape-ok?) : bool
+  (match (compiler-backend-cmp-mem-bounds-asm
+    compiler_ir_types.CompilerIrInstrList.Nil)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq 8(%r12), %r14\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq 8(%r12)")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; A second use of the loaded length keeps the load: the home register is read
+;; again, so it must actually be written.
+(define (compiler-backend-cmp-mem-bounds-second-use-refused-ok?) : bool
+  (match (compiler-backend-cmp-mem-bounds-asm
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        7
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ast_types.AstType.I64))
+      compiler_ir_types.CompilerIrInstrList.Nil))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq 8(%r12), %r13\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpq 8(%r12)")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; The `(& str)` spelling puts two width-preserving casts between the `.len`
+;; load and its bounds check (`i64 -> u64` for the length and for the index).
+;; Both emit nothing -- the index cast's operands share a home -- so the walk
+;; steps over them and the fold still fires.
+(define (compiler-backend-cmp-mem-bounds-cast-fold-ok?) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Cast
+            7
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ast_types.AstType.I64)
+            (compiler_ast_types.AstType.U64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Cast
+              6
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ast_types.AstType.I64)
+              (compiler_ast_types.AstType.U64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 7)
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ir_types.compiler-ir-label "ok"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))))
+    (compiler-backend-cmp-mem-fold-assignments)
+    8)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq 8(%r12), %r14\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq 8(%r12)")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; M6-B tail: `compare ; branch`. `mem-on-rhs?` puts the loaded value on the
+;; compare's RIGHT so the address takes the AT&T SOURCE slot instead of the
+;; destination one.
+(define (compiler-backend-cmp-mem-wide-tail [mem-on-rhs? : bool]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      5
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (if mem-on-rhs?
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Var 3))
+      (if mem-on-rhs?
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 4))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.compiler-ir-label "lt")
+        (compiler_ir_types.compiler-ir-label "ge"))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+;; `gep(i64, base + index) ; load ; <rest>`, where `rest` is a wide tail with
+;; any refusal instruction the fixture wants in front of it.
+(define (compiler-backend-cmp-mem-wide-asm
+  [rest : compiler_ir_types.CompilerIrInstrList]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        2
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        rest))
+    (compiler-backend-cmp-mem-fold-assignments)
+    8))
+
+(define (compiler-backend-cmp-mem-wide-rhs-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-wide-asm
+    (compiler-backend-cmp-mem-wide-tail true))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq (%r12,%r8,8), %r14\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq (%r12,%r8,8)")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; A memory write between the load and the compare stops the walk: the folded
+;; operand would be read after the store instead of before it.
+(define (compiler-backend-cmp-mem-store-between-refused-ok?) : bool
+  (match (compiler-backend-cmp-mem-wide-asm
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (compiler_ast_types.AstType.I64))
+      (compiler-backend-cmp-mem-wide-tail false)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq (%r12,%r8,8), %r13\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpq (%r12,%r8,8)")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; So does a flag writer: the compare must be the instruction that sets the
+;; flags the branch reads.
+(define (compiler-backend-cmp-mem-flags-between-refused-ok?) : bool
+  (match (compiler-backend-cmp-mem-wide-asm
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        6
+        (compiler_ir_types.CompilerIrBinOp.Sub)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler-backend-cmp-mem-wide-tail false)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq (%r12,%r8,8), %r13\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpq (%r12,%r8,8)")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-cmp-mem-fold-shapes-ok?) : bool
+  (and
+    (compiler_backend.backend-and4
+      (compiler-backend-cmp-mem-byte-fold-shape-ok?)
+      (compiler-backend-cmp-mem-word-fold-shape-ok?)
+      (compiler-backend-cmp-mem-narrow-rejects-signed-literal-ok?)
+      (compiler-backend-cmp-mem-narrow-rejects-ordered-ok?))
+    (compiler_backend.backend-and4
+      (compiler-backend-cmp-mem-bounds-fold-shape-ok?)
+      (compiler-backend-cmp-mem-bounds-cast-fold-ok?)
+      (compiler-backend-cmp-mem-bounds-second-use-refused-ok?)
+      (compiler-backend-cmp-mem-wide-rhs-fold-ok?))
+    (compiler-backend-cmp-mem-store-between-refused-ok?)
+    (compiler-backend-cmp-mem-flags-between-refused-ok?)))
 
 ;; GAP8: three-operand constant multiply strength reduction shapes.
 (define (compiler-backend-mul-pow2-test-asm [factor : i64] [dst-reg : i64]) : compiler_backend.ResultCompilerBackend

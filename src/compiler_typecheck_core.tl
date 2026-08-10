@@ -383,7 +383,11 @@
   (thread-name-kind TcThreadNameKindState)
   (inlay-hints TcInlayHintState)
   (macro-call-sites TcMacroCallSiteState)
-  (scratch-arenas TcScratchArenaState))
+  (scratch-arenas TcScratchArenaState)
+  ;; Lazily points into the expansion scratch arena while one macro walk owns
+  ;; a segmented declaration/path view. Zero outside that structural scope, so
+  ;; idle compiler jobs retain no segment table or maximum-capacity storage.
+  (macro-program-view-address i64))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
@@ -531,7 +535,8 @@
           (tc-thread-name-kind-state-new)
           (tc-inlay-hint-state-new)
           (tc-macro-call-site-state-new)
-          (tc-scratch-arena-state-new)))
+          (tc-scratch-arena-state-new)
+          0))
       (TcJobState
         (cast
           (unsafe
@@ -569,6 +574,22 @@
 
 (define (tc-job-state-scratch-arenas [state : TcJobState]) : TcScratchArenaState
   (struct-get (tc-job-state-data state) scratch-arenas))
+
+(define (tc-job-state-macro-program-view-address [state : TcJobState]) : i64
+  (tc-job-state-field state macro-program-view-address i64))
+
+(define (tc-job-state-set-macro-program-view-address!
+  [state : TcJobState]
+  [address : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast (struct-get state address) : u64) : (Ptr u8))
+          (comptime
+            (offset-of (type TcJobStateData) macro-program-view-address)))
+        : (MutPtr i64))
+      address)))
 
 (define (tc-scratch-arena-state-data [state : TcScratchArenaState]) : TcScratchArenaStateData
   (unsafe
@@ -4261,6 +4282,82 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-walk-segment-nodes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-splits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-delta-decls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flattens : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-alias-flattens : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-file-flattens : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-start-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-start-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flattens : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-start-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-start-live : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-walk-splice-registry-incremental : i64
     0))
 (cfg
@@ -4479,6 +4576,117 @@
         compiler-tc-walk-sp-probe-calls
         index
         (+ (array-ref compiler-tc-walk-sp-probe-calls index) 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-node-note!) : unit
+    (set! compiler-tc-walk-segment-nodes (+ compiler-tc-walk-segment-nodes 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-split-note! [delta-decls : i64]) : unit
+    (begin
+      (set!
+        compiler-tc-walk-segment-splits
+        (+ compiler-tc-walk-segment-splits 1))
+      (set!
+        compiler-tc-walk-segment-delta-decls
+        (+ compiler-tc-walk-segment-delta-decls delta-decls)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-fallback-flatten-start!) : unit
+    (begin
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-start-ns
+        (compiler-tc-walk-now-ns))
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-start-alloc
+        (profile.alloc-total))
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-start-live
+        (profile.alloc-live)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-fallback-flatten-finish! [reason : i64]) : unit
+    (begin
+      (set!
+        compiler-tc-walk-segment-fallback-flattens
+        (+ compiler-tc-walk-segment-fallback-flattens 1))
+      (if (= reason 1)
+        (set!
+          compiler-tc-walk-segment-fallback-alias-flattens
+          (+ compiler-tc-walk-segment-fallback-alias-flattens 1))
+        (if (= reason 2)
+          (set!
+            compiler-tc-walk-segment-fallback-file-flattens
+            (+ compiler-tc-walk-segment-fallback-file-flattens 1))
+          unit))
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-ns
+        (+
+          compiler-tc-walk-segment-fallback-flatten-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-walk-segment-fallback-flatten-start-ns)))
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-alloc
+        (+
+          compiler-tc-walk-segment-fallback-flatten-alloc
+          (-
+            (profile.alloc-total)
+            compiler-tc-walk-segment-fallback-flatten-start-alloc)))
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-live
+        (+
+          compiler-tc-walk-segment-fallback-flatten-live
+          (-
+            (profile.alloc-live)
+            compiler-tc-walk-segment-fallback-flatten-start-live))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-final-flatten-start!) : unit
+    (begin
+      (set!
+        compiler-tc-walk-segment-final-flatten-start-ns
+        (compiler-tc-walk-now-ns))
+      (set!
+        compiler-tc-walk-segment-final-flatten-start-alloc
+        (profile.alloc-total))
+      (set!
+        compiler-tc-walk-segment-final-flatten-start-live
+        (profile.alloc-live)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-final-flatten-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-walk-segment-final-flattens
+        (+ compiler-tc-walk-segment-final-flattens 1))
+      (set!
+        compiler-tc-walk-segment-final-flatten-ns
+        (+
+          compiler-tc-walk-segment-final-flatten-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-walk-segment-final-flatten-start-ns)))
+      (set!
+        compiler-tc-walk-segment-final-flatten-alloc
+        (+
+          compiler-tc-walk-segment-final-flatten-alloc
+          (-
+            (profile.alloc-total)
+            compiler-tc-walk-segment-final-flatten-start-alloc)))
+      (set!
+        compiler-tc-walk-segment-final-flatten-live
+        (+
+          compiler-tc-walk-segment-final-flatten-live
+          (-
+            (profile.alloc-live)
+            compiler-tc-walk-segment-final-flatten-start-live))))))
 
 (cfg
   compile-profile
@@ -6188,6 +6396,19 @@
       (set! compiler-tc-macro-walk-decls-shared 0)
       (set! compiler-tc-macro-walk-decls-expanded 0)
       (set! compiler-tc-macro-walk-share-gate-open 0)
+      (set! compiler-tc-walk-segment-nodes 0)
+      (set! compiler-tc-walk-segment-splits 0)
+      (set! compiler-tc-walk-segment-delta-decls 0)
+      (set! compiler-tc-walk-segment-fallback-flattens 0)
+      (set! compiler-tc-walk-segment-fallback-alias-flattens 0)
+      (set! compiler-tc-walk-segment-fallback-file-flattens 0)
+      (set! compiler-tc-walk-segment-fallback-flatten-ns 0)
+      (set! compiler-tc-walk-segment-fallback-flatten-alloc 0)
+      (set! compiler-tc-walk-segment-fallback-flatten-live 0)
+      (set! compiler-tc-walk-segment-final-flattens 0)
+      (set! compiler-tc-walk-segment-final-flatten-ns 0)
+      (set! compiler-tc-walk-segment-final-flatten-alloc 0)
+      (set! compiler-tc-walk-segment-final-flatten-live 0)
       (set! compiler-tc-walk-splice-registry-incremental 0)
       (set! compiler-tc-walk-splice-registry-invalidated 0)
       (set! compiler-tc-walk-splice-ctfe-deferred 0)
@@ -7263,6 +7484,45 @@
       (compiler-tc-macro-counter-profile-line
         "walk_splice_env_fallbacks"
         compiler-tc-walk-splice-env-fallbacks)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_nodes"
+        compiler-tc-walk-segment-nodes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_splits"
+        compiler-tc-walk-segment-splits)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_delta_decls"
+        compiler-tc-walk-segment-delta-decls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_flattens"
+        compiler-tc-walk-segment-fallback-flattens)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_alias_flattens"
+        compiler-tc-walk-segment-fallback-alias-flattens)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_file_flattens"
+        compiler-tc-walk-segment-fallback-file-flattens)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_flatten_us"
+        (/ compiler-tc-walk-segment-fallback-flatten-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_flatten_alloc_kb"
+        (/ compiler-tc-walk-segment-fallback-flatten-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_flatten_live_kb"
+        (/ compiler-tc-walk-segment-fallback-flatten-live 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_final_flattens"
+        compiler-tc-walk-segment-final-flattens)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_final_flatten_us"
+        (/ compiler-tc-walk-segment-final-flatten-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_final_flatten_alloc_kb"
+        (/ compiler-tc-walk-segment-final-flatten-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_final_flatten_live_kb"
+        (/ compiler-tc-walk-segment-final-flatten-live 1024))
       (compiler-tc-macro-counter-profile-line
         "walk_sp_copy_us"
         (/ (array-ref compiler-tc-walk-sp-probe-ns 0) 1000))
@@ -19794,11 +20054,17 @@
               (if (= cached -2)
                 (let
                   [found : bool
-                    (tc-imported-module-identity-ids?
-                      (box-get decls-box)
-                      current-module-id
-                      target-id
-                      cbi.compiler-builtin-id-fix-empty)]
+                    (if (macro-segmented-program-active?
+                      (tc-context-job-state ctx))
+                      (macro-segmented-imported-module-identity-ids?
+                        (tc-context-job-state ctx)
+                        current-module-id
+                        target-id)
+                      (tc-imported-module-identity-ids?
+                        (box-get decls-box)
+                        current-module-id
+                        target-id
+                        cbi.compiler-builtin-id-fix-empty))]
                   (begin
                     (tc-imported-module-identity-cache-put!
                       current-module-id
@@ -21196,6 +21462,27 @@
     [(TcMaybeNameId.No)
       (macro-import-alias-target-cached-id decls current-module-id alias-id)]))
 
+(define (tc-source-dotted-alias-target-id-in-context
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [current-module-id : i64]
+  [alias-id : i64]) : TcMaybeNameId
+  (match (tc-lazy-import-stub-target-id current-module-id alias-id)
+    [(TcMaybeNameId.Some target-module-id)
+      (if (= target-module-id alias-id)
+        (macro-import-alias-target-cached-id-in-context
+          ctx
+          decls
+          current-module-id
+          alias-id)
+        (TcMaybeNameId.Some target-module-id))]
+    [(TcMaybeNameId.No)
+      (macro-import-alias-target-cached-id-in-context
+        ctx
+        decls
+        current-module-id
+        alias-id)]))
+
 (define (tc-call-builtin-lookup-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -21250,7 +21537,8 @@
             [base-id : i64 (ci.intern-dotted-tail-id name-id)]
             (match (tc-context-program ctx)
               [(ast.AstProgram.Program decls-box)
-                (match (tc-source-dotted-alias-target-id
+                (match (macro-import-alias-target-cached-id-in-context
+                  ctx
                   (box-get decls-box)
                   current-module-id
                   alias-id)
@@ -21301,7 +21589,8 @@
           [(TcContext program _ _ _ current-module-id _ _ _ _)
             (match program
               [(ast.AstProgram.Program decls-box)
-                (match (macro-import-alias-target-cached-id
+                (match (macro-import-alias-target-cached-id-in-context
+                  ctx
                   (box-get decls-box)
                   current-module-id
                   alias-id)
@@ -22000,6 +22289,7 @@
       (match program
         [(ast.AstProgram.Program decls-box)
           (macro-resolve-qualified-module-id
+            ctx
             (box-get decls-box)
             current-module-id
             qualifier-id)])]))
@@ -22543,7 +22833,8 @@
             [(ast.AstProgram.Program decls-box)
               (let
                 [symbols : csym.CompilerSymbols (tc-context-symbols ctx)]
-                (match (tc-source-dotted-alias-target-id
+                (match (tc-source-dotted-alias-target-id-in-context
+                  ctx
                   (box-get decls-box)
                   (tc-context-module-id ctx)
                   alias-id)
@@ -22558,13 +22849,28 @@
                         key-id)
                         [(option_i64.Some _) (option_i64.Some key-id)]
                         [(option_i64.None)
-                          (match (tc-lazy-import-unique-type-key-id
-                            symbols
-                            alias-id
-                            base-id)
-                            [(TcMaybeNameId.Some unique-key-id)
-                              (option_i64.Some unique-key-id)]
-                            [(TcMaybeNameId.No) option_i64.None])]))]
+                          ;; A generated module's nested import is present in
+                          ;; the segmented view before its target module is
+                          ;; materialized. Its temporary self-target is an
+                          ;; explicit unresolved alias, not permission to pick
+                          ;; the sole same-base nominal from another generated
+                          ;; module (for example i64 `vec.Vec` while building
+                          ;; the later i32 specialization). Keep the signature
+                          ;; unresolved until the alias delta publishes its
+                          ;; canonical target; the splice re-resolution pass
+                          ;; then resolves it to the right specialization.
+                          (if (and
+                            (macro-segmented-program-active?
+                              (tc-context-job-state ctx))
+                            (= target-module-id alias-id))
+                            option_i64.None
+                            (match (tc-lazy-import-unique-type-key-id
+                              symbols
+                              alias-id
+                              base-id)
+                              [(TcMaybeNameId.Some unique-key-id)
+                                (option_i64.Some unique-key-id)]
+                              [(TcMaybeNameId.No) option_i64.None]))]))]
                   [(TcMaybeNameId.No)
                     (let
                       [key-id : i64
@@ -31772,24 +32078,26 @@
   [module-id : i64]) : ResultTcEnv
   (if (= module-id cbi.compiler-builtin-id-fix-empty)
     (ResultTcEnv.Ok top-env)
-    (match (tc-context-program ctx)
-      [(ast.AstProgram.Program decls-box)
-        (let
-          [decls : ast.AstDeclList (box-get decls-box)]
-          (match (tc-module-local-env-list
+    (match (if (macro-segmented-program-active? (tc-context-job-state ctx))
+      (macro-segmented-module-local-env-id
+        (tc-context-with-module-id ctx module module-id)
+        top-env
+        module-id)
+      (match (tc-context-program ctx)
+        [(ast.AstProgram.Program decls-box)
+          (tc-module-local-env-list
             (tc-context-with-module-id ctx module module-id)
-            decls
+            (box-get decls-box)
             top-env
             module
             module-id
-            "")
-            [(ResultTcEnv.Ok env)
-              ;; A module view is immutable once built. Publish its local
-              ;; bindings as one explicit cache layer so every function-local
-              ;; cache falls through to it instead of copying the complete
-              ;; module prefix again.
-              (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit env))]
-            [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))])))
+            "")]))
+      [(ResultTcEnv.Ok env)
+        ;; A module view is immutable once built. Publish its local bindings as
+        ;; one explicit cache layer so every function-local cache falls through
+        ;; to it instead of copying the complete module prefix again.
+        (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit env))]
+      [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))
 
 (define (tc-module-local-env-cache-lookup-at
   [cache : TcModuleLocalEnvCache]
@@ -33550,7 +33858,8 @@
       [alias-id : i64 (ci.intern-leading-dot-id name-id)]
       (match (tc-context-program ctx)
         [(ast.AstProgram.Program decls-box)
-          (match (tc-source-dotted-alias-target-id
+          (match (tc-source-dotted-alias-target-id-in-context
+            ctx
             (box-get decls-box)
             (tc-context-module-id ctx)
             alias-id)
@@ -35815,7 +36124,8 @@
           [alias-target-id : i64
             (match (tc-context-program ctx)
               [(ast.AstProgram.Program decls-box)
-                (match (tc-source-dotted-alias-target-id
+                (match (tc-source-dotted-alias-target-id-in-context
+                  ctx
                   (box-get decls-box)
                   current-module-id
                   alias-id)
@@ -38868,17 +39178,21 @@
     (set! tc-clone-able-cache (clone_support.clone-name-set-empty))))
 
 (define (tc-clone-able-set-build [ctx : TcContext]) : clone_support.CloneNameSet
-  (match (tc-context-program ctx)
-    [(ast.AstProgram.Program decls-box)
-      (let
-        [decls : ast.AstDeclList (box-get decls-box)]
-        [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-        (clone_support.clone-fixpoint
-          pools
-          decls
-          (clone_support.clone-all-type-names
+  (if (macro-segmented-program-active? (tc-context-job-state ctx))
+    (macro-segmented-clone-able-set-build
+      (tc-context-job-state ctx)
+      (tc-context-pools ctx))
+    (match (tc-context-program ctx)
+      [(ast.AstProgram.Program decls-box)
+        (let
+          [decls : ast.AstDeclList (box-get decls-box)]
+          [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+          (clone_support.clone-fixpoint
+            pools
             decls
-            (clone_support.clone-name-set-for-decls decls))))]))
+            (clone_support.clone-all-type-names
+              decls
+              (clone_support.clone-name-set-for-decls decls))))])))
 
 (define (tc-clone-able-cache-populate! [ctx : TcContext]) : unit
   (begin
@@ -53473,7 +53787,8 @@
         [target-module-id : i64
           (match (tc-context-program ctx)
             [(ast.AstProgram.Program decls-box)
-              (match (tc-source-dotted-alias-target-id
+              (match (tc-source-dotted-alias-target-id-in-context
+                ctx
                 (box-get decls-box)
                 (tc-context-module-id ctx)
                 alias-id)
@@ -53548,7 +53863,8 @@
       option_i64.None
       (match (tc-context-program ctx)
         [(ast.AstProgram.Program decls-box)
-          (match (tc-source-dotted-alias-target-id
+          (match (tc-source-dotted-alias-target-id-in-context
+            ctx
             (box-get decls-box)
             (tc-context-module-id ctx)
             alias-id)
@@ -53639,7 +53955,8 @@
       [(option_i64.None)
         (match (tc-context-program ctx)
           [(ast.AstProgram.Program decls-box)
-            (match (tc-source-dotted-alias-target-id
+            (match (tc-source-dotted-alias-target-id-in-context
+              ctx
               (box-get decls-box)
               (tc-context-module-id ctx)
               alias-id)
@@ -65688,7 +66005,8 @@
     [target-module-id : i64
       (match (tc-context-program ctx)
         [(ast.AstProgram.Program decls-box)
-          (match (tc-source-dotted-alias-target-id
+          (match (tc-source-dotted-alias-target-id-in-context
+            ctx
             (box-get decls-box)
             (tc-context-module-id ctx)
             alias-id)
@@ -78302,6 +78620,50 @@
     unit
     (macro-live-prescan-ensure-fresh! decls)))
 
+;; Publish a generated declaration segment directly into the hoisted prescan.
+;; The splice walk will visit the delta itself, so this updates only the
+;; whole-program facts and name sets that later declarations consult.
+(define (macro-live-prescan-append-decls!
+  [decls : ast.AstDeclList]
+  [module-id : i64]) : unit
+  (let
+    [expr-bases : i64 (ast.ast-node-pool-active-expr-segment-bases)]
+    [delta-has-defmacro : bool (macro-program-has-defmacro? decls)]
+    (begin
+      (set!
+        macro-live-prescan-has-defmacro
+        (or macro-live-prescan-has-defmacro delta-has-defmacro))
+      (set!
+        macro-live-prescan-needs-expansion
+        (or
+          macro-live-prescan-needs-expansion
+          (macro-program-needs-expansion? expr-bases decls)))
+      (set!
+        macro-live-prescan-summary-import
+        (or
+          macro-live-prescan-summary-import
+          (macro-program-has-summary-macro-import? decls)))
+      (if delta-has-defmacro
+        (begin
+          (set!
+            macro-live-prescan-expr-type-names
+            (macro-collect-expr-type-macro-names-in
+              expr-bases
+              decls
+              module-id
+              macro-live-prescan-expr-type-names))
+          (set!
+            macro-live-prescan-visible-names
+            (macro-collect-macro-names-in
+              decls
+              module-id
+              macro-live-prescan-visible-names))
+          (macro-expand-set-expr-type-macro-names!
+            macro-live-prescan-expr-type-names)
+          (macro-expand-set-macro-names! macro-live-prescan-visible-names))
+        unit)
+      (set! macro-live-prescan-ready true))))
+
 ;; Whether the current compile needs the CTFE reflection/layout metadata at all
 ;; (i.e. the program contains a `(type T)` literal). Set per compile at the top of
 ;; macro-expand-program; when false, tc-ctfe-env returns an empty env and skips
@@ -78319,47 +78681,6 @@
 (define macro-expand-scratch-arena : i64
   0)
 
-;; Whole-program declaration/path views are replaced at every forced splice.
-;; They must outlive the context/env rebuild that consumes them, but no later
-;; splice needs a view older than its immediate predecessor. Keep those large
-;; backing arrays in two independently owned generations: the next splice can
-;; read the current view while it builds its replacement, then the generation
-;; retired by the preceding splice can be released. This bounds view retention
-;; to two splice generations instead of the full expansion walk.
-(define macro-splice-view-arena : i64
-  0)
-(define macro-splice-view-retired-arena : i64
-  0)
-
-(define (macro-splice-view-arena-begin!) : unit
-  (if macro-expand-scratch-enabled
-    (let
-      [previous : i64 macro-splice-view-arena]
-      [retired : i64 macro-splice-view-retired-arena]
-      [next : i64 (arena.tl_arena_make)]
-      (begin
-        (set! macro-splice-view-arena next)
-        (set! macro-splice-view-retired-arena previous)
-        (if (= retired 0)
-          unit
-          (unsafe
-            (arena.tl_arena_destroy retired)))))
-    unit))
-
-(define (macro-splice-view-arenas-release!) : unit
-  (let
-    [current : i64 macro-splice-view-arena]
-    [retired : i64 macro-splice-view-retired-arena]
-    (begin
-      (set! macro-splice-view-arena 0)
-      (set! macro-splice-view-retired-arena 0)
-      (if (= current 0)
-        unit
-        (macro-generation-destroy! current))
-      (if (or (= retired 0) (= retired current))
-        unit
-        (macro-generation-destroy! retired)))))
-
 ;; R3-P1: a firing declaration's expansion allocates superseded intermediate
 ;; forms -- hygiene copies and re-walk products -- into the ambient macro
 ;; arena, where they stay live for the whole walk and are only reclaimed by the
@@ -78369,8 +78690,8 @@
 ;; then grows by the survivors only, and the existing `macro_finalize`
 ;; compaction becomes incremental rather than the sole reclamation point.
 ;;
-;; Two generations, not one, for the same reason as the splice-view ring above:
-;; the copy-out reads the generation it is retiring, and the walk's own step
+;; Two generations, not one: the copy-out reads the generation it is retiring,
+;; and the walk's own step
 ;; (`out-rev` prepend, module-id update, path reversal) runs after the copy but
 ;; before the next expansion begins. Retiring one behind keeps a whole
 ;; declaration boundary of slack over any reader the copy-out cannot see.
@@ -78661,16 +78982,6 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
-        "macro-splice-view-current"
-        macro-splice-view-arena)
-      (allocation_profile.compiler-allocation-profile-control!
-        2
-        "typecheck.macro.peak"
-        "macro-splice-view-retired"
-        macro-splice-view-retired-arena)
-      (allocation_profile.compiler-allocation-profile-control!
-        2
-        "typecheck.macro.peak"
         "macro-symbols-current"
         macro-live-symbols-arena)
       (allocation_profile.compiler-allocation-profile-control!
@@ -78774,8 +79085,7 @@
   (if (= macro-expand-scratch-arena 0)
     (begin
       (set! macro-expand-scratch-enabled false)
-      (macro-decl-generations-release!)
-      (macro-splice-view-arenas-release!))
+      (macro-decl-generations-release!))
     (let
       [scratch : i64 macro-expand-scratch-arena]
       [current : i64 (arena.tl_arena_current)]
@@ -78790,7 +79100,6 @@
         (set! macro-expand-scratch-arena 0)
         (macro-expand-scratch-clear-owned-caches!)
         (macro-decl-generations-release!)
-        (macro-splice-view-arenas-release!)
         ;; Macro timing entries were emitted before this boundary and live in
         ;; scratch. Clear the global before destroying their backing storage so
         ;; a later lowering-time declaration macro starts from a valid list.
@@ -79496,262 +79805,1301 @@
         (macro-decl-path-list-reverse prefix-rev)
         suffix))))
 
-(defstruct MacroSpliceDeclView
-  (view ast.AstDeclList)
-  (tail ast.AstDeclList))
+(defstruct MacroProgramSegmentNodeData
+  (decls ast.AstDeclList)
+  (paths ast.AstDeclPathList)
+  (next i64))
 
-(defstruct MacroSplicePathView
-  (view ast.AstDeclPathList)
-  (tail ast.AstDeclPathList))
+(defstruct MacroSegmentedProgramViewData
+  ;; Declarations already emitted by the walk retain its cheap reversed
+  ;; builder shape. Logical indexed access reverses only the index; it never
+  ;; copies the prefix merely to publish a new splice view.
+  (prefix-rev ast.AstDeclList)
+  (prefix-paths-rev ast.AstDeclPathList)
+  ;; The unprocessed program is an immutable linked sequence of array slices.
+  ;; A splice allocates one persisted delta node and, when necessary, one
+  ;; zero-copy suffix slice node.
+  (head i64)
+  (cursor i64)
+  (queue-len i64)
+  (generation i64))
 
-;; Whole-program view and walk tail for a forced splice, built in ONE backing
-;; array per list with the shape [reversed prefix | spliced decls | remaining
-;; decls]. The previous construction (append of the spliced decls onto the
-;; tail, then reverse + append for the prefix, which always missed the prepend
-;; headroom fast path) materialized three full-program arrays per list per
-;; splice and dominated the macro scratch arena (~5MB per splice on a
-;; self-compile). The tail shares the view's backing array, so each segment is
-;; copied exactly once.
-(define (macro-splice-decl-view-build
+(define (macro-program-segment-node-data [address : i64]) : MacroProgramSegmentNodeData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast address : u64) : (Ptr MacroProgramSegmentNodeData)))))
+
+(define (macro-segmented-program-view-data [address : i64]) : MacroSegmentedProgramViewData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast address : u64) : (Ptr MacroSegmentedProgramViewData)))))
+
+(define (macro-segmented-program-view-data-set!
+  [address : i64]
+  [data : MacroSegmentedProgramViewData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast address : u64) : (MutPtr MacroSegmentedProgramViewData))
+      data)))
+
+(define (macro-program-segment-node-new-current
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [next : i64]) : i64
+  (let
+    [cell : (__tl_dyn-array MacroProgramSegmentNodeData)
+      (array.make-array MacroProgramSegmentNodeData 1)]
+    (begin
+      (cfg compile-profile (compiler-tc-walk-segment-node-note!))
+      (array-set! cell 0 (MacroProgramSegmentNodeData decls paths next))
+      (cast
+        (unsafe
+          (ptr->int
+            (ptr-cast (array-data cell) : (Ptr MacroProgramSegmentNodeData))))
+        : i64))))
+
+(define (macro-segmented-program-view-new-current
   [prefix-rev : ast.AstDeclList]
-  [middle : ast.AstDeclList]
-  [suffix : ast.AstDeclList]) : MacroSpliceDeclView
+  [prefix-paths-rev : ast.AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : i64
   (let
-    [prefix-count : i64 (ast.ast-decl-list-len (& prefix-rev))]
-    [middle-count : i64 (ast.ast-decl-list-len (& middle))]
-    [suffix-count : i64 (ast.ast-decl-list-len (& suffix))]
-    [total : i64 (+ prefix-count (+ middle-count suffix-count))]
-    [slots : (__tl_dyn-array ast.AstDecl)
-      (array.make-array
-        ast.AstDecl
-        (if (< total 1)
-          1
-          total))]
-    ;; Copy each row array-to-array. `ast-decl-list-ref` returns `AstDecl`
-    ;; through an SRET pointer, so the old shape copied all 104 B into a stack
-    ;; temporary and then copied it again into `slots` -- two row copies and a
-    ;; call per declaration. Reading the backing slot directly leaves one.
-    [prefix-slots : (__tl_dyn-array ast.AstDecl) (struct-get prefix-rev slots)]
-    [prefix-offset : i64 (struct-get prefix-rev offset)]
-    [middle-slots : (__tl_dyn-array ast.AstDecl) (struct-get middle slots)]
-    [middle-offset : i64 (struct-get middle offset)]
-    [suffix-slots : (__tl_dyn-array ast.AstDecl) (struct-get suffix slots)]
-    [suffix-offset : i64 (struct-get suffix offset)]
-    [index : i64 0]
+    [head : i64
+      (if (<= (ast.ast-decl-list-len (& decls)) 0)
+        0
+        (macro-program-segment-node-new-current decls paths 0))]
+    [cell : (__tl_dyn-array MacroSegmentedProgramViewData)
+      (array.make-array MacroSegmentedProgramViewData 1)]
     (begin
-      (while (< index prefix-count)
-        (begin
-          (array-set!
-            slots
-            (- (- prefix-count 1) index)
-            (array-ref prefix-slots (+ prefix-offset index)))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index middle-count)
-        (begin
-          (array-set!
-            slots
-            (+ prefix-count index)
-            (array-ref middle-slots (+ middle-offset index)))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index suffix-count)
-        (begin
-          (array-set!
-            slots
-            (+ prefix-count (+ middle-count index))
-            (array-ref suffix-slots (+ suffix-offset index)))
-          (set! index (+ index 1))))
-      (MacroSpliceDeclView
-        (ast.AstDeclList slots 0 total true)
-        (ast.AstDeclList slots prefix-count (+ middle-count suffix-count) true)))))
+      (array-set!
+        cell
+        0
+        (MacroSegmentedProgramViewData
+          prefix-rev
+          prefix-paths-rev
+          head
+          0
+          (ast.ast-decl-list-len (& decls))
+          0))
+      (cast
+        (unsafe
+          (ptr->int
+            (ptr-cast (array-data cell) : (Ptr MacroSegmentedProgramViewData))))
+        : i64))))
 
-(define (macro-splice-path-view-build
-  [prefix-rev : ast.AstDeclPathList]
-  [middle : ast.AstDeclPathList]
-  [suffix : ast.AstDeclPathList]) : MacroSplicePathView
+(define (macro-segmented-program-begin!
+  [state : TcJobState]
+  [prefix-rev : ast.AstDeclList]
+  [prefix-paths-rev : ast.AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : unit
   (let
-    [prefix-count : i64 (ast.ast-decl-path-list-len (& prefix-rev))]
-    [middle-count : i64 (ast.ast-decl-path-list-len (& middle))]
-    [suffix-count : i64 (ast.ast-decl-path-list-len (& suffix))]
-    [total : i64 (+ prefix-count (+ middle-count suffix-count))]
-    [cap : i64
-      (if (< total 1)
-        1
-        total)]
-    [slots : (__tl_dyn-array String) (array.make-array String cap)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 cap)]
-    [index : i64 0]
+    [enclosing : i64 (arena.tl_arena_current)]
+    [storage : i64
+      (if macro-expand-scratch-enabled
+        (macro-expand-scratch-arena-get)
+        enclosing)]
     (begin
-      (while (< index prefix-count)
+      (unsafe
+        (arena.tl_arena_set storage))
+      (let
+        [address : i64
+          (macro-segmented-program-view-new-current
+            prefix-rev
+            prefix-paths-rev
+            decls
+            paths)]
+        [storage-head : i64 (arena.tl_arena_current)]
         (begin
-          (array-set!
-            slots
-            (- (- prefix-count 1) index)
-            (ast.ast-decl-path-list-get (& prefix-rev) index ""))
-          (array-set!
-            owner-ids
-            (- (- prefix-count 1) index)
-            (ast.ast-decl-path-list-owner-id
-              (& prefix-rev)
-              index
-              cbi.compiler-builtin-id-fix-empty))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index middle-count)
-        (begin
-          (array-set!
-            slots
-            (+ prefix-count index)
-            (ast.ast-decl-path-list-get (& middle) index ""))
-          (array-set!
-            owner-ids
-            (+ prefix-count index)
-            (ast.ast-decl-path-list-owner-id
-              (& middle)
-              index
-              cbi.compiler-builtin-id-fix-empty))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index suffix-count)
-        (begin
-          (array-set!
-            slots
-            (+ prefix-count (+ middle-count index))
-            (ast.ast-decl-path-list-get (& suffix) index ""))
-          (array-set!
-            owner-ids
-            (+ prefix-count (+ middle-count index))
-            (ast.ast-decl-path-list-owner-id
-              (& suffix)
-              index
-              cbi.compiler-builtin-id-fix-empty))
-          (set! index (+ index 1))))
-      (MacroSplicePathView
-        (ast.AstDeclPathList slots owner-ids 0 total true)
-        (ast.AstDeclPathList
-          slots
-          owner-ids
-          prefix-count
-          (+ middle-count suffix-count)
-          true)))))
+          (if macro-expand-scratch-enabled
+            (set! macro-expand-scratch-arena storage-head)
+            unit)
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          (tc-job-state-set-macro-program-view-address! state address))))))
 
-(define (macro-splice-path-tail-copy [suffix : ast.AstDeclPathList]) : ast.AstDeclPathList
+(define (macro-segmented-program-end! [state : TcJobState]) : unit
+  (tc-job-state-set-macro-program-view-address! state 0))
+
+(define (macro-segmented-program-active? [state : TcJobState]) : bool
+  (> (tc-job-state-macro-program-view-address state) 0))
+
+(define (macro-segmented-program-prefix-set!
+  [state : TcJobState]
+  [prefix-rev : ast.AstDeclList]
+  [prefix-paths-rev : ast.AstDeclPathList]) : unit
   (let
-    [count : i64 (ast.ast-decl-path-list-len (& suffix))]
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    (if (= address 0)
+      unit
+      (let
+        [data : MacroSegmentedProgramViewData
+          (macro-segmented-program-view-data address)]
+        (begin
+          (set! (struct-get data prefix-rev) prefix-rev)
+          (set! (struct-get data prefix-paths-rev) prefix-paths-rev)
+          (macro-segmented-program-view-data-set! address data))))))
+
+(define (macro-segmented-program-normalize-head! [state : TcJobState]) : MacroSegmentedProgramViewData
+  (let
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data address)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (> (struct-get data head) 0))
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data (struct-get data head))]
+          (if (<
+            (struct-get data cursor)
+            (ast.ast-decl-list-len (& (struct-get node decls))))
+            (set! done true)
+            (begin
+              (set! (struct-get data head) (struct-get node next))
+              (set! (struct-get data cursor) 0)))))
+      (macro-segmented-program-view-data-set! address data)
+      data)))
+
+(define (macro-segmented-program-empty? [state : TcJobState]) : bool
+  (if (not (macro-segmented-program-active? state))
+    true
+    (let
+      [data : MacroSegmentedProgramViewData
+        (macro-segmented-program-normalize-head! state)]
+      (or (<= (struct-get data queue-len) 0) (= (struct-get data head) 0)))))
+
+(define (macro-segmented-program-current-decl [state : TcJobState]) : ast.AstDecl
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data (struct-get data head))]
+    (ast.ast-decl-list-ref (struct-get node decls) (struct-get data cursor))))
+
+(define (macro-segmented-program-current-path [state : TcJobState]) : String
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data (struct-get data head))]
+    (ast.ast-decl-path-list-get
+      (& (struct-get node paths))
+      (struct-get data cursor)
+      "")))
+
+(define (macro-segmented-program-current-owner-id [state : TcJobState]) : i64
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data (struct-get data head))]
+    (ast.ast-decl-path-list-owner-id
+      (& (struct-get node paths))
+      (struct-get data cursor)
+      cbi.compiler-builtin-id-fix-empty)))
+
+(define (macro-segmented-program-advance! [state : TcJobState]) : unit
+  (let
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    (begin
+      (if (> (struct-get data queue-len) 0)
+        (begin
+          (set! (struct-get data cursor) (+ (struct-get data cursor) 1))
+          (set! (struct-get data queue-len) (- (struct-get data queue-len) 1)))
+        unit)
+      (macro-segmented-program-view-data-set! address data)
+      (macro-segmented-program-normalize-head! state)
+      unit)))
+
+(define (macro-segmented-path-drop [paths : ast.AstDeclPathList] [count : i64]) : ast.AstDeclPathList
+  (let
+    [len : i64 (ast.ast-decl-path-list-len (& paths))]
+    [drop : i64 (cond [(< count 0) 0] [(> count len) len] [else count])]
+    (ast.AstDeclPathList
+      (struct-get paths slots)
+      (struct-get paths owner-ids)
+      (+ (struct-get paths offset) drop)
+      (- len drop)
+      false)))
+
+(define (macro-segmented-decl-copy-current [decls : ast.AstDeclList]) : ast.AstDeclList
+  (let
+    [count : i64 (ast.ast-decl-list-len (& decls))]
     [capacity : i64
       (if (< count 1)
         1
         count)]
-    [slots : (__tl_dyn-array String) (array.make-array String capacity)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [slots : (__tl_dyn-array ast.AstDecl)
+      (array.make-array ast.AstDecl capacity)]
+    [src-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [src-offset : i64 (struct-get decls offset)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
+          (array-set! slots index (array-ref src-slots (+ src-offset index)))
+          (set! index (+ index 1))))
+      (ast.AstDeclList slots 0 count true))))
+
+(define (macro-segmented-path-copy-current
+  [paths : ast.AstDeclPathList]
+  [decl-count : i64]) : ast.AstDeclPathList
+  (let
+    [capacity : i64
+      (if (< decl-count 1)
+        1
+        decl-count)]
+    [slots : (__tl_dyn-array String) (array.make-array String capacity)]
+    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index decl-count)
+        (begin
           (array-set!
             slots
             index
-            (ast.ast-decl-path-list-get (& suffix) index ""))
+            (ast.ast-decl-path-list-get (& paths) index ""))
           (array-set!
             owner-ids
             index
             (ast.ast-decl-path-list-owner-id
-              (& suffix)
+              (& paths)
               index
               cbi.compiler-builtin-id-fix-empty))
           (set! index (+ index 1))))
-      (ast.AstDeclPathList slots owner-ids 0 count true))))
+      (ast.AstDeclPathList slots owner-ids 0 decl-count true))))
 
-(define (macro-scratch-splice-decl-view-build
-  [prefix-rev : ast.AstDeclList]
+(define (macro-segmented-program-splice-current-in-scratch!
+  [state : TcJobState]
   [middle : ast.AstDeclList]
-  [suffix : ast.AstDeclList]) : MacroSpliceDeclView
+  [middle-paths : ast.AstDeclPathList]) : unit
+  (let
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data (struct-get data head))]
+    [next-index : i64 (+ (struct-get data cursor) 1)]
+    [node-decls : ast.AstDeclList (struct-get node decls)]
+    [node-paths : ast.AstDeclPathList (struct-get node paths)]
+    [node-count : i64 (ast.ast-decl-list-len (& node-decls))]
+    [suffix-count : i64 (- node-count next-index)]
+    [suffix-head : i64
+      (if (> suffix-count 0)
+        (macro-program-segment-node-new-current
+          (ast.AstDeclList
+            (struct-get node-decls slots)
+            (+ (struct-get node-decls offset) next-index)
+            suffix-count
+            false)
+          (macro-segmented-path-drop node-paths next-index)
+          (struct-get node next))
+        (struct-get node next))]
+    [middle-count : i64 (ast.ast-decl-list-len (& middle))]
+    [stable-middle : ast.AstDeclList (macro-segmented-decl-copy-current middle)]
+    [stable-paths : ast.AstDeclPathList
+      (macro-segmented-path-copy-current middle-paths middle-count)]
+    [next-head : i64
+      (if (> middle-count 0)
+        (macro-program-segment-node-new-current
+          stable-middle
+          stable-paths
+          suffix-head)
+        suffix-head)]
+    (begin
+      (cfg compile-profile (compiler-tc-walk-segment-split-note! middle-count))
+      (set! (struct-get data head) next-head)
+      (set! (struct-get data cursor) 0)
+      (set!
+        (struct-get data queue-len)
+        (+ (- (struct-get data queue-len) 1) middle-count))
+      (set! (struct-get data generation) (+ (struct-get data generation) 1))
+      (macro-segmented-program-view-data-set! address data))))
+
+(define (macro-segmented-program-splice-current!
+  [state : TcJobState]
+  [middle : ast.AstDeclList]
+  [middle-paths : ast.AstDeclPathList]) : unit
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [storage : i64 (macro-expand-scratch-arena-get)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set storage))
+      (macro-segmented-program-splice-current-in-scratch!
+        state
+        middle
+        middle-paths)
+      (set! macro-expand-scratch-arena (arena.tl_arena_current))
+      (unsafe
+        (arena.tl_arena_set enclosing)))))
+
+(define (macro-segmented-program-decl-count [state : TcJobState]) : i64
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    (+
+      (ast.ast-decl-list-len (& (struct-get data prefix-rev)))
+      (struct-get data queue-len))))
+
+(define (macro-segmented-program-decl-at
+  [state : TcJobState]
+  [logical-index : i64]
+  [fallback : ast.AstDecl]) : ast.AstDecl
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix-count : i64 (ast.ast-decl-list-len (& prefix))]
+    (if (or
+      (< logical-index 0)
+      (>= logical-index (+ prefix-count (struct-get data queue-len))))
+      fallback
+      (if (< logical-index prefix-count)
+        (ast.ast-decl-list-ref prefix (- (- prefix-count 1) logical-index))
+        (let
+          [remaining : i64 (- logical-index prefix-count)]
+          [node-address : i64 (struct-get data head)]
+          [node-index : i64 (struct-get data cursor)]
+          [found : bool false]
+          [out : ast.AstDecl fallback]
+          (begin
+            (while (and (not found) (> node-address 0))
+              (let
+                [node : MacroProgramSegmentNodeData
+                  (macro-program-segment-node-data node-address)]
+                [decls : ast.AstDeclList (struct-get node decls)]
+                [available : i64
+                  (- (ast.ast-decl-list-len (& decls)) node-index)]
+                (if (< remaining available)
+                  (begin
+                    (set!
+                      out
+                      (ast.ast-decl-list-ref decls (+ node-index remaining)))
+                    (set! found true))
+                  (begin
+                    (set! remaining (- remaining available))
+                    (set! node-address (struct-get node next))
+                    (set! node-index 0)))))
+            out))))))
+
+(define (macro-segmented-program-path-at
+  [state : TcJobState]
+  [logical-index : i64]
+  [fallback : String]) : String
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclPathList (struct-get data prefix-paths-rev)]
+    [prefix-count : i64
+      (ast.ast-decl-list-len (& (struct-get data prefix-rev)))]
+    (if (or
+      (< logical-index 0)
+      (>= logical-index (+ prefix-count (struct-get data queue-len))))
+      fallback
+      (if (< logical-index prefix-count)
+        (ast.ast-decl-path-list-get
+          (& prefix)
+          (- (- prefix-count 1) logical-index)
+          fallback)
+        (let
+          [remaining : i64 (- logical-index prefix-count)]
+          [node-address : i64 (struct-get data head)]
+          [node-index : i64 (struct-get data cursor)]
+          [found : bool false]
+          [out : String ""]
+          (begin
+            (while (and (not found) (> node-address 0))
+              (let
+                [node : MacroProgramSegmentNodeData
+                  (macro-program-segment-node-data node-address)]
+                [decls : ast.AstDeclList (struct-get node decls)]
+                [available : i64
+                  (- (ast.ast-decl-list-len (& decls)) node-index)]
+                (if (< remaining available)
+                  (begin
+                    (set!
+                      out
+                      (ast.ast-decl-path-list-get
+                        (& (struct-get node paths))
+                        (+ node-index remaining)
+                        fallback))
+                    (set! found true))
+                  (begin
+                    (set! remaining (- remaining available))
+                    (set! node-address (struct-get node next))
+                    (set! node-index 0)))))
+            (if found
+              out
+              fallback)))))))
+
+(define (macro-segmented-program-owner-id-at
+  [state : TcJobState]
+  [logical-index : i64]
+  [fallback : i64]) : i64
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclPathList (struct-get data prefix-paths-rev)]
+    [prefix-count : i64
+      (ast.ast-decl-list-len (& (struct-get data prefix-rev)))]
+    (if (or
+      (< logical-index 0)
+      (>= logical-index (+ prefix-count (struct-get data queue-len))))
+      fallback
+      (if (< logical-index prefix-count)
+        (ast.ast-decl-path-list-owner-id
+          (& prefix)
+          (- (- prefix-count 1) logical-index)
+          fallback)
+        (let
+          [remaining : i64 (- logical-index prefix-count)]
+          [node-address : i64 (struct-get data head)]
+          [node-index : i64 (struct-get data cursor)]
+          [found : bool false]
+          [out : i64 fallback]
+          (begin
+            (while (and (not found) (> node-address 0))
+              (let
+                [node : MacroProgramSegmentNodeData
+                  (macro-program-segment-node-data node-address)]
+                [decls : ast.AstDeclList (struct-get node decls)]
+                [available : i64
+                  (- (ast.ast-decl-list-len (& decls)) node-index)]
+                (if (< remaining available)
+                  (begin
+                    (set!
+                      out
+                      (ast.ast-decl-path-list-owner-id
+                        (& (struct-get node paths))
+                        (+ node-index remaining)
+                        fallback))
+                    (set! found true))
+                  (begin
+                    (set! remaining (- remaining available))
+                    (set! node-address (struct-get node next))
+                    (set! node-index 0)))))
+            out))))))
+
+(defstruct MacroSegmentedProgramIter
+  (prefix-rev ast.AstDeclList)
+  (prefix-paths-rev ast.AstDeclPathList)
+  (prefix-index i64)
+  (node-address i64)
+  (node-index i64))
+
+(defstruct MacroSegmentedProgramBorrow
+  (decls ast.AstDeclList)
+  (paths ast.AstDeclPathList)
+  (index i64))
+
+(defenum MacroSegmentedProgramStep
+  (Nil)
+  (Cons MacroSegmentedProgramBorrow MacroSegmentedProgramIter))
+
+(define (macro-segmented-program-borrow-decl
+  [item : MacroSegmentedProgramBorrow]) : ast.AstDecl
+  (ast.ast-decl-list-ref (struct-get item decls) (struct-get item index)))
+
+(define (macro-segmented-program-borrow-path
+  [item : MacroSegmentedProgramBorrow]) : String
+  (ast.ast-decl-path-list-get
+    (& (struct-get item paths))
+    (struct-get item index)
+    ""))
+
+(define (macro-segmented-program-borrow-owner-id
+  [item : MacroSegmentedProgramBorrow]) : i64
+  (ast.ast-decl-path-list-owner-id
+    (& (struct-get item paths))
+    (struct-get item index)
+    cbi.compiler-builtin-id-fix-empty))
+
+(define (macro-segmented-program-iter [state : TcJobState]) : MacroSegmentedProgramIter
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    (MacroSegmentedProgramIter
+      prefix
+      (struct-get data prefix-paths-rev)
+      (- (ast.ast-decl-list-len (& prefix)) 1)
+      (struct-get data head)
+      (struct-get data cursor))))
+
+;; Allocation-free logical step across the reversed prefix and ordered segment
+;; chain. Expansion-time derived indexes use this instead of restarting an
+;; indexed head scan for every declaration.
+(define (macro-segmented-program-step [iter : MacroSegmentedProgramIter]) : MacroSegmentedProgramStep
+  (if (>= (struct-get iter prefix-index) 0)
+    (let
+      [index : i64 (struct-get iter prefix-index)]
+      (MacroSegmentedProgramStep.Cons
+        (MacroSegmentedProgramBorrow
+          (struct-get iter prefix-rev)
+          (struct-get iter prefix-paths-rev)
+          index)
+        (MacroSegmentedProgramIter
+          (struct-get iter prefix-rev)
+          (struct-get iter prefix-paths-rev)
+          (- index 1)
+          (struct-get iter node-address)
+          (struct-get iter node-index))))
+    (if (= (struct-get iter node-address) 0)
+      (MacroSegmentedProgramStep.Nil)
+      (let
+        [node : MacroProgramSegmentNodeData
+          (macro-program-segment-node-data (struct-get iter node-address))]
+        [index : i64 (struct-get iter node-index)]
+        [decls : ast.AstDeclList (struct-get node decls)]
+        (if (>= index (ast.ast-decl-list-len (& decls)))
+          (macro-segmented-program-step
+            (MacroSegmentedProgramIter
+              (struct-get iter prefix-rev)
+              (struct-get iter prefix-paths-rev)
+              -1
+              (struct-get node next)
+              0))
+          (MacroSegmentedProgramStep.Cons
+            (MacroSegmentedProgramBorrow decls (struct-get node paths) index)
+            (MacroSegmentedProgramIter
+              (struct-get iter prefix-rev)
+              (struct-get iter prefix-paths-rev)
+              -1
+              (struct-get iter node-address)
+              (+ index 1))))))))
+
+(define (macro-segmented-clone-name-set-note-decl
+  [names : clone_support.CloneNameSet]
+  [module-id : i64]
+  [decl : ast.AstDecl]) : clone_support.CloneNameSet
+  (match (ast.ast-decl-unwrapped decl)
+    [(ast.AstDecl.Import
+        _
+        (ast.AstImportSpec.Spec
+          _
+          _
+          (ast.AstMaybeModuleName.Some target)
+          (ast.AstMaybeImportAlias.Some alias)
+          _))
+      (clone_support.clone-name-set-insert-alias-id
+        names
+        module-id
+        alias
+        target)]
+    [(ast.AstDecl.DefEnum _ name _ _)
+      (clone_support.clone-name-set-insert-id
+        names
+        (clone_support.clone-name-key-id-in-module module-id name))]
+    [(ast.AstDecl.DefStruct _ name _ _ _)
+      (clone_support.clone-name-set-insert-id
+        names
+        (clone_support.clone-name-key-id-in-module module-id name))]
+    [_ names]))
+
+(define (macro-segmented-clone-name-set-for-program [state : TcJobState]) : clone_support.CloneNameSet
+  (let
+    [empty : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
+    [names : clone_support.CloneNameSet
+      (clone_support.clone-name-set-with-capacity
+        (macro-segmented-program-decl-count state)
+        (clone_support.clone-name-set-aliases empty))]
+    [module-id : i64 (clone_support.clone-root-module-id)]
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (macro-segmented-program-step iter)
+          [(MacroSegmentedProgramStep.Nil) (set! done true)]
+          [(MacroSegmentedProgramStep.Cons item rest)
+            (begin
+              (set! iter rest)
+              (if (or
+                (ast.ast-decl-list-unwrapped-module-or-import-at?
+                  (& (struct-get item decls))
+                  (struct-get item index))
+                (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+                  (& (struct-get item decls))
+                  (struct-get item index)))
+                (let
+                  [decl : ast.AstDecl
+                    (ast.ast-decl-unwrapped
+                      (macro-segmented-program-borrow-decl item))]
+                  (match decl
+                    [(ast.AstDecl.Module next-module)
+                      (set! module-id next-module)]
+                    [_
+                      (set!
+                        names
+                        (macro-segmented-clone-name-set-note-decl
+                          names
+                          module-id
+                          decl))]))
+                unit)
+              unit)]))
+      names)))
+
+(define (macro-segmented-clone-fixpoint-step
+  [state : TcJobState]
+  [pools : ast.AstNodePoolContext]
+  [names : clone_support.CloneNameSet]) : clone_support.CloneNameSet
+  (let
+    [out : clone_support.CloneNameSet
+      (clone_support.clone-name-set-with-capacity
+        (clone_support.clone-name-set-capacity names)
+        (clone_support.clone-name-set-aliases names))]
+    [module-id : i64 (clone_support.clone-root-module-id)]
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (macro-segmented-program-step iter)
+          [(MacroSegmentedProgramStep.Nil) (set! done true)]
+          [(MacroSegmentedProgramStep.Cons item rest)
+            (begin
+              (set! iter rest)
+              (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+                (& (struct-get item decls))
+                (struct-get item index))
+                (match (ast.ast-decl-unwrapped
+                  (macro-segmented-program-borrow-decl item))
+                  [(ast.AstDecl.Module next-module)
+                    (set! module-id next-module)]
+                  [(ast.AstDecl.DefEnum _ name _ variants)
+                    (if (clone_support.clone-variant-list-able?
+                      pools
+                      variants
+                      names
+                      module-id)
+                      (set!
+                        out
+                        (clone_support.clone-name-set-insert-id
+                          out
+                          (clone_support.clone-name-key-id-in-module
+                            module-id
+                            name)))
+                      unit)]
+                  [(ast.AstDecl.DefStruct _ name _ _ fields)
+                    (if (clone_support.clone-struct-fields-able?
+                      pools
+                      fields
+                      names
+                      module-id)
+                      (set!
+                        out
+                        (clone_support.clone-name-set-insert-id
+                          out
+                          (clone_support.clone-name-key-id-in-module
+                            module-id
+                            name)))
+                      unit)]
+                  [_ unit])
+                unit)
+              unit)]))
+      out)))
+
+(define (macro-segmented-clone-able-set-build
+  [state : TcJobState]
+  [pools : ast.AstNodePoolContext]) : clone_support.CloneNameSet
+  (let
+    [names : clone_support.CloneNameSet
+      (macro-segmented-clone-name-set-for-program state)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [next : clone_support.CloneNameSet
+            (macro-segmented-clone-fixpoint-step state pools names)]
+          (if (=
+            (clone_support.clone-name-set-len next)
+            (clone_support.clone-name-set-len names))
+            (begin
+              (set! names next)
+              (set! done true))
+            (set! names next))))
+      names)))
+
+(defstruct MacroSegmentedProgramFlatView
+  (decls ast.AstDeclList)
+  (paths ast.AstDeclPathList))
+
+(define (macro-segmented-program-flatten-raw [state : TcJobState]) : MacroSegmentedProgramFlatView
+  (let
+    [count : i64 (macro-segmented-program-decl-count state)]
+    [capacity : i64
+      (if (< count 1)
+        1
+        count)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl)
+      (array.make-array ast.AstDecl capacity)]
+    [path-slots : (__tl_dyn-array String) (array.make-array String capacity)]
+    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix-decls : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix-paths : ast.AstDeclPathList (struct-get data prefix-paths-rev)]
+    [prefix-count : i64 (ast.ast-decl-list-len (& prefix-decls))]
+    [index : i64 0]
+    (begin
+      ;; The prefix builder is reversed, so write it back-to-front. The queued
+      ;; suffix is already ordered inside each segment; walk every node once
+      ;; instead of paying an indexed head scan for every output declaration.
+      (while (< index prefix-count)
+        (begin
+          (array-set!
+            decl-slots
+            index
+            (ast.ast-decl-list-ref prefix-decls (- (- prefix-count 1) index)))
+          (array-set!
+            path-slots
+            index
+            (ast.ast-decl-path-list-get
+              (& prefix-paths)
+              (- (- prefix-count 1) index)
+              ""))
+          (array-set!
+            owner-ids
+            index
+            (ast.ast-decl-path-list-owner-id
+              (& prefix-paths)
+              (- (- prefix-count 1) index)
+              cbi.compiler-builtin-id-fix-empty))
+          (set! index (+ index 1))))
+      (let
+        [node-address : i64 (struct-get data head)]
+        [node-index : i64 (struct-get data cursor)]
+        (while (and (< index count) (> node-address 0))
+          (let
+            [node : MacroProgramSegmentNodeData
+              (macro-program-segment-node-data node-address)]
+            [decls : ast.AstDeclList (struct-get node decls)]
+            [paths : ast.AstDeclPathList (struct-get node paths)]
+            [node-count : i64 (ast.ast-decl-list-len (& decls))]
+            (begin
+              (while (and (< index count) (< node-index node-count))
+                (begin
+                  (array-set!
+                    decl-slots
+                    index
+                    (ast.ast-decl-list-ref decls node-index))
+                  (array-set!
+                    path-slots
+                    index
+                    (ast.ast-decl-path-list-get (& paths) node-index ""))
+                  (array-set!
+                    owner-ids
+                    index
+                    (ast.ast-decl-path-list-owner-id
+                      (& paths)
+                      node-index
+                      cbi.compiler-builtin-id-fix-empty))
+                  (set! index (+ index 1))
+                  (set! node-index (+ node-index 1))))
+              (set! node-address (struct-get node next))
+              (set! node-index 0)))))
+      (MacroSegmentedProgramFlatView
+        (ast.AstDeclList decl-slots 0 count true)
+        (ast.AstDeclPathList path-slots owner-ids 0 count true)))))
+
+;; Intermediate materialization is reserved for the documented conservative
+;; source-file/alias fallback. Ordinary marker and generated-module splices
+;; remain segmented until the walk's single final reverse.
+(define (macro-segmented-program-flatten-fallback
+  [state : TcJobState]
+  [_reason : i64]) : MacroSegmentedProgramFlatView
+  (begin
+    (cfg compile-profile (compiler-tc-walk-segment-fallback-flatten-start!))
+    (let
+      [out : MacroSegmentedProgramFlatView
+        (macro-segmented-program-flatten-raw state)]
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-walk-segment-fallback-flatten-finish! _reason))
+        out))))
+
+(define (macro-segmented-program-current-starts-module-import-placeholder?
+  [state : TcJobState]) : bool
+  (if (macro-segmented-program-empty? state)
+    false
+    (macro-decl-module-import-placeholder?
+      (macro-segmented-program-current-decl state))))
+
+(define (macro-segmented-bind-import-alias-module
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [target-module : i64]
+  [alias : i64]
+  [importer-module : i64]
+  [import-unqualified : bool]) : ResultTcEnv
+  (let
+    [state : TcJobState (tc-context-job-state ctx)]
+    [cur-env : TcTypeEnv env]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [message : String ""]
+    [ok : bool true]
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    [done : bool false]
+    (begin
+      (while (and ok (not done))
+        (match (macro-segmented-program-step iter)
+          [(MacroSegmentedProgramStep.Nil) (set! done true)]
+          [(MacroSegmentedProgramStep.Cons item rest)
+            (begin
+              (set! iter rest)
+              (match (ast.ast-decl-list-ref-borrowed
+                (& (struct-get item decls))
+                (struct-get item index))
+                [(ast.AstDecl.Module _)
+                  (set!
+                    cur-module-id
+                    (ast.ast-decl-list-module-id-at
+                      (& (struct-get item decls))
+                      (struct-get item index)
+                      cbi.compiler-builtin-id-fix-empty))]
+                [(ast.AstDecl.Import _ _) unit]
+                [(ast.AstDecl.IncludeStr _ _) unit]
+                [(ast.AstDecl.IncludeStrComptime _ _) unit]
+                [(ast.AstDecl.IncludeStrLzss _ _) unit]
+                [(ast.AstDecl.IncludeBin _ _) unit]
+                [(ast.AstDecl.Test _ _ _) unit]
+                [_
+                  (if (= cur-module-id target-module)
+                    (match (tc-bind-import-alias-decl-in-module
+                      ctx
+                      cur-env
+                      alias
+                      importer-module
+                      import-unqualified
+                      cur-module-id
+                      (macro-segmented-program-borrow-decl item))
+                      [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                      [(ResultTcEnv.Err step-message)
+                        (begin
+                          (set! message step-message)
+                          (set! ok false))])
+                    unit)])
+              unit)]))
+      (if (string.eq message "")
+        (ResultTcEnv.Ok cur-env)
+        (ResultTcEnv.Err message)))))
+
+(define (macro-segmented-imported-module-identity-ids?
+  [state : TcJobState]
+  [current-module-id : i64]
+  [target-id : i64]) : bool
+  (let
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    [module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [found : bool false]
+    [done : bool false]
+    (begin
+      (while (and (not found) (not done))
+        (match (macro-segmented-program-step iter)
+          [(MacroSegmentedProgramStep.Nil) (set! done true)]
+          [(MacroSegmentedProgramStep.Cons item rest)
+            (begin
+              (set! iter rest)
+              (match (ast.ast-decl-list-ref-borrowed
+                (& (struct-get item decls))
+                (struct-get item index))
+                [(ast.AstDecl.Module _)
+                  (set!
+                    module-id
+                    (ast.ast-decl-list-module-id-at
+                      (& (struct-get item decls))
+                      (struct-get item index)
+                      cbi.compiler-builtin-id-fix-empty))]
+                [(ast.AstDecl.Import _ _)
+                  (if (= module-id current-module-id)
+                    (match (macro-segmented-program-borrow-decl item)
+                      [(ast.AstDecl.Import
+                          _
+                          (ast.AstImportSpec.Spec _ _ expected _ _))
+                        (match expected
+                          [(ast.AstMaybeModuleName.Some target)
+                            (if (tc-module-identity-id-eq? target target-id)
+                              (set! found true)
+                              unit)]
+                          [(ast.AstMaybeModuleName.No) unit])]
+                      [_ unit])
+                    unit)]
+                [_ unit])
+              unit)]))
+      found)))
+
+(define (macro-segmented-module-local-root-shadow-note-at!
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [decls : ast.AstDeclList]
+  [index : i64]
+  [cur-module-id : i64]) : i64
+  (match (ast.ast-decl-list-ref-borrowed (& decls) index)
+    [(ast.AstDecl.Module _)
+      (ast.ast-decl-list-module-id-at
+        (& decls)
+        index
+        cbi.compiler-builtin-id-fix-empty)]
+    [_
+      (begin
+        (if (= cur-module-id cbi.compiler-builtin-id-fix-empty)
+          (tc-module-local-root-shadow-decl-note!
+            seen
+            (ast.ast-decl-list-ref decls index))
+          unit)
+        cur-module-id)]))
+
+(define (macro-segmented-module-local-root-shadow-names-note!
+  [state : TcJobState]
+  [seen : (&mut seen tc_i64_i64_map.Map)]) : unit
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [node-address : i64 (struct-get data head)]
+    [node-index : i64 (struct-get data cursor)]
+    (begin
+      (while (>= prefix-index 0)
+        (begin
+          (set!
+            cur-module-id
+            (macro-segmented-module-local-root-shadow-note-at!
+              seen
+              prefix
+              prefix-index
+              cur-module-id))
+          (set! prefix-index (- prefix-index 1))))
+      (while (> node-address 0)
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data node-address)]
+          [decls : ast.AstDeclList (struct-get node decls)]
+          [count : i64 (ast.ast-decl-list-len (& decls))]
+          (begin
+            (while (< node-index count)
+              (begin
+                (set!
+                  cur-module-id
+                  (macro-segmented-module-local-root-shadow-note-at!
+                    seen
+                    decls
+                    node-index
+                    cur-module-id))
+                (set! node-index (+ node-index 1))))
+            (set! node-address (struct-get node next))
+            (set! node-index 0)))))))
+
+(define (macro-segmented-module-local-env-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [target-module-id : i64]) : ResultTcEnv
+  (let
+    [state : TcJobState (tc-context-job-state ctx)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
+    [node-address : i64 (struct-get data head)]
+    [node-index : i64 (struct-get data cursor)]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    ;; This map grows only to root plus target-module names. A whole-program
+    ;; reserve retained hundreds of MiB across cached module environments;
+    ;; counting first avoided that retention but paid a third full traversal.
+    [seen : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 64)]
+    [cur-env : TcTypeEnv env]
+    [message : String ""]
+    [ok : bool true]
+    (begin
+      ;; Root declarations shadow imported module-local aliases regardless of
+      ;; segment boundaries, matching tc-module-local-env-list's index pass.
+      (macro-segmented-module-local-root-shadow-names-note! state (&mut seen))
+      (while (and ok (>= prefix-index 0))
+        (begin
+          (match (ast.ast-decl-list-ref-borrowed (& prefix) prefix-index)
+            [(ast.AstDecl.Module _)
+              (set!
+                cur-module-id
+                (ast.ast-decl-list-module-id-at
+                  (& prefix)
+                  prefix-index
+                  cbi.compiler-builtin-id-fix-empty))]
+            [_
+              (if (= cur-module-id target-module-id)
+                (match (tc-module-local-env-add-decl
+                  ctx
+                  cur-env
+                  (&mut seen)
+                  (ast.ast-decl-list-ref prefix prefix-index))
+                  [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                  [(ResultTcEnv.Err step-message)
+                    (begin
+                      (set! message step-message)
+                      (set! ok false))])
+                unit)])
+          (set! prefix-index (- prefix-index 1))))
+      (while (and ok (> node-address 0))
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data node-address)]
+          [decls : ast.AstDeclList (struct-get node decls)]
+          [count : i64 (ast.ast-decl-list-len (& decls))]
+          (begin
+            (while (and ok (< node-index count))
+              (begin
+                (match (ast.ast-decl-list-ref-borrowed (& decls) node-index)
+                  [(ast.AstDecl.Module _)
+                    (set!
+                      cur-module-id
+                      (ast.ast-decl-list-module-id-at
+                        (& decls)
+                        node-index
+                        cbi.compiler-builtin-id-fix-empty))]
+                  [_
+                    (if (= cur-module-id target-module-id)
+                      (match (tc-module-local-env-add-decl
+                        ctx
+                        cur-env
+                        (&mut seen)
+                        (ast.ast-decl-list-ref decls node-index))
+                        [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                        [(ResultTcEnv.Err step-message)
+                          (begin
+                            (set! message step-message)
+                            (set! ok false))])
+                      unit)])
+                (set! node-index (+ node-index 1))))
+            (set! node-address (struct-get node next))
+            (set! node-index 0))))
+      (if ok
+        (ResultTcEnv.Ok cur-env)
+        (ResultTcEnv.Err message)))))
+
+(define (macro-segmented-program-module-id-at-or
+  [state : TcJobState]
+  [index : i64]
+  [fallback : i64]) : i64
+  (match (macro-segmented-program-decl-at
+    state
+    index
+    (ast.AstDecl.Module fallback))
+    [(ast.AstDecl.Module name) name]
+    [_ fallback]))
+
+(define (macro-segmented-program-boundary-smoke?) : bool
+  (let
+    [p0 : i64 (ci.intern "seg-prefix-0")]
+    [p1 : i64 (ci.intern "seg-prefix-1")]
+    [a : i64 (ci.intern "seg-a")]
+    [b : i64 (ci.intern "seg-b")]
+    [c : i64 (ci.intern "seg-c")]
+    [x : i64 (ci.intern "seg-x")]
+    [y : i64 (ci.intern "seg-y")]
+    [z : i64 (ci.intern "seg-z")]
+    [prefix-rev : ast.AstDeclList
+      (ast.ast-decl-cons
+        (ast.AstDecl.Module p1)
+        (ast.ast-decl-cons (ast.AstDecl.Module p0) (ast.ast-decl-list-new)))]
+    [prefix-paths-rev : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id
+        "p1"
+        11
+        (ast.ast-decl-path-cons-with-owner-id
+          "p0"
+          10
+          (ast.ast-decl-path-list-new)))]
+    [source : ast.AstDeclList
+      (ast.ast-decl-cons
+        (ast.AstDecl.Module a)
+        (ast.ast-decl-cons
+          (ast.AstDecl.Module b)
+          (ast.ast-decl-cons (ast.AstDecl.Module c) (ast.ast-decl-list-new))))]
+    [source-paths : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id
+        "a"
+        20
+        (ast.ast-decl-path-cons-with-owner-id
+          "b"
+          21
+          (ast.ast-decl-path-cons-with-owner-id
+            "c"
+            22
+            (ast.ast-decl-path-list-new))))]
+    [xy : ast.AstDeclList
+      (ast.ast-decl-cons
+        (ast.AstDecl.Module x)
+        (ast.ast-decl-cons (ast.AstDecl.Module y) (ast.ast-decl-list-new)))]
+    [xy-paths : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id
+        "x"
+        30
+        (ast.ast-decl-path-cons-with-owner-id
+          "y"
+          31
+          (ast.ast-decl-path-list-new)))]
+    [zs : ast.AstDeclList
+      (ast.ast-decl-cons (ast.AstDecl.Module z) (ast.ast-decl-list-new))]
+    [z-paths : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id "z" 40 (ast.ast-decl-path-list-new))]
+    [state : TcJobState (tc-job-state-new)]
+    [out-rev : ast.AstDeclList prefix-rev]
+    [out-paths-rev : ast.AstDeclPathList prefix-paths-rev]
+    (begin
+      (macro-expand-scratch-begin!)
+      (macro-segmented-program-begin!
+        state
+        out-rev
+        out-paths-rev
+        source
+        source-paths)
+      (let
+        [initial-ok : bool
+          (and
+            (= (macro-segmented-program-decl-count state) 5)
+            (= (macro-segmented-program-module-id-at-or state 0 -1) p0)
+            (= (macro-segmented-program-module-id-at-or state 1 -1) p1)
+            (= (macro-segmented-program-module-id-at-or state 2 -1) a)
+            (= (macro-segmented-program-module-id-at-or state 3 -1) b)
+            (= (macro-segmented-program-module-id-at-or state 4 -1) c)
+            (string.eq (macro-segmented-program-path-at state 0 "") "p0")
+            (= (macro-segmented-program-owner-id-at state 4 -1) 22))]
+        (begin
+          (macro-segmented-program-splice-current! state xy xy-paths)
+          ;; Nested compiler work resets derived file state while a splice is
+          ;; active; that boundary must not cancel the walk-owned cursor.
+          (tc-job-state-reset-file-state! state)
+          (let
+            [first-splice-ok : bool
+              (and
+                (macro-segmented-program-active? state)
+                (= (macro-segmented-program-decl-count state) 6)
+                (= (macro-segmented-program-current-owner-id state) 30)
+                (string.eq (macro-segmented-program-current-path state) "x"))]
+            (begin
+              (set!
+                out-rev
+                (ast.ast-decl-list-prepend-builder
+                  (macro-segmented-program-current-decl state)
+                  out-rev))
+              (set!
+                out-paths-rev
+                (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                  (macro-segmented-program-current-path state)
+                  (macro-segmented-program-current-owner-id state)
+                  out-paths-rev))
+              (macro-segmented-program-advance! state)
+              (macro-segmented-program-prefix-set! state out-rev out-paths-rev)
+              (macro-segmented-program-splice-current! state zs z-paths)
+              (let
+                [flat : MacroSegmentedProgramFlatView
+                  (macro-segmented-program-flatten-raw state)]
+                [flat-decls : ast.AstDeclList (struct-get flat decls)]
+                [flat-paths : ast.AstDeclPathList (struct-get flat paths)]
+                [iter : MacroSegmentedProgramIter
+                  (macro-segmented-program-iter state)]
+                [iter-index : i64 0]
+                [iter-ok : bool true]
+                [iter-done : bool false]
+                [nested-ok : bool
+                  (and
+                    (= (ast.ast-decl-list-len (& flat-decls)) 6)
+                    (= (macro-segmented-program-module-id-at-or state 0 -1) p0)
+                    (= (macro-segmented-program-module-id-at-or state 1 -1) p1)
+                    (= (macro-segmented-program-module-id-at-or state 2 -1) x)
+                    (= (macro-segmented-program-module-id-at-or state 3 -1) z)
+                    (= (macro-segmented-program-module-id-at-or state 4 -1) b)
+                    (= (macro-segmented-program-module-id-at-or state 5 -1) c)
+                    (string.eq
+                      (ast.ast-decl-path-list-get (& flat-paths) 3 "")
+                      "z")
+                    (= (ast.ast-decl-path-list-owner-id (& flat-paths) 3 -1) 40)
+                    (string.eq
+                      (ast.ast-decl-path-list-get (& flat-paths) 4 "")
+                      "b")
+                    (= (ast.ast-decl-path-list-owner-id (& flat-paths) 5 -1) 22))]
+                (begin
+                  ;; The derived-index iterator must preserve declaration,
+                  ;; path, and owner alignment across prefix, split, and
+                  ;; inserted-segment boundaries.
+                  (while (and iter-ok (not iter-done))
+                    (match (macro-segmented-program-step iter)
+                      [(MacroSegmentedProgramStep.Nil) (set! iter-done true)]
+                      [(MacroSegmentedProgramStep.Cons item rest)
+                        (begin
+                          (if (>= iter-index 6)
+                            (set! iter-ok false)
+                            (let
+                              [expected-id : i64
+                                (match (ast.ast-decl-list-ref
+                                  flat-decls
+                                  iter-index)
+                                  [(ast.AstDecl.Module name) name]
+                                  [_ -1])]
+                              [actual-id : i64
+                                (match (macro-segmented-program-borrow-decl
+                                  item)
+                                  [(ast.AstDecl.Module name) name]
+                                  [_ -1])]
+                              (if (and
+                                (= actual-id expected-id)
+                                (string.eq
+                                  (macro-segmented-program-borrow-path item)
+                                  (ast.ast-decl-path-list-get
+                                    (& flat-paths)
+                                    iter-index
+                                    ""))
+                                (=
+                                  (macro-segmented-program-borrow-owner-id item)
+                                  (ast.ast-decl-path-list-owner-id
+                                    (& flat-paths)
+                                    iter-index
+                                    -1)))
+                                unit
+                                (set! iter-ok false))))
+                          (set! iter rest)
+                          (set! iter-index (+ iter-index 1)))]))
+                  (macro-segmented-program-end! state)
+                  (macro-expand-scratch-release!)
+                  (and
+                    initial-ok
+                    first-splice-ok
+                    nested-ok
+                    iter-ok
+                    (= iter-index 6)
+                    (not (macro-segmented-program-active? state))))))))))))
+
+(cfg
+  test
+  (test
+    macro-segmented-program-boundaries
+    (if (macro-segmented-program-boundary-smoke?)
+      unit
+      (io.panic "typecheck: segmented macro program boundary smoke failed"))))
+
+(define (macro-expand-scratch-program [decls : ast.AstDeclList]) : ast.AstProgram
   (if macro-expand-scratch-enabled
     (let
       [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64
-        (if (= macro-splice-view-arena 0)
-          (macro-expand-scratch-arena-get)
-          macro-splice-view-arena)]
+      [storage : i64 (macro-expand-scratch-arena-get)]
       (begin
         (unsafe
           (arena.tl_arena_set storage))
-        (let
-          [out : MacroSpliceDeclView
-            (macro-splice-decl-view-build prefix-rev middle suffix)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (if (= macro-splice-view-arena 0)
-              (set! macro-expand-scratch-arena storage-head)
-              (set! macro-splice-view-arena storage-head))
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))
-    (macro-splice-decl-view-build prefix-rev middle suffix)))
-
-(define (macro-scratch-splice-path-view-build
-  [prefix-rev : ast.AstDeclPathList]
-  [middle : ast.AstDeclPathList]
-  [suffix : ast.AstDeclPathList]) : MacroSplicePathView
-  (if macro-expand-scratch-enabled
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64
-        (if (= macro-splice-view-arena 0)
-          (macro-expand-scratch-arena-get)
-          macro-splice-view-arena)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
-        (let
-          [out : MacroSplicePathView
-            (macro-splice-path-view-build prefix-rev middle suffix)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (if (= macro-splice-view-arena 0)
-              (set! macro-expand-scratch-arena storage-head)
-              (set! macro-splice-view-arena storage-head))
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))
-    (macro-splice-path-view-build prefix-rev middle suffix)))
-
-(define (macro-scratch-splice-path-tail-copy [suffix : ast.AstDeclPathList]) : ast.AstDeclPathList
-  (if macro-expand-scratch-enabled
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64
-        (if (= macro-splice-view-arena 0)
-          (macro-expand-scratch-arena-get)
-          macro-splice-view-arena)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
-        (let
-          [out : ast.AstDeclPathList (macro-splice-path-tail-copy suffix)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (if (= macro-splice-view-arena 0)
-              (set! macro-expand-scratch-arena storage-head)
-              (set! macro-splice-view-arena storage-head))
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))
-    (macro-splice-path-tail-copy suffix)))
-
-(define (macro-splice-view-program [decls : ast.AstDeclList]) : ast.AstProgram
-  (if (and macro-expand-scratch-enabled (not (= macro-splice-view-arena 0)))
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set macro-splice-view-arena))
         (let
           [program : ast.AstProgram (ast.ast-program decls)]
           [storage-head : i64 (arena.tl_arena_current)]
           (begin
-            (set! macro-splice-view-arena storage-head)
+            (set! macro-expand-scratch-arena storage-head)
             (unsafe
               (arena.tl_arena_set enclosing))
             program))))
@@ -81449,6 +82797,63 @@
           (set! index (+ index 1))))
       (macro-decl-list-reverse out-rev))))
 
+(define (macro-segmented-find-module-body-decls
+  [state : TcJobState]
+  [target-module : String]) : MacroMaybeDeclList
+  (let
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    [module : String ""]
+    [found : bool false]
+    [done : bool false]
+    [out-rev : ast.AstDeclList (ast.ast-decl-list-new)]
+    (begin
+      (while (not done)
+        (match (macro-segmented-program-step iter)
+          [(MacroSegmentedProgramStep.Nil) (set! done true)]
+          [(MacroSegmentedProgramStep.Cons item rest)
+            (begin
+              (set! iter rest)
+              (match (ast.ast-decl-list-ref-borrowed
+                (& (struct-get item decls))
+                (struct-get item index))
+                [(ast.AstDecl.Module _)
+                  (begin
+                    (set!
+                      module
+                      (ci.intern-str
+                        (ast.ast-decl-list-module-id-at
+                          (& (struct-get item decls))
+                          (struct-get item index)
+                          cbi.compiler-builtin-id-fix-empty)))
+                    (if (string.eq module target-module)
+                      (set! found true)
+                      unit))]
+                [_
+                  (if (string.eq module target-module)
+                    (set!
+                      out-rev
+                      (ast.ast-decl-list-prepend-builder
+                        (macro-segmented-program-borrow-decl item)
+                        out-rev))
+                    unit)])
+              unit)]))
+      (if found
+        (MacroMaybeDeclList.Some (macro-decl-list-reverse out-rev))
+        (MacroMaybeDeclList.No)))))
+
+(define (macro-find-module-body-decls-in-context
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [target-module : String]) : MacroMaybeDeclList
+  (if (macro-segmented-program-active? (tc-context-job-state ctx))
+    (macro-segmented-find-module-body-decls
+      (tc-context-job-state ctx)
+      target-module)
+    (if (macro-module-exists? decls target-module)
+      (MacroMaybeDeclList.Some
+        (macro-collect-module-body-decls decls target-module ""))
+      (MacroMaybeDeclList.No))))
+
 (define (macro-find-module-body-decls
   [decls : ast.AstDeclList]
   [target-module : String]) : MacroMaybeDeclList
@@ -83093,15 +84498,16 @@
 ;; Index cursor rather than `ast-decl-list-step`: the module arm reads one id
 ;; out of the row and the other arm hands the row to `macro-collect-decl-name`,
 ;; so the step result's 144 B and its row copy are both pure overhead.
-(define (macro-collect-macro-names
+(define (macro-collect-macro-names-in
   [decls : ast.AstDeclList]
+  [module-id : i64]
   [acc : TcNameIdList]) : TcNameIdList
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
     [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
     [index : i64 0]
-    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [cur-module-id : i64 module-id]
     [out : TcNameIdList acc]
     (begin
       (while (< index count)
@@ -83123,6 +84529,11 @@
                   out))])
           (set! index (+ index 1))))
       out)))
+
+(define (macro-collect-macro-names
+  [decls : ast.AstDeclList]
+  [acc : TcNameIdList]) : TcNameIdList
+  (macro-collect-macro-names-in decls cbi.compiler-builtin-id-fix-empty acc))
 
 (define (macro-collect-surface-decl-name
   [decl : cload.CompilerLoadSurfaceDecl]
@@ -86654,6 +88065,8 @@
 ;; "no alias import" answer.
 (define macro-alias-cache-built : bool
   false)
+(define macro-alias-cache-built-segmented : bool
+  false)
 (define macro-alias-cache-complete : bool
   false)
 (define macro-alias-cache-built-decl-count : i64
@@ -87772,6 +89185,7 @@
         (set! macro-alias-cache-count 0)
         (set! macro-alias-cache-generation (ci.intern-generation))
         (set! macro-alias-cache-built false)
+        (set! macro-alias-cache-built-segmented false)
         (set! macro-alias-cache-complete false)
         (set! macro-alias-cache-ready true)))))
 
@@ -87904,6 +89318,47 @@
           (set! i (+ i 1))))
       cur-module-id)))
 
+;; The expansion prefix is a prepend builder and therefore stored in reverse
+;; program order. Index it back-to-front without constructing the large
+;; generic segmented iterator result for every declaration.
+(define (macro-alias-cache-index-reverse-range!
+  [decls : ast.AstDeclList]
+  [start : i64]
+  [start-module-id : i64]) : i64
+  (let
+    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [cur-module-id : i64 start-module-id]
+    [i : i64 start]
+    (begin
+      (while (>= i 0)
+        (begin
+          (if (ast.ast-decl-list-unwrapped-module-or-import-at? (& decls) i)
+            (match (ast.ast-decl-unwrapped
+              (array-ref decl-slots (+ decl-offset i)))
+              [(ast.AstDecl.Module next-module)
+                (set! cur-module-id next-module)]
+              [(ast.AstDecl.Import
+                  _decl-meta
+                  (ast.AstImportSpec.Spec _ _ expected maybe-alias _))
+                (match maybe-alias
+                  [(ast.AstMaybeImportAlias.Some alias)
+                    (let
+                      [target-id : i64
+                        (match expected
+                          [(ast.AstMaybeModuleName.Some target) target]
+                          [(ast.AstMaybeModuleName.No) alias])]
+                      (if (>=
+                        (* macro-alias-cache-count 2)
+                        macro-alias-cache-capacity)
+                        (set! macro-alias-cache-complete false)
+                        (macro-alias-cache-put! cur-module-id alias target-id)))]
+                  [(ast.AstMaybeImportAlias.No) unit])]
+              [_ unit])
+            unit)
+          (set! i (- i 1))))
+      cur-module-id)))
+
 ;; One-pass eager index over the program's aliased imports: record every
 ;; (module, alias) -> target mapping in program order (first import wins,
 ;; matching macro-import-alias-target-ids' first-match scan). Each per-pair
@@ -87926,11 +89381,52 @@
           count
           cbi.compiler-builtin-id-fix-empty))
       (set! macro-alias-cache-built true)
+      (set! macro-alias-cache-built-segmented false)
       (set! macro-alias-cache-built-decl-count count)
       (set! macro-alias-cache-built-decl-offset (struct-get decls offset))
       (set!
         macro-alias-cache-built-decl-slots-addr
         (macro-decl-list-slots-data-addr decls)))))
+
+(define (macro-alias-cache-build-segmented! [state : TcJobState]) : unit
+  (let
+    [count : i64 (macro-segmented-program-decl-count state)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [node-address : i64 (struct-get data head)]
+    [node-index : i64 (struct-get data cursor)]
+    (begin
+      (set! macro-alias-cache-complete true)
+      (set!
+        cur-module-id
+        (macro-alias-cache-index-reverse-range!
+          prefix
+          (- (ast.ast-decl-list-len (& prefix)) 1)
+          cur-module-id))
+      (while (> node-address 0)
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data node-address)]
+          [decls : ast.AstDeclList (struct-get node decls)]
+          (begin
+            (set!
+              cur-module-id
+              (macro-alias-cache-index-range!
+                decls
+                node-index
+                (ast.ast-decl-list-len (& decls))
+                cur-module-id))
+            (set! node-address (struct-get node next))
+            (set! node-index 0))))
+      (set! macro-alias-cache-built-end-module-id cur-module-id)
+      (set! macro-alias-cache-built true)
+      (set! macro-alias-cache-built-segmented true)
+      (set! macro-alias-cache-built-decl-count count)
+      (set! macro-alias-cache-built-decl-offset -1)
+      (set! macro-alias-cache-built-decl-slots-addr 0))))
 
 ;; Macro expansion appends generated declarations to the active program view.
 ;; Keep the eager index synchronized once per larger view. When the backing
@@ -88056,11 +89552,33 @@
                     (TcMaybeNameId.Some cached))])])]
         [else (TcMaybeNameId.Some cached)]))))
 
+(define (macro-import-alias-target-cached-id-in-context
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [current-module-id : i64]
+  [qualifier-id : i64]) : TcMaybeNameId
+  (let
+    [state : TcJobState (tc-context-job-state ctx)]
+    (begin
+      (if (macro-segmented-program-active? state)
+        (begin
+          (macro-alias-cache-ensure!)
+          (if (and macro-alias-cache-built macro-alias-cache-built-segmented)
+            unit
+            (begin
+              (set! macro-alias-cache-ready false)
+              (macro-alias-cache-ensure!)
+              (macro-alias-cache-build-segmented! state))))
+        unit)
+      (macro-import-alias-target-cached-id decls current-module-id qualifier-id))))
+
 (define (macro-resolve-qualified-module-id
+  [ctx : TcContext]
   [decls : ast.AstDeclList]
   [current-module-id : i64]
   [qualifier-id : i64]) : i64
-  (match (macro-import-alias-target-cached-id
+  (match (macro-import-alias-target-cached-id-in-context
+    ctx
     decls
     current-module-id
     qualifier-id)
@@ -88181,6 +89699,7 @@
       (let
         [target-module-id : i64
           (macro-resolve-qualified-module-id
+            ctx
             decls
             (tc-context-module-id ctx)
             qualifier-id)]
@@ -89126,7 +90645,8 @@
             [(TcContext program _ _ current-module current-module-id _ _ _ _)
               (match program
                 [(ast.AstProgram.Program decls-box)
-                  (match (macro-import-alias-target-cached-id
+                  (match (macro-import-alias-target-cached-id-in-context
+                    ctx
                     (box-get decls-box)
                     current-module-id
                     name-id)
@@ -91686,7 +93206,8 @@
             (tc-source-slash-qualified-id? lookup-name source-id)
             (>= (tc-name-first-dot-id source-id) 0))
             fallback
-            (match (macro-import-alias-target-cached-id
+            (match (macro-import-alias-target-cached-id-in-context
+              ctx
               decls
               module-id
               source-id)
@@ -93370,14 +94891,22 @@
               (ast.AstMaybeImportAlias.Some alias)
               _))
           (if (= alias cbi.compiler-builtin-id-fix-empty)
-            (tc-bind-import-alias-module
-              ctx
-              all-decls
-              top-env
-              target-module
-              cbi.compiler-builtin-id-fix-empty
-              module-id
-              true)
+            (if (macro-segmented-program-active? (tc-context-job-state ctx))
+              (macro-segmented-bind-import-alias-module
+                ctx
+                top-env
+                target-module
+                cbi.compiler-builtin-id-fix-empty
+                module-id
+                true)
+              (tc-bind-import-alias-module
+                ctx
+                all-decls
+                top-env
+                target-module
+                cbi.compiler-builtin-id-fix-empty
+                module-id
+                true))
             (begin
               (tc-lazy-import-stub-record-for-job!
                 (tc-context-job-state ctx)
@@ -93718,7 +95247,10 @@
       macro-name
       decl-path
       memoize?
-      (match (macro-find-module-body-decls orig-decls target-module)
+      (match (macro-find-module-body-decls-in-context
+        ctx
+        orig-decls
+        target-module)
         [(MacroMaybeDeclList.Some existing-body)
           (if (macro-decls-contain-generated-key? existing-body identity)
             ;: The module for this identity is already materialized and recorded in
@@ -94307,7 +95839,8 @@
                                               alias
                                               span)]
                                           [expanded : ast.AstDeclList
-                                            (match (macro-find-module-body-decls
+                                            (match (macro-find-module-body-decls-in-context
+                                              ctx
                                               orig-decls
                                               target-module)
                                               [(MacroMaybeDeclList.Some _)
@@ -96458,7 +97991,16 @@
   [env-plan : MacroSpliceEnvPlan]) : ResultMacroSpliceRebuild
   (let
     [pools : ast.AstNodePoolContext (tc-context-pools cur-ctx)]
-    [next-program : ast.AstProgram (macro-splice-view-program next-decls)]
+    [reuse-segmented? : bool
+      (and
+        macro-live-symbols-ready
+        (not macro-live-symbols-fallback)
+        macro-live-registries-ready
+        (not macro-live-registries-fallback))]
+    [next-program : ast.AstProgram
+      (if reuse-segmented?
+        (tc-context-program cur-ctx)
+        (macro-expand-scratch-program next-decls))]
     (begin
       ;; Existing symbol handles and their cached owner names remain stable
       ;; across an append-only splice. The one-entry type lookup also caches a
@@ -96564,8 +98106,7 @@
     ;; rebuilding it from the whole expanded program per import retained tens
     ;; of megabytes of obsolete persistent-env bindings.
     [cur-materialize-seen : sym_i64_env.SymI64Env initial-materialize-seen]
-    [cur-decls : ast.AstDeclList decls]
-    [cur-paths : ast.AstDeclPathList paths]
+    [walk-state : TcJobState (tc-context-job-state ctx)]
     [cur-module : String module]
     [cur-module-id : i64 module-id]
     [cur-orig-decls : ast.AstDeclList orig-decls]
@@ -96579,39 +98120,47 @@
         (box (tc-diag-at-start "macro: internal decl expansion walk")))]
     [done : bool false]
     (begin
+      (macro-segmented-program-begin!
+        walk-state
+        out-rev
+        out-paths-rev
+        decls
+        paths)
       (while (not done)
         (begin
           (cfg compile-profile (compiler-tc-walk-decl-sample-flush!))
-          (match (ast.ast-decl-list-step cur-decls)
+          (match (if (macro-segmented-program-empty? walk-state)
+            (ast.AstDeclListStep.Nil)
+            (ast.AstDeclListStep.Cons
+              (macro-segmented-program-current-decl walk-state)
+              (ast.ast-decl-list-new)))
             [(ast.AstDeclListStep.Nil)
-              (begin
-                (set!
-                  result
-                  (ResultMacroDeclsWithPaths.Ok
-                    (macro-decl-list-reverse out-rev)
-                    (macro-decl-path-list-reverse out-paths-rev)))
-                (set! done true))]
-            [(ast.AstDeclListStep.Cons decl rest)
               (let
-                [rest : ast.AstDeclList rest]
+                [_final-flatten-start : unit
+                  (cfg
+                    compile-profile
+                    (compiler-tc-walk-segment-final-flatten-start!))]
+                [final-decls : ast.AstDeclList
+                  (macro-decl-list-reverse out-rev)]
+                [final-paths : ast.AstDeclPathList
+                  (macro-decl-path-list-reverse out-paths-rev)]
+                [_final-flatten-finish : unit
+                  (cfg
+                    compile-profile
+                    (compiler-tc-walk-segment-final-flatten-finish!))]
+                (begin
+                  (set!
+                    result
+                    (ResultMacroDeclsWithPaths.Ok final-decls final-paths))
+                  (set! done true)))]
+            [(ast.AstDeclListStep.Cons decl _rest)
+              (let
                 [decl-path : String
-                  (match (ast.ast-decl-path-list-step cur-paths)
-                    [(ast.AstDeclPathListStep.Cons path _) path]
-                    [(ast.AstDeclPathListStep.Nil) ""])]
+                  (macro-segmented-program-current-path walk-state)]
                 [decl-owner-id : i64
-                  (ast.ast-decl-path-list-owner-id
-                    (& cur-paths)
-                    0
-                    cbi.compiler-builtin-id-fix-empty)]
+                  (macro-segmented-program-current-owner-id walk-state)]
                 [_set-decl-owner : unit
                   (set! macro-active-decl-owner-id decl-owner-id)]
-                [rest-paths : ast.AstDeclPathList
-                  (match (ast.ast-decl-path-list-step cur-paths)
-                    [(ast.AstDeclPathListStep.Cons _ path-rest)
-                      (let
-                        [path-rest : ast.AstDeclPathList path-rest]
-                        path-rest)]
-                    [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)])]
                 (match decl
                   [(ast.AstDecl.Module next-module)
                     (begin
@@ -96627,8 +98176,11 @@
                           decl-path
                           decl-owner-id
                           out-paths-rev))
-                      (set! cur-decls rest)
-                      (set! cur-paths rest-paths)
+                      (macro-segmented-program-advance! walk-state)
+                      (macro-segmented-program-prefix-set!
+                        walk-state
+                        out-rev
+                        out-paths-rev)
                       (set! cur-module (ci.intern-str next-module))
                       (set! cur-module-id next-module))]
                   [_
@@ -96664,9 +98216,7 @@
                               ;; no new name, so no context rebuild is needed.
                               (match (ast.ast-decl-list-step expanded)
                                 [(ast.AstDeclListStep.Nil)
-                                  (begin
-                                    (set! cur-decls rest)
-                                    (set! cur-paths rest-paths))]
+                                  (macro-segmented-program-advance! walk-state)]
                                 [_
                                   (if (and
                                     (macro-decl-module-import-placeholder? decl)
@@ -96685,59 +98235,43 @@
                                           compile-profile
                                           (compiler-tc-walk-sp-probe-start! 0)
                                           unit)]
-                                      [_splice-view-generation : unit
-                                        (macro-splice-view-arena-begin!)]
-                                      ;; Share one scratch-arena backing array
-                                      ;; across the marker splice's whole-program
-                                      ;; declaration view instead of copying the
-                                      ;; complete program through two appends.
-                                      [marker-decl-view : MacroSpliceDeclView
-                                        (macro-scratch-splice-decl-view-build
-                                          out-rev
+                                      [_segment-splice : unit
+                                        (macro-segmented-program-splice-current!
+                                          walk-state
                                           expanded
-                                          rest)]
-                                      [next-decls : ast.AstDeclList
-                                        (struct-get marker-decl-view view)]
-                                      ;; Marker-only splices do not walk the
-                                      ;; generated marker again, but the walk
-                                      ;; tail still has to move into this view
-                                      ;; generation. Otherwise a later splice
-                                      ;; could reclaim the older backing array
-                                      ;; that `rest` still references.
-                                      [marker-rest : ast.AstDeclList
-                                        (ast.AstDeclList
-                                          (struct-get next-decls slots)
-                                          (+
-                                            (struct-get next-decls offset)
-                                            (+
-                                              (ast.ast-decl-list-len
-                                                (& out-rev))
-                                              (ast.ast-decl-list-len
-                                                (& expanded))))
-                                          (ast.ast-decl-list-len (& rest))
-                                          false)]
-                                      [marker-rest-paths : ast.AstDeclPathList
-                                        (macro-scratch-splice-path-tail-copy
-                                          rest-paths)]
-                                      [next-decls-for-ctx : ast.AstDeclList
-                                        (ast.AstDeclList
-                                          (struct-get next-decls slots)
-                                          (struct-get next-decls offset)
-                                          (struct-get next-decls len)
-                                          false)]
-                                      [next-ctx : TcContext
-                                        (tc-context-with-program
-                                          cur-ctx
-                                          (macro-splice-view-program
-                                            next-decls-for-ctx))]
+                                          expanded-paths)]
+                                      [_commit-marker-prefix : unit
+                                        (let
+                                          [remaining : i64
+                                            (ast.ast-decl-list-len (& expanded))]
+                                          (begin
+                                            (set!
+                                              out-rev
+                                              (macro-decl-list-reverse-into
+                                                expanded
+                                                out-rev))
+                                            (set!
+                                              out-paths-rev
+                                              (macro-decl-path-list-reverse-into
+                                                expanded-paths
+                                                out-paths-rev))
+                                            (while (> remaining 0)
+                                              (begin
+                                                (macro-segmented-program-advance!
+                                                  walk-state)
+                                                (set! remaining (- remaining 1))))
+                                            (macro-segmented-program-prefix-set!
+                                              walk-state
+                                              out-rev
+                                              out-paths-rev)))]
                                       ;; Consecutive markers can share one raw
                                       ;; delta prefix. Lookups still see every
                                       ;; imported binding, but the explicit cache
                                       ;; and unresolved-signature pass are paid
                                       ;; once when the marker batch ends.
                                       [defer-cache? : bool
-                                        (macro-decls-start-with-module-import-placeholder?
-                                          rest)]
+                                        (macro-segmented-program-current-starts-module-import-placeholder?
+                                          walk-state)]
                                       [_sp-probe-copy-finish : unit
                                         (cfg
                                           compile-profile
@@ -96752,7 +98286,7 @@
                                             (macro-extend-top-env-with-module-marker
                                               cur-ctx
                                               cur-top-env
-                                              next-decls
+                                              cur-orig-decls
                                               expanded
                                               cur-module
                                               cur-module-id)]
@@ -96787,7 +98321,7 @@
                                                     (compiler-tc-walk-sp-probe-start!
                                                       4))
                                                   (tc-top-env-reresolve-caches!
-                                                    next-ctx
+                                                    cur-ctx
                                                     next-top-env)
                                                   (cfg
                                                     compile-profile
@@ -96805,20 +98339,7 @@
                                                     compile-profile
                                                     (compiler-tc-walk-sp-probe-finish!
                                                       2))))
-                                              (set! cur-orig-decls next-decls)
-                                              (set! cur-ctx next-ctx)
-                                              (set!
-                                                out-rev
-                                                (macro-decl-list-reverse-into
-                                                  expanded
-                                                  out-rev))
-                                              (set!
-                                                out-paths-rev
-                                                (macro-decl-path-list-reverse-into
-                                                  expanded-paths
-                                                  out-paths-rev))
-                                              (set! cur-decls marker-rest)
-                                              (set! cur-paths marker-rest-paths))]
+                                              unit)]
                                           [(ResultTcEnv.Err message)
                                             (begin
                                               (set!
@@ -96843,52 +98364,58 @@
                                             (& expanded-paths)
                                             cur-materialize-seen
                                             cur-module-id))]
-                                      ;; Build the whole-program view and the walk
-                                      ;; tail in one shared backing array per list
-                                      ;; instead of append + reverse + append
-                                      ;; copies (~5MB of scratch per splice on a
-                                      ;; self-compile).
-                                      [_splice-view-generation : unit
-                                        (macro-splice-view-arena-begin!)]
-                                      [splice-decl-view : MacroSpliceDeclView
-                                        (macro-scratch-splice-decl-view-build
-                                          out-rev
+                                      [_segment-splice : unit
+                                        (macro-segmented-program-splice-current!
+                                          walk-state
                                           expanded
-                                          rest)]
-                                      [splice-path-view : MacroSplicePathView
-                                        (macro-scratch-splice-path-view-build
-                                          out-paths-rev
-                                          expanded-paths
-                                          rest-paths)]
-                                      [spliced-tail : ast.AstDeclList
-                                        (struct-get splice-decl-view tail)]
-                                      [spliced-path-tail : ast.AstDeclPathList
-                                        (struct-get splice-path-view tail)]
-                                      [next-decls : ast.AstDeclList
-                                        (struct-get splice-decl-view view)]
-                                      [next-paths : ast.AstDeclPathList
-                                        (struct-get splice-path-view view)]
-                                      [splice-index : i64
-                                        (csym.compiler-decl-list-index-count
-                                          out-rev)]
+                                          expanded-paths)]
                                       [generated-ext : MacroMaybeGeneratedModuleExtension
                                         (macro-generated-module-extension
                                           expanded
                                           cur-module-id)]
                                       [symbols-inserted : bool
-                                        (match generated-ext
-                                          [(MacroMaybeGeneratedModuleExtension.Some
-                                              _
-                                              _)
-                                            (and
-                                              (csym.compiler-symbols-insert-aliases-self-contained?
-                                                expanded
-                                                expanded)
-                                              (macro-live-symbols-insert-decls!
-                                                expanded
-                                                cur-module-id))]
-                                          [(MacroMaybeGeneratedModuleExtension.No)
-                                            false])]
+                                        (and
+                                          (csym.compiler-symbols-insert-aliases-self-contained?
+                                            expanded
+                                            expanded)
+                                          (macro-live-symbols-insert-decls!
+                                            expanded
+                                            cur-module-id))]
+                                      [registries-inserted : bool
+                                        (and
+                                          symbols-inserted
+                                          (macro-live-registries-append-decls!
+                                            expanded
+                                            expanded-paths
+                                            cur-module-id))]
+                                      [incremental? : bool
+                                        (and
+                                          symbols-inserted
+                                          registries-inserted)]
+                                      [_invalidate-fallback : unit
+                                        (if incremental?
+                                          unit
+                                          (begin
+                                            (macro-live-symbols-invalidate!)
+                                            (macro-live-registries-invalidate!)))]
+                                      [flat-view : MacroSegmentedProgramFlatView
+                                        (if incremental?
+                                          (MacroSegmentedProgramFlatView
+                                            expanded
+                                            expanded-paths)
+                                          (macro-segmented-program-flatten-fallback
+                                            walk-state
+                                            1))]
+                                      [next-decls : ast.AstDeclList
+                                        (struct-get flat-view decls)]
+                                      [next-paths : ast.AstDeclPathList
+                                        (struct-get flat-view paths)]
+                                      [_prescan-delta : unit
+                                        (if incremental?
+                                          (macro-live-prescan-append-decls!
+                                            expanded
+                                            cur-module-id)
+                                          unit)]
                                       ;; Any reflection-relevant delta gets the
                                       ;; append-safety classification after the
                                       ;; post-splice registries exist. Fresh
@@ -96903,55 +98430,13 @@
                                         (cfg
                                           compile-profile
                                           (compiler-tc-walk-decl-sample-note! 6))
-                                        (if symbols-inserted
-                                          (if (macro-live-registries-append-decls!
-                                            expanded
-                                            expanded-paths
-                                            cur-module-id)
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-walk-splice-flag-note!
-                                                1)
-                                              unit)
-                                            (begin
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-walk-splice-flag-note!
-                                                  2))
-                                              (macro-live-symbols-invalidate!)
-                                              (macro-live-registries-invalidate!)))
-                                          (if (and
-                                            (macro-decls-registry-incremental-safe?
-                                              expanded)
-                                            (not
-                                              (macro-decls-have-unqualified-import-of-module?
-                                                next-decls
-                                                cur-module-id)))
-                                            (if (macro-live-registries-insert-decls!
-                                              expanded
-                                              expanded-paths
-                                              splice-index
-                                              cur-module-id)
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-walk-splice-flag-note!
-                                                  1)
-                                                unit)
-                                              (begin
-                                                (cfg
-                                                  compile-profile
-                                                  (compiler-tc-walk-splice-flag-note!
-                                                    2))
-                                                (macro-live-registries-invalidate!)))
-                                            (begin
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-walk-splice-flag-note!
-                                                  2))
-                                              (macro-live-registries-invalidate!))))
-                                        (if symbols-inserted
-                                          unit
-                                          (macro-live-symbols-invalidate!))
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-splice-flag-note!
+                                            (if incremental?
+                                              1
+                                              2))
+                                          unit)
                                         (cfg
                                           compile-profile
                                           (if extend-ctfe-metadata?
@@ -96977,11 +98462,14 @@
                                               compile-profile
                                               (compiler-tc-walk-splice-flag-note!
                                                 5))
-                                            (macro-live-prescan-reset!)
-                                            (macro-live-prescan-ensure!
-                                              next-decls)
-                                            (macro-expand-set-expr-type-macro-names!
-                                              macro-live-prescan-expr-type-names)
+                                            (if incremental?
+                                              unit
+                                              (begin
+                                                (macro-live-prescan-reset!)
+                                                (macro-live-prescan-ensure!
+                                                  next-decls)
+                                                (macro-expand-set-expr-type-macro-names!
+                                                  macro-live-prescan-expr-type-names)))
                                             (set!
                                               ctfe-needs-metadata
                                               (or
@@ -97048,10 +98536,11 @@
                                                   [_ unit])
                                                 unit)
                                               (set! cur-ctx next-ctx)
-                                              (set! cur-orig-decls next-decls)
+                                              (if incremental?
+                                                unit
+                                                (set! cur-orig-decls next-decls))
                                               (set! cur-top-env next-top-env)
-                                              (set! cur-decls spliced-tail)
-                                              (set! cur-paths spliced-path-tail))]
+                                              unit)]
                                           [(ResultMacroSpliceRebuild.Err diag)
                                             (begin
                                               (set!
@@ -97113,24 +98602,23 @@
                                 (let
                                   [_install-after-load : unit
                                     (tc-context-install-pools! cur-ctx)]
-                                  [_splice-view-generation : unit
-                                    (macro-splice-view-arena-begin!)]
-                                  [splice-decl-view : MacroSpliceDeclView
-                                    (macro-scratch-splice-decl-view-build
-                                      out-rev
+                                  [_segment-splice : unit
+                                    (macro-segmented-program-splice-current!
+                                      walk-state
                                       materialized-decls
-                                      rest)]
-                                  [splice-path-view : MacroSplicePathView
-                                    (macro-scratch-splice-path-view-build
-                                      out-paths-rev
-                                      materialized-paths
-                                      rest-paths)]
-                                  [materialized-tail : ast.AstDeclList
-                                    (struct-get splice-decl-view tail)]
+                                      materialized-paths)]
+                                  ;; Source-file materialization is the explicit
+                                  ;; conservative fallback: arbitrary aliases and
+                                  ;; index-bearing declarations require fresh
+                                  ;; whole-program symbols and registries.
+                                  [flat-view : MacroSegmentedProgramFlatView
+                                    (macro-segmented-program-flatten-fallback
+                                      walk-state
+                                      2)]
                                   [next-decls : ast.AstDeclList
-                                    (struct-get splice-decl-view view)]
+                                    (struct-get flat-view decls)]
                                   [next-paths : ast.AstDeclPathList
-                                    (struct-get splice-path-view view)]
+                                    (struct-get flat-view paths)]
                                   [extend-ctfe-metadata? : bool
                                     (macro-decls-reflection-relevant?
                                       materialized-decls)]
@@ -97196,10 +98684,7 @@
                                           (set! cur-ctx next-ctx)
                                           (set! cur-orig-decls next-decls)
                                           (set! cur-top-env next-top-env)
-                                          (set! cur-decls materialized-tail)
-                                          (set!
-                                            cur-paths
-                                            (struct-get splice-path-view tail)))]
+                                          unit)]
                                       [(ResultMacroSpliceRebuild.Err diag)
                                         (begin
                                           (set!
@@ -97241,8 +98726,11 @@
                               decl-path
                               decl-owner-id
                               out-paths-rev))
-                          (set! cur-decls rest)
-                          (set! cur-paths rest-paths))]
+                          (macro-segmented-program-advance! walk-state)
+                          (macro-segmented-program-prefix-set!
+                            walk-state
+                            out-rev
+                            out-paths-rev))]
                       [else
                         (begin
                           (cfg
@@ -97295,14 +98783,18 @@
                                 (set!
                                   cur-module
                                   (macro-decl-module-display cur-module-id))
-                                (set! cur-decls rest)
-                                (set! cur-paths rest-paths))]
+                                (macro-segmented-program-advance! walk-state)
+                                (macro-segmented-program-prefix-set!
+                                  walk-state
+                                  out-rev
+                                  out-paths-rev))]
                             [(ResultMacroDeclExpansion.Err diag)
                               (begin
                                 (set!
                                   result
                                   (ResultMacroDeclsWithPaths.Err diag))
                                 (set! done true))]))])]))])))
+      (macro-segmented-program-end! walk-state)
       result)))
 
 (define (macro-expr-needs-compat-expansion?
@@ -98416,7 +99908,8 @@
   [cleanup-name : i64]) : i64
   (match (tc-context-program ctx)
     [(ast.AstProgram.Program decls-box)
-      (match (macro-import-alias-target-cached-id
+      (match (macro-import-alias-target-cached-id-in-context
+        ctx
         (box-get decls-box)
         (tc-context-module-id ctx)
         (ci.intern-qualified-module-id cleanup-name))

@@ -4597,39 +4597,29 @@
           (OptAggregateSroaResult.Result (OptAggregateFieldFacts.Nil) instr)
           (OptAggregateSroaResult.Result def-facts instr)))]))
 
-(define (opt-aggregate-sroa-instr-seq-from
-  [type-segment-bases : i64]
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [facts : OptAggregateFieldFacts]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    ir.CompilerIrInstrList.Nil
-    (match (opt-aggregate-sroa-instr
-      type-segment-bases
-      candidates
-      facts
-      (ir.compiler-ir-instr-seq-ref instrs index))
-      [(OptAggregateSroaResult.Result next-facts next-instr)
-        (ir.compiler-ir-instr-cons
-          next-instr
-          (opt-aggregate-sroa-instr-seq-from
-            type-segment-bases
-            candidates
-            next-facts
-            instrs
-            (+ index 1)))])))
-
 (define (opt-aggregate-sroa-instr-seq
   [type-segment-bases : i64]
   [candidates : opt_aggregate_candidate_vec.Vec]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
-  (opt-aggregate-sroa-instr-seq-from
-    type-segment-bases
-    candidates
-    (OptAggregateFieldFacts.Nil)
-    instrs
-    0))
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    [facts : OptAggregateFieldFacts (OptAggregateFieldFacts.Nil)]
+    (begin
+      (while (< index count)
+        (match (opt-aggregate-sroa-instr
+          type-segment-bases
+          candidates
+          facts
+          (ir.compiler-ir-instr-seq-ref instrs index))
+          [(OptAggregateSroaResult.Result next-facts next-instr)
+            (begin
+              (array-set! slots index next-instr)
+              (set! facts next-facts)
+              (set! index (+ index 1)))]))
+      (ir.CompilerIrInstrSeq slots count))))
 
 (define (opt-aggregate-sroa-block
   [type-segment-bases : i64]
@@ -4637,7 +4627,7 @@
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         label
         (opt-aggregate-sroa-instr-seq type-segment-bases candidates instrs))]))
 
@@ -16195,23 +16185,27 @@
         ty)]
     [_ instr]))
 
-(define (opt-loop-preheaders-rewrite-header-instrs-from
+(define (opt-loop-preheaders-rewrite-header-instrs
   [outside : OptLabelSet]
   [preheader : i64]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (ir.CompilerIrInstrList.Nil)
-    (ir.compiler-ir-instr-cons
-      (opt-loop-preheaders-rewrite-header-instr
-        outside
-        preheader
-        (ir.compiler-ir-instr-seq-ref instrs index))
-      (opt-loop-preheaders-rewrite-header-instrs-from
-        outside
-        preheader
-        instrs
-        (+ index 1)))))
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (opt-loop-preheaders-rewrite-header-instr
+              outside
+              preheader
+              (ir.compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
 
 (define (opt-loop-preheaders-retarget-label
   [label : i64]
@@ -16298,32 +16292,43 @@
         trap-label)]
     [_ instr]))
 
-(define (opt-loop-preheaders-retarget-instrs-from
+(define (opt-loop-preheaders-retarget-instrs
   [instrs : ir.CompilerIrInstrSeq]
   [header : i64]
-  [preheader : i64]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (ir.CompilerIrInstrList.Nil)
-    (ir.compiler-ir-instr-cons
-      (opt-loop-preheaders-retarget-instr
-        (ir.compiler-ir-instr-seq-ref instrs index)
-        header
-        preheader)
-      (opt-loop-preheaders-retarget-instrs-from
-        instrs
-        header
-        preheader
-        (+ index 1)))))
+  [preheader : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (opt-loop-preheaders-retarget-instr
+              (ir.compiler-ir-instr-seq-ref instrs index)
+              header
+              preheader))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
 
 (define (opt-loop-preheaders-append-jump
-  [instrs : ir.CompilerIrInstrList]
-  [target : i64]) : ir.CompilerIrInstrList
-  (opt-aggregate-instr-list-append
-    instrs
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Jump target)
-      (ir.CompilerIrInstrList.Nil))))
+  [instrs : ir.CompilerIrInstrSeq]
+  [target : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr (+ count 1))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! slots index (ir.compiler-ir-instr-seq-ref instrs index))
+          (set! index (+ index 1))))
+      (array-set! slots count (ir.CompilerIrInstr.Jump target))
+      (ir.CompilerIrInstrSeq slots (+ count 1)))))
 
 (define (opt-loop-preheaders-rewrite-block
   [block : ir.CompilerIrBlock]
@@ -16334,22 +16339,14 @@
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (if (= label header)
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           label
-          (opt-loop-preheaders-rewrite-header-instrs-from
-            outside
-            preheader
-            instrs
-            0))
+          (opt-loop-preheaders-rewrite-header-instrs outside preheader instrs))
         (if (opt-label-contains outside label)
           (let
-            [retargeted : ir.CompilerIrInstrList
-              (opt-loop-preheaders-retarget-instrs-from
-                instrs
-                header
-                preheader
-                0)]
-            (ir.compiler-ir-block
+            [retargeted : ir.CompilerIrInstrSeq
+              (opt-loop-preheaders-retarget-instrs instrs header preheader)]
+            (ir.CompilerIrBlock.Block
               label
               (if (and
                 (= next-label header)
@@ -16386,11 +16383,9 @@
         preheader)]))
 
 (define (opt-loop-preheaders-new-block [preheader : i64] [header : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     preheader
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Jump header)
-      (ir.CompilerIrInstrList.Nil))))
+    (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump header))))
 
 (define (opt-loop-preheaders-insert-before-header
   [blocks : ir.CompilerIrBlockList]
@@ -16583,7 +16578,7 @@
 ;; verifier gate.
 (defenum OptLoopRotationHeader
   (No)
-  (Header ir.CompilerIrInstrList))
+  (Header ir.CompilerIrInstrSeq))
 
 (define (opt-loop-rotation-header-count
   [loops : OptNaturalLoopList]
@@ -16616,15 +16611,6 @@
       (opt-loop-rotation-guard-instr?
         (ir.compiler-ir-instr-seq-ref instrs index))
       (opt-loop-rotation-header-prefix-ok? instrs (+ index 1) last))))
-
-(define (opt-loop-rotation-header-list-from
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (ir.CompilerIrInstrList.Nil)
-    (ir.compiler-ir-instr-cons
-      (ir.compiler-ir-instr-seq-ref instrs index)
-      (opt-loop-rotation-header-list-from instrs (+ index 1)))))
 
 (define (opt-loop-rotation-body-target?
   [body : OptLabelSet]
@@ -16667,8 +16653,7 @@
                             header
                             false-label)
                           (opt-loop-rotation-exit-target? body true-label))))
-                      (OptLoopRotationHeader.Header
-                        (opt-loop-rotation-header-list-from instrs 0))
+                      (OptLoopRotationHeader.Header instrs)
                       (OptLoopRotationHeader.No))]
                   [_ (OptLoopRotationHeader.No)]))))])]))
 
@@ -16694,37 +16679,44 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (opt-loop-rotation-final-jump-to? instrs target)])]))
 
-(define (opt-loop-rotation-prefix-before-final-from
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [last : i64]) : ir.CompilerIrInstrList
-  (if (>= index last)
-    (ir.CompilerIrInstrList.Nil)
-    (ir.compiler-ir-instr-cons
-      (ir.compiler-ir-instr-seq-ref instrs index)
-      (opt-loop-rotation-prefix-before-final-from instrs (+ index 1) last))))
-
 (define (opt-loop-rotation-replace-final-jump
   [pools : ast.AstNodePoolContext]
   [instrs : ir.CompilerIrInstrSeq]
-  [guard : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (opt-aggregate-instr-list-append
-    (opt-loop-rotation-prefix-before-final-from
-      instrs
-      0
-      (- (ir.compiler-ir-instr-seq-count instrs) 1))
-    (ir.compiler-ir-clone-instr-list pools guard)))
+  [guard : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [instr-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [prefix-count : i64 (- instr-count 1)]
+    [guard-count : i64 (ir.compiler-ir-instr-seq-count guard)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr (+ prefix-count guard-count))]
+    [index : i64 0]
+    (begin
+      (while (< index prefix-count)
+        (begin
+          (array-set! slots index (ir.compiler-ir-instr-seq-ref instrs index))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index guard-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count index)
+            (ir.compiler-ir-clone-instr
+              pools
+              (ir.compiler-ir-instr-seq-ref guard index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots (+ prefix-count guard-count)))))
 
 (define (opt-loop-rotation-rewrite-block
   [pools : ast.AstNodePoolContext]
   [block : ir.CompilerIrBlock]
   [preheader : i64]
   [latch : i64]
-  [guard : ir.CompilerIrInstrList]) : ir.CompilerIrBlock
+  [guard : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (if (or (= label preheader) (= label latch))
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           label
           (opt-loop-rotation-replace-final-jump pools instrs guard))
         block)]))
@@ -16735,7 +16727,7 @@
   [header : i64]
   [preheader : i64]
   [latch : i64]
-  [guard : ir.CompilerIrInstrList]) : ir.CompilerIrBlockList
+  [guard : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -16778,7 +16770,7 @@
   [header : i64]
   [preheader : i64]
   [latch : i64]
-  [guard : ir.CompilerIrInstrList]) : OptBlockListPassResult
+  [guard : ir.CompilerIrInstrSeq]) : OptBlockListPassResult
   (let
     [next : ir.CompilerIrBlockList
       (opt-loop-rotation-rewrite-blocks
@@ -16958,9 +16950,9 @@
   (Some OptRotateSsaPhiRecs))
 
 (defstruct OptRotateSsaShape
-  (phis ir.CompilerIrInstrList)
+  (phis ir.CompilerIrInstrSeq)
   (recs OptRotateSsaPhiRecs)
-  (guard ir.CompilerIrInstrList)
+  (guard ir.CompilerIrInstrSeq)
   (cond-value ir.CompilerIrValue)
   (true-label i64)
   (false-label i64)
@@ -16972,10 +16964,10 @@
   (Some OptRotateSsaShape))
 
 (defenum OptRotateSsaClone
-  (Clone ir.CompilerIrInstrList i64))
+  (Clone ir.CompilerIrInstrSeq i64))
 
 (defenum OptRotateSsaExitPhis
-  (Result ir.CompilerIrInstrList OptCopyEnv i64))
+  (Result ir.CompilerIrInstrSeq OptCopyEnv i64))
 
 (defenum OptRotateSsaRewrite
   (No)
@@ -16989,10 +16981,10 @@
   (body-label i64)
   (exit-label i64)
   (body OptLabelSet)
-  (phis ir.CompilerIrInstrList)
-  (preheader-guard ir.CompilerIrInstrList)
-  (latch-guard ir.CompilerIrInstrList)
-  (exit-phis ir.CompilerIrInstrList)
+  (phis ir.CompilerIrInstrSeq)
+  (preheader-guard ir.CompilerIrInstrSeq)
+  (latch-guard ir.CompilerIrInstrSeq)
+  (exit-phis ir.CompilerIrInstrSeq)
   (exit-env OptCopyEnv))
 
 (define (opt-rotate-ssa-land-label [header : i64]) : i64
@@ -17014,54 +17006,78 @@
 
 ;; Each header phi must carry exactly the two loop-edge inputs {preheader,
 ;; latch}; the record keeps (dst, preheader input, latch input, type).
+(define (opt-rotate-ssa-phi-recs-from
+  [phis : ir.CompilerIrInstrSeq]
+  [preheader : i64]
+  [latch : i64]
+  [index : i64]) : OptRotateSsaMaybePhiRecs
+  (if (>= index (ir.compiler-ir-instr-seq-count phis))
+    (OptRotateSsaMaybePhiRecs.Some (OptRotateSsaPhiRecs.Nil))
+    (match (opt-rotate-ssa-phi-recs-from phis preheader latch (+ index 1))
+      [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybePhiRecs.No)]
+      [(OptRotateSsaMaybePhiRecs.Some recs)
+        (match (ir.compiler-ir-instr-seq-ref phis index)
+          [(ir.CompilerIrInstr.Phi dst inputs ty)
+            (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+              [(ir.CompilerIrPhiInputList.Cons first-value first-label rest1)
+                (match (box-get rest1)
+                  [(ir.CompilerIrPhiInputList.Cons
+                      second-value
+                      second-label
+                      rest2)
+                    (match (box-get rest2)
+                      [(ir.CompilerIrPhiInputList.Nil)
+                        (cond
+                          [(and
+                              (= first-label preheader)
+                              (= second-label latch))
+                            (OptRotateSsaMaybePhiRecs.Some
+                              (OptRotateSsaPhiRecs.Cons
+                                dst
+                                first-value
+                                second-value
+                                ty
+                                (box recs)))]
+                          [(and
+                              (= first-label latch)
+                              (= second-label preheader))
+                            (OptRotateSsaMaybePhiRecs.Some
+                              (OptRotateSsaPhiRecs.Cons
+                                dst
+                                second-value
+                                first-value
+                                ty
+                                (box recs)))]
+                          [else (OptRotateSsaMaybePhiRecs.No)])]
+                      [_ (OptRotateSsaMaybePhiRecs.No)])]
+                  [_ (OptRotateSsaMaybePhiRecs.No)])]
+              [_ (OptRotateSsaMaybePhiRecs.No)])]
+          [_ (OptRotateSsaMaybePhiRecs.No)])])))
+
 (define (opt-rotate-ssa-phi-recs
-  [phis : ir.CompilerIrInstrList]
+  [phis : ir.CompilerIrInstrSeq]
   [preheader : i64]
   [latch : i64]) : OptRotateSsaMaybePhiRecs
-  (match phis
-    [(ir.CompilerIrInstrList.Nil)
-      (OptRotateSsaMaybePhiRecs.Some (OptRotateSsaPhiRecs.Nil))]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (opt-rotate-ssa-phi-recs (box-get rest) preheader latch)
-        [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybePhiRecs.No)]
-        [(OptRotateSsaMaybePhiRecs.Some recs)
-          (match instr
-            [(ir.CompilerIrInstr.Phi dst inputs ty)
-              (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-                [(ir.CompilerIrPhiInputList.Cons first-value first-label rest1)
-                  (match (box-get rest1)
-                    [(ir.CompilerIrPhiInputList.Cons
-                        second-value
-                        second-label
-                        rest2)
-                      (match (box-get rest2)
-                        [(ir.CompilerIrPhiInputList.Nil)
-                          (cond
-                            [(and
-                                (= first-label preheader)
-                                (= second-label latch))
-                              (OptRotateSsaMaybePhiRecs.Some
-                                (OptRotateSsaPhiRecs.Cons
-                                  dst
-                                  first-value
-                                  second-value
-                                  ty
-                                  (box recs)))]
-                            [(and
-                                (= first-label latch)
-                                (= second-label preheader))
-                              (OptRotateSsaMaybePhiRecs.Some
-                                (OptRotateSsaPhiRecs.Cons
-                                  dst
-                                  second-value
-                                  first-value
-                                  ty
-                                  (box recs)))]
-                            [else (OptRotateSsaMaybePhiRecs.No)])]
-                        [_ (OptRotateSsaMaybePhiRecs.No)])]
-                    [_ (OptRotateSsaMaybePhiRecs.No)])]
-                [_ (OptRotateSsaMaybePhiRecs.No)])]
-            [_ (OptRotateSsaMaybePhiRecs.No)])])]))
+  (opt-rotate-ssa-phi-recs-from phis preheader latch 0))
+
+(define (opt-rotate-ssa-instr-seq-range
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [last : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (- last first)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (ir.compiler-ir-instr-seq-ref instrs (+ first index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
 
 (define (opt-rotate-ssa-shape-from-branch
   [instrs : ir.CompilerIrInstrSeq]
@@ -17084,26 +17100,26 @@
         (opt-loop-rotation-body-target? body header false-label)
         (opt-loop-rotation-exit-target? body true-label))]
     (if (or true-is-body false-is-body)
-      (match (opt-rotate-ssa-phi-recs
-        (opt-loop-rotation-prefix-before-final-from instrs 0 phi-end)
-        preheader
-        latch)
-        [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybeShape.No)]
-        [(OptRotateSsaMaybePhiRecs.Some recs)
-          (OptRotateSsaMaybeShape.Some
-            (OptRotateSsaShape
-              (opt-loop-rotation-prefix-before-final-from instrs 0 phi-end)
-              recs
-              (opt-loop-rotation-prefix-before-final-from instrs phi-end last)
-              cond-value
-              true-label
-              false-label
-              (if true-is-body
+      (let
+        [phis : ir.CompilerIrInstrSeq
+          (opt-rotate-ssa-instr-seq-range instrs 0 phi-end)]
+        (match (opt-rotate-ssa-phi-recs phis preheader latch)
+          [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybeShape.No)]
+          [(OptRotateSsaMaybePhiRecs.Some recs)
+            (OptRotateSsaMaybeShape.Some
+              (OptRotateSsaShape
+                phis
+                recs
+                (opt-rotate-ssa-instr-seq-range instrs phi-end last)
+                cond-value
                 true-label
-                false-label)
-              (if true-is-body
                 false-label
-                true-label)))])
+                (if true-is-body
+                  true-label
+                  false-label)
+                (if true-is-body
+                  false-label
+                  true-label)))]))
       (OptRotateSsaMaybeShape.No))))
 
 ;; Header shape: leading phis (zero or more), then a whitelisted pure guard
@@ -17252,17 +17268,22 @@
 ;; inside the header by the guard/branch itself; `uses` covers all other
 ;; blocks plus the header's own phi inputs.
 (define (opt-rotate-ssa-guard-dsts-local?
-  [guard : ir.CompilerIrInstrList]
+  [guard : ir.CompilerIrInstrSeq]
   [uses : opt_i64_i64_map.Map]) : bool
-  (match guard
-    [(ir.CompilerIrInstrList.Nil) true]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (let
-        [dst : i64 (opt-rotate-ssa-instr-dst instr)]
-        (and
-          (>= dst 0)
-          (not (opt-used-contains uses dst))
-          (opt-rotate-ssa-guard-dsts-local? (box-get rest) uses)))]))
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count guard)]
+    [index : i64 0]
+    [local? : bool true]
+    (begin
+      (while (and local? (< index count))
+        (let
+          [dst : i64
+            (opt-rotate-ssa-instr-dst
+              (ir.compiler-ir-instr-seq-ref guard index))]
+          (begin
+            (set! local? (and (>= dst 0) (not (opt-used-contains uses dst))))
+            (set! index (+ index 1)))))
+      local?)))
 
 ;; Map each header-phi destination to the input value carried by one loop
 ;; edge: the preheader input for the preheader clone, the latch input for the
@@ -17308,110 +17329,170 @@
 ;; orientation) on the remapped condition.
 (define (opt-rotate-ssa-clone-guard
   [env : OptCopyEnv]
-  [guard : ir.CompilerIrInstrList]
+  [guard : ir.CompilerIrInstrSeq]
   [cond-value : ir.CompilerIrValue]
   [true-label : i64]
   [false-label : i64]
   [next-var : i64]) : OptRotateSsaClone
-  (match guard
-    [(ir.CompilerIrInstrList.Nil)
-      (OptRotateSsaClone.Clone
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Branch
-            (opt-copy-resolve env cond-value)
-            true-label
-            false-label)
-          (ir.CompilerIrInstrList.Nil))
-        next-var)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (let
-        [cloned : ir.CompilerIrInstr
-          (opt-rotate-ssa-clone-guard-instr env next-var instr)]
-        [next-env : OptCopyEnv
-          (OptCopyEnv.Cons
-            (opt-rotate-ssa-instr-dst instr)
-            (ir.CompilerIrValue.Var next-var)
-            (box env))]
-        (match (opt-rotate-ssa-clone-guard
-          next-env
-          (box-get rest)
-          cond-value
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count guard)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr (+ count 1))]
+    [index : i64 0]
+    [out-env : OptCopyEnv env]
+    [out-var : i64 next-var]
+    (begin
+      (while (< index count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref guard index)]
+          (begin
+            (array-set!
+              slots
+              index
+              (opt-rotate-ssa-clone-guard-instr out-env out-var instr))
+            (set!
+              out-env
+              (OptCopyEnv.Cons
+                (opt-rotate-ssa-instr-dst instr)
+                (ir.CompilerIrValue.Var out-var)
+                (box out-env)))
+            (set! out-var (+ out-var 1))
+            (set! index (+ index 1)))))
+      (array-set!
+        slots
+        count
+        (ir.CompilerIrInstr.Branch
+          (opt-copy-resolve out-env cond-value)
           true-label
-          false-label
-          (+ next-var 1))
-          [(OptRotateSsaClone.Clone cloned-rest out-var)
-            (OptRotateSsaClone.Clone
-              (ir.compiler-ir-instr-cons cloned cloned-rest)
-              out-var)]))]))
+          false-label))
+      (OptRotateSsaClone.Clone
+        (ir.CompilerIrInstrSeq slots (+ count 1))
+        out-var))))
 
 ;; Rebuild the header phis for the top of the loop-body block: same
 ;; destinations, initial input relabeled to the landing block (the body's new
 ;; preheader-side predecessor), latch input unchanged.
+(define (opt-rotate-ssa-phi-rec-count [recs : OptRotateSsaPhiRecs]) : i64
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) 0]
+    [(OptRotateSsaPhiRecs.Cons _ _ _ _ rest)
+      (+ 1 (opt-rotate-ssa-phi-rec-count (box-get rest)))]))
+
+(define (opt-rotate-ssa-moved-phis-fill!
+  [recs : OptRotateSsaPhiRecs]
+  [land-label : i64]
+  [latch : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]) : unit
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) unit]
+    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
+      (begin
+        (array-set!
+          slots
+          index
+          (ir.CompilerIrInstr.Phi
+            dst
+            (ir.compiler-ir-phi-input-cons
+              init
+              land-label
+              (ir.compiler-ir-phi-input-cons
+                back
+                latch
+                (ir.CompilerIrPhiInputList.Nil)))
+            ty))
+        (opt-rotate-ssa-moved-phis-fill!
+          (box-get rest)
+          land-label
+          latch
+          slots
+          (+ index 1)))]))
+
 (define (opt-rotate-ssa-moved-phis
   [recs : OptRotateSsaPhiRecs]
   [land-label : i64]
-  [latch : i64]) : ir.CompilerIrInstrList
-  (match recs
-    [(OptRotateSsaPhiRecs.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Phi
-          dst
-          (ir.compiler-ir-phi-input-cons
-            init
-            land-label
-            (ir.compiler-ir-phi-input-cons
-              back
-              latch
-              (ir.CompilerIrPhiInputList.Nil)))
-          ty)
-        (opt-rotate-ssa-moved-phis (box-get rest) land-label latch))]))
+  [latch : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (opt-rotate-ssa-phi-rec-count recs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    (begin
+      (opt-rotate-ssa-moved-phis-fill! recs land-label latch slots 0)
+      (ir.CompilerIrInstrSeq slots count))))
 
 ;; For each header phi whose destination is used outside the loop body, mint a
 ;; fresh exit phi merging the same edge inputs at the exit block, and record
 ;; the destination remap for the outside-use rewrite.
+(define (opt-rotate-ssa-exit-phis-from
+  [recs : OptRotateSsaPhiRecs]
+  [outside-uses : opt_i64_i64_map.Map]
+  [preheader : i64]
+  [latch : i64]
+  [next-var : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [write : i64]) : OptRotateSsaExitPhis
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil)
+      (OptRotateSsaExitPhis.Result
+        (ir.CompilerIrInstrSeq slots write)
+        (OptCopyEnv.Nil)
+        next-var)]
+    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
+      (if (opt-used-contains outside-uses dst)
+        (begin
+          (array-set!
+            slots
+            write
+            (ir.CompilerIrInstr.Phi
+              next-var
+              (ir.compiler-ir-phi-input-cons
+                init
+                preheader
+                (ir.compiler-ir-phi-input-cons
+                  back
+                  latch
+                  (ir.CompilerIrPhiInputList.Nil)))
+              ty))
+          (match (opt-rotate-ssa-exit-phis-from
+            (box-get rest)
+            outside-uses
+            preheader
+            latch
+            (+ next-var 1)
+            slots
+            (+ write 1))
+            [(OptRotateSsaExitPhis.Result phis env out-var)
+              (OptRotateSsaExitPhis.Result
+                phis
+                (OptCopyEnv.Cons
+                  dst
+                  (ir.CompilerIrValue.Var next-var)
+                  (box env))
+                out-var)]))
+        (opt-rotate-ssa-exit-phis-from
+          (box-get rest)
+          outside-uses
+          preheader
+          latch
+          next-var
+          slots
+          write))]))
+
 (define (opt-rotate-ssa-exit-phis
   [recs : OptRotateSsaPhiRecs]
   [outside-uses : opt_i64_i64_map.Map]
   [preheader : i64]
   [latch : i64]
   [next-var : i64]) : OptRotateSsaExitPhis
-  (match recs
-    [(OptRotateSsaPhiRecs.Nil)
-      (OptRotateSsaExitPhis.Result
-        (ir.CompilerIrInstrList.Nil)
-        (OptCopyEnv.Nil)
-        next-var)]
-    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
-      (if (opt-used-contains outside-uses dst)
-        (match (opt-rotate-ssa-exit-phis
-          (box-get rest)
-          outside-uses
-          preheader
-          latch
-          (+ next-var 1))
-          [(OptRotateSsaExitPhis.Result phis env out-var)
-            (OptRotateSsaExitPhis.Result
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Phi
-                  next-var
-                  (ir.compiler-ir-phi-input-cons
-                    init
-                    preheader
-                    (ir.compiler-ir-phi-input-cons
-                      back
-                      latch
-                      (ir.CompilerIrPhiInputList.Nil)))
-                  ty)
-                phis)
-              (OptCopyEnv.Cons dst (ir.CompilerIrValue.Var next-var) (box env))
-              out-var)])
-        (opt-rotate-ssa-exit-phis
-          (box-get rest)
-          outside-uses
-          preheader
-          latch
-          next-var))]))
+  (opt-rotate-ssa-exit-phis-from
+    recs
+    outside-uses
+    preheader
+    latch
+    next-var
+    (array.make-array ir.CompilerIrInstr (opt-rotate-ssa-phi-rec-count recs))
+    0))
 
 (define (opt-rotate-ssa-subst-phi-inputs
   [env : OptCopyEnv]
@@ -17441,64 +17522,55 @@
         ty)]
     [_ (opt-copy-subst-instr env instr)]))
 
-(define (opt-rotate-ssa-rewrite-instr-seq-from
-  [env : OptCopyEnv]
-  [subst? : bool]
-  [replace-index : i64]
-  [guard : ir.CompilerIrInstrList]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [acc : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (if (< index 0)
-    acc
-    (if (= index replace-index)
-      (opt-rotate-ssa-rewrite-instr-seq-from
-        env
-        subst?
-        replace-index
-        guard
-        instrs
-        (- index 1)
-        guard)
-      (let
-        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-        [rewritten : ir.CompilerIrInstr
-          (if subst?
-            (opt-rotate-ssa-subst-instr env instr)
-            instr)]
-        (opt-rotate-ssa-rewrite-instr-seq-from
-          env
-          subst?
-          replace-index
-          guard
-          instrs
-          (- index 1)
-          (ir.compiler-ir-instr-cons rewritten acc))))))
-
 (define (opt-rotate-ssa-rewrite-instr-seq
   [env : OptCopyEnv]
   [subst? : bool]
   [replace-final? : bool]
-  [guard : ir.CompilerIrInstrList]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
+  [prefix : ir.CompilerIrInstrSeq]
+  [guard : ir.CompilerIrInstrSeq]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [replace-index : i64
+    [prefix-count : i64 (ir.compiler-ir-instr-seq-count prefix)]
+    [body-count : i64
       (if (and replace-final? (> count 0))
         (- count 1)
-        (- 0 1))]
-    [initial : ir.CompilerIrInstrList
-      (if (and replace-final? (= count 0))
-        guard
-        ir.CompilerIrInstrList.Nil)]
-    (opt-rotate-ssa-rewrite-instr-seq-from
-      env
-      subst?
-      replace-index
-      guard
-      instrs
-      (- count 1)
-      initial)))
+        count)]
+    [guard-count : i64
+      (if replace-final?
+        (ir.compiler-ir-instr-seq-count guard)
+        0)]
+    [out-count : i64 (+ prefix-count (+ body-count guard-count))]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr out-count)]
+    [index : i64 0]
+    (begin
+      (while (< index prefix-count)
+        (begin
+          (array-set! slots index (ir.compiler-ir-instr-seq-ref prefix index))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index body-count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          (begin
+            (array-set!
+              slots
+              (+ prefix-count index)
+              (if subst?
+                (opt-rotate-ssa-subst-instr env instr)
+                instr))
+            (set! index (+ index 1)))))
+      (set! index 0)
+      (while (< index guard-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count (+ body-count index))
+            (ir.compiler-ir-instr-seq-ref guard index))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots out-count))))
 
 (define (opt-rotate-ssa-block-touched? [plan : OptRotateSsaPlan] [label : i64]) : bool
   (or
@@ -17515,31 +17587,30 @@
 (define (opt-rotate-ssa-rewrite-instrs
   [plan : OptRotateSsaPlan]
   [label : i64]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [replace-final? : bool
       (or
         (= label (struct-get plan preheader))
         (= label (struct-get plan latch)))]
-    [guard : ir.CompilerIrInstrList
+    [prefix : ir.CompilerIrInstrSeq
+      (cond
+        [(= label (struct-get plan body-label)) (struct-get plan phis)]
+        [(= label (struct-get plan exit-label)) (struct-get plan exit-phis)]
+        [else (ir.compiler-ir-instr-seq-empty)])]
+    [guard : ir.CompilerIrInstrSeq
       (cond
         [(= label (struct-get plan preheader))
           (struct-get plan preheader-guard)]
         [(= label (struct-get plan latch)) (struct-get plan latch-guard)]
-        [else ir.CompilerIrInstrList.Nil])]
-    [retargeted : ir.CompilerIrInstrList
-      (opt-rotate-ssa-rewrite-instr-seq
-        (struct-get plan exit-env)
-        (not (opt-label-contains (struct-get plan body) label))
-        replace-final?
-        guard
-        instrs)]
-    (cond
-      [(= label (struct-get plan body-label))
-        (opt-aggregate-instr-list-append (struct-get plan phis) retargeted)]
-      [(= label (struct-get plan exit-label))
-        (opt-aggregate-instr-list-append (struct-get plan exit-phis) retargeted)]
-      [else retargeted])))
+        [else (ir.compiler-ir-instr-seq-empty)])]
+    (opt-rotate-ssa-rewrite-instr-seq
+      (struct-get plan exit-env)
+      (not (opt-label-contains (struct-get plan body) label))
+      replace-final?
+      prefix
+      guard
+      instrs)))
 
 ;; The deleted header's slot in the block list is reused for the landing
 ;; block, keeping the layout deterministic; the accepted shape guarantees no
@@ -17555,13 +17626,12 @@
         [(ir.CompilerIrBlock.Block label instrs)
           (ir.compiler-ir-block-cons
             (if (= label (struct-get plan header))
-              (ir.compiler-ir-block
+              (ir.CompilerIrBlock.Block
                 (struct-get plan land-label)
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Jump (struct-get plan body-label))
-                  (ir.CompilerIrInstrList.Nil)))
+                (ir.compiler-ir-instr-seq1
+                  (ir.CompilerIrInstr.Jump (struct-get plan body-label))))
               (if (opt-rotate-ssa-block-touched? plan label)
-                (ir.compiler-ir-block
+                (ir.CompilerIrBlock.Block
                   label
                   (opt-rotate-ssa-rewrite-instrs plan label instrs))
                 block))
@@ -17584,9 +17654,9 @@
     [body-label : i64 (struct-get shape body-label)]
     [exit-label : i64 (struct-get shape exit-label)]
     [land-label : i64 (opt-rotate-ssa-land-label header)]
-    [phis : ir.CompilerIrInstrList (struct-get shape phis)]
+    [phis : ir.CompilerIrInstrSeq (struct-get shape phis)]
     [recs : OptRotateSsaPhiRecs (struct-get shape recs)]
-    [guard : ir.CompilerIrInstrList (struct-get shape guard)]
+    [guard : ir.CompilerIrInstrSeq (struct-get shape guard)]
     (if (and
       (not (= exit-label preheader))
       (not (opt-cfg-block-exists? blocks land-label))
@@ -17602,7 +17672,7 @@
       (opt-rotate-ssa-guard-dsts-local?
         guard
         (opt-rotate-ssa-uses-except-header
-          (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) phis)
+          (opt-collect-instr-seq-uses (opt_i64_i64_map.with-capacity 64) phis)
           blocks
           header)))
       ;; The preheader clone's loop arm targets the landing block instead of
@@ -53583,8 +53653,7 @@
   [blocks : ir.CompilerIrBlockList]
   [label : i64]) : ir.CompilerIrInstrSeq
   (match blocks
-    [(ir.CompilerIrBlockList.Nil)
-      (ir.compiler-ir-instr-seq-from-list (ir.CompilerIrInstrList.Nil))]
+    [(ir.CompilerIrBlockList.Nil) (ir.compiler-ir-instr-seq-empty)]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block block-label instrs)

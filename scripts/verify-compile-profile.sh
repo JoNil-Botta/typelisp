@@ -1303,6 +1303,11 @@ fi
 # physical payload bytes. The same migration's simpler concat expansions brought
 # ast_type_pool.typecheck back from 9 to 8 segments: 8,030 used nodes, 8,192
 # capacity, and 196,608 physical payload bytes.
+# #6328's delayed binding-clause expansion markers avoid retaining a wrapper for
+# every captured initializer and bring ast_expr_pool.macro_expand from 54 to 42
+# segments. The authoritative Windows probe measured 2,705,143 used nodes,
+# 2,752,512 capacity, and 88,080,384 physical payload bytes; the other three
+# exact pool boundaries remain unchanged.
 # #6293's derived-symbol table (moving ~50k generated spellings out of the
 # pinned intern pool, plus its tests) crossed the expr typecheck boundary
 # from 29 to 30 segments: the authoritative Windows probe measured 1,902,698
@@ -1462,7 +1467,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 54 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \

@@ -62041,6 +62041,8 @@
     (match (tc-context-expr-get ctx expr-id)
       [(ast.AstExpr.Spanned inner-id _)
         (tc-proof-reuse-session-clone-callee-expr-id? ctx inner-id)]
+      [(ast.AstExpr.MacroExpansion inner-id _ _)
+        (tc-proof-reuse-session-clone-callee-expr-id? ctx inner-id)]
       [(ast.AstExpr.Var name-id)
         (if (not (ci.intern-renderable-id? name-id))
           false
@@ -62078,9 +62080,31 @@
             (tc-context-expr-get ctx inner)
             other)
           false)]
+      ;; MacroExpansion carries diagnostic provenance only.  Like source
+      ;; spans, it must not change a generated declaration's proof shape.
+      [(ast.AstExpr.MacroExpansion inner _ _)
+        (if (and
+          (>= inner 0)
+          (< inner (ast.ast-node-pool-context-expr-len (tc-context-pools ctx))))
+          (tc-proof-reuse-session-ast-expr-exact?
+            ctx
+            (tc-context-expr-get ctx inner)
+            other)
+          false)]
       [_
         (match other
           [(ast.AstExpr.Spanned second _)
+            (if (and
+              (>= second 0)
+              (<
+                second
+                (ast.ast-node-pool-context-expr-len (tc-context-pools ctx))))
+              (tc-proof-reuse-session-ast-expr-exact?
+                ctx
+                expr
+                (tc-context-expr-get ctx second))
+              false)]
+          [(ast.AstExpr.MacroExpansion second _ _)
             (if (and
               (>= second 0)
               (<
@@ -63278,6 +63302,10 @@
     [expr : ast.AstExpr]) : bool
     (match expr
       [(ast.AstExpr.Spanned inner-id _)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))]
+      [(ast.AstExpr.MacroExpansion inner-id _ _)
         (tc-generated-expr-dependent-construct?
           ctx
           (tc-context-expr-get ctx inner-id))]

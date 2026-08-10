@@ -674,6 +674,7 @@ if ! "$COMPILER" compile src/main.tl \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
     --cfg tlci-native-route \
+    --cfg tlci-native-route-stress \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI compile failed"
@@ -684,6 +685,14 @@ if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFI
     >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI link failed"
+fi
+
+# ci-verify reuses this one profile compiler for the sustained production-route
+# gate instead of paying for a second full self-compile. The handoff is written
+# only after a successful link and consumed only after this verifier passes.
+if [ -n "${TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE:-}" ]; then
+    mkdir -p "$(dirname -- "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE")"
+    printf '%s\n' "$PROFILE_BIN" > "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE"
 fi
 
 echo "[compile-profile] verify dense macro profile storage"
@@ -1324,6 +1333,10 @@ fi
 # brings the combined tree back to 31 segments: the authoritative Windows probe
 # measured 2,008,157 used nodes, 2,031,616 capacity, and 65,011,712 physical
 # payload bytes.
+# #6424's dead-phi retirement pass, rotation rounds, and flag-exit separation
+# clause crossed ast_expr_pool.typecheck from 31 to 32 segments: the
+# authoritative Windows probe measured 2,032,112 used nodes, 2,097,152
+# capacity, and 67,108,864 physical payload bytes.
 # #6277's function-owned backend scratch context crossed the expr typecheck
 # boundary from 31 to 32 segments: the authoritative Windows CI probe measured
 # 2,031,667 used nodes, 2,097,152 capacity, and 67,108,864 physical payload

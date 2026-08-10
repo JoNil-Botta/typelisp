@@ -1151,6 +1151,10 @@ fi
 # brings the combined tree back to 31 segments: the authoritative Windows probe
 # measured 2,008,157 used nodes, 2,031,616 capacity, and 65,011,712 physical
 # payload bytes.
+# #6277's function-owned backend scratch context crossed the expr typecheck
+# boundary from 31 to 32 segments: the authoritative Windows CI probe measured
+# 2,031,667 used nodes, 2,097,152 capacity, and 67,108,864 physical payload
+# bytes.
 # #5493's removal of the splice-tail rebuild plans and filtered-environment
 # walkers brings ast_type_pool.macro_expand back from 24 to 23 segments: the
 # authoritative Windows probe measured 22,788 used nodes, 23,552 capacity, and
@@ -1268,7 +1272,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 52 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 31 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \

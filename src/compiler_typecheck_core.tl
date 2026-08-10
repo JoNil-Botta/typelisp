@@ -100500,7 +100500,7 @@
     [poison-names : TcPoisonNameList
       (TcPoisonNameList (array.make-array i64 0) 0)]
     [diagnostics : cdiag.CompilerDiagnosticList
-      cdiag.CompilerDiagnosticList.Nil]
+      (cdiag.compiler-diagnostic-list-empty)]
     [type-module-cache-valid : bool false]
     [type-module-cache-path-owner-id : i64 -1]
     [type-module-cache-id : i64 -1]
@@ -100518,12 +100518,9 @@
               (cfg compile-profile (compiler-tc-decl-profile-finish))
               (set!
                 result
-                (match diagnostics
-                  [(cdiag.CompilerDiagnosticList.Nil)
-                    (ResultCompilerTypecheck.Ok cur-summary)]
-                  [_
-                    (ResultCompilerTypecheck.Err
-                      (box (cdiag.compiler-diagnostic-list-reverse diagnostics)))]))
+                (if (= (cdiag.compiler-diagnostic-list-count diagnostics) 0)
+                  (ResultCompilerTypecheck.Ok cur-summary)
+                  (ResultCompilerTypecheck.Err (box diagnostics))))
               (set! done true))]
           [(ast.AstDeclListStep.Cons decl rest)
             (let
@@ -100586,36 +100583,32 @@
                               (cfg
                                 compile-profile
                                 (compiler-tc-decl-profile-add-local-env))
+                              (cdiag.compiler-diagnostic-list-push!
+                                (&mut diagnostics)
+                                (tc-typecheck-diag-with-rest-path
+                                  (& rest)
+                                  decl
+                                  decl-path
+                                  message))
                               (set!
                                 result
-                                (ResultCompilerTypecheck.Err
-                                  (box
-                                    (cdiag.compiler-diagnostic-list-reverse
-                                      (cdiag.compiler-diagnostic-list-prepend
-                                        (tc-typecheck-diag-with-rest-path
-                                          (& rest)
-                                          decl
-                                          decl-path
-                                          message)
-                                        diagnostics)))))
+                                (ResultCompilerTypecheck.Err (box diagnostics)))
                               (set! done true))])]
                       [(ResultTcModuleLocalEnv.Err message)
                         (begin
                           (cfg
                             compile-profile
                             (compiler-tc-decl-profile-add-local-env))
+                          (cdiag.compiler-diagnostic-list-push!
+                            (&mut diagnostics)
+                            (tc-typecheck-diag-with-rest-path
+                              (& rest)
+                              decl
+                              decl-path
+                              message))
                           (set!
                             result
-                            (ResultCompilerTypecheck.Err
-                              (box
-                                (cdiag.compiler-diagnostic-list-reverse
-                                  (cdiag.compiler-diagnostic-list-prepend
-                                    (tc-typecheck-diag-with-rest-path
-                                      (& rest)
-                                      decl
-                                      decl-path
-                                      message)
-                                    diagnostics)))))
+                            (ResultCompilerTypecheck.Err (box diagnostics)))
                           (set! done true))]))]
                 [_
                   (if (and
@@ -100725,15 +100718,13 @@
                               (tc-unused-unsafe-restore-current-path! prev-path)
                               (if tc-poison-observed
                                 unit
-                                (set!
-                                  diagnostics
-                                  (cdiag.compiler-diagnostic-list-prepend
-                                    (tc-typecheck-diag-with-rest-path
-                                      (& rest)
-                                      decl
-                                      decl-path
-                                      message)
-                                    diagnostics)))
+                                (cdiag.compiler-diagnostic-list-push!
+                                  (&mut diagnostics)
+                                  (tc-typecheck-diag-with-rest-path
+                                    (& rest)
+                                    decl
+                                    decl-path
+                                    message)))
                               (set!
                                 cur-local-env
                                 (tc-poison-decl-env

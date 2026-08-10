@@ -1176,6 +1176,11 @@
   (type-fact-index (__tl_dyn-array i64))
   (type-fact-expr-ids (__tl_dyn-array i64))
   (type-fact-types (__tl_dyn-array ast.AstType))
+  ;; Parallel to type-fact-types. Zero means no checker-only concrete closure
+  ;; fact has been computed for this expression; encoded facts start at 16.
+  ;; Move analysis populates a lambda body slot once, and the later borrow and
+  ;; tail-escape walks reuse it instead of recursively rechecking the lambda.
+  (type-fact-closure-codes (__tl_dyn-array i64))
   (type-fact-count i64)
   (type-fact-storage-arena i64)
   (type-fact-enclosing-arena i64)
@@ -1423,6 +1428,7 @@
           (array.make-array i64 1)
           (array.make-array i64 1)
           (array.make-array ast.AstType 1)
+          (array.make-array i64 1)
           0
           0
           0
@@ -1634,6 +1640,9 @@
         (set!
           (struct-get data type-fact-types)
           (array.make-array ast.AstType 1))
+        (set!
+          (struct-get data type-fact-closure-codes)
+          (array.make-array i64 1))
         (set! (struct-get data type-fact-storage-arena) 0)
         (set! (struct-get data type-fact-enclosing-arena) 0)
         (set! (struct-get data type-fact-count) 0)
@@ -1675,6 +1684,9 @@
                 ast.AstType
                 (tc-body-type-fact-initial-capacity)))
             (set!
+              (struct-get data type-fact-closure-codes)
+              (array.make-array i64 (tc-body-type-fact-initial-capacity)))
+            (set!
               (struct-get data type-fact-storage-arena)
               (arena.tl_arena_current))
             (set! (struct-get data type-fact-count) 0)
@@ -1684,8 +1696,10 @@
 
 (define (tc-body-type-fact-grow-copy!
   [dst-types : (__tl_dyn-array ast.AstType)]
+  [dst-closure-codes : (__tl_dyn-array i64)]
   [dst-expr-ids : (__tl_dyn-array i64)]
   [src-types : (__tl_dyn-array ast.AstType)]
+  [src-closure-codes : (__tl_dyn-array i64)]
   [src-expr-ids : (__tl_dyn-array i64)]
   [count : i64]
   [index : i64]) : unit
@@ -1694,6 +1708,7 @@
     (while (< i count)
       (begin
         (array-set! dst-types i (array.ref src-types i))
+        (array-set! dst-closure-codes i (array.ref src-closure-codes i))
         (array-set! dst-expr-ids i (array.ref src-expr-ids i))
         (set! i (+ i 1))))))
 
@@ -1701,6 +1716,8 @@
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     [old-types : (__tl_dyn-array ast.AstType) (struct-get data type-fact-types)]
+    [old-closure-codes : (__tl_dyn-array i64)
+      (struct-get data type-fact-closure-codes)]
     [old-expr-ids : (__tl_dyn-array i64) (struct-get data type-fact-expr-ids)]
     [old-cap : i64 (array.length old-types)]
     [new-cap : i64
@@ -1714,16 +1731,21 @@
       (let
         [next-types : (__tl_dyn-array ast.AstType)
           (array.make-array ast.AstType new-cap)]
+        [next-closure-codes : (__tl_dyn-array i64)
+          (array.make-array i64 new-cap)]
         [next-expr-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
         (begin
           (tc-body-type-fact-grow-copy!
             next-types
+            next-closure-codes
             next-expr-ids
             old-types
+            old-closure-codes
             old-expr-ids
             (struct-get data type-fact-count)
             0)
           (set! (struct-get data type-fact-types) next-types)
+          (set! (struct-get data type-fact-closure-codes) next-closure-codes)
           (set! (struct-get data type-fact-expr-ids) next-expr-ids)
           (set!
             (struct-get data type-fact-storage-arena)
@@ -1824,6 +1846,7 @@
               [ready : TcBodyStateData (tc-body-state-data-value state)]
               (begin
                 (array-set! (struct-get ready type-fact-types) slot ty)
+                (array-set! (struct-get ready type-fact-closure-codes) slot 0)
                 (array-set! (struct-get ready type-fact-expr-ids) slot expr-id)
                 (array-set!
                   (struct-get ready type-fact-index)
@@ -1844,6 +1867,36 @@
             (array.ref (struct-get data type-fact-types) slot))
           (TcBodyTypeFact.Miss)))
       (TcBodyTypeFact.Miss))))
+
+;; Concrete closure facts use the same per-body slot index as inferred types.
+;; They are written during the move pass, while type facts are being consumed,
+;; and remain available to the immediately following borrow pass. Lambda body
+;; ids synthesized after source typecheck simply miss and retain the
+;; conservative recomputation path.
+(define (tc-body-closure-fact-code [state : TcBodyState] [body-id : i64]) : i64
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    [slot : i64 (tc-body-type-fact-slot state body-id)]
+    (if (and
+      (struct-get data type-facts-consuming)
+      (>= slot 0)
+      (< slot (struct-get data type-fact-count)))
+      (array.ref (struct-get data type-fact-closure-codes) slot)
+      0)))
+
+(define (tc-body-closure-fact-record!
+  [state : TcBodyState]
+  [body-id : i64]
+  [code : i64]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    [slot : i64 (tc-body-type-fact-slot state body-id)]
+    (if (and
+      (struct-get data type-facts-consuming)
+      (>= slot 0)
+      (< slot (struct-get data type-fact-count)))
+      (array-set! (struct-get data type-fact-closure-codes) slot code)
+      unit)))
 
 (define (tc-body-state-type-fact-i64-hit? [state : TcBodyState] [expr-id : i64]) : bool
   (match (tc-body-type-fact-lookup state expr-id)
@@ -72422,23 +72475,31 @@
           (let
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            [copyable : bool
-              (not
-                (tc-lambda-capture-has-move-only-with-locals?
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  params
-                  body))]
-            [capability : i64
-              (tc-lambda-call-capability-with-locals
-                ctx
-                env
-                locals
-                params
-                body-box)]
-            (tc-closure-local-fact-encode copyable capability))])]
+            [state : TcBodyState (tc-context-body-state ctx)]
+            [cached : i64 (tc-body-closure-fact-code state body-box)]
+            (if (tc-closure-local-fact-code? cached)
+              cached
+              (let
+                [copyable : bool
+                  (not
+                    (tc-lambda-capture-has-move-only-with-locals?
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      params
+                      body))]
+                [capability : i64
+                  (tc-lambda-call-capability-with-locals
+                    ctx
+                    env
+                    locals
+                    params
+                    body-box)]
+                [code : i64 (tc-closure-local-fact-encode copyable capability)]
+                (begin
+                  (tc-body-closure-fact-record! state body-box code)
+                  code))))])]
     [_
       (match (tc-move-bare-var expr-bases init)
         [(TcMaybeMoveName.Some name-id _)

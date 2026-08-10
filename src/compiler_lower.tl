@@ -64577,7 +64577,13 @@
                           (compiler-lower-profile-string-concat-reset))
                         (match (lower-compiler-program-checked-with-names-mode
                           ctx
-                          top-env
+                          ;; Additive macro splices intentionally retain a
+                          ;; shallow forest of delta layers. Lowering performs
+                          ;; repeated whole-program lookups after the final
+                          ;; splice, so publish one flat front cache at this
+                          ;; phase boundary instead of paying the layer walk in
+                          ;; every lowered function.
+                          (tc_core.tc-env-with-cache top-env)
                           pruned-program
                           (lower-decl-keep-plan-apply-paths
                             checked-keep-plan

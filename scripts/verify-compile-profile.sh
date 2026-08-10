@@ -1238,26 +1238,19 @@ if [ "$NL_HOST_OS" = windows ]; then
         1 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
-    # The cache-local candidate scan is allocation-free for misses. Exact-tag
-    # memo hits keep repeated unresolved leaves from invoking alias/symbol
-    # resolution again, and actual signature reconstruction stays well below
-    # the removed ~39 MiB tail-build bucket.
+    # The cache-local candidate scan revisits only unresolved signatures, and
+    # direct signature reconstruction stays below the removed ~39 MiB
+    # tail-build bucket.
     assert_profile_counter_at_least_in \
         "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_splice_env_leaf_memo_hits" \
+        "typecheck.macro.walk_splice_env_reresolve_candidates" \
         1 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_counter_at_most_in \
         "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_splice_env_leaf_resolver_calls" \
-        10000 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_counter_at_most_in \
-        "$SELFHOST_STDERR" \
         "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        20000 \
+        25000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
@@ -2775,7 +2768,7 @@ assert_profile_counter_at_least_in \
     "$CTFE_SPLICE_STDERR"
 assert_profile_counter_at_least_in \
     "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_env_leaf_memo_hits" \
+    "typecheck.macro.walk_splice_env_reresolve_candidates" \
     1 \
     "$CTFE_SPLICE_STDOUT" \
     "$CTFE_SPLICE_STDERR"

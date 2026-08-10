@@ -106,12 +106,10 @@
   (ids tc_i64_i64_map.Map)
   (values (__tl_dyn-array ast.AstType))
   ;; Only top-env signatures that still contain Var/VarArgs can change after
-  ;; an additive splice. These two arrays hold (binding name, value slot)
-  ;; pairs for that shrinking candidate set, so splice invalidation never has
-  ;; to rediscover candidates by walking the cache's retained binding spine.
-  (resolution-name-ids (__tl_dyn-array i64))
-  (resolution-value-slots (__tl_dyn-array i64))
-  (resolution-count i64)
+  ;; an additive splice. Explicit layers fuse that shrinking candidate-name
+  ;; list into the tail of `unsafe-flags`: [flags x capacity, live count,
+  ;; names x capacity]. The existing `ids` map recovers each value slot. This
+  ;; keeps the hot cache record at its original width.
   (unsafe-flags (__tl_dyn-array i64))
   (c-abi-fnptr-flags (__tl_dyn-array i64))
   (shadow-flags (__tl_dyn-array i64))
@@ -4375,7 +4373,7 @@
     0))
 
 ;; Additive top-env splice accounting. Candidates are unresolved cache entries
-;; admitted because a leaf became resolvable; updates are entries whose type
+;; revisited against a new symbol surface, updates are entries whose type
 ;; changed, and remaining is the unresolved set retained for a later surface.
 (cfg
   compile-profile
@@ -4397,38 +4395,6 @@
   compile-profile
   (define compiler-tc-walk-splice-env-fallbacks : i64
     0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-env-leaf-probes : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-env-leaf-memo-hits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-walk-splice-env-leaf-resolver-calls : i64
-    0))
-
-;; A direct-mapped memo removes repeated negative type-name resolution while a
-;; splice surface is fixed. Exact context/name tags make collisions a cache
-;; miss, never a semantic match, and fixed process-lifetime storage cannot grow
-;; into a transient macro arena. VarArgs stays on the exact resolver because
-;; its lifetime payload is part of the leaf identity.
-(define tc-top-env-resolution-memo-size : i64
-  4096)
-(define tc-top-env-resolution-memo-mask : i64
-  4095)
-(define tc-top-env-resolution-memo-contexts : (__tl_dyn-array i64)
-  (array.make-array i64 tc-top-env-resolution-memo-size))
-(define tc-top-env-resolution-memo-names : (__tl_dyn-array i64)
-  (array.make-array i64 tc-top-env-resolution-memo-size))
-(define tc-top-env-resolution-memo-epochs : (__tl_dyn-array i64)
-  (array.make-array i64 tc-top-env-resolution-memo-size))
-(define tc-top-env-resolution-memo-results : (__tl_dyn-array i64)
-  (array.make-array i64 tc-top-env-resolution-memo-size))
-(define tc-top-env-resolution-memo-epoch : i64
-  0)
 
 ;; Marker-path sub-probe: 0 = whole-program list copies + context build,
 ;; 1 = macro-extend-top-env-with-module-marker, 2 = the env cache layer,
@@ -6248,10 +6214,7 @@
       (set! compiler-tc-walk-splice-env-reresolve-candidates 0)
       (set! compiler-tc-walk-splice-env-reresolve-updates 0)
       (set! compiler-tc-walk-splice-env-reresolve-remaining 0)
-      (set! compiler-tc-walk-splice-env-fallbacks 0)
-      (set! compiler-tc-walk-splice-env-leaf-probes 0)
-      (set! compiler-tc-walk-splice-env-leaf-memo-hits 0)
-      (set! compiler-tc-walk-splice-env-leaf-resolver-calls 0))))
+      (set! compiler-tc-walk-splice-env-fallbacks 0))))
 
 (cfg
   compile-profile
@@ -7301,15 +7264,6 @@
         "walk_splice_env_fallbacks"
         compiler-tc-walk-splice-env-fallbacks)
       (compiler-tc-macro-counter-profile-line
-        "walk_splice_env_leaf_probes"
-        compiler-tc-walk-splice-env-leaf-probes)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_env_leaf_memo_hits"
-        compiler-tc-walk-splice-env-leaf-memo-hits)
-      (compiler-tc-macro-counter-profile-line
-        "walk_splice_env_leaf_resolver_calls"
-        compiler-tc-walk-splice-env-leaf-resolver-calls)
-      (compiler-tc-macro-counter-profile-line
         "walk_sp_copy_us"
         (/ (array-ref compiler-tc-walk-sp-probe-ns 0) 1000))
       (compiler-tc-macro-counter-profile-line
@@ -8035,9 +7989,9 @@
     (ptr-read ,cache-ptr)))
 
 ;; Physical byte offsets in TcTypeEnvCache after the four-word chain prefix:
-;; ids=32 (the map is inline and 24 bytes), values=56, resolution candidate
-;; lanes=64/72/80, sidecar arrays=88/96/104, flags=112/113, and
-;; rest/below=120/128. Keep these literals paired with the raw-layout smoke and
+;; ids=32 (the map is inline and 24 bytes), values=56, sidecar arrays=64/72/80,
+;; flags=88/89, and rest/below=96/104. Keep these literals paired with the
+;; raw-layout smoke and
 ;; cache behavior tests; `offset-of` currently treats the inline map as one word
 ;; and therefore under-reports every following field.
 (defmacro (tc-type-env-cache-field-at
@@ -8181,15 +8135,15 @@
             (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
           (TcTypeEnvView.Cache
             cache-ptr
-            (tc-type-env-cache-field-at cache-ptr 112 bool)
-            (tc-type-env-cache-field-at cache-ptr 113 bool)
+            (tc-type-env-cache-field-at cache-ptr 88 bool)
+            (tc-type-env-cache-field-at cache-ptr 89 bool)
             (TcTypeEnv
               store-handle
-              (tc-type-env-cache-field-at cache-ptr 120 i64)
+              (tc-type-env-cache-field-at cache-ptr 96 i64)
               0)
             (TcTypeEnv
               store-handle
-              (tc-type-env-cache-field-at cache-ptr 128 i64)
+              (tc-type-env-cache-field-at cache-ptr 104 i64)
               0)))])))
 
 (define (tc-empty-env) : TcTypeEnv
@@ -8251,7 +8205,7 @@
         [values : (__tl_dyn-array ast.AstType)
           (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
         [unsafe-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 88 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at cache-ptr 64 (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(tc_i64_i64_map.LookupFound index)
             ;; AstType read must stay `array-ref`; the unsafe flag is a
@@ -11004,8 +10958,6 @@
   [env : TcTypeEnv]
   [ids : tc_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array ast.AstType)]
-  [resolution-name-ids : (__tl_dyn-array i64)]
-  [resolution-value-slots : (__tl_dyn-array i64)]
   [track-resolution : bool]
   [unsafe-flags : (__tl_dyn-array i64)]
   [c-abi-fnptr-flags : (__tl_dyn-array i64)]
@@ -11069,8 +11021,10 @@
                   (begin
                     (if (and track-resolution (tc-type-needs-resolution? ty))
                       (begin
-                        (array-set! resolution-name-ids resolution-next name-id)
-                        (array-set! resolution-value-slots resolution-next next)
+                        (array-set!
+                          unsafe-flags
+                          (+ (array.length values) 1 resolution-next)
+                          name-id)
                         (set! resolution-next (+ resolution-next 1)))
                       unit)
                     (set! next (+ next 1)))
@@ -11114,10 +11068,7 @@
       ;; The final slot is a construction-only handoff to the cache node. It
       ;; avoids a second result aggregate around the consuming map.
       (if track-resolution
-        (array-set!
-          resolution-value-slots
-          (- (array.length resolution-value-slots) 1)
-          resolution-next)
+        (array-set! unsafe-flags (array.length values) resolution-next)
         unit)
       cur-ids)))
 
@@ -11126,8 +11077,6 @@
   [remaining : i64]
   [ids : tc_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array ast.AstType)]
-  [resolution-name-ids : (__tl_dyn-array i64)]
-  [resolution-value-slots : (__tl_dyn-array i64)]
   [track-resolution : bool]
   [unsafe-flags : (__tl_dyn-array i64)]
   [c-abi-fnptr-flags : (__tl_dyn-array i64)]
@@ -11189,8 +11138,10 @@
                   (begin
                     (if (and track-resolution (tc-type-needs-resolution? ty))
                       (begin
-                        (array-set! resolution-name-ids resolution-next name-id)
-                        (array-set! resolution-value-slots resolution-next next)
+                        (array-set!
+                          unsafe-flags
+                          (+ (array.length values) 1 resolution-next)
+                          name-id)
                         (set! resolution-next (+ resolution-next 1)))
                       unit)
                     (set! next (+ next 1)))
@@ -11241,10 +11192,7 @@
                 (set! done true)))]
           [else (set! done true)]))
       (if track-resolution
-        (array-set!
-          resolution-value-slots
-          (- (array.length resolution-value-slots) 1)
-          resolution-next)
+        (array-set! unsafe-flags (array.length values) resolution-next)
         unit)
       cur-ids)))
 
@@ -11659,15 +11607,12 @@
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (__tl_dyn-array ast.AstType)
         (array.make-array ast.AstType capacity)]
-      [resolution-name-ids : (__tl_dyn-array i64)
-        (if scan-through
-          (tc-global-shared-view tc-chain-empty-i64-array)
-          (array.make-array i64 capacity))]
-      [resolution-value-slots : (__tl_dyn-array i64)
-        (if scan-through
-          (tc-global-shared-view tc-chain-empty-i64-array)
-          (array.make-array i64 (+ capacity 1)))]
-      [unsafe-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [unsafe-flags : (__tl_dyn-array i64)
+        (array.make-array
+          i64
+          (if scan-through
+            capacity
+            (+ (* capacity 2) 1)))]
       [c-abi-fnptr-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
@@ -11675,8 +11620,6 @@
           env
           (tc_i64_i64_map.with-capacity capacity)
           values
-          resolution-name-ids
-          resolution-value-slots
           (not scan-through)
           unsafe-flags
           c-abi-fnptr-flags
@@ -11694,11 +11637,6 @@
               (tc-global-shared-view tc-chain-empty-i64-array)
               ids
               values
-              resolution-name-ids
-              resolution-value-slots
-              (if scan-through
-                0
-                (array-ref resolution-value-slots capacity))
               unsafe-flags
               c-abi-fnptr-flags
               shadow-flags
@@ -11737,15 +11675,12 @@
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (__tl_dyn-array ast.AstType)
         (array.make-array ast.AstType capacity)]
-      [resolution-name-ids : (__tl_dyn-array i64)
-        (if scan-through
-          (tc-global-shared-view tc-chain-empty-i64-array)
-          (array.make-array i64 capacity))]
-      [resolution-value-slots : (__tl_dyn-array i64)
-        (if scan-through
-          (tc-global-shared-view tc-chain-empty-i64-array)
-          (array.make-array i64 (+ capacity 1)))]
-      [unsafe-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [unsafe-flags : (__tl_dyn-array i64)
+        (array.make-array
+          i64
+          (if scan-through
+            capacity
+            (+ (* capacity 2) 1)))]
       [c-abi-fnptr-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
@@ -11754,8 +11689,6 @@
           count
           (tc_i64_i64_map.with-capacity capacity)
           values
-          resolution-name-ids
-          resolution-value-slots
           (not scan-through)
           unsafe-flags
           c-abi-fnptr-flags
@@ -11773,11 +11706,6 @@
               (tc-global-shared-view tc-chain-empty-i64-array)
               ids
               values
-              resolution-name-ids
-              resolution-value-slots
-              (if scan-through
-                0
-                (array-ref resolution-value-slots capacity))
               unsafe-flags
               c-abi-fnptr-flags
               shadow-flags
@@ -16765,7 +16693,7 @@
         [ids : tc_i64_i64_map.Map
           (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
         [sidecar-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 104 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(tc_i64_i64_map.LookupFound index)
             (not (= (bit-and (array-ref sidecar-flags index) sidecar-flag) 0))]
@@ -17205,7 +17133,7 @@
     [ids : tc_i64_i64_map.Map
       (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
     [sidecar-flags : (__tl_dyn-array i64)
-      (tc-type-env-cache-field-at cache-ptr 104 (__tl_dyn-array i64))]
+      (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
     [ordinary-index : i64 (tc_i64_i64_map.get-value-or (& ids) lifetime-id -1)]
     [marker-index : i64
       (tc_i64_i64_map.get-value-or
@@ -17286,7 +17214,7 @@
         [ids : tc_i64_i64_map.Map
           (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
         [sidecar-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 104 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
         (if scan-through
           (match (tc_i64_i64_map.get (& ids) name-id)
             [(tc_i64_i64_map.LookupFound index)
@@ -33301,7 +33229,7 @@
         [ids : tc_i64_i64_map.Map
           (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
         [shadow-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 104 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(tc_i64_i64_map.LookupFound index)
             (=
@@ -96360,171 +96288,31 @@
         ctx))
     (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)))
 
-;; Cheap admission before reconstructing a composite signature: test only its
-;; unresolved leaves and allocate the rebuilt container nodes iff at least one
-;; leaf can resolve in the post-splice symbol/alias surface.
-(define (tc-top-env-resolution-memo-begin!) : unit
-  (if (>= tc-top-env-resolution-memo-epoch 2147483647)
-    (let
-      [index : i64 0]
-      (begin
-        (while (< index tc-top-env-resolution-memo-size)
-          (begin
-            (array-set! tc-top-env-resolution-memo-epochs index 0)
-            (set! index (+ index 1))))
-        (set! tc-top-env-resolution-memo-epoch 1)))
-    (set!
-      tc-top-env-resolution-memo-epoch
-      (+ tc-top-env-resolution-memo-epoch 1))))
-
-(define (tc-type-var-has-new-resolution? [ctx : TcContext] [name : i64]) : bool
-  (let
-    [context-id : i64 (tc-context-module-id ctx)]
-    [index : i64
-      (bit-and
-        (hash.combine (hash.i64 context-id) (hash.i64 name))
-        tc-top-env-resolution-memo-mask)]
-    [hit : bool
-      (and
-        (=
-          (array-ref tc-top-env-resolution-memo-epochs index)
-          tc-top-env-resolution-memo-epoch)
-        (= (array-ref tc-top-env-resolution-memo-contexts index) context-id)
-        (= (array-ref tc-top-env-resolution-memo-names index) name))]
-    (begin
-      (cfg
-        compile-profile
-        (set!
-          compiler-tc-walk-splice-env-leaf-probes
-          (+ compiler-tc-walk-splice-env-leaf-probes 1)))
-      (if hit
-        (begin
-          (cfg
-            compile-profile
-            (set!
-              compiler-tc-walk-splice-env-leaf-memo-hits
-              (+ compiler-tc-walk-splice-env-leaf-memo-hits 1)))
-          (= (array-ref tc-top-env-resolution-memo-results index) 1))
-        (let
-          [resolved : bool
-            (not
-              (ast.ast-type-eq?
-                (ast.AstType.Var name)
-                (tc-resolve-type-name ctx (tc-hygiene-name-text-id name) name)))]
-          (begin
-            (cfg
-              compile-profile
-              (set!
-                compiler-tc-walk-splice-env-leaf-resolver-calls
-                (+ compiler-tc-walk-splice-env-leaf-resolver-calls 1)))
-            (array-set! tc-top-env-resolution-memo-contexts index context-id)
-            (array-set! tc-top-env-resolution-memo-names index name)
-            (array-set!
-              tc-top-env-resolution-memo-epochs
-              index
-              tc-top-env-resolution-memo-epoch)
-            (array-set!
-              tc-top-env-resolution-memo-results
-              index
-              (if resolved
-                1
-                0))
-            resolved))))))
-
-(define (tc-type-list-has-new-resolution-at?
-  [ctx : TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
-    (or
-      (tc-type-has-new-resolution?
-        ctx
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (tc-type-list-has-new-resolution-at? ctx types (+ index 1)))))
-
-(define (tc-type-list-has-new-resolution?
-  [ctx : TcContext]
-  [types : ast.AstTypeList]) : bool
-  (tc-type-list-has-new-resolution-at? ctx (& types) 0))
-
-(define (tc-type-has-new-resolution? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (match ty
-    [(ast.AstType.Func args ret)
-      (or
-        (tc-type-list-has-new-resolution? ctx (box-get args))
-        (tc-type-has-new-resolution? ctx (ast.ty-node-get ret)))]
-    [(ast.AstType.Tuple elems)
-      (tc-type-list-has-new-resolution? ctx (box-get elems))]
-    [(ast.AstType.Array elem _)
-      (tc-type-has-new-resolution? ctx (ast.ty-node-get elem))]
-    [(ast.AstType.DynArray elem)
-      (tc-type-has-new-resolution? ctx (ast.ty-node-get elem))]
-    [(ast.AstType.Slice elem)
-      (tc-type-has-new-resolution? ctx (ast.ty-node-get elem))]
-    [(ast.AstType.Box elem)
-      (tc-type-has-new-resolution? ctx (ast.ty-node-get elem))]
-    [(ast.AstType.Ptr elem)
-      (tc-type-has-new-resolution? ctx (ast.ty-node-get elem))]
-    [(ast.AstType.MutPtr elem)
-      (tc-type-has-new-resolution? ctx (ast.ty-node-get elem))]
-    [(ast.AstType.Ref _ inner)
-      (tc-type-has-new-resolution? ctx (ast.ty-node-get inner))]
-    [(ast.AstType.MutRef _ inner)
-      (tc-type-has-new-resolution? ctx (ast.ty-node-get inner))]
-    [(ast.AstType.Region _ inner)
-      (tc-type-has-new-resolution? ctx (ast.ty-node-get inner))]
-    [(ast.AstType.Consume inner)
-      (tc-type-has-new-resolution? ctx (ast.ty-node-get inner))]
-    [(ast.AstType.VarArgs name lifetimes)
-      (begin
-        (cfg
-          compile-profile
-          (begin
-            (set!
-              compiler-tc-walk-splice-env-leaf-probes
-              (+ compiler-tc-walk-splice-env-leaf-probes 1))
-            (set!
-              compiler-tc-walk-splice-env-leaf-resolver-calls
-              (+ compiler-tc-walk-splice-env-leaf-resolver-calls 1))))
-        (not
-          (ast.ast-type-eq?
-            ty
-            (tc-resolve-type-name-with-args
-              ctx
-              (tc-hygiene-name-text-id name)
-              name
-              (box-get lifetimes)))))]
-    [(ast.AstType.Var name) (tc-type-var-has-new-resolution? ctx name)]
-    [_ false]))
-
 ;; A splice updates symbols before it updates the type env. Final
 ;; nominal/scalar bindings cannot change; only signatures that still contain
 ;; Var/VarArgs nodes are candidates. Every cache records that candidate set at
 ;; construction, and this walk compacts it in place as names become resolvable.
 ;; The fixed-width scan is proportional to unresolved signatures, never the
-;; retained top-env spine or source tail; the exact leaf memo bounds expensive
-;; alias/symbol resolution to distinct (binding module, unresolved name) pairs
-;; on each splice surface.
+;; retained top-env spine or source tail.
 (define (tc-top-env-reresolve-cache-node!
   [ctx : TcContext]
-  [cache-ptr : (MutPtr TcTypeEnvCache)]) : i64
+  [cache-ptr : (Ptr TcTypeEnvCache)]) : i64
   (let
     [cache : TcTypeEnvCache
       (unsafe
-        (ptr-read (ptr-cast cache-ptr : (Ptr TcTypeEnvCache))))]
+        (ptr-read cache-ptr))]
+    [ids : tc_i64_i64_map.Map (struct-get cache ids)]
     [values : (__tl_dyn-array ast.AstType) (struct-get cache values)]
-    [names : (__tl_dyn-array i64) (struct-get cache resolution-name-ids)]
-    [slots : (__tl_dyn-array i64) (struct-get cache resolution-value-slots)]
-    [count : i64 (struct-get cache resolution-count)]
+    [sidecar : (__tl_dyn-array i64) (struct-get cache unsafe-flags)]
+    [capacity : i64 (array.length values)]
+    [count : i64 (array-ref sidecar capacity)]
     [read-index : i64 0]
     [write-index : i64 0]
     (begin
       (while (< read-index count)
         (let
-          [name-id : i64 (array-ref names read-index)]
-          [value-slot : i64 (array-ref slots read-index)]
+          [name-id : i64 (array-ref sidecar (+ capacity 1 read-index))]
+          [value-slot : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
           (begin
             (if (and (>= value-slot 0) (< value-slot (array.length values)))
               (let
@@ -96533,39 +96321,32 @@
                   (let
                     [binding-ctx : TcContext
                       (tc-top-env-binding-context ctx name-id)]
-                    (if (tc-type-has-new-resolution? binding-ctx before)
-                      (let
-                        [after : ast.AstType
-                          (tc-resolve-type binding-ctx before)]
+                    [after : ast.AstType (tc-resolve-type binding-ctx before)]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (set!
+                          compiler-tc-walk-splice-env-reresolve-candidates
+                          (+ compiler-tc-walk-splice-env-reresolve-candidates 1)))
+                      (if (ast.ast-type-eq? before after)
+                        unit
                         (begin
+                          (array-set! values value-slot after)
                           (cfg
                             compile-profile
                             (set!
-                              compiler-tc-walk-splice-env-reresolve-candidates
+                              compiler-tc-walk-splice-env-reresolve-updates
                               (+
-                                compiler-tc-walk-splice-env-reresolve-candidates
-                                1)))
-                          (if (ast.ast-type-eq? before after)
-                            unit
-                            (begin
-                              (array-set! values value-slot after)
-                              (cfg
-                                compile-profile
-                                (set!
-                                  compiler-tc-walk-splice-env-reresolve-updates
-                                  (+
-                                    compiler-tc-walk-splice-env-reresolve-updates
-                                    1)))))
-                          (if (tc-type-needs-resolution? after)
-                            (begin
-                              (array-set! names write-index name-id)
-                              (array-set! slots write-index value-slot)
-                              (set! write-index (+ write-index 1)))
-                            unit)))
-                      (begin
-                        (array-set! names write-index name-id)
-                        (array-set! slots write-index value-slot)
-                        (set! write-index (+ write-index 1)))))
+                                compiler-tc-walk-splice-env-reresolve-updates
+                                1)))))
+                      (if (tc-type-needs-resolution? after)
+                        (begin
+                          (array-set!
+                            sidecar
+                            (+ capacity 1 write-index)
+                            name-id)
+                          (set! write-index (+ write-index 1)))
+                        unit)))
                   unit))
               (io.panic
                 (string.append
@@ -96576,9 +96357,7 @@
                       " / "
                       (string.int->string (array.length values)))))))
             (set! read-index (+ read-index 1)))))
-      (set! (struct-get cache resolution-count) write-index)
-      (unsafe
-        (ptr-write! cache-ptr cache))
+      (array-set! sidecar capacity write-index)
       (cfg
         compile-profile
         (set!
@@ -96592,7 +96371,6 @@
     [head : i64 (struct-get env head)]
     [done : bool false]
     (begin
-      (tc-top-env-resolution-memo-begin!)
       (cfg
         compile-profile
         (set!
@@ -96611,11 +96389,11 @@
                 (tc-type-env-binding-ptr store-handle head)))]
           [else
             (let
-              [cache-ptr : (MutPtr TcTypeEnvCache)
+              [cache-ptr : (Ptr TcTypeEnvCache)
                 (unsafe
                   (int->ptr
                     (cast (tc-type-env-cache-index head) : u64)
-                    : (MutPtr TcTypeEnvCache)))]
+                    : (Ptr TcTypeEnvCache)))]
               [cache : TcTypeEnvCache
                 (unsafe
                   (ptr-read (ptr-cast cache-ptr : (Ptr TcTypeEnvCache))))]

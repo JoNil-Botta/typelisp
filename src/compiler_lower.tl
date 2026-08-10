@@ -41655,7 +41655,25 @@
     [(ast.AstExpr.SpmdProgramIndex) true]
     [_ false]))
 
-(define (lower-dynamic-array-var
+;; SPMD plans historically carried a dynamic-array descriptor variable id.
+;; Native Slice references are register groups instead: word 0 is the data
+;; pointer and word 1 is the length. Keep the compact plan representation by
+;; tagging Slice ids as `-(id + 1)`; function-local IR ids are non-negative.
+(define (lower-sequence-var-slice [var-id : i64]) : i64
+  (- 0 (+ var-id 1)))
+
+(define (lower-sequence-var-slice? [sequence-var : i64]) : bool
+  (< sequence-var 0))
+
+(define (lower-sequence-var-id [sequence-var : i64]) : i64
+  (if (lower-sequence-var-slice? sequence-var)
+    (- 0 (+ sequence-var 1))
+    sequence-var))
+
+(define (lower-sequence-ir-value [sequence-var : i64]) : ir.CompilerIrValue
+  (ir.CompilerIrValue.Var (lower-sequence-var-id sequence-var)))
+
+(define (lower-contiguous-sequence-var
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
@@ -41664,11 +41682,11 @@
     [(ast.AstExpr.Spanned inner-box _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-dynamic-array-var ctx env type-env inner))]
+        (lower-contiguous-sequence-var ctx env type-env inner))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-dynamic-array-var ctx env type-env inner))]
+        (lower-contiguous-sequence-var ctx env type-env inner))]
     [(ast.AstExpr.Var name)
       (let
         [var-id : i64
@@ -41693,11 +41711,12 @@
                         var-id
                         (tc_core.tc-type-without-regions
                           (tc_core.tc-context-type-get ctx elem-ty)))]
-                    ;; Slice references use the same two-word data/length
-                    ;; descriptor consumed by contiguous SPMD load plans.
+                    ;; Slice references are tagged here so emitters extract the
+                    ;; two words from the register group instead of loading a
+                    ;; dynamic-array descriptor through the data pointer.
                     [(ast.AstType.Slice elem-ty)
                       (LowerMaybeArrayVar.Some
-                        var-id
+                        (lower-sequence-var-slice var-id)
                         (tc_core.tc-type-without-regions
                           (tc_core.tc-context-type-get ctx elem-ty)))]
                     [_ (LowerMaybeArrayVar.No)])]
@@ -41711,7 +41730,7 @@
                           (tc_core.tc-context-type-get ctx elem-ty)))]
                     [(ast.AstType.Slice elem-ty)
                       (LowerMaybeArrayVar.Some
-                        var-id
+                        (lower-sequence-var-slice var-id)
                         (tc_core.tc-type-without-regions
                           (tc_core.tc-context-type-get ctx elem-ty)))]
                     [_ (LowerMaybeArrayVar.No)])]
@@ -41736,7 +41755,7 @@
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
         [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
         (if (lower-expr-is-var? ctx idx index)
-          (lower-dynamic-array-var ctx env type-env arr)
+          (lower-contiguous-sequence-var ctx env type-env arr)
           (LowerMaybeArrayVar.No)))]
     [_ (LowerMaybeArrayVar.No)]))
 
@@ -41757,7 +41776,7 @@
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
         [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
         (if (lower-expr-is-program-index? ctx idx)
-          (lower-dynamic-array-var ctx env type-env arr)
+          (lower-contiguous-sequence-var ctx env type-env arr)
           (LowerMaybeArrayVar.No)))]
     [_ (LowerMaybeArrayVar.No)]))
 
@@ -42850,7 +42869,7 @@
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
         [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
         (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
-          (match (lower-dynamic-array-var ctx env type-env arr)
+          (match (lower-contiguous-sequence-var ctx env type-env arr)
             [(LowerMaybeArrayVar.Some _ elem-ty)
               (if (lower-type-bool? elem-ty)
                 (lower-avx512-bool-lanes mode)
@@ -42863,7 +42882,7 @@
         [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
-          (match (lower-dynamic-array-var ctx env type-env arr)
+          (match (lower-contiguous-sequence-var ctx env type-env arr)
             [(LowerMaybeArrayVar.Some _ elem-ty)
               (if (lower-type-bool? elem-ty)
                 (let
@@ -44068,7 +44087,7 @@
   [idx : ast.AstExpr]) : bool
   (and
     (>= (lower-masked-vector-index-offset ctx index idx) 0)
-    (match (lower-dynamic-array-var ctx env type-env arr)
+    (match (lower-contiguous-sequence-var ctx env type-env arr)
       [(LowerMaybeArrayVar.Some _ elem-ty) (lower-spmd-enum-type? elem-ty)]
       [(LowerMaybeArrayVar.No) false])))
 
@@ -44535,7 +44554,7 @@
   [arr : ast.AstExpr]
   [idx : ast.AstExpr]) : bool
   (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
-    (match (lower-dynamic-array-var ctx env type-env arr)
+    (match (lower-contiguous-sequence-var ctx env type-env arr)
       [(LowerMaybeArrayVar.Some _ elem-ty) (lower-type-bool? elem-ty)]
       [(LowerMaybeArrayVar.No) false])
     false))
@@ -45130,7 +45149,7 @@
         [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
         [idx-offset : i64 (lower-masked-vector-index-offset ctx index idx)]
         (if (>= idx-offset 0)
-          (match (lower-dynamic-array-var ctx env type-env arr)
+          (match (lower-contiguous-sequence-var ctx env type-env arr)
             [(LowerMaybeArrayVar.Some var _)
               (lower-array-var-set-add
                 (lower-array-var-set-empty)
@@ -45146,7 +45165,7 @@
         [idx-offset : i64 (lower-masked-vector-index-offset ctx index idx)]
         (lower-array-var-set-merge
           (if (>= idx-offset 0)
-            (match (lower-dynamic-array-var ctx env type-env arr)
+            (match (lower-contiguous-sequence-var ctx env type-env arr)
               [(LowerMaybeArrayVar.Some var _)
                 (lower-array-var-set-add
                   (lower-array-var-set-empty)
@@ -46049,7 +46068,7 @@
         [set-index : ast.AstExpr (lower-context-expr-get ctx set-index-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         (if (lower-expr-is-var? ctx set-index index)
-          (match (lower-dynamic-array-var ctx env type-env arr)
+          (match (lower-contiguous-sequence-var ctx env type-env arr)
             [(LowerMaybeArrayVar.Some _ dst-elem)
               (and
                 (> (lower-simd-lanes-for-elem mode dst-elem) 0)
@@ -46102,7 +46121,7 @@
         [set-index : ast.AstExpr (lower-context-expr-get ctx set-index-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         (if (lower-expr-is-var? ctx set-index index)
-          (match (lower-dynamic-array-var ctx env type-env arr)
+          (match (lower-contiguous-sequence-var ctx env type-env arr)
             [(LowerMaybeArrayVar.Some _ dst-elem)
               (if (and
                 (> (lower-simd-lanes-for-elem mode dst-elem) 0)
@@ -46238,7 +46257,7 @@
       (let
         [source : ast.AstExpr (lower-context-expr-get ctx source-box)]
         [indexes : ast.AstExpr (lower-context-expr-get ctx indexes-box)]
-        (match (lower-dynamic-array-var ctx env type-env source)
+        (match (lower-contiguous-sequence-var ctx env type-env source)
           [(LowerMaybeArrayVar.Some source-var source-elem)
             (match (lower-array-ref-var-for-index
               ctx
@@ -46680,7 +46699,7 @@
         [set-index : ast.AstExpr (lower-context-expr-get ctx set-index-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         (if (lower-expr-is-var? ctx set-index index)
-          (match (lower-dynamic-array-var ctx env type-env arr)
+          (match (lower-contiguous-sequence-var ctx env type-env arr)
             [(LowerMaybeArrayVar.Some dst-var dst-elem)
               (let
                 [lanes : i64 (lower-simd-lanes-for-elem mode dst-elem)]
@@ -46895,7 +46914,7 @@
       (if (and
         (lower-expr-is-var? ctx (lower-context-expr-get ctx index-box) index)
         (lower-expr-is-var? ctx (lower-context-expr-get ctx value-box) prefix))
-        (lower-dynamic-array-var
+        (lower-contiguous-sequence-var
           ctx
           env
           type-env
@@ -47057,6 +47076,67 @@
   ;; repeated SIMD accesses to the same base.
   (lower-emit-load state arr-value (ast.AstType.U64)))
 
+(define (lower-sequence-len-value [state : LowerState] [sequence-var : i64]) : LowerExpr
+  (if (lower-sequence-var-slice? sequence-var)
+    (lower-emit-word
+      state
+      (lower-sequence-ir-value sequence-var)
+      1
+      (ast.AstType.I64))
+    (lower-array-len-value state (lower-sequence-ir-value sequence-var))))
+
+(define (lower-sequence-data-pointer-value
+  [state : LowerState]
+  [sequence-var : i64]) : LowerExpr
+  (if (lower-sequence-var-slice? sequence-var)
+    (lower-emit-word
+      state
+      (lower-sequence-ir-value sequence-var)
+      0
+      (ast.AstType.U64))
+    (lower-array-data-pointer-value
+      state
+      (lower-sequence-ir-value sequence-var))))
+
+(define (lower-sequence-element-addr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [sequence-var : i64]
+  [idx-value : ir.CompilerIrValue]
+  [idx-ty : ast.AstType]
+  [elem-ty : ast.AstType]) : LowerExpr
+  (if (lower-sequence-var-slice? sequence-var)
+    (match (lower-sequence-data-pointer-value state sequence-var)
+      [(LowerExpr.Expr data-state data-ptr _)
+        (match (lower-sequence-len-value data-state sequence-var)
+          [(LowerExpr.Expr len-state length-i64 _)
+            (match (lower-emit-bounds-operand len-state idx-value idx-ty)
+              [(LowerExpr.Expr index-state idx-u _)
+                (match (lower-emit-cast
+                  index-state
+                  idx-value
+                  idx-ty
+                  (ast.AstType.I64))
+                  [(LowerExpr.Expr cast-state idx-off _)
+                    (match (lower-emit-bounds-operand
+                      cast-state
+                      length-i64
+                      (ast.AstType.I64))
+                      [(LowerExpr.Expr bounds-state length-u _)
+                        (lower-emit-elem-addr-gep
+                          ctx
+                          (lower-emit-bounds-check bounds-state idx-u length-u)
+                          data-ptr
+                          idx-off
+                          elem-ty)])])])])])
+    (lower-array-element-addr
+      ctx
+      state
+      (lower-sequence-ir-value sequence-var)
+      idx-value
+      idx-ty
+      elem-ty)))
+
 (define (lower-emit-vector-load-data
   [state : LowerState]
   [data-ptr : ir.CompilerIrValue]
@@ -47079,6 +47159,16 @@
   [lanes : i64]
   [elem-ty : ast.AstType]) : LowerExpr
   (match (lower-array-data-pointer-value state base)
+    [(LowerExpr.Expr data-state data-ptr _)
+      (lower-emit-vector-load-data data-state data-ptr index lanes elem-ty)]))
+
+(define (lower-emit-sequence-vector-load
+  [state : LowerState]
+  [sequence-var : i64]
+  [index : ir.CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : ast.AstType]) : LowerExpr
+  (match (lower-sequence-data-pointer-value state sequence-var)
     [(LowerExpr.Expr data-state data-ptr _)
       (lower-emit-vector-load-data data-state data-ptr index lanes elem-ty)]))
 
@@ -47249,6 +47339,23 @@
   (lower-state-emit
     state
     (ir.ir-instr-vector-store data-ptr index value lanes elem-ty)))
+
+(define (lower-emit-sequence-vector-store
+  [state : LowerState]
+  [sequence-var : i64]
+  [index : ir.CompilerIrValue]
+  [value : ir.CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : ast.AstType]) : LowerState
+  (match (lower-sequence-data-pointer-value state sequence-var)
+    [(LowerExpr.Expr data-state data-ptr _)
+      (lower-emit-vector-store-data
+        data-state
+        data-ptr
+        index
+        value
+        lanes
+        elem-ty)]))
 
 (define (lower-emit-vector-binop
   [state : LowerState]
@@ -47678,7 +47785,7 @@
   [state : LowerState]
   [array-var : i64]
   [offset : i64]) : LowerExpr
-  (match (lower-array-len-value state (ir.CompilerIrValue.Var array-var))
+  (match (lower-sequence-len-value state array-var)
     [(LowerExpr.Expr len-state array-len _)
       (if (> offset 0)
         (let
@@ -48124,10 +48231,10 @@
   [acc-var : i64]
   [array-var : i64]
   [elem-ty : ast.AstType]) : ResultLowerExpr
-  (match (lower-array-element-addr
+  (match (lower-sequence-element-addr
     ctx
     state
-    (ir.CompilerIrValue.Var array-var)
+    array-var
     (ir.CompilerIrValue.Var index-var)
     index-ty
     elem-ty)
@@ -48275,9 +48382,9 @@
               (begin
                 (set! s next-s)
                 (set! full-mask value))])
-          (match (lower-emit-predicated-load
+          (match (lower-emit-sequence-predicated-load
             s
-            (ir.CompilerIrValue.Var input-var)
+            input-var
             (ir.CompilerIrValue.Var index-var)
             full-mask
             lanes
@@ -48286,9 +48393,9 @@
               (begin
                 (set! s next-s)
                 (set! chunk value))]))
-        (match (lower-emit-vector-load
+        (match (lower-emit-sequence-vector-load
           s
-          (ir.CompilerIrValue.Var input-var)
+          input-var
           (ir.CompilerIrValue.Var index-var)
           lanes
           elem-ty)
@@ -48314,9 +48421,9 @@
       (if (lower-type-bool? elem-ty)
         (set!
           s
-          (lower-emit-predicated-store
+          (lower-emit-sequence-predicated-store
             s
-            (ir.CompilerIrValue.Var output-var)
+            output-var
             (ir.CompilerIrValue.Var index-var)
             prefix-value
             full-mask
@@ -48324,9 +48431,9 @@
             elem-ty))
         (set!
           s
-          (lower-emit-vector-store
+          (lower-emit-sequence-vector-store
             s
-            (ir.CompilerIrValue.Var output-var)
+            output-var
             (ir.CompilerIrValue.Var index-var)
             prefix-value
             lanes
@@ -48344,9 +48451,7 @@
       ;; `vector-limit` already proves the whole output gang is in bounds.
       ;; Reload the stored final lane through its raw data pointer so carry
       ;; handoff does not add a redundant scalar bounds-check block.
-      (match (lower-array-data-pointer-value
-        s
-        (ir.CompilerIrValue.Var output-var))
+      (match (lower-sequence-data-pointer-value s output-var)
         [(LowerExpr.Expr data-state data-ptr _)
           (match (lower-emit-elem-addr-gep
             ctx
@@ -48820,9 +48925,7 @@
                   (begin
                     (set! s next-s)
                     (set! vector-start-ok value))])
-              (match (lower-array-data-pointer-value
-                s
-                (ir.CompilerIrValue.Var array-var))
+              (match (lower-sequence-data-pointer-value s array-var)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
@@ -49410,6 +49513,42 @@
     state
     (ir.ir-instr-predicated-store data-ptr index value mask lanes elem-ty)))
 
+(define (lower-emit-sequence-predicated-load
+  [state : LowerState]
+  [sequence-var : i64]
+  [index : ir.CompilerIrValue]
+  [mask : ir.CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : ast.AstType]) : LowerExpr
+  (match (lower-sequence-data-pointer-value state sequence-var)
+    [(LowerExpr.Expr data-state data-ptr _)
+      (lower-emit-predicated-load-data
+        data-state
+        data-ptr
+        index
+        mask
+        lanes
+        elem-ty)]))
+
+(define (lower-emit-sequence-predicated-store
+  [state : LowerState]
+  [sequence-var : i64]
+  [index : ir.CompilerIrValue]
+  [value : ir.CompilerIrValue]
+  [mask : ir.CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : ast.AstType]) : LowerState
+  (match (lower-sequence-data-pointer-value state sequence-var)
+    [(LowerExpr.Expr data-state data-ptr _)
+      (lower-emit-predicated-store-data
+        data-state
+        data-ptr
+        index
+        value
+        mask
+        lanes
+        elem-ty)]))
+
 (define (lower-emit-spmd-broadcast-lane-check
   [state : LowerState]
   [lane : ir.CompilerIrValue]
@@ -49439,10 +49578,10 @@
     lane
     (ast.AstType.I64))
     [(LowerExpr.Expr index-state source-index _)
-      (match (lower-array-element-addr
+      (match (lower-sequence-element-addr
         ctx
         index-state
-        (ir.CompilerIrValue.Var array-var)
+        array-var
         source-index
         (ast.AstType.I64)
         elem-ty)
@@ -49693,9 +49832,7 @@
         (let
           [array-var : i64 (array-ref (struct-get arrays vars) index)]
           (begin
-            (match (lower-array-data-pointer-value
-              s
-              (ir.CompilerIrValue.Var array-var))
+            (match (lower-sequence-data-pointer-value s array-var)
               [(LowerExpr.Expr next-s data-ptr _)
                 (begin
                   (set! s next-s)
@@ -49770,16 +49907,16 @@
     [(LowerVectorMapValue.Array array-var)
       (match emit-mode
         [(LowerVectorMapEmitMode.Full)
-          (lower-emit-vector-load
+          (lower-emit-sequence-vector-load
             state
-            (ir.CompilerIrValue.Var array-var)
+            array-var
             index
             lanes
             (ast.AstType.I64))]
         [(LowerVectorMapEmitMode.Predicated _ mask)
-          (lower-emit-predicated-load
+          (lower-emit-sequence-predicated-load
             state
-            (ir.CompilerIrValue.Var array-var)
+            array-var
             index
             mask
             lanes
@@ -50069,22 +50206,20 @@
   [plan : LowerVectorMapValue]) : LowerExpr
   (match plan
     [(LowerVectorMapValue.Array array-var)
-      (lower-emit-vector-load
+      (lower-emit-sequence-vector-load
         state
-        (ir.CompilerIrValue.Var array-var)
+        array-var
         (ir.CompilerIrValue.Var index-var)
         lanes
         elem-ty)]
     [(LowerVectorMapValue.Gather source-var indexes-var)
-      (match (lower-array-len-value state (ir.CompilerIrValue.Var source-var))
+      (match (lower-sequence-len-value state source-var)
         [(LowerExpr.Expr len-state source-len _)
-          (match (lower-array-data-pointer-value
-            len-state
-            (ir.CompilerIrValue.Var source-var))
+          (match (lower-sequence-data-pointer-value len-state source-var)
             [(LowerExpr.Expr source-state source-data _)
-              (match (lower-array-data-pointer-value
+              (match (lower-sequence-data-pointer-value
                 source-state
-                (ir.CompilerIrValue.Var indexes-var))
+                indexes-var)
                 [(LowerExpr.Expr indexes-state indexes-data _)
                   (match (lower-emit-gather-lane-checks
                     ctx
@@ -50104,22 +50239,18 @@
                         lanes
                         elem-ty)])])])])]
     [(LowerVectorMapValue.GatherLaneOffset source-var offsets-var)
-      (match (lower-array-len-value state (ir.CompilerIrValue.Var source-var))
+      (match (lower-sequence-len-value state source-var)
         [(LowerExpr.Expr len-state source-len _)
-          (match (lower-array-data-pointer-value
-            len-state
-            (ir.CompilerIrValue.Var source-var))
+          (match (lower-sequence-data-pointer-value len-state source-var)
             [(LowerExpr.Expr source-state source-data _)
-              (match (lower-array-len-value
-                source-state
-                (ir.CompilerIrValue.Var offsets-var))
+              (match (lower-sequence-len-value source-state offsets-var)
                 [(LowerExpr.Expr offsets-len-state offsets-len _)
-                  (match (lower-array-data-pointer-value
+                  (match (lower-sequence-data-pointer-value
                     (lower-emit-bounds-check
                       offsets-len-state
                       (ir.CompilerIrValue.I64 (- lanes 1))
                       offsets-len)
-                    (ir.CompilerIrValue.Var offsets-var))
+                    offsets-var)
                     [(LowerExpr.Expr offsets-state offsets-data _)
                       (match (lower-emit-gather-lane-offset-checks
                         offsets-state
@@ -50138,14 +50269,14 @@
                             lanes
                             elem-ty)])])])])])]
     [(LowerVectorMapValue.LaneArray array-var)
-      (match (lower-array-len-value state (ir.CompilerIrValue.Var array-var))
+      (match (lower-sequence-len-value state array-var)
         [(LowerExpr.Expr len-state array-len _)
-          (lower-emit-vector-load
+          (lower-emit-sequence-vector-load
             (lower-emit-bounds-check
               len-state
               (ir.CompilerIrValue.I64 (- lanes 1))
               array-len)
-            (ir.CompilerIrValue.Var array-var)
+            array-var
             (ir.CompilerIrValue.I64 0)
             lanes
             elem-ty)])]
@@ -50488,9 +50619,9 @@
   [plan : LowerVectorMapValue]) : LowerExpr
   (match plan
     [(LowerVectorMapValue.Array array-var)
-      (lower-emit-predicated-load
+      (lower-emit-sequence-predicated-load
         state
-        (ir.CompilerIrValue.Var array-var)
+        array-var
         (ir.CompilerIrValue.Var index-var)
         mask
         lanes
@@ -50515,13 +50646,11 @@
             (ir.CompilerIrValue.I64 1)
             (ast.AstType.I64))
             [(LowerExpr.Expr last-state last-lane _)
-              (match (lower-array-len-value
-                last-state
-                (ir.CompilerIrValue.Var array-var))
+              (match (lower-sequence-len-value last-state array-var)
                 [(LowerExpr.Expr len-state array-len _)
-                  (lower-emit-predicated-load
+                  (lower-emit-sequence-predicated-load
                     (lower-emit-bounds-check len-state last-lane array-len)
-                    (ir.CompilerIrValue.Var array-var)
+                    array-var
                     (ir.CompilerIrValue.I64 0)
                     mask
                     lanes
@@ -50688,30 +50817,30 @@
   [plan : LowerVectorMapValue]) : LowerExpr
   (match plan
     [(LowerVectorMapValue.Array array-var)
-      (match (lower-array-element-addr
+      (match (lower-sequence-element-addr
         ctx
         state
-        (ir.CompilerIrValue.Var array-var)
+        array-var
         (ir.CompilerIrValue.Var current-index-var)
         (ast.AstType.I64)
         elem-ty)
         [(LowerExpr.Expr addr-state elem-ptr _)
           (lower-emit-load addr-state elem-ptr elem-ty)])]
     [(LowerVectorMapValue.Gather source-var indexes-var)
-      (match (lower-array-element-addr
+      (match (lower-sequence-element-addr
         ctx
         state
-        (ir.CompilerIrValue.Var indexes-var)
+        indexes-var
         (ir.CompilerIrValue.Var current-index-var)
         (ast.AstType.I64)
         (ast.AstType.I64))
         [(LowerExpr.Expr index-addr-state index-ptr _)
           (match (lower-emit-load index-addr-state index-ptr (ast.AstType.I64))
             [(LowerExpr.Expr index-state gathered-index _)
-              (match (lower-array-element-addr
+              (match (lower-sequence-element-addr
                 ctx
                 index-state
-                (ir.CompilerIrValue.Var source-var)
+                source-var
                 gathered-index
                 (ast.AstType.I64)
                 elem-ty)
@@ -50724,7 +50853,7 @@
       ;; iteration to lane zero.
       (match (lower-state-alloc-var state)
         [(LowerAlloc.Alloc lane-alloc-state lane-var)
-          (match (lower-array-element-addr
+          (match (lower-sequence-element-addr
             ctx
             (lower-state-emit
               lane-alloc-state
@@ -50734,7 +50863,7 @@
                 (ir.CompilerIrValue.Var current-index-var)
                 (ir.CompilerIrValue.Var base-index-var)
                 (ast.AstType.I64)))
-            (ir.CompilerIrValue.Var offsets-var)
+            offsets-var
             (ir.CompilerIrValue.Var lane-var)
             (ast.AstType.I64)
             (ast.AstType.I64))
@@ -50751,10 +50880,10 @@
                     offset
                     (ast.AstType.I64))
                     [(LowerExpr.Expr index-state gathered-index _)
-                      (match (lower-array-element-addr
+                      (match (lower-sequence-element-addr
                         ctx
                         index-state
-                        (ir.CompilerIrValue.Var source-var)
+                        source-var
                         gathered-index
                         (ast.AstType.I64)
                         elem-ty)
@@ -50768,10 +50897,10 @@
         (ir.CompilerIrValue.Var base-index-var)
         (ast.AstType.I64))
         [(LowerExpr.Expr lane-state lane-index _)
-          (match (lower-array-element-addr
+          (match (lower-sequence-element-addr
             ctx
             lane-state
-            (ir.CompilerIrValue.Var array-var)
+            array-var
             lane-index
             (ast.AstType.I64)
             elem-ty)
@@ -50786,10 +50915,10 @@
         lane
         (ast.AstType.I64))
         [(LowerExpr.Expr index-state source-index _)
-          (match (lower-array-element-addr
+          (match (lower-sequence-element-addr
             ctx
             index-state
-            (ir.CompilerIrValue.Var array-var)
+            array-var
             source-index
             (ast.AstType.I64)
             elem-ty)
@@ -50978,10 +51107,10 @@
                       (begin
                         (set! s next-s)
                         (set! scalar-value value))])
-                  (match (lower-array-element-addr
+                  (match (lower-sequence-element-addr
                     ctx
                     s
-                    (ir.CompilerIrValue.Var dst-array)
+                    dst-array
                     (ir.CompilerIrValue.Var tail-var)
                     (ast.AstType.I64)
                     elem-ty)
@@ -51097,9 +51226,9 @@
                     [(LowerMaybeIrValue.No)
                       (set!
                         s
-                        (lower-emit-vector-store
+                        (lower-emit-sequence-vector-store
                           s
-                          (ir.CompilerIrValue.Var dst-array)
+                          dst-array
                           (ir.CompilerIrValue.Var index-var)
                           (array-ref results store-index)
                           lanes
@@ -51141,9 +51270,7 @@
           (begin
             (match (lower-predicated-index-plus-offset s end-value offset)
               [(LowerExpr.Expr index-state limit-index _)
-                (match (lower-array-len-value
-                  index-state
-                  (ir.CompilerIrValue.Var array-var))
+                (match (lower-sequence-len-value index-state array-var)
                   [(LowerExpr.Expr len-state array-len _)
                     (match (lower-vector-loop-i64-compare
                       len-state
@@ -51267,7 +51394,7 @@
 
 (define (lower-emit-active-load
   [state : LowerState]
-  [base : ir.CompilerIrValue]
+  [sequence-var : i64]
   [index : ir.CompilerIrValue]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
@@ -51275,16 +51402,28 @@
   (if (lower-type-bool? elem-ty)
     (match (lower-masked-active-mask-value state active-mask lanes)
       [(LowerExpr.Expr mask-state mask _)
-        (lower-emit-predicated-load mask-state base index mask lanes elem-ty)])
+        (lower-emit-sequence-predicated-load
+          mask-state
+          sequence-var
+          index
+          mask
+          lanes
+          elem-ty)])
     (match active-mask
       [(ir.CompilerIrMaybeValue.No)
-        (lower-emit-vector-load state base index lanes elem-ty)]
+        (lower-emit-sequence-vector-load state sequence-var index lanes elem-ty)]
       [(ir.CompilerIrMaybeValue.Some mask)
-        (lower-emit-predicated-load state base index mask lanes elem-ty)])))
+        (lower-emit-sequence-predicated-load
+          state
+          sequence-var
+          index
+          mask
+          lanes
+          elem-ty)])))
 
 (define (lower-emit-active-store
   [state : LowerState]
-  [base : ir.CompilerIrValue]
+  [sequence-var : i64]
   [index : ir.CompilerIrValue]
   [value : ir.CompilerIrValue]
   [active-mask : ir.CompilerIrMaybeValue]
@@ -51293,9 +51432,9 @@
   (if (lower-type-bool? elem-ty)
     (match (lower-masked-active-mask-value state active-mask lanes)
       [(LowerExpr.Expr mask-state mask _)
-        (lower-emit-predicated-store
+        (lower-emit-sequence-predicated-store
           mask-state
-          base
+          sequence-var
           index
           value
           mask
@@ -51303,9 +51442,22 @@
           elem-ty)])
     (match active-mask
       [(ir.CompilerIrMaybeValue.No)
-        (lower-emit-vector-store state base index value lanes elem-ty)]
+        (lower-emit-sequence-vector-store
+          state
+          sequence-var
+          index
+          value
+          lanes
+          elem-ty)]
       [(ir.CompilerIrMaybeValue.Some mask)
-        (lower-emit-predicated-store state base index value mask lanes elem-ty)])))
+        (lower-emit-sequence-predicated-store
+          state
+          sequence-var
+          index
+          value
+          mask
+          lanes
+          elem-ty)])))
 
 (define (lower-avx512-masked-index-value
   [ctx : tc_core.TcContext]
@@ -51418,7 +51570,7 @@
   [expr : ast.AstExpr]
   [arr : ast.AstExpr]
   [idx : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-dynamic-array-var ctx env type-env arr)
+  (match (lower-contiguous-sequence-var ctx env type-env arr)
     [(LowerMaybeArrayVar.Some array-var elem-ty)
       (let
         [lane-ty : ast.AstType (tc_core.tc-type-without-regions elem-ty)]
@@ -51430,7 +51582,7 @@
                   (ResultLowerExpr.Ok
                     (lower-emit-active-load
                       idx-state
-                      (ir.CompilerIrValue.Var array-var)
+                      array-var
                       idx-value
                       active-mask
                       lanes
@@ -51451,7 +51603,7 @@
                     (ResultLowerExpr.Ok
                       (lower-emit-active-load
                         idx-state
-                        (ir.CompilerIrValue.Var array-var)
+                        array-var
                         idx-value
                         active-mask
                         lanes
@@ -51463,7 +51615,7 @@
     [(LowerMaybeArrayVar.No)
       (lower-avx512-masked-unsupported
         expr
-        "non-dynamic-array reads inside masked branches")]))
+        "non-contiguous sequence reads inside masked branches")]))
 
 (define (lower-avx512-masked-array-set
   [ctx : tc_core.TcContext]
@@ -51479,7 +51631,7 @@
   [arr : ast.AstExpr]
   [idx : ast.AstExpr]
   [value : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-dynamic-array-var ctx env type-env arr)
+  (match (lower-contiguous-sequence-var ctx env type-env arr)
     [(LowerMaybeArrayVar.Some array-var elem-ty)
       (let
         [lane-ty : ast.AstType (tc_core.tc-type-without-regions elem-ty)]
@@ -51507,7 +51659,7 @@
                             (LowerExpr.Expr
                               (lower-emit-active-store
                                 value-state
-                                (ir.CompilerIrValue.Var array-var)
+                                array-var
                                 idx-value
                                 value-ir
                                 active-mask
@@ -51549,7 +51701,7 @@
                               (LowerExpr.Expr
                                 (lower-emit-active-store
                                   value-state
-                                  (ir.CompilerIrValue.Var array-var)
+                                  array-var
                                   idx-value
                                   value-ir
                                   active-mask
@@ -51566,7 +51718,7 @@
     [(LowerMaybeArrayVar.No)
       (lower-avx512-masked-unsupported
         expr
-        "non-dynamic-array writes inside masked branches")]))
+        "non-contiguous sequence writes inside masked branches")]))
 
 ;; Keep a varying enum lane as the address of the gang's first contiguous
 ;; element. Tag and payload vectors are assembled below from active-lane-only
@@ -51647,7 +51799,7 @@
       (let
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
         [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        (match (lower-dynamic-array-var ctx env type-env arr)
+        (match (lower-contiguous-sequence-var ctx env type-env arr)
           [(LowerMaybeArrayVar.Some array-var elem-ty)
             (let
               [resolved : ast.AstType
@@ -51663,9 +51815,9 @@
                   [(ResultLowerExpr.Ok idx-lowered)
                     (match idx-lowered
                       [(LowerExpr.Expr idx-state idx-value _)
-                        (match (lower-array-data-pointer-value
+                        (match (lower-sequence-data-pointer-value
                           idx-state
-                          (ir.CompilerIrValue.Var array-var))
+                          array-var)
                           [(LowerExpr.Expr data-state data-ptr _)
                             (match (lower-emit-elem-addr-gep
                               ctx
@@ -56665,9 +56817,9 @@
                 (begin
                   (set!
                     s
-                    (lower-emit-predicated-store
+                    (lower-emit-sequence-predicated-store
                       s
-                      (ir.CompilerIrValue.Var dst-array)
+                      dst-array
                       (ir.CompilerIrValue.Var index-var)
                       (array-ref results store-index)
                       mask

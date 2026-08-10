@@ -4359,14 +4359,29 @@ runtime-sized buffers, reading through `array-ref` and writing through
   Numeric `=`, `!=`, `<`, `<=`, `>`, and `>=` maps produce private masks that
   are stored through `bool` array lanes.
 
-Runtime-sized SPMD inputs and outputs need not be spelled as unsized
-`(Array T)` parameters: vector/slice-style sources and mutable destinations
-borrow storage instead of copying collections. Generated vector
-`slots`/`slots-mut` accessors and generated full-slice `slots` fields may be
-borrowed into inferred local bindings before a `foreach` body; callers do not
-name either the compatibility `(Array T)` spelling or the compiler-private
-dynamic backing type. The body then uses ordinary `array-ref`/`array-set!`
-over those borrowed buffers.
+Runtime-sized SPMD inputs and outputs need not use compatibility `(Array T)`
+parameters. Native `(& owner (Slice T))` and `(&mut owner (Slice T))` values
+are first-class contiguous SPMD sources and destinations, including checked
+subviews of fixed arrays and generated vectors. A Slice's data pointer is the
+start of its logical zero-based range, and its length supplies the bounds for
+every logical access; a nonzero owner offset is therefore invisible to the
+`foreach` body. Empty ranges, sub-gang ranges, full gangs, multiple gangs, and
+partial tails preserve the scalar reference behavior.
+
+Shared Slice references permit reads. Mutable Slice references permit reads
+and the same statically lane-disjoint contiguous writes as other SPMD buffers.
+The ordinary borrow checker continues to enforce owner provenance, exclusive
+mutable access, and non-escape rules at call and view boundaries. SIMD modes
+vectorize only the proven contiguous access shapes and the explicitly
+supported gather-only read surface above; accepting a Slice does not infer an
+arbitrary scatter operation. Unsupported varying control or alias shapes are
+rejected with a diagnostic. Ordinary scalar `for` and `while` loops are not
+implicitly converted into SPMD or SIMD loops.
+
+Generated vector `slots`/`slots-mut` accessors and generated full-slice `slots`
+fields may likewise be borrowed into inferred local bindings before a
+`foreach` body. Callers do not name the compiler-private dynamic backing type;
+the body uses ordinary `array-ref`/`array-set!` over the borrowed view.
 
 Uniform and varying rules:
 
@@ -7030,8 +7045,10 @@ in documentation passes.
 - SPMD: scalar reference lowering for `foreach`, `spmd-reduce`,
   `spmd-scan`, `spmd-broadcast`, `spmd-shuffle`, lane identity forms,
   masked varying `if`, varying `while`, and varying `match` (enum tags and
-  payload bindings). AVX2/AVX-512 contiguous `foreach` map/zip subsets over
-  all scalar integer and float lane types, including straight-line
+  payload bindings), with native borrowed Slice data/length lowering for
+  contiguous scalar, AVX2, and AVX-512 sources and destinations.
+  AVX2/AVX-512 contiguous `foreach` map/zip subsets over all scalar integer and
+  float lane types, including straight-line
   multi-destination maps with one shared lane shape, distinct destinations,
   and no destination read by a fused value; eligible vectorized
   `spmd-reduce` folds; canonical contiguous range-wide AVX2/AVX-512

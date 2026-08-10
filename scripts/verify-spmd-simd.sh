@@ -1017,6 +1017,66 @@ verify_map_shift_shape() {
     done
 }
 
+verify_native_slice_shape() {
+    _mode=$1
+    compile_spmd_mode tests/spmd/native_slice_surface_i64.tl "$_mode" 2
+    _tag=tests_spmd_native_slice_surface_i64_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    _func="$WORKDIR/$_tag.$_mode.native-slice.s"
+    _scalar_func="$WORKDIR/$_tag.$_mode.scalar-loop.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] native Slice $_mode shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl $_mode (shape compile)" >> "$FAILURES"
+        return
+    fi
+    sed -n \
+        '/^_tl_native_slice_surface_i64_fill_slice_foreach:/,/^$/p' \
+        "$_asm" > "$_func"
+    if [ ! -s "$_func" ]; then
+        echo "[spmd-simd] native Slice $_mode helper body is missing" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl $_mode (missing helper)" >> "$FAILURES"
+        return
+    fi
+    sed -n \
+        '/^_tl_native_slice_surface_i64_slice_case:/,/^$/p' \
+        "$_asm" > "$_scalar_func"
+    if [ ! -s "$_scalar_func" ]; then
+        echo "[spmd-simd] native Slice $_mode scalar-loop helper is missing" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl $_mode (missing scalar loop)" >> "$FAILURES"
+    elif grep -E -- '%ymm[0-9]+|%zmm[0-9]+|%k[0-7]' "$_scalar_func" > /dev/null; then
+        echo "[spmd-simd] native Slice $_mode ordinary while loop was vectorized" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl $_mode (implicit SIMD)" >> "$FAILURES"
+    fi
+    if ! grep -F -- vpaddq "$_func" > /dev/null; then
+        echo "[spmd-simd] native Slice $_mode helper lacks vector addition" >&2
+        echo "tests/spmd/native_slice_surface_i64.tl $_mode (scalarized map)" >> "$FAILURES"
+    fi
+    if [ "$_mode" = avx2 ]; then
+        for shape in '%ymm' vmovdqu vpmaskmovq; do
+            if ! grep -F -- "$shape" "$_func" > /dev/null; then
+                echo "[spmd-simd] native Slice AVX2 helper missing $shape" >&2
+                echo "tests/spmd/native_slice_surface_i64.tl avx2 (missing $shape)" >> "$FAILURES"
+            fi
+        done
+        if grep -E -- '%zmm[0-9]+|%k[0-7]' "$_func" > /dev/null; then
+            echo "[spmd-simd] native Slice AVX2 helper contains AVX-512 state" >&2
+            echo "tests/spmd/native_slice_surface_i64.tl avx2 (AVX-512 state)" >> "$FAILURES"
+        fi
+    else
+        for shape in '%zmm' vmovdqu64 '{%k'; do
+            if ! grep -F -- "$shape" "$_func" > /dev/null; then
+                echo "[spmd-simd] native Slice AVX-512 helper missing $shape" >&2
+                echo "tests/spmd/native_slice_surface_i64.tl avx512 (missing $shape)" >> "$FAILURES"
+            fi
+        done
+        if grep -F -- vpmaskmovq "$_func" > /dev/null; then
+            echo "[spmd-simd] native Slice AVX-512 helper used AVX2 mask moves" >&2
+            echo "tests/spmd/native_slice_surface_i64.tl avx512 (AVX2 mask move)" >> "$FAILURES"
+        fi
+    fi
+}
+
 verify_avx2_native_mask_shapes() {
     compile_spmd_mode tests/spmd/masked_if_value_types.tl avx2
     _tag=tests_spmd_masked_if_value_types_tl
@@ -1147,6 +1207,7 @@ for mode in avx2 avx512; do
     verify_map_operator_surface_shape "$mode"
     verify_map_compare_shape "$mode"
     verify_map_shift_shape "$mode"
+    verify_native_slice_shape "$mode"
 done
 
 verify_avx2_private_helper_call_shape

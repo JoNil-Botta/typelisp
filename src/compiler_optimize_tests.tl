@@ -28980,6 +28980,389 @@
       [(not (= (compiler_ir_types.compiler-ir-block-list-count too-big) 11)) 2]
       [else 42])))
 
+;; --- guard-dominated compare folding fixture ----------------------------------
+;;
+;; The pl-line-end shape reduced to its essentials: a counted do-while loop
+;; (counter %3 seeded from the invariant param %2, step +1, latch `%8 < %0`)
+;; whose ONE derivable check `bounds_check %3, %1` makes the guard prove
+;; `%2 >= 0 && %2 < %0 && %0 <= %1`, and whose header then branches on a
+;; comparison the guard already decides. `variant` picks that comparison:
+;;   0  `%3 >= 0`      folds TRUE  (monotone induction: counter >= seed >= 0)
+;;   1  `%3 < 0`       folds FALSE (same fact, other side)
+;;   2  `%12 >= 0`     REFUSED: %12 is a second induction phi whose step is
+;;                     the non-literal %1, so it is not the counter the guard
+;;                     bounded -- the pass never proved it monotone
+;;   3  `%6 >= 0` with `%6 = sub %3, 5` REFUSED: a value the loop itself
+;;                     writes is neither the counter phi nor invariant
+;;   4  `%3 >= 1`      REFUSED: true of every executed trip only via range
+;;                     reasoning the rules deliberately do not do; the guard
+;;                     proves the seed `>= 0`, not `>= 1`
+;;   5  `%0 <= %1`     folds TRUE  (invariant recomputation: the guard's own
+;;                     `bound <= length` conjunct, same operator and operands)
+;;   6  `%0 < %1`      REFUSED: `<` is not the recorded `<=`, and deriving it
+;;                     would need reasoning past exact conjunct identity
+;;   7  `%3 >= 0` with a phi in the "else" arm fed from the header REFUSED:
+;;                     folding would delete an edge a phi still selects on
+;; Vars: 0-2 params, 3 counter phi, 5 header condition, 6 the variant-3
+;; in-loop value, 8 the step, 9 the latch compare, 10 the exit phi, 11 the
+;; variant-7 else phi, 12-13 the variant-2 non-literal-step phi.
+(define opt-bce-fold-test-frame : i64
+  16)
+
+(define (opt-bce-fold-test-nonliteral-variant? [variant : i64]) : bool
+  (= variant 2))
+
+(define (opt-bce-fold-test-else-phi-variant? [variant : i64]) : bool
+  (= variant 7))
+
+;; The comparison the header branches on.
+(define (opt-bce-fold-test-cond-instr [variant : i64]) : compiler_ir_types.CompilerIrInstr
+  (cond
+    [(= variant 1)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        5
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))]
+    [(= variant 2)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        5
+        (compiler_ir_types.CompilerIrBinOp.Ge)
+        (compiler_ir_types.CompilerIrValue.Var 12)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))]
+    [(= variant 3)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        5
+        (compiler_ir_types.CompilerIrBinOp.Ge)
+        (compiler_ir_types.CompilerIrValue.Var 6)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))]
+    [(= variant 4)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        5
+        (compiler_ir_types.CompilerIrBinOp.Ge)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))]
+    [(= variant 5)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        5
+        (compiler_ir_types.CompilerIrBinOp.Le)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.I64))]
+    [(= variant 6)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        5
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.I64))]
+    [else
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        5
+        (compiler_ir_types.CompilerIrBinOp.Ge)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))]))
+
+;; Header: counter phi, the optional second (non-literal-step) phi, the check,
+;; the variant-3 in-loop value, the condition, the branch.
+(define (opt-bce-fold-test-header-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "body")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        3
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (opt-bce-fold-test-header-tail variant))))
+
+(define (opt-bce-fold-test-header-tail [variant : i64]) : compiler_ir_types.CompilerIrInstrList
+  (let
+    [core : compiler_ir_types.CompilerIrInstrList
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.compiler-ir-label "fold_ok0"))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            6
+            (compiler_ir_types.CompilerIrBinOp.Sub)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 5)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (opt-bce-fold-test-cond-instr variant)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "then")
+                (compiler_ir_types.compiler-ir-label "else"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))))]
+    (if (opt-bce-fold-test-nonliteral-variant? variant)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          12
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 13)
+              (compiler_ir_types.compiler-ir-label "merge")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64))
+        core)
+      core)))
+
+(define (opt-bce-fold-test-then-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "then")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "merge"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bce-fold-test-else-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "else")
+    (let
+      [tail : compiler_ir_types.CompilerIrInstrList
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))]
+      (if (opt-bce-fold-test-else-phi-variant? variant)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            11
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          tail)
+        tail))))
+
+(define (opt-bce-fold-test-merge-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "merge")
+    (let
+      [tail : compiler_ir_types.CompilerIrInstrList
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            8
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              9
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 8)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))]
+      (if (opt-bce-fold-test-nonliteral-variant? variant)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            13
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.I64))
+          tail)
+        tail))))
+
+(define (opt-bce-fold-test-exit-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "exit")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        10
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.compiler-ir-label "merge")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 10)))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-bce-fold-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "body"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bce-fold-test-header-block variant)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-fold-test-then-block)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-fold-test-else-block variant)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bce-fold-test-merge-block variant)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bce-fold-test-exit-block)
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-bce-fold-test-versioned-function [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-bce-version-function
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "bce_version_fold_fixture")
+      (opt-bce-version-test-params)
+      (compiler_ast_types.AstType.I64)
+      opt-bce-fold-test-frame
+      (opt-bce-fold-test-blocks variant))))
+
+(define (opt-bce-fold-test-versioned [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (opt-bce-fold-test-versioned-function variant)))
+
+;; -1 when the block is missing or does not end in a Jump; otherwise the
+;; jump's target label.
+(define (opt-bce-fold-test-jump-target
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) -1]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            (if (< count 1)
+              -1
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                instrs
+                (- count 1))
+                [(compiler_ir_types.CompilerIrInstr.Jump target) target]
+                [_ -1])))])]))
+
+(define (opt-bce-fold-test-branch-terminated?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            (if (< count 1)
+              false
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                instrs
+                (- count 1))
+                [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) true]
+                [_ false])))])]))
+
+(define (opt-bce-fold-test-has-block?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some _) true]))
+
+(define (opt-bce-fold-test-fast-label [text : String]) : i64
+  (compiler_ir_types.compiler-ir-label (string.append text "__bce_fast")))
+
+(define (compiler-optimize-bce-version-fold-self-test) : i64
+  (let
+    [monotone : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-fold-test-versioned 0)]
+    [monotone-false : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-fold-test-versioned 1)]
+    [invariant : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-fold-test-versioned 5)]
+    [retired : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-cfg-simplify-blocks
+        (opt-bce-fold-test-versioned 0))]
+    [fast-body : i64 (opt-bce-fold-test-fast-label "body")]
+    [fast-then : i64 (opt-bce-fold-test-fast-label "then")]
+    [fast-else : i64 (opt-bce-fold-test-fast-label "else")]
+    (cond
+      ;; the fixture versions at all, and the fold keeps it verifiable.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-bce-fold-test-versioned-function 0))))
+        1]
+      [(not (opt-bce-fold-test-has-block? monotone fast-body)) 2]
+      ;; R1: `counter >= 0` becomes the jump it always took ...
+      [(not (= (opt-bce-fold-test-jump-target monotone fast-body) fast-then)) 3]
+      ;; ... while the slow loop keeps its branch.
+      [(not
+          (opt-bce-fold-test-branch-terminated?
+            monotone
+            (compiler_ir_types.compiler-ir-label "body")))
+        4]
+      ;; R1 the other way: `counter < 0` is decided FALSE.
+      [(not
+          (= (opt-bce-fold-test-jump-target monotone-false fast-body) fast-else))
+        5]
+      ;; R2: the guard's own `bound <= length` conjunct, recomputed in the loop.
+      [(not (= (opt-bce-fold-test-jump-target invariant fast-body) fast-then))
+        6]
+      ;; the arm that lost its last predecessor retires.
+      [(opt-bce-fold-test-has-block? retired fast-else) 7]
+      [(not (opt-bce-fold-test-has-block? retired fast-then)) 8]
+      [(not
+          (opt-bce-fold-test-has-block?
+            retired
+            (compiler_ir_types.compiler-ir-label "else")))
+        9]
+      [else 42])))
+
+;; Every refusal keeps the versioned fast clone's conditional branch.
+(define (compiler-optimize-bce-version-fold-refusal-self-test) : i64
+  (let
+    [fast-body : i64 (opt-bce-fold-test-fast-label "body")]
+    [nonliteral : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-fold-test-versioned 2)]
+    [in-loop : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-fold-test-versioned 3)]
+    [range-needed : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-fold-test-versioned 4)]
+    [wrong-op : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-fold-test-versioned 6)]
+    [else-phi : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-fold-test-versioned 7)]
+    (cond
+      ;; a second induction phi whose step is not a literal is not the
+      ;; counter the guard bounded.
+      [(not (opt-bce-fold-test-has-block? nonliteral fast-body)) 1]
+      [(not (opt-bce-fold-test-branch-terminated? nonliteral fast-body)) 2]
+      ;; a value the loop itself writes is neither counter nor invariant.
+      [(not (opt-bce-fold-test-branch-terminated? in-loop fast-body)) 3]
+      ;; `counter >= 1` needs a seed bound the guard never proved.
+      [(not (opt-bce-fold-test-branch-terminated? range-needed fast-body)) 4]
+      ;; `bound < length` is not the recorded `bound <= length`.
+      [(not (opt-bce-fold-test-branch-terminated? wrong-op fast-body)) 5]
+      ;; the dropped arm still selects a value on the edge.
+      [(not (opt-bce-fold-test-branch-terminated? else-phi fast-body)) 6]
+      [else 42])))
+
 ;; --- loop-nest fixture --------------------------------------------------------
 ;;
 ;; A counted OUTER loop (do-while latch "merge", counter %3, bounded phi %4)

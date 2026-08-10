@@ -3449,6 +3449,14 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-fold-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-fold-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-fold-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-fold-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-nest-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-nest-self-test)
       42)
@@ -3733,6 +3741,20 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
     42
     "multi-block versioning rejections"))
+
+(test
+  bce-version-guard-dominated-fold
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-fold-self-test)
+    42
+    "versioning guard facts fold dominated compares in the fast clone"))
+
+(test
+  bce-version-guard-dominated-fold-refusals
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-fold-refusal-self-test)
+    42
+    "guard-dominated compare folding refuses everything past its two rules"))
 
 (test
   bce-version-multiblock-loop-nest

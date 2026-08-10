@@ -52716,11 +52716,12 @@
   (derived i64)
   (hoists OptBceMbHoists))
 
-;; guard-conds output: the guard instructions + value plus the kept-check set
-;; the clone must preserve (remapped) instead of dropping.
+;; guard-conds output: the guard instructions + value, the kept-check set the
+;; clone must preserve (remapped) instead of dropping, and the facts the guard
+;; proves for every block of the fast clone (see the compare-folding section).
 (defenum OptBceMbGuardOut
   (No)
-  (Some ir.CompilerIrInstrSeq ir.CompilerIrValue OptBceMbKeep))
+  (Some ir.CompilerIrInstrSeq ir.CompilerIrValue OptBceMbKeep OptBceFoldFacts))
 
 ;; A multi-block index of the form `base + scale*counter + offset` (either
 ;; operand order): one Add operand recovers counter-affine with a positive
@@ -53518,7 +53519,362 @@
           (struct-get dr guard)))
         [(OptBceVersionGuardResult.No) (OptBceMbGuardOut.No)]
         [(OptBceVersionGuardResult.Some guard-instrs guard-value)
-          (OptBceMbGuardOut.Some guard-instrs guard-value (struct-get dr keep))]))))
+          (OptBceMbGuardOut.Some
+            guard-instrs
+            guard-value
+            (struct-get dr keep)
+            (OptBceFoldFacts
+              (opt-bce-fold-collect
+                guard-instrs
+                guard-value
+                (opt-bce-fold-conjunct-fuel)
+                (OptBceFoldCondList.Nil))
+              all-blocks
+              (struct-get shape body-blocks)
+              (struct-get shape iphi)
+              (opt-bce-version-guard-counter-seen? (struct-get dr guard))))]))))
+
+;; --- guard-dominated compare folding --------------------------------------------
+;;
+;; The guard decides more than the BoundsChecks it removes. Its conjunction is
+;; a set of facts that hold at EVERY point of the fast clone -- the guard block
+;; is the clone's only entry, so it dominates every cloned block by
+;; construction and no dominance analysis is needed. Ordinary compares the
+;; guard already decides (the defensive `>= 0` an inlined accessor re-tests
+;; every iteration, an invariant range test recomputed inside the body) then
+;; survive in the fast clone as provably-constant per-iteration work. This
+;; folds their branches: the conditional becomes an unconditional jump to the
+;; arm the fact selects, and the round-end DCE fixpoint retires the compare and
+;; any arm that lost its last predecessor.
+;;
+;; Exactly two implication rules, both EXACT -- no range analysis, no interval
+;; join, no transitive chaining. Anything else refuses.
+;;
+;; R1 MONOTONE INDUCTION. `counter <op> k` with a literal `k`, on the loop's
+;; OWN counter phi, in signed i64. The counter's lower bound is the guard's:
+;; `opt-bce-version-guard-finish` emits `seed >= 0` (or proves it of a literal
+;; seed) whenever a counter-cased derivation fired, which is exactly the
+;; `counter-seen` flag recorded below. The counter never drops below that seed:
+;; the shape scan admits only `iphi = phi(seed from preheader, iphi + step from
+;; latch)` with a POSITIVE LITERAL step, and the same no-wrap argument the pass
+;; already documents for its bounds derivations (see the finisher: step 1 gives
+;; `last + 1 <= bound <= MAX` from the latch's `< bound`; a larger step gets the
+;; explicit `wrap(bound + step - 1) >= bound` conjunct) makes the increment
+;; representable, so the sequence strictly INCREASES in mathematical i64 and
+;; every executed trip's counter lies in [seed, bound-1]. Hence
+;; `counter >= seed >= 0` at every point of the clone, and:
+;;   counter >= k  /  counter > k   are TRUE  for k <= 0 / k < 0
+;;   counter <  k  /  counter <= k  are FALSE for k <= 0 / k < 0
+;; with the mirrored operand order (`k < counter` ...) normalized first. The
+;; counter phi ITSELF is what the rule is about; the rule never looks at a
+;; value derived from it, and it can never fold the latch/header test, whose
+;; other operand is the invariant bound (a literal bound only reaches the
+;; k <= 0 cases on a guard conjunction that is already unsatisfiable, since it
+;; also demands `seed >= 0 && seed < bound`).
+;;
+;; R2 INVARIANT RECOMPUTATION. A compare in the loop whose BOTH operands are
+;; loop-invariant (literal, or a var no loop block defines, after resolving
+;; through in-loop copies/reinterprets) and which reproduces a guard conjunct
+;; EXACTLY -- same operator, same operand values, same signed i64 operand type
+;; the guard's conditions are built with -- is TRUE on the fast path. Operand
+;; identity is SSA identity after the same resolution the derivation used, so
+;; the recomputation and the conjunct are the same comparison of the same two
+;; runtime values. Guard-local temporaries are freshly allocated ids that
+;; appear in no original block, so a loop compare can never match a conjunct
+;; over them.
+;;
+;; The single-block pass shares the guard finisher but needs no folding hook:
+;; its clonable whitelist has no Branch, so its fast clone's only conditional
+;; is the latch test itself.
+;;
+;; EDGE HYGIENE. Folding deletes one CFG edge. A phi in the dropped successor
+;; that names this block would keep an input on an edge that no longer exists,
+;; and the unreachable-block sweep only trims inputs from predecessors that
+;; became unreachable, not from ones that merely stopped branching there. So a
+;; fold is refused whenever the dropped successor -- in the loop or an exit
+;; block outside it -- carries a phi input labelled with the folding block.
+(defenum OptBceFoldCondList
+  (Nil)
+  (Cons
+    ir.CompilerIrBinOp
+    ir.CompilerIrValue
+    ir.CompilerIrValue
+    (Box OptBceFoldCondList)))
+
+;; What the guard establishes for the whole fast clone: its conjunct compares,
+;; the blocks the fold inspects (every block for successor phis, the clone
+;; group for definitions), and the counter's proven lower bound.
+(defstruct OptBceFoldFacts
+  (conds OptBceFoldCondList)
+  (blocks ir.CompilerIrBlockList)
+  (body-blocks ir.CompilerIrBlockList)
+  (iphi i64)
+  (counter-nonneg? bool))
+
+(defenum OptBceFoldVerdict
+  (Unknown)
+  (True)
+  (False))
+
+;; Conjunct-walk depth. The And chain is one node per emitted condition and a
+;; loop derives a handful; this only bounds a malformed chain.
+(define (opt-bce-fold-conjunct-fuel) : i64
+  64)
+
+(define (opt-bce-version-guard-counter-seen? [acc : OptBceVersionGuardAcc]) : bool
+  (match acc
+    [(OptBceVersionGuardAcc.No) false]
+    [(OptBceVersionGuardAcc.Some _ _ counter-seen) counter-seen]))
+
+;; The comparisons the fold reasons about. BitTest* forms are deliberately out:
+;; the guard never emits one, and R1 is about ordered i64 compares.
+(define (opt-bce-fold-cond-op? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Eq) true]
+    [(ir.CompilerIrBinOp.Ne) true]
+    [(ir.CompilerIrBinOp.Lt) true]
+    [(ir.CompilerIrBinOp.Le) true]
+    [(ir.CompilerIrBinOp.Gt) true]
+    [(ir.CompilerIrBinOp.Ge) true]
+    [_ false]))
+
+(define (opt-bce-fold-i64-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [_ false]))
+
+(define (opt-bce-fold-guard-def
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : OptBceMbMaybeInstr
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    (OptBceMbMaybeInstr.No)
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      (if (= (ir.compiler-ir-instr-loop-dst-or instr (- 0 1)) var)
+        (OptBceMbMaybeInstr.Some instr)
+        (opt-bce-fold-guard-def instrs (+ index 1) var)))))
+
+;; Decompose the guard value into the conditions the fast edge proves. The
+;; guard block branches on it, and it is built as an `And` tree over the
+;; per-check condition values (opt-bce-version-and-chain), so every leaf of
+;; that tree is non-zero on the taken fast edge. Only comparison leaves are
+;; recorded; a leaf defined outside the guard block contributes nothing.
+(define (opt-bce-fold-collect
+  [instrs : ir.CompilerIrInstrSeq]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]
+  [acc : OptBceFoldCondList]) : OptBceFoldCondList
+  (if (<= fuel 0)
+    acc
+    (match value
+      [(ir.CompilerIrValue.Var var)
+        (match (opt-bce-fold-guard-def instrs 0 var)
+          [(OptBceMbMaybeInstr.No) acc]
+          [(OptBceMbMaybeInstr.Some instr)
+            (match instr
+              [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+                (match op
+                  [(ir.CompilerIrBinOp.And)
+                    (opt-bce-fold-collect
+                      instrs
+                      rhs
+                      (- fuel 1)
+                      (opt-bce-fold-collect instrs lhs (- fuel 1) acc))]
+                  [_
+                    (if (opt-bce-fold-cond-op? op)
+                      (OptBceFoldCondList.Cons op lhs rhs (box acc))
+                      acc)])]
+              [_ acc])])]
+      [_ acc])))
+
+(define (opt-bce-fold-cond-holds?
+  [conds : OptBceFoldCondList]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : bool
+  (match conds
+    [(OptBceFoldCondList.Nil) false]
+    [(OptBceFoldCondList.Cons cond-op cond-lhs cond-rhs rest)
+      (if (and
+        (opt-binop-eq cond-op op)
+        (opt-value-eq cond-lhs lhs)
+        (opt-value-eq cond-rhs rhs))
+        true
+        (opt-bce-fold-cond-holds? (box-get rest) op lhs rhs))]))
+
+;; `counter <op> k` normalized with the counter on the left, given only
+;; `counter >= 0`.
+(define (opt-bce-fold-counter-verdict [op : ir.CompilerIrBinOp] [k : i64]) : OptBceFoldVerdict
+  (match op
+    [(ir.CompilerIrBinOp.Ge)
+      (if (<= k 0)
+        (OptBceFoldVerdict.True)
+        (OptBceFoldVerdict.Unknown))]
+    [(ir.CompilerIrBinOp.Gt)
+      (if (< k 0)
+        (OptBceFoldVerdict.True)
+        (OptBceFoldVerdict.Unknown))]
+    [(ir.CompilerIrBinOp.Lt)
+      (if (<= k 0)
+        (OptBceFoldVerdict.False)
+        (OptBceFoldVerdict.Unknown))]
+    [(ir.CompilerIrBinOp.Le)
+      (if (< k 0)
+        (OptBceFoldVerdict.False)
+        (OptBceFoldVerdict.Unknown))]
+    [_ (OptBceFoldVerdict.Unknown)]))
+
+;; `k <op> counter` reads as `counter <mirror(op)> k`.
+(define (opt-bce-fold-mirror-op [op : ir.CompilerIrBinOp]) : ir.CompilerIrBinOp
+  (match op
+    [(ir.CompilerIrBinOp.Lt) (ir.CompilerIrBinOp.Gt)]
+    [(ir.CompilerIrBinOp.Le) (ir.CompilerIrBinOp.Ge)]
+    [(ir.CompilerIrBinOp.Gt) (ir.CompilerIrBinOp.Lt)]
+    [(ir.CompilerIrBinOp.Ge) (ir.CompilerIrBinOp.Le)]
+    [_ op]))
+
+(define (opt-bce-fold-counter-operand?
+  [body-blocks : ir.CompilerIrBlockList]
+  [iphi : i64]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var raw)
+      (= (opt-bce-mb-resolve body-blocks raw 16) iphi)]
+    [_ false]))
+
+;; A compare operand's canonical spelling for R2: a literal, or a var that no
+;; loop block defines once in-loop copies are resolved away. Anything the loop
+;; itself computes is not invariant and never matches a guard conjunct.
+(define (opt-bce-fold-invariant-operand
+  [body-blocks : ir.CompilerIrBlockList]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (match value
+    [(ir.CompilerIrValue.I64 k)
+      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 k))]
+    [(ir.CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+        (match (opt-bce-mb-find-def body-blocks id)
+          [(OptBceMbMaybeInstr.Some _) (ir.CompilerIrMaybeValue.No)]
+          [(OptBceMbMaybeInstr.No)
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var id))]))]
+    [_ (ir.CompilerIrMaybeValue.No)]))
+
+(define (opt-bce-fold-invariant-verdict
+  [facts : OptBceFoldFacts]
+  [body-blocks : ir.CompilerIrBlockList]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : OptBceFoldVerdict
+  (match (opt-bce-fold-invariant-operand body-blocks lhs)
+    [(ir.CompilerIrMaybeValue.No) (OptBceFoldVerdict.Unknown)]
+    [(ir.CompilerIrMaybeValue.Some canon-lhs)
+      (match (opt-bce-fold-invariant-operand body-blocks rhs)
+        [(ir.CompilerIrMaybeValue.No) (OptBceFoldVerdict.Unknown)]
+        [(ir.CompilerIrMaybeValue.Some canon-rhs)
+          (if (opt-bce-fold-cond-holds?
+            (struct-get facts conds)
+            op
+            canon-lhs
+            canon-rhs)
+            (OptBceFoldVerdict.True)
+            (OptBceFoldVerdict.Unknown))])]))
+
+;; The verdict for one comparison evaluated anywhere in the fast clone.
+(define (opt-bce-fold-compare-verdict
+  [facts : OptBceFoldFacts]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptBceFoldVerdict
+  (if (not (and (opt-bce-fold-cond-op? op) (opt-bce-fold-i64-type? ty)))
+    (OptBceFoldVerdict.Unknown)
+    (let
+      [body-blocks : ir.CompilerIrBlockList (struct-get facts body-blocks)]
+      [iphi : i64 (struct-get facts iphi)]
+      [monotone? : bool (and (struct-get facts counter-nonneg?) (>= iphi 0))]
+      (cond
+        [(and monotone? (opt-bce-fold-counter-operand? body-blocks iphi lhs))
+          (match rhs
+            [(ir.CompilerIrValue.I64 k) (opt-bce-fold-counter-verdict op k)]
+            [_ (OptBceFoldVerdict.Unknown)])]
+        [(and monotone? (opt-bce-fold-counter-operand? body-blocks iphi rhs))
+          (match lhs
+            [(ir.CompilerIrValue.I64 k)
+              (opt-bce-fold-counter-verdict (opt-bce-fold-mirror-op op) k)]
+            [_ (OptBceFoldVerdict.Unknown)])]
+        [else (opt-bce-fold-invariant-verdict facts body-blocks op lhs rhs)]))))
+
+(define (opt-bce-fold-phi-from-instrs?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [label : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Phi _ inputs _)
+        (if (opt-bce-fold-phi-input-from? inputs label)
+          true
+          (opt-bce-fold-phi-from-instrs? instrs (+ index 1) label))]
+      [_ (opt-bce-fold-phi-from-instrs? instrs (+ index 1) label)])))
+
+(define (opt-bce-fold-phi-input-from?
+  [inputs : ir.CompilerIrPhiInputList]
+  [label : i64]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) false]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bce-fold-phi-input-from?
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        label)]
+    [(ir.CompilerIrPhiInputList.Cons _ input-label rest)
+      (if (= input-label label)
+        true
+        (opt-bce-fold-phi-input-from? (box-get rest) label))]))
+
+;; May the edge `label -> dropped` disappear? Only when nothing in `dropped`
+;; selects a value on it. A successor that cannot be found rejects.
+(define (opt-bce-fold-drop-edge-ok?
+  [facts : OptBceFoldFacts]
+  [label : i64]
+  [dropped : i64]) : bool
+  (match (opt-cfg-find-block (struct-get facts blocks) dropped)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (not (opt-bce-fold-phi-from-instrs? instrs 0 label))])]))
+
+;; The verdict for one cloned conditional branch, edge hygiene included.
+(define (opt-bce-fold-branch-verdict
+  [facts : OptBceFoldFacts]
+  [label : i64]
+  [cond : ir.CompilerIrValue]
+  [then-label : i64]
+  [else-label : i64]) : OptBceFoldVerdict
+  (match cond
+    [(ir.CompilerIrValue.Var raw)
+      (let
+        [body-blocks : ir.CompilerIrBlockList (struct-get facts body-blocks)]
+        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+        (match (opt-bce-mb-find-def body-blocks id)
+          [(OptBceMbMaybeInstr.No) (OptBceFoldVerdict.Unknown)]
+          [(OptBceMbMaybeInstr.Some instr)
+            (match instr
+              [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                (match (opt-bce-fold-compare-verdict facts op lhs rhs ty)
+                  [(OptBceFoldVerdict.Unknown) (OptBceFoldVerdict.Unknown)]
+                  [(OptBceFoldVerdict.True)
+                    (if (opt-bce-fold-drop-edge-ok? facts label else-label)
+                      (OptBceFoldVerdict.True)
+                      (OptBceFoldVerdict.Unknown))]
+                  [(OptBceFoldVerdict.False)
+                    (if (opt-bce-fold-drop-edge-ok? facts label then-label)
+                      (OptBceFoldVerdict.False)
+                      (OptBceFoldVerdict.Unknown))])]
+              [_ (OptBceFoldVerdict.Unknown)])]))]
+    [_ (OptBceFoldVerdict.Unknown)]))
 
 ;; --- fast-clone emission --------------------------------------------------------
 (define (opt-bce-mb-fast-label [body-labels : OptLabelSet] [label : i64]) : i64
@@ -53635,6 +53991,8 @@
   [all-labels : OptLabelSet]
   [preheader : i64]
   [guard-label : i64]
+  [facts : OptBceFoldFacts]
+  [label : i64]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match instr
     [(ir.CompilerIrInstr.Mov dst src ty)
@@ -53695,11 +54053,26 @@
         ty)]
     [(ir.CompilerIrInstr.Jump target)
       (ir.CompilerIrInstr.Jump (opt-bce-mb-fast-label body-labels target))]
+    ;; A branch the guard already decides becomes the jump it always takes;
+    ;; DCE retires the compare and any arm that lost its last predecessor.
     [(ir.CompilerIrInstr.Branch cond then-label else-label)
-      (ir.CompilerIrInstr.Branch
-        (opt-unroll-subst-value remap cond)
-        (opt-bce-mb-fast-label body-labels then-label)
-        (opt-bce-mb-fast-label body-labels else-label))]
+      (match (opt-bce-fold-branch-verdict
+        facts
+        label
+        cond
+        then-label
+        else-label)
+        [(OptBceFoldVerdict.True)
+          (ir.CompilerIrInstr.Jump
+            (opt-bce-mb-fast-label body-labels then-label))]
+        [(OptBceFoldVerdict.False)
+          (ir.CompilerIrInstr.Jump
+            (opt-bce-mb-fast-label body-labels else-label))]
+        [(OptBceFoldVerdict.Unknown)
+          (ir.CompilerIrInstr.Branch
+            (opt-unroll-subst-value remap cond)
+            (opt-bce-mb-fast-label body-labels then-label)
+            (opt-bce-mb-fast-label body-labels else-label))])]
     [(ir.CompilerIrInstr.Switch index base cases default-label)
       (ir.CompilerIrInstr.Switch
         (opt-unroll-subst-value remap index)
@@ -53754,6 +54127,7 @@
   [all-labels : OptLabelSet]
   [preheader : i64]
   [guard-label : i64]
+  [facts : OptBceFoldFacts]
   [keep : OptBceMbKeep]) : ir.CompilerIrInstrList
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     (ir.CompilerIrInstrList.Nil)
@@ -53769,6 +54143,8 @@
                 all-labels
                 preheader
                 guard-label
+                facts
+                label
                 instr)
               (opt-bce-mb-clone-instrs
                 label
@@ -53779,6 +54155,7 @@
                 all-labels
                 preheader
                 guard-label
+                facts
                 keep))
             (opt-bce-mb-clone-instrs
               label
@@ -53789,6 +54166,7 @@
               all-labels
               preheader
               guard-label
+              facts
               keep))]
         [_
           (ir.compiler-ir-instr-cons
@@ -53798,6 +54176,8 @@
               all-labels
               preheader
               guard-label
+              facts
+              label
               instr)
             (opt-bce-mb-clone-instrs
               label
@@ -53808,6 +54188,7 @@
               all-labels
               preheader
               guard-label
+              facts
               keep))]))))
 
 (define (opt-bce-mb-clone-blocks
@@ -53817,6 +54198,7 @@
   [all-labels : OptLabelSet]
   [preheader : i64]
   [guard-label : i64]
+  [facts : OptBceFoldFacts]
   [keep : OptBceMbKeep]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
@@ -53836,6 +54218,7 @@
                 all-labels
                 preheader
                 guard-label
+                facts
                 keep))
             (opt-bce-mb-clone-blocks
               (box-get rest)
@@ -53844,6 +54227,7 @@
               all-labels
               preheader
               guard-label
+              facts
               keep))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-mb-clone-blocks
@@ -53853,6 +54237,7 @@
         all-labels
         preheader
         guard-label
+        facts
         keep)]))
 
 ;; --- rewrite --------------------------------------------------------------------
@@ -54887,7 +55272,7 @@
       defs
       cell)
       [(OptBceMbGuardOut.No) (OptUnrollResult.Result blocks frame false)]
-      [(OptBceMbGuardOut.Some guard-instrs guard-value keep)
+      [(OptBceMbGuardOut.Some guard-instrs guard-value keep facts)
         (let
           [remap : (__tl_dyn-array ir.CompilerIrValue)
             (array.make-array ir.CompilerIrValue frame)]
@@ -54906,6 +55291,7 @@
               (opt-bce-mb-all-labels-from blocks (OptLabelSet.Nil))
               (struct-get shape preheader)
               guard-label
+              facts
               keep)]
           [guard-block : ir.CompilerIrBlock
             (opt-bce-version-guard-block

@@ -12461,7 +12461,7 @@
 (define (compiler-parse-place-migration-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
-      "(define (main [p : i64]) : i64 p.value)"
+      "(define (main [p : i64]) : i64 (struct-get p value))"
       "parse: struct-get was removed; use dotted field projection value.field")
     (compiler-parse-error-ok?
       "(define (main [p : i64]) : unit (struct-set p value 1))"
@@ -12473,7 +12473,7 @@
       "(define (main [xs : (Array i64 1)]) : unit (array-set! xs 0 1))"
       "parse: array-set! was removed; use (set! (array-ref array index) value)")
     (compiler-parse-error-ok?
-      "(define (main [b : (Box i64)]) : i64 (__tl-box-place b))"
+      "(define (main [b : (Box i64)]) : i64 (box-get b))"
       "parse: box-get was removed; use (deref box)")
     (compiler-parse-error-ok?
       "(define (main [b : (Box i64)]) : i64 (box-take b))"

@@ -10792,7 +10792,7 @@
 
 (define (compiler-typecheck-live-borrow-resource-conflict-source) : String
   (str_cat.str-cat
-    (compiler-typecheck-live-borrow-owner-prefix)
+    (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [fd : i64]) : i64
   (with ([h (Holder (FileHandle fd) 1) cleanup-holder])
     (let [borrowed : (& h Holder) (& h)]

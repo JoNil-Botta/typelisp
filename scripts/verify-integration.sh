@@ -1598,6 +1598,16 @@ run_linux_backend_fixtures() {
         42 \
         2
     run_linux_program_fixture \
+        integer-literal-boundary-matrix-opt0 \
+        tests/integration/integer_literal_boundary_matrix.tl \
+        42 \
+        0
+    run_linux_program_fixture \
+        integer-literal-boundary-matrix-opt2 \
+        tests/integration/integer_literal_boundary_matrix.tl \
+        42 \
+        2
+    run_linux_program_fixture \
         f32-mandelbrot-loop-opt0 \
         tests/integration/opt2_f32_mandelbrot_loop.tl \
         42 \
@@ -1911,6 +1921,16 @@ run_windows_backend_fixtures() {
     run_windows_program_fixture \
         inline-alloc-scavenge-live-through-opt2 \
         tests/integration/inline_alloc_scavenge_live_through.tl \
+        42 \
+        2
+    run_windows_program_fixture \
+        integer-literal-boundary-matrix-opt0 \
+        tests/integration/integer_literal_boundary_matrix.tl \
+        42 \
+        0
+    run_windows_program_fixture \
+        integer-literal-boundary-matrix-opt2 \
+        tests/integration/integer_literal_boundary_matrix.tl \
         42 \
         2
     run_windows_program_fixture \

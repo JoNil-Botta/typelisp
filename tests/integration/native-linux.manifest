@@ -227,6 +227,7 @@ opt2_f32_mandelbrot_loop|tests/integration/opt2_f32_mandelbrot_loop.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
 integer_literal_default_i32|tests/integration/integer_literal_default_i32.tl|42|-|-|-
 integer_literal_default_i32_and_wide_cast|tests/integration/integer_literal_default_i32_and_wide_cast.tl|42|-|-|-
+integer_literal_boundary_matrix|tests/integration/integer_literal_boundary_matrix.tl|42|-|-|stdlib/comptime.tl
 integer_literal_u64_full_range|tests/integration/integer_literal_u64_full_range.tl|42|-|-|-
 inline_alloc_scavenge_live_through|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl
 parser|tests/integration/parser.tl|14|-|-|-

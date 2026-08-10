@@ -13561,7 +13561,8 @@
   [lit : ast.AstLiteral]
   [ty : ast.AstType]) : ir.CompilerIrValue
   (match lit
-    [(ast.AstLiteral.Int n _) (ir.CompilerIrValue.I64 n)]
+    [(ast.AstLiteral.Int n text)
+      (ir.CompilerIrValue.I64 (ast.ast-int-literal-value-or-payload n text))]
     [(ast.AstLiteral.Float n)
       (ir.CompilerIrValue.F64 (lower-float-literal-bits n ty))]
     [(ast.AstLiteral.Bool b) (ir.CompilerIrValue.Bool b)]
@@ -25436,13 +25437,18 @@
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
   [index : ast.AstExpr]) : tc_core.ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env type-cache index)
-    [(tc_core.ResultTcType.Ok index-ty)
-      (if (tc_core.tc-integer-type? index-ty)
-        (tc_core.ResultTcType.Ok index-ty)
-        (tc_core.ResultTcType.Err
-          "lower: index result type is not fast-pathable"))]
-    [(tc_core.ResultTcType.Err message) (tc_core.ResultTcType.Err message)]))
+  ;; The type checker contextually adopts i64 for a bare integer index. Do not
+  ;; let the syntax-only result cache reintroduce the default i32 type and a
+  ;; narrowing/sign-extension pair after that checked decision.
+  (if (tc_core.tc-integer-literal-expr? index)
+    (tc_core.ResultTcType.Ok (ast.AstType.I64))
+    (match (lower-expr-result-type-fast ctx env type-env type-cache index)
+      [(tc_core.ResultTcType.Ok index-ty)
+        (if (tc_core.tc-integer-type? index-ty)
+          (tc_core.ResultTcType.Ok index-ty)
+          (tc_core.ResultTcType.Err
+            "lower: index result type is not fast-pathable"))]
+      [(tc_core.ResultTcType.Err message) (tc_core.ResultTcType.Err message)])))
 
 (define (lower-unary-result-type-fast
   [ctx : tc_core.TcContext]
@@ -41770,8 +41776,9 @@
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-simple-spmd-broadcast-lane ctx env type-env inner))]
-    [(ast.AstExpr.Literal (ast.AstLiteral.Int n _))
-      (LowerMaybeIrValue.Some (ir.CompilerIrValue.I64 n))]
+    [(ast.AstExpr.Literal (ast.AstLiteral.Int n text))
+      (LowerMaybeIrValue.Some
+        (ir.CompilerIrValue.I64 (ast.ast-int-literal-value-or-payload n text)))]
     [(ast.AstExpr.Var name)
       (let
         [var-id : i64
@@ -41874,10 +41881,12 @@
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-index-literal-offset ctx inner))]
-    [(ast.AstExpr.Literal (ast.AstLiteral.Int n _))
-      (if (>= n 0)
-        n
-        -1)]
+    [(ast.AstExpr.Literal (ast.AstLiteral.Int n text))
+      (let
+        [value : i64 (ast.ast-int-literal-value-or-payload n text)]
+        (if (>= value 0)
+          value
+          -1))]
     [_ -1]))
 
 (define (lower-masked-vector-positive-power-two-literal
@@ -41896,12 +41905,14 @@
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-positive-power-two-literal ctx inner))]
-    [(ast.AstExpr.Literal (ast.AstLiteral.Int n _))
-      (if (> n 0)
-        (if (= (bit-and n (- n 1)) 0)
-          n
-          -1)
-        -1)]
+    [(ast.AstExpr.Literal (ast.AstLiteral.Int n text))
+      (let
+        [value : i64 (ast.ast-int-literal-value-or-payload n text)]
+        (if (> value 0)
+          (if (= (bit-and value (- value 1)) 0)
+            value
+            -1)
+          -1))]
     [_ -1]))
 
 (define (lower-masked-vector-index-offset

@@ -41493,7 +41493,8 @@
     [capability-capturing-lambda : bool
       (or
         ref-capturing-lambda
-        (or move-only-capturing-lambda consuming-capturing-lambda))]
+        move-only-capturing-lambda
+        consuming-capturing-lambda)]
     (match maybe-ty
       [(ast.AstMaybeType.Some want)
         (let

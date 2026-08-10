@@ -21,7 +21,7 @@
     [copy : (-> i64) f]
     (and (= (f) 42) (= (copy) 42))))
 
-(define (read-copy-ref [r : (& n i64)]) : i64
+(define (read-copy-ref [_r : (& n i64)]) : i64
   1)
 
 (define (copy-immutable-reference [x : i64]) : i64

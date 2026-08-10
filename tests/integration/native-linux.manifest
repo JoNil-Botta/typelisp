@@ -115,6 +115,7 @@ param_pin_interval|tests/integration/param_pin_interval.tl|42|-|-|stdlib/io.tl
 dead_frame_store|tests/integration/dead_frame_store.tl|42|-|-|stdlib/io.tl
 save_reload_elide|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl
 global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+scalar_indexed_snapshot|tests/integration/scalar_indexed_snapshot.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl

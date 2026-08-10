@@ -40,6 +40,9 @@ WORKDIR=target/embedded-stdlib-tlci-verify
 EMBEDDED_IMAGE=target/embedded-stdlib-tlci/stdlib.tlci
 IMAGE_A=$WORKDIR/stdlib-a.tlci
 IMAGE_B=$WORKDIR/stdlib-b.tlci
+FULL_BLOCKER_IMAGE=$WORKDIR/stdlib-full-blockers.tlci
+FULL_BLOCKER_STDOUT=$WORKDIR/full-blockers.stdout
+FULL_BLOCKER_STDERR=$WORKDIR/full-blockers.stderr
 MUTATED_ROOT=$WORKDIR/stdlib-mutated
 MUTATED_IMAGE=$WORKDIR/stdlib-mutated.tlci
 MUTATED_SURFACE=$WORKDIR/stdlib-mutated-surface.rodata
@@ -75,12 +78,14 @@ floor_field() {
 }
 
 NATIVE_ENTRIES=$(coverage_field native-entries)
+SHELL_ENTRIES=$(coverage_field shell-entries)
 INTERPRETED_ARMS=$(coverage_field interpreted-arms)
 NATIVE_ENTRIES_MIN=$(floor_field native-entries-min)
 INTERPRETED_ARMS_MAX=$(floor_field interpreted-arms-max)
 
 for pair in \
     "native entry count:$NATIVE_ENTRIES" \
+    "shell entry count:$SHELL_ENTRIES" \
     "interpreted arm count:$INTERPRETED_ARMS" \
     "native-entries-min:$NATIVE_ENTRIES_MIN" \
     "interpreted-arms-max:$INTERPRETED_ARMS_MAX"; do
@@ -89,6 +94,58 @@ for pair in \
         exit 1
     fi
 done
+
+# The opt-in census is diagnostics-only: it must preserve the normal image and
+# the two stdout coverage lines while replacing scalar stderr rows with an
+# explicit, duplicate-free blocked/walked relation. Refs #5742.
+if PRODUCER_IDENTITY=$($COMPILER --producer-identity 2>/dev/null); then
+    :
+else
+    PRODUCER_VERSION=$($COMPILER --version 2>/dev/null) || {
+        echo "cannot read producer identity from compiler: $COMPILER" >&2
+        exit 1
+    }
+    PRODUCER_IDENTITY=$(printf '%s\n' "$PRODUCER_VERSION" |
+        awk 'NR == 1 && $1 == "typelisp" { print $2 }')
+fi
+SURFACE=target/embedded-stdlib-tlci/prelude-surface-$HOST_TARGET.rodata
+"$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$MANIFEST" stdlib "$FULL_BLOCKER_IMAGE" "$HOST_TARGET" \
+    "$PRODUCER_IDENTITY" "$SURFACE" --full-blockers \
+    > "$FULL_BLOCKER_STDOUT" 2> "$FULL_BLOCKER_STDERR"
+
+if ! cmp -s "$IMAGE_A" "$FULL_BLOCKER_IMAGE"; then
+    echo "full-blocker diagnostics changed the embedded stdlib tlci image" >&2
+    exit 1
+fi
+if ! cmp -s "$COVERAGE_LOG" "$FULL_BLOCKER_STDOUT"; then
+    echo "full-blocker diagnostics changed the coverage output" >&2
+    exit 1
+fi
+if ! awk -F '\t' '
+    NF != 3 || ($2 != "blocked" && $2 != "walked") { bad = 1 }
+    END { exit bad }
+' "$FULL_BLOCKER_STDERR"; then
+    echo "full-blocker diagnostics emitted a malformed status row" >&2
+    exit 1
+fi
+if [ -n "$(sort "$FULL_BLOCKER_STDERR" | uniq -d)" ]; then
+    echo "full-blocker diagnostics emitted a duplicate status row" >&2
+    exit 1
+fi
+BLOCKED_SHELLS=$(awk -F '\t' '$2 == "blocked" { print $1 }' \
+    "$FULL_BLOCKER_STDERR" | sort -u | wc -l | tr -d ' ')
+if [ "$BLOCKED_SHELLS" -ne "$SHELL_ENTRIES" ]; then
+    echo "full-blocker diagnostics reported $BLOCKED_SHELLS blocked shells," \
+        "coverage reports $SHELL_ENTRIES" >&2
+    exit 1
+fi
+if [ "$SHELL_ENTRIES" -gt 0 ] &&
+    ! grep -q "$(printf '\twalked\t')" "$FULL_BLOCKER_STDERR"; then
+    echo "full-blocker diagnostics did not report any walked capability" >&2
+    exit 1
+fi
 
 if [ "$NATIVE_ENTRIES" -lt "$NATIVE_ENTRIES_MIN" ]; then
     echo "embedded stdlib tlci native coverage regressed:" \

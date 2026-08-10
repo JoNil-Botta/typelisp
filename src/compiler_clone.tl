@@ -214,6 +214,20 @@
 (define (clone-name-set-aliases [names : CloneNameSet]) : clone_id_map.Map
   names.aliases)
 
+(define (clone-name-set-insert-alias-id
+  [names : CloneNameSet]
+  [module-id : i64]
+  [alias-id : i64]
+  [target-module-id : i64]) : CloneNameSet
+  (let
+    [aliases : clone_id_map.Map (clone-name-set-aliases names)]
+    (begin
+      (clone_id_map.insert-ref!
+        (&mut aliases)
+        (clone-import-alias-key-id module-id alias-id)
+        target-module-id)
+      (CloneNameSet (clone-name-set-map names) aliases))))
+
 (define (clone-name-set-insert-id [names : CloneNameSet] [key-id : i64]) : CloneNameSet
   (let
     [map (clone-name-set-map names)]

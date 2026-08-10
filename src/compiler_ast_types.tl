@@ -7149,6 +7149,128 @@
   (shared-type-base i64)
   (persist-in-place bool))
 
+;; Compile-profile-only reachability census for the per-declaration macro
+;; generation copy-out.  The copy walk is the ownership authority: ids below
+;; the declaration's entry bases are source/shared references, while the first
+;; visit to an id at or above a base is a macro-pool survivor.  Keeping the
+;; census here avoids a second graph traversal and, importantly, counts the
+;; same exhaustive set of AstExpr/AstDecl variants as the copy itself.
+;;
+;; Type nodes are committed at push time, so the copy's operational
+;; `shared-type-base` is taken after expansion.  `source-type-base` preserves
+;; the entry boundary for attribution, and `survivor-type-map` deduplicates the
+;; newly committed type ids that the returned declaration actually reaches.
+(cfg
+  compile-profile
+  (define ast-compaction-profile-active : bool
+    false))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-source-type-base : i64
+    0))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-survivor-type-map : (__tl_dyn-array i32)
+    (array.make-array i32 1)))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-source-shared-expr-refs : i64
+    0))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-source-shared-type-refs : i64
+    0))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-survivor-expr-nodes : i64
+    0))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-survivor-type-nodes : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-start!
+    [source-type-base : i64]
+    [survivor-type-map : (__tl_dyn-array i32)]) : unit
+    (begin
+      (set! ast-compaction-profile-source-type-base source-type-base)
+      (set! ast-compaction-profile-survivor-type-map survivor-type-map)
+      (set! ast-compaction-profile-source-shared-expr-refs 0)
+      (set! ast-compaction-profile-source-shared-type-refs 0)
+      (set! ast-compaction-profile-survivor-expr-nodes 0)
+      (set! ast-compaction-profile-survivor-type-nodes 0)
+      (set! ast-compaction-profile-active true))))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-finish!) : unit
+    (set! ast-compaction-profile-active false)))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-note-source-expr!) : unit
+    (if ast-compaction-profile-active
+      (set!
+        ast-compaction-profile-source-shared-expr-refs
+        (+ ast-compaction-profile-source-shared-expr-refs 1))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-note-survivor-expr!) : unit
+    (if ast-compaction-profile-active
+      (set!
+        ast-compaction-profile-survivor-expr-nodes
+        (+ ast-compaction-profile-survivor-expr-nodes 1))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-note-shared-type! [id : i64]) : unit
+    (if (not ast-compaction-profile-active)
+      unit
+      (if (< id ast-compaction-profile-source-type-base)
+        (set!
+          ast-compaction-profile-source-shared-type-refs
+          (+ ast-compaction-profile-source-shared-type-refs 1))
+        (let
+          [slot : i64 (- id ast-compaction-profile-source-type-base)]
+          (if (or
+            (< slot 0)
+            (>= slot (array-length ast-compaction-profile-survivor-type-map)))
+            unit
+            (if (> (array-ref ast-compaction-profile-survivor-type-map slot) 0)
+              unit
+              (begin
+                (set!
+                  (array-ref ast-compaction-profile-survivor-type-map slot)
+                  1)
+                (set!
+                  ast-compaction-profile-survivor-type-nodes
+                  (+ ast-compaction-profile-survivor-type-nodes 1))))))))))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-source-shared-expr-ref-count) : i64
+    ast-compaction-profile-source-shared-expr-refs))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-source-shared-type-ref-count) : i64
+    ast-compaction-profile-source-shared-type-refs))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-survivor-expr-node-count) : i64
+    ast-compaction-profile-survivor-expr-nodes))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-survivor-type-node-count) : i64
+    ast-compaction-profile-survivor-type-nodes))
+
 (define (ast-compaction-id-map-create [count : i64]) : (__tl_dyn-array i32)
   (let
     [cap : i64
@@ -7285,7 +7407,9 @@
   (let
     [base : i64 remap.shared-type-base]
     (if (< id base)
-      id
+      (begin
+        (cfg compile-profile (ast-compaction-profile-note-shared-type! id))
+        id)
       (let
         [type-map : (__tl_dyn-array i32) remap.type-map]
         [slot : i64 (- id base)]
@@ -8192,7 +8316,9 @@
   (let
     [base : i64 remap.shared-expr-base]
     (if (< id base)
-      id
+      (begin
+        (cfg compile-profile (ast-compaction-profile-note-source-expr!))
+        id)
       (let
         [expr-map : (__tl_dyn-array i32) remap.expr-map]
         [slot : i64 (- id base)]
@@ -8209,7 +8335,12 @@
             ;; local first, so writing it back after the children are done can
             ;; never race the read.
             (let
-              [_mark : unit (set! (array-ref expr-map slot) (cast 1 : i32))]
+              [_mark : unit
+                (begin
+                  (set! (array-ref expr-map slot) (cast 1 : i32))
+                  (cfg
+                    compile-profile
+                    (ast-compaction-profile-note-survivor-expr!)))]
               [source-expr : AstExpr
                 (ast-expr-segment-bases-get remap.source-expr-bases id)]
               [owned-expr : AstExpr

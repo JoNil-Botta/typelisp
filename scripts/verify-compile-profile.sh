@@ -267,6 +267,157 @@ profile_counter_value_in() {
     ' "$_file"
 }
 
+# Every intermediate segmented-program flatten must name one of the two
+# documented conservative reasons. Successful expansion then publishes the
+# ordinary flat program exactly once at the walk boundary.
+assert_segmented_program_view_in() {
+    _spv_file=$1
+    _spv_stdout=$2
+    _spv_stderr=$3
+    _spv_total=$(profile_counter_value_in \
+        "$_spv_file" "typecheck.macro.walk_segment_fallback_flattens") || {
+        show_failure_logs "$_spv_stdout" "$_spv_stderr"
+        fail "missing segmented-program fallback counter"
+    }
+    _spv_alias=$(profile_counter_value_in \
+        "$_spv_file" "typecheck.macro.walk_segment_fallback_alias_flattens") || {
+        show_failure_logs "$_spv_stdout" "$_spv_stderr"
+        fail "missing segmented-program alias fallback counter"
+    }
+    _spv_file_count=$(profile_counter_value_in \
+        "$_spv_file" "typecheck.macro.walk_segment_fallback_file_flattens") || {
+        show_failure_logs "$_spv_stdout" "$_spv_stderr"
+        fail "missing segmented-program file fallback counter"
+    }
+    _spv_final=$(profile_counter_value_in \
+        "$_spv_file" "typecheck.macro.walk_segment_final_flattens") || {
+        show_failure_logs "$_spv_stdout" "$_spv_stderr"
+        fail "missing segmented-program final flatten counter"
+    }
+    if [ "$_spv_total" -ne $((_spv_alias + _spv_file_count)) ]; then
+        show_failure_logs "$_spv_stdout" "$_spv_stderr"
+        fail "unclassified segmented-program flatten: total=$_spv_total alias=$_spv_alias file=$_spv_file_count"
+    fi
+    if [ "$_spv_final" -ne 1 ]; then
+        show_failure_logs "$_spv_stdout" "$_spv_stderr"
+        fail "segmented-program walk must flatten once at its boundary; got $_spv_final"
+    fi
+}
+
+# Fired self time excludes the union of nested hygiene and produced-node rewalk
+# intervals. Exercise that arithmetic on the small cross-platform fixture as
+# well as the Windows-only allocation census below. Windows intentionally has
+# no fine-grained elapsed clock, so all three timer rows remain zero there.
+assert_fired_decl_timing_in() {
+    _fdt_file=$1
+    _fdt_stdout=$2
+    _fdt_stderr=$3
+
+    _fdt_fire_us=$(profile_counter_value_in "$_fdt_file" "typecheck.macro.walk_decl_fire_us") &&
+        _fdt_fire_count=$(profile_counter_value_in "$_fdt_file" "typecheck.macro.walk_decl_fire_count") &&
+        _fdt_self_us=$(profile_counter_value_in "$_fdt_file" "typecheck.macro.walk_decl_fire_self_us") &&
+        _fdt_nested_us=$(profile_counter_value_in "$_fdt_file" "typecheck.macro.walk_decl_fire_nested_us") &&
+        _fdt_attributed_calls=$(profile_counter_value_in "$_fdt_file" "typecheck.macro.walk_decl_fire_attributed_calls") || {
+        show_failure_logs "$_fdt_stdout" "$_fdt_stderr"
+        fail "missing fired-declaration timing counter"
+    }
+
+    [ "$_fdt_attributed_calls" -eq "$_fdt_fire_count" ] || {
+        show_failure_logs "$_fdt_stdout" "$_fdt_stderr"
+        fail "fired-declaration attribution lost calls: fire=$_fdt_fire_count attributed=$_fdt_attributed_calls"
+    }
+    _fdt_timed=$((_fdt_self_us + _fdt_nested_us))
+    _fdt_delta=$((_fdt_fire_us - _fdt_timed))
+    if [ "$_fdt_delta" -lt 0 ]; then
+        _fdt_delta=$((-_fdt_delta))
+    fi
+    [ "$_fdt_delta" -le 2 ] || {
+        show_failure_logs "$_fdt_stdout" "$_fdt_stderr"
+        fail "fired-declaration exclusive time double-counted nested lanes: total=$_fdt_fire_us self=$_fdt_self_us nested=$_fdt_nested_us"
+    }
+    if [ "$NL_HOST_OS" = windows ]; then
+        [ "$_fdt_fire_us" -eq 0 ] &&
+            [ "$_fdt_self_us" -eq 0 ] &&
+            [ "$_fdt_nested_us" -eq 0 ] || {
+            show_failure_logs "$_fdt_stdout" "$_fdt_stderr"
+            fail "Windows fired-declaration timers must remain intentionally zero"
+        }
+    fi
+}
+
+# Fired-declaration ownership is measured at three independent boundaries: the
+# exhaustive returned-graph copy, the reclaimable declaration generation, and
+# the remainder committed during expansion / after copy-out. Keep the arithmetic
+# exact while bounding the final allocator-granularity remainder.
+assert_fired_decl_attribution_in() {
+    _fda_file=$1
+    _fda_stdout=$2
+    _fda_stderr=$3
+
+    assert_fired_decl_timing_in "$_fda_file" "$_fda_stdout" "$_fda_stderr"
+    _fda_walk_decl_fire_live_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_live_bytes") &&
+        _fda_walk_decl_fire_survivor_alloc_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_survivor_alloc_bytes") &&
+        _fda_walk_decl_fire_survivor_live_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_survivor_live_bytes") &&
+        _fda_walk_decl_fire_survivor_pool_node_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_survivor_pool_node_bytes") &&
+        _fda_walk_decl_fire_survivor_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_survivor_bytes") &&
+        _fda_walk_decl_fire_superseded_alloc_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_superseded_alloc_bytes") &&
+        _fda_walk_decl_fire_superseded_released_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_superseded_released_bytes") &&
+        _fda_walk_decl_fire_nonoutput_live_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_nonoutput_live_bytes") &&
+        _fda_walk_decl_fire_residual_live_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_residual_live_bytes") &&
+        _fda_walk_decl_fire_residual_committed_live_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_residual_committed_live_bytes") &&
+        _fda_walk_decl_fire_residual_post_boundary_live_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_residual_post_boundary_live_bytes") &&
+        _fda_walk_decl_fire_residual_unattributed_live_bytes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_residual_unattributed_live_bytes") &&
+        _fda_walk_decl_fire_source_shared_expr_refs=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_source_shared_expr_refs") &&
+        _fda_walk_decl_fire_source_shared_type_refs=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_source_shared_type_refs") &&
+        _fda_walk_decl_fire_survivor_expr_nodes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_survivor_expr_nodes") &&
+        _fda_walk_decl_fire_survivor_type_nodes=$(profile_counter_value_in "$1" "typecheck.macro.walk_decl_fire_survivor_type_nodes") || {
+        show_failure_logs "$_fda_stdout" "$_fda_stderr"
+        fail "missing fired-declaration attribution counter"
+    }
+
+    [ "$_fda_walk_decl_fire_survivor_alloc_bytes" -gt 0 ] &&
+        [ "$_fda_walk_decl_fire_survivor_live_bytes" -gt 0 ] &&
+        [ "$_fda_walk_decl_fire_survivor_pool_node_bytes" -gt 0 ] &&
+        [ "$_fda_walk_decl_fire_survivor_bytes" -gt "$_fda_walk_decl_fire_survivor_alloc_bytes" ] &&
+        [ "$_fda_walk_decl_fire_superseded_alloc_bytes" -gt 0 ] &&
+        [ "$_fda_walk_decl_fire_superseded_released_bytes" -gt 0 ] &&
+        [ "$_fda_walk_decl_fire_source_shared_expr_refs" -gt 0 ] &&
+        [ "$_fda_walk_decl_fire_source_shared_type_refs" -gt 0 ] &&
+        [ "$_fda_walk_decl_fire_survivor_expr_nodes" -gt 0 ] &&
+        [ "$_fda_walk_decl_fire_survivor_type_nodes" -gt 0 ] || {
+        show_failure_logs "$_fda_stdout" "$_fda_stderr"
+        fail "fired-declaration survivor/non-output counters did not exercise the selfhost graph"
+    }
+
+    _fda_reconciled=$((
+        _fda_walk_decl_fire_survivor_live_bytes +
+        _fda_walk_decl_fire_nonoutput_live_bytes +
+        _fda_walk_decl_fire_residual_live_bytes
+    ))
+    [ "$_fda_reconciled" -eq "$_fda_walk_decl_fire_live_bytes" ] || {
+        show_failure_logs "$_fda_stdout" "$_fda_stderr"
+        fail "fired-declaration live attribution does not reconcile: live=$_fda_walk_decl_fire_live_bytes attributed=$_fda_reconciled"
+    }
+    _fda_residual_parts=$((
+        _fda_walk_decl_fire_residual_committed_live_bytes +
+        _fda_walk_decl_fire_residual_post_boundary_live_bytes +
+        _fda_walk_decl_fire_residual_unattributed_live_bytes
+    ))
+    [ "$_fda_residual_parts" -eq "$_fda_walk_decl_fire_residual_live_bytes" ] || {
+        show_failure_logs "$_fda_stdout" "$_fda_stderr"
+        fail "fired-declaration residual attribution does not reconcile: residual=$_fda_walk_decl_fire_residual_live_bytes parts=$_fda_residual_parts"
+    }
+    _fda_unattributed=$_fda_walk_decl_fire_residual_unattributed_live_bytes
+    if [ "$_fda_unattributed" -lt 0 ]; then
+        _fda_unattributed=$((-_fda_unattributed))
+    fi
+    [ "$_fda_unattributed" -le 4194304 ] || {
+        show_failure_logs "$_fda_stdout" "$_fda_stderr"
+        fail "fired-declaration unattributed residual exceeds 4 MiB: $_fda_unattributed"
+    }
+
+}
+
 profile_live_counter_value_in() {
     _file=$1
     _phase=$2
@@ -1200,6 +1351,31 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    assert_segmented_program_view_in \
+        "$SELFHOST_STDERR" \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_fired_decl_attribution_in \
+        "$SELFHOST_STDERR" \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    SELFHOST_SEGMENT_FILE_FLATTENS=$(profile_counter_value_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_segment_fallback_file_flattens")
+    SELFHOST_MATERIALIZED_SPLICES=$(profile_counter_value_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_decl_sp_mat_count")
+    SELFHOST_SEGMENT_ALIAS_FLATTENS=$(profile_counter_value_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_segment_fallback_alias_flattens")
+    SELFHOST_REGISTRY_INVALIDATIONS=$(profile_counter_value_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_splice_registry_invalidated")
+    if [ "$SELFHOST_SEGMENT_FILE_FLATTENS" -ne "$SELFHOST_MATERIALIZED_SPLICES" ] ||
+        [ "$SELFHOST_SEGMENT_ALIAS_FLATTENS" -ne "$SELFHOST_REGISTRY_INVALIDATIONS" ]; then
+        show_failure_logs "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
+        fail "segmented-program fallbacks do not match their conservative paths: file=$SELFHOST_SEGMENT_FILE_FLATTENS materialized=$SELFHOST_MATERIALIZED_SPLICES alias=$SELFHOST_SEGMENT_ALIAS_FLATTENS invalidated=$SELFHOST_REGISTRY_INVALIDATIONS"
+    fi
     # The compiler source currently exercises ordinary Decls, generated
     # Modules, and generated-file nominal deltas. All are additive: the CTFE
     # metadata cache builds once, grows when needed, and never rescans the
@@ -1455,6 +1631,8 @@ if ! "$PROFILE_BIN" check tests/integration/compile_profile_macro_detail.tl \
     fail "profiled fixture check failed"
 fi
 
+assert_fired_decl_timing_in "$CHECK_STDERR" "$CHECK_STDOUT" "$CHECK_STDERR"
+
 assert_contains "$CHECK_STDERR" "compile-profile-detail|typecheck.macro_expand|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro_materialize|"
 assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=2 calls=2"
@@ -1478,6 +1656,11 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_rewalk_zer
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_rewalk_provenance_skips|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_hygiene_nodes_reused|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_hygiene_nodes_copied|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_self_us|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_survivor_bytes|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_nonoutput_live_bytes|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_residual_live_bytes|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_source_shared_expr_refs|"
 assert_profile_counter_at_least_in \
     "$CHECK_STDERR" \
     "typecheck.macro.walk_hygiene_nodes_reused" \
@@ -2684,6 +2867,36 @@ assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 
+# Generated vector Modules and their marker imports are append-only. They split
+# the active segment and publish declaration deltas, but must never request an
+# intermediate whole-program view.
+assert_segmented_program_view_in \
+    "$VECTOR_ONE_STDERR" \
+    "$VECTOR_ONE_STDOUT" \
+    "$VECTOR_ONE_STDERR"
+assert_segmented_program_view_in \
+    "$VECTOR_FIVE_STDERR" \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.walk_segment_fallback_flattens" \
+    0 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+assert_profile_counter_at_least_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.walk_segment_splits" \
+    5 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+assert_profile_counter_at_least_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.walk_segment_delta_decls" \
+    5 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+
 for counter in \
     checked_program.pre_decls.functions \
     checked_program.reachable.decls \
@@ -2714,6 +2927,10 @@ if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import.tl 
     show_failure_logs "$GEN_IMPORT_STDOUT" "$GEN_IMPORT_STDERR"
     fail "profiled generated import fixture check failed"
 fi
+assert_segmented_program_view_in \
+    "$GEN_IMPORT_STDERR" \
+    "$GEN_IMPORT_STDOUT" \
+    "$GEN_IMPORT_STDERR"
 
 # The generated module imports stdlib.string; the single demand-driven pass
 # loads and forces that file import inline (there is no fixed-point loop or
@@ -2737,6 +2954,10 @@ if ! "$PROFILE_BIN" check tests/integration/compile_profile_ctfe_splice_delta.tl
     show_failure_logs "$CTFE_SPLICE_STDOUT" "$CTFE_SPLICE_STDERR"
     fail "profiled additive CTFE splice fixture check failed"
 fi
+assert_segmented_program_view_in \
+    "$CTFE_SPLICE_STDERR" \
+    "$CTFE_SPLICE_STDOUT" \
+    "$CTFE_SPLICE_STDERR"
 
 # Fresh ordinary/module/file nominals remain visible to later reflection. The
 # fixture also forces vector growth and one first-wins collision. Every clear

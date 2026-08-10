@@ -3130,6 +3130,173 @@
     (producer-test-str-cat-scoped-native-image-ok?)
     (io.panic "str-cat-scoped tlci native producer test failed")))
 
+(define (producer-test-bytes-eq?
+  [left : (& left (__tl_dyn-array u8))]
+  [right : (& right (__tl_dyn-array u8))]) : bool
+  (let
+    [count : i64 (array-length left)]
+    [index : i64 0]
+    [equal : bool (= count (array-length right))]
+    (begin
+      (while (and equal (< index count))
+        (if (= (array-ref left index) (array-ref right index))
+          (set! index (+ index 1))
+          (set! equal false)))
+      equal)))
+
+(define (producer-test-string-count [text : String] [needle : String]) : i64
+  (let
+    [needle-len : i64 (string.string-length needle)]
+    [limit : i64 (string.string-length text)]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (and (> needle-len 0) (<= (+ index needle-len) limit))
+        (begin
+          (when
+            (string.is-string-prefix-at text needle index)
+            (set! count (+ count 1)))
+          (set! index (+ index 1))))
+      count)))
+
+;; Full blocker diagnostics use a second, non-emitting traversal. Two rejected
+;; sibling template nodes prove it continues after the first, while comparing
+;; the complete package bytes and coverage counters proves that recovery text
+;; never escapes into the image-producing pass. Refs #5742.
+(define (producer-test-full-blocker-second-pass-ok?
+  [captures
+    : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]
+  [default-bytes : (& default-bytes (__tl_dyn-array u8))]
+  [default-report : String]
+  [default-native : i64]
+  [default-partial : i64]
+  [default-arms : i64]) : bool
+  (begin
+    (compiler_tlci_native_producer.embedded-native-full-blocker-report-set!
+      true)
+    (match (compiler_tlci_native_producer.embedded-native-emit-package
+      (tlci.tlci-metadata-emit
+        (tlci.tlci-make-metadata "v1" "diagnostics" "0.1.0"))
+      "producer-full-blocker-test"
+      (cfg windows true false)
+      (tlci.tlci-empty-bytes)
+      (make-array "package.multi/multi")
+      captures)
+      [(compiler_tlci_native_producer.ResultProducerBytes.Err _)
+        (begin
+          (compiler_tlci_native_producer.embedded-native-full-blocker-report-set!
+            false)
+          false)]
+      [(compiler_tlci_native_producer.ResultProducerBytes.Ok full-bytes)
+        (let
+          [full-report : String
+            (string.copy
+              (&
+                (array-ref
+                  compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-full-reasons
+                  0)))]
+          [_reset-mode : unit
+            (compiler_tlci_native_producer.embedded-native-full-blocker-report-set!
+              false)]
+          (and
+            (string.eq
+              default-report
+              "package.multi/multi\ttemplate-node:lambda\n")
+            (=
+              (producer-test-string-count
+                full-report
+                "package.multi/multi\tblocked\ttemplate-node:lambda\n")
+              1)
+            (=
+              (producer-test-string-count
+                full-report
+                "package.multi/multi\tblocked\ttemplate-node:with-arena\n")
+              1)
+            (=
+              (producer-test-string-count
+                full-report
+                "package.multi/multi\twalked\ttemplate-node:begin\n")
+              1)
+            (producer-test-bytes-eq? default-bytes (& full-bytes))
+            (= default-native 0)
+            (=
+              default-native
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
+                0))
+            (=
+              default-partial
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
+                0))
+            (=
+              default-arms
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-interpreted-arms
+                0))))])))
+
+(define (producer-test-full-blocker-default-pass-ok?
+  [captures
+    : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : bool
+  (begin
+    (compiler_tlci_native_producer.embedded-native-full-blocker-report-set!
+      false)
+    (match (compiler_tlci_native_producer.embedded-native-emit-package
+      (tlci.tlci-metadata-emit
+        (tlci.tlci-make-metadata "v1" "diagnostics" "0.1.0"))
+      "producer-full-blocker-test"
+      (cfg windows true false)
+      (tlci.tlci-empty-bytes)
+      (make-array "package.multi/multi")
+      captures)
+      [(compiler_tlci_native_producer.ResultProducerBytes.Err _) false]
+      [(compiler_tlci_native_producer.ResultProducerBytes.Ok default-bytes)
+        (producer-test-full-blocker-second-pass-ok?
+          captures
+          (& default-bytes)
+          (string.copy
+            (&
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
+                0)))
+          (array-ref
+            compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
+            0)
+          (array-ref
+            compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
+            0)
+          (array-ref
+            compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-interpreted-arms
+            0))])))
+
+(define (producer-test-full-blocker-report-ok?) : bool
+  (let
+    [names : producer_test_svec.Vec (producer_test_svec.new)]
+    [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
+      (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
+    (match (parse_core.parse-ast-source
+      "(module package.multi)\n(defmacro (multi [value : Expr]) : Expr `(begin (lambda ([x : i64]) x) (with-arena a value) ,value))\n")
+      [(parse_core.ResultAstProgram.Err _) false]
+      [(parse_core.ResultAstProgram.Ok program)
+        (match program
+          [(ast.AstProgram.Program decls)
+            (begin
+              (producer-test-collect-decls!
+                (box-get decls)
+                ""
+                (&mut names)
+                (&mut captures))
+              (and
+                (= (producer_test_svec.len (& names)) 1)
+                (= (struct-get captures len) 1)
+                (producer-test-full-blocker-default-pass-ok? (& captures))))])])))
+
+(test
+  full-blocker-report-tlci-native-producer
+  (unless
+    (producer-test-full-blocker-report-ok?)
+    (io.panic "full blocker report tlci native producer test failed")))
+
 ;; In-package coverage: every supported shape dispatches natively and the
 ;; let-rooted body stays a counted shell. The report count must equal the
 ;; number of supported entries, and the arm-level counters must count every

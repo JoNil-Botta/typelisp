@@ -209,6 +209,7 @@
   [windows-target : bool]
   [rodata : (__tl_dyn-array u8)]
   [names : (__tl_dyn-array String)]
+  [full-blockers : bool]
   [captures
     : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : i64
   (match (compiler_tlci_native_producer.embedded-native-emit-package
@@ -250,9 +251,13 @@
           ;; twice (#5605, #5600). stdout keeps exactly the two lines the gates
           ;; match on. Refs #5596.
           (io.print-error
-            (array-ref
-              compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
-              0))
+            (if full-blockers
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-full-reasons
+                0)
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
+                0)))
           (io.print-string
             (str_cat.str-cat
               "embedded stdlib tlci: coverage native-entries="
@@ -281,10 +286,10 @@
           0))]))
 
 (define (main) : i64
-  (if (not (= (io.arg-count) 7))
+  (if (and (!= (io.arg-count) 7) (!= (io.arg-count) 8))
     (begin
       (io.print-error
-        "usage: build <module-manifest> <stdlib-root> <output.tlci> <linux|windows> <build-hash> <surface-rodata>\n")
+        "usage: build <module-manifest> <stdlib-root> <output.tlci> <linux|windows> <build-hash> <surface-rodata> [--full-blockers]\n")
       2)
     (let
       [manifest-path : String (io.arg 1)]
@@ -293,10 +298,16 @@
       [target : String (io.arg 4)]
       [build-hash : String (io.arg 5)]
       [rodata-path : String (io.arg 6)]
+      [full-blockers : bool (= (io.arg-count) 8)]
+      [_report-mode : unit
+        (compiler_tlci_native_producer.embedded-native-full-blocker-report-set!
+          full-blockers)]
       [names : svec.Vec (svec.new)]
       [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
         (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
-      (if (or (string.eq target "linux") (string.eq target "windows"))
+      (if (and
+        (or (string.eq target "linux") (string.eq target "windows"))
+        (or (not full-blockers) (string.eq (io.arg 7) "--full-blockers")))
         (let
           [rodata : (__tl_dyn-array u8)
             (byte_buf.to-array (io.read-file rodata-path))]
@@ -336,11 +347,20 @@
                     (string.eq target "windows")
                     rodata
                     name-array
+                    full-blockers
                     (& captures)))))))
-        (begin
-          (io.print-error
-            (str_cat.str-cat
-              "embedded stdlib tlci: invalid host target: "
-              target
-              "\n"))
-          1)))))
+        (if (and full-blockers (not (string.eq (io.arg 7) "--full-blockers")))
+          (begin
+            (io.print-error
+              (str_cat.str-cat
+                "embedded stdlib tlci: invalid diagnostics mode: "
+                (io.arg 7)
+                "\n"))
+            2)
+          (begin
+            (io.print-error
+              (str_cat.str-cat
+                "embedded stdlib tlci: invalid host target: "
+                target
+                "\n"))
+            1))))))

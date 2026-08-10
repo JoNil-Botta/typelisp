@@ -2989,9 +2989,21 @@
                   (ctfe_support.ctfe-expr-binding-clause-type clause)
                   (ctfe_support.ctfe-untyped-expr-type))]
               [else
-                (ctfe_support.CompilerCtfeValue.Expr
-                  (ctfe_support.ctfe-expr-binding-clause-init clause)
-                  (struct-get clause init-produced))])]
+                (let
+                  [produced : ast.AstType (struct-get clause init-produced)]
+                  [pools : ast.AstNodePoolContext
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)]
+                  (ctfe_support.CompilerCtfeValue.Expr
+                    (ctfe_support.ctfe-caller-origin-expr-node-with-pools
+                      pools
+                      (ctfe_support.ctfe-expr-binding-clause-init clause)
+                      produced)
+                    (ctfe_support.ctfe-caller-origin-expr-type-inner-with-pools
+                      pools
+                      produced)))])]
           (begin
             (set!
               compiler-comptime-host-stack-len

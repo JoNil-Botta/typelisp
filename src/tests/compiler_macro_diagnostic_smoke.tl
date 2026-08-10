@@ -260,6 +260,8 @@
       (load.compiler-load-join-root-path dir "generated_entry.tl")]
     [caller-entry : String
       (load.compiler-load-join-root-path dir "caller_entry.tl")]
+    [binding-entry : String
+      (load.compiler-load-join-root-path dir "binding_entry.tl")]
     [native-entry : String
       (load.compiler-load-join-root-path dir "native_entry.tl")]
     [roots : svec.Vec (svec.new)]
@@ -271,7 +273,9 @@
 (defmacro (bad [value : Expr]) : Expr
   `(+ ,value true))
 (defmacro (callerbad [value : Expr]) : Expr
-  value)")
+  value)
+(defmacro (bindingbad [binding : ExprBindingClause]) : Expr
+  (comptime.expr-binding-clause-init binding))")
       (macro-diagnostic-write-text
         generated-entry
         "(import tc_macro_diagnostic_provider as dep)
@@ -280,6 +284,10 @@
         caller-entry
         "(import tc_macro_diagnostic_provider as dep)
 (define (main) : i64 (dep.callerbad missing))")
+      (macro-diagnostic-write-text
+        binding-entry
+        "(import tc_macro_diagnostic_provider as dep)
+(define (main) : i64 (dep.bindingbad [item missing]))")
       (macro-diagnostic-write-text
         native-entry
         "(import stdlib.core_macros)
@@ -319,23 +327,40 @@
                 (io.panic "typecheck: imported caller macro frame smoke failed"))
               (tc_api.compiler-typecheck-reset-load-session!)
               (let
-                [native-ok : bool
+                [binding-ok : bool
                   (macro-diagnostic-loaded-shape?
-                    native-entry
+                    binding-entry
                     roots
-                    native-entry
-                    3
+                    binding-entry
+                    2
                     44
-                    3
-                    26
-                    "stdlib.fs/path-join-many")]
+                    2
+                    22
+                    "tc_macro_diagnostic_provider/bindingbad")]
                 (begin
                   (unless
-                    native-ok
+                    binding-ok
                     (io.panic
-                      "typecheck: native stdlib macro frame smoke failed"))
+                      "typecheck: imported binding-clause macro frame smoke failed"))
                   (tc_api.compiler-typecheck-reset-load-session!)
-                  true)))))))))
+                  (let
+                    [native-ok : bool
+                      (macro-diagnostic-loaded-shape?
+                        native-entry
+                        roots
+                        native-entry
+                        3
+                        44
+                        3
+                        26
+                        "stdlib.fs/path-join-many")]
+                    (begin
+                      (unless
+                        native-ok
+                        (io.panic
+                          "typecheck: native stdlib macro frame smoke failed"))
+                      (tc_api.compiler-typecheck-reset-load-session!)
+                      true)))))))))))
 
 (define (main) : i64
   (unless

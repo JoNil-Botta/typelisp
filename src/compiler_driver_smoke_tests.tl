@@ -488,10 +488,10 @@
             "integer literal 300 does not fit expected type u8")
           (compiler-driver-pic-smoke-contains?
             rendered
-            "generated identity: :gennum(type_u8)")
+            "in expansion of macro `gennum` invoked here")
           (compiler-driver-pic-smoke-contains?
             rendered
-            "generated declaration: big from gennum")))]))
+            "compiler_driver_module_macro_diagnostic_fixture.tl:9:1")))]))
 
 (define (compiler-driver-reader-context-smoke-write-fixture) : String
   (let

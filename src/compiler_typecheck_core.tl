@@ -84584,6 +84584,11 @@
         (ast.ast-node-get inner-box)
         (macro-source-span-from-ast ast-span)
         origin)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (macro-call-head-to-spanned-sexpr
+        (ast.ast-node-get inner-box)
+        span
+        origin)]
     [(ast.AstExpr.Var name-id)
       (let
         [source-id : i64 (macro-output-syntax-id-at name-id "call-head")]
@@ -84608,6 +84613,11 @@
       (macro-expr-to-spanned-sexpr-with-span
         (ast.ast-node-get inner-box)
         (macro-source-span-from-ast ast-span)
+        origin)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (macro-expr-to-spanned-sexpr-with-span
+        (ast.ast-node-get inner-box)
+        span
         origin)]
     [(ast.AstExpr.Literal lit)
       (match lit
@@ -92015,14 +92025,26 @@
   (let
     [init-id : i64 (struct-get clause init)]
     [init : ast.AstExpr (ast.ast-node-get init-id)]
+    [raw-init-produced : ast.AstType
+      (if capture-expr-types
+        (macro-captured-binding-init-produced-type ctx env init)
+        (struct-get clause init-produced))]
+    [init-produced : ast.AstType
+      (ctfe_support.ctfe-caller-origin-expr-type-with-pools
+        (tc-context-pools ctx)
+        raw-init-produced
+        (macro-active-decl-path-id ctx))]
+    ;; The origin/type payload is appended through the explicit context while
+    ;; the variadic environment still observes the previously installed pool.
+    ;; Publish it before another clause is checked or the transformer projects
+    ;; this initializer and materializes its caller-origin expression marker.
+    [_publish-captured : unit (tc-context-install-pools! ctx)]
     (ast.AstExprBindingClause
       (struct-get clause name)
       (struct-get clause has-type)
       (struct-get clause ty)
-      (macro-captured-expr-node ctx (tc-context-pools ctx) init-id init)
-      (if capture-expr-types
-        (macro-captured-binding-init-produced-type ctx env init)
-        (struct-get clause init-produced))
+      init-id
+      init-produced
       (struct-get clause span))))
 
 (define (macro-captured-binding-clause-list

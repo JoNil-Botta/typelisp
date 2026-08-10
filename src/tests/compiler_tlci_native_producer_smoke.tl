@@ -1947,10 +1947,49 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
-;; The fixed-array, Slice, and shared-reference annotations in `typetpl`
-;; exercise the composite-type callbacks by name. Loading the image is
-;; insufficient: a mismatched producer spelling only fails when the emitted
-;; entry dispatches.
+;; Every composite annotation in `typetpl` exercises its callback by name.
+;; Loading the image is insufficient: a mismatched producer spelling only
+;; fails when the emitted entry dispatches. Keep every reconstructed binding
+;; pinned so a working sibling cannot hide one broken callback.
+(define (producer-test-typetpl-ptr-binding-ok?
+  [pools : ast.AstNodePoolContext]
+  [binding : ast.AstLetBinding]) : bool
+  (match binding
+    [(ast.AstLetBinding.Binding _ (ast.AstMaybeType.Some ty) _)
+      (match ty
+        [(ast.AstType.Ptr elem)
+          (match (ast.ast-node-pool-context-type-get pools elem)
+            [(ast.AstType.U8) true]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+(define (producer-test-typetpl-dyn-array-binding-ok?
+  [pools : ast.AstNodePoolContext]
+  [binding : ast.AstLetBinding]) : bool
+  (match binding
+    [(ast.AstLetBinding.Binding _ (ast.AstMaybeType.Some ty) _)
+      (match ty
+        [(ast.AstType.DynArray elem)
+          (match (ast.ast-node-pool-context-type-get pools elem)
+            [(ast.AstType.I64) true]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+(define (producer-test-typetpl-box-binding-ok?
+  [pools : ast.AstNodePoolContext]
+  [binding : ast.AstLetBinding]) : bool
+  (match binding
+    [(ast.AstLetBinding.Binding _ (ast.AstMaybeType.Some ty) _)
+      (match ty
+        [(ast.AstType.Box inner)
+          (match (ast.ast-node-pool-context-type-get pools inner)
+            [(ast.AstType.I64) true]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
 (define (producer-test-typetpl-array-binding-ok?
   [pools : ast.AstNodePoolContext]
   [binding : ast.AstLetBinding]
@@ -2004,11 +2043,29 @@
             [(ast.AstLet.Let bindings _)
               (and
                 (= (ast.ast-let-binding-list-len (& bindings)) 6)
+                (producer-test-typetpl-ptr-binding-ok?
+                  pools
+                  (ast.ast-let-binding-list-get
+                    (& bindings)
+                    0
+                    (ast.ast-let-binding-fallback)))
+                (producer-test-typetpl-dyn-array-binding-ok?
+                  pools
+                  (ast.ast-let-binding-list-get
+                    (& bindings)
+                    1
+                    (ast.ast-let-binding-fallback)))
                 (producer-test-typetpl-ref-binding-ok?
                   pools
                   (ast.ast-let-binding-list-get
                     (& bindings)
                     2
+                    (ast.ast-let-binding-fallback)))
+                (producer-test-typetpl-box-binding-ok?
+                  pools
+                  (ast.ast-let-binding-list-get
+                    (& bindings)
+                    3
                     (ast.ast-let-binding-fallback)))
                 (producer-test-typetpl-array-binding-ok?
                   pools

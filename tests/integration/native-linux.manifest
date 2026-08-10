@@ -115,6 +115,7 @@ param_pin_interval|tests/integration/param_pin_interval.tl|42|-|-|stdlib/io.tl
 dead_frame_store|tests/integration/dead_frame_store.tl|42|-|-|stdlib/io.tl
 save_reload_elide|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl
 global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+scalar_indexed_snapshot|tests/integration/scalar_indexed_snapshot.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl
@@ -163,6 +164,10 @@ box_pattern_direct|tests/integration/box_pattern_direct.tl|42|-|-|-
 box_pattern_enum_payload|tests/integration/box_pattern_enum_payload.tl|42|-|-|-
 make_array_negative_trap|tests/integration/make_array_negative_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 make_array_overflow_trap|tests/integration/make_array_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+intern_pool_active_source_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|0|compiler_intern.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_pool_active_generated_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|1|compiler_intern.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_pool_state_source_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|2|compiler_intern.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_pool_state_generated_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|3|compiler_intern.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
 bce_paired_underflow_sp0_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_paired_underflow_sp0_trap/bce_paired_underflow_sp0_trap.tl:39:47: array index out of bounds: index=-1 length=4\n
 bce_paired_underflow_sp1_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/bce_paired_underflow_sp1_trap/bce_paired_underflow_sp1_trap.tl:40:46: array index out of bounds: index=-1 length=4\n
 bce_affine_versioning|tests/integration/bce_affine_versioning.tl|42|-|0|stdlib/io.tl stdlib/string.tl

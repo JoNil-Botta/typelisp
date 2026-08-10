@@ -88,16 +88,18 @@ esac
 printf '%s' "$BUILD_GIT_HASH" > "$BUILD_GIT_HASH_FILE"
 printf '%s' "$BUILD_DATE" > "$BUILD_DATE_FILE"
 
-# Only stage1 runs on the published seed, and only a seed that still rejects
-# ptr-addr-of on globals may receive the legacy shared-view cfg. A seed that
-# already enforces the move-out-of-global rule rejects the legacy direct read
-# the cfg would select, so SEED_REQUIRES_LEGACY_GLOBAL_VIEWS (resolved below,
-# after any compatibility bridge) decides.
+# Only stage1 runs on the published seed. It receives the narrow interner-abort
+# bridge because the seed predates fixed `tl_abort_string` recognition. Only a
+# seed that still rejects ptr-addr-of on globals also receives the legacy
+# shared-view cfg: a seed that enforces move-out-of-global rejects that spelling,
+# so SEED_REQUIRES_LEGACY_GLOBAL_VIEWS (resolved below) decides independently.
 stage_seed_bootstrap_cfg_args() {
     stage_number=$1
-    if [ "$stage_number" -eq 1 ] &&
-        [ "$SEED_REQUIRES_LEGACY_GLOBAL_VIEWS" -eq 1 ]; then
-        printf '%s\n' --cfg stage0-seed-bootstrap
+    if [ "$stage_number" -eq 1 ]; then
+        printf '%s\n' --cfg stage0-seed-intern-abort
+        if [ "$SEED_REQUIRES_LEGACY_GLOBAL_VIEWS" -eq 1 ]; then
+            printf '%s\n' --cfg stage0-seed-bootstrap
+        fi
     fi
 }
 

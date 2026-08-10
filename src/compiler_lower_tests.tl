@@ -43,6 +43,7 @@
   [names : compiler_lower.LowerNameEnv]
   [clone-roots : compiler_clone.CloneRootEntries]) : compiler_lower.LowerPrunedProgram
   (match (compiler_lower.lower-prune-unreachable-functions-with-clone-roots-and-plan
+    (compiler_lower.compiler-lower-state-new)
     pools
     entry-path
     program
@@ -894,39 +895,50 @@
 
 (define (compiler-lower-entry-moduled-main-ok?) : bool
   (let
-    [prev-active : bool (compiler_lower.lower-entry-main-module-active-current)]
-    [prev-module : String (compiler_lower.lower-entry-main-module-current)]
-    [prev-module-id : i64 (compiler_lower.lower-entry-main-module-id-current)]
+    [lower-state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
+    [prev-active : bool
+      (compiler_lower.lower-entry-main-module-active-current lower-state)]
+    [prev-module : String
+      (compiler_lower.lower-entry-main-module-current lower-state)]
+    [prev-module-id : i64
+      (compiler_lower.lower-entry-main-module-id-current lower-state)]
     [active-ok : bool false]
     (begin
       (compiler_lower.lower-entry-main-selection-install!
+        lower-state
         (compiler_lower.LowerMaybeEntryMainModule.Some "app.main" 123))
       (set!
         active-ok
         (and
           (compiler_lower.lower-decl-entry-main?
+            lower-state
             "src/app.tl"
             "src/app.tl"
             "app.main"
             "main")
           (compiler_lower.lower-decl-entry-main?
+            lower-state
             "src\\app.tl"
             "src/app.tl"
             "app.main"
             "main")
           (not
             (compiler_lower.lower-decl-entry-main?
+              lower-state
               "src/app.tl"
               "src/lib.tl"
               "app.main"
               "main"))
           (not
             (compiler_lower.lower-decl-entry-main?
+              lower-state
               "src/app.tl"
               "src/app.tl"
               "app.main"
               "helper"))))
       (compiler_lower.lower-entry-main-selection-restore!
+        lower-state
         prev-active
         prev-module
         prev-module-id)
@@ -934,6 +946,7 @@
         active-ok
         (not
           (compiler_lower.lower-decl-entry-main?
+            lower-state
             "src/app.tl"
             "src/app.tl"
             "app.main"
@@ -12726,6 +12739,8 @@
 
 (define (compiler-lower-name-env-dense-snapshots-ok?) : bool
   (let
+    [lower-state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
     [source-id : i64 (ci.intern-generated-canonical-name "dense-source")]
     [sibling-id : i64 (ci.intern-generated-canonical-name "dense-sibling")]
     [overlay-id : i64 (ci.intern-generated-canonical-name "dense-overlay")]
@@ -12815,12 +12830,14 @@
     [appended : compiler_lower.LowerNameEnv
       (compiler_lower.lower-name-env-append left right)]
     [previous-global : compiler_lower.LowerNameCache
-      (compiler_lower.lower-active-global-name-cache-current)]
+      (compiler_lower.lower-active-global-name-cache-current lower-state)]
     [_set-global : unit
       (compiler_lower.lower-active-global-name-cache-set!
-        (compiler_lower.lower-name-cache-from-env base))]
+        lower-state
+        (compiler_lower.lower-name-cache-from-env lower-state base))]
     [overlay : compiler_lower.LowerNameCache
       (compiler_lower.lower-name-cache-overlay
+        lower-state
         (compiler_lower.lower-name-env-bind-logical-symbol-id
           overlay-id
           overlay-id
@@ -12902,7 +12919,9 @@
                 [_ false]))]
           [_ false]))]
     (begin
-      (compiler_lower.lower-active-global-name-cache-set! previous-global)
+      (compiler_lower.lower-active-global-name-cache-set!
+        lower-state
+        previous-global)
       ok)))
 
 (test
@@ -13134,6 +13153,8 @@
 
 (define (compiler-lower-name-cache-intern-id-dotted-ok?) : bool
   (let
+    [lower-state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
     [alias-id : i64 cbi.compiler-builtin-id-fix-alias]
     [value-id : i64 cbi.compiler-builtin-id-fix-value]
     [source-id : i64
@@ -13167,7 +13188,7 @@
           source-id
           compiler_lower.LowerNameEnv.Nil))]
     [cache : compiler_lower.LowerNameCache
-      (compiler_lower.lower-name-cache-from-env names)]
+      (compiler_lower.lower-name-cache-from-env lower-state names)]
     (and
       (>= source-id 0)
       (>= alias-id 0)
@@ -13193,6 +13214,8 @@
 
 (define (compiler-lower-type-cache-i64-keys-ok?) : bool
   (let
+    [lower-state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new)]
     [module : String "type_cache_mod_3939"]
     [name : String "TypeCacheThing3939"]
     [module-id : i64 (ci.intern-generated-name module)]
@@ -13218,7 +13241,7 @@
         fallback-id
         (compiler_ast_types.AstType.Bool))]
     [cache : compiler_lower.LowerTypeCache
-      (compiler_lower.lower-type-cache-from-env env)]
+      (compiler_lower.lower-type-cache-from-env lower-state env)]
     [missing : String "TypeCacheMissing3939"]
     [missing-id : i64 (+ (ci.intern-capacity) 3939)]
     [missing-before : bool

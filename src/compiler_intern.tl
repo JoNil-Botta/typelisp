@@ -49,6 +49,9 @@
 (extern (tl_arena_current) : i64)
 (extern (tl_region_mark) : i64)
 (extern (tl_oob_abort) : never)
+(cfg
+  (not stage0-seed-intern-abort)
+  (extern (intern-runtime-abort-string [message : String]) : never (:symbol "tl_abort_string")))
 
 (unsafe
   (extern (tl_arena_set [arg0 : i64]) : unit))
@@ -174,8 +177,7 @@
 
 ;: Capacity must stay a power of two so the bucket index is a mask, not a modulo.
 ;: It also bounds one compile's live ids: source ids grow up from 0 and generated
-;: ids grow down from capacity-1, so the two lanes together must fit or
-;: `intern-generated-id-allocate!` aborts with no diagnostic.
+;: ids grow down from capacity-1, so the two lanes together must fit.
 ;: It CANNOT simply be raised. Every structural symbol range is a polynomial in
 ;: this capacity, and the widest of them --
 ;: `tc_core.macro-hygiene-local-id`, which spans 1024*capacity^3 -- already uses
@@ -190,6 +192,16 @@
 ;: moving this number. Refs #6258.
 (define (intern-capacity) : i64
   131072)
+
+(define (intern-pool-capacity-abort) : never
+  ;; The published seed predates the backend's fixed `tl_abort_string`
+  ;; recognition. Only its one-shot stage1 compile selects the old fallback;
+  ;; stage1 and every converged/published stage compile the diagnostic branch.
+  (cfg
+    stage0-seed-intern-abort
+    (tl_oob_abort)
+    (intern-runtime-abort-string
+      "tl: intern pool capacity exhausted: source and generated lanes met\n")))
 
 ;; Structural compound identities are session-owned canonical records, not
 ;; entries in the string pool. Keep their compatibility raw-handle adapters at
@@ -1497,22 +1509,25 @@
             [stored-id : InternSlotId (array-ref state.map-id-slots cursor)]
             (if (intern-id-slot-empty? stored-id)
               (let
-                [persistent-name : String
-                  (intern-compat-state-persistent-copy state name)]
                 [id : i64 (intern-compat-state-pool-len state)]
-                (begin
-                  (set! (array-ref state.pool-slots id) persistent-name)
-                  (set!
-                    (array-ref state.map-id-slots cursor)
-                    (intern-id-slot-encode id))
-                  (set! (array-ref state.map-hash-slots cursor) hash)
-                  (set! (array-ref state.pool-count 0) (+ id 1))
-                  (intern-compat-state-record-qualified-metadata!
-                    state
-                    id
-                    persistent-name)
-                  (set! out id)
-                  (set! done true)))
+                (if (> id (array-ref state.generated-next-id 0))
+                  (intern-pool-capacity-abort)
+                  (let
+                    [persistent-name : String
+                      (intern-compat-state-persistent-copy state name)]
+                    (begin
+                      (set! (array-ref state.pool-slots id) persistent-name)
+                      (set!
+                        (array-ref state.map-id-slots cursor)
+                        (intern-id-slot-encode id))
+                      (set! (array-ref state.map-hash-slots cursor) hash)
+                      (set! (array-ref state.pool-count 0) (+ id 1))
+                      (intern-compat-state-record-qualified-metadata!
+                        state
+                        id
+                        persistent-name)
+                      (set! out id)
+                      (set! done true)))))
               (let
                 [slot-id : i64 (intern-id-slot-decode stored-id)]
                 [slot-hash : i64 (array-ref state.map-hash-slots cursor)]
@@ -2012,7 +2027,7 @@
 ;: down from the high end, so neither kind can silently overwrite the other.
 (define (intern-source-id-allocate!) : i64
   (if (> intern-pool-count intern-generated-next-id)
-    (tl_oob_abort)
+    (intern-pool-capacity-abort)
     (let
       [id : i64 intern-pool-count]
       (begin
@@ -2021,7 +2036,7 @@
 
 (define (intern-generated-id-allocate!) : i64
   (if (< intern-generated-next-id intern-pool-count)
-    (tl_oob_abort)
+    (intern-pool-capacity-abort)
     (let
       [id : i64 intern-generated-next-id]
       (begin
@@ -2042,7 +2057,7 @@
     (let
       [next-id : i64 (array-ref state.generated-next-id 0)]
       (if (< next-id (intern-compat-state-pool-len state))
-        (tl_oob_abort)
+        (intern-pool-capacity-abort)
         (let
           [persistent-name : String
             (intern-compat-state-persistent-copy state name)]
@@ -2083,7 +2098,7 @@
     (let
       [next-id : i64 (array-ref state.generated-next-id 0)]
       (if (< next-id (intern-compat-state-pool-len state))
-        (tl_oob_abort)
+        (intern-pool-capacity-abort)
         (begin
           (set! (array-ref state.pool-slots next-id) "")
           (set! (array-ref state.pool-qualified-slots next-id) false)

@@ -150,6 +150,8 @@
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (let
+        [lower-state : compiler_lower.CompilerLowerState
+          (compiler_lower.compiler-lower-state-new)]
         [source-id : i64 (ci.intern "same-name")]
         [module-id : i64 (ci.intern "identity-module")]
         [link-id : i64 (ci.intern-generated-name "same-name")]
@@ -173,10 +175,11 @@
             source-id
             true)]
         [root-cache : compiler_lower.LowerNameCache
-          (compiler_lower.lower-name-cache-from-env root-env)]
+          (compiler_lower.lower-name-cache-from-env lower-state root-env)]
         [entry-main-source-id : i64 (ci.intern-generated-name "main")]
         [entry-main-env : compiler_lower.LowerNameEnv
           (compiler_lower.lower-name-env-add-decl-module-binding-id
+            lower-state
             compiler_lower.LowerNameEnv.Nil
             "entry.tl"
             "entry.tl"
@@ -185,11 +188,12 @@
             "main"
             entry-main-source-id)]
         [entry-main-cache : compiler_lower.LowerNameCache
-          (compiler_lower.lower-name-cache-from-env entry-main-env)]
+          (compiler_lower.lower-name-cache-from-env lower-state entry-main-env)]
         [stale-main-symbol-id : i64
           (ci.intern-generated-name "package-entry-main")]
         [stale-main-cache : compiler_lower.LowerNameCache
           (compiler_lower.lower-name-cache-from-env
+            lower-state
             (compiler_lower.lower-name-env-bind-logical-symbol-id
               entry-main-source-id
               cbi.compiler-builtin-id-fix-main
@@ -1106,6 +1110,75 @@
                       (compiler_lower.lower-arenas-release!)
                       (and isolated-ok? b-released-ok?))))))))))))
 
+;; The driver owns one opaque lower job state per compile state. Populate A
+;; through a successful lower, drive B through a semantic failure, then reset B
+;; through the driver lifecycle. The 30-cell structural observation of A must
+;; remain exact, while B returns to its fresh observation.
+(define (compiler-driver-lower-state-isolation-ok?) : bool
+  (let
+    [state-a : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [state-b : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [lower-a : compiler_lower.CompilerLowerState
+      (compiler_driver_core.compiler-driver-state-owned-lower-state state-a)]
+    [lower-b : compiler_lower.CompilerLowerState
+      (compiler_driver_core.compiler-driver-state-owned-lower-state state-b)]
+    [initial-a : compiler_lower.CompilerLowerStateObservation
+      (compiler_lower.compiler-lower-state-observe lower-a)]
+    (match (compiler_lower.lower-compiler-source-with-state
+      lower-a
+      "(define (helper) : i64 42)
+(module main)
+(define (main) : i64 (helper))")
+      [(compiler_lower.ResultCompilerLower.Err diag)
+        (compiler-driver-reader-context-smoke-fail
+          (string.append
+            "lower state A failed: "
+            (compiler_diagnostic.compiler-diagnostic-render
+              (__tl-box-place diag))))]
+      [(compiler_lower.ResultCompilerLower.Ok _ _)
+        (let
+          [a-before : compiler_lower.CompilerLowerStateObservation
+            (compiler_lower.compiler-lower-state-observe lower-a)]
+          [b-failed : bool
+            (match (compiler_lower.lower-compiler-source-with-state
+              lower-b
+              "(module main)
+(define (main) : i64 lower-state-controlled-failure)")
+              [(compiler_lower.ResultCompilerLower.Err _) true]
+              [(compiler_lower.ResultCompilerLower.Ok _ _) false])]
+          (begin
+            (compiler_driver_core.compiler-driver-state-reset-lower! state-b)
+            (let
+              [a-after : compiler_lower.CompilerLowerStateObservation
+                (compiler_lower.compiler-lower-state-observe lower-a)]
+              (cond
+                [(not (= (compiler_lower.compiler-lower-state-size) 8))
+                  (compiler-driver-reader-context-smoke-fail
+                    "lower state carrier is not one word")]
+                [(= lower-a.address lower-b.address)
+                  (compiler-driver-reader-context-smoke-fail
+                    "lower state owners alias")]
+                [(compiler_lower.compiler-lower-state-observation-eq?
+                    initial-a
+                    a-before)
+                  (compiler-driver-reader-context-smoke-fail
+                    "successful lower did not populate state A")]
+                [(not b-failed)
+                  (compiler-driver-reader-context-smoke-fail
+                    "controlled lower state B failure succeeded")]
+                [(not
+                    (compiler_lower.compiler-lower-state-observation-eq?
+                      a-before
+                      a-after))
+                  (compiler-driver-reader-context-smoke-fail
+                    "state B failure/reset mutated state A")]
+                [(not (compiler_lower.compiler-lower-state-reset? lower-b))
+                  (compiler-driver-reader-context-smoke-fail
+                    "state B reset did not restore fresh state")]
+                [else true]))))])))
+
 (define (compiler-driver-base-transients-smoke-ok?) : bool
   (let
     [state-a : compiler_driver_core.CompilerDriverState
@@ -1191,7 +1264,8 @@
                   isolated-ok?
                   (compiler-driver-base-transients-lower-arenas-ok?
                     state-a
-                    state-b))))))))))
+                    state-b)
+                  (compiler-driver-lower-state-isolation-ok?))))))))))
 
 (define (compiler-driver-base-transients-smoke-main) : i64
   (if (compiler-driver-base-transients-smoke-ok?)

@@ -12207,11 +12207,9 @@
             [pred-label : i64
               (compiler-reg-preheader-block-label (array-ref orig pred))]
             (ir.compiler-ir-block-cons
-              (ir.compiler-ir-block
+              (ir.CompilerIrBlock.Block
                 ph-label
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Jump h-label)
-                  ir.CompilerIrInstrList.Nil))
+                (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump h-label)))
               (ir.compiler-ir-block-cons
                 (compiler-reg-preheader-relabel-header
                   redirected
@@ -12253,11 +12251,10 @@
                         (compiler-reg-preheader-block-label
                           (array-ref orig pred))]
                       (ir.compiler-ir-block-cons
-                        (ir.compiler-ir-block
+                        (ir.CompilerIrBlock.Block
                           ph-label
-                          (ir.compiler-ir-instr-cons
-                            (ir.CompilerIrInstr.Jump h-label)
-                            ir.CompilerIrInstrList.Nil))
+                          (ir.compiler-ir-instr-seq1
+                            (ir.CompilerIrInstr.Jump h-label)))
                         (ir.compiler-ir-block-cons
                           (compiler-reg-preheader-relabel-header
                             redirected

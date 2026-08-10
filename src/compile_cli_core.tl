@@ -1323,7 +1323,8 @@
     (ResultCompileCliWindowsBatchEntry.Err 1)
     (match result
       [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
-          object)
+          object
+          _)
         (let
           [write-status : i64
             (begin

@@ -87,7 +87,7 @@
   (intern-state (__tl_dyn-array ci.InternCompatState))
   (parser-state compiler_parse_core.CompilerParseState)
   (builtin-ids (__tl_dyn-array cbi.CompilerBuiltinIdsState))
-  (lower-arenas (__tl_dyn-array compiler_lower.CompilerLowerArenaState))
+  (lower-state-address (__tl_dyn-array i64))
   (load-session compiler_load.CompilerLoadSessionState)
   (typecheck-state compiler_typecheck_core.TcJobState)
   (backend-state compiler_backend.CompilerBackendState)
@@ -109,8 +109,7 @@
       (array.make-array ci.InternCompatState 1)]
     [builtin-cell : (__tl_dyn-array cbi.CompilerBuiltinIdsState)
       (array.make-array cbi.CompilerBuiltinIdsState 1)]
-    [lower-cell : (__tl_dyn-array compiler_lower.CompilerLowerArenaState)
-      (array.make-array compiler_lower.CompilerLowerArenaState 1)]
+    [lower-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
     [pool-arena-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
     ;; Intern capability identity is shared by parser, lowering, and backend.
     ;; Create it before switching arenas; the backend's own state data is
@@ -126,6 +125,10 @@
         (arena.tl_arena_set surface-arena))]
     [typecheck-state : compiler_typecheck_core.TcJobState
       (compiler_typecheck_core.tc-job-state-new)]
+    [_lower-state-init : unit
+      (set!
+        (array-ref lower-cell 0)
+        (__tl-project-field (compiler_lower.compiler-lower-state-new) address))]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-state)]
     [_restore-previous-arena : unit
@@ -136,9 +139,6 @@
       (set! (array-ref type-cell 0) type-pool)
       (set! (array-ref intern-cell 0) intern-state)
       (set! (array-ref builtin-cell 0) (cbi.state-new))
-      (set!
-        (array-ref lower-cell 0)
-        (compiler_lower.compiler-lower-arena-state-new))
       (set! (array-ref pool-arena-cell 0) pool-arena)
       (CompilerDriverState
         expr-cell
@@ -218,7 +218,9 @@
     (begin
       (cbi.state-capture-from-globals! (array-ref state.builtin-ids 0))
       (compiler_lower.compiler-lower-arena-state-capture-from-globals!
-        (array-ref state.lower-arenas 0))
+        (compiler_lower.compiler-lower-state-arenas
+          (compiler_lower.compiler-lower-state-from-address
+            (array-ref state.lower-state-address 0))))
       state)))
 
 (define (compiler-driver-state-session-cache-enabled?
@@ -674,14 +676,20 @@
 (define (compiler-driver-state-owned-builtins [state : CompilerDriverState]) : cbi.CompilerBuiltinIdsState
   (array-ref state.builtin-ids 0))
 
-;; The state's owned lower scratch/IR arena carrier.
+;; The state's owned lower traversal/index/cache carrier.
+(define (compiler-driver-state-owned-lower-state [state : CompilerDriverState]) : compiler_lower.CompilerLowerState
+  (compiler_lower.compiler-lower-state-from-address
+    (array-ref state.lower-state-address 0)))
+
+;; The lower job owner composes the existing scratch/IR arena carrier.
 (define (compiler-driver-state-owned-lower-arenas [state : CompilerDriverState]) : compiler_lower.CompilerLowerArenaState
-  (array-ref state.lower-arenas 0))
+  (compiler_lower.compiler-lower-state-arenas
+    (compiler-driver-state-owned-lower-state state)))
 
 (define (compiler-driver-state-install-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler_lower.compiler-lower-arena-state-install!
-    (array-ref state.lower-arenas 0)))
+    (compiler-driver-state-owned-lower-arenas state)))
 
 ;; Legacy/test capture paired with `compiler-driver-state-install-interns!`.
 (define (compiler-driver-state-capture-active-interns!
@@ -714,10 +722,14 @@
   (compiler_lower.compiler-lower-arena-state-release!
     (compiler-driver-state-owned-lower-arenas state)))
 
+(define (compiler-driver-state-reset-lower! [state : CompilerDriverState]) : unit
+  (compiler_lower.compiler-lower-state-reset!
+    (compiler-driver-state-owned-lower-state state)))
+
 (define (compiler-driver-state-capture-active-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler_lower.compiler-lower-arena-state-capture-from-globals!
-    (array-ref state.lower-arenas 0)))
+    (compiler-driver-state-owned-lower-arenas state)))
 
 ;; Session-floor snapshot after a batch entry: refresh the state's builtin and
 ;; lower-arena cells from the compatibility globals the phases just used, so a
@@ -905,6 +917,7 @@
         (compiler-driver-state-reset-builtins! state)
         (compiler_typecheck_core.compiler-typecheck-reset-file-state!)
         (compiler_lower.lower-reset-file-state!)
+        (compiler-driver-state-reset-lower! state)
         ;; Drop the previous entry's lowerer arenas. At opt level 0
         ;; the escaped IR stays alive until the next file reset.
         (compiler-driver-state-release-lower-arenas! state)))))
@@ -937,6 +950,7 @@
         (compiler-driver-state-reset-builtins! state)
         (compiler_typecheck_core.compiler-typecheck-reset-file-state!)
         (compiler_lower.lower-reset-file-state!)
+        (compiler-driver-state-reset-lower! state)
         (compiler-driver-state-release-lower-arenas! state)))))
 
 (cfg
@@ -974,6 +988,7 @@
             ordinal
             "intern-session-cleanup")
           (compiler_lower.lower-reset-file-state!)
+          (compiler-driver-state-reset-lower! state)
           (compiler-driver-state-release-lower-arenas! state)
           (compiler-driver-batch-profile-mark!
             (compiler-driver-state-profile state)
@@ -3526,6 +3541,7 @@
                 (compiler_lower.compiler-lower-checked-dest-pools-clear!))]
             [lowered : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
+                (compiler-driver-state-owned-lower-state state)
                 state.load-session
                 state.typecheck-prefix-cache
                 state.typecheck-state
@@ -3777,6 +3793,7 @@
                 (compiler_lower.compiler-lower-checked-dest-pools-clear!))]
             [lowered : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
+                (compiler-driver-state-owned-lower-state state)
                 state.load-session
                 state.typecheck-prefix-cache
                 state.typecheck-state

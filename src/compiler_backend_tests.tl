@@ -33017,6 +33017,29 @@
             ".extern tl_oob_abort\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-export-symbol-abort-string-source) : String
+  "(extern (runtime-abort [message : String]) : never (:symbol \"tl_abort_string\"))
+(define (abort-string [message : String]) (:export-symbol \"tl_abort_string\") : never
+  (runtime-abort message))
+(define (main) : i64 0)")
+
+(define (compiler-backend-export-symbol-abort-string-ok?) : bool
+  (match (compiler_backend.compiler-backend-emit-source
+    (compiler-backend-export-symbol-abort-string-source))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          ".globl tl_abort_string\n")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "tl_abort_string:\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            ".extern tl_abort_string\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-duplicate-export-symbol-source) : String
   "(define (a) (:export-symbol \"dup_export\") : i64 1)
 (define (b) (:export-symbol \"dup_export\") : i64 2)
@@ -33085,6 +33108,7 @@
   (and
     (compiler-backend-export-symbol-ok?)
     (compiler-backend-export-symbol-fixed-fault-ok?)
+    (compiler-backend-export-symbol-abort-string-ok?)
     (compiler-backend-export-symbol-diagnostics-ok?)))
 
 (define (compiler-backend-clean-module-symbol-collision-program) : compiler_ir_types.CompilerIrProgram

@@ -48,8 +48,13 @@ compile and run in `avx2` and `avx512`.
   destination is too short. The harness requires the ordinary bounds trap in
   scalar and every runnable SIMD mode, pinning all-destination safety checks.
 - `native_slice_surface_i64.tl` - `foreach` maps whose public functions take
-  generated vectors and native slices. This pins the array-surface migration
-  away from public `(Array T)` signatures.
+  generated vectors and native slices. Vec- and fixed-array-backed views cover
+  empty, sub-gang, full-gang, multi-gang, offset, and masked-tail ranges while
+  surrounding sentinels prove that stores stay within the logical Slice;
+  native-Slice `spmd-reduce` and `spmd-scan` paths run in the same fixture. The
+  verifier also pins native AVX2/AVX-512 load, arithmetic, store, and tail-mask
+  code shapes. This guards the array-surface migration away from public
+  `(Array T)` signatures.
 - `inline_helper_i64.tl` - `foreach` over `n = 1` i64 lane through a direct
   source-known helper with a varying scalar argument. Exit 42.
 - `inline_helper_shadow_i64.tl` - `foreach` over `n = 13` i64 lanes through a

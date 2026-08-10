@@ -88,6 +88,10 @@ bootstrap_extra_cfg_args() {
 }
 
 bootstrap_seed_global_view_cfg_args() {
+    # The published seed does not yet classify tl_abort_string as an
+    # always-linked runtime symbol. Keep that one-shot stage1 bootstrap on the
+    # old interner abort path; converged stages compile the explicit diagnostic.
+    printf '%s\n' --cfg stage0-seed-intern-abort
     if [ "$SEED_REQUIRES_LEGACY_GLOBAL_VIEWS" -eq 1 ]; then
         printf '%s\n' --cfg stage0-seed-bootstrap
     fi

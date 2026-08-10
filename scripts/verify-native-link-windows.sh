@@ -287,6 +287,120 @@ fi
 assert_empty "$WORKDIR/built-direct-object.stdout"
 assert_empty "$WORKDIR/built-direct-object.stderr"
 
+PACKAGE_DIR="$WORKDIR/direct-object-package"
+PACKAGE_OUTPUT_DIR="$PACKAGE_DIR/target/release"
+PACKAGE_BIN="$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.exe"
+PACKAGE_BIN_DISPLAY=$PACKAGE_BIN
+if command -v cygpath >/dev/null 2>&1; then
+    PACKAGE_BIN_DISPLAY=$(cygpath -m "$PACKAGE_BIN")
+fi
+mkdir -p "$PACKAGE_DIR/src"
+cat > "$PACKAGE_DIR/typelisp.pkg" <<'EOF'
+(package
+  (name "windows_direct_object_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+cat > "$PACKAGE_DIR/src/main.tl" <<'EOF'
+(define (main) : i64 42)
+EOF
+
+echo "[windows-native-link] package bin direct-object without assembler"
+set +e
+TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_package_assembler_fallback__.exe \
+    "$COMPILER" build --manifest-path "$PACKAGE_DIR/typelisp.pkg" \
+    --target windows-x86_64 --opt-level 0 --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/build-package-direct-object.stdout" \
+    2> "$WORKDIR/build-package-direct-object.stderr"
+package_build_status=$?
+set -e
+if [ "$package_build_status" -ne 0 ]; then
+    sed 's/^/  /' "$WORKDIR/build-package-direct-object.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/build-package-direct-object.stderr" >&2 || true
+    fail "package direct-object build without assembler failed"
+fi
+assert_empty "$WORKDIR/build-package-direct-object.stderr"
+assert_contains "$WORKDIR/build-package-direct-object.stdout" "Built $PACKAGE_BIN_DISPLAY"
+[ -s "$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.s" ] || \
+    fail "package direct-object build did not preserve its assembly side artifact"
+[ -s "$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.obj" ] || \
+    fail "package direct-object build did not preserve its object side artifact"
+[ -s "$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.tlci" ] || \
+    fail "package direct-object build did not preserve its tlci artifact"
+[ -x "$PACKAGE_BIN" ] || fail "package direct-object build did not write $PACKAGE_BIN"
+PACKAGE_ASSEMBLER=$(find_clang || true)
+if [ -z "$PACKAGE_ASSEMBLER" ]; then
+    fail "missing assembler for package side-artifact validation"
+fi
+"$PACKAGE_ASSEMBLER" --target=x86_64-pc-windows-msvc -c \
+    "$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.s" \
+    -o "$WORKDIR/windows_direct_object_pkg-side.obj"
+[ -s "$WORKDIR/windows_direct_object_pkg-side.obj" ] || \
+    fail "package structured assembly side artifact did not assemble"
+set +e
+"$PACKAGE_BIN" > "$WORKDIR/package-direct-object.stdout" \
+    2> "$WORKDIR/package-direct-object.stderr"
+package_run_status=$?
+set -e
+if [ "$package_run_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/package-direct-object.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/package-direct-object.stderr" >&2 || true
+    fail "package direct-object executable expected exit 42, got $package_run_status"
+fi
+assert_empty "$WORKDIR/package-direct-object.stdout"
+assert_empty "$WORKDIR/package-direct-object.stderr"
+
+FALLBACK_PACKAGE_DIR="$WORKDIR/semantic-fallback-package"
+FALLBACK_PACKAGE_BIN="$FALLBACK_PACKAGE_DIR/target/release/windows_semantic_fallback_pkg.exe"
+mkdir -p "$FALLBACK_PACKAGE_DIR/src"
+cat > "$FALLBACK_PACKAGE_DIR/typelisp.pkg" <<'EOF'
+(package
+  (name "windows_semantic_fallback_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+cat > "$FALLBACK_PACKAGE_DIR/src/main.tl" <<'EOF'
+(define (main) : i64 (/ 84 2))
+EOF
+
+echo "[windows-native-link] package unsupported semantics use assembler fallback"
+set +e
+TYPELISP_WINDOWS_CLANG=__typelisp_expected_package_assembler_fallback__.exe \
+    "$COMPILER" build --manifest-path "$FALLBACK_PACKAGE_DIR/typelisp.pkg" \
+    --target windows-x86_64 --opt-level 0 --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/build-package-fallback-probe.stdout" \
+    2> "$WORKDIR/build-package-fallback-probe.stderr"
+fallback_probe_status=$?
+set -e
+if [ "$fallback_probe_status" -eq 0 ]; then
+    fail "unsupported package semantics unexpectedly bypassed the assembler"
+fi
+assert_contains "$WORKDIR/build-package-fallback-probe.stderr" \
+    "__typelisp_expected_package_assembler_fallback__.exe"
+if ! "$COMPILER" build --manifest-path "$FALLBACK_PACKAGE_DIR/typelisp.pkg" \
+    --target windows-x86_64 --opt-level 0 --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/build-package-fallback.stdout" \
+    2> "$WORKDIR/build-package-fallback.stderr"; then
+    sed 's/^/  /' "$WORKDIR/build-package-fallback.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/build-package-fallback.stderr" >&2 || true
+    fail "package assembler fallback build failed"
+fi
+assert_empty "$WORKDIR/build-package-fallback.stderr"
+[ -x "$FALLBACK_PACKAGE_BIN" ] || \
+    fail "package assembler fallback did not write $FALLBACK_PACKAGE_BIN"
+set +e
+"$FALLBACK_PACKAGE_BIN" > "$WORKDIR/package-fallback.stdout" \
+    2> "$WORKDIR/package-fallback.stderr"
+fallback_run_status=$?
+set -e
+if [ "$fallback_run_status" -ne 42 ]; then
+    fail "package assembler-fallback executable expected exit 42, got $fallback_run_status"
+fi
+assert_empty "$WORKDIR/package-fallback.stdout"
+assert_empty "$WORKDIR/package-fallback.stderr"
+
 echo "[windows-native-link] run --direct direct-object without assembler"
 set +e
 TYPELISP_WINDOWS_DIRECT_OBJECT=1 \

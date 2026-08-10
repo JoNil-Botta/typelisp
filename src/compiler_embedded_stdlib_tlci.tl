@@ -3085,9 +3085,9 @@
                       pools
                       (ctfe_support.ctfe-expr-binding-clause-init clause)
                       produced)
-                      (ctfe_support.ctfe-caller-origin-expr-type-inner-with-pools
-                        pools
-                        produced)))])]
+                    (ctfe_support.ctfe-caller-origin-expr-type-inner-with-pools
+                      pools
+                      produced)))])]
           (begin
             (set!
               compiler-comptime-host-stack-len

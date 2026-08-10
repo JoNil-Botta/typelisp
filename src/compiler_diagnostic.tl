@@ -911,9 +911,7 @@
           (begin
             (if (and
               (compiler-diagnostic-span-eq? (& entry-span) (& span))
-              (compiler-diagnostic-maybe-string-eq?
-                entry.label
-                label))
+              (compiler-diagnostic-maybe-string-eq? entry.label label))
               (set! found true)
               unit)
             (set! index (+ index 1)))))

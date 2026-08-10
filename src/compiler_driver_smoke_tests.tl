@@ -16,6 +16,8 @@
 (import compiler_parse_core)
 (import compiler_backend)
 (import compiler_ir_types)
+(import compiler_load)
+(import sym_i64_env)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import compiler_profile_state as profile_state)
@@ -386,6 +388,56 @@
       (or
         (compiler-driver-pic-smoke-contains? path needle)
         (compiler-driver-pic-smoke-paths-contain? rest needle))]))
+
+;; A cache miss builds its persistent key and runtime-prelude result in the
+;; process-lifetime node-pool arena. Verify that this nested target restores the
+;; caller's arena and that the cached paths remain readable after that caller is
+;; destroyed.
+(define (compiler-driver-runtime-prelude-cache-in-caller-ok?
+  [caller : arena.Arena]
+  [caller-handle : i64]
+  [key : compiler_load.CompilerLoadPreludeCacheKey]
+  [roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : bool
+  (in-arena
+    caller
+    (match (compiler_driver_core.compiler-driver-load-runtime-prelude-cache-miss
+      key
+      roots
+      cfgs)
+      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ paths _ _)
+        (and
+          (= (arena.tl_arena_current) caller-handle)
+          (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl"))]
+      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (compiler-driver-runtime-prelude-cache-arena-scope-ok?) : bool
+  (let
+    [roots : svec.Vec (compiler-driver-pic-smoke-roots)]
+    [cfgs : sym_i64_env.SymI64Env (compiler_cfg_core.compiler-cfg-empty)]
+    [key : compiler_load.CompilerLoadPreludeCacheKey
+      (compiler_load.compiler-load-runtime-prelude-cache-key roots cfgs)]
+    [home-handle : i64 (arena.tl_arena_current)]
+    [caller : arena.Arena (arena.make)]
+    [caller-handle : i64 (arena.raw-handle caller)]
+    [scoped-ok? : bool
+      (compiler-driver-runtime-prelude-cache-in-caller-ok?
+        caller
+        caller-handle
+        key
+        roots
+        cfgs)]
+    [home-restored? : bool (= (arena.tl_arena_current) home-handle)]
+    (begin
+      (arena.destroy-safe! caller)
+      (match (compiler_driver_core.compiler-driver-runtime-prelude-cache-lookup
+        key)
+        [(compiler_load.CompilerLoadPreludeCacheHit _ paths _ _)
+          (and
+            scoped-ok?
+            home-restored?
+            (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl"))]
+        [(compiler_load.CompilerLoadPreludeCacheMiss) false]))))
 
 (define (compiler-driver-pic-smoke-output-ok?
   [output : compiler_backend.CompilerBackendPicOutput]) : bool
@@ -1315,4 +1367,5 @@
     (unless
       (compiler-driver-pic-smoke-user-cfg-keeps-runtime-prelude?)
       (return 4))
+    (unless (compiler-driver-runtime-prelude-cache-arena-scope-ok?) (return 8))
     42))

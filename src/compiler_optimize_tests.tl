@@ -13965,6 +13965,335 @@
         2)]
     (= (opt-inline-dominant-remaining-calls refused 0 64) 64)))
 
+;; --- dominant accessors reached by loop-depth weight -------------------------
+;;
+;; The tier above is entered on 64 counted references. It is also entered on 64
+;; WEIGHTED references, where a site inside one loop weighs 8 and a site inside
+;; a nested loop weighs 64 (opt-inline-census-depth-weight). Two sites at depth
+;; two therefore clear the same floor that took 64 straight-line sites.
+;;
+;; The leaf below is built to be refused by every other band, so these fixtures
+;; isolate exactly the weighted entrance:
+;;
+;;   - eight blocks, so the duplication band's 32/6 refuses it on block count
+;;     and the cost model prices it at 12 + 6*9 against a threshold of 4;
+;;   - one block holding four instructions, so the branch-chain gate's
+;;     three-instruction block cap refuses it;
+;;   - two static references, so the hot-loop-leaf gate's `> 2` refuses it and
+;;     the shared tier's raw floor of five refuses it;
+;;   - bounds-free, acyclic and call-free, so nothing above refuses it for a
+;;     reason the weighted entrance does not own.
+(define (opt-inline-depth-leaf-zero-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Mov
+      4
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        5
+        (compiler_ir_types.CompilerIrValue.I64 2)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          6
+          (compiler_ir_types.CompilerIrValue.I64 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-inline-depth-relay-label [index : i64]) : i64
+  (compiler_ir_types.compiler-ir-label
+    (str_cat.str-cat "relay" (string.int->string index))))
+
+;; `other` -> relay_0 -> ... -> relay_{count-1} -> join. The chain length is the
+;; only thing separating the admitted leaf from the oversize one.
+(define (opt-inline-depth-relay-blocks
+  [index : i64]
+  [count : i64]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (if (>= index count)
+    tail
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (opt-inline-depth-relay-label index)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (if (= (+ index 1) count)
+              (compiler_ir_types.compiler-ir-label "join")
+              (opt-inline-depth-relay-label (+ index 1))))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (opt-inline-depth-relay-blocks (+ index 1) count tail))))
+
+(define (opt-inline-depth-leaf-join-block [relays : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "join")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          3
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.I64 10)
+            (compiler_ir_types.compiler-ir-label "zero")
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 20)
+              (compiler_ir_types.compiler-ir-label "one")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.I64 30)
+                (opt-inline-depth-relay-label (- relays 1))
+                compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 3)))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (opt-inline-depth-relay-block
+  [label : String]
+  [target : String]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label label)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label target))
+        compiler_ir_types.CompilerIrInstrList.Nil))
+    tail))
+
+;; `entry-instrs` and the relay count are the only things the bounds-carrying
+;; and oversize variants change, so all three leaves share one block chain.
+(define (opt-inline-depth-leaf-named
+  [callee-name : i64]
+  [entry-instrs : compiler_ir_types.CompilerIrInstrList]
+  [relays : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    7
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        entry-instrs)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "zero")
+          (opt-inline-depth-leaf-zero-instrs))
+        (opt-inline-depth-relay-block
+          "one"
+          "join"
+          (opt-inline-depth-relay-block
+            "other"
+            "relay0"
+            (opt-inline-depth-relay-blocks
+              0
+              relays
+              (opt-inline-depth-leaf-join-block relays))))))))
+
+(define (opt-inline-depth-leaf-switch-instrs) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Switch
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      0
+      (opt-inline-switch-cases
+        (compiler_ir_types.compiler-ir-label "zero")
+        (compiler_ir_types.compiler-ir-label "one"))
+      (compiler_ir_types.compiler-ir-label "other"))
+    compiler_ir_types.CompilerIrInstrList.Nil))
+
+(define (opt-inline-depth-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-depth-leaf-named
+    callee-name
+    (opt-inline-depth-leaf-switch-instrs)
+    3))
+
+;; The identical leaf plus one bounds check: the clause that keeps the weighted
+;; entrance off the class where a wrong frequency estimate is expensive.
+(define (opt-inline-depth-bounds-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-depth-leaf-named
+    callee-name
+    (compiler_ir_types.compiler-ir-instr-cons
+      (opt-inline-switch-loop-bounds-instr
+        (compiler_ir_types.compiler-ir-label "switch_bounds_ok"))
+      (opt-inline-depth-leaf-switch-instrs))
+    3))
+
+;; The identical leaf past the accessor block ceiling: the weighted entrance
+;; relaxes which references count as dominant, never the size bands.
+(define (opt-inline-depth-oversize-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-depth-leaf-named
+    callee-name
+    (opt-inline-depth-leaf-switch-instrs)
+    6))
+
+;; entry -> outer_header -> {inner_pre -> inner_header -> {inner_body ->
+;; inner_latch -> inner_header, outer_latch -> outer_header}, exit}. The call
+;; sits in `inner_body`, two loops deep, so its census weight is 8*8.
+(define (opt-inline-depth-nested-caller-blocks [callee-name : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "outer_header"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "outer_header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "outer_latch")
+                compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "inner_pre")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (opt-inline-depth-relay-block
+        "inner_pre"
+        "inner_header"
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "inner_header")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "inner_body")
+                (compiler_ir_types.compiler-ir-label "outer_latch"))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "inner_body")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (opt-inline-loop-site-call callee-name 5)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "inner_latch"))
+                  compiler_ir_types.CompilerIrInstrList.Nil)))
+            (opt-inline-depth-relay-block
+              "inner_latch"
+              "inner_header"
+              (opt-inline-depth-relay-block
+                "outer_latch"
+                "outer_header"
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "exit")
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 4)))
+                      compiler_ir_types.CompilerIrInstrList.Nil))
+                  compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (opt-inline-depth-nested-caller [func-name : i64] [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (opt-inline-depth-nested-caller-blocks callee-name)))
+
+(define (opt-inline-depth-caller-chain
+  [names : compiler_optimize.OptSlotList]
+  [callee-name : i64]
+  [nested? : bool]
+  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  (match names
+    [(compiler_optimize.OptSlotList.Nil) tail]
+    [(compiler_optimize.OptSlotList.Cons name rest)
+      (compiler_ir_types.compiler-ir-function-cons
+        (if nested?
+          (opt-inline-depth-nested-caller name callee-name)
+          (opt-inline-loop-site-function
+            name
+            callee-name
+            (opt-inline-loop-site-entry-instrs)))
+        (opt-inline-depth-caller-chain (box-get rest) callee-name nested? tail))]))
+
+(define (opt-inline-depth-optimized
+  [callee-name : i64]
+  [nested? : bool]
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_optimize.opt-inline-program-functions
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-inline-depth-caller-chain
+      (opt-inline-dominant-caller-names-from 0 2)
+      callee-name
+      nested?
+      (compiler_ir_types.compiler-ir-function-cons
+        leaf
+        compiler_ir_types.CompilerIrFunctionList.Nil))
+    2))
+
+;; Two nested-loop sites weigh 128 and take the leaf; the identical leaf at two
+;; SINGLE-loop sites weighs 16 and keeps both calls. Nothing but the loop depth
+;; of the two call sites differs -- same leaf, same reference count, same
+;; budgets, both sites inside a loop either way.
+(define (compiler-optimize-inline-accessor-depth-weight-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [admitted : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-depth-optimized
+        callee-name
+        true
+        (opt-inline-depth-leaf callee-name))]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-depth-optimized
+        callee-name
+        false
+        (opt-inline-depth-leaf callee-name))]
+    (and
+      (= (opt-inline-dominant-remaining-calls admitted 0 2) 0)
+      (= (opt-inline-dominant-remaining-calls refused 0 2) 2))))
+
+;; A body past the accessor block ceiling stays out of line at the same two
+;; nested-loop sites: the weighted count changes which references are dominant,
+;; never how big an admitted body may be.
+(define (compiler-optimize-inline-accessor-depth-oversize-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-depth-optimized
+        callee-name
+        true
+        (opt-inline-depth-oversize-leaf callee-name))]
+    (= (opt-inline-dominant-remaining-calls refused 0 2) 2)))
+
+;; The identical leaf carrying one bounds check stays out of line at the same
+;; two nested-loop sites: a weighted count is an estimate, and the tier accepts
+;; an estimate only where a wrong one is cheap.
+(define (compiler-optimize-inline-accessor-depth-bounds-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-depth-optimized
+        callee-name
+        true
+        (opt-inline-depth-bounds-leaf callee-name))]
+    (= (opt-inline-dominant-remaining-calls refused 0 2) 2)))
+
 ;; --- branch-chain classifiers ------------------------------------------------
 ;;
 ;; The callee under test is a bounds-free acyclic decision chain: five

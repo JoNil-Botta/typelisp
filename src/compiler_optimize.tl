@@ -64357,10 +64357,17 @@
   (edges (__tl_dyn-array OptSlotList)))
 
 (defstruct OptInlineCensus
-  ;; Both maps are keyed by OptFunctionIndex dense slots. IR spellings are
+  ;; All three maps are keyed by OptFunctionIndex dense slots. IR spellings are
   ;; resolved once at the index boundary and never retained as census keys.
   (refcount opt_i64_i64_map.Map)
-  (addrtaken opt_i64_i64_map.Map))
+  (addrtaken opt_i64_i64_map.Map)
+  ;; The same references as `refcount`, each weighted by the loop nesting depth
+  ;; of the block that holds it. See opt-inline-census-depth-weight.
+  (hotcount opt_i64_i64_map.Map))
+
+;; (next block index, saw a back edge) from one function's back-edge marking.
+(defenum OptInlineDepthMark
+  (Mark i64 bool))
 
 (defstruct OptSccResult
   (scc-of (__tl_dyn-array i64))
@@ -64681,15 +64688,351 @@
 (define (opt-inline-census-capacity [index : OptFunctionIndex]) : i64
   (opt-function-index-capacity (opt-function-index-count index)))
 
+;; --- loop-depth-weighted reference counting ---------------------------------
+;;
+;; A static reference count answers "how many places name this callee", and
+;; every admission band above spends it as if it also answered "how often does
+;; this callee run". For an absorbed or duplicated body those are the same
+;; question -- the body moves to the sites, so the count is the growth. For the
+;; shared-accessor tier they are not: that tier's whole argument is the callee's
+;; DYNAMIC weight, and a per-element accessor reached from four sites inside one
+;; scan loop runs orders more often than one named from sixty straight-line
+;; sites.
+;;
+;; So the census keeps a second count in the currency the accessor tier actually
+;; wants: each reference is weighted by the loop nesting depth of the block that
+;; holds it, W^min(depth, cap). This is the classic static frequency estimate
+;; (LLVM and GCC both weight a loop level by about ten); W is 8 here because it
+;; is a power of two, and the cap is 2 so one weight is exactly the tier's
+;; existing 64-reference floor. Read as an admission rule, the floor now says:
+;; sixty-four straight-line references, OR eight references inside a loop, OR
+;; one reference inside a nested loop -- three statements of the same evidence
+;; that the callee is dynamically dominant.
+;;
+;; The weight is never below 1, so this count is always at least the raw count
+;; and no callee that used to clear a floor stops clearing it.
+(define (opt-inline-census-depth-base) : i64
+  8)
+
+(define (opt-inline-census-depth-cap) : i64
+  2)
+
+(define (opt-inline-census-depth-weight [depth : i64]) : i64
+  (let
+    [capped : i64
+      (if (> depth (opt-inline-census-depth-cap))
+        (opt-inline-census-depth-cap)
+        depth)]
+    [weight : i64 1]
+    [level : i64 0]
+    (begin
+      (while (< level capped)
+        (begin
+          (set! weight (* weight (opt-inline-census-depth-base)))
+          (set! level (+ level 1))))
+      weight)))
+
+;; Per-block loop depth of the function currently being censused. Depth is
+;; estimated from BACK EDGES IN BLOCK ORDER -- an edge whose target sits at or
+;; before its source -- rather than from dominator-based natural loops, because
+;; the census walks every function in the program and a dominator solve per
+;; function is the cost this file already refuses to pay eagerly (see
+;; opt-inline-caller-facts-ensure!). The two agree on every reducible CFG this
+;; compiler lowers, and where they disagree the estimate is only a weight: a
+;; wrong answer misprices a candidate, it cannot make an inline unsound.
+;;
+;; The array holds a difference sequence while the back edges are marked -- +1
+;; at each header, -1 one past each latch -- and a prefix sum turns it into the
+;; depth of every block in one further pass, so the whole estimate is linear in
+;; blocks plus edges.
+(define opt-inline-census-depth-slots : (__tl_dyn-array i64)
+  (array.make-array i64 64))
+(define opt-inline-census-depth-count : i64
+  0)
+(define opt-inline-census-depth-active? : bool
+  false)
+
+;; Weight of the block the census is currently walking, read by add-ref. A
+;; global instead of a threaded parameter for the same reason the site facts
+;; above are globals: the census walk is a value-threading fold and every arm
+;; would otherwise carry a constant.
+(define opt-inline-census-site-weight : i64
+  1)
+
+;; The scratch outlives optimizer arena rewinds for the same reason the CFG
+;; label table does, so it grows in the IR label arena.
+(define (opt-inline-census-depth-reserve! [count : i64]) : unit
+  (if (<= count (array-length opt-inline-census-depth-slots))
+    unit
+    (let
+      [size : i64 (array-length opt-inline-census-depth-slots)]
+      (begin
+        (while (< size count)
+          (set! size (* size 2)))
+        (in-arena
+          (arena.Arena (ir.compiler-ir-label-arena))
+          (set! opt-inline-census-depth-slots (array.make-array i64 size)))))))
+
+(define (opt-inline-census-depth-clear! [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (array-set! opt-inline-census-depth-slots i 0)
+        (set! i (+ i 1))))))
+
+(define (opt-inline-census-depth-stamp!
+  [blocks : ir.CompilerIrBlockList]
+  [generation : i64]
+  [start : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) start]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label _)
+          (begin
+            (opt-cfg-label-table-put! label start generation)
+            (opt-inline-census-depth-stamp!
+              (box-get rest)
+              generation
+              (+ start 1)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq i)
+                [(ir.CompilerIrBlock.Block label _)
+                  (opt-cfg-label-table-put! label (+ start i) generation)])
+              (set! i (+ i 1))))
+          (+ start count)))]))
+
+;; One edge. Only a target at or before the source opens a loop; a forward edge
+;; (including the fall-through this walk never has to ask about, which always
+;; goes to the next block) contributes nothing.
+(define (opt-inline-census-depth-edge!
+  [target : i64]
+  [generation : i64]
+  [source : i64]) : bool
+  (let
+    [id : i64 (opt-cfg-label-table-get target generation)]
+    (if (and (>= id 0) (<= id source))
+      (begin
+        (array-set!
+          opt-inline-census-depth-slots
+          id
+          (+ (array-ref opt-inline-census-depth-slots id) 1))
+        (array-set!
+          opt-inline-census-depth-slots
+          (+ source 1)
+          (- (array-ref opt-inline-census-depth-slots (+ source 1)) 1))
+        true)
+      false)))
+
+(define (opt-inline-census-depth-switch-cases!
+  [cases : ir.CompilerIrSwitchCaseList]
+  [generation : i64]
+  [source : i64]
+  [found : bool]) : bool
+  (match cases
+    [(ir.CompilerIrSwitchCaseList.Nil) found]
+    [(ir.CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(ir.CompilerIrSwitchCase.Case _ label)
+          (opt-inline-census-depth-switch-cases!
+            (box-get rest)
+            generation
+            source
+            (or (opt-inline-census-depth-edge! label generation source) found))])]
+    [(ir.CompilerIrSwitchCaseList.Array seq)
+      (opt-inline-census-depth-switch-cases!
+        (ir.compiler-ir-switch-case-seq-to-list seq)
+        generation
+        source
+        found)]))
+
+(define (opt-inline-census-depth-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [generation : i64]
+  [source : i64]) : bool
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (< i count)
+        (begin
+          (match (array-ref slots i)
+            [(ir.CompilerIrInstr.Jump label)
+              (set!
+                found
+                (or
+                  (opt-inline-census-depth-edge! label generation source)
+                  found))]
+            [(ir.CompilerIrInstr.Branch _ true-label false-label)
+              (begin
+                (set!
+                  found
+                  (or
+                    (opt-inline-census-depth-edge! true-label generation source)
+                    found))
+                (set!
+                  found
+                  (or
+                    (opt-inline-census-depth-edge!
+                      false-label
+                      generation
+                      source)
+                    found)))]
+            [(ir.CompilerIrInstr.TotalEnumBranch _ true-label false-label)
+              (begin
+                (set!
+                  found
+                  (or
+                    (opt-inline-census-depth-edge! true-label generation source)
+                    found))
+                (set!
+                  found
+                  (or
+                    (opt-inline-census-depth-edge!
+                      false-label
+                      generation
+                      source)
+                    found)))]
+            [(ir.CompilerIrInstr.Switch _ _ cases default-label)
+              (begin
+                (set!
+                  found
+                  (or
+                    (opt-inline-census-depth-edge!
+                      default-label
+                      generation
+                      source)
+                    found))
+                (set!
+                  found
+                  (opt-inline-census-depth-switch-cases!
+                    cases
+                    generation
+                    source
+                    found)))]
+            [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
+              (begin
+                (set!
+                  found
+                  (or
+                    (opt-inline-census-depth-edge!
+                      default-label
+                      generation
+                      source)
+                    found))
+                (set!
+                  found
+                  (opt-inline-census-depth-switch-cases!
+                    cases
+                    generation
+                    source
+                    found)))]
+            [_ unit])
+          (set! i (+ i 1))))
+      found)))
+
+(define (opt-inline-census-depth-mark!
+  [blocks : ir.CompilerIrBlockList]
+  [generation : i64]
+  [start : i64]
+  [found : bool]) : OptInlineDepthMark
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (OptInlineDepthMark.Mark start found)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-inline-census-depth-mark!
+            (box-get rest)
+            generation
+            (+ start 1)
+            (or (opt-inline-census-depth-instrs! instrs generation start) found))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [i : i64 0]
+        [any? : bool found]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq i)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set!
+                    any?
+                    (or
+                      (opt-inline-census-depth-instrs!
+                        instrs
+                        generation
+                        (+ start i))
+                      any?))])
+              (set! i (+ i 1))))
+          (OptInlineDepthMark.Mark (+ start count) any?)))]))
+
+(define (opt-inline-census-depth-prefix! [count : i64]) : unit
+  (let
+    [i : i64 1]
+    (while (< i count)
+      (begin
+        (array-set!
+          opt-inline-census-depth-slots
+          i
+          (+
+            (array-ref opt-inline-census-depth-slots i)
+            (array-ref opt-inline-census-depth-slots (- i 1))))
+        (set! i (+ i 1))))))
+
+;; Install per-block depths for one function. A body with no back edge at all --
+;; the common case -- leaves the estimate inactive and every site weighs 1, so
+;; the prefix pass is skipped and the walk never reads the array.
+(define (opt-inline-census-depths-build! [blocks : ir.CompilerIrBlockList]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-block-list-count blocks)]
+    (begin
+      (set! opt-inline-census-depth-active? false)
+      (set! opt-inline-census-depth-count 0)
+      (set! opt-inline-census-site-weight 1)
+      (if (< count 2)
+        unit
+        (let
+          [generation : i64 (opt-cfg-label-table-begin!)]
+          (begin
+            (opt-inline-census-depth-reserve! (+ count 1))
+            (opt-inline-census-depth-clear! (+ count 1))
+            (opt-inline-census-depth-stamp! blocks generation 0)
+            (match (opt-inline-census-depth-mark! blocks generation 0 false)
+              [(OptInlineDepthMark.Mark _ found)
+                (if found
+                  (begin
+                    (opt-inline-census-depth-prefix! count)
+                    (set! opt-inline-census-depth-count count)
+                    (set! opt-inline-census-depth-active? true))
+                  unit)])))))))
+
+(define (opt-inline-census-depth-at [position : i64]) : i64
+  (if (and
+    opt-inline-census-depth-active?
+    (< position opt-inline-census-depth-count))
+    (array-ref opt-inline-census-depth-slots position)
+    0))
+
 (define (opt-inline-census-bump-map
   [map : opt_i64_i64_map.Map (:consume)]
-  [slot : i64]) : opt_i64_i64_map.Map
+  [slot : i64]
+  [amount : i64]) : opt_i64_i64_map.Map
   (begin
     (match (opt_i64_i64_map.get (& map) slot)
       [(opt_i64_i64_map.LookupFound count)
-        (opt_i64_i64_map.insert-ref! (&mut map) slot (+ count 1))]
+        (opt_i64_i64_map.insert-ref! (&mut map) slot (+ count amount))]
       [(opt_i64_i64_map.LookupMissing)
-        (opt_i64_i64_map.insert-ref! (&mut map) slot 1)])
+        (opt_i64_i64_map.insert-ref! (&mut map) slot amount)])
     map))
 
 (define (opt-inline-census-add-ref
@@ -64699,8 +65042,12 @@
   (match (opt-function-index-slot index name)
     [(option_i64.Some slot)
       (OptInlineCensus
-        (opt-inline-census-bump-map (struct-get census refcount) slot)
-        (struct-get census addrtaken))]
+        (opt-inline-census-bump-map (struct-get census refcount) slot 1)
+        (struct-get census addrtaken)
+        (opt-inline-census-bump-map
+          (struct-get census hotcount)
+          slot
+          opt-inline-census-site-weight))]
     [(option_i64.None) census]))
 
 (define (opt-inline-census-add-address
@@ -64713,7 +65060,10 @@
         [addrtaken : opt_i64_i64_map.Map (struct-get census addrtaken)]
         (begin
           (opt_i64_i64_map.insert-ref! (&mut addrtaken) slot 1)
-          (OptInlineCensus (struct-get census refcount) addrtaken)))]
+          (OptInlineCensus
+            (struct-get census refcount)
+            addrtaken
+            (struct-get census hotcount))))]
     [(option_i64.None) census]))
 
 (define (opt-inline-census-value
@@ -65109,19 +65459,29 @@
   [instrs : ir.CompilerIrInstrSeq]) : OptInlineCensus
   (opt-inline-census-instr-seq-from index census instrs 0))
 
+;; `position` is the block's index in this function's block order, the same
+;; order opt-inline-census-depths-build! numbered. Each block installs its own
+;; site weight before its instructions are walked.
 (define (opt-inline-census-blocks
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
-  [blocks : ir.CompilerIrBlockList]) : OptInlineCensus
+  [blocks : ir.CompilerIrBlockList]
+  [position : i64]) : OptInlineCensus
   (match blocks
     [(ir.CompilerIrBlockList.Nil) census]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-inline-census-blocks
-            index
-            (opt-inline-census-instr-seq index census instrs)
-            (box-get rest))])]
+          (begin
+            (set!
+              opt-inline-census-site-weight
+              (opt-inline-census-depth-weight
+                (opt-inline-census-depth-at position)))
+            (opt-inline-census-blocks
+              index
+              (opt-inline-census-instr-seq index census instrs)
+              (box-get rest)
+              (+ position 1)))])]
     ;; Read-only: scan the sequence instead of materialising a block cons
     ;; chain to walk once (refs #5729).
     [(ir.CompilerIrBlockList.Array seq)
@@ -65132,6 +65492,10 @@
         (begin
           (while (< i count)
             (begin
+              (set!
+                opt-inline-census-site-weight
+                (opt-inline-census-depth-weight
+                  (opt-inline-census-depth-at (+ position i))))
               (match (ir.compiler-ir-block-seq-ref seq i)
                 [(ir.CompilerIrBlock.Block _ instrs)
                   (set! acc (opt-inline-census-instr-seq index acc instrs))])
@@ -65144,7 +65508,9 @@
   [func : ir.CompilerIrFunction]) : OptInlineCensus
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-      (opt-inline-census-blocks index census blocks)]))
+      (begin
+        (opt-inline-census-depths-build! blocks)
+        (opt-inline-census-blocks index census blocks 0))]))
 
 (define (opt-inline-census-functions
   [index : OptFunctionIndex]
@@ -65172,6 +65538,7 @@
       index
       (OptInlineCensus
         (opt_i64_i64_map.with-capacity capacity)
+        (opt_i64_i64_map.with-capacity capacity)
         (opt_i64_i64_map.with-capacity capacity))
       functions)))
 
@@ -65182,6 +65549,19 @@
   (match (opt-function-index-slot index name)
     [(option_i64.Some slot)
       (match (opt_i64_i64_map.get (& (struct-get census refcount)) slot)
+        [(opt_i64_i64_map.LookupFound count) count]
+        [(opt_i64_i64_map.LookupMissing) 0])]
+    [(option_i64.None) 0]))
+
+;; The loop-depth-weighted reference count. Always at least the raw count: the
+;; weight of a depth-0 site is 1.
+(define (opt-inline-census-hot-refcount
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [name : i64]) : i64
+  (match (opt-function-index-slot index name)
+    [(option_i64.Some slot)
+      (match (opt_i64_i64_map.get (& (struct-get census hotcount)) slot)
         [(opt_i64_i64_map.LookupFound count) count]
         [(opt_i64_i64_map.LookupMissing) 0])]
     [(option_i64.None) 0]))
@@ -68081,6 +68461,71 @@
 (define (opt-inline-shared-accessor-dominant-min-refcount) : i64
   64)
 
+;; The floor above is a floor on DYNAMIC weight, and the raw reference count was
+;; only ever the available proxy for it. `pl-byte-at` clears 64 because it is
+;; named 146 times; `gvn-byte-at` and `cfg-byte-at` are the identical shape --
+;; one guarded load, three blocks, fourteen instructions -- reached from four
+;; sites each, and they run just as often because every one of those sites is
+;; inside a scan loop and three of the four are inside a nested one. The static
+;; count says 4 and 146; the dynamic counts are 5.0M and 15.3M calls. The proxy
+;; is what is wrong, not the floor.
+;;
+;; So the tier gains a second entrance on the loop-depth-weighted count
+;; (opt-inline-census-hot-refcount): the SAME 64, in a currency that counts a
+;; reference by how often it is reached rather than by how many times it was
+;; typed. Because a depth-0 site still weighs 1, the weighted count is never
+;; below the raw one, so every callee that used to enter this tier still enters
+;; it on the raw count alone and nothing that was admitted becomes refused.
+;;
+;; Three clauses keep the new entrance inside the class it was measured on:
+;;
+;;   - the size ceilings above are untouched. This tier only ever admits a body
+;;     of at most opt-inline-shared-accessor-max-body instructions in
+;;     opt-inline-shared-accessor-max-blocks blocks, so a hot-by-depth callee
+;;     that is not accessor-shaped is refused exactly as before. The tiny leaf
+;;     is the class where inlining does not grow the caller's live set enough
+;;     to cost a callee-saved push/pop pair per invocation, which is how a
+;;     bigger import net-regresses a row.
+;;   - opt-inline-shared-accessor-dominant-min-refs: the callee must still be
+;;     genuinely SHARED, at least two static references. A single-reference
+;;     callee belongs to absorption, which moves its body instead of copying it;
+;;     letting one deeply nested site claim a tier whose argument is "many sites
+;;     are hot" would claim something false and would spend this tier's fuel on
+;;     a case the absorb band already owns.
+;;   - the callee must carry NO bounds check. This is the clause the corpus
+;;     insisted on, and the reason is the difference between the two counts. A
+;;     raw reference count is a COUNTED FACT; a depth weight is an ESTIMATE, and
+;;     its error is unbounded in one direction -- a loop that runs once weighs
+;;     the same as a loop that runs a million times. So the weighted entrance is
+;;     granted only where a wrong estimate is cheap, and an imported bounds
+;;     check is the opposite of cheap: it adds a length load, a compare, a
+;;     branch and a trap edge inside the caller's hottest loop, and it lengthens
+;;     the live ranges there. Measured on the corpus, both accessors that reach
+;;     this tier on weight alone while carrying a bounds check regress their
+;;     rows even though every one of their sites is inside a loop --
+;;     `gvn-byte-at` (4 references, weight 200) costs gvn_table +1.329% and
+;;     `cfg-byte-at` (the identical shape) costs cfg_domloops +0.733%, because
+;;     the imported guard is CSE'd with the caller's own loop test and the
+;;     shared boolean stops fusing into either branch, while the length load
+;;     spills. `pl-byte-at` carries a bounds check too and wins -12.3%, but it
+;;     enters on 146 counted references, not on an estimate. Every other row in
+;;     both corpora is byte-identical either way.
+(define (opt-inline-shared-accessor-dominant-min-refs) : i64
+  2)
+
+;; The tier verdict, asked identically by the gate and by the caller's fuel
+;; accounting so a site admitted here always spends the fuel this tier owns.
+(define (opt-inline-shared-accessor-dominant?
+  [refs : i64]
+  [hot-refs : i64]
+  [has-bounds? : bool]) : bool
+  (or
+    (>= refs (opt-inline-shared-accessor-dominant-min-refcount))
+    (and
+      (not has-bounds?)
+      (>= refs (opt-inline-shared-accessor-dominant-min-refs))
+      (>= hot-refs (opt-inline-shared-accessor-dominant-min-refcount)))))
+
 ;; The dominant tier also gets its own per-caller block fuel, for the same
 ;; reason the hot-loop-leaf gate has one and with the same accounting: a copy
 ;; taken here must not spend the fuel the caller's banked single-reference
@@ -68107,18 +68552,26 @@
 ;; budget it can change the answer to.
 (define (opt-inline-shared-accessor-ok?
   [refs : i64]
+  [hot-refs : i64]
+  [has-bounds? : bool]
   [callee-instrs : i64]
   [blocks : ir.CompilerIrBlockList]
   [added-blocks : i64]
   [caller-blocks : i64]
   [added-so-far : i64]) : bool
   (and
-    (>= refs (opt-inline-shared-accessor-min-refcount))
+    ;; Either tier's own entry test. The legacy tier keeps its raw-reference
+    ;; floor exactly; the dominant tier also opens on weighted references, so a
+    ;; callee below the raw floor can still reach it -- and nothing that used to
+    ;; be admitted is refused, because the weighted count is never smaller.
+    (or
+      (>= refs (opt-inline-shared-accessor-min-refcount))
+      (opt-inline-shared-accessor-dominant? refs hot-refs has-bounds?))
     (<= callee-instrs (opt-inline-shared-accessor-max-body))
     (<=
       (ir.compiler-ir-block-list-count blocks)
       (opt-inline-shared-accessor-max-blocks))
-    (if (>= refs (opt-inline-shared-accessor-dominant-min-refcount))
+    (if (opt-inline-shared-accessor-dominant? refs hot-refs has-bounds?)
       (and
         (not
           (opt-inline-cost-crosses-heavy-gate?
@@ -68879,10 +69332,14 @@
                   (opt-inline-blocks-have-bounds-check? cblocks)]
                 [refs : i64
                   (opt-inline-census-refcount index census callee-name)]
+                [hot-refs : i64
+                  (opt-inline-census-hot-refcount index census callee-name)]
                 ;; A shared acyclic accessor is admitted on its own terms.
                 [shared-accessor? : bool
                   (opt-inline-shared-accessor-ok?
                     refs
+                    hot-refs
+                    has-bounds?
                     callee-instrs
                     cblocks
                     added-blocks
@@ -68946,7 +69403,10 @@
                 [accessor-import? : bool
                   (and
                     shared-accessor?
-                    (>= refs (opt-inline-shared-accessor-dominant-min-refcount))
+                    (opt-inline-shared-accessor-dominant?
+                      refs
+                      hot-refs
+                      has-bounds?)
                     (not budget-cost-ok?))]
                 ;; A bounds-free acyclic branch chain is admitted on its own
                 ;; terms: the census still claims it, but the cost model's
@@ -69595,10 +70055,14 @@
                   (opt-inline-blocks-have-bounds-check? cblocks)]
                 [refs : i64
                   (opt-inline-census-refcount index census callee-name)]
+                [hot-refs : i64
+                  (opt-inline-census-hot-refcount index census callee-name)]
                 ;; A shared acyclic accessor is admitted on its own terms.
                 [shared-accessor? : bool
                   (opt-inline-shared-accessor-ok?
                     refs
+                    hot-refs
+                    has-bounds?
                     callee-instrs
                     cblocks
                     added-blocks
@@ -69659,7 +70123,10 @@
                 [accessor-import? : bool
                   (and
                     shared-accessor?
-                    (>= refs (opt-inline-shared-accessor-dominant-min-refcount))
+                    (opt-inline-shared-accessor-dominant?
+                      refs
+                      hot-refs
+                      has-bounds?)
                     (not budget-cost-ok?))]
                 ;; Same branch-chain decision as the non-span path.
                 [branch-chain? : bool

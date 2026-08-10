@@ -21,6 +21,7 @@
 ;; Out of scope: broad aggregate/String/array IR optimization.
 (import stdlib.io)
 (cfg compile-profile (import stdlib.profile))
+(cfg test (import stdlib.test))
 (import stdlib.array)
 (import stdlib.vector)
 (import stdlib.text_buf)
@@ -258,94 +259,123 @@
     (str_cat.str-cat "|" (string.int->string value))))
 
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-max-table-size : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-max-table-size-metric : i64
+    32))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-max-kinds-size : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-max-kinds-size-metric : i64
+    33))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-max-table-cap : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-max-table-cap-metric : i64
+    34))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-max-kinds-cap : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-max-kinds-cap-metric : i64
+    35))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-table-cap-hits : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-table-cap-hits-metric : i64
+    36))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-kinds-cap-hits : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-kinds-cap-hits-metric : i64
+    37))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-field-key-drops : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-field-key-drops-metric : i64
+    38))
+(cfg
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-metric-end : i64
+    39))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-reset) : unit
-    (begin
-      (set! compiler-opt-load-cse-profile-max-table-size 0)
-      (set! compiler-opt-load-cse-profile-max-kinds-size 0)
-      (set! compiler-opt-load-cse-profile-max-table-cap 0)
-      (set! compiler-opt-load-cse-profile-max-kinds-cap 0)
-      (set! compiler-opt-load-cse-profile-table-cap-hits 0)
-      (set! compiler-opt-load-cse-profile-kinds-cap-hits 0)
-      (set! compiler-opt-load-cse-profile-field-key-drops 0))))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-reset
+    [state : profile_state.CompilerProfileState]) : unit
+    (profile_state.compiler-profile-state-metric-reset-range!
+      state
+      compiler-opt-load-cse-profile-max-table-size-metric
+      compiler-opt-load-cse-profile-metric-end)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-table-size [size : i64]) : unit
-    (if (> size compiler-opt-load-cse-profile-max-table-size)
-      (set! compiler-opt-load-cse-profile-max-table-size size)
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-max
+    [metrics : profile_state.CompilerProfileMetrics]
+    [metric : i64]
+    [value : i64]) : unit
+    (if (> value (profile_state.compiler-profile-metrics-value metrics metric))
+      (profile_state.compiler-profile-metrics-set! metrics metric value)
       unit)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-kinds-size [size : i64]) : unit
-    (if (> size compiler-opt-load-cse-profile-max-kinds-size)
-      (set! compiler-opt-load-cse-profile-max-kinds-size size)
-      unit)))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-table-size
+    [metrics : profile_state.CompilerProfileMetrics]
+    [size : i64]) : unit
+    (compiler-opt-load-cse-profile-note-max
+      metrics
+      compiler-opt-load-cse-profile-max-table-size-metric
+      size)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-table-cap [cap : i64]) : unit
-    (if (> cap compiler-opt-load-cse-profile-max-table-cap)
-      (set! compiler-opt-load-cse-profile-max-table-cap cap)
-      unit)))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-kinds-size
+    [metrics : profile_state.CompilerProfileMetrics]
+    [size : i64]) : unit
+    (compiler-opt-load-cse-profile-note-max
+      metrics
+      compiler-opt-load-cse-profile-max-kinds-size-metric
+      size)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-kinds-cap [cap : i64]) : unit
-    (if (> cap compiler-opt-load-cse-profile-max-kinds-cap)
-      (set! compiler-opt-load-cse-profile-max-kinds-cap cap)
-      unit)))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-table-cap
+    [metrics : profile_state.CompilerProfileMetrics]
+    [cap : i64]) : unit
+    (compiler-opt-load-cse-profile-note-max
+      metrics
+      compiler-opt-load-cse-profile-max-table-cap-metric
+      cap)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-table-cap-hit) : unit
-    (set!
-      compiler-opt-load-cse-profile-table-cap-hits
-      (+ compiler-opt-load-cse-profile-table-cap-hits 1))))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-kinds-cap
+    [metrics : profile_state.CompilerProfileMetrics]
+    [cap : i64]) : unit
+    (compiler-opt-load-cse-profile-note-max
+      metrics
+      compiler-opt-load-cse-profile-max-kinds-cap-metric
+      cap)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-kinds-cap-hit) : unit
-    (set!
-      compiler-opt-load-cse-profile-kinds-cap-hits
-      (+ compiler-opt-load-cse-profile-kinds-cap-hits 1))))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-table-cap-hit
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-add!
+      metrics
+      compiler-opt-load-cse-profile-table-cap-hits-metric
+      1)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-field-key-drop) : unit
-    (set!
-      compiler-opt-load-cse-profile-field-key-drops
-      (+ compiler-opt-load-cse-profile-field-key-drops 1))))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-kinds-cap-hit
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-add!
+      metrics
+      compiler-opt-load-cse-profile-kinds-cap-hits-metric
+      1)))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-field-key-drop
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-add!
+      metrics
+      compiler-opt-load-cse-profile-field-key-drops-metric
+      1)))
 
 (cfg
   compile-profile
@@ -360,29 +390,126 @@
 
 (cfg
   compile-profile
-  (define (compiler-opt-load-cse-profile-emit) : unit
+  (define (compiler-opt-load-cse-profile-emit
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
       (compiler-opt-load-cse-profile-line
         "max_table_size"
-        compiler-opt-load-cse-profile-max-table-size)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-max-table-size-metric))
       (compiler-opt-load-cse-profile-line
         "max_kinds_size"
-        compiler-opt-load-cse-profile-max-kinds-size)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-max-kinds-size-metric))
       (compiler-opt-load-cse-profile-line
         "max_table_cap"
-        compiler-opt-load-cse-profile-max-table-cap)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-max-table-cap-metric))
       (compiler-opt-load-cse-profile-line
         "max_kinds_cap"
-        compiler-opt-load-cse-profile-max-kinds-cap)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-max-kinds-cap-metric))
       (compiler-opt-load-cse-profile-line
         "table_cap_hits"
-        compiler-opt-load-cse-profile-table-cap-hits)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-table-cap-hits-metric))
       (compiler-opt-load-cse-profile-line
         "kinds_cap_hits"
-        compiler-opt-load-cse-profile-kinds-cap-hits)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-kinds-cap-hits-metric))
       (compiler-opt-load-cse-profile-line
         "field_key_drops"
-        compiler-opt-load-cse-profile-field-key-drops))))
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-field-key-drops-metric)))))
+
+(cfg
+  test
+  (test
+    compiler-opt-load-cse-profile-job-isolation
+    (let
+      [left : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [right : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [left-metrics : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics left)]
+      [right-metrics : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics right)]
+      (begin
+        (compiler-opt-load-cse-profile-reset left)
+        (compiler-opt-load-cse-profile-reset right)
+        (compiler-opt-load-cse-profile-note-table-size left-metrics 4)
+        (compiler-opt-load-cse-profile-note-table-size right-metrics 19)
+        (compiler-opt-load-cse-profile-note-table-size left-metrics 7)
+        (compiler-opt-load-cse-profile-note-kinds-size left-metrics 6)
+        (compiler-opt-load-cse-profile-note-table-cap left-metrics 31)
+        (compiler-opt-load-cse-profile-note-kinds-cap left-metrics 29)
+        (compiler-opt-load-cse-profile-note-table-cap-hit left-metrics)
+        (compiler-opt-load-cse-profile-note-kinds-cap-hit left-metrics)
+        (compiler-opt-load-cse-profile-note-field-key-drop left-metrics)
+        (compiler-opt-load-cse-profile-reset right)
+        (compiler-opt-load-cse-profile-note-field-key-drop right-metrics)
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-max-table-size-metric)
+          7
+          "left job keeps its table maximum across a right reset")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-max-kinds-size-metric)
+          6
+          "left job keeps its kinds maximum")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-max-table-cap-metric)
+          31
+          "left job keeps its table cap")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-max-kinds-cap-metric)
+          29
+          "left job keeps its kinds cap")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-table-cap-hits-metric)
+          1
+          "left job keeps its table cap hit count")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-kinds-cap-hits-metric)
+          1
+          "left job keeps its kinds cap hit count")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-field-key-drops-metric)
+          1
+          "left job keeps its field-key drop count")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            right
+            compiler-opt-load-cse-profile-max-table-size-metric)
+          0
+          "right reset clears only the right maximum")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            right
+            compiler-opt-load-cse-profile-field-key-drops-metric)
+          1
+          "right job restarts its own drop count")))))
 
 (cfg
   compile-profile
@@ -32547,6 +32674,7 @@
 ;; Replace dominated repeated pure scalar expressions with a copy from the first
 ;; dominating value; existing copy propagation and DCE remove the dead copies.
 (define (opt-gvn-blocks-with-context-and-call-memory
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : ir.CompilerIrParamList]
@@ -32563,6 +32691,7 @@
     [hs : OptLoadHeaderSet
       (opt-load-header-set-from-function type-segment-bases params gvn)]
     (opt-load-gvn-blocks-with-context
+      profile-state
       type-segment-bases
       context
       sources
@@ -32576,6 +32705,8 @@
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (opt-gvn-blocks-with-context-and-call-memory
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
     type-segment-bases
     (opt-cfg-context-build blocks)
     params
@@ -39168,6 +39299,7 @@
           (= (opt-block-fold-scan scan-work opt-fold-scan-tag instrs) 0))])))
 
 (define (optimize-block-hs-full
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39199,6 +39331,7 @@
           (set!
             work
             (opt-dead-store-instr-seq-known-with-kinds
+              profile-state
               type-segment-bases
               hs
               store-capacity
@@ -39208,6 +39341,7 @@
             type-segment-bases
             hs
             (opt-load-cse-empty-state-for-size-with-kinds
+              profile-state
               (ir.compiler-ir-instr-seq-count work)
               load-kinds
               load-facts)
@@ -39216,6 +39350,7 @@
           (ir.CompilerIrBlock.Block label work)))]))
 
 (define (optimize-block-hs-with-kinds
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39228,6 +39363,7 @@
   (if (opt-block-scan-skippable? scan-work block)
     block
     (optimize-block-hs-full
+      profile-state
       pools
       type-segment-bases
       hs
@@ -39237,6 +39373,7 @@
       block)))
 
 (define (optimize-block-hs
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39245,6 +39382,7 @@
   (if (opt-block-scan-skippable? scan-work block)
     block
     (optimize-block-hs-full
+      profile-state
       pools
       type-segment-bases
       hs
@@ -39258,6 +39396,8 @@
   [type-segment-bases : i64]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (optimize-block-hs
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
     pools
     type-segment-bases
     (opt-load-header-set-empty)
@@ -39275,6 +39415,7 @@
         (opt-alias-empty))]))
 
 (define (optimize-block-seq-hs
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39296,6 +39437,7 @@
             (set!
               (array-ref slots index)
               (optimize-block-hs-with-kinds
+                profile-state
                 pools
                 type-segment-bases
                 hs
@@ -39317,6 +39459,7 @@
   (+ base (* index 2)))
 
 (define (optimize-block-seq-hs-dense-from
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39342,6 +39485,7 @@
             (set!
               (array-ref slots index)
               (optimize-block-hs-with-kinds
+                profile-state
                 pools
                 type-segment-bases
                 hs
@@ -39366,6 +39510,7 @@
 ;; workspace this shares was dead code); the two arms otherwise run identical
 ;; per-block work.
 (define (optimize-block-list-hs-dense
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39380,6 +39525,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (ir.compiler-ir-block-cons
         (optimize-block-hs-with-kinds
+          profile-state
           pools
           type-segment-bases
           hs
@@ -39396,6 +39542,7 @@
           scan-work
           block)
         (optimize-block-list-hs-dense
+          profile-state
           pools
           type-segment-bases
           hs
@@ -39407,6 +39554,7 @@
           (__tl-box-place rest)))]
     [(ir.CompilerIrBlockList.Array seq)
       (optimize-block-seq-hs-dense-from
+        profile-state
         pools
         type-segment-bases
         hs
@@ -39418,6 +39566,7 @@
         seq)]))
 
 (define (optimize-block-list-hs
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39430,6 +39579,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (ir.compiler-ir-block-cons
         (optimize-block-hs-with-kinds
+          profile-state
           pools
           type-segment-bases
           hs
@@ -39440,6 +39590,7 @@
           scan-work
           block)
         (optimize-block-list-hs
+          profile-state
           pools
           type-segment-bases
           hs
@@ -39449,6 +39600,7 @@
           (__tl-box-place rest)))]
     [(ir.CompilerIrBlockList.Array seq)
       (optimize-block-seq-hs
+        profile-state
         pools
         type-segment-bases
         hs
@@ -39489,6 +39641,7 @@
 ;; generation stamps reset it per block in O(1), and stale bytes can only ever
 ;; over-report "maybe" (safe), never skip a firing block.
 (define (optimize-block-list-for-function-pass
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [frame : i64]
@@ -39518,6 +39671,7 @@
           (match blocks
             [(ir.CompilerIrBlockList.Array seq)
               (optimize-block-seq-hs-dense-from
+                profile-state
                 pools
                 type-segment-bases
                 hs
@@ -39529,6 +39683,7 @@
                 seq)]
             [_
               (optimize-block-list-hs-dense
+                profile-state
                 pools
                 type-segment-bases
                 hs
@@ -39547,12 +39702,14 @@
           changed)))))
 
 (define (optimize-block-list-for-function
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [frame : i64]
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match (optimize-block-list-for-function-pass
+    profile-state
     pools
     type-segment-bases
     frame
@@ -39565,6 +39722,8 @@
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (optimize-block-list-hs
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
     pools
     type-segment-bases
     (opt-load-header-set-empty)
@@ -60824,6 +60983,8 @@
   [func : ir.CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunction
   (let
+    [load-cse-profile : profile_state.CompilerProfileMetrics
+      (profile_state.compiler-profile-state-metrics summaries.profile-state)]
     [_t-tailrec : i64 (cfg compile-profile (profile.now-ms) 0)]
     [tailrec : ir.CompilerIrFunction
       (compiler-opt-debug-observe-function
@@ -60862,6 +61023,7 @@
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
           [fold-result : OptBlockListPassResult
             (optimize-block-list-for-function-pass
+              load-cse-profile
               pools
               type-segment-bases
               frame
@@ -61163,6 +61325,7 @@
                           ssa-frame
                           (if run-heavy?
                             (opt-gvn-blocks-with-context-and-call-memory
+                              load-cse-profile
                               type-segment-bases
                               ssa-context
                               params
@@ -62158,6 +62321,8 @@
   (match func
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
+        [load-cse-profile : profile_state.CompilerProfileMetrics
+          (profile_state.compiler-profile-state-metrics summaries.profile-state)]
         [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
         [folded : ir.CompilerIrBlockList
           (compiler-opt-debug-observe-blocks
@@ -62168,6 +62333,7 @@
             ret-ty
             frame
             (optimize-block-list-for-function
+              load-cse-profile
               pools
               type-segment-bases
               frame
@@ -74229,7 +74395,7 @@
                 [_load-cse-profile-reset : unit
                   (cfg
                     compile-profile
-                    (compiler-opt-load-cse-profile-reset)
+                    (compiler-opt-load-cse-profile-reset profile-state)
                     unit)]
                 [optimized-functions : ir.CompilerIrFunctionList
                   (optimize-function-list-with-level-and-summaries
@@ -74245,7 +74411,9 @@
                   (cfg
                     compile-profile-summary
                     (compiler-opt-profile-summary-emit summaries.profile-state))
-                  (cfg compile-profile (compiler-opt-load-cse-profile-emit))
+                  (cfg
+                    compile-profile
+                    (compiler-opt-load-cse-profile-emit profile-state))
                   (cfg
                     compile-profile
                     (compiler-opt-profile-start profile-state))
@@ -74701,7 +74869,7 @@
                     [_load-cse-profile-reset : unit
                       (cfg
                         compile-profile
-                        (compiler-opt-load-cse-profile-reset)
+                        (compiler-opt-load-cse-profile-reset profile-state)
                         unit)]
                     [optimized-functions : ir.CompilerIrFunctionList
                       (optimize-function-list-with-level-and-summaries
@@ -74741,7 +74909,9 @@
                         compile-profile-summary
                         (compiler-opt-profile-summary-emit
                           summaries.profile-state))
-                      (cfg compile-profile (compiler-opt-load-cse-profile-emit))
+                      (cfg
+                        compile-profile
+                        (compiler-opt-load-cse-profile-emit profile-state))
                       (cfg
                         compile-profile
                         (compiler-opt-profile-start profile-state))
@@ -77297,6 +77467,7 @@
 ;; Range-checked Field constructor: out-of-range components degrade to Unknown
 ;; (the encoding packs base<2^30, off<2^20, 0<w<512).
 (define (opt-load-loc-field-checked
+  [_profile-state : profile_state.CompilerProfileMetrics]
   [base : i64]
   [off : i64]
   [width : i64]
@@ -77310,12 +77481,15 @@
     (< width opt-load-loc-field-width-limit))
     (OptLoadLocField base off width header?)
     (begin
-      (cfg compile-profile (compiler-opt-load-cse-profile-note-field-key-drop))
+      (cfg
+        compile-profile
+        (compiler-opt-load-cse-profile-note-field-key-drop _profile-state))
       (OptLoadLocUnknown))))
 
 ;; Range-checked ScaledField constructor (same packing limits, index in the
 ;; offset slot).
 (define (opt-load-loc-scaled-field-checked
+  [_profile-state : profile_state.CompilerProfileMetrics]
   [base : i64]
   [index : i64]
   [width : i64]
@@ -77329,7 +77503,9 @@
     (< width opt-load-loc-field-width-limit))
     (OptLoadLocScaledField base index width header?)
     (begin
-      (cfg compile-profile (compiler-opt-load-cse-profile-note-field-key-drop))
+      (cfg
+        compile-profile
+        (compiler-opt-load-cse-profile-note-field-key-drop _profile-state))
       (OptLoadLocUnknown))))
 
 ;; Pointer-kind env: var -> encoded kind, plus a base-var refcount so the
@@ -77376,9 +77552,13 @@
     [(OptLoadPtrKinds.Dense work generation len _)
       (OptLoadPtrKinds.Dense work generation len cap)]))
 
-(define (opt-load-kinds-empty-with-cap [cap : i64]) : OptLoadPtrKinds
+(define (opt-load-kinds-empty-with-cap
+  [_profile-state : profile_state.CompilerProfileMetrics]
+  [cap : i64]) : OptLoadPtrKinds
   (begin
-    (cfg compile-profile (compiler-opt-load-cse-profile-note-kinds-cap cap))
+    (cfg
+      compile-profile
+      (compiler-opt-load-cse-profile-note-kinds-cap _profile-state cap))
     (OptLoadPtrKinds.Sparse
       (opt_i64_i64_map.with-capacity 17)
       (opt_i64_i64_map.with-capacity 17)
@@ -77525,6 +77705,7 @@
 ;; Bind var -> kind. Unknown removes; the env is size-capped (conservative:
 ;; new pointers just stay unclassified once the cap is hit).
 (define (opt-load-kinds-bind
+  [_profile-state : profile_state.CompilerProfileMetrics]
   [kinds : OptLoadPtrKinds]
   [var : i64]
   [kind : OptLoadLocKind]) : OptLoadPtrKinds
@@ -77540,15 +77721,20 @@
               (begin
                 (cfg
                   compile-profile
-                  (compiler-opt-load-cse-profile-note-kinds-size current-len))
+                  (compiler-opt-load-cse-profile-note-kinds-size
+                    _profile-state
+                    current-len))
                 (cfg
                   compile-profile
-                  (compiler-opt-load-cse-profile-note-kinds-cap cap))
+                  (compiler-opt-load-cse-profile-note-kinds-cap
+                    _profile-state
+                    cap))
                 (if (>= current-len cap)
                   (begin
                     (cfg
                       compile-profile
-                      (compiler-opt-load-cse-profile-note-kinds-cap-hit))
+                      (compiler-opt-load-cse-profile-note-kinds-cap-hit
+                        _profile-state))
                     removed)
                   (let
                     [refs2 : opt_i64_i64_map.Map
@@ -77557,6 +77743,7 @@
                       (cfg
                         compile-profile
                         (compiler-opt-load-cse-profile-note-kinds-size
+                          _profile-state
                           (+ current-len 1)))
                       (OptLoadPtrKinds.Sparse
                         (let
@@ -77580,7 +77767,8 @@
                   unit
                   (cfg
                     compile-profile
-                    (compiler-opt-load-cse-profile-note-kinds-cap-hit)))
+                    (compiler-opt-load-cse-profile-note-kinds-cap-hit
+                      _profile-state)))
                 removed)
               (begin
                 (opt-load-kinds-dense-ref-add-kind! work generation kind 1)
@@ -77592,7 +77780,9 @@
                 (set! (array-ref work.kind-stamps var) generation)
                 (cfg
                   compile-profile
-                  (compiler-opt-load-cse-profile-note-kinds-size (+ len 1)))
+                  (compiler-opt-load-cse-profile-note-kinds-size
+                    _profile-state
+                    (+ len 1)))
                 (OptLoadPtrKinds.Dense work generation (+ len 1) cap)))]))]))
 
 ;; Redefinition of `var`: drop its own binding, and (only when some Field kind
@@ -77674,6 +77864,7 @@
           (opt-load-kinds-dense-drop-base-from removed var 0))])))
 
 (define (opt-load-kinds-dense-clone-from
+  [profile-state : profile_state.CompilerProfileMetrics]
   [kinds : OptLoadPtrKinds]
   [index : i64]
   [out : OptLoadPtrKinds (:consume)]) : OptLoadPtrKinds
@@ -77684,12 +77875,19 @@
         (let
           [var : i64 (array-ref work.active index)]
           (opt-load-kinds-dense-clone-from
+            profile-state
             kinds
             (+ index 1)
-            (opt-load-kinds-bind out var (opt-load-kinds-lookup kinds var)))))]
+            (opt-load-kinds-bind
+              profile-state
+              out
+              var
+              (opt-load-kinds-lookup kinds var)))))]
     [_ out]))
 
-(define (opt-load-kinds-clone [kinds : OptLoadPtrKinds]) : OptLoadPtrKinds
+(define (opt-load-kinds-clone
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [kinds : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match kinds
     [(OptLoadPtrKinds.Sparse map refs cap)
       (let
@@ -77717,18 +77915,23 @@
           (OptLoadPtrKinds.Sparse out out-refs cap)))]
     [(OptLoadPtrKinds.Dense _ _ _ cap)
       (opt-load-kinds-dense-clone-from
+        profile-state
         kinds
         0
-        (opt-load-kinds-empty-with-cap cap))]))
+        (opt-load-kinds-empty-with-cap profile-state cap))]))
 
 ;; Control-flow join: keep only bindings identical on both edges.
-(define (opt-load-kinds-intersect [a : OptLoadPtrKinds] [b : OptLoadPtrKinds]) : OptLoadPtrKinds
+(define (opt-load-kinds-intersect
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [a : OptLoadPtrKinds]
+  [b : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match a
     [(OptLoadPtrKinds.Sparse amap _ acap)
       (match b
         [(OptLoadPtrKinds.Sparse bmap _ _)
           (let
-            [out : OptLoadPtrKinds (opt-load-kinds-empty-with-cap acap)]
+            [out : OptLoadPtrKinds
+              (opt-load-kinds-empty-with-cap profile-state acap)]
             [capacity : i64 (opt_i64_i64_map.capacity (& amap))]
             [i : i64 (opt_i64_i64_map.next-occupied (& amap) 0)]
             (begin
@@ -77742,6 +77945,7 @@
                             (set!
                               out
                               (opt-load-kinds-bind
+                                profile-state
                                 out
                                 var
                                 (opt-load-loc-kind-decode value)))
@@ -77751,9 +77955,15 @@
                   (set! i (opt_i64_i64_map.next-occupied (& amap) (+ i 1)))))
               out))]
         [(OptLoadPtrKinds.Dense _ _ _ _)
-          (opt-load-kinds-intersect a (opt-load-kinds-clone b))])]
+          (opt-load-kinds-intersect
+            profile-state
+            a
+            (opt-load-kinds-clone profile-state b))])]
     [(OptLoadPtrKinds.Dense _ _ _ _)
-      (opt-load-kinds-intersect (opt-load-kinds-clone a) b)]))
+      (opt-load-kinds-intersect
+        profile-state
+        (opt-load-kinds-clone profile-state a)
+        b)]))
 
 ;; A (var, kind) binding that no unseen back edge can kill: the var and every
 ;; var its kind references are single-source, so nothing anywhere redefines
@@ -77779,12 +77989,14 @@
 ;; a single-source var's kind is a property of its VALUE, which the back edge
 ;; cannot change, so those bindings carry into the loop.
 (define (opt-load-kinds-filter-stable
+  [profile-state : profile_state.CompilerProfileMetrics]
   [kinds : OptLoadPtrKinds]
   [sources : opt_i64_i64_map.Map]) : OptLoadPtrKinds
   (match kinds
     [(OptLoadPtrKinds.Sparse map _ cap)
       (let
-        [out : OptLoadPtrKinds (opt-load-kinds-empty-with-cap cap)]
+        [out : OptLoadPtrKinds
+          (opt-load-kinds-empty-with-cap profile-state cap)]
         [capacity : i64 (opt_i64_i64_map.capacity (& map))]
         [i : i64 (opt_i64_i64_map.next-occupied (& map) 0)]
         (begin
@@ -77795,17 +78007,23 @@
                   (let
                     [kind : OptLoadLocKind (opt-load-loc-kind-decode value)]
                     (if (opt-load-kind-binding-gvn-stable? sources var kind)
-                      (set! out (opt-load-kinds-bind out var kind))
+                      (set!
+                        out
+                        (opt-load-kinds-bind profile-state out var kind))
                       unit))]
                 [(opt_i64_i64_map.EntryNone) unit])
               (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
           out))]
     [(OptLoadPtrKinds.Dense _ _ _ _)
-      (opt-load-kinds-filter-stable (opt-load-kinds-clone kinds) sources)]))
+      (opt-load-kinds-filter-stable
+        profile-state
+        (opt-load-kinds-clone profile-state kinds)
+        sources)]))
 
 ;; Kind transfer for one instruction: redefinitions first (own binding + the
 ;; base-reference sweep), then the deriving arms.
 (define (opt-load-kinds-step
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [kinds : OptLoadPtrKinds]
   [hs : OptLoadHeaderSet]
@@ -77827,14 +78045,21 @@
                   ;; array share one load key.
                   [(ir.CompilerIrValue.Var index-var)
                     (opt-load-kinds-bind
+                      profile-state
                       invalidated
                       dst
                       (opt-load-loc-scaled-field-checked
+                        profile-state
                         bvar
                         index-var
                         (opt-load-loc-type-size type-segment-bases ty)
                         false))]
-                  [_ (opt-load-kinds-bind invalidated dst (OptLoadLocElement))])]
+                  [_
+                    (opt-load-kinds-bind
+                      profile-state
+                      invalidated
+                      dst
+                      (OptLoadLocElement))])]
               [(OptLoadLocField b0 o0 _ h0)
                 (match offset
                   [(ir.CompilerIrValue.I64 k)
@@ -77842,18 +78067,26 @@
                       [sz : i64 (opt-load-loc-type-size type-segment-bases ty)]
                       (if (> sz 0)
                         (opt-load-kinds-bind
+                          profile-state
                           invalidated
                           dst
-                          (opt-load-loc-field-checked b0 (+ o0 (* k sz)) sz h0))
+                          (opt-load-loc-field-checked
+                            profile-state
+                            b0
+                            (+ o0 (* k sz))
+                            sz
+                            h0))
                         invalidated))]
                   [(ir.CompilerIrValue.Var index-var)
                     ;; Only a zero-offset field base is a provable element
                     ;; base; a nonzero offset would be lost by the scaled key.
                     (if (= o0 0)
                       (opt-load-kinds-bind
+                        profile-state
                         invalidated
                         dst
                         (opt-load-loc-scaled-field-checked
+                          profile-state
                           b0
                           index-var
                           (opt-load-loc-type-size type-segment-bases ty)
@@ -77869,9 +78102,11 @@
                       [sz : i64 (opt-load-loc-type-size type-segment-bases ty)]
                       (if (and (> sz 0) (not (= bvar dst)))
                         (opt-load-kinds-bind
+                          profile-state
                           invalidated
                           dst
                           (opt-load-loc-field-checked
+                            profile-state
                             bvar
                             (* k sz)
                             sz
@@ -77883,7 +78118,11 @@
                 ;; the canonical ScaledField key, but it is still an element
                 ;; address. Keep the coarser location fact so stores through
                 ;; inline slot-field Geps do not masquerade as unknown writes.
-                (opt-load-kinds-bind invalidated dst (OptLoadLocElement))])]
+                (opt-load-kinds-bind
+                  profile-state
+                  invalidated
+                  dst
+                  (OptLoadLocElement))])]
           [_ invalidated])]
       [(ir.CompilerIrInstr.Load dst src ty)
         (match src
@@ -77894,7 +78133,11 @@
                   header?
                   (= off 0)
                   (= (opt-load-loc-type-size type-segment-bases ty) 8))
-                  (opt-load-kinds-bind invalidated dst (OptLoadLocElement))
+                  (opt-load-kinds-bind
+                    profile-state
+                    invalidated
+                    dst
+                    (OptLoadLocElement))
                   invalidated)]
               [_
                 (if (and
@@ -77902,7 +78145,11 @@
                   (= (opt-load-loc-type-size type-segment-bases ty) 8))
                   ;; A header var's first word is the data pointer (the element
                   ;; base), whether or not the var already has a Field kind.
-                  (opt-load-kinds-bind invalidated dst (OptLoadLocElement))
+                  (opt-load-kinds-bind
+                    profile-state
+                    invalidated
+                    dst
+                    (OptLoadLocElement))
                   invalidated)])]
           [_ invalidated])]
       [(ir.CompilerIrInstr.Mov dst src _)
@@ -77911,14 +78158,20 @@
             (match (opt-load-kinds-lookup invalidated s)
               [(OptLoadLocUnknown) invalidated]
               [(OptLoadLocElement)
-                (opt-load-kinds-bind invalidated dst (OptLoadLocElement))]
+                (opt-load-kinds-bind
+                  profile-state
+                  invalidated
+                  dst
+                  (OptLoadLocElement))]
               [(OptLoadLocField base off width header?)
                 (opt-load-kinds-bind
+                  profile-state
                   invalidated
                   dst
                   (OptLoadLocField base off width header?))]
               [(OptLoadLocScaledField base index width header?)
                 (opt-load-kinds-bind
+                  profile-state
                   invalidated
                   dst
                   (OptLoadLocScaledField base index width header?))])]
@@ -78030,9 +78283,16 @@
   (Some i64 i64 bool))
 
 ;; facts, table, pointer kinds, table cap, allocation-epoch counter, resolved
-;; global-based addresses.
+;; global-based addresses, and the owning compile-profile job.
 (defenum OptLoadCseState
-  (State OptAliasFacts OptLoadTable OptLoadPtrKinds i64 i64 OptLoadGlobalBases))
+  (State
+    OptAliasFacts
+    OptLoadTable
+    OptLoadPtrKinds
+    i64
+    i64
+    OptLoadGlobalBases
+    profile_state.CompilerProfileMetrics))
 
 (defenum OptLoadCseResult
   (Result OptLoadCseState ir.CompilerIrInstr))
@@ -78469,6 +78729,7 @@
 ;; Bind key -> value. Since granular invalidation lets tables survive stores,
 ;; cap growth: a fresh key is skipped once the table reaches the state cap.
 (define (opt-load-table-bind
+  [_profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [table : OptLoadTable]
   [cap : i64]
@@ -78486,20 +78747,24 @@
         (begin
           (cfg
             compile-profile
-            (compiler-opt-load-cse-profile-note-table-size current-len))
+            (compiler-opt-load-cse-profile-note-table-size
+              _profile-state
+              current-len))
           (cfg
             compile-profile
-            (compiler-opt-load-cse-profile-note-table-cap cap))
+            (compiler-opt-load-cse-profile-note-table-cap _profile-state cap))
           (if (>= current-len cap)
             (begin
               (cfg
                 compile-profile
-                (compiler-opt-load-cse-profile-note-table-cap-hit))
+                (compiler-opt-load-cse-profile-note-table-cap-hit
+                  _profile-state))
               table)
             (begin
               (cfg
                 compile-profile
                 (compiler-opt-load-cse-profile-note-table-size
+                  _profile-state
                   (+ current-len 1)))
               (OptLoadTable.Cons
                 (OptLoadEntry.Entry key value epoch)
@@ -78525,6 +78790,7 @@
 ;; The synthesized destination entry is created by THIS CopyBytes, so it takes
 ;; the state's current allocation epoch, not the source entry's older one.
 (define (opt-load-copy-transfer-entry
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [table : OptLoadTable]
   [cap : i64]
@@ -78561,12 +78827,20 @@
                 (opt-load-value-gvn-stable? sources value))
               true)]
           (if eligible?
-            (opt-load-table-bind type-segment-bases table cap key value epoch)
+            (opt-load-table-bind
+              profile-state
+              type-segment-bases
+              table
+              cap
+              key
+              value
+              epoch)
             table))]
       [_ table])
     table))
 
 (define (opt-load-table-transfer-copy-fields
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [source : OptLoadTable]
   [out : OptLoadTable]
@@ -78584,9 +78858,11 @@
     [(OptLoadTable.Nil) out]
     [(OptLoadTable.Cons entry rest)
       (opt-load-table-transfer-copy-fields
+        profile-state
         type-segment-bases
         (__tl-box-place rest)
         (opt-load-copy-transfer-entry
+          profile-state
           type-segment-bases
           out
           cap
@@ -79022,6 +79298,7 @@
       stores)))
 
 (define (opt-dead-store-instr-seq-known-with-kinds
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [store-capacity : i64]
@@ -79052,7 +79329,12 @@
                   instr))
               (set!
                 kinds
-                (opt-load-kinds-step type-segment-bases kinds hs instr))
+                (opt-load-kinds-step
+                  profile-state
+                  type-segment-bases
+                  kinds
+                  hs
+                  instr))
               (set! index (+ index 1)))))
         (opt-dead-store-compact! (&mut instrs) dead count)
         instrs))
@@ -79064,6 +79346,8 @@
   [store-capacity : i64]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (opt-dead-store-instr-seq-known-with-kinds
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
     type-segment-bases
     hs
     store-capacity
@@ -79155,7 +79439,14 @@
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (let
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
@@ -79168,10 +79459,11 @@
           (match (opt-instr-def-var instr)
             [(option_i64.Some dst) (opt-load-table-invalidate-var table dst)]
             [(option_i64.None) table])
-          (opt-load-kinds-step type-segment-bases kinds hs instr)
+          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
           table-cap
           next-epoch
-          (opt-load-global-bases-step type-segment-bases bases instr)))]))
+          (opt-load-global-bases-step type-segment-bases bases instr)
+          profile-state))]))
 
 ;; Calls/unknown effects: the table clears entirely; pointer kinds are value
 ;; properties and survive (only the instr's own def is invalidated). The
@@ -79186,7 +79478,7 @@
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts _ kinds table-cap epoch bases)
+    [(OptLoadCseState.State facts _ kinds table-cap epoch bases profile-state)
       (let
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
@@ -79197,10 +79489,11 @@
             instr
             next-epoch)
           (OptLoadTable.Nil)
-          (opt-load-kinds-step type-segment-bases kinds hs instr)
+          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
           table-cap
           next-epoch
-          (opt-load-global-bases-clear bases)))]))
+          (opt-load-global-bases-clear bases)
+          profile-state))]))
 
 ;; Apply one callee parameter-write bit to the cached load table. The callee
 ;; summary carries no byte-range fact, so filtering is root-only: a write
@@ -79253,7 +79546,14 @@
     ;; summary lets table entries live: those entries survive only where the
     ;; callee provably cannot reach them, while a base map binding would have to
     ;; re-prove that the global SLOT is untouched, which no summary states.
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (let
         ;; Filtering reads the PRE-call facts and table, so a tl_alloc call
         ;; cannot use its own (not yet bound) fresh root to keep entries.
@@ -79286,10 +79586,11 @@
             instr
             next-epoch)
           (opt-load-table-invalidate-var filtered dst)
-          (opt-load-kinds-step type-segment-bases kinds hs instr)
+          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
           table-cap
           next-epoch
-          (opt-load-global-bases-clear bases)))]))
+          (opt-load-global-bases-clear bases)
+          profile-state))]))
 
 ;; StorePtr: granular invalidation, then store-to-load forwarding. The
 ;; forwarded value must be a copy-safe source (no hidden global reads). Sub-word
@@ -79309,7 +79610,14 @@
   (match state
     ;; The store may land on a global slot (an unclassified pointer can address
     ;; anything), so the base map clears whatever the class turns out to be.
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (let
         [width : i64 (opt-load-loc-type-size type-segment-bases ty)]
         [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
@@ -79340,7 +79648,8 @@
               kinds
               table-cap
               next-epoch
-              (opt-load-global-bases-clear bases))]
+              (opt-load-global-bases-clear bases)
+              profile-state)]
           [_
             (let
               [key : OptLoadKey (opt-load-key-for-address kinds bases ptr ty)]
@@ -79368,6 +79677,7 @@
                 (match forwarded
                   [(ir.CompilerIrMaybeValue.Some forwarded-value)
                     (opt-load-table-bind
+                      profile-state
                       type-segment-bases
                       filtered
                       table-cap
@@ -79378,7 +79688,8 @@
                 kinds
                 table-cap
                 next-epoch
-                (opt-load-global-bases-clear bases)))]))]))
+                (opt-load-global-bases-clear bases)
+                profile-state))]))]))
 
 ;; CopyBytes writes `size` bytes through its dst pointer: same granular
 ;; invalidation, plus conservative field-to-field forwarding when source and
@@ -79395,7 +79706,14 @@
   (match state
     ;; Same reasoning as the StorePtr arm: a copy through an unclassified
     ;; pointer may write a global slot, so the base map clears here too.
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (let
         [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
         [src-class : OptLoadStoreClass (opt-load-classify-store kinds src size)]
@@ -79423,7 +79741,8 @@
               kinds
               table-cap
               next-epoch
-              (opt-load-global-bases-clear bases))]
+              (opt-load-global-bases-clear bases)
+              profile-state)]
           [(OptLoadStoreElement)
             (OptLoadCseState.State
               facts2
@@ -79431,7 +79750,8 @@
               kinds
               table-cap
               next-epoch
-              (opt-load-global-bases-clear bases))]
+              (opt-load-global-bases-clear bases)
+              profile-state)]
           [(OptLoadStoreField dst-base dst-off _ dst-header?)
             (let
               [copied : OptLoadTable
@@ -79448,6 +79768,7 @@
                           0))
                       (opt-load-ranges-disjoint? src-off size dst-off size))
                       (opt-load-table-transfer-copy-fields
+                        profile-state
                         type-segment-bases
                         filtered
                         filtered
@@ -79469,7 +79790,8 @@
                 kinds
                 table-cap
                 next-epoch
-                (opt-load-global-bases-clear bases)))]))]))
+                (opt-load-global-bases-clear bases)
+                profile-state))]))]))
 
 (define (opt-load-cse-core-load
   [type-segment-bases : i64]
@@ -79484,7 +79806,14 @@
   (match state
     ;; A Load writes nothing, so the base map is carried (through the same
     ;; transfer the pure arm uses -- the rewritten Mov can inherit a binding).
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (let
         ;; The dst redefinition drops stale entries first; the key is computed
         ;; from the PRE-def kinds and bases (a `Load dst <- dst` reads the old
@@ -79516,13 +79845,19 @@
                     new-instr
                     next-epoch)
                   table2
-                  (opt-load-kinds-step type-segment-bases kinds hs new-instr)
+                  (opt-load-kinds-step
+                    profile-state
+                    type-segment-bases
+                    kinds
+                    hs
+                    new-instr)
                   table-cap
                   next-epoch
                   (opt-load-global-bases-step
                     type-segment-bases
                     bases
-                    new-instr))
+                    new-instr)
+                  profile-state)
                 new-instr))]
           [(ir.CompilerIrMaybeValue.No)
             (let
@@ -79539,6 +79874,7 @@
                     next-epoch)
                   (if record?
                     (opt-load-table-bind
+                      profile-state
                       type-segment-bases
                       table2
                       table-cap
@@ -79546,10 +79882,16 @@
                       (ir.CompilerIrValue.Var dst)
                       next-epoch)
                     table2)
-                  (opt-load-kinds-step type-segment-bases kinds hs instr)
+                  (opt-load-kinds-step
+                    profile-state
+                    type-segment-bases
+                    kinds
+                    hs
+                    instr)
                   table-cap
                   next-epoch
-                  (opt-load-global-bases-step type-segment-bases bases instr))
+                  (opt-load-global-bases-step type-segment-bases bases instr)
+                  profile-state)
                 instr))]))]))
 
 ;; Shared per-instruction dispatcher for the block-local (gated? false) and
@@ -79676,30 +80018,43 @@
   (Rewrite OptLoadCseState ir.CompilerIrInstrSeq))
 
 (define (opt-load-cse-state-with-caps-and-facts
+  [profile-state : profile_state.CompilerProfileMetrics]
   [table-cap : i64]
   [kinds-cap : i64]
   [facts : OptAliasFacts]) : OptLoadCseState
   (begin
     (cfg
       compile-profile
-      (compiler-opt-load-cse-profile-note-table-cap table-cap))
+      (compiler-opt-load-cse-profile-note-table-cap profile-state table-cap))
     (OptLoadCseState.State
       facts
       (OptLoadTable.Nil)
-      (opt-load-kinds-empty-with-cap kinds-cap)
+      (opt-load-kinds-empty-with-cap profile-state kinds-cap)
       table-cap
       0
-      (opt-load-global-bases-empty))))
+      (opt-load-global-bases-empty)
+      profile-state)))
 
-(define (opt-load-cse-empty-state-with-caps [table-cap : i64] [kinds-cap : i64]) : OptLoadCseState
-  (opt-load-cse-state-with-caps-and-facts table-cap kinds-cap (opt-alias-empty)))
+(define (opt-load-cse-empty-state-with-caps
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [table-cap : i64]
+  [kinds-cap : i64]) : OptLoadCseState
+  (opt-load-cse-state-with-caps-and-facts
+    profile-state
+    table-cap
+    kinds-cap
+    (opt-alias-empty)))
 
-(define (opt-load-cse-empty-state-for-size [instr-count : i64]) : OptLoadCseState
+(define (opt-load-cse-empty-state-for-size
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [instr-count : i64]) : OptLoadCseState
   (opt-load-cse-empty-state-with-caps
+    profile-state
     (opt-load-cse-table-cap-for-size instr-count)
     (opt-load-cse-kinds-cap-for-size instr-count)))
 
 (define (opt-load-cse-empty-state-for-size-with-kinds
+  [profile-state : profile_state.CompilerProfileMetrics]
   [instr-count : i64]
   [kinds : OptLoadPtrKinds]
   [facts : OptAliasFacts]) : OptLoadCseState
@@ -79708,7 +80063,7 @@
     (begin
       (cfg
         compile-profile
-        (compiler-opt-load-cse-profile-note-table-cap table-cap))
+        (compiler-opt-load-cse-profile-note-table-cap profile-state table-cap))
       (OptLoadCseState.State
         facts
         (OptLoadTable.Nil)
@@ -79717,21 +80072,30 @@
           (opt-load-cse-kinds-cap-for-size instr-count))
         table-cap
         0
-        (opt-load-global-bases-empty)))))
+        (opt-load-global-bases-empty)
+        profile-state))))
 
 ;; The load table is persistent, but alias facts, pointer kinds, and global
 ;; bases are mutable tables; entering a block through a single predecessor must
 ;; process copies.
 (define (opt-load-cse-state-clone-facts [state : OptLoadCseState]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (OptLoadCseState.State
         (opt-alias-clone facts)
         table
-        (opt-load-kinds-clone kinds)
+        (opt-load-kinds-clone profile-state kinds)
         table-cap
         epoch
-        (opt-load-global-bases-clone bases))]))
+        (opt-load-global-bases-clone bases)
+        profile-state)]))
 
 (defenum OptMaybeLoadEntry
   (No)
@@ -79792,13 +80156,20 @@
   [a : OptLoadCseState]
   [b : OptLoadCseState]) : OptLoadCseState
   (match a
-    [(OptLoadCseState.State afacts atable akinds atable-cap aepoch abases)
+    [(OptLoadCseState.State
+        afacts
+        atable
+        akinds
+        atable-cap
+        aepoch
+        abases
+        profile-state)
       (match b
-        [(OptLoadCseState.State bfacts btable bkinds btable-cap bepoch bbases)
+        [(OptLoadCseState.State bfacts btable bkinds btable-cap bepoch bbases _)
           (OptLoadCseState.State
             (opt-alias-intersect afacts bfacts)
             (opt-load-table-intersect type-segment-bases atable btable)
-            (opt-load-kinds-intersect akinds bkinds)
+            (opt-load-kinds-intersect profile-state akinds bkinds)
             (if (< atable-cap btable-cap)
               atable-cap
               btable-cap)
@@ -79807,7 +80178,8 @@
             (if (< aepoch bepoch)
               bepoch
               aepoch)
-            (opt-load-global-bases-intersect abases bbases))])]))
+            (opt-load-global-bases-intersect abases bbases)
+            profile-state)])]))
 
 ;; --- loop-header descriptor-entry carry ---------------------------------------
 ;;
@@ -80029,22 +80401,30 @@
       ;; NOT carry: the unprocessed edge may write the global slot a binding
       ;; read, which would make the binding name a stale address.
       (match acc
-        [(OptLoadCseState.State _ acc-table acc-kinds _ acc-epoch _)
+        [(OptLoadCseState.State
+            _
+            acc-table
+            acc-kinds
+            _
+            acc-epoch
+            _
+            profile-state)
           (match empty-state
-            [(OptLoadCseState.State empty-facts empty-table _ empty-cap _ _)
+            [(OptLoadCseState.State empty-facts empty-table _ empty-cap _ _ _)
               (OptLoadCseState.State
                 empty-facts
                 (if (opt-load-gvn-loop-safe-contains? loop-safe label)
                   (opt-load-table-filter-descriptor-stable acc-table sources)
                   empty-table)
-                (opt-load-kinds-filter-stable acc-kinds sources)
+                (opt-load-kinds-filter-stable profile-state acc-kinds sources)
                 empty-cap
                 ;; Carried entries keep their creation epochs, so the counter
                 ;; must be the accumulated predecessors' value: resetting it to
                 ;; zero would let a loop-body allocation claim an epoch that a
                 ;; surviving entry already used.
                 acc-epoch
-                (opt-load-global-bases-empty))])])
+                (opt-load-global-bases-empty)
+                profile-state)])])
       acc)
     (let
       [pred : i64 (array-ref index.preds.edges edge)]
@@ -80339,6 +80719,7 @@
       (opt-load-gvn-block-seq-has-load? seq 0)]))
 
 (define (opt-load-gvn-blocks-with-context
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
@@ -80365,6 +80746,7 @@
           (opt-cfg-natural-loops-with-context blocks context))]
       [empty-state : OptLoadCseState
         (opt-load-cse-state-with-caps-and-facts
+          profile-state
           (opt-load-cse-table-cap-for-size
             (ir.compiler-ir-block-list-instruction-count blocks))
           (opt-load-cse-kinds-cap-for-size

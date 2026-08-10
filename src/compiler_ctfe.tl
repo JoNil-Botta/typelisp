@@ -223,24 +223,27 @@
           (ci.intern-dotted-final-id base-id)
           base-id))]))
 
-(define (ctfe-result-macro-provenance-note-call-head-with-pools!
+(define (ctfe-result-macro-provenance-call-head-with-pools?
   [pools : ast.AstNodePoolContext]
-  [callee-node : i64]) : unit
+  [callee-node : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
     pools
     (ast.ast-node-pool-context-expr-get pools callee-node))
     [(ast.AstExpr.Var name-id)
       (let
         [base-id : i64 (ctfe-macro-provenance-callee-base-name-id name-id)]
-        [hit : bool
-          (or
-            (ctfe_key_map.contains? (& ctfe-visible-macro-name-set) base-id)
-            (= base-id cbi.compiler-builtin-id-fix-when)
-            (= base-id cbi.compiler-builtin-id-fix-unless))]
-        (if hit
-          (ctfe-result-may-contain-macro-note!)
-          unit))]
-    [_ unit]))
+        (or
+          (ctfe_key_map.contains? (& ctfe-visible-macro-name-set) base-id)
+          (= base-id cbi.compiler-builtin-id-fix-when)
+          (= base-id cbi.compiler-builtin-id-fix-unless)))]
+    [_ false]))
+
+(define (ctfe-result-macro-provenance-note-call-head-with-pools!
+  [pools : ast.AstNodePoolContext]
+  [callee-node : i64]) : unit
+  (if (ctfe-result-macro-provenance-call-head-with-pools? pools callee-node)
+    (ctfe-result-may-contain-macro-note!)
+    unit))
 
 (define (ctfe-ast-expr-call-with-provenance
   [pools : ast.AstNodePoolContext]
@@ -779,6 +782,67 @@
 (define (ctfe-captured-expr-type-id) : i64
   -4)
 
+;; Binding-clause syntax has no pool-bearing value variant of its own. Carry a
+;; caller source-path identity beside its produced type until the initializer is
+;; projected as an Expr; the projection can then allocate the diagnostic-only
+;; origin marker in the transformer's installed syntax pool instead of placing
+;; a foreign wrapper directly in the captured clause.
+(define (ctfe-caller-origin-expr-type-id) : i64
+  -5)
+
+(define (ctfe-caller-origin-expr-type-with-pools
+  [pools : ast.AstNodePoolContext]
+  [ty : ast.AstType]
+  [path-id : i64]) : ast.AstType
+  (if (< path-id 0)
+    ty
+    (ast.AstType.Region
+      (ctfe-caller-origin-expr-type-id)
+      (ci.intern-composite-pair-id
+        path-id
+        (ast.ast-node-pool-context-type-push pools ty)))))
+
+(define (ctfe-caller-origin-expr-type-path-id [ty : ast.AstType]) : i64
+  (match ty
+    [(ast.AstType.Region name provenance-id)
+      (if (= name (ctfe-caller-origin-expr-type-id))
+        (ci.intern-composite-left-id-unchecked provenance-id)
+        -1)]
+    [_ -1]))
+
+(define (ctfe-caller-origin-expr-type-inner-with-pools
+  [pools : ast.AstNodePoolContext]
+  [ty : ast.AstType]) : ast.AstType
+  (match ty
+    [(ast.AstType.Region name provenance-id)
+      (if (= name (ctfe-caller-origin-expr-type-id))
+        (ast.ast-node-pool-context-type-get
+          pools
+          (ci.intern-composite-right-id-unchecked provenance-id))
+        ty)]
+    [_ ty]))
+
+(define (ctfe-caller-origin-expr-node-with-pools
+  [pools : ast.AstNodePoolContext]
+  [node : i64]
+  [ty : ast.AstType]) : i64
+  (let
+    [path-id : i64 (ctfe-caller-origin-expr-type-path-id ty)]
+    (if (< path-id 0)
+      node
+      (match (ast.ast-node-pool-context-expr-get pools node)
+        [(ast.AstExpr.Spanned inner span)
+          (ast.ast-expr-spanned-with-pools
+            pools
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.MacroExpansion
+                inner
+                (ci.intern-composite-pair-id -1 path-id)
+                -1))
+            span)]
+        [_ node]))))
+
 (define (ctfe-captured-expr-type-with-pools
   [pools : ast.AstNodePoolContext]
   [ty : ast.AstType]) : ast.AstType
@@ -794,12 +858,15 @@
 (define (ctfe-captured-expr-type-inner-with-pools
   [pools : ast.AstNodePoolContext]
   [ty : ast.AstType]) : ast.AstType
-  (match ty
-    [(ast.AstType.Region name inner)
-      (if (= name (ctfe-captured-expr-type-id))
-        (ast.ast-node-pool-context-type-get pools inner)
-        ty)]
-    [_ ty]))
+  (let
+    [inner : ast.AstType
+      (ctfe-caller-origin-expr-type-inner-with-pools pools ty)]
+    (match inner
+      [(ast.AstType.Region name captured)
+        (if (= name (ctfe-captured-expr-type-id))
+          (ast.ast-node-pool-context-type-get pools captured)
+          inner)]
+      [_ inner])))
 
 (define (ctfe-stdlib-comptime-type-id [name-id : i64]) : ast.AstType
   (ast.AstType.Var
@@ -1535,6 +1602,8 @@
   (match expr
     [(ast.AstExpr.Spanned inner-id _)
       (ctfe-expr-unspan env (ctfe-ast-get env inner-id))]
+    [(ast.AstExpr.MacroExpansion inner-id _ _)
+      (ctfe-expr-unspan env (ctfe-ast-get env inner-id))]
     [_ expr]))
 
 (define (ctfe-ty-get [env : CtfeEnv] [id : i64]) : ast.AstType
@@ -2241,6 +2310,7 @@
 (define (ctfe-describe-expr [expr : ast.AstExpr]) : String
   (match expr
     [(ast.AstExpr.Spanned _ _) "expression"]
+    [(ast.AstExpr.MacroExpansion _ _ _) "macro expansion"]
     [(ast.AstExpr.Literal _) "literal"]
     [(ast.AstExpr.Var _) "variable reference"]
     [(ast.AstExpr.Binary _ _ _) "binary operation"]
@@ -3063,6 +3133,8 @@
   [env : CtfeEnv]) : ast.AstType
   (match inner
     [(ast.AstExpr.Spanned inner-box _)
+      (ctfe-cast-source-type (ctfe-ast-get env inner-box) value env)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (ctfe-cast-source-type (ctfe-ast-get env inner-box) value env)]
     [(ast.AstExpr.Ann _ ty-id) (ctfe-ty-get env ty-id)]
     [(ast.AstExpr.Cast _ ty-id) (ctfe-ty-get env ty-id)]
@@ -3973,6 +4045,10 @@
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (compiler-ctfe-eval inner env fuel))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (compiler-ctfe-eval inner env fuel))]
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
@@ -4335,6 +4411,10 @@
 (define (ctfe-offset-field-name [expr : ast.AstExpr] [env : CtfeEnv]) : CtfeMaybeFieldName
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (ctfe-offset-field-name inner env))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-offset-field-name inner env))]
@@ -6771,11 +6851,18 @@
                       (ctfe-untyped-expr-type))
                     arg-fuel)]
                 [else
-                  (ResultCtfe.Ok
-                    (CompilerCtfeValue.Expr
-                      (ctfe-expr-binding-clause-init clause)
-                      (struct-get clause init-produced))
-                    arg-fuel)])]
+                  (let
+                    [produced : ast.AstType (struct-get clause init-produced)]
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Expr
+                        (ctfe-caller-origin-expr-node-with-pools
+                          (ctfe-env-pools env)
+                          (ctfe-expr-binding-clause-init clause)
+                          produced)
+                        (ctfe-caller-origin-expr-type-inner-with-pools
+                          (ctfe-env-pools env)
+                          produced))
+                      arg-fuel))])]
             [_
               (ResultCtfe.Err
                 (box
@@ -6895,6 +6982,8 @@
           (ast.ast-node-pool-context-type-get pools ty-id))
         fuel)]
     [(ast.AstExpr.Spanned inner _)
+      (ctfe-eval-expr-list-type-node pools inner expr fuel)]
+    [(ast.AstExpr.MacroExpansion inner _ _)
       (ctfe-eval-expr-list-type-node pools inner expr fuel)]
     [_
       (ResultCtfe.Err
@@ -8900,6 +8989,10 @@
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-eval-call inner args expr env fuel))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (ctfe-eval-call inner args expr env fuel))]
     [(ast.AstExpr.Var name)
       (let
         [raw-id : i64 (ci.intern-macro-global-source-name-id-or name name)]
@@ -9252,10 +9345,11 @@
   [env : CtfeEnv]) : ast.AstMatchArm
   (ast.ast-match-arm-list-get (& lst) index (ctfe-match-arm-empty-default env)))
 
-(define (ctfe-eval-struct-get-value
+(define (ctfe-eval-struct-get-value-with-pools
   [value : CompilerCtfeValue]
   [field : i64]
   [expr : ast.AstExpr]
+  [pools : ast.AstNodePoolContext]
   [fuel : i64]) : ResultCtfe
   (let
     [field-kind : i64 field]
@@ -9350,11 +9444,16 @@
                 (ctfe-untyped-expr-type))
               fuel)]
           [(= field-kind cbi.compiler-builtin-id-fix-init)
-            (ResultCtfe.Ok
-              (CompilerCtfeValue.Expr
-                (ctfe-expr-binding-clause-init clause)
-                (struct-get clause init-produced))
-              fuel)]
+            (let
+              [produced : ast.AstType (struct-get clause init-produced)]
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Expr
+                  (ctfe-caller-origin-expr-node-with-pools
+                    pools
+                    (ctfe-expr-binding-clause-init clause)
+                    produced)
+                  (ctfe-caller-origin-expr-type-inner-with-pools pools produced))
+                fuel))]
           [else (ctfe-comptime-field-error field expr)])]
       [(CompilerCtfeValue.ExprBindingClauseList clauses)
         (cond
@@ -9457,6 +9556,18 @@
           [else (ctfe-comptime-field-error field expr)])]
       [_ (ctfe-comptime-struct-get-type-error expr)])))
 
+(define (ctfe-eval-struct-get-value
+  [value : CompilerCtfeValue]
+  [field : i64]
+  [expr : ast.AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (ctfe-eval-struct-get-value-with-pools
+    value
+    field
+    expr
+    (ast.ast-node-pool-context-capture-active)
+    fuel))
+
 (define (ctfe-eval-struct-get
   [inner : ast.AstExpr]
   [field : i64]
@@ -9465,7 +9576,12 @@
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval inner env fuel)
     [(ResultCtfe.Ok value next-fuel)
-      (ctfe-eval-struct-get-value value field expr next-fuel)]
+      (ctfe-eval-struct-get-value-with-pools
+        value
+        field
+        expr
+        (ctfe-env-pools env)
+        next-fuel)]
     [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 (define (ctfe-comptime-array-index-error [expr : ast.AstExpr]) : ResultCtfe
@@ -11338,6 +11454,18 @@
                 (ast.ast-expr-spanned-with-pools (ctfe-env-pools env) node span)
                 ty
                 next-fuel))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
+    [(ast.AstExpr.MacroExpansion inner-box provenance-id macro-name-id)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (match (ctfe-quote-expr inner env fuel quasiquote)
+          [(ResultCtfeQuoteExpr.Ok node ty next-fuel)
+            (ResultCtfeQuoteExpr.Ok
+              (ctfe-ast-push
+                env
+                (ast.AstExpr.MacroExpansion node provenance-id macro-name-id))
+              ty
+              next-fuel)]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(ast.AstExpr.Literal lit)
       (ResultCtfeQuoteExpr.Ok

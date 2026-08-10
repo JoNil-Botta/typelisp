@@ -1470,6 +1470,8 @@
   (match (ast.ast-node-get node-id)
     [(ast.AstExpr.Spanned inner _)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(ast.AstExpr.MacroExpansion inner _ _)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
     [(ast.AstExpr.Unquote inner)
       (compiler-semantic-walk-node! state scope env inner)]
     [(ast.AstExpr.UnquoteSplicing inner)
@@ -2347,6 +2349,13 @@
                 env
                 inner-id
                 (CompilerSemanticMaybeSpan.Some span))]
+            [(ast.AstExpr.MacroExpansion inner-id _ _)
+              (compiler-semantic-walk-node-with-span!
+                state
+                scope
+                env
+                inner-id
+                maybe-span)]
             [_ (compiler-semantic-walk-expr! state scope env expr maybe-span)]))))))
 
 (define (compiler-semantic-walk-node!
@@ -2375,6 +2384,13 @@
         env
         inner-id
         (CompilerSemanticMaybeSpan.Some span))]
+    [(ast.AstExpr.MacroExpansion inner-id _ _)
+      (compiler-semantic-walk-node-with-span!
+        state
+        scope
+        env
+        inner-id
+        maybe-span)]
     [(ast.AstExpr.Var name)
       (compiler-semantic-record-name-use! state scope name maybe-span)]
     [(ast.AstExpr.Binary _ left right)

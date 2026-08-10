@@ -500,7 +500,7 @@
       "typecheck: cannot pass region-tagged value to function parameter; region value would escape; direct aggregate reads through a shared vector borrow are not owned values; borrow slots from a vector place or use the generated vector get helper"
       24
       13
-      1)
+      2)
     (compiler-typecheck-rendered-error-ok?
       (compiler-typecheck-direct-borrow-temporary-diagnostic-source)
       "error[E0200]: typecheck: borrow requires a local, parameter, or aggregate place

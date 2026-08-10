@@ -22,6 +22,7 @@ ptr_addr_of_places|tests/integration/ptr_addr_of_places.tl|0|-|-|-
 ptr_aggregate_copy|tests/integration/ptr_aggregate_copy.tl|0|-|-|stdlib/array.tl
 raw_pointer_register_addr_of|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-
 auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl
+stdlib_string_to_int|tests/integration/stdlib_string_to_int.tl|42|-|-|stdlib/string.tl
 mut_to_immut_reborrow_call|tests/integration/mut_to_immut_reborrow_call.tl|42|-|-|-
 borrow_reborrow_stored_reference|tests/integration/borrow_reborrow_stored_reference.tl|0|-|-|-
 borrow_reborrow_stored_reference_aggregate|tests/integration/borrow_reborrow_stored_reference_aggregate.tl|42|-|-|-

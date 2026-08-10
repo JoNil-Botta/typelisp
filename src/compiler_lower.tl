@@ -33161,7 +33161,7 @@
                   (box
                     (lower-diagnostic-at-expr
                       arg
-                      "lower: string->int requires String"))))])]
+                      "lower: string.>int requires String"))))])]
         [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
     (lower-direct-call-id
       ctx

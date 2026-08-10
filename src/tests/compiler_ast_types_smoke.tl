@@ -6,6 +6,33 @@
 (import stdlib.arena)
 (import stdlib.string)
 
+(define (compiler-ast-int-literal-source-bits-smoke?) : bool
+  (let
+    [i64-max : i64 (cast (shr (bit-not (cast 0 : u64)) (cast 1 : u64)) : i64)]
+    [i64-min : i64 (cast (shl (cast 1 : u64) (cast 63 : u64)) : i64)]
+    (and
+      (=
+        (ast.ast-int-literal-value-or-payload -1 "9223372036854775807")
+        i64-max)
+      (= (ast.ast-int-literal-value-or-payload -1 "0x7fffffffffffffff") i64-max)
+      (=
+        (ast.ast-int-literal-value-or-payload
+          -1
+          "0b0111111111111111111111111111111111111111111111111111111111111111")
+        i64-max)
+      (=
+        (ast.ast-int-literal-value-or-payload 0 "-9223372036854775808")
+        i64-min)
+      (= (ast.ast-int-literal-value-or-payload 0 "-0x8000000000000000") i64-min)
+      (=
+        (ast.ast-int-literal-value-or-payload
+          0
+          "-0b1000000000000000000000000000000000000000000000000000000000000000")
+        i64-min)
+      (= (ast.ast-int-literal-value-or-payload 0 "18446744073709551615") -1)
+      (= (ast.ast-int-literal-value-or-payload 0 "0xffffffffffffffff") -1)
+      (= (ast.ast-int-literal-value-or-payload 73 "") 73))))
+
 (define (compiler-ast-state-expr-int-lit?
   [pool : ast.AstExprNodePoolState]
   [id : i64]
@@ -1322,6 +1349,7 @@
 (define (main) : i64
   (begin
     (unless (= (ast.compiler-ast-smoke) 23) (return 2))
+    (unless (compiler-ast-int-literal-source-bits-smoke?) (return 18))
     (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))
     (unless (compiler-ast-active-context-sync-smoke?) (return 4))
     (unless (compiler-ast-context-owner-identity-smoke?) (return 17))

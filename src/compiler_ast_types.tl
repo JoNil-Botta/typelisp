@@ -293,6 +293,42 @@
         (ast-int-literal-magnitude-leq-limit? text start end limit-bin)]
       [else (ast-int-literal-magnitude-leq-limit? text start end limit-dec)])))
 
+;; Rebuild the checked source magnitude as unsigned bits. The lexer payload is
+;; only an i64 compatibility field and may already have crossed a signed
+;; boundary before contextual typing selects the literal's actual type.
+(define (ast-int-literal-u64-magnitude [text : String]) : u64
+  (let
+    [base : u64 (cast (ast-int-literal-base text) : u64)]
+    [i : i64 (ast-int-literal-value-start text)]
+    [n : i64 (string.string-length text)]
+    [value : u64 (cast 0 : u64)]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            value
+            (+
+              (* value base)
+              (cast
+                (ast-int-literal-digit-value (string.string-ref text i))
+                : u64)))
+          (set! i (+ i 1))))
+      value)))
+
+(define (ast-int-literal-i64-bits [text : String]) : i64
+  (let
+    [magnitude : u64 (ast-int-literal-u64-magnitude text)]
+    (if (ast-int-literal-negative? text)
+      (cast (- (cast 0 : u64) magnitude) : i64)
+      (cast magnitude : i64))))
+
+;; Return the exact low 64 bits selected by checked literal source text, or the
+;; compatibility payload for compiler-generated literals that have no text.
+(define (ast-int-literal-value-or-payload [payload : i64] [text : String]) : i64
+  (if (> (string.string-length text) 0)
+    (ast-int-literal-i64-bits text)
+    payload))
+
 (defenum AstBinOp
   (Add)
   (Sub)

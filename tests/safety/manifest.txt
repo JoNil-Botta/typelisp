@@ -18,7 +18,7 @@ array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|array index out
 array_set_bounds_trap|run-trap|tests/safety/array_set_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 fixed_array_take_bounds_trap|run-trap|tests/safety/fixed_array_take_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 fixed_array_take_negative_bounds_trap|run-trap|tests/safety/fixed_array_take_negative_bounds_trap.tl|134|array index out of bounds: index=-1 length=1
-fixed_array_take_huge_bounds_trap|run-trap|tests/safety/fixed_array_take_huge_bounds_trap.tl|134|array index out of bounds
+fixed_array_take_huge_bounds_trap|run-trap|tests/safety/fixed_array_take_huge_bounds_trap.tl|134|array index out of bounds: index=9223372036854775807 length=1
 string_bounds_trap|run-trap|tests/safety/string_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 make_array_negative_trap|run-trap|tests/safety/make_array_negative_trap.tl|134|tl: array index out of bounds
 byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|134|tl: array index out of bounds
@@ -202,6 +202,8 @@ while_continue_value_reject|check-fail|tests/safety/while_continue_value_reject.
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
 integer_literal_u8_overflow_reject|check-fail|tests/safety/integer_literal_u8_overflow_reject.tl|-|integer literal 256 does not fit expected type u8
 integer_literal_unsigned_negative_reject|check-fail|tests/safety/integer_literal_unsigned_negative_reject.tl|-|integer literal -1 does not fit expected type u8
+integer_literal_i64_overflow_reject|check-fail|tests/safety/integer_literal_i64_overflow_reject.tl|-|integer literal 9223372036854775808 does not fit expected type i64
+integer_literal_i64_based_overflow_reject|check-fail|tests/safety/integer_literal_i64_based_overflow_reject.tl|-|integer literal 0x8000000000000000 does not fit expected type i64
 integer_literal_u64_overflow_reject|check-fail|tests/safety/integer_literal_u64_overflow_reject.tl|-|integer literal 18446744073709551616 does not fit expected type u64
 integer_literal_u64_based_overflow_reject|check-fail|tests/safety/integer_literal_u64_based_overflow_reject.tl|-|integer literal 0x10000000000000000 does not fit expected type u64
 integer_literal_u64_negative_reject|check-fail|tests/safety/integer_literal_u64_negative_reject.tl|-|integer literal -1 does not fit expected type u64

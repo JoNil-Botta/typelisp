@@ -65748,7 +65748,9 @@
         (tc-move-literal-index expr-bases inner))]
     [(ast.AstExpr.Literal lit)
       (match lit
-        [(ast.AstLiteral.Int index _) (TcMoveMaybeIndex.Some index)]
+        [(ast.AstLiteral.Int index text)
+          (TcMoveMaybeIndex.Some
+            (ast.ast-int-literal-value-or-payload index text))]
         [_ (TcMoveMaybeIndex.No)])]
     [_ (TcMoveMaybeIndex.No)]))
 

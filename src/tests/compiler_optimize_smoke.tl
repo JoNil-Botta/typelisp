@@ -3646,6 +3646,30 @@
     "the same accessor at straight-line sites stays out of line"))
 
 (test
+  inline-shared-accessor-dominant-floor
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-dominant-floor-ok?)
+    "an accessor at the dominant reference floor is taken at every straight-line site; one reference short keeps every call"))
+
+(test
+  inline-shared-accessor-dominant-call-free
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-shared-accessor-dominant-call-free-ok?)
+    "a call-bearing body at the dominant floor stays out of line at every straight-line site"))
+
+(test
+  inline-branch-chain-site
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-branch-chain-site-ok?)
+    "a bounds-free acyclic decision chain past the block cap is taken at both in-loop sites"))
+
+(test
+  inline-branch-chain-merge-web
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-branch-chain-merge-web-ok?)
+    "the same block count with one working block stays out of line: the chain gate prices blocks, not shapes"))
+
+(test
   inline-vm-run-bounds-loop-span-positive
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-switch-span-case-code

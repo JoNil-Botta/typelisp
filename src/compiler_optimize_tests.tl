@@ -13718,6 +13718,238 @@
         (opt-inline-shared-accessor-leaf callee-name))]
     (= (opt-inline-shared-remaining-calls refused 5) 5)))
 
+;; --- dominant-reference accessors at straight-line sites ---------------------
+;;
+;; Same leaf, same straight-line callers as the refusal directly above; the only
+;; thing that varies is how many of them there are. Below
+;; opt-inline-shared-accessor-dominant-min-refcount the per-site loop clause
+;; still refuses every one; at the floor the callee's own weight is the
+;; argument and every site takes it.
+(define (opt-inline-dominant-caller-text [index : i64]) : String
+  (string.append "dominant_caller_" (string.int->string index)))
+
+(define (opt-inline-dominant-caller-names-from [index : i64] [count : i64]) : compiler_optimize.OptSlotList
+  (if (>= index count)
+    (compiler_optimize.OptSlotList.Nil)
+    (compiler_optimize.OptSlotList.Cons
+      (opt-test-symbol (opt-inline-dominant-caller-text index))
+      (box (opt-inline-dominant-caller-names-from (+ index 1) count)))))
+
+(define (opt-inline-dominant-remaining-calls
+  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index count)
+    0
+    (+
+      (opt-count-direct-call-name-function-list
+        functions
+        (opt-inline-dominant-caller-text index)
+        "inline_switch")
+      (opt-inline-dominant-remaining-calls functions (+ index 1) count))))
+
+(define (opt-inline-dominant-optimized [callee-name : i64] [count : i64]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_optimize.opt-inline-program-functions
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-inline-shared-flat-caller-chain
+      (opt-inline-dominant-caller-names-from 0 count)
+      callee-name
+      (compiler_ir_types.compiler-ir-function-cons
+        (opt-inline-shared-accessor-leaf callee-name)
+        compiler_ir_types.CompilerIrFunctionList.Nil))
+    2))
+
+;; 64 straight-line callers put the leaf at the dominant floor and every site
+;; takes it; 63 leave it one short and every site keeps its call. This is the
+;; one clause the two counts differ in: the sites, the leaf, and every budget
+;; are identical.
+(define (compiler-optimize-inline-shared-accessor-dominant-floor-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [admitted : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dominant-optimized callee-name 64)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dominant-optimized callee-name 63)]
+    (and
+      (= (opt-inline-dominant-remaining-calls admitted 0 64) 0)
+      (= (opt-inline-dominant-remaining-calls refused 0 63) 63))))
+
+;; A CALL-BEARING body at the dominant floor stays refused at all 64 sites: the
+;; floor relaxes the two per-site questions, not the clauses that bound what a
+;; clone can drag in (#6307).
+(define (compiler-optimize-inline-shared-accessor-dominant-call-free-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-shared-flat-caller-chain
+          (opt-inline-dominant-caller-names-from 0 64)
+          callee-name
+          (compiler_ir_types.compiler-ir-function-cons
+            (opt-inline-shared-accessor-calling-leaf
+              callee-name
+              (struct-get symbols external-helper))
+            compiler_ir_types.CompilerIrFunctionList.Nil))
+        2)]
+    (= (opt-inline-dominant-remaining-calls refused 0 64) 64)))
+
+;; --- branch-chain classifiers ------------------------------------------------
+;;
+;; The callee under test is a bounds-free acyclic decision chain: five
+;; compare-and-branch blocks over one parameter, each arm jumping to a shared
+;; join. It is twelve instructions in twelve blocks, so the duplication band's
+;; 32/6 refuses it on block count alone and the cost model prices it at
+;; 12 + 6*13 with no absorb credit to spend. Two in-loop callers hold it, the
+;; same shape opt-inline-dup-absorb-ok? serves.
+(define (opt-inline-chain-hit-label [index : i64]) : i64
+  (compiler_ir_types.compiler-ir-label
+    (string.append "hit" (string.int->string index))))
+
+(define (opt-inline-chain-test-label [index : i64]) : i64
+  (if (= index 0)
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-label
+      (string.append "chain" (string.int->string index)))))
+
+;; hit_i and the miss block all reach `join`, so the phi carries one input per
+;; arm. Built newest-first from the miss edge inward.
+(define (opt-inline-chain-phi-inputs [index : i64] [arms : i64]) : compiler_ir_types.CompilerIrPhiInputList
+  (if (< index 0)
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ir_types.compiler-ir-label "miss")
+      compiler_ir_types.CompilerIrPhiInputList.Nil)
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (opt-inline-chain-hit-label index)
+      (opt-inline-chain-phi-inputs (- index 1) arms))))
+
+(define (opt-inline-chain-hit-blocks
+  [index : i64]
+  [arms : i64]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (if (>= index arms)
+    tail
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (opt-inline-chain-hit-label index)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (opt-inline-chain-hit-blocks (+ index 1) arms tail))))
+
+(define (opt-inline-chain-test-blocks
+  [index : i64]
+  [arms : i64]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (if (>= index arms)
+    tail
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (opt-inline-chain-test-label index)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (opt-inline-chain-hit-label index)
+            (if (= (+ index 1) arms)
+              (compiler_ir_types.compiler-ir-label "miss")
+              (opt-inline-chain-test-label (+ index 1))))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (opt-inline-chain-test-blocks (+ index 1) arms tail))))
+
+;; `padding` is prepended to the miss block: zero for the chain shape, four
+;; movs for the merge-web shape, which is the only thing that separates the two
+;; fixtures below.
+(define (opt-inline-chain-pad-instrs
+  [count : i64]
+  [tail : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrInstrList
+  (if (<= count 0)
+    tail
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        (+ 3 count)
+        (compiler_ir_types.CompilerIrValue.I64 count)
+        (compiler_ast_types.AstType.I64))
+      (opt-inline-chain-pad-instrs (- count 1) tail))))
+
+(define (opt-inline-chain-leaf [callee-name : i64] [arms : i64] [padding : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    (+ 4 padding)
+    (opt-inline-chain-test-blocks
+      0
+      arms
+      (opt-inline-chain-hit-blocks
+        0
+        arms
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "miss")
+            (opt-inline-chain-pad-instrs
+              padding
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "join")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Phi
+                  3
+                  (opt-inline-chain-phi-inputs (- arms 1) arms)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 3)))
+                  compiler_ir_types.CompilerIrInstrList.Nil)))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-inline-chain-remaining-calls
+  [functions : compiler_ir_types.CompilerIrFunctionList]) : i64
+  (+
+    (opt-count-direct-call-name-function-list functions "main" "inline_switch")
+    (opt-count-direct-call-name-function-list
+      functions
+      "inline_nonleaf"
+      "inline_switch")))
+
+;; Twelve instructions in twelve blocks, no block above one instruction: the
+;; block cap is the only thing refusing it, and the chain gate is what admits
+;; it at both in-loop sites.
+(define (compiler-optimize-inline-branch-chain-site-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-two-caller-names symbols)
+        callee-name
+        (opt-inline-chain-leaf callee-name 5 0))]
+    (= (opt-inline-chain-remaining-calls optimized) 0)))
+
+;; The same block count and the same in-loop sites, with four movs moved into
+;; one block. Sixteen instructions is still far inside every band; the body is
+;; no longer a chain, so it stays refused at both sites -- the block cap's
+;; original job, kept.
+(define (compiler-optimize-inline-branch-chain-merge-web-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (struct-get symbols inline-switch)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-dup-optimized
+        (opt-inline-dup-two-caller-names symbols)
+        callee-name
+        (opt-inline-chain-leaf callee-name 5 4))]
+    (= (opt-inline-chain-remaining-calls optimized) 2)))
+
 ;; --- hot loop leaves ---------------------------------------------------------
 ;;
 ;; The callee under test is the cyclic bounds-carrying Switch leaf again, now

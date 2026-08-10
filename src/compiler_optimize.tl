@@ -65679,6 +65679,23 @@
 ;; reconstruction has anything new to rebuild.
 (define opt-inline-caller-hot-loop-blocks : i64
   0)
+
+;; Blocks imported into the current caller by the dominant-reference tier of
+;; the shared-accessor gate alone, on the same terms and for the same reason.
+;; The tier below the dominant floor keeps spending the shared fuel exactly as
+;; it always did.
+(define opt-inline-caller-accessor-blocks : i64
+  0)
+
+;; Blocks imported into the current caller by the branch-chain gate alone, kept
+;; out of `added-so-far` for exactly the reason above: a chain copy must not
+;; spend the fuel the caller's banked absorptions draw on. The chain gate has
+;; its own fuel (opt-inline-branch-chain-block-fuel), and it needs a separate
+;; accumulator from the hot-loop one because the two admit disjoint shapes --
+;; acyclic bounds-free chains here, cyclic leaves there -- and neither should
+;; be able to exhaust the other's budget.
+(define opt-inline-caller-chain-blocks : i64
+  0)
 (define opt-inline-pred-renames : (__tl_dyn-array OptInlinePredRenameList)
   (make-array (OptInlinePredRenameList.Nil)))
 
@@ -67049,6 +67066,8 @@
     (array-set! opt-inline-caller-loop-labels 0 (OptLabelSet.Nil))
     (set! opt-inline-caller-has-bounds? false)
     (set! opt-inline-caller-hot-loop-blocks 0)
+    (set! opt-inline-caller-chain-blocks 0)
+    (set! opt-inline-caller-accessor-blocks 0)
     (set! opt-inline-current-block-label (ir.compiler-ir-label-none))))
 
 (define (opt-inline-caller-facts-ensure!) : unit
@@ -67237,10 +67256,60 @@
 (define (opt-inline-shared-accessor-min-refcount) : i64
   5)
 
+;; Two of the clauses below are per-SITE questions asked of a callee whose
+;; whole admission argument is per-CALLEE, and at the top of the reference
+;; distribution they refuse the sites this gate exists to take.
+;;
+;;   - the in-loop clause. It is the right question for an import that must
+;;     repay one caller's boundary: repaid per iteration, or once per program.
+;;     But `pl-byte-at` is not imported for one caller -- it is a single load
+;;     behind a call at 146 references, and most of its dynamic weight arrives
+;;     through straight-line byte predicates (`pl-movq-prefix?`, `pl-single-dest?`,
+;;     `pl-mnemonic-call?`, `pl-record-sweep`'s fourteen unrolled probes) that
+;;     are themselves called from loops one level up. Measured on
+;;     benchmark/typelisp/peephole_lines: 15,308,593 dynamic calls, 186.7M
+;;     instructions of self cost, and the sites carrying it are refused by this
+;;     clause and nothing else.
+;;   - the cascade clause. It stops an import handing a bounds-free
+;;     single-reference caller its first bounds check, so that the caller keeps
+;;     its own absorption. That trade is priced in absorptions: one boundary
+;;     retired against one caller inline lost. `pl-indexed-rsp?` is a
+;;     single-reference bounds-free caller whose in-loop sites call pl-byte-at
+;;     4,631,694 times -- the largest single site group on the row -- and the
+;;     clause refuses all six of them to protect one absorption.
+;;
+;; So both clauses are conditioned on the callee's total weight, for which the
+;; reference count is the same proxy the floor above uses. Above the dominant
+;; floor the callee's own dynamic weight is the whole argument and neither
+;; per-site question changes the verdict; below it, both stand exactly as they
+;; were.
+(define (opt-inline-shared-accessor-dominant-min-refcount) : i64
+  64)
+
+;; The dominant tier also gets its own per-caller block fuel, for the same
+;; reason the hot-loop-leaf gate has one and with the same accounting: a copy
+;; taken here must not spend the fuel the caller's banked single-reference
+;; absorptions draw on. It also must not be RATIONED by it. The shared fuel is
+;; 32 blocks and this accessor is 10, so a caller could take three copies and
+;; no more -- and the measured callers are byte predicates that probe a fixed
+;; window: `pl-record-sweep` holds fifteen sites, `pl-single-dest?` eleven,
+;; `pl-tail-is-rsp?` four consecutive indices. Stopping at three is the worst
+;; of both: the caller pays the growth and still keeps the call, and the
+;; consecutive probes never end up in one block where GVN can fold their
+;; bounds checks and their two global loads together.
+;;
+;; 160 blocks is sixteen copies of the widest admitted accessor, which covers
+;; every measured caller's full window. It is spent only above the dominant
+;; floor, so nothing at five references moves.
+(define (opt-inline-shared-accessor-block-fuel) : i64
+  160)
+
 ;; Ordered by cost: the reference count and the two size caps are integer tests
 ;; on values the site already has, the budgets are arithmetic, and only then do
 ;; the three scans run -- call-free over the callee, the memoized caller facts,
-;; and last the acyclic check, which builds a CFG index per candidate.
+;; and last the acyclic check, which builds a CFG index per candidate. The
+;; dominant-reference test is free, so it runs before each caller fact and each
+;; budget it can change the answer to.
 (define (opt-inline-shared-accessor-ok?
   [refs : i64]
   [callee-instrs : i64]
@@ -67254,15 +67323,158 @@
     (<=
       (ir.compiler-ir-block-list-count blocks)
       (opt-inline-shared-accessor-max-blocks))
+    (if (>= refs (opt-inline-shared-accessor-dominant-min-refcount))
+      (and
+        (not
+          (opt-inline-cost-crosses-heavy-gate?
+            caller-blocks
+            (+ added-so-far opt-inline-caller-accessor-blocks)
+            added-blocks))
+        (<=
+          (+ opt-inline-caller-accessor-blocks added-blocks)
+          (opt-inline-shared-accessor-block-fuel)))
+      (and
+        (not
+          (opt-inline-cost-crosses-heavy-gate?
+            caller-blocks
+            added-so-far
+            added-blocks))
+        (<= (+ added-so-far added-blocks) (opt-inline-cost-block-fuel))
+        (opt-inline-bounds-loop-site-in-loop?)
+        (opt-inline-bounds-loop-cascade-safe?)))
+    (opt-inline-blocks-call-free? blocks)
+    (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
+
+;; --- branch-chain classifiers ----------------------------------------------
+;;
+;; The duplication band above prices a callee at `instructions + 6 * blocks`
+;; and caps it at 32 instructions in 6 blocks. Block count is the wrong
+;; currency for one measured shape: the byte classifier. `ls-space?` is a
+;; four-way `or` over one register -- 17 instructions in 9 blocks, every block
+;; a compare and a branch -- and `ls-symbol-char?` is the same construction
+;; thirteen arms wide, 118 instructions in 57 blocks. Both are refused by the
+;; block cap alone, and both run per input byte: 9,377,680 and 12,909,128 calls
+;; on benchmark/typelisp/lex_source, where the retired boundary is not just the
+;; call and the return but the bool the callee materialises into a register for
+;; the site to immediately test. C compiles these to inline bitmask tests.
+;;
+;; What the block cap is protecting against is a body whose blocks each do
+;; work: a merge web brings a second working set into the caller and taxes its
+;; allocation. A chain of compare-and-branch blocks over one value brings none.
+;; So this gate keeps the instruction budget -- widened, because chain blocks
+;; are cheap, not free -- and replaces the block cap with the structural fact
+;; that makes blocks cheap: no block in the body holds more than
+;; opt-inline-branch-chain-max-block-instrs instructions.
+;;
+;; Everything else stays as narrow as the bands above:
+;;
+;;   1. the census claims the callee (absorption at one reference, duplication
+;;      at two), so the program grows by at most one extra copy;
+;;   2. the body carries no bounds check. This is what lets the gate omit the
+;;      cascade clause rather than widen it: opt-inline-bounds-loop-cascade-safe?
+;;      exists to stop an import handing a bounds-free single-reference caller
+;;      its first bounds check, and a bounds-free callee cannot do that. Both
+;;      of the measured lex_source sites are refused today by that clause and
+;;      by nothing else it can be read as protecting;
+;;   3. the body is call-free -- a clone is bounded by the callee's own size
+;;      only while nothing inside it brings another body along, and the
+;;      multiblock clone path miscompiles call-carrying clones (#6307);
+;;   4. the site lies in a natural loop of the caller, so the retired boundary
+;;      is repaid per iteration rather than once per program;
+;;   5. the body is acyclic -- a loop inside a chain is not a chain;
+;;   6. the caller does not balloon: the heavy gate is asked about total
+;;      growth, and the copy spends this gate's OWN per-caller block fuel, not
+;;      the shared accumulator the caller's banked single-reference absorptions
+;;      draw on. An import must never evict a banked inline.
+(define (opt-inline-branch-chain-max-block-instrs) : i64
+  3)
+
+;; The chain band, in instructions. The measured shapes are `ls-space?` at 17
+;; instructions in 9 blocks and `ls-symbol-char?` at 118 in 57; 128 sits above
+;; the wider one. The per-block cap is what keeps a 128-instruction body from
+;; being anything other than a decision chain, and the corpus population it
+;; admits is small and entirely of that shape: `doc-html-syntax-space?`,
+;; `ctfe-reduce-op-eq`, `lsp-uri-safe-code?`, `doc-render-anchor-char?`.
+(define (opt-inline-branch-chain-max-body) : i64
+  128)
+
+(define (opt-inline-branch-chain-max-blocks) : i64
+  64)
+
+;; Two copies of the largest admitted chain, which is what `ls-tokenize` needs:
+;; it holds one `ls-space?` site (10 blocks) and one `ls-symbol-char?` site
+;; (58), and rationing it to the first would leave the larger call standing.
+(define (opt-inline-branch-chain-block-fuel) : i64
+  128)
+
+(define (opt-inline-block-seq-branch-chain-from?
+  [seq : ir.CompilerIrBlockSeq]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    true
+    (match (ir.compiler-ir-block-seq-ref seq index)
+      [(ir.CompilerIrBlock.Block _ instrs)
+        (if (<=
+          (opt-inline-cost-instrs instrs)
+          (opt-inline-branch-chain-max-block-instrs))
+          (opt-inline-block-seq-branch-chain-from? seq (+ index 1) count)
+          false)])))
+
+;; No block in the body does more than compare-and-branch work. This is the
+;; structural fact the cost model's block weight is a proxy for: a body whose
+;; blocks are all this small adds no second working set to the caller no matter
+;; how many of them there are.
+(define (opt-inline-blocks-branch-chain? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (<=
+            (opt-inline-cost-instrs instrs)
+            (opt-inline-branch-chain-max-block-instrs))
+            (opt-inline-blocks-branch-chain? (box-get rest))
+            false)])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-inline-block-seq-branch-chain-from?
+        seq
+        0
+        (ir.compiler-ir-block-seq-count seq))]))
+
+;; Ordered by cost: the census class and the bounds flag are values the site
+;; already has, the two bands and the two budgets are arithmetic, and only then
+;; do the scans run -- call-free and the chain shape over the callee, the
+;; memoized caller facts, and last the acyclic check, which builds a CFG index
+;; per candidate.
+(define (opt-inline-branch-chain-ok?
+  [absorb-class : i64]
+  [has-bounds? : bool]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (and
+    (>= absorb-class 1)
+    (not has-bounds?)
+    (<= callee-instrs (opt-inline-branch-chain-max-body))
+    (<=
+      (ir.compiler-ir-block-list-count blocks)
+      (opt-inline-branch-chain-max-blocks))
+    ;; The heavy gate is asked about TOTAL caller growth, shared and
+    ;; gate-specific alike; the block fuel is this gate's own accumulator.
     (not
       (opt-inline-cost-crosses-heavy-gate?
         caller-blocks
-        added-so-far
+        (+ added-so-far opt-inline-caller-chain-blocks)
         added-blocks))
-    (<= (+ added-so-far added-blocks) (opt-inline-cost-block-fuel))
+    (<=
+      (+ opt-inline-caller-chain-blocks added-blocks)
+      (opt-inline-branch-chain-block-fuel))
     (opt-inline-blocks-call-free? blocks)
+    (opt-inline-blocks-branch-chain? blocks)
     (opt-inline-bounds-loop-site-in-loop?)
-    (opt-inline-bounds-loop-cascade-safe?)
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
 
 ;; --- hot loop leaves: admission past the duplication ceiling -------------
@@ -67914,7 +68126,7 @@
                       callee-name
                       cblocks)
                     hot-loop-leaf?)]
-                [legacy-cost-ok? : bool
+                [budget-cost-ok? : bool
                   (or
                     (opt-inline-cost-inline?
                       callee-instrs
@@ -67932,17 +68144,39 @@
                         added-blocks
                         const-args
                         caller-blocks
-                        added-so-far))
-                    shared-accessor?)]
+                        added-so-far)))]
+                [legacy-cost-ok? : bool (or budget-cost-ok? shared-accessor?)]
+                ;; True only when the dominant-reference accessor tier is what
+                ;; admits this site: its blocks spend that tier's own fuel.
+                [accessor-import? : bool
+                  (and
+                    shared-accessor?
+                    (>= refs (opt-inline-shared-accessor-dominant-min-refcount))
+                    (not budget-cost-ok?))]
+                ;; A bounds-free acyclic branch chain is admitted on its own
+                ;; terms: the census still claims it, but the cost model's
+                ;; block weight is not what should price it.
+                [branch-chain? : bool
+                  (opt-inline-branch-chain-ok?
+                    absorb-class
+                    has-bounds?
+                    callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
                 [inline? : bool
                   (and
                     bounds-ok?
                     bounds-loop-ok?
-                    (or legacy-cost-ok? hot-loop-leaf?))]
+                    (or legacy-cost-ok? hot-loop-leaf? branch-chain?))]
                 ;; True only when the hot-loop-leaf gate is what admits this
                 ;; site: its blocks spend the gate's own fuel, not the shared
                 ;; accumulator the caller's banked absorptions draw on.
                 [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
+                ;; Same accounting for a chain import, against its own fuel.
+                [chain-import? : bool
+                  (and branch-chain? (not legacy-cost-ok?) (not hot-loop-leaf?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-from
                     instrs
@@ -67990,12 +68224,25 @@
                               opt-inline-caller-hot-loop-blocks
                               (+ opt-inline-caller-hot-loop-blocks added-blocks))
                             unit)]
-                        ;; A hot-loop import's blocks stay out of the shared
-                        ;; accumulator; the gate charged its own fuel above.
+                        [_chain-bump : unit
+                          (if chain-import?
+                            (set!
+                              opt-inline-caller-chain-blocks
+                              (+ opt-inline-caller-chain-blocks added-blocks))
+                            unit)]
+                        [_accessor-bump : unit
+                          (if accessor-import?
+                            (set!
+                              opt-inline-caller-accessor-blocks
+                              (+ opt-inline-caller-accessor-blocks added-blocks))
+                            unit)]
+                        ;; A hot-loop or chain import's blocks stay out of the
+                        ;; shared accumulator; each gate charged its own fuel
+                        ;; above.
                         [added2 : i64
                           (+
                             prefix-added
-                            (if hot-import?
+                            (if (or hot-import? chain-import? accessor-import?)
                               0
                               added-blocks))]
                         [stage-instrs : ir.CompilerIrInstrList
@@ -68592,7 +68839,7 @@
                       callee-name
                       cblocks)
                     hot-loop-leaf?)]
-                [legacy-cost-ok? : bool
+                [budget-cost-ok? : bool
                   (or
                     (opt-inline-cost-inline?
                       callee-instrs
@@ -68610,15 +68857,35 @@
                         added-blocks
                         const-args
                         caller-blocks
-                        added-so-far))
-                    shared-accessor?)]
+                        added-so-far)))]
+                [legacy-cost-ok? : bool (or budget-cost-ok? shared-accessor?)]
+                ;; True only when the dominant-reference accessor tier is what
+                ;; admits this site: its blocks spend that tier's own fuel.
+                [accessor-import? : bool
+                  (and
+                    shared-accessor?
+                    (>= refs (opt-inline-shared-accessor-dominant-min-refcount))
+                    (not budget-cost-ok?))]
+                ;; Same branch-chain decision as the non-span path.
+                [branch-chain? : bool
+                  (opt-inline-branch-chain-ok?
+                    absorb-class
+                    has-bounds?
+                    callee-instrs
+                    cblocks
+                    added-blocks
+                    caller-blocks
+                    added-so-far)]
                 [inline? : bool
                   (and
                     bounds-ok?
                     bounds-loop-ok?
-                    (or legacy-cost-ok? hot-loop-leaf?))]
+                    (or legacy-cost-ok? hot-loop-leaf? branch-chain?))]
                 ;; Same hot-import accounting as the non-span path.
                 [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
+                ;; Same chain-import accounting as the non-span path.
+                [chain-import? : bool
+                  (and branch-chain? (not legacy-cost-ok?) (not hot-loop-leaf?))]
                 (if inline?
                   (match (opt-inline-walk-instr-seq-with-spans-from
                     instrs
@@ -68669,11 +68936,24 @@
                               opt-inline-caller-hot-loop-blocks
                               (+ opt-inline-caller-hot-loop-blocks added-blocks))
                             unit)]
-                        ;; Same hot-import accounting as the non-span path.
+                        [_chain-bump : unit
+                          (if chain-import?
+                            (set!
+                              opt-inline-caller-chain-blocks
+                              (+ opt-inline-caller-chain-blocks added-blocks))
+                            unit)]
+                        [_accessor-bump : unit
+                          (if accessor-import?
+                            (set!
+                              opt-inline-caller-accessor-blocks
+                              (+ opt-inline-caller-accessor-blocks added-blocks))
+                            unit)]
+                        ;; Same hot-import and chain-import accounting as the
+                        ;; non-span path.
                         [added2 : i64
                           (+
                             prefix-added
-                            (if hot-import?
+                            (if (or hot-import? chain-import? accessor-import?)
                               0
                               added-blocks))]
                         [stage-instrs : ir.CompilerIrInstrList
@@ -69264,7 +69544,15 @@
                     ret
                     new-vars
                     repaired-blocks)
-                  (> (+ added opt-inline-caller-hot-loop-blocks) 0))))]))]))
+                  (>
+                    (+
+                      added
+                      (+
+                        opt-inline-caller-hot-loop-blocks
+                        (+
+                          opt-inline-caller-chain-blocks
+                          opt-inline-caller-accessor-blocks)))
+                    0))))]))]))
 
 (define (opt-inline-function-with-spans
   [type-segment-bases : i64]
@@ -69321,7 +69609,15 @@
                 (if (opt-inline-structure-ok-reclaiming? repaired-blocks)
                   (OptInlineSpanProgram.Program
                     (ir.compiler-ir-function-cons
-                      (if (> (+ added opt-inline-caller-hot-loop-blocks) 0)
+                      (if (>
+                        (+
+                          added
+                          (+
+                            opt-inline-caller-hot-loop-blocks
+                            (+
+                              opt-inline-caller-chain-blocks
+                              opt-inline-caller-accessor-blocks)))
+                        0)
                         (opt-ssa-construct-function type-segment-bases next)
                         next)
                       ir.CompilerIrFunctionList.Nil)

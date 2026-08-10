@@ -47,6 +47,18 @@
   (defstruct CompilerProfileState
     (storage (__tl_dyn-array CompilerProfileStateStorage))))
 
+;; Hot instrumentation passes this one-word view instead of repeatedly copying
+;; the wide profile storage record out of its job-owned array.
+(cfg
+  (any compile-profile test)
+  (defstruct CompilerProfileMetrics
+    (values (__tl_dyn-array i64))))
+
+(cfg
+  (not (any compile-profile test))
+  (defstruct CompilerProfileMetrics
+    (disabled i64)))
+
 (cfg
   (not (any compile-profile compile-profile-summary test))
   (defstruct CompilerProfileState
@@ -88,13 +100,59 @@
   (define (compiler-profile-state-storage [state : CompilerProfileState]) : CompilerProfileStateStorage
     (array-ref (struct-get state storage) 0)))
 
+(define (compiler-profile-state-metrics [_state : CompilerProfileState]) : CompilerProfileMetrics
+  (cfg
+    (any compile-profile test)
+    (CompilerProfileMetrics
+      (struct-get (compiler-profile-state-storage _state) metrics))
+    (CompilerProfileMetrics 0)))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-profile-metrics-value
+    [metrics : CompilerProfileMetrics]
+    [metric : i64]) : i64
+    (array-ref (struct-get metrics values) metric)))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-profile-metrics-set!
+    [metrics : CompilerProfileMetrics]
+    [metric : i64]
+    [value : i64]) : unit
+    (array-set! (struct-get metrics values) metric value)))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-profile-metrics-add!
+    [metrics : CompilerProfileMetrics]
+    [metric : i64]
+    [value : i64]) : unit
+    (compiler-profile-metrics-set!
+      metrics
+      metric
+      (+ (compiler-profile-metrics-value metrics metric) value))))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-profile-metrics-reset-range!
+    [metrics : CompilerProfileMetrics]
+    [start : i64]
+    [end : i64]) : unit
+    (let
+      [metric : i64 start]
+      (while (< metric end)
+        (begin
+          (compiler-profile-metrics-set! metrics metric 0)
+          (set! metric (+ metric 1)))))))
+
 (cfg
   (any compile-profile test)
   (define (compiler-profile-state-metric-value
     [state : CompilerProfileState]
     [metric : i64]) : i64
-    (array-ref
-      (struct-get (compiler-profile-state-storage state) metrics)
+    (compiler-profile-metrics-value
+      (compiler-profile-state-metrics state)
       metric)))
 
 (cfg
@@ -103,8 +161,8 @@
     [state : CompilerProfileState]
     [metric : i64]
     [value : i64]) : unit
-    (array-set!
-      (struct-get (compiler-profile-state-storage state) metrics)
+    (compiler-profile-metrics-set!
+      (compiler-profile-state-metrics state)
       metric
       value)))
 
@@ -114,10 +172,10 @@
     [state : CompilerProfileState]
     [metric : i64]
     [value : i64]) : unit
-    (compiler-profile-state-metric-set!
-      state
+    (compiler-profile-metrics-add!
+      (compiler-profile-state-metrics state)
       metric
-      (+ (compiler-profile-state-metric-value state metric) value))))
+      value)))
 
 (cfg
   (any compile-profile test)
@@ -125,12 +183,10 @@
     [state : CompilerProfileState]
     [start : i64]
     [end : i64]) : unit
-    (let
-      [metric : i64 start]
-      (while (< metric end)
-        (begin
-          (compiler-profile-state-metric-set! state metric 0)
-          (set! metric (+ metric 1)))))))
+    (compiler-profile-metrics-reset-range!
+      (compiler-profile-state-metrics state)
+      start
+      end)))
 
 (cfg
   (any compile-profile-summary test)

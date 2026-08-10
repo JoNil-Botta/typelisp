@@ -91576,23 +91576,29 @@
   [arg : ast.AstExpr]) : ResultMacroCheck
   (if (tc-type-eq resolved-expected (ast.AstType.Expr))
     ResultMacroCheck.Ok
-    (match (tc-expr-with-expected-or-actual ctx env arg resolved-expected)
-      [(ResultTcType.Ok actual)
-        (if (tc-type-compatible? resolved-expected actual)
-          ResultMacroCheck.Ok
-          (ResultMacroCheck.Err
-            (box
-              (tc-expr-diag
-                arg
-                (macro-operand-mismatch-message resolved-expected actual)))))]
-      [(ResultTcType.Err message)
-        (ResultMacroCheck.Err
-          (box
-            (tc-expr-diag
-              arg
-              (str_cat.str-cat
-                "typecheck: macro operand typecheck failed: "
-                message))))])))
+    (let
+      [journal-mark : i64 (tc-dotted-macro-journal-start!)]
+      [result : ResultMacroCheck
+        (match (tc-expr-with-expected-or-actual ctx env arg resolved-expected)
+          [(ResultTcType.Ok actual)
+            (if (tc-type-compatible? resolved-expected actual)
+              ResultMacroCheck.Ok
+              (ResultMacroCheck.Err
+                (box
+                  (tc-expr-diag
+                    arg
+                    (macro-operand-mismatch-message resolved-expected actual)))))]
+          [(ResultTcType.Err message)
+            (ResultMacroCheck.Err
+              (box
+                (tc-expr-diag
+                  arg
+                  (str_cat.str-cat
+                    "typecheck: macro operand typecheck failed: "
+                    message))))])]
+      (begin
+        (tc-dotted-macro-journal-restore-to! journal-mark)
+        result))))
 
 (define (macro-operand-bracket-clause? [arg : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan arg)

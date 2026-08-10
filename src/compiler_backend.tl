@@ -63584,15 +63584,6 @@
                   (struct-get program-index backend-state))))
               [(ResultCompilerBackend.Ok spills)
                 (let
-                  [_carry-safe : unit
-                    (compiler-backend-peephole-collect-carry-safe!
-                      (struct-get program-index backend-state)
-                      (compiler-backend-state-stream-state
-                        (struct-get program-index backend-state))
-                      (compiler-backend-state-function-state
-                        (struct-get program-index backend-state))
-                      label-scope
-                      emit-blocks-list)]
                   [_addr-forward : unit
                     (compiler-backend-addr-of-forwarding-enable!
                       (struct-get program-index backend-state)
@@ -64081,6 +64072,21 @@
                                   allow-rbp
                                   false)
                                 (begin
+                                  ;; Publish carry-safe labels transactionally:
+                                  ;; shrinkwrap/FPO attempts may recursively
+                                  ;; retry this function with different final
+                                  ;; blocks but reuse its assembly label scope.
+                                  ;; An abandoned attempt must not leave labels
+                                  ;; that make the accepted body inherit an
+                                  ;; owner map across a non-fallthrough edge.
+                                  (compiler-backend-peephole-collect-carry-safe!
+                                    (struct-get program-index backend-state)
+                                    (compiler-backend-state-stream-state
+                                      (struct-get program-index backend-state))
+                                    (compiler-backend-state-function-state
+                                      (struct-get program-index backend-state))
+                                    label-scope
+                                    emit-blocks-list)
                                   (compiler-backend-commit-frame-layout!
                                     (struct-get program-index backend-state)
                                     target

@@ -77398,10 +77398,8 @@
   (No)
   (Some ast.AstDeclList))
 
-;; Keep the scalar head opaque without using a one-field struct: Linux opt2
-;; currently miscompiles that aggregate argument/return shape (#5953).
-(defenum MacroHygieneEnv
-  (Snapshot i64))
+(defstruct MacroHygieneEnv
+  (head i64))
 
 ;; Hygiene environments are immutable snapshots into this dense append-only
 ;; store. A branch extends a retained head without copying or mutating its
@@ -84072,11 +84070,10 @@
   4)
 
 (define (macro-hygiene-env-empty) : MacroHygieneEnv
-  (MacroHygieneEnv.Snapshot -1))
+  (MacroHygieneEnv -1))
 
 (define (macro-hygiene-env-head [env : MacroHygieneEnv]) : i64
-  (match env
-    [(MacroHygieneEnv.Snapshot head) head]))
+  (struct-get env head))
 
 (define (macro-hygiene-env-reset!) : unit
   (set! macro-hygiene-env-slot-count 0))
@@ -84210,7 +84207,7 @@
           (macro-hygiene-env-head env))
         (set! macro-hygiene-env-slot-count (+ macro-hygiene-env-slot-count 1))
         (cfg compile-profile (compiler-tc-macro-hygiene-note-binding!))
-        (MacroHygieneEnv.Snapshot index)))))
+        (MacroHygieneEnv index)))))
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
   (let

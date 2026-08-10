@@ -75,6 +75,7 @@ arg_register_swap_cycle|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdl
 arg_cycle_stack_break|tests/integration/arg_cycle_stack_break.tl|42|-|-|stdlib/io.tl
 save_reload_elide|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl
 global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+scalar_indexed_snapshot|tests/integration/scalar_indexed_snapshot.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 call_spanning_split|tests/integration/call_spanning_split.tl|42|-|-|stdlib/io.tl
 call_spanning_split_single|tests/integration/call_spanning_split_single.tl|42|-|-|stdlib/io.tl
 loopcarry_coalesce|tests/integration/loopcarry_coalesce.tl|42|-|-|stdlib/io.tl

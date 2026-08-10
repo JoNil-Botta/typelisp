@@ -83,8 +83,12 @@
   (Ok backend.CompilerBackendTarget)
   (Err String))
 
+(defenum BuildPackageSideAssembly
+  (Regenerate)
+  (Prepared String))
+
 (defenum ResultBuildPackagePreparedRuntime
-  (DirectObject String)
+  (DirectObject String BuildPackageSideAssembly)
   (Assembly String String)
   (Unavailable String)
   (Err String))
@@ -3081,10 +3085,13 @@
   [paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
   (if (and
     (build-package-kind-supports-direct-object? kind target)
+    ;; Structured object images do not carry source-line/unwind debug records.
+    ;; Preserve --debug package behavior through the assembly path.
+    (not (ir.compiler-debug-info-enabled?))
     (build-package-direct-object-mode? mode)
     ;; Direct object emission does not yet preserve scalar f32/f64 parameter
     ;; and return registers for generated private SPMD helpers. Use the
-    ;; assembler path so package archives carry the same ABI as side assembly.
+    ;; assembler path so runtime artifacts carry the same ABI as side assembly.
     (not (build-package-decls-have-spmd-callable? decls))
     (build-package-direct-object-size-ok? target paths))
     (match target
@@ -3102,7 +3109,9 @@
           [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
             (match (build-package-render-linux-direct-object kind image)
               [(build_run_core.ResultSourceToolString.Ok object)
-                (ResultBuildPackagePreparedRuntime.DirectObject object)]
+                (ResultBuildPackagePreparedRuntime.DirectObject
+                  object
+                  BuildPackageSideAssembly.Regenerate)]
               [(build_run_core.ResultSourceToolString.Err message)
                 (ResultBuildPackagePreparedRuntime.Unavailable message)])]
           [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
@@ -3123,10 +3132,21 @@
             paths)
           mode
           opt-level
-          false)
+          false
+          true)
           [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
-              object)
-            (ResultBuildPackagePreparedRuntime.DirectObject object)]
+              object
+              side-assembly)
+            (match side-assembly
+              [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.None)
+                (ResultBuildPackagePreparedRuntime.DirectObject
+                  object
+                  BuildPackageSideAssembly.Regenerate)]
+              [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.Some
+                  asm)
+                (ResultBuildPackagePreparedRuntime.DirectObject
+                  object
+                  (BuildPackageSideAssembly.Prepared asm))])]
           [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
               asm
               category)
@@ -5467,6 +5487,7 @@
   [tlci-path : String]
   [tlci-text : String]
   [object-text : String]
+  [side-assembly : BuildPackageSideAssembly]
   [announce : bool]) : i64
   (let
     [fingerprint-path : String
@@ -5549,15 +5570,22 @@
                       (let
                         [asm-status : build_run_core.SourceToolCommandStatus
                           (if runtime-dirty
-                            (build-package-write-side-assembly
-                              target
-                              opt-level
-                              mode
-                              emit-entry
-                              crt-entry
-                              decls
-                              owned-paths
-                              (struct-get stage asm))
+                            (match side-assembly
+                              [(BuildPackageSideAssembly.Regenerate)
+                                (build-package-write-side-assembly
+                                  target
+                                  opt-level
+                                  mode
+                                  emit-entry
+                                  crt-entry
+                                  decls
+                                  owned-paths
+                                  (struct-get stage asm))]
+                              [(BuildPackageSideAssembly.Prepared asm)
+                                (build-package-write-assembly
+                                  (struct-get stage asm)
+                                  asm
+                                  target)])
                             build_run_core.SourceToolCommandStatus.Ok)]
                         (match asm-status
                           [(build_run_core.SourceToolCommandStatus.Err message)
@@ -5729,7 +5757,7 @@
     crt-entry
     decls
     owned-paths)
-    [(ResultBuildPackagePreparedRuntime.DirectObject object-text)
+    [(ResultBuildPackagePreparedRuntime.DirectObject object-text side-assembly)
       (build-package-finish-direct-fresh-artifacts
         name
         kind
@@ -5750,6 +5778,7 @@
         tlci-path
         tlci-text
         object-text
+        side-assembly
         announce)]
     [(ResultBuildPackagePreparedRuntime.Assembly asm _)
       (build-package-finish-assembly-fresh-artifacts

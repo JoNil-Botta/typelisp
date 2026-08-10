@@ -69,9 +69,9 @@ configure_toolchain
 # state before advancing. A 64-entry ceiling amortizes process startup while
 # keeping each process bounded; smaller values remain available for local
 # memory probes, but the gate never accepts an unbounded whole-corpus batch.
-# Whole-compiler smoke sources dominate their process, so keep those as
-# singleton batches instead of carrying an already-large process high-water
-# mark into another compile.
+# Whole-compiler selfhost and smoke sources dominate their process, so keep
+# those as singleton batches instead of carrying an already-large process
+# high-water mark into another compile.
 BATCH_CHUNK_MAX=64
 BATCH_CHUNK_SIZE=${TYPELISP_BUILD_INVARIANCE_BATCH_SIZE:-$BATCH_CHUNK_MAX}
 case "$BATCH_CHUNK_SIZE" in
@@ -206,8 +206,8 @@ write_batch_chunks() {
     rm -rf "$chunk_dir"
     mkdir -p "$chunk_dir"
     awk -F'|' -v chunk_dir="$chunk_dir" -v chunk_size="$BATCH_CHUNK_SIZE" '
-        function heavy(source) {
-            return source ~ /^src\/tests\/compiler_[^/]*\.tl$/
+        function singleton(name, source) {
+            return name ~ /^selfhost_main_/ || source ~ /^src\/tests\/compiler_[^/]*\.tl$/
         }
         function finish_chunk() {
             if (chunk_entries > 0) {
@@ -223,7 +223,7 @@ write_batch_chunks() {
             cases_path = chunk_dir "/cases." suffix ".txt"
         }
         $1 != "" {
-            if (heavy($2) && chunk_entries > 0) {
+            if (singleton($1, $2) && chunk_entries > 0) {
                 finish_chunk()
             }
             if (chunk_entries == 0) {
@@ -232,7 +232,7 @@ write_batch_chunks() {
             print $3 "|" $4 >> entries_path
             print $0 >> cases_path
             chunk_entries += 1
-            if (heavy($2) || chunk_entries >= chunk_size) {
+            if (singleton($1, $2) || chunk_entries >= chunk_size) {
                 finish_chunk()
             }
         }
@@ -338,9 +338,20 @@ run_batch_chunk() {
 
     batch_stdout="${batch_chunk_path%.txt}.stdout"
     batch_stderr="${batch_chunk_path%.txt}.stderr"
+    batch_timing_label="$batch_compiler_label:opt$batch_opt_level:chunk$batch_id"
+    if [ "$batch_entries" -eq 1 ]; then
+        batch_single_name=$(awk -F'|' 'NR == 1 { print $1; exit }' "$batch_case_chunk")
+        case "$batch_single_name" in
+            selfhost_main_opt1 | selfhost_main_opt2)
+                # Preserve the timing-budget contract and self-build ratio rows
+                # while compiling the selfhost cases through singleton batches.
+                batch_timing_label="$batch_compiler_label:$batch_single_name"
+                ;;
+        esac
+    fi
     batch_started=$(date +%s%3N)
     echo "[build-invariance] $batch_label"
-    if ! ci_timing_run "$batch_compiler_label:opt$batch_opt_level:chunk$batch_id" compile \
+    if ! ci_timing_run "$batch_timing_label" compile \
         run_with_heartbeat_capture \
         "$batch_label" \
         "$batch_stdout" \

@@ -64365,13 +64365,12 @@
     1
     (compiler_ir_types.compiler-ir-block-list-compact
       (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.CompilerIrBlock.Block
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.compiler-ir-instr-seq1
             (compiler_ir_types.CompilerIrInstr.Return
               (compiler_ir_types.CompilerIrMaybeValue.Some
-                (compiler_ir_types.CompilerIrValue.I64 0)))
-            compiler_ir_types.CompilerIrInstrList.Nil))
+                (compiler_ir_types.CompilerIrValue.I64 0)))))
         compiler_ir_types.CompilerIrBlockList.Nil))))
 
 (define (compiler-backend-functions-with-implicit-main
@@ -77753,48 +77752,44 @@
         (compiler_ast_types.AstType.I64)
         4
         (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.CompilerIrBlock.Block
             (compiler_ir_types.compiler-ir-label "entry")
-            (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.compiler-ir-instr-seq4
               (compiler_ir_types.CompilerIrInstr.Call
                 0
                 cbi.compiler-builtin-id-tl-alloc
                 (compiler_ir_types.CompilerIrCallArgs.One
                   (compiler_ir_types.CompilerIrValue.I64 8))
                 (compiler_ast_types.AstType.I64))
-              (compiler_ir_types.compiler-ir-instr-cons
-                (compiler_ir_types.CompilerIrInstr.Call
-                  1
-                  cbi.compiler-builtin-id-tl-substring
-                  (compiler_ir_types.compiler-ir-call-args-from-list
+              (compiler_ir_types.CompilerIrInstr.Call
+                1
+                cbi.compiler-builtin-id-tl-substring
+                (compiler_ir_types.compiler-ir-call-args-from-list
+                  (compiler_ir_types.compiler-ir-value-cons
+                    (compiler_ir_types.CompilerIrValue.I64 0)
+                    (compiler_ir_types.compiler-ir-value-cons
+                      (compiler_ir_types.CompilerIrValue.I64 0)
+                      (compiler_ir_types.compiler-ir-value-cons
+                        (compiler_ir_types.CompilerIrValue.I64 0)
+                        compiler_ir_types.CompilerIrValueList.Nil))))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Call
+                2
+                cbi.compiler-builtin-id-tl-string-concat
+                (compiler_ir_types.compiler-ir-call-args-from-list
+                  (compiler_ir_types.compiler-ir-value-cons
+                    (compiler_ir_types.CompilerIrValue.I64 0)
                     (compiler_ir_types.compiler-ir-value-cons
                       (compiler_ir_types.CompilerIrValue.I64 0)
                       (compiler_ir_types.compiler-ir-value-cons
                         (compiler_ir_types.CompilerIrValue.I64 0)
                         (compiler_ir_types.compiler-ir-value-cons
                           (compiler_ir_types.CompilerIrValue.I64 0)
-                          compiler_ir_types.CompilerIrValueList.Nil))))
-                  (compiler_ast_types.AstType.I64))
-                (compiler_ir_types.compiler-ir-instr-cons
-                  (compiler_ir_types.CompilerIrInstr.Call
-                    2
-                    cbi.compiler-builtin-id-tl-string-concat
-                    (compiler_ir_types.compiler-ir-call-args-from-list
-                      (compiler_ir_types.compiler-ir-value-cons
-                        (compiler_ir_types.CompilerIrValue.I64 0)
-                        (compiler_ir_types.compiler-ir-value-cons
-                          (compiler_ir_types.CompilerIrValue.I64 0)
-                          (compiler_ir_types.compiler-ir-value-cons
-                            (compiler_ir_types.CompilerIrValue.I64 0)
-                            (compiler_ir_types.compiler-ir-value-cons
-                              (compiler_ir_types.CompilerIrValue.I64 0)
-                              compiler_ir_types.CompilerIrValueList.Nil)))))
-                    (compiler_ast_types.AstType.I64))
-                  (compiler_ir_types.compiler-ir-instr-cons
-                    (compiler_ir_types.CompilerIrInstr.Return
-                      (compiler_ir_types.CompilerIrMaybeValue.Some
-                        (compiler_ir_types.CompilerIrValue.I64 42)))
-                    compiler_ir_types.CompilerIrInstrList.Nil)))))
+                          compiler_ir_types.CompilerIrValueList.Nil)))))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 42)))))
           compiler_ir_types.CompilerIrBlockList.Nil))
       compiler_ir_types.CompilerIrFunctionList.Nil)
     (compiler-backend-runtime-helper-externs)))
@@ -78023,13 +78018,12 @@
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.CompilerIrBlock.Block
             (compiler_ir_types.compiler-ir-label "entry")
-            (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.compiler-ir-instr-seq1
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
-                  (compiler_ir_types.CompilerIrValue.I64 7)))
-              compiler_ir_types.CompilerIrInstrList.Nil))
+                  (compiler_ir_types.CompilerIrValue.I64 7)))))
           compiler_ir_types.CompilerIrBlockList.Nil))
       (compiler_ir_types.compiler-ir-function-cons
         (compiler_ir_types.CompilerIrFunction.Function
@@ -78038,13 +78032,12 @@
           (compiler_ast_types.AstType.I64)
           0
           (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.CompilerIrBlock.Block
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.compiler-ir-instr-seq1
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
-                    (compiler_ir_types.CompilerIrValue.I64 42)))
-                compiler_ir_types.CompilerIrInstrList.Nil))
+                    (compiler_ir_types.CompilerIrValue.I64 42)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
     (compiler_ir_types.compiler-ir-extern-cons
@@ -78221,13 +78214,12 @@
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.CompilerIrBlock.Block
             (compiler_ir_types.compiler-ir-label "entry")
-            (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.compiler-ir-instr-seq1
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
-                  (compiler_ir_types.CompilerIrValue.I64 7)))
-              compiler_ir_types.CompilerIrInstrList.Nil))
+                  (compiler_ir_types.CompilerIrValue.I64 7)))))
           compiler_ir_types.CompilerIrBlockList.Nil))
       (compiler_ir_types.compiler-ir-function-cons
         (compiler_ir_types.CompilerIrFunction.Function
@@ -78236,19 +78228,17 @@
           (compiler_ast_types.AstType.I64)
           1
           (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.CompilerIrBlock.Block
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.compiler-ir-instr-seq2
                 (compiler_ir_types.CompilerIrInstr.Call
                   0
                   (compiler-backend-test-symbol "tl_alloc")
                   (compiler_ir_types.CompilerIrCallArgs.Nil)
                   (compiler_ast_types.AstType.I64))
-                (compiler_ir_types.compiler-ir-instr-cons
-                  (compiler_ir_types.CompilerIrInstr.Return
-                    (compiler_ir_types.CompilerIrMaybeValue.Some
-                      (compiler_ir_types.CompilerIrValue.Var 0)))
-                  compiler_ir_types.CompilerIrInstrList.Nil)))
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 0)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
     compiler_ir_types.CompilerIrExternList.Nil))
@@ -78277,13 +78267,12 @@
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.CompilerIrBlock.Block
             (compiler_ir_types.compiler-ir-label "entry")
-            (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.compiler-ir-instr-seq1
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
-                  (compiler_ir_types.CompilerIrValue.I64 7)))
-              compiler_ir_types.CompilerIrInstrList.Nil))
+                  (compiler_ir_types.CompilerIrValue.I64 7)))))
           compiler_ir_types.CompilerIrBlockList.Nil))
       (compiler_ir_types.compiler-ir-function-cons
         (compiler_ir_types.CompilerIrFunction.Function
@@ -78292,32 +78281,29 @@
           (compiler_ast_types.AstType.I64)
           2
           (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.CompilerIrBlock.Block
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.compiler-ir-instr-seq3
                 (compiler_ir_types.CompilerIrInstr.Call
                   0
                   (compiler-backend-test-symbol "tl_alloc")
                   (compiler_ir_types.CompilerIrCallArgs.Nil)
                   (compiler_ast_types.AstType.I64))
-                (compiler_ir_types.compiler-ir-instr-cons
-                  (compiler_ir_types.CompilerIrInstr.Call
-                    1
-                    cbi.compiler-builtin-id-tl-substring
-                    (compiler_ir_types.compiler-ir-call-args-from-list
+                (compiler_ir_types.CompilerIrInstr.Call
+                  1
+                  cbi.compiler-builtin-id-tl-substring
+                  (compiler_ir_types.compiler-ir-call-args-from-list
+                    (compiler_ir_types.compiler-ir-value-cons
+                      (compiler_ir_types.CompilerIrValue.I64 0)
                       (compiler_ir_types.compiler-ir-value-cons
                         (compiler_ir_types.CompilerIrValue.I64 0)
                         (compiler_ir_types.compiler-ir-value-cons
                           (compiler_ir_types.CompilerIrValue.I64 0)
-                          (compiler_ir_types.compiler-ir-value-cons
-                            (compiler_ir_types.CompilerIrValue.I64 0)
-                            compiler_ir_types.CompilerIrValueList.Nil))))
-                    (compiler_ast_types.AstType.I64))
-                  (compiler_ir_types.compiler-ir-instr-cons
-                    (compiler_ir_types.CompilerIrInstr.Return
-                      (compiler_ir_types.CompilerIrMaybeValue.Some
-                        (compiler_ir_types.CompilerIrValue.Var 0)))
-                    compiler_ir_types.CompilerIrInstrList.Nil))))
+                          compiler_ir_types.CompilerIrValueList.Nil))))
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 0)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
     (compiler_ir_types.compiler-ir-extern-cons
@@ -78355,13 +78341,12 @@
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.CompilerIrBlock.Block
             (compiler_ir_types.compiler-ir-label "entry")
-            (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.compiler-ir-instr-seq1
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
-                  (compiler_ir_types.CompilerIrValue.I64 7)))
-              compiler_ir_types.CompilerIrInstrList.Nil))
+                  (compiler_ir_types.CompilerIrValue.I64 7)))))
           compiler_ir_types.CompilerIrBlockList.Nil))
       (compiler_ir_types.compiler-ir-function-cons
         (compiler_ir_types.CompilerIrFunction.Function
@@ -78370,19 +78355,17 @@
           (compiler_ast_types.AstType.I64)
           1
           (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.CompilerIrBlock.Block
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.compiler-ir-instr-seq2
                 (compiler_ir_types.CompilerIrInstr.Call
                   0
                   (compiler-backend-test-symbol "lib.tl::helper")
                   (compiler_ir_types.CompilerIrCallArgs.Nil)
                   (compiler_ast_types.AstType.I64))
-                (compiler_ir_types.compiler-ir-instr-cons
-                  (compiler_ir_types.CompilerIrInstr.Return
-                    (compiler_ir_types.CompilerIrMaybeValue.Some
-                      (compiler_ir_types.CompilerIrValue.Var 0)))
-                  compiler_ir_types.CompilerIrInstrList.Nil)))
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 0)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
         compiler_ir_types.CompilerIrFunctionList.Nil))
     compiler_ir_types.CompilerIrExternList.Nil))

@@ -63940,17 +63940,15 @@
   [args : ir.CompilerIrCallArgs]
   [ret-ty : ast.AstType]
   [call-var : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "cached")
-    (ir.compiler-ir-instr-cons
+    (ir.compiler-ir-instr-seq2
       (ir.CompilerIrInstr.CallIndirect
         call-var
         (ir.CompilerIrValue.Global cache-name)
         args
         ret-ty)
-      (ir.compiler-ir-instr-cons
-        (lower-dispatch-call-return-instr call-var ret-ty)
-        ir.CompilerIrInstrList.Nil))))
+      (lower-dispatch-call-return-instr call-var ret-ty))))
 
 (define (lower-dispatch-select-block
   [label : i64]
@@ -63960,43 +63958,38 @@
   [args : ir.CompilerIrCallArgs]
   [ret-ty : ast.AstType]
   [call-var : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     label
-    (ir.compiler-ir-instr-cons
+    (ir.compiler-ir-instr-seq3
       (ir.CompilerIrInstr.Store
         cache-name
         (ir.CompilerIrValue.Function fn-name)
         fn-ty)
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.CallIndirect
-          call-var
-          (ir.CompilerIrValue.Function fn-name)
-          args
-          ret-ty)
-        (ir.compiler-ir-instr-cons
-          (lower-dispatch-call-return-instr call-var ret-ty)
-          ir.CompilerIrInstrList.Nil)))))
+      (ir.CompilerIrInstr.CallIndirect
+        call-var
+        (ir.CompilerIrValue.Function fn-name)
+        args
+        ret-ty)
+      (lower-dispatch-call-return-instr call-var ret-ty))))
 
 (define (lower-dispatch-entry-block
   [cache-name : i64]
   [_fn-ty : ast.AstType]
   [cached-var : i64]
   [resolve-label : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "entry")
-    (ir.compiler-ir-instr-cons
+    (ir.compiler-ir-instr-seq2
       (ir.CompilerIrInstr.BinOp
         cached-var
         ir.CompilerIrBinOp.Ne
         (ir.CompilerIrValue.Global cache-name)
         (ir.CompilerIrValue.I64 0)
         (ast.AstType.I64))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var cached-var)
-          (ir.compiler-ir-label "cached")
-          resolve-label)
-        ir.CompilerIrInstrList.Nil))))
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var cached-var)
+        (ir.compiler-ir-label "cached")
+        resolve-label))))
 
 (define lower-dispatch-avx512-required-feature-mask : i64
   ;; CPUID.7.0:EBX AVX512F bit 16, AVX512DQ bit 17, AVX512BW bit 30.
@@ -64034,113 +64027,98 @@
     (begin
       (ir.compiler-ir-block-builder-push!
         (&mut blocks)
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           check-label
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq3
             (ir.CompilerIrInstr.CpuId
               max-leaf-var
               (ir.CompilerIrValue.I64 0)
               (ir.CompilerIrValue.I64 0)
               0)
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                max-ok-var
-                ir.CompilerIrBinOp.Ge
-                (ir.CompilerIrValue.Var max-leaf-var)
-                (ir.CompilerIrValue.I64 7)
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Var max-ok-var)
-                  osxsave-label
-                  fallback-label)
-                ir.CompilerIrInstrList.Nil)))))
+            (ir.CompilerIrInstr.BinOp
+              max-ok-var
+              ir.CompilerIrBinOp.Ge
+              (ir.CompilerIrValue.Var max-leaf-var)
+              (ir.CompilerIrValue.I64 7)
+              (ast.AstType.I64))
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var max-ok-var)
+              osxsave-label
+              fallback-label))))
       (ir.compiler-ir-block-builder-push!
         (&mut blocks)
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           osxsave-label
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq4
             (ir.CompilerIrInstr.CpuId
               leaf1-ecx-var
               (ir.CompilerIrValue.I64 1)
               (ir.CompilerIrValue.I64 0)
               2)
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                osxsave-mask-var
-                ir.CompilerIrBinOp.BitAnd
-                (ir.CompilerIrValue.Var leaf1-ecx-var)
-                (ir.CompilerIrValue.I64 134217728)
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.BinOp
-                  osxsave-ok-var
-                  ir.CompilerIrBinOp.Ne
-                  (ir.CompilerIrValue.Var osxsave-mask-var)
-                  (ir.CompilerIrValue.I64 0)
-                  (ast.AstType.I64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var osxsave-ok-var)
-                    xcr0-label
-                    fallback-label)
-                  ir.CompilerIrInstrList.Nil))))))
+            (ir.CompilerIrInstr.BinOp
+              osxsave-mask-var
+              ir.CompilerIrBinOp.BitAnd
+              (ir.CompilerIrValue.Var leaf1-ecx-var)
+              (ir.CompilerIrValue.I64 134217728)
+              (ast.AstType.I64))
+            (ir.CompilerIrInstr.BinOp
+              osxsave-ok-var
+              ir.CompilerIrBinOp.Ne
+              (ir.CompilerIrValue.Var osxsave-mask-var)
+              (ir.CompilerIrValue.I64 0)
+              (ast.AstType.I64))
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var osxsave-ok-var)
+              xcr0-label
+              fallback-label))))
       (ir.compiler-ir-block-builder-push!
         (&mut blocks)
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           xcr0-label
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq4
             (ir.CompilerIrInstr.Xgetbv xcr0-var (ir.CompilerIrValue.I64 0))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                xcr0-mask-var
-                ir.CompilerIrBinOp.BitAnd
-                (ir.CompilerIrValue.Var xcr0-var)
-                (ir.CompilerIrValue.I64 xcr0-mask)
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.BinOp
-                  xcr0-ok-var
-                  ir.CompilerIrBinOp.Eq
-                  (ir.CompilerIrValue.Var xcr0-mask-var)
-                  (ir.CompilerIrValue.I64 xcr0-mask)
-                  (ast.AstType.I64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var xcr0-ok-var)
-                    leaf7-label
-                    fallback-label)
-                  ir.CompilerIrInstrList.Nil))))))
+            (ir.CompilerIrInstr.BinOp
+              xcr0-mask-var
+              ir.CompilerIrBinOp.BitAnd
+              (ir.CompilerIrValue.Var xcr0-var)
+              (ir.CompilerIrValue.I64 xcr0-mask)
+              (ast.AstType.I64))
+            (ir.CompilerIrInstr.BinOp
+              xcr0-ok-var
+              ir.CompilerIrBinOp.Eq
+              (ir.CompilerIrValue.Var xcr0-mask-var)
+              (ir.CompilerIrValue.I64 xcr0-mask)
+              (ast.AstType.I64))
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var xcr0-ok-var)
+              leaf7-label
+              fallback-label))))
       (ir.compiler-ir-block-builder-push!
         (&mut blocks)
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           leaf7-label
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq4
             (ir.CompilerIrInstr.CpuId
               leaf7-ebx-var
               (ir.CompilerIrValue.I64 7)
               (ir.CompilerIrValue.I64 0)
               1)
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.BinOp
-                feature-mask-var
-                ir.CompilerIrBinOp.BitAnd
-                (ir.CompilerIrValue.Var leaf7-ebx-var)
-                (ir.CompilerIrValue.I64 feature-mask)
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.BinOp
-                  feature-ok-var
-                  ir.CompilerIrBinOp.Eq
-                  (ir.CompilerIrValue.Var feature-mask-var)
-                  (ir.CompilerIrValue.I64 feature-mask)
-                  (ast.AstType.I64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Branch
-                    (ir.CompilerIrValue.Var feature-ok-var)
-                    select-label
-                    fallback-label)
-                  ir.CompilerIrInstrList.Nil))))))
+            (ir.CompilerIrInstr.BinOp
+              feature-mask-var
+              ir.CompilerIrBinOp.BitAnd
+              (ir.CompilerIrValue.Var leaf7-ebx-var)
+              (ir.CompilerIrValue.I64 feature-mask)
+              (ast.AstType.I64))
+            (ir.CompilerIrInstr.BinOp
+              feature-ok-var
+              ir.CompilerIrBinOp.Eq
+              (ir.CompilerIrValue.Var feature-mask-var)
+              (ir.CompilerIrValue.I64 feature-mask)
+              (ast.AstType.I64))
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var feature-ok-var)
+              select-label
+              fallback-label))))
       (ir.compiler-ir-block-builder-append-list! (&mut blocks) tail)
       (ir.compiler-ir-block-builder-to-list blocks))))
 

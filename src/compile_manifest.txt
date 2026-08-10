@@ -367,6 +367,7 @@ not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
 
 decision|src/compiler_object.tl|structured object-image data model (#2308): main-less, imported by src/compiler_backend.tl and exercised through the backend object-image self-test plus selfhost_compiler_backend_smoke
+decision|src/compiler_object_asm.tl|structured object-image GNU assembly side-artifact renderer (#5810): main-less, imported by compiler_windows_coff_core.tl and exercised through the selfhost_main case, compiler-object-asm-render-smoke, and the Windows package side-artifact reassembly verifier
 decision|src/compiler_object_coff.tl|COFF object serialization helper (#2310): main-less, imported by src/build_run_core.tl and the backend test helper, exercised through the selfhost_main case and the compiler_backend_smoke native integration test
 decision|src/compiler_object_elf.tl|ELF64 object serialization helper (#2309): main-less, imported by src/build_run_core.tl and the backend test helper, exercised through the selfhost_main case and the compiler_backend_smoke native integration test
 decision|src/compiler_backend_runtime_common.tl|target-neutral backend runtime feature recipe and shared assembly fragments (#5344): main-less, imported by compiler_backend.tl and both platform leaves; exercised through selfhost_compiler_backend, compiler_backend_runtime_tests.tl, and native backend runtime fixtures

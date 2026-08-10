@@ -29,6 +29,8 @@
 ;; reader's standalone demo. This mirrors how `lex.tl` was factored from the
 ;; `main`-bearing `lexer.tl`: a `main`-less module is the unit of reuse, a
 ;; `main`-bearing file is a runnable demo.
+(import stdlib.str_cat_runtime as str_cat)
+
 (module read)
 
 (import stdlib.arena)
@@ -857,7 +859,7 @@
       "?")))
 
 (define (quoted-close-delimiter [tag : i64]) : String
-  (string.append "'" (string.append (close-delimiter-text tag) "'")))
+  (str_cat.str-cat "'" (close-delimiter-text tag) "'"))
 
 (define (opposite-close-delimiter? [tag : i64] [expected : i64]) : bool
   (if (= expected (token.tag-rparen))
@@ -867,12 +869,13 @@
       false)))
 
 (define (span-location [span : token.SourceSpan]) : String
-  (string.append
+  (str_cat.str-cat
     (string.int->string (token.span-start-line span))
-    (string.append ":" (string.int->string (token.span-start-col span)))))
+    ":"
+    (string.int->string (token.span-start-col span))))
 
 (define (unterminated-list-message [expected : i64]) : String
-  (string.append
+  (str_cat.str-cat
     "reader: unterminated list: reached end of input before "
     (quoted-close-delimiter expected)))
 
@@ -880,15 +883,13 @@
   [expected : i64]
   [actual : i64]
   [actual-span : token.SourceSpan]) : String
-  (string.append
+  (str_cat.str-cat
     "reader: mismatched delimiter: expected "
-    (string.append
-      (quoted-close-delimiter expected)
-      (string.append
-        " but found "
-        (string.append
-          (quoted-close-delimiter actual)
-          (string.append " at " (span-location actual-span)))))))
+    (quoted-close-delimiter expected)
+    " but found "
+    (quoted-close-delimiter actual)
+    " at "
+    (span-location actual-span)))
 
 ;; --------------------------------------------------------------------------
 ;; The reader proper: `read-form` and `read-list`, mutually recursive.

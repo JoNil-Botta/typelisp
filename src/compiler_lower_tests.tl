@@ -8672,7 +8672,7 @@
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-arena-source [src : String]) : String
-  (string.append
+  (str_cat.str-cat
     "(module stdlib.arena)
 (extern (tl_arena_make) : i64)
 (extern (tl_arena_current) : i64)
@@ -8845,7 +8845,7 @@
   (with-scratch (string.int->string 42)))"))
 
 (define (compiler-lower-runtime-substring-scratch-source) : String
-  (string.append
+  (str_cat.str-cat
     "(define (substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (unsafe (string-from-bytes (ptr-offset src start) len)))
 "
@@ -8857,7 +8857,7 @@
     (compiler_ast_types.ast-decl-path-list-new)))
 
 (define (compiler-lower-runtime-substring-call-source) : String
-  (string.append
+  (str_cat.str-cat
     "(define (substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (unsafe (string-from-bytes (ptr-offset src start) len)))
 (unsafe
@@ -8869,7 +8869,7 @@
     (unsafe (tl_substring (string-data s) 1 2))))"))
 
 (define (compiler-lower-runtime-substring-capturing-lambda-source) : String
-  (string.append
+  (str_cat.str-cat
     "(define (substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (unsafe (string-from-bytes (ptr-offset src start) len)))
 "

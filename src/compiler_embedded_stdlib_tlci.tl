@@ -1,4 +1,5 @@
 ;; Build-configured embedded stdlib comptime image and production loader path.
+(import stdlib.str_cat_runtime as str_cat)
 (cfg
   (any stage0-seed-bootstrap test)
   (import compiler_embedded_stdlib_tlci_payload_seed as payload))
@@ -4249,7 +4250,7 @@
                       (while (< index arg-a)
                         (let
                           [name : String
-                            (string.append prefix (string.int->string index))]
+                            (str_cat.str-cat prefix (string.int->string index))]
                           (begin
                             (ast.ast-pattern-list-push
                               (&mut patterns)

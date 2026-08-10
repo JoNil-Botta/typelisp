@@ -1,5 +1,6 @@
 ;; compiler_windows_coff_core.tl - Shared Windows COFF eligibility and
 ;; one-optimization object-or-assembly emission.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.text_buf)
 (import stdlib.string)
 (import stdlib.vector)
@@ -618,7 +619,7 @@
                                 (ResultCompilerWindowsBatchArtifact.Err
                                   (compiler-windows-batch-diagnostic
                                     input-path
-                                    (string.append
+                                    (str_cat.str-cat
                                       "assembly side artifact rendering failed: "
                                       message)))])
                             (ResultCompilerWindowsBatchArtifact.CoffObject
@@ -635,7 +636,7 @@
                           (ResultCompilerWindowsBatchArtifact.Err
                             (compiler-windows-batch-diagnostic
                               input-path
-                              (string.append
+                              (str_cat.str-cat
                                 "COFF serialization failed: "
                                 message))))]))]
                 [(CompilerWindowsCoffLinkability.Unavailable category)

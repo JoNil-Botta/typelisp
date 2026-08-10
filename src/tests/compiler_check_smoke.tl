@@ -1,4 +1,5 @@
 ;; compiler_check_smoke.tl - Runnable smoke for virtual-source check helpers.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -55,7 +56,7 @@
     (if (or (< start 0) (< end start))
       cdiag.CompilerDiagnosticNoString
       (cdiag.CompilerDiagnosticSomeString
-        (string.concat3
+        (str_cat.str-cat
           (string.substring source 0 start)
           (cdiag.compiler-diagnostic-text-edit-replacement edit)
           (string.substring source end (- source-len end)))))))

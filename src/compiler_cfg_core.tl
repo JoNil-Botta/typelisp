@@ -1,5 +1,5 @@
 ;; compiler_cfg_core.tl - Parser-independent cfg environment primitives.
-(import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import sym_i64_env)
 
@@ -10,7 +10,7 @@
   (- key-id (ci.intern-capacity)))
 
 (define (compiler-cfg-key-name [key-id : i64]) : String
-  (string.append "cfg:" (ci.intern-str (compiler-cfg-name-id key-id))))
+  (str_cat.str-cat "cfg:" (ci.intern-str (compiler-cfg-name-id key-id))))
 
 (define (compiler-cfg-name [key-id : i64]) : String
   (ci.intern-str (compiler-cfg-name-id key-id)))

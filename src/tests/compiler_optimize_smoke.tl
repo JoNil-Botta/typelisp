@@ -20,6 +20,7 @@
 ;; implicit scratch-region candidates/blockers, and validates
 ;; unused call-graph/SCC infrastructure for the next inliner phases; returns 42
 ;; only when every self-test passes.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_optimize_tests)
 (import compiler_optimize as opt)
 (import compiler_ir_types as ir)
@@ -2460,7 +2461,7 @@
       [else 42])))
 
 (define (smoke-heavy-pass-large-label [index : i64]) : i64
-  (ir.compiler-ir-label (string.append "b" (string.int->string index))))
+  (ir.compiler-ir-label (str_cat.str-cat "b" (string.int->string index))))
 
 (define (smoke-heavy-pass-large-jump-block [index : i64] [next : i64]) : ir.CompilerIrBlock
   (ir.compiler-ir-block

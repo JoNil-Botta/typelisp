@@ -1,5 +1,6 @@
 ;; lint_driver_smoke.tl - Runnable smoke for lint_driver_core.tl: drives
 ;; the full load -> lint -> render path on an embedded source and returns 42.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -57,7 +58,7 @@
   (string.string-length (string.append \"a\" \"b\")))")
 
 (define (lint-driver-smoke-redundant-import-alias-source) : String
-  (string.append
+  (str_cat.str-cat
     "(import pkg.data "
     "as data)
 (define (main) : i64 (data.value))"))
@@ -71,7 +72,7 @@
 (define (main) : i64 (d.value))")
 
 (define (lint-driver-smoke-suppressed-redundant-import-alias-source) : String
-  (string.append
+  (str_cat.str-cat
     ";; lint-allow: redundant-import-alias
 (import pkg.data "
     "as data)
@@ -271,16 +272,12 @@
     (unsafe (ptr-read p))))")
 
 (define (lint-driver-smoke-unsafe-builtin-source [name : String]) : String
-  (string.append
-    "(define (main) : i64
-  (unsafe ("
-    (string.append name " 0)))")))
+  (str_cat.str-cat "(define (main) : i64
+  (unsafe (" name " 0)))"))
 
 (define (lint-driver-smoke-program-unsafe-source [name : String]) : String
-  (string.append
-    "(define (main) : (Ptr (Ptr u8))
-  (unsafe ("
-    (string.append name ")))")))
+  (str_cat.str-cat "(define (main) : (Ptr (Ptr u8))
+  (unsafe (" name ")))"))
 
 (define (lint-driver-smoke-safe-program-argc-source) : String
   "(define (main) : i64
@@ -570,7 +567,7 @@
   [BadParam : i64]) : i64 BadParam)")
 
 (define (lint-driver-smoke-name-case-out-of-scope-source) : String
-  (string.append
+  (str_cat.str-cat
     "(defstruct GoodType (bad_Field i64))
 (defenum GoodEnum (bad-variant))
 (extern BadExtern : i64)

@@ -3,6 +3,7 @@
 ;; This driver owns JSON-RPC/LSP Content-Length framing over stdin/stdout plus
 ;; the first selfhost protocol loop: initialize/shutdown, document tracking, and
 ;; diagnostics for full-document open/change notifications.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.fs)
 (import stdlib.io)
 (import stdlib.arena)
@@ -47,13 +48,13 @@
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (lsp-str2 [a : String] [b : String]) : String
-  (string.concat3 a b ""))
+  (str_cat.str-cat a b ""))
 
 (define (lsp-str3 [a : String] [b : String] [c : String]) : String
-  (string.concat3 a b c))
+  (str_cat.str-cat a b c))
 
 (define (lsp-str4 [a : String] [b : String] [c : String] [d : String]) : String
-  (string.concat4 a b c d))
+  (str_cat.str-cat a b c d))
 
 (define (lsp-str5
   [a : String]
@@ -61,7 +62,7 @@
   [c : String]
   [d : String]
   [e : String]) : String
-  (string.concat5 a b c d e))
+  (str_cat.str-cat a b c d e))
 
 (define (lsp-str7
   [a : String]
@@ -71,7 +72,7 @@
   [e : String]
   [f : String]
   [g : String]) : String
-  (string.concat3 (lsp-str4 a b c d) (lsp-str3 e f g) ""))
+  (str_cat.str-cat (lsp-str4 a b c d) (lsp-str3 e f g) ""))
 
 (defenum LspFrameRead
   (Ok String)
@@ -408,7 +409,7 @@
         (arena.tl_arena_set lsp-frame-memory-arena))
       (set!
         lsp-frame-memory-stdout
-        (string.append lsp-frame-memory-stdout text))
+        (str_cat.str-cat-scoped lsp-frame-memory-stdout text))
       (set! lsp-frame-memory-arena (arena.tl_arena_current))
       (unsafe
         (arena.tl_arena_set active-arena)))))
@@ -421,7 +422,7 @@
         (arena.tl_arena_set lsp-frame-memory-arena))
       (set!
         lsp-frame-memory-stderr
-        (string.append lsp-frame-memory-stderr text))
+        (str_cat.str-cat-scoped lsp-frame-memory-stderr text))
       (set! lsp-frame-memory-arena (arena.tl_arena_current))
       (unsafe
         (arena.tl_arena_set active-arena)))))
@@ -757,7 +758,7 @@
                 [(target_cfg.ResultCompilerTargetCfg.Ok parsed-target)
                   (set! target parsed-target)]
                 [(target_cfg.ResultCompilerTargetCfg.Err message)
-                  (set! error (string.append "lsp: " message))])]
+                  (set! error (str_cat.str-cat "lsp: " message))])]
             [_
               (set! error "lsp: initializationOptions.target must be a string")])])
       (if (= (string.string-length error) 0)
@@ -2139,7 +2140,7 @@
                   (match (json.codepoint-string (+ (* hi 16) lo))
                     [(json.OkJsonCodepointString decoded)
                       (begin
-                        (set! out (string.concat3 out decoded ""))
+                        (set! out (str_cat.str-cat out decoded ""))
                         (set! i (+ i 3)))]
                     [(json.ErrJsonCodepointString message)
                       (begin
@@ -2155,7 +2156,7 @@
                 (set! has-error true)
                 (set! i n)))
             (begin
-              (set! out (string.concat3 out (string.substring text i 1) ""))
+              (set! out (str_cat.str-cat out (string.substring text i 1) ""))
               (set! i (+ i 1))))
           (set! i n)))
       (if (not has-error)
@@ -2208,7 +2209,7 @@
           (let
             [code : i64 (cast (string.string-ref path i) : i64)]
             (if (lsp-uri-safe-code? code)
-              (set! out (string.concat3 out (string.substring path i 1) ""))
+              (set! out (str_cat.str-cat out (string.substring path i 1) ""))
               (set!
                 out
                 (lsp-str4
@@ -5814,7 +5815,7 @@
       "position"
       (lsp-position (struct-get lc line) (struct-get lc col))
       "label"
-      (json.JsonString (string.append ": " ty))
+      (json.JsonString (str_cat.str-cat ": " ty))
       "kind"
       (lsp-json-number 1)
       "paddingRight"
@@ -6509,19 +6510,18 @@
             (begin
               (set!
                 acc
-                (string.append
+                (str_cat.str-cat
                   (lsp-doc-comment-text text prev-line-start n)
-                  (string.append "\n" acc)))
+                  "\n"
+                  acc))
               (set! line-start prev-line-start))
             (set! done true))))
       acc)))
 
 (define (lsp-hover-markdown [body : String] [docs : String]) : String
   (if (string.eq docs "")
-    (string.append "```typelisp\n" (string.append body "\n```"))
-    (string.append
-      "```typelisp\n"
-      (string.append body (string.append "\n```\n\n" docs)))))
+    (str_cat.str-cat "```typelisp\n" body "\n```")
+    (str_cat.str-cat "```typelisp\n" body "\n```\n\n" docs)))
 
 (define (lsp-hover-result
   [markdown : String]
@@ -6736,13 +6736,13 @@
         (string.eq name "*")
         (string.eq name "/"))
       (lsp-hover-markdown
-        (string.append name " : (-> num num num)")
+        (str_cat.str-cat name " : (-> num num num)")
         "Arithmetic on two integers or floats of the same numeric type.")]
     [(string.eq name "%")
       (lsp-hover-markdown "% : (-> int int int)" "Integer remainder (modulo).")]
     [(or (string.eq name "=") (string.eq name "!="))
       (lsp-hover-markdown
-        (string.append name " : (-> a a bool)")
+        (str_cat.str-cat name " : (-> a a bool)")
         "Equality / inequality comparison.")]
     [(or
         (string.eq name "<")
@@ -6750,18 +6750,18 @@
         (string.eq name ">")
         (string.eq name ">="))
       (lsp-hover-markdown
-        (string.append name " : (-> a a bool)")
+        (str_cat.str-cat name " : (-> a a bool)")
         "Ordering comparison.")]
     [(or (string.eq name "shl") (string.eq name "shr"))
       (lsp-hover-markdown
-        (string.append name " : (-> int int int)")
+        (str_cat.str-cat name " : (-> int int int)")
         "Bit shift left / right.")]
     [(or
         (string.eq name "bit-and")
         (string.eq name "bit-or")
         (string.eq name "bit-xor"))
       (lsp-hover-markdown
-        (string.append name " : (-> int int int)")
+        (str_cat.str-cat name " : (-> int int int)")
         "Bitwise and / or / xor.")]
     [(string.eq name "bit-not")
       (lsp-hover-markdown "bit-not : (-> int int)" "Bitwise complement.")]
@@ -6918,7 +6918,7 @@
                   id
                   (lsp-hover-result
                     (lsp-hover-markdown
-                      (string.append needle (string.append " : " bind-type))
+                      (str_cat.str-cat needle " : " bind-type)
                       "")
                     text
                     sym-start
@@ -6958,9 +6958,7 @@
                             (lsp-hover-result
                               (lsp-hover-markdown
                                 variant-form
-                                (string.append
-                                  "Variant of `"
-                                  (string.append enum-name "`.")))
+                                (str_cat.str-cat "Variant of `" enum-name "`."))
                               text
                               sym-start
                               sym-end))]
@@ -8850,7 +8848,7 @@
     [source-text : String
       (string.substring text source-start (- source-end source-start))]
     [text-without-source : String
-      (string.append
+      (str_cat.str-cat
         (string.substring text 0 source-start)
         (string.substring
           text
@@ -11407,12 +11405,12 @@
         (lsp-transcript-batch-tab text (+ tab4 1) end)
         end)]
     [line-label : String
-      (string.append
+      (str_cat.str-cat
         "lsp: invalid transcript batch manifest line "
         (string.int->string line-number))]
     (if (or (= tab1 end) (= tab2 end) (= tab3 end) (= tab4 end) (< extra end))
       (ResultLspTranscriptBatchEntry.Err
-        (string.append line-label ": expected five tab-separated fields"))
+        (str_cat.str-cat line-label ": expected five tab-separated fields"))
       (let
         [case-id : String (lsp-transcript-batch-field text start tab1)]
         [input-path : String (lsp-transcript-batch-field text (+ tab1 1) tab2)]
@@ -11426,7 +11424,7 @@
           (= (string.string-length stderr-path) 0)
           (= (string.string-length status-path) 0))
           (ResultLspTranscriptBatchEntry.Err
-            (string.append line-label ": fields must be non-empty"))
+            (str_cat.str-cat line-label ": fields must be non-empty"))
           (ResultLspTranscriptBatchEntry.Ok
             (LspTranscriptBatchEntry
               case-id
@@ -11471,7 +11469,7 @@
             (if (= cursor line-end)
               (set!
                 error
-                (string.append
+                (str_cat.str-cat
                   "lsp: invalid transcript batch manifest empty line "
                   (string.int->string line-number)))
               (match (lsp-transcript-batch-parse-entry
@@ -11491,7 +11489,7 @@
                       [(lsp-transcript-batch-id-seen? ids case-id)
                         (set!
                           error
-                          (string.append
+                          (str_cat.str-cat
                             "lsp: duplicate transcript batch case id: "
                             case-id))]
                       [(or
@@ -11509,13 +11507,13 @@
                           (string.eq stderr-path status-path))
                         (set!
                           error
-                          (string.append
+                          (str_cat.str-cat
                             "lsp: duplicate transcript batch result path in case: "
                             case-id))]
                       [(not (io.file-exists? (struct-get entry input-path)))
                         (set!
                           error
-                          (string.append
+                          (str_cat.str-cat
                             "lsp: transcript batch input does not exist: "
                             (struct-get entry input-path)))]
                       [else
@@ -11576,7 +11574,7 @@
                       (struct-get result stderr))
                     (lsp-write-file-text
                       (struct-get entry status-path)
-                      (string.append
+                      (str_cat.str-cat
                         (string.int->string (struct-get result status))
                         "\n"))
                     (io.print-string
@@ -11595,7 +11593,7 @@
   (if (not (io.file-exists? manifest-path))
     (begin
       (io.print-error
-        (string.append
+        (str_cat.str-cat
           "lsp: transcript batch manifest does not exist: "
           manifest-path))
       (io.print-error "\n")
@@ -11663,14 +11661,16 @@
             (>= (+ i old-len) n)
             (not (lsp-ident-char? (string.string-ref text (+ i old-len))))))
           (begin
-            (set! result (string.concat3 result new ""))
+            (set! result (str_cat.str-cat result new ""))
             (set! i (+ i old-len)))
           (begin
-            (set! result (string.concat3 result (string.substring text i 1) ""))
+            (set!
+              result
+              (str_cat.str-cat result (string.substring text i 1) ""))
             (set! i (+ i 1)))))
       (while (< i n)
         (begin
-          (set! result (string.concat3 result (string.substring text i 1) ""))
+          (set! result (str_cat.str-cat result (string.substring text i 1) ""))
           (set! i (+ i 1))))
       result)))
 

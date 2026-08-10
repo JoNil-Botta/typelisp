@@ -258,20 +258,17 @@ tl_boot_pool:
 ")
 
 (define (compiler-backend-runtime-windows-arena-functions-base [profile : bool]) : String
-  (string.append
+  (str_cat.str-cat
     "    .globl tl_arena_current
 tl_arena_current:
 "
-    (string.append
-      (compiler-backend-current-arena-load "%rax")
-      (string.append
-        "    ret
+    (compiler-backend-current-arena-load "%rax")
+    "    ret
 
     .globl tl_arena_set
 tl_arena_set:
 "
-        (string.append
-          "    testq %rcx, %rcx
+    "    testq %rcx, %rcx
     jz .L_tl_arena_set_store
     movq 40(%rcx), %rax
     testq %rax, %rax
@@ -279,10 +276,8 @@ tl_arena_set:
     movq %rax, %rcx
 .L_tl_arena_set_store:
 "
-          (string.append
-            (compiler-backend-current-arena-store "%rcx")
-            (string.append
-              "    ret
+    (compiler-backend-current-arena-store "%rcx")
+    "    ret
 
     .globl tl_arena_poison_enable
 tl_arena_poison_enable:
@@ -467,12 +462,11 @@ tl_arena_destroy:
     jz .L_tl_arena_destroy_win_active_done
     movq 0(%rsi), %rbx
 "
-              (string.append
-                (runtime_common.compiler-backend-runtime-profile-live-sub
-                  "%rsi"
-                  "%r10"
-                  profile)
-                "    movq %rsi, %rcx
+    (runtime_common.compiler-backend-runtime-profile-live-sub
+      "%rsi"
+      "%r10"
+      profile)
+    "    movq %rsi, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
     call VirtualFree
@@ -498,7 +492,7 @@ tl_arena_destroy:
     popq %rbp
     ret
 
-"))))))))
+"))
 
 (define (compiler-backend-runtime-windows-arena-debug-functions) : String
   ".L_tl_arena_debug_register_root:
@@ -587,7 +581,7 @@ tl_arena_debug_assert_pool_install:
     (cfg
       (any compiler-arena-debug test)
       (if _arena-debug
-        (string.append
+        (str_cat.str-cat
           (compiler-backend-runtime-windows-arena-debug-functions)
           (string.replace
             (string.replace
@@ -1082,7 +1076,7 @@ tl_alloc:
 ;; tl_array_zero consults that bit to skip its fill only for virgin arenas.
 (define (compiler-backend-runtime-windows-region-reset-functions-base
   [profile : bool]) : String
-  (string.append
+  (str_cat.str-cat
     "    .globl tl_region_reset
 tl_region_reset:
     push %rbp
@@ -1122,13 +1116,11 @@ tl_region_reset:
     je .L_tl_region_reset_win_restore
     movq 0(%r14), %rbx
 "
-    (string.append
-      (runtime_common.compiler-backend-runtime-profile-live-sub
-        "%r14"
-        "%rax"
-        profile)
-      (string.append
-        "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    (runtime_common.compiler-backend-runtime-profile-live-sub
+      "%r14"
+      "%rax"
+      profile)
+    "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     jne .L_tl_region_reset_win_retire
     movq %r14, %rcx
     xorq %rdx, %rdx
@@ -1150,14 +1142,12 @@ tl_region_reset:
 .L_tl_region_reset_win_restore:
     movq 40(%r13), %r11
 "
-        (string.append
-          (runtime_common.compiler-backend-runtime-profile-live-rewind
-            "%r13"
-            "%r12"
-            "%rax"
-            profile)
-          (string.append
-            "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    (runtime_common.compiler-backend-runtime-profile-live-rewind
+      "%r13"
+      "%r12"
+      "%rax"
+      profile)
+    "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     jne .L_tl_region_reset_win_decommit_done
     movq %r12, %rbx
     subq %r13, %rbx
@@ -1210,12 +1200,11 @@ tl_region_reset:
     jz .L_tl_region_reset_win_all_retired
     movq 0(%r14), %rbx
 "
-            (string.append
-              (runtime_common.compiler-backend-runtime-profile-live-sub
-                "%r14"
-                "%rax"
-                profile)
-              "    movq %r14, %rcx
+    (runtime_common.compiler-backend-runtime-profile-live-sub
+      "%r14"
+      "%rax"
+      profile)
+    "    movq %r14, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
     sub $32, %rsp
@@ -1245,7 +1234,7 @@ tl_region_reset:
     pop %rbp
     ret
 
-")))))))
+"))
 
 (define (compiler-backend-runtime-windows-region-reset-functions
   [profile : bool]
@@ -1620,27 +1609,20 @@ tl_tlci_call_macro_entry:
         (compiler-backend-runtime-tlci-macro-entry-functions)
         "")]
     [runtime-front-asm : String
-      (string.append
+      (str_cat.str-cat
         memcpy-asm
-        (string.append
-          memchr-asm
-          (string.append
-            array-zero-asm
-            (string.append
-              mem-fill8-asm
-              (string.append
-                tlci-entry-asm
-                (string.append
-                  tlci-macro-entry-asm
-                  (string.append
-                    arena-asm
-                    (string.append
-                      profile-asm
-                      (str_cat.str-cat
-                        startup-profile-asm
-                        alloc-asm
-                        region-mark-asm
-                        region-reset-asm)))))))))]
+        memchr-asm
+        array-zero-asm
+        mem-fill8-asm
+        tlci-entry-asm
+        tlci-macro-entry-asm
+        arena-asm
+        profile-asm
+        (str_cat.str-cat
+          startup-profile-asm
+          alloc-asm
+          region-mark-asm
+          region-reset-asm))]
     [libc-shims-asm : String
       (compiler-backend-runtime-windows-libc-shim-functions startup-profile)]
     [thread-asm : String (compiler-backend-runtime-windows-thread-functions)]

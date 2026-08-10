@@ -2724,7 +2724,7 @@
 (define (tlci-metadata-parse [source : String]) : ResultTlciMetadata
   (match (reader.result (lexer.lex source))
     [(reader.ResultSexpr.Err message)
-      (ResultTlciMetadata.Err (string.append "tlci metadata: " message))]
+      (ResultTlciMetadata.Err (str_cat.str-cat "tlci metadata: " message))]
     [(reader.ResultSexpr.Ok form) (tlci-metadata-from-form form)]))
 
 (define (tlci-quote-text) : String

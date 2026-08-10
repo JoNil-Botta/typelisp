@@ -4455,8 +4455,8 @@
   [asm : String]
   [name : String]) : bool
   (let
-    [symbol : String (string.append "_tl_" name)]
-    [init-symbol : String (string.append "_tl___global_init_" name)]
+    [symbol : String (str_cat.str-cat "_tl_" name)]
+    [init-symbol : String (str_cat.str-cat "_tl___global_init_" name)]
     (and
       (compiler_backend.backend-and4
         ;; A register-group global (e.g. `pair`) reserves 16 inline bytes;
@@ -5282,9 +5282,7 @@
 (define (compiler-backend-compare-self-operand? [body : String] [reg : String]) : bool
   (compiler_backend.compiler-backend-string-contains?
     body
-    (string.append
-      "    cmpq "
-      (string.append reg (string.append ", " (string.append reg "\n"))))))
+    (str_cat.str-cat "    cmpq " reg ", " reg "\n")))
 
 (define (compiler-backend-immediate-lhs-r9-compare-win64-ok?) : bool
   (let
@@ -10123,13 +10121,12 @@
             buf
             (text_buf.append
               buf
-              (string.append
+              (str_cat.str-cat
                 "(define (f"
-                (string.append
-                  (string.int->string i)
-                  (string.append
-                    ") : i64 "
-                    (string.append (string.int->string i) ")\n"))))))
+                (string.int->string i)
+                ") : i64 "
+                (string.int->string i)
+                ")\n")))
           (set! i (+ i 1))))
       (compiler-backend-streamed-final-output-equivalent-source?
         (text_buf.render
@@ -12938,7 +12935,7 @@
               (compiler_backend.compiler-backend-emit-arg-cycle-temp-save
                 compiler_abi.compiler-reg-id-rdi
                 backend-state)]
-            [asm : String (string.append save-asm restore-asm)]
+            [asm : String (str_cat.str-cat save-asm restore-asm)]
             (and
               (compiler_backend.compiler-backend-string-contains?
                 asm
@@ -28539,7 +28536,7 @@
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-todo-marker) : String
-  (string.append "# " "TODO"))
+  (str_cat.str-cat "# " "TODO"))
 
 (define (compiler-backend-bool-control-flow-ok?) : bool
   (and
@@ -31500,7 +31497,7 @@
             params
             (compiler_ir_types.compiler-ir-param-cons
               (compiler_ir_types.CompilerIrParam.Param
-                (string.append "scalar" (string.int->string i))
+                (str_cat.str-cat "scalar" (string.int->string i))
                 (compiler_ast_types.AstType.I64)
                 i)
               params))

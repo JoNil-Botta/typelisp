@@ -6,6 +6,7 @@
 ;; `--check` after the input path to exit non-zero when findings remain, or
 ;; `--format flat` for the stable `path:line:col: message` machine format. The
 ;; deprecated string.concat rule and staged migration rules are opt-in.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.arena)
@@ -246,9 +247,10 @@
                       name-case))]
                 [else
                   (ResultSelfhostLintConfig.Err
-                    (string.append
+                    (str_cat.str-cat
                       "selfhost-lint: unsupported --format "
-                      (string.append format " (expected rich or flat)")))])))]
+                      format
+                      " (expected rich or flat)"))])))]
         [(string.eq current "--cfg")
           (if (>= (+ idx 1) count)
             (ResultSelfhostLintConfig.Err
@@ -295,7 +297,7 @@
                       name-case))]
                 [(target_cfg.ResultCompilerTargetCfg.Err message)
                   (ResultSelfhostLintConfig.Err
-                    (string.append "selfhost-lint: " message))])))]
+                    (str_cat.str-cat "selfhost-lint: " message))])))]
         [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultSelfhostLintConfig.Err
@@ -337,7 +339,7 @@
                 name-case)))]
         [(selfhost-lint-flag? current)
           (ResultSelfhostLintConfig.Err
-            (string.append "selfhost-lint: unknown flag " current))]
+            (str_cat.str-cat "selfhost-lint: unknown flag " current))]
         [else
           (selfhost-lint-parse-options
             (+ idx 1)
@@ -414,7 +416,7 @@
   (let
     [rendered : String (selfhost-lint-render-finding path source finding)]
     (if selfhost-lint-flat-output
-      (string.append rendered "\n")
+      (str_cat.str-cat rendered "\n")
       rendered)))
 
 ;; Print every finding to stdout; returns the number printed.
@@ -687,7 +689,7 @@
   [line : i64]
   [rule-id : String]) : bool
   (let
-    [needle : String (string.append "lint-allow: " rule-id)]
+    [needle : String (str_cat.str-cat "lint-allow: " rule-id)]
     [source-len : i64 (string.string-length source)]
     [line-start : i64 (selfhost-lint-line-start-index source line)]
     [found : bool false]
@@ -728,7 +730,7 @@
     (if (or (<= line 0) (<= col 0))
       false
       (let
-        [needle : String (string.append "(" form-name)]
+        [needle : String (str_cat.str-cat "(" form-name)]
         [line-start : i64 (selfhost-lint-line-start-index source line)]
         [idx : i64 (+ line-start (- col 1))]
         (and
@@ -1144,10 +1146,10 @@
           (array-ref (struct-get names slots) index)]
         (begin
           (lint_core.lint-unused-unsafe-classifier-add-exact-name!
-            (string.append alias (string.append "." (struct-get fact name)))
+            (str_cat.str-cat alias "." (struct-get fact name))
             (struct-get fact requires-unsafe))
           (lint_core.lint-unused-unsafe-classifier-add-exact-name!
-            (string.append alias (string.append "/" (struct-get fact name)))
+            (str_cat.str-cat alias "/" (struct-get fact name))
             (struct-get fact requires-unsafe))
           (set! index (+ index 1)))))))
 
@@ -1728,7 +1730,7 @@
 (define (selfhost-lint-dead-module-key [module : String] [name : String]) : String
   (if (= (string.string-length module) 0)
     name
-    (string.append module (string.append "/" name))))
+    (str_cat.str-cat module "/" name)))
 
 (define (selfhost-lint-dead-default-module-from-path [path : String]) : String
   (parser.parse-ast-dotted-import-default-alias
@@ -1738,9 +1740,7 @@
   "\nselfhost-lint-dead-qualified-ref\n")
 
 (define (selfhost-lint-dead-qualified-ref [key : String] [fallback : String]) : String
-  (string.append
-    (selfhost-lint-dead-qualified-ref-prefix)
-    (string.append key (string.append "\n" fallback))))
+  (str_cat.str-cat (selfhost-lint-dead-qualified-ref-prefix) key "\n" fallback))
 
 (define (selfhost-lint-dead-qualified-ref? [ref : String]) : bool
   (selfhost-lint-prefix-at? ref 0 (selfhost-lint-dead-qualified-ref-prefix)))
@@ -1772,11 +1772,11 @@
   "\nselfhost-lint-dead-source-root\n")
 
 (define (selfhost-lint-dead-source-root [path : String] [name : String]) : String
-  (string.append
+  (str_cat.str-cat
     (selfhost-lint-dead-source-root-prefix)
-    (string.append
-      (compiler_load.compiler-load-normalize-path path)
-      (string.append "\n" name))))
+    (compiler_load.compiler-load-normalize-path path)
+    "\n"
+    name))
 
 (define (selfhost-lint-dead-source-root? [root : String]) : bool
   (selfhost-lint-prefix-at? root 0 (selfhost-lint-dead-source-root-prefix)))
@@ -2513,7 +2513,7 @@
   [name : String]
   [body-span : ast.AstSourceSpan]) : ast.AstSourceSpan
   (let
-    [fn-needle : String (string.append "(define (" name)]
+    [fn-needle : String (str_cat.str-cat "(define (" name)]
     [fn-idx : i64 (selfhost-lint-dead-find-name-prefix-from source fn-needle 0)]
     (if (>= fn-idx 0)
       (selfhost-lint-dead-index-span source fn-idx body-span)
@@ -2521,7 +2521,7 @@
         source
         (selfhost-lint-dead-find-name-prefix-from
           source
-          (string.append "(define " name)
+          (str_cat.str-cat "(define " name)
           0)
         body-span))))
 
@@ -4371,18 +4371,18 @@
             (begin
               (selfhost-lint-print-findings input-path source findings)
               (io.print-string
-                (string.append
+                (str_cat.str-cat
                   "lint: "
-                  (string.append
-                    (string.int->string
-                      (lint_core.lint-findings-count findings))
-                    " finding(s)\n")))
+                  (string.int->string (lint_core.lint-findings-count findings))
+                  " finding(s)\n"))
               (selfhost-lint-enforce-exit
                 enforcing
                 (lint_core.lint-findings-count findings)))
             (begin
               (io.print-error
-                (string.append selfhost-lint-typed-unused-unsafe-error "\n"))
+                (str_cat.str-cat-scoped
+                  selfhost-lint-typed-unused-unsafe-error
+                  "\n"))
               1)))]
       [(parser.ResultAstProgramDiagnostic.Err diag)
         (begin
@@ -4438,15 +4438,16 @@
               [total-count : i64 (+ ordinary-count dead-count)]
               (begin
                 (io.print-string
-                  (string.append
+                  (str_cat.str-cat
                     "lint: "
-                    (string.append
-                      (string.int->string total-count)
-                      " finding(s)\n")))
+                    (string.int->string total-count)
+                    " finding(s)\n"))
                 (selfhost-lint-enforce-exit enforcing total-count)))
             (begin
               (io.print-error
-                (string.append selfhost-lint-typed-unused-unsafe-error "\n"))
+                (str_cat.str-cat-scoped
+                  selfhost-lint-typed-unused-unsafe-error
+                  "\n"))
               1)))]
       [(parser.ResultAstProgramDiagnostic.Err diag)
         (begin
@@ -4471,8 +4472,7 @@
       [file-status : i64
         (begin
           (if print-headers
-            (io.print-string
-              (string.append "--- " (string.append input-path "\n")))
+            (io.print-string (str_cat.str-cat "--- " input-path "\n"))
             unit)
           (selfhost-lint-run-file-in-scratch
             input-path
@@ -4539,8 +4539,7 @@
       [file-status : i64
         (begin
           (if print-headers
-            (io.print-string
-              (string.append "--- " (string.append input-path "\n")))
+            (io.print-string (str_cat.str-cat "--- " input-path "\n"))
             unit)
           (selfhost-lint-run-file-with-package-dead-in-scratch
             input-path
@@ -4607,7 +4606,7 @@
     has-manifest)
     [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
-        (io.print-error (string.append message "\n"))
+        (io.print-error (str_cat.str-cat message "\n"))
         1)]
     [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (let
@@ -4685,5 +4684,5 @@
             name-case)])]
     [(ResultSelfhostLintConfig.Err message)
       (begin
-        (io.print-error (string.append message "\n"))
+        (io.print-error (str_cat.str-cat message "\n"))
         2)]))

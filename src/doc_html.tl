@@ -30,7 +30,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! out (string.concat3 out (doc-html-escape-one text i) ""))
+          (set! out (str_cat.str-cat out (doc-html-escape-one text i) ""))
           (set! i (+ i 1))))
       out)))
 
@@ -51,7 +51,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! out (string.concat3 out (doc-html-escape-text-one text i) ""))
+          (set! out (str_cat.str-cat out (doc-html-escape-text-one text i) ""))
           (set! i (+ i 1))))
       out)))
 
@@ -272,12 +272,12 @@
               (begin
                 (set!
                   out
-                  (string.concat3 out (doc-html-escape-one source i) ""))
+                  (str_cat.str-cat out (doc-html-escape-one source i) ""))
                 (set! i (+ i 1)))))
           (begin
-            (set! out (string.concat3 out (doc-html-escape-one source i) ""))
+            (set! out (str_cat.str-cat out (doc-html-escape-one source i) ""))
             (set! i (+ i 1)))))
-      (string.concat3 out "</span>" ""))))
+      (str_cat.str-cat out "</span>" ""))))
 
 (define (doc-html-syntax-char-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -449,7 +449,7 @@
                 (begin
                   (set!
                     out
-                    (string.concat3
+                    (str_cat.str-cat
                       out
                       (doc-html-syntax-span class-name line)
                       ""))
@@ -460,7 +460,7 @@
                 (begin
                   (set!
                     out
-                    (string.concat3
+                    (str_cat.str-cat
                       out
                       (doc-html-syntax-render-string source i end)
                       ""))
@@ -472,7 +472,7 @@
                   (begin
                     (set!
                       out
-                      (string.concat3
+                      (str_cat.str-cat
                         out
                         (doc-html-syntax-span
                           "tl-syn-string"
@@ -482,7 +482,7 @@
                   (begin
                     (set!
                       out
-                      (string.concat3 out (doc-html-escape-one source i) ""))
+                      (str_cat.str-cat out (doc-html-escape-one source i) ""))
                     (set! i (+ i 1)))))]
             [(doc-html-syntax-number-start? source i)
               (let
@@ -490,7 +490,7 @@
                 (begin
                   (set!
                     out
-                    (string.concat3
+                    (str_cat.str-cat
                       out
                       (doc-html-syntax-span
                         "tl-syn-number"
@@ -506,7 +506,7 @@
                 (begin
                   (set!
                     out
-                    (string.concat3
+                    (str_cat.str-cat
                       out
                       (if (= (string.string-length class-name) 0)
                         (doc-html-escape token)
@@ -517,7 +517,7 @@
               (begin
                 (set!
                   out
-                  (string.concat3 out (doc-html-escape-one source i) ""))
+                  (str_cat.str-cat out (doc-html-escape-one source i) ""))
                 (set! i (+ i 1)))])))
       out)))
 
@@ -557,7 +557,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (string.append
+    (str_cat.str-cat
       (doc-html-item-nav-entry (doc_extract.doc-item-list-ref items index))
       (doc-html-item-nav-entries-from items (+ index 1) count))))
 
@@ -604,7 +604,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (string.append
+    (str_cat.str-cat
       (doc-html-item (doc_extract.doc-item-list-ref items index))
       (doc-html-item-list-from items (+ index 1) count))))
 
@@ -634,7 +634,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (string.append
+    (str_cat.str-cat
       (doc-html-module-nav-entry (doc_render.doc-module-list-ref modules index))
       (doc-html-module-nav-entries-from modules (+ index 1) count))))
 
@@ -682,7 +682,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (string.append
+    (str_cat.str-cat
       (doc-html-module-section (doc_render.doc-module-list-ref modules index))
       (doc-html-module-sections-from modules (+ index 1) count))))
 

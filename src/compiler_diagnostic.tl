@@ -3,6 +3,7 @@
 (import token)
 (import compiler_ast_types as ast)
 (import stdlib.string)
+(import stdlib.text_buf)
 
 (defenum CompilerDiagnosticLevel
   (CompilerDiagnosticError)
@@ -1046,19 +1047,14 @@
   (let
     [count : i64 (compiler-diagnostic-note-list-count notes)]
     [index : i64 0]
-    [out : String ""]
+    [out : text_buf.TextBuf (text_buf.empty)]
     (begin
       (while (< index count)
         (begin
-          (set!
-            out
-            (string.append
-              out
-              (string.append
-                "\nnote: "
-                (compiler-diagnostic-note-list-get notes index))))
+          (text_buf.append! out "\nnote: ")
+          (text_buf.append! out (compiler-diagnostic-note-list-get notes index))
           (set! index (+ index 1))))
-      out)))
+      (text_buf.render out))))
 
 (define (compiler-diagnostic-render-flat-secondary
   [primary-path : String]
@@ -1108,22 +1104,17 @@
       out)))
 
 (define (compiler-diagnostic-render [diag : CompilerDiagnostic]) : String
-  (string.append
-    (string.append
-      (string.append
-        (compiler-diagnostic-path diag)
-        (string.append
-          ":"
-          (string.append
-            (string.int->string (compiler-diagnostic-line diag))
-            (string.append
-              ":"
-              (string.append
-                (string.int->string (compiler-diagnostic-col diag))
-                (string.append ": " (compiler-diagnostic-message diag)))))))
-      (compiler-diagnostic-render-flat-secondaries
-        (compiler-diagnostic-path diag)
-        (compiler-diagnostic-secondary-spans diag)))
+  (str_cat.str-cat
+    (compiler-diagnostic-path diag)
+    ":"
+    (string.int->string (compiler-diagnostic-line diag))
+    ":"
+    (string.int->string (compiler-diagnostic-col diag))
+    ": "
+    (compiler-diagnostic-message diag)
+    (compiler-diagnostic-render-flat-secondaries
+      (compiler-diagnostic-path diag)
+      (compiler-diagnostic-secondary-spans diag))
     (compiler-diagnostic-render-notes (compiler-diagnostic-notes diag))))
 
 (define (compiler-diagnostic-level-render [level : CompilerDiagnosticLevel]) : String
@@ -1135,19 +1126,19 @@
 (define (compiler-diagnostic-repeat [chunk : String] [count : i64]) : String
   (let
     [idx : i64 0]
-    [out : String ""]
+    [out : text_buf.TextBuf (text_buf.empty)]
     (begin
       (while (< idx count)
         (begin
-          (set! out (string.concat3 out chunk ""))
+          (text_buf.append! out (string.copy chunk))
           (set! idx (+ idx 1))))
-      out)))
+      (text_buf.render out))))
 
 (define (compiler-diagnostic-line-gutter [line : i64]) : String
   (let
     [line-text : String (string.int->string line)]
     (if (< line 10)
-      (string.append " " line-text)
+      (str_cat.str-cat " " line-text)
       line-text)))
 
 (define (compiler-diagnostic-blank-gutter [line : i64]) : String
@@ -1230,7 +1221,7 @@
         (str_cat.str-cat
           level-text
           ": "
-          (string.append (compiler-diagnostic-message diag) "\n"))])))
+          (str_cat.str-cat (compiler-diagnostic-message diag) "\n"))])))
 
 (define (compiler-diagnostic-render-span-location-with-fallback
   [fallback-path : String]
@@ -1262,7 +1253,7 @@
 (define (compiler-diagnostic-render-label-suffix
   [label : CompilerDiagnosticMaybeString]) : String
   (match label
-    [(CompilerDiagnosticSomeString text) (string.append " " text)]
+    [(CompilerDiagnosticSomeString text) (str_cat.str-cat " " text)]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-source-snippet
@@ -1284,8 +1275,8 @@
               (compiler-diagnostic-span-start-col span)))]
         [underline : String
           (compiler-diagnostic-repeat "^" (compiler-diagnostic-span-width span))]
-        (string.append
-          (str_cat.str-cat gutter " | " (string.append line-text "\n"))
+        (str_cat.str-cat
+          (str_cat.str-cat gutter " | " (str_cat.str-cat line-text "\n"))
           (str_cat.str-cat
             blank
             " | "
@@ -1299,7 +1290,7 @@
   [label : CompilerDiagnosticMaybeString]) : String
   (match label
     [(CompilerDiagnosticSomeString text)
-      (string.append "   = label: " (string.append text "\n"))]
+      (str_cat.str-cat "   = label: " text "\n")]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-secondary-span
@@ -1322,18 +1313,17 @@
         span
         (& source)
         (& label-suffix))]
-    (string.concat3
+    (str_cat.str-cat
       (compiler-diagnostic-render-span-location-with-fallback
         (string.copy primary-path)
         span)
-      (string.concat3
-        "   |\n"
-        (if same-path
-          (if (string.eq snippet "")
-            (string.copy label-only)
-            (string.copy snippet))
-          (string.copy label-only))
-        "")
+      "   |\n"
+      (if same-path
+        (if (string.eq snippet "")
+          (string.copy label-only)
+          (string.copy snippet))
+        (string.copy label-only))
+      ""
       "")))
 
 (define (compiler-diagnostic-render-secondary-spans
@@ -1343,20 +1333,18 @@
   (let
     [count : i64 (compiler-diagnostic-label-list-count labels)]
     [index : i64 0]
-    [out : String ""]
+    [out : text_buf.TextBuf (text_buf.empty)]
     (begin
       (while (< index count)
         (begin
-          (set!
+          (text_buf.append!
             out
-            (string.append
-              out
-              (compiler-diagnostic-render-secondary-span
-                primary-path
-                source
-                (compiler-diagnostic-label-list-get labels index))))
+            (compiler-diagnostic-render-secondary-span
+              primary-path
+              source
+              (compiler-diagnostic-label-list-get labels index)))
           (set! index (+ index 1))))
-      out)))
+      (text_buf.render out))))
 
 (define (compiler-diagnostic-render-help [help : CompilerDiagnosticMaybeString]) : String
   (match help
@@ -1369,19 +1357,15 @@
   (let
     [count : i64 (compiler-diagnostic-note-list-count notes)]
     [index : i64 0]
-    [out : String ""]
+    [out : text_buf.TextBuf (text_buf.empty)]
     (begin
       (while (< index count)
         (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              "   = note: "
-              (compiler-diagnostic-note-list-get notes index)
-              "\n"))
+          (text_buf.append! out "   = note: ")
+          (text_buf.append! out (compiler-diagnostic-note-list-get notes index))
+          (text_buf.append! out "\n")
           (set! index (+ index 1))))
-      out)))
+      (text_buf.render out))))
 
 (define (compiler-diagnostic-render-source-with-metadata
   [diag : CompilerDiagnostic]
@@ -1393,26 +1377,20 @@
     [primary-span : CompilerDiagnosticSpan
       (compiler-diagnostic-primary-span diag)]
     [empty-label : String ""]
-    (string.append
+    (str_cat.str-cat
       (compiler-diagnostic-render-header diag level code)
-      (string.append
-        (compiler-diagnostic-render-location diag)
-        (string.append
-          "   |\n"
-          (string.append
-            (compiler-diagnostic-render-source-snippet
-              primary-span
-              (& source)
-              (& empty-label))
-            (string.append
-              (compiler-diagnostic-render-secondary-spans
-                (compiler-diagnostic-path diag)
-                source
-                (compiler-diagnostic-secondary-spans diag))
-              (string.append
-                (compiler-diagnostic-render-help help)
-                (compiler-diagnostic-render-source-notes
-                  (compiler-diagnostic-notes diag))))))))))
+      (compiler-diagnostic-render-location diag)
+      "   |\n"
+      (compiler-diagnostic-render-source-snippet
+        primary-span
+        (& source)
+        (& empty-label))
+      (compiler-diagnostic-render-secondary-spans
+        (compiler-diagnostic-path diag)
+        source
+        (compiler-diagnostic-secondary-spans diag))
+      (compiler-diagnostic-render-help help)
+      (compiler-diagnostic-render-source-notes (compiler-diagnostic-notes diag)))))
 
 (define (compiler-diagnostic-render-source
   [diag : CompilerDiagnostic]

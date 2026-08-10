@@ -8,6 +8,7 @@
 ;;   typelisp run selfhost/cli.tl -- doc --test input.tl
 ;;   typelisp run selfhost/cli.tl -- doc --test --batch inputs.txt
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
@@ -57,7 +58,7 @@
   (Err String))
 
 (define (doc-print-wrote [output-path : String]) : unit
-  (io.print-string (string.append "Wrote " (string.append output-path "\n"))))
+  (io.print-string (str_cat.str-cat "Wrote " output-path "\n")))
 
 (define (doc-write-text [output-path : String] [contents : String]) : unit
   (io.write-file output-path (byte_buf.str-as-bytes (& contents))))
@@ -271,7 +272,7 @@
     has-manifest)
     [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
-        (io.print-error (string.append message "\n"))
+        (io.print-error (str_cat.str-cat message "\n"))
         1)]
     [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (begin
@@ -308,7 +309,7 @@
     (begin
       (if (doc_test.doc-test-run-report-ok? report)
         (io.print-string
-          (string.append (doc_test.doc-test-run-report-render report) "\n"))
+          (str_cat.str-cat (doc_test.doc-test-run-report-render report) "\n"))
         (io.print-error (doc_test.doc-test-run-report-render report)))
       (doc_test.doc-test-run-report-status report))))
 
@@ -421,7 +422,7 @@
         (doc-test-batch-paths-from-text (byte_buf.to-string contents)))]
     [(io.ErrIoBytes error)
       (ResultDocTestBatchPaths.Err
-        (string.append
+        (str_cat.str-cat
           "doc: failed to read --batch list file: "
           (io.error-message error)))]))
 
@@ -544,7 +545,7 @@
                   batch-list))]
             [(doc-flag? current)
               (ResultDocTestCliConfig.Err
-                (string.append "doc: unknown flag " current))]
+                (str_cat.str-cat "doc: unknown flag " current))]
             [else
               (doc-test-parse-options
                 (+ idx 1)
@@ -584,8 +585,7 @@
       [file-status : i64
         (begin
           (if print-headers
-            (io.print-string
-              (string.append "--- " (string.append input-path "\n")))
+            (io.print-string (str_cat.str-cat "--- " input-path "\n"))
             unit)
           (doc-test-file input-path stdlib-roots))]
       (doc-test-files-from
@@ -615,8 +615,7 @@
       [input-path : String (doc_svec.get (& input-paths) index "")]
       [file-status : i64
         (begin
-          (io.print-string
-            (string.append "--- " (string.append input-path "\n")))
+          (io.print-string (str_cat.str-cat "--- " input-path "\n"))
           (doc-test-file input-path stdlib-roots))]
       (doc-test-package-files-from
         input-paths
@@ -642,7 +641,7 @@
     has-manifest)
     [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
-        (io.print-error (string.append message "\n"))
+        (io.print-error (str_cat.str-cat message "\n"))
         1)]
     [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (doc-test-package-files (struct-get source-set sources) stdlib-roots 0)]))
@@ -737,7 +736,7 @@
                     stdlib-roots)))]
             [(doc-flag? current)
               (ResultDocDefaultCliConfig.Err
-                (string.append "doc: unknown flag " current))]
+                (str_cat.str-cat "doc: unknown flag " current))]
             [else
               (doc-default-parse-options
                 (+ idx 1)

@@ -1,4 +1,5 @@
 ;; format_render_buf.tl - Shared formatter render buffer helpers.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 
 (define (format-width) : i64
@@ -11,7 +12,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string.concat3 out " " ""))
+          (set! out (str_cat.str-cat out " " ""))
           (set! i (+ i 1))))
       out)))
 

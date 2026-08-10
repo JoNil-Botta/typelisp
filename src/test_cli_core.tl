@@ -346,7 +346,7 @@
         (tltest-batch-paths-from-text (byte_buf.to-string contents)))]
     [(io.ErrIoBytes error)
       (ResultTestBatchPaths.Err
-        (string.append
+        (str_cat.str-cat
           "test: failed to read --batch list file: "
           (io.error-message error)))]))
 
@@ -696,7 +696,7 @@
                   batch-list))]
             [(build_run_core.source-tool-flag? current)
               (ResultTestConfig.Err
-                (string.append "test: unknown flag " current))]
+                (str_cat.str-cat "test: unknown flag " current))]
             [has-source
               (ResultTestConfig.Err "test: accepts only one source file")]
             [else
@@ -768,7 +768,7 @@
   (ast.ast-source-span-start-line span))
 
 (define (tltest-private-name [idx : i64]) : String
-  (string.append "__tl_inline_test_" (string.int->string idx)))
+  (str_cat.str-cat "__tl_inline_test_" (string.int->string idx)))
 
 (define (tltest-private-call-id [module-id : i64] [private-id : i64]) : i64
   (if (= module-id (tltest-empty-name-id))
@@ -894,9 +894,7 @@
 (define (tltest-list-line [test : InlineTest]) : String
   (match test
     [(InlineTest.Case name path _ line _ _ _ _)
-      (string.append
-        name
-        (string.append " " (string.append (tltest-location path line) "\n")))]))
+      (str_cat.str-cat name " " (tltest-location path line) "\n")]))
 
 (define (tltest-list-tests-from
   [tests : (__tl_dyn-array InlineTest)]
@@ -915,9 +913,10 @@
     [(InlineCollect.Collect _ _ tests) (tltest-list-tests-from tests 0)]))
 
 (define (tltest-list-summary-line [count : i64]) : String
-  (string.append
+  (str_cat.str-cat
     "TypeLisp tests listed: "
-    (string.append (string.int->string count) " test(s)\n")))
+    (string.int->string count)
+    " test(s)\n"))
 
 (define (tltest-print-expr [text : String]) : i64
   (ast.ast-expr-call
@@ -951,31 +950,22 @@
 
 (define (tltest-location [path : String] [line : i64]) : String
   (if (string.eq path "")
-    (string.append "<unknown>:" (string.int->string line))
-    (string.append path (string.append ":" (string.int->string line)))))
+    (str_cat.str-cat "<unknown>:" (string.int->string line))
+    (str_cat.str-cat path ":" (string.int->string line))))
 
 (define (tltest-running-line [test : InlineTest]) : String
   (match test
     [(InlineTest.Case name path _ line _ _ _ _)
-      (string.append
-        "test "
-        (string.append
-          name
-          (string.append " " (string.append (tltest-location path line) "\n"))))]))
+      (str_cat.str-cat "test " name " " (tltest-location path line) "\n")]))
 
 (define (tltest-ok-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name _ _ _ _ _ _ _)
-      (string.append "ok " (string.append name "\n"))]))
+    [(InlineTest.Case name _ _ _ _ _ _ _) (str_cat.str-cat "ok " name "\n")]))
 
 (define (tltest-failed-line [test : InlineTest]) : String
   (match test
     [(InlineTest.Case name path _ line _ _ _ _)
-      (string.append
-        "FAILED "
-        (string.append
-          name
-          (string.append " " (string.append (tltest-location path line) "\n"))))]))
+      (str_cat.str-cat "FAILED " name " " (tltest-location path line) "\n")]))
 
 (define (tltest-print-runtime-write-params) : ast.AstParamList
   (ast.ast-param-cons
@@ -2565,7 +2555,9 @@
             (if (= status 0)
               unit
               (io.print-error
-                (string.append "test: package inline preflight failed: " source)))
+                (str_cat.str-cat
+                  "test: package inline preflight failed: "
+                  source)))
             (set! cursor (+ cursor 1)))))
       (begin
         (begin
@@ -3853,9 +3845,10 @@
       [(ResultCompilerTypecheck.Ok _)
         (begin
           (io.print-string
-            (string.append
+            (str_cat.str-cat
               "TypeLisp test typecheck passed: "
-              (string.append (string.int->string count) " test(s)\n")))
+              (string.int->string count)
+              " test(s)\n"))
           0)]
       [(ResultCompilerTypecheck.Err diag)
         (begin
@@ -3879,9 +3872,10 @@
       unit
       (io.print-error "\n"))
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "typelisp test: test executable exited with exit status: "
-        (string.append (string.int->string (process.output-status output)) "\n")))))
+        (string.int->string (process.output-status output))
+        "\n"))))
 
 (define (tltest-diagnostic-with-source-fallback
   [source : String]
@@ -3897,7 +3891,7 @@
         "test executable exists; child-process spawn failed"
         "test executable is missing after link")]
     [(io.ErrIoBool error)
-      (string.append
+      (str_cat.str-cat
         "could not inspect test executable: "
         (io.error-message error))]))
 
@@ -3905,15 +3899,16 @@
   [bin-path : String]
   [temp-dir : String]
   [error : process.ProcessError]) : String
-  (string.append
-    (string.append
-      (string.append
-        (string.append "Error: failed to run test executable '" bin-path)
-        (string.append "': " (process.error-message error)))
-      (string.append " (" (tltest-executable-spawn-detail bin-path)))
-    (string.append
-      (string.append "); preserving test artifacts in '" temp-dir)
-      "'\n")))
+  (str_cat.str-cat
+    "Error: failed to run test executable '"
+    bin-path
+    "': "
+    (process.error-message error)
+    " ("
+    (tltest-executable-spawn-detail bin-path)
+    "); preserving test artifacts in '"
+    temp-dir
+    "'\n"))
 
 (define (tltest-run-executable-error-message-self-test?) : bool
   (let
@@ -4138,7 +4133,7 @@
         [(build_run_core.ResultSourceToolString.Err message)
           (begin
             (io.print-error
-              (string.append "test: failed to create temp dir: " message))
+              (str_cat.str-cat "test: failed to create temp dir: " message))
             1)])]))
 
 (define (tltest-run-direct
@@ -4274,7 +4269,7 @@
       (string.eq (string.substring text 0 prefix-len) prefix))))
 
 (define (tltest-package-tests-prefix [manifest-dir : String]) : String
-  (string.append
+  (str_cat.str-cat
     (compiler_load.compiler-load-normalize-path
       (package_source_core.package-source-root-join manifest-dir "tests"))
     "/"))
@@ -4287,7 +4282,7 @@
 (define (tltest-package-tests-subdir-prefix
   [tests-prefix : String]
   [name : String]) : String
-  (string.append tests-prefix (string.append name "/")))
+  (str_cat.str-cat tests-prefix name "/"))
 
 (define (tltest-package-manifest-managed-integration? [tests-prefix : String]) : bool
   (let
@@ -4295,9 +4290,9 @@
       (tltest-package-tests-subdir-prefix tests-prefix "integration")]
     (or
       (io.file-exists?
-        (string.append integration-prefix "native-linux.manifest"))
+        (str_cat.str-cat integration-prefix "native-linux.manifest"))
       (io.file-exists?
-        (string.append integration-prefix "native-windows.manifest")))))
+        (str_cat.str-cat integration-prefix "native-windows.manifest")))))
 
 (define (tltest-package-manifest-managed-integration-source-with?
   [normalized : String]
@@ -4430,43 +4425,39 @@
         (tltest-decls-have-main? rest))]))
 
 (define (tltest-package-source-line [source : String] [count : i64]) : String
-  (string.append
+  (str_cat.str-cat
     "TypeLisp test file: "
-    (string.append
-      source
-      (string.append
-        " ("
-        (string.append (string.int->string count) " test(s))\n")))))
+    source
+    " ("
+    (string.int->string count)
+    " test(s))\n"))
 
 (define (tltest-package-summary-line
   [mode : TestMode]
   [file-count : i64]
   [test-count : i64]) : String
   (if tltest-list-only
-    (string.append
+    (str_cat.str-cat
       "TypeLisp package tests listed: "
-      (string.append
-        (string.int->string test-count)
-        (string.append
-          " test(s) in "
-          (string.append (string.int->string file-count) " file(s)\n"))))
+      (string.int->string test-count)
+      " test(s) in "
+      (string.int->string file-count)
+      " file(s)\n")
     (match mode
       [(TestMode.Check)
-        (string.append
+        (str_cat.str-cat
           "TypeLisp package test typecheck passed: "
-          (string.append
-            (string.int->string test-count)
-            (string.append
-              " test(s) in "
-              (string.append (string.int->string file-count) " file(s)\n"))))]
+          (string.int->string test-count)
+          " test(s) in "
+          (string.int->string file-count)
+          " file(s)\n")]
       [(TestMode.Run)
-        (string.append
+        (str_cat.str-cat
           "TypeLisp package tests passed: "
-          (string.append
-            (string.int->string test-count)
-            (string.append
-              " test(s) in "
-              (string.append (string.int->string file-count) " file(s)\n"))))])))
+          (string.int->string test-count)
+          " test(s) in "
+          (string.int->string file-count)
+          " file(s)\n")])))
 
 (define (tltest-package-run-one
   [source : String]
@@ -4492,9 +4483,10 @@
             (if tltest-name-filter-set
               unit
               (io.print-error
-                (string.append
+                (str_cat.str-cat
                   "test: discovered inline test marker but no inline tests in "
-                  (string.append source "\n"))))
+                  source
+                  "\n")))
             (if tltest-name-filter-set
               (ResultTestPackageTotals.Ok 0 0)
               (ResultTestPackageTotals.Err 1)))
@@ -4525,7 +4517,7 @@
                   (ResultTestPackageTotals.Err status)))))))]))
 
 (define (tltest-package-integration-line [source : String]) : String
-  (string.append "TypeLisp integration test file: " (string.append source "\n")))
+  (str_cat.str-cat "TypeLisp integration test file: " source "\n"))
 
 (define (tltest-package-integration-selected? [source : String]) : bool
   (if tltest-name-filter-set
@@ -4533,9 +4525,7 @@
     true))
 
 (define (tltest-package-integration-missing-main [source : String]) : String
-  (string.append
-    "test: integration test file has no main: "
-    (string.append source "\n")))
+  (str_cat.str-cat "test: integration test file has no main: " source "\n"))
 
 (define (tltest-package-integration-check
   [source : String]
@@ -4608,7 +4598,7 @@
   (if (tltest-package-integration-selected? source)
     (if tltest-list-only
       (begin
-        (io.print-string (string.append source "\n"))
+        (io.print-string (str_cat.str-cat source "\n"))
         (ResultTestPackageTotals.Ok 1 1))
       (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
         source
@@ -4638,7 +4628,7 @@
         [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
           (begin
             (io.print-error
-              (string.append "test: integration test source failed: " source))
+              (str_cat.str-cat "test: integration test source failed: " source))
             (io.print-error
               (driver.compiler-driver-render-source-diagnostic (box-get diag)))
             (ResultTestPackageTotals.Err 1))]))
@@ -4713,7 +4703,7 @@
         [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
           (begin
             (io.print-error
-              (string.append "test: package source failed: " source))
+              (str_cat.str-cat "test: package source failed: " source))
             (io.print-error
               (driver.compiler-driver-render-source-diagnostic (box-get diag)))
             (ResultTestPackageTotals.Err 1))]))
@@ -4985,17 +4975,14 @@
   [file-count : i64]
   [test-count : i64]
   [failed-file-count : i64]) : String
-  (string.append
+  (str_cat.str-cat
     "TypeLisp package tests failed: "
-    (string.append
-      (string.int->string failed-file-count)
-      (string.append
-        " of "
-        (string.append
-          (string.int->string file-count)
-          (string.append
-            " file(s) failed; "
-            (string.append (string.int->string test-count) " test(s)\n")))))))
+    (string.int->string failed-file-count)
+    " of "
+    (string.int->string file-count)
+    " file(s) failed; "
+    (string.int->string test-count)
+    " test(s)\n"))
 
 (define (tltest-package-finish
   [test-mode : TestMode]
@@ -5242,44 +5229,38 @@
 
 (define (tltest-batch-summary-line [file-count : i64] [test-count : i64]) : String
   (if tltest-list-only
-    (string.append
+    (str_cat.str-cat
       "TypeLisp test batch listed: "
-      (string.append
-        (string.int->string test-count)
-        (string.append
-          " test(s) in "
-          (string.append (string.int->string file-count) " file(s)\n"))))
-    (string.append
+      (string.int->string test-count)
+      " test(s) in "
+      (string.int->string file-count)
+      " file(s)\n")
+    (str_cat.str-cat
       "TypeLisp test batch typecheck passed: "
-      (string.append
-        (string.int->string test-count)
-        (string.append
-          " test(s) in "
-          (string.append (string.int->string file-count) " file(s)\n"))))))
+      (string.int->string test-count)
+      " test(s) in "
+      (string.int->string file-count)
+      " file(s)\n")))
 
 (define (tltest-batch-run-summary-line
   [file-count : i64]
   [test-count : i64]
   [failed-file-count : i64]) : String
   (if (= failed-file-count 0)
-    (string.append
+    (str_cat.str-cat
       "TypeLisp test batch passed: "
-      (string.append
-        (string.int->string test-count)
-        (string.append
-          " test(s) in "
-          (string.append (string.int->string file-count) " file(s)\n"))))
-    (string.append
+      (string.int->string test-count)
+      " test(s) in "
+      (string.int->string file-count)
+      " file(s)\n")
+    (str_cat.str-cat
       "TypeLisp test batch failed: "
-      (string.append
-        (string.int->string failed-file-count)
-        (string.append
-          " of "
-          (string.append
-            (string.int->string file-count)
-            (string.append
-              " file(s) failed; "
-              (string.append (string.int->string test-count) " test(s)\n"))))))))
+      (string.int->string failed-file-count)
+      " of "
+      (string.int->string file-count)
+      " file(s) failed; "
+      (string.int->string test-count)
+      " test(s)\n")))
 
 (define (tltest-batch-finish-entry
   [entry-arena : arena.Arena]
@@ -5341,7 +5322,7 @@
           (if (< entry-result 0)
             (begin
               (io.print-error
-                (string.append "test: batch source failed: " source))
+                (str_cat.str-cat "test: batch source failed: " source))
               (io.print-error "\n")
               (set! status (- 0 entry-result)))
             (begin
@@ -5456,7 +5437,7 @@
             (if (< entry-result 0)
               (begin
                 (io.print-error
-                  (string.append "\ntest: batch source failed: " source))
+                  (str_cat.str-cat "\ntest: batch source failed: " source))
                 (io.print-error "\n")
                 (set! fatal-status (- 0 entry-result)))
               (begin

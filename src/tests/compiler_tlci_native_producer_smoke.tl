@@ -6,6 +6,7 @@
 ;; with indexed operand access and a count-binding default arm (#5617).
 ;; A body outside the supported subset keeps the counted interpreted-fallback
 ;; shell.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_tlci_native_producer)
 
 ;; compiler_embedded_stdlib_tlci owns the loader import. Importing the same
@@ -763,7 +764,7 @@
                 [else "stdlib.string.concat5"])]
             [expected : String
               (if borrowed
-                (string.append expected-base "-borrowed")
+                (str_cat.str-cat expected-base "-borrowed")
                 expected-base)]
             [expected-count : i64
               (if (= count 2)
@@ -2316,14 +2317,14 @@
     (compiler_ctfe.ctfe-reflect-info-list-with-capacity 1)
     (if enum?
       (compiler_ctfe.CtfeReflectInfo.Enum
-        (string.append module-text (string.append "/" name-text))
+        (str_cat.str-cat module-text "/" name-text)
         module-text
         name-text
         canonical-id
         (compiler_ctfe.CtfeReflectCleanup.No)
         (compiler_ctfe.ctfe-reflect-variant-list-with-capacity 0))
       (compiler_ctfe.CtfeReflectInfo.Struct
-        (string.append module-text (string.append "/" name-text))
+        (str_cat.str-cat module-text "/" name-text)
         module-text
         name-text
         canonical-id
@@ -3130,6 +3131,173 @@
     (producer-test-str-cat-scoped-native-image-ok?)
     (io.panic "str-cat-scoped tlci native producer test failed")))
 
+(define (producer-test-bytes-eq?
+  [left : (& left (__tl_dyn-array u8))]
+  [right : (& right (__tl_dyn-array u8))]) : bool
+  (let
+    [count : i64 (array-length left)]
+    [index : i64 0]
+    [equal : bool (= count (array-length right))]
+    (begin
+      (while (and equal (< index count))
+        (if (= (array-ref left index) (array-ref right index))
+          (set! index (+ index 1))
+          (set! equal false)))
+      equal)))
+
+(define (producer-test-string-count [text : String] [needle : String]) : i64
+  (let
+    [needle-len : i64 (string.string-length needle)]
+    [limit : i64 (string.string-length text)]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (and (> needle-len 0) (<= (+ index needle-len) limit))
+        (begin
+          (when
+            (string.is-string-prefix-at text needle index)
+            (set! count (+ count 1)))
+          (set! index (+ index 1))))
+      count)))
+
+;; Full blocker diagnostics use a second, non-emitting traversal. Two rejected
+;; sibling template nodes prove it continues after the first, while comparing
+;; the complete package bytes and coverage counters proves that recovery text
+;; never escapes into the image-producing pass. Refs #5742.
+(define (producer-test-full-blocker-second-pass-ok?
+  [captures
+    : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]
+  [default-bytes : (& default-bytes (__tl_dyn-array u8))]
+  [default-report : String]
+  [default-native : i64]
+  [default-partial : i64]
+  [default-arms : i64]) : bool
+  (begin
+    (compiler_tlci_native_producer.embedded-native-full-blocker-report-set!
+      true)
+    (match (compiler_tlci_native_producer.embedded-native-emit-package
+      (tlci.tlci-metadata-emit
+        (tlci.tlci-make-metadata "v1" "diagnostics" "0.1.0"))
+      "producer-full-blocker-test"
+      (cfg windows true false)
+      (tlci.tlci-empty-bytes)
+      (make-array "package.multi/multi")
+      captures)
+      [(compiler_tlci_native_producer.ResultProducerBytes.Err _)
+        (begin
+          (compiler_tlci_native_producer.embedded-native-full-blocker-report-set!
+            false)
+          false)]
+      [(compiler_tlci_native_producer.ResultProducerBytes.Ok full-bytes)
+        (let
+          [full-report : String
+            (string.copy
+              (&
+                (array-ref
+                  compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-full-reasons
+                  0)))]
+          [_reset-mode : unit
+            (compiler_tlci_native_producer.embedded-native-full-blocker-report-set!
+              false)]
+          (and
+            (string.eq
+              default-report
+              "package.multi/multi\ttemplate-node:lambda\n")
+            (=
+              (producer-test-string-count
+                full-report
+                "package.multi/multi\tblocked\ttemplate-node:lambda\n")
+              1)
+            (=
+              (producer-test-string-count
+                full-report
+                "package.multi/multi\tblocked\ttemplate-node:with-arena\n")
+              1)
+            (=
+              (producer-test-string-count
+                full-report
+                "package.multi/multi\twalked\ttemplate-node:begin\n")
+              1)
+            (producer-test-bytes-eq? default-bytes (& full-bytes))
+            (= default-native 0)
+            (=
+              default-native
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
+                0))
+            (=
+              default-partial
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
+                0))
+            (=
+              default-arms
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-interpreted-arms
+                0))))])))
+
+(define (producer-test-full-blocker-default-pass-ok?
+  [captures
+    : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : bool
+  (begin
+    (compiler_tlci_native_producer.embedded-native-full-blocker-report-set!
+      false)
+    (match (compiler_tlci_native_producer.embedded-native-emit-package
+      (tlci.tlci-metadata-emit
+        (tlci.tlci-make-metadata "v1" "diagnostics" "0.1.0"))
+      "producer-full-blocker-test"
+      (cfg windows true false)
+      (tlci.tlci-empty-bytes)
+      (make-array "package.multi/multi")
+      captures)
+      [(compiler_tlci_native_producer.ResultProducerBytes.Err _) false]
+      [(compiler_tlci_native_producer.ResultProducerBytes.Ok default-bytes)
+        (producer-test-full-blocker-second-pass-ok?
+          captures
+          (& default-bytes)
+          (string.copy
+            (&
+              (array-ref
+                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
+                0)))
+          (array-ref
+            compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
+            0)
+          (array-ref
+            compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
+            0)
+          (array-ref
+            compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-interpreted-arms
+            0))])))
+
+(define (producer-test-full-blocker-report-ok?) : bool
+  (let
+    [names : producer_test_svec.Vec (producer_test_svec.new)]
+    [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
+      (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
+    (match (parse_core.parse-ast-source
+      "(module package.multi)\n(defmacro (multi [value : Expr]) : Expr `(begin (lambda ([x : i64]) x) (with-arena a value) ,value))\n")
+      [(parse_core.ResultAstProgram.Err _) false]
+      [(parse_core.ResultAstProgram.Ok program)
+        (match program
+          [(ast.AstProgram.Program decls)
+            (begin
+              (producer-test-collect-decls!
+                (box-get decls)
+                ""
+                (&mut names)
+                (&mut captures))
+              (and
+                (= (producer_test_svec.len (& names)) 1)
+                (= (struct-get captures len) 1)
+                (producer-test-full-blocker-default-pass-ok? (& captures))))])])))
+
+(test
+  full-blocker-report-tlci-native-producer
+  (unless
+    (producer-test-full-blocker-report-ok?)
+    (io.panic "full blocker report tlci native producer test failed")))
+
 ;; In-package coverage: every supported shape dispatches natively and the
 ;; let-rooted body stays a counted shell. The report count must equal the
 ;; number of supported entries, and the arm-level counters must count every
@@ -3146,7 +3314,7 @@
       "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr (match value [(comptime.Expr.If c t e) c] [_ value]))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n(defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))\n(defmacro (modname [format : Module]) : Expr (comptime.expr-var (comptime.module-name format)))\n(defmacro (modhook [format : Module]) : Expr (comptime.module-hook format \"object-field\"))\n(defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))\n(defmacro (twice [value : Expr]) : Expr `(begin (set! flag 1) (set! flag 2)))\n(defmacro (catlike [args : String ...]) : String (match (comptime.expr-list-length args) [0 `\"\"] [1 (comptime.expr-list-nth args 0)] [2 `(concat2 ,(comptime.expr-list-nth args 0) ,(comptime.expr-list-nth args 1))] [n `(concat-all (pack (__args ,@args) ,(comptime.expr-int n)))]))\n(defmacro (pushlike [carrier : Expr] [piece : Expr]) : Expr (match carrier [(comptime.Expr.Call callee pieces) `(,callee ,@pieces ,piece)] [_ carrier]))\n(defmacro (finishlike [carrier : Expr]) : Expr (match carrier [(comptime.Expr.Call _ pieces) `(joined ,@pieces)] [_ `\"\"]))\n(defmacro (kindfull [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [\"f64\" `(kind-f64 ,value)]))\n(defmacro (kindly [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [other (comptime.comptime-error \"kindly: unsupported\")]))
 (defmacro (kindwild [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [_ `(kind-other ,value)]))\n(defmacro (places [value : Expr]) : Expr `(match ,value [(Some inner) (begin (set! (struct-get inner len) 1.5) (box-get (box inner)))] [_ (return ,value)]))\n(defmacro (foldlike [carrier : Expr] [acc : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match carrier [(comptime.Expr.Call _ elems) (if (>= i (comptime.expr-list-length elems)) acc `(foldlike ,carrier (step ,acc ,(comptime.expr-list-nth elems i)) ,(comptime.expr-int (+ i 1))))] [_ acc])] [_ acc]))\n(defmacro (kindof [value : Expr]) : Expr (match (type-kind (comptime.expr-type value)) [\"f64\" `(f64-op ,value)] [_ `(other ,value)]))\n(defmacro (keyof [T : type] [value : Expr]) : Expr (match (type-key T) [\"i64\" `(i64-op (cast ,value : i64))] [_ `(other ,value)]))\n(defmacro (rawptr [value : Expr]) : Expr `(unsafe (ptr-write! (ptr-offset (string-data ,value) 1) (ptr-read (ptr-offset (array-data ,value) 2))) (string-from-bytes (string-data ,value) (ptr->int (string-data ,value)))))\n(defmacro (strval [value : Expr]) : Expr (comptime.expr-var (comptime.expr-string-value value)))\n(defmacro (typeof [value : Expr]) : Expr `(marker ,(comptime.expr-type value)))\n(defmacro (aliaslike [value : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match value [(comptime.Expr.Var t) (comptime.expr-var (comptime.string-append (comptime.string-append t \"_n\") (comptime.int->string i)))] [_ value])] [_ value]))\n(defmacro (typetpl [value : Expr]) : Expr `(let [a : (Ptr u8) (ptr-cast (string-data ,value) : (Ptr u8))] [b : (__tl_dyn-array i64) ,value] [c : (& region str) ,value] [d : (Box i64) ,value] [e : (Array i64 4) ,value] [f : (Slice i64) ,value] (marker a b c d e f)))\n(defmacro (scan [text : Expr]) : Expr (if (comptime.expr-string? text) (let [s : String (comptime.expr-string-value text)] [n : i64 (string.string-length s)] (if (= (cast (string.string-ref s 0) : i64) 123) `(brace ,(comptime.expr-int n)) `(plain ,(comptime.expr-string (comptime.string-slice s 1 (- n 1)))))) (comptime.comptime-error \"scan: expects a string literal\")))\n"]
     [source : String
-      (string.append
+      (str_cat.str-cat
         source-base
         "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n(defmacro (structset [target : Expr] [field : String] [value : Expr]) : Expr (comptime.expr-struct-set target field value))\n")]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
@@ -3188,7 +3356,7 @@
                       message)
                     (begin
                       (io.print-error
-                        (string.append "producer error: " message))
+                        (str_cat.str-cat "producer error: " message))
                       (io.print-error "\n")
                       false)]
                   [(compiler_tlci_native_producer.ResultProducerBytes.Ok bytes)
@@ -3199,7 +3367,7 @@
                       [(tlci_loader.ResultTlciLoadedImage.Err message)
                         (begin
                           (io.print-error
-                            (string.append "loader error: " message))
+                            (str_cat.str-cat "loader error: " message))
                           (io.print-error "\n")
                           false)]
                       [(tlci_loader.ResultTlciLoadedImage.Ok loaded)

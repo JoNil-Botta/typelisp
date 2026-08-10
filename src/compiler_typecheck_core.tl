@@ -2762,7 +2762,7 @@
   [state : TcPrefixSnapshotCacheState]
   [label : String]) : unit
   (io.print-error
-    (string.append
+    (str_cat.str-cat
       (tc-prefix-snapshot-cache-stats-line-for-state state label)
       "\n")))
 
@@ -3620,7 +3620,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-profile-field [value : i64]) : String
-    (string.append "|" (string.int->string value))))
+    (str_cat.str-cat "|" (string.int->string value))))
 
 (cfg
   compile-profile
@@ -3640,20 +3640,16 @@
       [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64 (- (profile.alloc-peak) compiler-tc-profile-start-live)]
       (io.print-error
-        (string.append
+        (str_cat.str-cat
           "compile-profile|typecheck."
-          (string.append
-            phase
-            (string.append
-              (compiler-tc-profile-field
-                (- end-ms compiler-tc-profile-start-ms))
-              (string.append
-                (compiler-tc-profile-field
-                  (- end-total compiler-tc-profile-start-total))
-                (string.append
-                  (compiler-tc-profile-field
-                    (- end-live compiler-tc-profile-start-live))
-                  (string.append (compiler-tc-profile-field peak-delta) "\n"))))))))))
+          phase
+          (compiler-tc-profile-field (- end-ms compiler-tc-profile-start-ms))
+          (compiler-tc-profile-field
+            (- end-total compiler-tc-profile-start-total))
+          (compiler-tc-profile-field
+            (- end-live compiler-tc-profile-start-live))
+          (compiler-tc-profile-field peak-delta)
+          "\n")))))
 
 ;; Fine-grained walk-region accumulators. The ms clock cannot resolve the
 ;; per-call regions inside the macro walk, so these use a nanosecond
@@ -5824,13 +5820,15 @@
     [macro-name : (& macro-name str)]
     [arity : i64]
     [calls : i64]) : String
-    (string.append
-      macro-name
-      (string.append
+    (let
+      [arity-text : String (string.int->string arity)]
+      [calls-text : String (string.int->string calls)]
+      (str_cat.str-cat-scoped
+        macro-name
         " arity="
-        (string.append
-          (string.int->string arity)
-          (string.append " calls=" (string.int->string calls)))))))
+        arity-text
+        " calls="
+        calls-text))))
 
 (cfg
   compile-profile
@@ -5843,15 +5841,12 @@
       compile-profile-summary
       unit
       (io.print-error
-        (string.append
+        (str_cat.str-cat
           "compile-profile-detail|typecheck.macro_expand|"
-          (string.append
-            (string.int->string total-ms)
-            (string.append
-              "|"
-              (string.append
-                (compiler-tc-macro-profile-detail macro-name arity calls)
-                "\n"))))))))
+          (string.int->string total-ms)
+          "|"
+          (compiler-tc-macro-profile-detail macro-name arity calls)
+          "\n")))))
 
 (cfg
   compile-profile
@@ -6221,15 +6216,13 @@
     [alloc-delta : i64]
     [live-delta : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.reinfer."
-        (string.append
-          site
-          (string.append
-            (compiler-tc-profile-field elapsed-ms)
-            (string.append
-              (compiler-tc-profile-field alloc-delta)
-              (string.append (compiler-tc-profile-field live-delta) "|0\n"))))))))
+        site
+        (compiler-tc-profile-field elapsed-ms)
+        (compiler-tc-profile-field alloc-delta)
+        (compiler-tc-profile-field live-delta)
+        "|0\n"))))
 
 (cfg
   compile-profile
@@ -6241,7 +6234,7 @@
         (array-ref compiler-tc-reinfer-profile-alloc index)
         (array-ref compiler-tc-reinfer-profile-live index))
       (compiler-tc-reinfer-profile-line
-        (string.append (compiler-tc-reinfer-profile-site-name index) ".calls")
+        (str_cat.str-cat (compiler-tc-reinfer-profile-site-name index) ".calls")
         (array-ref compiler-tc-reinfer-profile-calls index)
         0
         0))))
@@ -7068,22 +7061,24 @@
           unit
           (if (>= elapsed 1)
             (io.print-error
-              (string.append
+              (str_cat.str-cat
                 "compile-profile-detail|typecheck.fn_expr|"
-                (string.append
-                  (string.int->string elapsed)
-                  (string.append "|" (string.append name "\n")))))
+                (string.int->string elapsed)
+                "|"
+                name
+                "\n"))
             unit))
         (cfg
           compile-profile-summary
           unit
           (if (>= live-delta 131072)
             (io.print-error
-              (string.append
+              (str_cat.str-cat
                 "compile-profile-detail|typecheck.fn_live_kb|"
-                (string.append
-                  (string.int->string (/ live-delta 1024))
-                  (string.append "|" (string.append name "\n")))))
+                (string.int->string (/ live-delta 1024))
+                "|"
+                name
+                "\n"))
             unit))))))
 
 (cfg
@@ -7239,64 +7234,64 @@
   compile-profile
   (define (compiler-tc-decl-profile-line [phase : String] [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.decl."
-        (string.append
-          phase
-          (string.append (compiler-tc-profile-field value) "|0|0|0\n"))))))
+        phase
+        (compiler-tc-profile-field value)
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
   (define (compiler-tc-env-profile-line [phase : String] [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.env."
-        (string.append
-          phase
-          (string.append (compiler-tc-profile-field value) "|0|0|0\n"))))))
+        phase
+        (compiler-tc-profile-field value)
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
   (define (compiler-tc-env-profile-emit-prefix [prefix : String]) : unit
     (begin
       (compiler-tc-env-profile-line
-        (string.append prefix "binds")
+        (str_cat.str-cat prefix "binds")
         compiler-tc-env-profile-binds)
       (compiler-tc-env-profile-line
-        (string.append prefix "lookups")
+        (str_cat.str-cat prefix "lookups")
         compiler-tc-env-profile-lookups)
       (compiler-tc-env-profile-line
-        (string.append prefix "cache_builds")
+        (str_cat.str-cat prefix "cache_builds")
         compiler-tc-env-profile-cache-builds)
       (compiler-tc-env-profile-line
-        (string.append prefix "cache_entries")
+        (str_cat.str-cat prefix "cache_entries")
         compiler-tc-env-profile-cache-entries)
       (compiler-tc-env-profile-line
-        (string.append prefix "marker_scans")
+        (str_cat.str-cat prefix "marker_scans")
         compiler-tc-env-profile-marker-scans)
       (compiler-tc-env-profile-line
-        (string.append prefix "module_local_hits")
+        (str_cat.str-cat prefix "module_local_hits")
         compiler-tc-env-profile-module-local-hits)
       (compiler-tc-env-profile-line
-        (string.append prefix "module_local_misses")
+        (str_cat.str-cat prefix "module_local_misses")
         compiler-tc-env-profile-module-local-misses)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_binds")
+        (str_cat.str-cat prefix "scoped_binds")
         compiler-tc-env-profile-scoped-binds)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_cache_hits")
+        (str_cat.str-cat prefix "scoped_cache_hits")
         compiler-tc-env-profile-scoped-cache-hits)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_cache_misses")
+        (str_cat.str-cat prefix "scoped_cache_misses")
         compiler-tc-env-profile-scoped-cache-misses)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_tail_fallbacks")
+        (str_cat.str-cat prefix "scoped_tail_fallbacks")
         compiler-tc-env-profile-scoped-tail-fallbacks)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_materializations")
+        (str_cat.str-cat prefix "scoped_materializations")
         compiler-tc-env-profile-scoped-materializations)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_materialized_slots")
+        (str_cat.str-cat prefix "scoped_materialized_slots")
         compiler-tc-env-profile-scoped-materialized-slots))))
 
 (cfg
@@ -7305,23 +7300,21 @@
     [phase : String]
     [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.macro."
-        (string.append
-          phase
-          (string.append (compiler-tc-profile-field value) "|0|0|0\n"))))))
+        phase
+        (compiler-tc-profile-field value)
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
   (define (tc-lp-line [phase : String] [index : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.layout."
-        (string.append
-          phase
-          (string.append
-            (compiler-tc-profile-field (tc-lp-count index))
-            "|0|0|0\n"))))))
+        phase
+        (compiler-tc-profile-field (tc-lp-count index))
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
@@ -7331,15 +7324,13 @@
     [alloc : i64]
     [live : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.decl."
-        (string.append
-          phase
-          (string.append
-            (compiler-tc-profile-field value)
-            (string.append
-              (compiler-tc-profile-field alloc)
-              (string.append (compiler-tc-profile-field live) "|0\n"))))))))
+        phase
+        (compiler-tc-profile-field value)
+        (compiler-tc-profile-field alloc)
+        (compiler-tc-profile-field live)
+        "|0\n"))))
 
 (cfg
   compile-profile
@@ -8122,13 +8113,11 @@
         [with-context : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-with-note
             diag
-            (string.append
-              "generated declaration: "
-              (string.append item (string.append " from " generator))))]
+            (str_cat.str-cat "generated declaration: " item " from " generator))]
         (if (> (string.string-length key) 0)
           (cdiag.compiler-diagnostic-with-note
             with-context
-            (string.append "generated identity: " key))
+            (str_cat.str-cat "generated identity: " key))
           with-context))]
     [(ast.AstGeneratedDeclMeta.No) diag]))
 
@@ -8403,7 +8392,7 @@
       [(TcMaybeAstSourceSpan.Some span)
         (tc-rich-error-one-secondary
           span
-          (string.append
+          (str_cat.str-cat
             message
             "; direct aggregate reads through a shared vector borrow are not owned values; borrow slots from a vector place or use the generated vector get helper")
           "a direct aggregate read through this shared vector reference is not an owned value; borrow slots from a vector place or use the generated vector get helper"
@@ -13066,7 +13055,7 @@
   (tc-hygiene-name-base name (tc-hygiene-global-prefix)))
 
 (define (tc-hygiene-global-name [name : String]) : String
-  (string.append (tc-hygiene-global-prefix) name))
+  (str_cat.str-cat (tc-hygiene-global-prefix) name))
 
 (define (tc-hygiene-global-context-name [module : String] [name : String]) : String
   (tc-hygiene-global-name (str_cat.str-cat module "|" name)))
@@ -13530,9 +13519,7 @@
   (if (tc-in-loop-target? env)
     (ResultTcType.Ok (ast.AstType.Never))
     (ResultTcType.Err
-      (string.append
-        "typecheck: "
-        (string.append form " requires enclosing scalar while")))))
+      (str_cat.str-cat "typecheck: " form " requires enclosing scalar while"))))
 
 (define (tc-type-list1 [a : ast.AstType]) : ast.AstTypeList
   (ast.ast-type-cons a (ast.ast-type-list-new)))
@@ -15836,9 +15823,7 @@
     (csym.compiler-composite-pair-key-id? name-id)
     (csym.compiler-composite-triple-key-id? name-id))
     (tc-hygiene-name-text-id name-id)
-    (string.append
-      "<structural-id:"
-      (string.append (string.int->string name-id) ">"))))
+    (str_cat.str-cat "<structural-id:" (string.int->string name-id) ">")))
 
 (define (tc-env-key-name-text [name-id : i64]) : String
   (if (or
@@ -15919,7 +15904,7 @@
             (tc-poison-observation-note! found-ty)
             (ResultTcType.Ok found-ty))
           (ResultTcType.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: unbound name "
               (tc-env-key-display display-id))))))))
 
@@ -16150,7 +16135,7 @@
             (tc-poison-observation-note! found-ty)
             (ResultTcTypeUnsafe.Ok found-ty found-unsafe))
           (ResultTcTypeUnsafe.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: unbound name "
               (tc-env-key-display display-id))))))))
 
@@ -16203,7 +16188,7 @@
             display-id)
             unit
             (io.panic
-              (string.append
+              (str_cat.str-cat
                 "typecheck: scoped unsafe lookup diverged for "
                 (tc-env-key-display display-id)))))
         (match scoped
@@ -18754,7 +18739,7 @@
 (define (tc-elided-lifetime-name [index : i64]) : i64
   (let
     [name : String
-      (string.append
+      (str_cat.str-cat
         (tc-elided-lifetime-name-prefix)
         (string.int->string index))]
     (tc-generated-name-id name)))
@@ -19708,9 +19693,10 @@
             (tc-region-list-can-flow-into env value-regions target-regions))
             ResultTcUnit.Ok
             (ResultTcUnit.Err
-              (string.append
+              (str_cat.str-cat
                 "typecheck: cannot store region-tagged value into "
-                (string.append context "; region value would escape")))))])))
+                context
+                "; region value would escape"))))])))
 
 (define (tc-resolve-type-list [ctx : TcContext] [types : ast.AstTypeList]) : ast.AstTypeList
   (if (tc-type-list-needs-resolution? types)
@@ -19968,7 +19954,7 @@
               "."
               (string.substring name i 1))]
           (begin
-            (set! out (string.concat3 out chunk ""))
+            (set! out (str_cat.str-cat out chunk ""))
             (set! i (+ i 1)))))
       out)))
 
@@ -22118,11 +22104,11 @@
   [message : String]) : String
   (let
     [lookup-unbound : String
-      (string.append "typecheck: unbound name " lookup-name)]
+      (str_cat.str-cat "typecheck: unbound name " lookup-name)]
     (match (tc-source-alias-display-key ctx source-name source-name-id)
       [(TcMaybeString.Some display-name)
         (if (string.eq message lookup-unbound)
-          (string.append "typecheck: unbound name " display-name)
+          (str_cat.str-cat "typecheck: unbound name " display-name)
           message)]
       [(TcMaybeString.No) message])))
 
@@ -23909,11 +23895,10 @@
     [(string.eq name "mask")
       "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal"]
     [else
-      (string.append
+      (str_cat.str-cat
         "typecheck: unknown type "
-        (string.append
-          name
-          "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead"))]))
+        name
+        "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead")]))
 
 (define (tc-nominal-lifetimes-from-decl [decl : ast.AstDecl]) : ResultTcLifetimeList
   (match decl
@@ -24657,8 +24642,9 @@
   "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
 
 (define (tc-spmd-lane-scope-message [name : String]) : String
-  (string.append
-    (string.append "typecheck: " name)
+  (str_cat.str-cat
+    "typecheck: "
+    name
     " is only valid inside a foreach body or spmd-reduce value expression"))
 
 (define (tc-source-expr-list-spmd-broadcast-scope-ok
@@ -27263,11 +27249,11 @@
 (define (tc-match-arm-merge-message
   [previous : ast.AstType]
   [current : ast.AstType]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: match arms must agree: previous arm type "
-    (string.append
-      (tc-type-render previous)
-      (string.append ", current arm type " (tc-type-render current)))))
+    (tc-type-render previous)
+    ", current arm type "
+    (tc-type-render current)))
 
 (define (tc-integer-type? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -27288,7 +27274,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string.concat3 out piece ""))
+          (set! out (str_cat.str-cat out piece ""))
           (set! i (+ i 1))))
       out)))
 
@@ -27296,7 +27282,7 @@
   (tc-repeat-text "1" bits))
 
 (define (tc-binary-min-signed [bits : i64]) : String
-  (string.append "1" (tc-repeat-text "0" (- bits 1))))
+  (str_cat.str-cat "1" (tc-repeat-text "0" (- bits 1))))
 
 (define (tc-integer-literal-fits-positive-type?
   [text : String]
@@ -27816,17 +27802,13 @@
   (if (tc-atomic-load-name? name)
     (match (tc-raw-pointer-elem
       (tc-resolve-type ctx ptr-ty)
-      (string.append
-        "typecheck: "
-        (string.append name " requires a raw pointer operand")))
+      (str_cat.str-cat "typecheck: " name " requires a raw pointer operand"))
       [(ResultTcType.Ok elem)
         (tc-atomic-check-elem name (tc-resolve-type ctx elem))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])
     (match (tc-mut-pointer-elem
       (tc-resolve-type ctx ptr-ty)
-      (string.append
-        "typecheck: "
-        (string.append name " requires a MutPtr pointer operand")))
+      (str_cat.str-cat "typecheck: " name " requires a MutPtr pointer operand"))
       [(ResultTcType.Ok elem)
         (tc-atomic-check-elem name (tc-resolve-type ctx elem))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
@@ -27837,9 +27819,7 @@
     "typecheck: atomic value type mismatch"))
 
 (define (tc-atomic-load-arity-message [name : String]) : String
-  (string.append
-    "typecheck: "
-    (string.append name " expects exactly one argument")))
+  (str_cat.str-cat "typecheck: " name " expects exactly one argument"))
 
 (define (tc-atomic-update-arity-message [name : String]) : String
   (if (tc-atomic-kind-volatile? name)
@@ -28068,9 +28048,7 @@
       (tc-unused-unsafe-mark-current-used!)
       ResultTcUnit.Ok)
     (ResultTcUnit.Err
-      (string.append
-        "typecheck: "
-        (string.append name " requires unsafe context")))))
+      (str_cat.str-cat "typecheck: " name " requires unsafe context"))))
 
 (define (tc-dyn-array-elem-list-supported?
   [env : TcTypeEnv]
@@ -28232,7 +28210,7 @@
     (tc-spmd-varying? class)
     (not (tc-spmd-varying-expr-type-supported? ty)))
     (ResultTcSpmdExprInfo.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: foreach varying value type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))
     (ResultTcSpmdExprInfo.Ok (TcSpmdExprInfo ty class env))))
@@ -28263,7 +28241,7 @@
       (not (tc-spmd-lane-type-supported? resolved))
       (not supported-enum))
       (ResultTcSpmdExprInfo.Err
-        (string.append
+        (str_cat.str-cat
           "typecheck: foreach varying array lane type is not supported: "
           (tc-type-render (tc-type-strip-region resolved))))
       (if (and (tc-spmd-varying? class) supported-enum)
@@ -28759,7 +28737,7 @@
             (tc-bind-id
               segment-grown
               (ci.intern
-                (string.append "segment-" (string.int->string segment-index)))
+                (str_cat.str-cat "segment-" (string.int->string segment-index)))
               (ast.AstType.I64)))
           (set! segment-index (+ segment-index 1))))
       (while (< cache-segment-index (+ (tc-type-env-cache-segment-capacity) 2))
@@ -28770,7 +28748,7 @@
               (tc-bind-id
                 cache-segment-base
                 (ci.intern
-                  (string.append
+                  (str_cat.str-cat
                     "cache-segment-"
                     (string.int->string cache-segment-index)))
                 (ast.AstType.I64))))
@@ -28850,7 +28828,7 @@
             out
             (tc-bind-id
               out
-              (ci.intern (string.append "local" (string.int->string i)))
+              (ci.intern (str_cat.str-cat "local" (string.int->string i)))
               (ast.AstType.I64)))
           (set! i (+ i 1))))
       out)))
@@ -28870,7 +28848,7 @@
       (while (< i count)
         (let
           [name-id : i64
-            (ci.intern (string.append "local" (string.int->string i)))]
+            (ci.intern (str_cat.str-cat "local" (string.int->string i)))]
           (begin
             (if (= i 0)
               (set! first-id name-id)
@@ -29531,7 +29509,8 @@
     (begin
       (while (< i count)
         (let
-          [name : String (string.append "carrier-local" (string.int->string i))]
+          [name : String
+            (str_cat.str-cat "carrier-local" (string.int->string i))]
           (begin
             (set!
               out
@@ -30036,7 +30015,7 @@
           (=
             key
             (ci.intern
-              (string.append
+              (str_cat.str-cat
                 "local"
                 (string.int->string
                   (- (+ (* (tc-local-cache-threshold) 2) 8) 1)))))]
@@ -30599,30 +30578,26 @@
               (if (= scoped-unsafe persistent-unsafe)
                 true
                 (io.panic
-                  (string.append
+                  (str_cat.str-cat
                     "typecheck: scoped unsafe flag diverged for "
                     (tc-env-key-display display-id))))
               (io.panic
-                (string.append
-                  (string.append
-                    (string.append
-                      (string.append
-                        "typecheck: scoped unsafe type diverged for "
-                        (tc-env-key-display display-id))
-                      ": scoped=")
-                    (tc-type-env-scoped-dual-type-kind scoped-ty))
-                  (string.append
-                    " persistent="
-                    (tc-type-env-scoped-dual-type-kind persistent-ty)))))]
+                (str_cat.str-cat
+                  "typecheck: scoped unsafe type diverged for "
+                  (tc-env-key-display display-id)
+                  ": scoped="
+                  (tc-type-env-scoped-dual-type-kind scoped-ty)
+                  " persistent="
+                  (tc-type-env-scoped-dual-type-kind persistent-ty))))]
           [(ResultTcTypeUnsafe.Err _)
             (io.panic
-              (string.append
+              (str_cat.str-cat
                 "typecheck: scoped unsafe lookup found persistent miss for "
                 (tc-env-key-display display-id)))])]
       [(ResultTcTypeUnsafe.Err _)
         (if (tc-name-bound-persistent-key-id? env persistent-id)
           (io.panic
-            (string.append
+            (str_cat.str-cat
               "typecheck: scoped unsafe lookup missed persistent binding for "
               (tc-env-key-display display-id)))
           true)])))
@@ -30772,12 +30747,14 @@
                       (tc-context-pools ctx)
                       (ast.AstExpr.Var
                         (tc-generated-name-id
-                          (string.append (tc-env-key-name-text name) "$first"))))
+                          (str_cat.str-cat (tc-env-key-name-text name) "$first"))))
                     (ast.ast-node-pool-context-expr-push
                       (tc-context-pools ctx)
                       (ast.AstExpr.Var
                         (tc-generated-name-id
-                          (string.append (tc-env-key-name-text name) "$second"))))))]
+                          (str_cat.str-cat
+                            (tc-env-key-name-text name)
+                            "$second"))))))]
               [(tc-macro-expr-binding-clause-type?
                   (tc-resolve-type ctx (tc-macro-signature-type ty)))
                 (let
@@ -30794,7 +30771,9 @@
                         (tc-context-pools ctx)
                         (ast.AstExpr.Var
                           (tc-generated-name-id
-                            (string.append (tc-env-key-name-text name) "$init"))))
+                            (str_cat.str-cat
+                              (tc-env-key-name-text name)
+                              "$init"))))
                       (ctfe_support.ctfe-untyped-expr-type)
                       (ast.ast-source-span 0 0 0 0))))]
               [else
@@ -30884,7 +30863,7 @@
     (csym.compiler-symbol-module-key-id-by-id (tc-context-module-id ctx) name)))
 
 (define (tc-dispatch-variant-non-function-message [name : i64]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: defdispatch variant is not a function "
     (tc-env-key-name-text name)))
 
@@ -30936,7 +30915,7 @@
                 (ResultTcType.Err
                   (tc-dispatch-variant-non-function-message variant-name)))))
           (ResultTcType.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: unknown defdispatch variant "
               (ci.intern-str variant-name))))))))
 
@@ -33306,11 +33285,10 @@
       (ResultTcType.Ok (ast.AstType.Expr))]
     [(ctfe_support.CompilerCtfeValue.Type ty)
       (ResultTcType.Err
-        (string.append
+        (str_cat.str-cat
           "type value "
-          (string.append
-            (tc-type-render (tc-resolve-type ctx ty))
-            " is compile-time only")))]
+          (tc-type-render (tc-resolve-type ctx ty))
+          " is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.ExprList _)
       (ResultTcType.Ok (ast.AstType.ExprList))]
     [(ctfe_support.CompilerCtfeValue.CapturedExprList _ _)
@@ -34709,7 +34687,7 @@
           (tc-unbound-near-miss module-qualified module-id env name name-id)]
         (if (> (string.string-length near-miss) 0)
           (TcUnboundSuggestion.Replace
-            (string.append "did you mean " (string.append near-miss "?"))
+            (str_cat.str-cat "did you mean " near-miss "?")
             near-miss)
           (TcUnboundSuggestion.No))))))
 
@@ -34748,7 +34726,7 @@
                     (string.string-length clean-message)
                     (string.string-length (tc-unbound-name-message-prefix))))]
               [display-message : String
-                (string.append (tc-unbound-name-message-prefix) name)]
+                (str_cat.str-cat (tc-unbound-name-message-prefix) name)]
               (if (string.eq (tc-name-slashes-to-dots clean-name) name)
                 (let
                   [span : ast.AstSourceSpan
@@ -34891,21 +34869,15 @@
   [func : ast.AstExpr]
   [expected : i64]
   [actual : i64]) : String
-  (string.append
+  (str_cat.str-cat
     (tc-call-arity-message-prefix)
-    (string.append
-      (tc-call-arity-callee-name func)
-      (string.append
-        " expected "
-        (string.append
-          (string.int->string expected)
-          (string.append
-            (tc-call-arity-argument-word expected)
-            (string.append
-              ", got "
-              (string.append
-                (string.int->string actual)
-                (tc-call-arity-argument-word actual)))))))))
+    (tc-call-arity-callee-name func)
+    " expected "
+    (string.int->string expected)
+    (tc-call-arity-argument-word expected)
+    ", got "
+    (string.int->string actual)
+    (tc-call-arity-argument-word actual)))
 
 (define (tc-call-arity-message
   [func : ast.AstExpr]
@@ -39434,13 +39406,12 @@
   [args : ast.AstExprList]) : ResultTcType
   (if (= (struct-get (& args) len) 1)
     (ResultTcType.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: "
-        (string.append name " is compile-time only; wrap it in (comptime ...)")))
+        name
+        " is compile-time only; wrap it in (comptime ...)"))
     (ResultTcType.Err
-      (string.append
-        "typecheck: "
-        (string.append name " expects exactly one type argument")))))
+      (str_cat.str-cat "typecheck: " name " expects exactly one type argument"))))
 
 (define (tc-offset-layout-query-runtime-call [args : ast.AstExprList]) : ResultTcType
   (if (= (struct-get (& args) len) 2)
@@ -39456,9 +39427,10 @@
 
 (define (tc-reflection-query-runtime-call [name : String]) : ResultTcType
   (ResultTcType.Err
-    (string.append
+    (str_cat.str-cat
       "typecheck: "
-      (string.append name " is compile-time only; wrap it in (comptime ...)"))))
+      name
+      " is compile-time only; wrap it in (comptime ...)")))
 
 ;; The clone-able type set is a whole-program fixpoint (O(types*fields) plus a
 ;; type-name map build). It is invariant across a compile, but `tc-clone-able-
@@ -39797,7 +39769,7 @@
                 (tc-clone-root-collection-note! ctx clone-ty)
                 (ResultTcType.Ok clone-ty))
               (ResultTcType.Err
-                (string.append
+                (str_cat.str-cat
                   "typecheck: clone unsupported type "
                   (tc-type-render
                     (tc-type-without-regions (tc-resolve-type ctx arg-ty)))))))]
@@ -41956,7 +41928,7 @@
                         (tc-spmd-varying? arg-class)
                         (not (tc-spmd-varying-value-type-supported? bound-ty)))
                         (ResultTcSpmdInlineCallState.Err
-                          (string.append
+                          (str_cat.str-cat
                             "typecheck: SPMD helper varying parameter type is not supported: "
                             (tc-type-render (tc-type-strip-region bound-ty))))
                         (tc-spmd-inline-helper-bind-args-at
@@ -42584,7 +42556,7 @@
 
 (define (tc-spmd-masked-if-unsupported [detail : String]) : ResultTcUnit
   (ResultTcUnit.Err
-    (string.append "typecheck: SPMD masked if does not support " detail)))
+    (str_cat.str-cat "typecheck: SPMD masked if does not support " detail)))
 
 (define (tc-spmd-masked-if-result-type-supported? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -42595,7 +42567,7 @@
   (if (tc-spmd-masked-if-result-type-supported? ty)
     ResultTcUnit.Ok
     (ResultTcUnit.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: SPMD masked if result type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))))
 
@@ -42830,7 +42802,7 @@
   (if (tc-spmd-lane-type-supported? ty)
     ResultTcUnit.Ok
     (ResultTcUnit.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: SPMD masked if lane type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))))
 
@@ -43345,7 +43317,7 @@
     true))
 
 (define (tc-spmd-match-pattern-binding-diagnostic [ty : ast.AstType]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: foreach varying match pattern binding type is not supported: "
     (tc-type-render (tc-type-strip-region ty))))
 
@@ -44943,7 +44915,7 @@
                                               (tc-spmd-lane-type-supported?
                                                 (ast.ty-node-get elem-ty))))
                                             (ResultTcSpmdExprInfo.Err
-                                              (string.append
+                                              (str_cat.str-cat
                                                 "typecheck: foreach varying array lane type is not supported: "
                                                 (tc-type-render
                                                   (tc-type-strip-region
@@ -44959,7 +44931,7 @@
                                               (tc-spmd-lane-type-supported?
                                                 (ast.ty-node-get elem-ty))))
                                             (ResultTcSpmdExprInfo.Err
-                                              (string.append
+                                              (str_cat.str-cat
                                                 "typecheck: foreach varying array lane type is not supported: "
                                                 (tc-type-render
                                                   (tc-type-strip-region
@@ -45015,7 +44987,7 @@
                                   (tc-spmd-lane-type-supported?
                                     (tc-type-strip-region field-ty))))
                                 (ResultTcSpmdExprInfo.Err
-                                  (string.append
+                                  (str_cat.str-cat
                                     "typecheck: foreach varying struct field type is not supported: "
                                     (tc-type-render
                                       (tc-type-strip-region field-ty))))
@@ -45054,7 +45026,7 @@
                                   (tc-spmd-lane-type-supported?
                                     (ast.ty-node-get elem-ty))))
                                 (ResultTcSpmdExprInfo.Err
-                                  (string.append
+                                  (str_cat.str-cat
                                     "typecheck: foreach varying array lane type is not supported: "
                                     (tc-type-render
                                       (tc-type-strip-region
@@ -49008,7 +48980,7 @@
       (parser.ResultAstVariantDefList.Ok variants)]
     [_
       (parser.ResultAstVariantDefList.Err
-        (string.append "typecheck: unknown enum " enum-name))]))
+        (str_cat.str-cat "typecheck: unknown enum " enum-name))]))
 
 (define (tc-program-enum-variants-id
   [program : ast.AstProgram]
@@ -49030,7 +49002,7 @@
               enum-name)]
           [(tc_i64_i64_map.LookupMissing)
             (parser.ResultAstVariantDefList.Err
-              (string.append "typecheck: unknown enum " enum-name))]))]))
+              (str_cat.str-cat "typecheck: unknown enum " enum-name))]))]))
 
 (define (tc-context-enum-variants-id
   [ctx : TcContext]
@@ -49057,11 +49029,11 @@
                 (parser.ResultAstVariantDefList.Ok variants)]
               [_
                 (parser.ResultAstVariantDefList.Err
-                  (string.append "typecheck: unknown enum " enum-name))])]
+                  (str_cat.str-cat "typecheck: unknown enum " enum-name))])]
           [(parser.ResultAstDecl.Err message)
             (parser.ResultAstVariantDefList.Err message)])
         (parser.ResultAstVariantDefList.Err
-          (string.append "typecheck: unknown enum " enum-name)))
+          (str_cat.str-cat "typecheck: unknown enum " enum-name)))
       (tc-program-enum-variants-id
         (tc-context-program ctx)
         enum-name-id
@@ -49088,7 +49060,7 @@
             (parser.ResultAstVariantDefList.Ok variants)]
           [_
             (parser.ResultAstVariantDefList.Err
-              (string.append "typecheck: unknown enum " enum-name))])]
+              (str_cat.str-cat "typecheck: unknown enum " enum-name))])]
       [(parser.ResultAstDecl.Err message)
         (parser.ResultAstVariantDefList.Err message)])
     (tc-context-enum-variants-id ctx enum-name-id enum-name)))
@@ -49645,11 +49617,11 @@
               [(parser.ResultAstDecl.Err message)
                 (ResultTcStructDecl.Err message)])
             (ResultTcStructDecl.Err
-              (string.append
+              (str_cat.str-cat
                 "typecheck: unknown struct "
                 (tc-nominal-name-id-display struct-name-id))))
           (ResultTcStructDecl.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: unknown struct "
               (tc-nominal-name-id-display struct-name-id)))))]))
 
@@ -49706,11 +49678,11 @@
               [(parser.ResultAstDecl.Err message)
                 (ResultTcEnumDecl.Err message)])
             (ResultTcEnumDecl.Err
-              (string.append
+              (str_cat.str-cat
                 "typecheck: unknown enum "
                 (tc-nominal-name-id-display enum-name-id))))
           (ResultTcEnumDecl.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: unknown enum "
               (tc-nominal-name-id-display enum-name-id)))))]))
 
@@ -49868,7 +49840,7 @@
                       (tc-string-list-cons stack name))])]
               [(ResultTcStructDecl.Err message) (ResultTcUnit.Err message)])
             (ResultTcUnit.Err
-              (string.append "typecheck: unknown aggregate " name))))
+              (str_cat.str-cat "typecheck: unknown aggregate " name))))
         (match (tc-context-enum-variants-id ctx name-id name)
           [(parser.ResultAstVariantDefList.Ok variants)
             (tc-inline-aggregate-variants-finite-ok
@@ -49877,7 +49849,7 @@
               (tc-string-list-cons stack name))]
           [(parser.ResultAstVariantDefList.Err _)
             (ResultTcUnit.Err
-              (string.append "typecheck: unknown aggregate " name))])))))
+              (str_cat.str-cat "typecheck: unknown aggregate " name))])))))
 
 (define (tc-inline-aggregate-type-finite-ok
   [ctx : TcContext]
@@ -50372,7 +50344,7 @@
           handle
           stack)
         (ResultTcInlineAggregateLayout.Err
-          (string.append "typecheck: unknown aggregate " name))))))
+          (str_cat.str-cat "typecheck: unknown aggregate " name))))))
 
 (define (tc-inline-aggregate-layout-fill-cache
   [ctx : TcContext]
@@ -50458,7 +50430,7 @@
             stack)]
         [(parser.ResultAstVariantDefList.Err _)
           (ResultTcInlineAggregateLayout.Err
-            (string.append "typecheck: unknown aggregate " name))]))))
+            (str_cat.str-cat "typecheck: unknown aggregate " name))]))))
 
 ;; Borrowed slices are represented physically as a data pointer plus a signed
 ;; length.  Their referent is stored in the type pool, so inspect that node
@@ -51137,7 +51109,7 @@
   [seen : TcStringList]) : ResultTcReprCLayout
   (if (tc-string-list-contains seen struct-name)
     (ResultTcReprCLayout.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: recursive repr c struct layout cycle involving "
         struct-name))
     (match (tc-struct-decl-id ctx struct-name-id)
@@ -51153,7 +51125,9 @@
                 0
                 (tc-string-list-add seen struct-name))
               (ResultTcReprCLayout.Err
-                (string.append "typecheck: struct is not repr c: " struct-name)))])]
+                (str_cat.str-cat
+                  "typecheck: struct is not repr c: "
+                  struct-name)))])]
       [(ResultTcStructDecl.Err message) (ResultTcReprCLayout.Err message)])))
 
 (define (tc-repr-c-struct-layout-id
@@ -51472,7 +51446,7 @@
           ctx
           (ast.ast-type-list-get (& fields) 0 (ast.ast-type-id-fallback)))))
     (ResultTcType.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: try requires Result-like variant with one payload "
         (ci.intern-str variant-name)))))
 
@@ -51499,7 +51473,7 @@
   (if (ast.ast-type-list-empty? (& fields))
     (ResultTcType.Ok (ast.AstType.Unit))
     (ResultTcType.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: try requires Option-like variant with no payload "
         (ci.intern-str variant-name)))))
 
@@ -51815,7 +51789,7 @@
   [field-id : i64]) : String
   (let
     [base : String
-      (string.append
+      (str_cat.str-cat
         "typecheck: unknown struct field "
         (csym.compiler-struct-field-key
           (tc-nominal-name-id-display struct-name-id)
@@ -51823,11 +51797,10 @@
     [decl-result : ResultTcStructDecl (tc-struct-decl-id ctx struct-name-id)]
     (match decl-result
       [(ResultTcStructDecl.Ok decl)
-        (string.append
+        (str_cat.str-cat
           base
-          (string.append
-            "; available fields: "
-            (tc-struct-decl-field-name-list-render decl)))]
+          "; available fields: "
+          (tc-struct-decl-field-name-list-render decl))]
       [(ResultTcStructDecl.Err _) base])))
 
 (define (tc-struct-field-type-id
@@ -51901,7 +51874,7 @@
 
 (define (tc-comptime-unknown-field-id [owner : String] [field-id : i64]) : ResultTcType
   (ResultTcType.Err
-    (string.append
+    (str_cat.str-cat
       "typecheck: unknown struct field "
       (csym.compiler-struct-field-key owner (ci.intern-str field-id)))))
 
@@ -52234,7 +52207,7 @@
               (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
         [_
           (ResultTcBorrowPlace.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: array-ref borrow requires array place, got "
               (tc-type-render
                 (tc-type-strip-region (tc-resolve-type ctx array-ty)))))])]))
@@ -52491,18 +52464,16 @@
               target-lifetime)
               ResultTcUnit.Ok
               (ResultTcUnit.Err
-                (string.append
+                (str_cat.str-cat
                   "typecheck: cannot store reference into longer-lived "
-                  (string.append
-                    context
-                    "; reference value would escape lexical scope"))))]
+                  context
+                  "; reference value would escape lexical scope")))]
           [(ResultTcNameId.Err _)
             (ResultTcUnit.Err
-              (string.append
+              (str_cat.str-cat
                 "typecheck: cannot store reference into non-place "
-                (string.append
-                  context
-                  "; reference value would escape lexical scope")))])])))
+                context
+                "; reference value would escape lexical scope"))])])))
 
 (define (tc-borrow-place-result-type
   [mutable : bool]
@@ -52868,15 +52839,15 @@
                   (ResultTcEnv.Err message)])]
             [(parser.ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
           (ResultTcEnv.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: variant "
-              (string.append
-                variant-name
-                (string.append
-                  " belongs to enum "
-                  (string.append owner (string.append ", not " enum-name))))))))
+              variant-name
+              " belongs to enum "
+              owner
+              ", not "
+              enum-name))))
       (ResultTcEnv.Err
-        (string.append "typecheck: unknown variant " variant-name)))))
+        (str_cat.str-cat "typecheck: unknown variant " variant-name)))))
 
 (define (tc-box-pattern-name? [name : i64]) : bool
   (string.eq (tc-env-key-name-text name) "box"))
@@ -53581,15 +53552,15 @@
                   (ResultTcEnv.Err message)])]
             [(parser.ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
           (ResultTcEnv.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: variant "
-              (string.append
-                variant-name
-                (string.append
-                  " belongs to enum "
-                  (string.append owner (string.append ", not " enum-name))))))))
+              variant-name
+              " belongs to enum "
+              owner
+              ", not "
+              enum-name))))
       (ResultTcEnv.Err
-        (string.append "typecheck: unknown variant " variant-name)))))
+        (str_cat.str-cat "typecheck: unknown variant " variant-name)))))
 
 (define (tc-bind-borrowed-sub-pattern
   [ctx : TcContext]
@@ -55257,7 +55228,7 @@
             (+ index 1)))])))
 
 (define (tc-match-missing-variant-message [variant-name : String]) : String
-  (string.append "typecheck: match missing arm for variant " variant-name))
+  (str_cat.str-cat "typecheck: match missing arm for variant " variant-name))
 
 (define (tc-pattern-mentions-variant?
   [ctx : TcContext]
@@ -56468,12 +56439,12 @@
     [(ResultTcNameId.Err message) (ResultTcType.Err message)]))
 
 (define (tc-init-unsupported-message [ctx : TcContext] [ty : ast.AstType]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: init unsupported type "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
 
 (define (tc-init-cleanup-owning-message [ctx : TcContext] [ty : ast.AstType]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: init does not support cleanup-owning aggregate "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
 
@@ -56897,9 +56868,10 @@
       [(ResultTcType.Ok body-ty)
         (if (tc-type-contains-region body-ty region)
           (ResultTcType.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: region-tagged value cannot escape with-arena '"
-              (string.append (tc-lifetime-name-render region) "'")))
+              (tc-lifetime-name-render region)
+              "'"))
           (ResultTcType.Ok body-ty))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
@@ -56915,9 +56887,10 @@
       [(ResultTcType.Ok body-ty)
         (if (tc-type-contains-region body-ty region)
           (ResultTcType.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: region-tagged value cannot escape with-arena '"
-              (string.append (tc-lifetime-name-render region) "'")))
+              (tc-lifetime-name-render region)
+              "'"))
           (ResultTcType.Ok body-ty))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
@@ -57469,7 +57442,7 @@
                             (ResultTcType.Err message)])]
                       [(ResultTcUnit.Err message)
                         (ResultTcType.Err
-                          (string.append
+                          (str_cat.str-cat
                             "typecheck: array-take! element cannot be reinitialized; "
                             message))])])]
               [(ResultTcArrayReceiver.Err message) (ResultTcType.Err message)])]
@@ -57631,7 +57604,7 @@
       [global-id : i64 (macro-hygiene-global-source-name-id-or name -1)]
       (if (< global-id 0)
         (ResultTcType.Err
-          (string.append
+          (str_cat.str-cat
             "typecheck: macro hygiene source id unavailable: "
             name-text))
         (if (macro-hygiene-global-id? name)
@@ -57770,16 +57743,14 @@
     (if (>= name-id 0)
       (ResultTcExprId.Ok name-id)
       (ResultTcExprId.Err
-        (string.append
+        (str_cat.str-cat
           "typecheck: internal scalar for planner expected a variable for "
-          (string.append
-            role
-            (string.append
-              ", got "
-              (ctfe_support.ctfe-describe-expr
-                (ast.ast-expr-unspan-with-pools
-                  (tc-context-pools ctx)
-                  (tc-context-expr-get ctx expr-id))))))))))
+          role
+          ", got "
+          (ctfe_support.ctfe-describe-expr
+            (ast.ast-expr-unspan-with-pools
+              (tc-context-pools ctx)
+              (tc-context-expr-get ctx expr-id))))))))
 
 (define (tc-for-owned-expected-type [ctx : TcContext] [expected-id : i64]) : ResultTcType
   (let
@@ -57976,12 +57947,10 @@
             (tc-var-expr-after-local-field-check ctx env name name-text))))]
     [(ast.AstExpr.TypeLiteral ty-id)
       (ResultTcType.Err
-        (string.append
+        (str_cat.str-cat
           "type value "
-          (string.append
-            (tc-type-render
-              (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
-            " is compile-time only")))]
+          (tc-type-render (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
+          " is compile-time only"))]
     [(ast.AstExpr.Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id maybe-ty-id)
         [(ast.AstMaybeType.Some ty) (tc-init-expr ctx env ty)]
@@ -58840,12 +58809,16 @@
   [position : String]
   [ty : ast.AstType]) : String
   (if (tc-extern-abi-enum-aggregate-type? ty)
-    (string.append
+    (str_cat.str-cat
       "typecheck: extern ABI c does not support enum aggregate "
-      (string.append position (string.append " type " (tc-type-render ty))))
-    (string.append
+      position
+      " type "
+      (tc-type-render ty))
+    (str_cat.str-cat
       "typecheck: extern ABI c does not support "
-      (string.append position (string.append " type " (tc-type-render ty))))))
+      position
+      " type "
+      (tc-type-render ty))))
 
 ;; A public Slice reference is a two-word (pointer, length) value in the
 ;; language ABI, but native externals do not have a corresponding direct
@@ -64519,16 +64492,15 @@
       [(tc_i64_i64_map.LookupMissing) TcMoveConflict.No])))
 
 (define (tc-move-use-message [name : String]) : String
-  (string.append (string.append "typecheck: use of moved value `" name) "`"))
+  (str_cat.str-cat "typecheck: use of moved value `" name "`"))
 
 (define (tc-move-loop-carried-message [name : String]) : String
-  (string.append
-    (string.append "typecheck: cannot move loop-carried owner value `" name)
-    "`"))
+  (str_cat.str-cat "typecheck: cannot move loop-carried owner value `" name "`"))
 
 (define (tc-move-cleanup-owner-exit-message [name : String]) : String
-  (string.append
-    (string.append "typecheck: cleanup owner `" name)
+  (str_cat.str-cat
+    "typecheck: cleanup owner `"
+    name
     "` moved before with scope exit"))
 
 (define (tc-move-help) : String
@@ -64777,34 +64749,30 @@
                   [(= (struct-get node kind) tc-move-path-segment-kind-field)
                     (set!
                       out
-                      (string.append
+                      (str_cat.str-cat
                         out
-                        (string.append
-                          "."
-                          (tc-env-key-name-text (struct-get node value)))))]
+                        "."
+                        (tc-env-key-name-text (struct-get node value))))]
                   [(= (struct-get node kind) tc-move-path-segment-kind-tuple)
                     (set!
                       out
-                      (string.append
+                      (str_cat.str-cat
                         out
-                        (string.append
-                          "."
-                          (string.int->string (struct-get node value)))))]
+                        "."
+                        (string.int->string (struct-get node value))))]
                   [else
                     (set!
                       out
-                      (string.append
+                      (str_cat.str-cat
                         out
-                        (string.append
-                          "["
-                          (string.append
-                            (string.int->string (struct-get node value))
-                            "]"))))])
+                        "["
+                        (string.int->string (struct-get node value))
+                        "]"))])
                 (set! read-index (+ read-index 1)))))
           out)))))
 
 (define (tc-move-path-render [path : TcMovePath]) : String
-  (string.append
+  (str_cat.str-cat
     (tc-env-key-name-text (struct-get path root))
     (tc-move-path-segments-render (struct-get path segments))))
 
@@ -65998,25 +65966,23 @@
             [(= (% index 3) 0)
               (begin
                 (set! deep (tc-move-path-segments-append-field deep alpha-id))
-                (set! deep-render (string.append deep-render ".alpha")))]
+                (set! deep-render (str_cat.str-cat deep-render ".alpha")))]
             [(= (% index 3) 1)
               (begin
                 (set! deep (tc-move-path-segments-append-tuple deep index))
                 (set!
                   deep-render
-                  (string.append
-                    deep-render
-                    (string.append "." (string.int->string index)))))]
+                  (str_cat.str-cat deep-render "." (string.int->string index))))]
             [else
               (begin
                 (set! deep (tc-move-path-segments-append-array deep index))
                 (set!
                   deep-render
-                  (string.append
+                  (str_cat.str-cat
                     deep-render
-                    (string.append
-                      "["
-                      (string.append (string.int->string index) "]")))))])
+                    "["
+                    (string.int->string index)
+                    "]")))])
           (set! index (+ index 1))))
       (and
         (tc-move-path-eq? mixed-path same-path)
@@ -71894,31 +71860,22 @@
   (Some i64))
 
 (define (tc-borrow-check-move-message [path : String]) : String
-  (string.append
-    (string.append "typecheck: cannot move borrowed place `" path)
-    "`"))
+  (str_cat.str-cat "typecheck: cannot move borrowed place `" path "`"))
 
 (define (tc-borrow-check-assign-message [path : String]) : String
-  (string.append
-    (string.append "typecheck: cannot assign to borrowed place `" path)
-    "`"))
+  (str_cat.str-cat "typecheck: cannot assign to borrowed place `" path "`"))
 
 (define (tc-borrow-check-mutably-borrow-message [path : String]) : String
-  (string.append
-    (string.append "typecheck: cannot mutably borrow borrowed place `" path)
-    "`"))
+  (str_cat.str-cat "typecheck: cannot mutably borrow borrowed place `" path "`"))
 
 (define (tc-borrow-check-immutably-borrow-message [path : String]) : String
-  (string.append
-    (string.append
-      "typecheck: cannot immutably borrow mutably borrowed place `"
-      path)
+  (str_cat.str-cat
+    "typecheck: cannot immutably borrow mutably borrowed place `"
+    path
     "`"))
 
 (define (tc-borrow-check-read-message [path : String]) : String
-  (string.append
-    (string.append "typecheck: cannot read mutably borrowed place `" path)
-    "`"))
+  (str_cat.str-cat "typecheck: cannot read mutably borrowed place `" path "`"))
 
 (define (tc-borrow-check-help) : String
   "let the last reference use occur before this operation, shorten the borrow with a narrower lexical scope, clone the owner before borrowing when ownership must move later, or use an immutable borrow for non-mutating access")
@@ -79910,7 +79867,7 @@
             (if (>= source-id 0)
               source-id
               (io.panic
-                (string.append
+                (str_cat.str-cat
                   "macro template symbol missing source id at "
                   site))))
           name-id))]))
@@ -79934,9 +79891,11 @@
       (ci.intern-str name-id)]
     [else
       (io.panic
-        (string.append
+        (str_cat.str-cat
           "macro output received structural id at "
-          (string.append site (string.append ": " (string.int->string name-id)))))]))
+          site
+          ": "
+          (string.int->string name-id)))]))
 
 ;; id-taking variant: callers have the interned name id; avoids the (intern
 ;; source-name) the String variant does inside tc-source-slash-qualified?.
@@ -82384,7 +82343,7 @@
           (spec.ResultGenKey.Err diag))])))
 
 (define (macro-decls-generated-key [identity : String]) : String
-  (string.append "decls:" identity))
+  (str_cat.str-cat "decls:" identity))
 
 (define (macro-generated-meta
   [generator : String]
@@ -83981,7 +83940,7 @@
     [(ast.AstExpr.Var name-id)
       (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
         (ci.intern-str name-id)
-        (string.append "<var:" (string.append (string.int->string name-id) ">")))]
+        (str_cat.str-cat "<var:" (string.int->string name-id) ">"))]
     [(ast.AstExpr.TypeLiteral ty-id)
       (let
         [ty : ast.AstType (ast.ty-node-get ty-id)]
@@ -83989,9 +83948,7 @@
           [(ast.AstType.Var name-id)
             (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
               (ci.intern-str name-id)
-              (string.append
-                "<type-var:"
-                (string.append (string.int->string name-id) ">")))]
+              (str_cat.str-cat "<type-var:" (string.int->string name-id) ">"))]
           [_ (tc-type-render ty)]))]
     [_ "<expression>"]))
 
@@ -84011,9 +83968,7 @@
             (macro-output-origin-arg-name
               (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0)))
             "<no-args>")]
-        (string.append
-          func-name
-          (string.append "(" (string.append arg-name ")"))))]
+        (str_cat.str-cat func-name "(" arg-name ")"))]
     [(ast.AstExpr.Var name-id)
       (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
         (ci.intern-str name-id)
@@ -84165,7 +84120,7 @@
     [(ast.AstType.Var name)
       (if (< name 0)
         (io.panic
-          (string.append
+          (str_cat.str-cat
             "macro output received invalid type-var id in origin "
             (macro-output-origin-name origin)))
         (ResultMacroSexpr.Ok
@@ -87026,7 +86981,7 @@
                       (when
                         (< source-name-id 0)
                         (io.panic
-                          (string.append
+                          (str_cat.str-cat
                             "typecheck: missing macro template source id: "
                             base)))
                       (if (and
@@ -89100,7 +89055,7 @@
     (unsafe
       (arena.set! producer))
     (let
-      [ty : String (string.append "lifetime-hint-" (string.int->string 42))]
+      [ty : String (str_cat.str-cat "lifetime-hint-" (string.int->string 42))]
       (tc-inlay-hint-record-for-state! state 7 11 ty))))
 
 ;; Exercise every retained no-state adapter against the one serial state. The
@@ -90473,7 +90428,7 @@
     [(TcMaybeNameId.No) qualifier-id]))
 
 (define (macro-missing-macro-message [name : String]) : String
-  (string.append "typecheck: missing macro " name))
+  (str_cat.str-cat "typecheck: missing macro " name))
 
 (define (macro-source-module-id [module-id : i64]) : i64
   (if (csym.compiler-symbol-root-module-id? module-id)
@@ -90600,7 +90555,9 @@
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
             call-expr
-            (string.append "typecheck: qualified macro has no source id: " name)))))))
+            (str_cat.str-cat
+              "typecheck: qualified macro has no source id: "
+              name)))))))
 
 ;; The implicit core macro prelude module (stdlib/core_macros.tl). A bare name
 ;; that is not bound as a macro in the current module falls back to this module's
@@ -91065,7 +91022,7 @@
       (box
         (ctfe_support.ctfe-diagnostic-at-expr
           call-expr
-          (string.append
+          (str_cat.str-cat
             "typecheck: macro hygiene source id unavailable: "
             lookup-name))))
     (if (and
@@ -91824,7 +91781,7 @@
                 arg
                 (if (tc-encoded-error? message)
                   message
-                  (string.append
+                  (str_cat.str-cat
                     "typecheck: macro operand typecheck failed: "
                     message))))))])))
 
@@ -99070,13 +99027,11 @@
                         unit)))
                   unit))
               (io.panic
-                (string.append
+                (str_cat.str-cat
                   "typecheck: top-env resolution slot out of bounds: "
-                  (string.append
-                    (string.int->string value-slot)
-                    (string.append
-                      " / "
-                      (string.int->string (array.length values)))))))
+                  (string.int->string value-slot)
+                  " / "
+                  (string.int->string (array.length values)))))
             (set! read-index (+ read-index 1)))))
       (array-set! sidecar capacity write-index)
       (cfg
@@ -100184,9 +100139,10 @@
         (io.print-error
           "compile-profile-detail|prelude.macro_walk_decl_visits|0\n")
         (io.print-error
-          (string.append
+          (str_cat.str-cat
             "compile-profile-detail|prelude.macro_walk_skipped_decls|"
-            (string.append (string.int->string count) "\n")))))))
+            (string.int->string count)
+            "\n"))))))
 
 (define (macro-surface-prefix-plan
   [decls : ast.AstDeclList]
@@ -102909,9 +102865,10 @@
         (io.print-error
           "compile-profile-detail|prelude.typecheck_decl_checks|0\n")
         (io.print-error
-          (string.append
+          (str_cat.str-cat
             "compile-profile-detail|prelude.typecheck_skipped_decls|"
-            (string.append (string.int->string count) "\n")))))))
+            (string.int->string count)
+            "\n"))))))
 
 (define (tc-check-decls-with-surface-prefix-hit
   [ctx : TcContext]

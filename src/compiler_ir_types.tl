@@ -3681,13 +3681,13 @@
 
 (define (compiler-ir-value-render [value : CompilerIrValue]) : String
   (match value
-    [(CompilerIrValue.Var id) (string.append "%" (string.int->string id))]
+    [(CompilerIrValue.Var id) (str_cat.str-cat "%" (string.int->string id))]
     [(CompilerIrValue.Global name)
-      (string.append "@" (compiler-ir-symbol-text name))]
+      (str_cat.str-cat "@" (compiler-ir-symbol-text name))]
     [(CompilerIrValue.GlobalAddr name)
-      (string.append "&@" (compiler-ir-symbol-text name))]
+      (str_cat.str-cat "&@" (compiler-ir-symbol-text name))]
     [(CompilerIrValue.Function name)
-      (string.append "fn@" (compiler-ir-symbol-text name))]
+      (str_cat.str-cat "fn@" (compiler-ir-symbol-text name))]
     [(CompilerIrValue.I64 value) (string.int->string value)]
     [(CompilerIrValue.F64 value)
       (str_cat.str-cat "float-bits:" (compiler-ir-u64-payload-render value))]
@@ -3703,7 +3703,7 @@
         (string.int->string (string.string-length value))
         ">")]
     [(CompilerIrValue.RuntimeGlobal init)
-      (string.append "runtime-init@" (compiler-ir-symbol-text init))]
+      (str_cat.str-cat "runtime-init@" (compiler-ir-symbol-text init))]
     [(CompilerIrValue.Unit) "unit"]))
 
 (define (compiler-ir-value-list-render [values : CompilerIrValueList]) : String

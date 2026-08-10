@@ -32,6 +32,8 @@
 ;; constants.
 ;; Imported by module name so token declarations stay behind the `token.`
 ;; qualifier instead of flattening through `lex.tl`.
+(import stdlib.str_cat_runtime as str_cat)
+
 (module lex)
 
 (import compiler_intern as ci)
@@ -262,11 +264,10 @@
             false))]
       (if malformed
         (result_lex_i64.Err
-          (string.append
+          (str_cat.str-cat
             (string.substring "lexer: malformed integer literal" 0 17)
-            (string.append
-              "number"
-              (string.substring "lexer: malformed integer literal" 24 8))))
+            "number"
+            (string.substring "lexer: malformed integer literal" 24 8)))
         (result_lex_i64.Ok end)))))
 
 (define (parse-based-int [src : String] [start : i64] [end : i64] [base : i64]) : i64
@@ -1557,7 +1558,7 @@
     [(ResultSpannedTokens.Err _) false]))
 
 (define (apostrophe-char-source [body : String]) : String
-  (string.append "'" (string.append body "'")))
+  (str_cat.str-cat "'" body "'"))
 
 (define (quote-vs-apostrophe-char-ok?) : bool
   (and
@@ -1610,12 +1611,12 @@
       (one-apostrophe-char-ok? "0" '0')
       (one-apostrophe-char-ok? "+" '+')
       (one-apostrophe-char-ok? " " ' ')
-      (one-apostrophe-char-ok? (string.append slash "n") '\n')
-      (one-apostrophe-char-ok? (string.append slash "t") '\t')
-      (one-apostrophe-char-ok? (string.append slash "r") '\r')
-      (one-apostrophe-char-ok? (string.append slash "0") '\0')
-      (one-apostrophe-char-ok? (string.append slash slash) '\\')
-      (one-apostrophe-char-ok? (string.append slash "'") '\'')
+      (one-apostrophe-char-ok? (str_cat.str-cat slash "n") '\n')
+      (one-apostrophe-char-ok? (str_cat.str-cat slash "t") '\t')
+      (one-apostrophe-char-ok? (str_cat.str-cat slash "r") '\r')
+      (one-apostrophe-char-ok? (str_cat.str-cat slash "0") '\0')
+      (one-apostrophe-char-ok? (str_cat.str-cat slash slash) '\\')
+      (one-apostrophe-char-ok? (str_cat.str-cat slash "'") '\'')
       (legacy-char-rejected? "#x'")
       (legacy-char-rejected? "#\\n'")
       (legacy-char-rejected? "#\\space'"))))
@@ -1643,12 +1644,12 @@
     (and
       (error-ok? "\n#\\bogus'" 2 1 "lexer: unexpected character")
       (error-ok?
-        (apostrophe-char-source (string.append slash "x"))
+        (apostrophe-char-source (str_cat.str-cat slash "x"))
         1
         1
         "lexer: unknown character escape")
       (error-ok?
-        (string.append "'" (string.append slash "n"))
+        (str_cat.str-cat "'" slash "n")
         1
         1
         "lexer: unterminated character literal")
@@ -1672,7 +1673,7 @@
       (string.eq message "lexer: malformed integer literal")]))
 
 (define (string-source [inner : String]) : String
-  (string.append (quote-text) (string.append inner (quote-text))))
+  (str_cat.str-cat (quote-text) inner (quote-text)))
 
 (define (string-token-ok? [src : String] [expected : String]) : bool
   (let
@@ -1693,20 +1694,20 @@
       (= (token.str-id literal) literal-id))))
 
 (define (escaped-quote-source-inner) : String
-  (string.append
+  (str_cat.str-cat
     "say "
-    (string.append
-      (backslash-text)
-      (string.append
-        (quote-text)
-        (string.append "hi" (string.append (backslash-text) (quote-text)))))))
+    (backslash-text)
+    (quote-text)
+    "hi"
+    (backslash-text)
+    (quote-text)))
 
 (define (backslash-quote-source-inner) : String
-  (string.append
+  (str_cat.str-cat
     (backslash-text)
-    (string.append
-      (backslash-text)
-      (string.append (backslash-text) (quote-text)))))
+    (backslash-text)
+    (backslash-text)
+    (quote-text)))
 
 (define (string-escapes-ok?) : bool
   (let
@@ -1716,11 +1717,11 @@
       (string-token-ok? (string-source "hello\\nworld") "hello\nworld")
       (string-token-ok?
         (string-source (escaped-quote-source-inner))
-        (string.append "say " (string.append quote (string.append "hi" quote))))
-      (string-token-ok? (string-source (string.append slash slash)) slash)
+        (str_cat.str-cat "say " quote "hi" quote))
+      (string-token-ok? (string-source (str_cat.str-cat slash slash)) slash)
       (string-token-ok?
         (string-source (backslash-quote-source-inner))
-        (string.append slash quote)))))
+        (str_cat.str-cat slash quote)))))
 
 (define (quote-prefix-tokens-ok?) : bool
   (match (result "`(if ,x ,@xs)")

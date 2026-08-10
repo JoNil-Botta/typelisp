@@ -80615,7 +80615,7 @@
 ;; remain segmented until the walk's single final reverse.
 (define (macro-segmented-program-flatten-fallback
   [state : TcJobState]
-  [reason : i64]) : MacroSegmentedProgramFlatView
+  [_reason : i64]) : MacroSegmentedProgramFlatView
   (begin
     (cfg compile-profile (compiler-tc-walk-segment-fallback-flatten-start!))
     (let
@@ -80624,7 +80624,7 @@
       (begin
         (cfg
           compile-profile
-          (compiler-tc-walk-segment-fallback-flatten-finish! reason))
+          (compiler-tc-walk-segment-fallback-flatten-finish! _reason))
         out))))
 
 (define (macro-segmented-program-current-starts-module-import-placeholder?
@@ -98057,16 +98057,14 @@
                     result
                     (ResultMacroDeclsWithPaths.Ok final-decls final-paths))
                   (set! done true)))]
-            [(ast.AstDeclListStep.Cons decl rest)
+            [(ast.AstDeclListStep.Cons decl _rest)
               (let
-                [rest : ast.AstDeclList rest]
                 [decl-path : String
                   (macro-segmented-program-current-path walk-state)]
                 [decl-owner-id : i64
                   (macro-segmented-program-current-owner-id walk-state)]
                 [_set-decl-owner : unit
                   (set! macro-active-decl-owner-id decl-owner-id)]
-                [rest-paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
                 (match decl
                   [(ast.AstDecl.Module next-module)
                     (begin
@@ -98116,357 +98114,345 @@
                             [(ResultMacroDeclExpansion.Ok
                                 expanded
                                 expanded-paths)
-                              (begin
-                                ;; A deduplicated splice (see
-                                ;; macro-decls-splice-with-memo) expands to nothing:
-                                ;; drop the placeholder and keep walking -- there is
-                                ;; no new name, so no context rebuild is needed.
-                                (match (ast.ast-decl-list-step expanded)
-                                  [(ast.AstDeclListStep.Nil)
-                                    (begin
-                                      (macro-segmented-program-advance!
-                                        walk-state))]
-                                  [_
-                                    (if (and
-                                      (macro-decl-module-import-placeholder?
-                                        decl)
-                                      (macro-module-import-marker-only?
-                                        expanded))
-                                      (let
-                                        [_update-materialize-seen : unit
-                                          (set!
+                              ;; A deduplicated splice (see
+                              ;; macro-decls-splice-with-memo) expands to nothing:
+                              ;; drop the placeholder and keep walking -- there is
+                              ;; no new name, so no context rebuild is needed.
+                              (match (ast.ast-decl-list-step expanded)
+                                [(ast.AstDeclListStep.Nil)
+                                  (macro-segmented-program-advance! walk-state)]
+                                [_
+                                  (if (and
+                                    (macro-decl-module-import-placeholder? decl)
+                                    (macro-module-import-marker-only? expanded))
+                                    (let
+                                      [_update-materialize-seen : unit
+                                        (set!
+                                          cur-materialize-seen
+                                          (macro-materialize-seen-from
+                                            (& expanded)
+                                            (& expanded-paths)
                                             cur-materialize-seen
-                                            (macro-materialize-seen-from
-                                              (& expanded)
-                                              (& expanded-paths)
-                                              cur-materialize-seen
-                                              cur-module-id))]
-                                        [_sp-probe-copy-start : unit
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-walk-sp-probe-start! 0)
-                                            unit)]
-                                        [_segment-splice : unit
-                                          (macro-segmented-program-splice-current!
-                                            walk-state
-                                            expanded
-                                            expanded-paths)]
-                                        [_commit-marker-prefix : unit
-                                          (let
-                                            [remaining : i64
-                                              (ast.ast-decl-list-len
-                                                (& expanded))]
-                                            (begin
-                                              (set!
-                                                out-rev
-                                                (macro-decl-list-reverse-into
-                                                  expanded
-                                                  out-rev))
-                                              (set!
-                                                out-paths-rev
-                                                (macro-decl-path-list-reverse-into
-                                                  expanded-paths
-                                                  out-paths-rev))
-                                              (while (> remaining 0)
-                                                (begin
-                                                  (macro-segmented-program-advance!
-                                                    walk-state)
-                                                  (set!
-                                                    remaining
-                                                    (- remaining 1))))
-                                              (macro-segmented-program-prefix-set!
-                                                walk-state
-                                                out-rev
-                                                out-paths-rev)))]
-                                        ;; Consecutive markers can share one raw
-                                        ;; delta prefix. Lookups still see every
-                                        ;; imported binding, but the explicit cache
-                                        ;; and unresolved-signature pass are paid
-                                        ;; once when the marker batch ends.
-                                        [defer-cache? : bool
-                                          (macro-segmented-program-current-starts-module-import-placeholder?
-                                            walk-state)]
-                                        [_sp-probe-copy-finish : unit
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-walk-sp-probe-finish!
-                                              0)
-                                            unit)]
-                                        (begin
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-walk-sp-probe-start! 1))
-                                          (match (let
-                                            [extend-result : ResultTcEnv
-                                              (macro-extend-top-env-with-module-marker
-                                                cur-ctx
-                                                cur-top-env
-                                                cur-orig-decls
+                                            cur-module-id))]
+                                      [_sp-probe-copy-start : unit
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-sp-probe-start! 0)
+                                          unit)]
+                                      [_segment-splice : unit
+                                        (macro-segmented-program-splice-current!
+                                          walk-state
+                                          expanded
+                                          expanded-paths)]
+                                      [_commit-marker-prefix : unit
+                                        (let
+                                          [remaining : i64
+                                            (ast.ast-decl-list-len (& expanded))]
+                                          (begin
+                                            (set!
+                                              out-rev
+                                              (macro-decl-list-reverse-into
                                                 expanded
-                                                cur-module
-                                                cur-module-id)]
-                                            (begin
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-walk-sp-probe-finish!
-                                                  1))
-                                              extend-result))
-                                            [(ResultTcEnv.Ok next-top-env)
+                                                out-rev))
+                                            (set!
+                                              out-paths-rev
+                                              (macro-decl-path-list-reverse-into
+                                                expanded-paths
+                                                out-paths-rev))
+                                            (while (> remaining 0)
                                               (begin
-                                                (tc-nominal-owner-cache-reset!)
-                                                (macro-alias-derived-cache-reset!)
-                                                (tc-job-state-reset-derived-caches!
-                                                  (tc-context-job-state cur-ctx))
-                                                (if defer-cache?
-                                                  (begin
-                                                    (cfg
-                                                      compile-profile
-                                                      (compiler-tc-walk-decl-sample-note!
-                                                        4))
-                                                    (set!
-                                                      cur-top-env
-                                                      next-top-env))
-                                                  (begin
-                                                    (cfg
-                                                      compile-profile
-                                                      (compiler-tc-walk-decl-sample-note!
-                                                        5))
-                                                    (cfg
-                                                      compile-profile
-                                                      (compiler-tc-walk-sp-probe-start!
-                                                        4))
-                                                    (tc-top-env-reresolve-caches!
-                                                      cur-ctx
-                                                      next-top-env)
-                                                    (cfg
-                                                      compile-profile
-                                                      (compiler-tc-walk-sp-probe-finish!
-                                                        4))
-                                                    (cfg
-                                                      compile-profile
-                                                      (compiler-tc-walk-sp-probe-start!
-                                                        2))
-                                                    (set!
-                                                      cur-top-env
-                                                      (tc-env-with-cache-layer-over-explicit
-                                                        next-top-env))
-                                                    (cfg
-                                                      compile-profile
-                                                      (compiler-tc-walk-sp-probe-finish!
-                                                        2))))
-                                                unit)]
-                                            [(ResultTcEnv.Err message)
-                                              (begin
-                                                (set!
-                                                  result
-                                                  (ResultMacroDeclsWithPaths.Err
-                                                    (box
-                                                      (tc-diag-at-start message))))
-                                                (set! done true))])
-                                          unit))
-                                      ;; Force the splice inline: append the generated
-                                      ;; symbols/registries and rebuild the context over
-                                      ;; the spliced whole-program view. The top env takes
-                                      ;; only the declaration delta, then the walk continues
-                                      ;; over the spliced body itself (nested placeholders
-                                      ;; and generated file imports included).
-                                      (let
-                                        [_update-materialize-seen : unit
-                                          (set!
-                                            cur-materialize-seen
-                                            (macro-materialize-seen-from
-                                              (& expanded)
-                                              (& expanded-paths)
-                                              cur-materialize-seen
-                                              cur-module-id))]
-                                        [_segment-splice : unit
-                                          (macro-segmented-program-splice-current!
-                                            walk-state
-                                            expanded
-                                            expanded-paths)]
-                                        [generated-ext : MacroMaybeGeneratedModuleExtension
-                                          (macro-generated-module-extension
-                                            expanded
-                                            cur-module-id)]
-                                        [symbols-inserted : bool
-                                          (and
-                                            (csym.compiler-symbols-insert-aliases-self-contained?
-                                              expanded
-                                              expanded)
-                                            (macro-live-symbols-insert-decls!
-                                              expanded
-                                              cur-module-id))]
-                                        [registries-inserted : bool
-                                          (and
-                                            symbols-inserted
-                                            (macro-live-registries-append-decls!
-                                              expanded
-                                              expanded-paths
-                                              cur-module-id))]
-                                        [incremental? : bool
-                                          (and
-                                            symbols-inserted
-                                            registries-inserted)]
-                                        [_invalidate-fallback : unit
-                                          (if incremental?
-                                            unit
-                                            (begin
-                                              (macro-live-symbols-invalidate!)
-                                              (macro-live-registries-invalidate!)))]
-                                        [flat-view : MacroSegmentedProgramFlatView
-                                          (if incremental?
-                                            (MacroSegmentedProgramFlatView
-                                              expanded
-                                              expanded-paths)
-                                            (macro-segmented-program-flatten-fallback
+                                                (macro-segmented-program-advance!
+                                                  walk-state)
+                                                (set! remaining (- remaining 1))))
+                                            (macro-segmented-program-prefix-set!
                                               walk-state
-                                              1))]
-                                        [next-decls : ast.AstDeclList
-                                          (struct-get flat-view decls)]
-                                        [next-paths : ast.AstDeclPathList
-                                          (struct-get flat-view paths)]
-                                        [_prescan-delta : unit
-                                          (if incremental?
-                                            (macro-live-prescan-append-decls!
+                                              out-rev
+                                              out-paths-rev)))]
+                                      ;; Consecutive markers can share one raw
+                                      ;; delta prefix. Lookups still see every
+                                      ;; imported binding, but the explicit cache
+                                      ;; and unresolved-signature pass are paid
+                                      ;; once when the marker batch ends.
+                                      [defer-cache? : bool
+                                        (macro-segmented-program-current-starts-module-import-placeholder?
+                                          walk-state)]
+                                      [_sp-probe-copy-finish : unit
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-sp-probe-finish! 0)
+                                          unit)]
+                                      (begin
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-sp-probe-start! 1))
+                                        (match (let
+                                          [extend-result : ResultTcEnv
+                                            (macro-extend-top-env-with-module-marker
+                                              cur-ctx
+                                              cur-top-env
+                                              cur-orig-decls
                                               expanded
-                                              cur-module-id)
-                                            unit)]
-                                        ;; Any reflection-relevant delta gets the
-                                        ;; append-safety classification after the
-                                        ;; post-splice registries exist. Fresh
-                                        ;; ordinary Decls and generated Modules can
-                                        ;; therefore share the same O(delta) path.
-                                        [extend-ctfe-metadata? : bool
-                                          (macro-decls-reflection-relevant?
-                                            expanded)]
-                                        [ctfe-build-generation-before : i64
-                                          macro-expand-ctfe-env-build-generation]
-                                        (begin
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-walk-decl-sample-note!
-                                              6))
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-walk-splice-flag-note!
-                                              (if incremental?
-                                                1
-                                                2))
-                                            unit)
-                                          (cfg
-                                            compile-profile
-                                            (if extend-ctfe-metadata?
-                                              (compiler-tc-walk-splice-flag-note!
-                                                3)
-                                              unit)
-                                            unit)
-                                          ;; Generated Module catalogs are usually
-                                          ;; inert additions, but a full catalog can
-                                          ;; legitimately introduce a defmacro. Its
-                                          ;; name must be visible to the remaining
-                                          ;; declarations in this same expansion
-                                          ;; walk (for example `api.one` immediately
-                                          ;; after `(import (catalog) as api)`).
-                                          ;; Refresh the otherwise additive-inert
-                                          ;; prescan before rebuilding the splice
-                                          ;; context so the macro-name gate and CTFE
-                                          ;; export map include that generated macro.
-                                          (if (macro-program-has-defmacro?
-                                            expanded)
+                                              cur-module
+                                              cur-module-id)]
+                                          (begin
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-walk-sp-probe-finish!
+                                                1))
+                                            extend-result))
+                                          [(ResultTcEnv.Ok next-top-env)
                                             (begin
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-walk-splice-flag-note!
-                                                  5))
+                                              (tc-nominal-owner-cache-reset!)
+                                              (macro-alias-derived-cache-reset!)
+                                              (tc-job-state-reset-derived-caches!
+                                                (tc-context-job-state cur-ctx))
+                                              (if defer-cache?
+                                                (begin
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-decl-sample-note!
+                                                      4))
+                                                  (set!
+                                                    cur-top-env
+                                                    next-top-env))
+                                                (begin
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-decl-sample-note!
+                                                      5))
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-start!
+                                                      4))
+                                                  (tc-top-env-reresolve-caches!
+                                                    cur-ctx
+                                                    next-top-env)
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-finish!
+                                                      4))
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-start!
+                                                      2))
+                                                  (set!
+                                                    cur-top-env
+                                                    (tc-env-with-cache-layer-over-explicit
+                                                      next-top-env))
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-finish!
+                                                      2))))
+                                              unit)]
+                                          [(ResultTcEnv.Err message)
+                                            (begin
+                                              (set!
+                                                result
+                                                (ResultMacroDeclsWithPaths.Err
+                                                  (box
+                                                    (tc-diag-at-start message))))
+                                              (set! done true))])
+                                        unit))
+                                    ;; Force the splice inline: append the generated
+                                    ;; symbols/registries and rebuild the context over
+                                    ;; the spliced whole-program view. The top env takes
+                                    ;; only the declaration delta, then the walk continues
+                                    ;; over the spliced body itself (nested placeholders
+                                    ;; and generated file imports included).
+                                    (let
+                                      [_update-materialize-seen : unit
+                                        (set!
+                                          cur-materialize-seen
+                                          (macro-materialize-seen-from
+                                            (& expanded)
+                                            (& expanded-paths)
+                                            cur-materialize-seen
+                                            cur-module-id))]
+                                      [_segment-splice : unit
+                                        (macro-segmented-program-splice-current!
+                                          walk-state
+                                          expanded
+                                          expanded-paths)]
+                                      [generated-ext : MacroMaybeGeneratedModuleExtension
+                                        (macro-generated-module-extension
+                                          expanded
+                                          cur-module-id)]
+                                      [symbols-inserted : bool
+                                        (and
+                                          (csym.compiler-symbols-insert-aliases-self-contained?
+                                            expanded
+                                            expanded)
+                                          (macro-live-symbols-insert-decls!
+                                            expanded
+                                            cur-module-id))]
+                                      [registries-inserted : bool
+                                        (and
+                                          symbols-inserted
+                                          (macro-live-registries-append-decls!
+                                            expanded
+                                            expanded-paths
+                                            cur-module-id))]
+                                      [incremental? : bool
+                                        (and
+                                          symbols-inserted
+                                          registries-inserted)]
+                                      [_invalidate-fallback : unit
+                                        (if incremental?
+                                          unit
+                                          (begin
+                                            (macro-live-symbols-invalidate!)
+                                            (macro-live-registries-invalidate!)))]
+                                      [flat-view : MacroSegmentedProgramFlatView
+                                        (if incremental?
+                                          (MacroSegmentedProgramFlatView
+                                            expanded
+                                            expanded-paths)
+                                          (macro-segmented-program-flatten-fallback
+                                            walk-state
+                                            1))]
+                                      [next-decls : ast.AstDeclList
+                                        (struct-get flat-view decls)]
+                                      [next-paths : ast.AstDeclPathList
+                                        (struct-get flat-view paths)]
+                                      [_prescan-delta : unit
+                                        (if incremental?
+                                          (macro-live-prescan-append-decls!
+                                            expanded
+                                            cur-module-id)
+                                          unit)]
+                                      ;; Any reflection-relevant delta gets the
+                                      ;; append-safety classification after the
+                                      ;; post-splice registries exist. Fresh
+                                      ;; ordinary Decls and generated Modules can
+                                      ;; therefore share the same O(delta) path.
+                                      [extend-ctfe-metadata? : bool
+                                        (macro-decls-reflection-relevant?
+                                          expanded)]
+                                      [ctfe-build-generation-before : i64
+                                        macro-expand-ctfe-env-build-generation]
+                                      (begin
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-decl-sample-note! 6))
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-splice-flag-note!
+                                            (if incremental?
+                                              1
+                                              2))
+                                          unit)
+                                        (cfg
+                                          compile-profile
+                                          (if extend-ctfe-metadata?
+                                            (compiler-tc-walk-splice-flag-note!
+                                              3)
+                                            unit)
+                                          unit)
+                                        ;; Generated Module catalogs are usually
+                                        ;; inert additions, but a full catalog can
+                                        ;; legitimately introduce a defmacro. Its
+                                        ;; name must be visible to the remaining
+                                        ;; declarations in this same expansion
+                                        ;; walk (for example `api.one` immediately
+                                        ;; after `(import (catalog) as api)`).
+                                        ;; Refresh the otherwise additive-inert
+                                        ;; prescan before rebuilding the splice
+                                        ;; context so the macro-name gate and CTFE
+                                        ;; export map include that generated macro.
+                                        (if (macro-program-has-defmacro?
+                                          expanded)
+                                          (begin
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-walk-splice-flag-note!
+                                                5))
+                                            (if incremental?
+                                              unit
+                                              (begin
+                                                (macro-live-prescan-reset!)
+                                                (macro-live-prescan-ensure!
+                                                  next-decls)
+                                                (macro-expand-set-expr-type-macro-names!
+                                                  macro-live-prescan-expr-type-names)))
+                                            (set!
+                                              ctfe-needs-metadata
+                                              (or
+                                                ctfe-needs-metadata
+                                                macro-live-prescan-has-defmacro))
+                                            unit)
+                                          unit)
+                                        (match (macro-expand-rebuild-context-for-splice
+                                          cur-ctx
+                                          next-decls
+                                          next-paths
+                                          cur-module
+                                          cur-module-id
+                                          (match generated-ext
+                                            [(MacroMaybeGeneratedModuleExtension.No)
+                                              (MacroSpliceEnvPlan.Extend
+                                                cur-top-env
+                                                expanded)]
+                                            [(MacroMaybeGeneratedModuleExtension.Some
+                                                summary
+                                                marker)
+                                              (MacroSpliceEnvPlan.ExtendGeneratedModule
+                                                cur-top-env
+                                                summary
+                                                marker)]))
+                                          [(ResultMacroSpliceRebuild.Ok
+                                              next-ctx
+                                              next-top-env)
+                                            (begin
+                                              ;; Extend the reused CTFE metadata
+                                              ;; with the spliced module's nominal
+                                              ;; declarations now that next-ctx
+                                              ;; carries the post-splice registries
+                                              ;; the layout build resolves through.
+                                              ;; On any inapplicability fall back to
+                                              ;; the established clear, which makes
+                                              ;; the next consumer rebuild the full
+                                              ;; metadata over the spliced program.
+                                              (if extend-ctfe-metadata?
+                                                (match (compiler-typecheck-ctfe-env-extend-for-splice!
+                                                  next-ctx
+                                                  expanded
+                                                  expanded-paths
+                                                  cur-module
+                                                  cur-module-id
+                                                  (match generated-ext
+                                                    [(MacroMaybeGeneratedModuleExtension.Some
+                                                        _
+                                                        _)
+                                                      true]
+                                                    [(MacroMaybeGeneratedModuleExtension.No)
+                                                      false])
+                                                  (tc-context-registries
+                                                    next-ctx)
+                                                  ctfe-build-generation-before)
+                                                  [(CompilerCtfeSpliceExtensionResult.SemanticRejected)
+                                                    (compiler-typecheck-ctfe-env-rebuild-for-splice!
+                                                      next-ctx
+                                                      1)]
+                                                  [(CompilerCtfeSpliceExtensionResult.CacheUnavailable)
+                                                    (compiler-typecheck-ctfe-env-rebuild-for-splice!
+                                                      next-ctx
+                                                      1)]
+                                                  [_ unit])
+                                                unit)
+                                              (set! cur-ctx next-ctx)
                                               (if incremental?
                                                 unit
-                                                (begin
-                                                  (macro-live-prescan-reset!)
-                                                  (macro-live-prescan-ensure!
-                                                    next-decls)
-                                                  (macro-expand-set-expr-type-macro-names!
-                                                    macro-live-prescan-expr-type-names)))
+                                                (set! cur-orig-decls next-decls))
+                                              (set! cur-top-env next-top-env)
+                                              unit)]
+                                          [(ResultMacroSpliceRebuild.Err diag)
+                                            (begin
                                               (set!
-                                                ctfe-needs-metadata
-                                                (or
-                                                  ctfe-needs-metadata
-                                                  macro-live-prescan-has-defmacro))
-                                              unit)
-                                            unit)
-                                          (match (macro-expand-rebuild-context-for-splice
-                                            cur-ctx
-                                            next-decls
-                                            next-paths
-                                            cur-module
-                                            cur-module-id
-                                            (match generated-ext
-                                              [(MacroMaybeGeneratedModuleExtension.No)
-                                                (MacroSpliceEnvPlan.Extend
-                                                  cur-top-env
-                                                  expanded)]
-                                              [(MacroMaybeGeneratedModuleExtension.Some
-                                                  summary
-                                                  marker)
-                                                (MacroSpliceEnvPlan.ExtendGeneratedModule
-                                                  cur-top-env
-                                                  summary
-                                                  marker)]))
-                                            [(ResultMacroSpliceRebuild.Ok
-                                                next-ctx
-                                                next-top-env)
-                                              (begin
-                                                ;; Extend the reused CTFE metadata
-                                                ;; with the spliced module's nominal
-                                                ;; declarations now that next-ctx
-                                                ;; carries the post-splice registries
-                                                ;; the layout build resolves through.
-                                                ;; On any inapplicability fall back to
-                                                ;; the established clear, which makes
-                                                ;; the next consumer rebuild the full
-                                                ;; metadata over the spliced program.
-                                                (if extend-ctfe-metadata?
-                                                  (match (compiler-typecheck-ctfe-env-extend-for-splice!
-                                                    next-ctx
-                                                    expanded
-                                                    expanded-paths
-                                                    cur-module
-                                                    cur-module-id
-                                                    (match generated-ext
-                                                      [(MacroMaybeGeneratedModuleExtension.Some
-                                                          _
-                                                          _)
-                                                        true]
-                                                      [(MacroMaybeGeneratedModuleExtension.No)
-                                                        false])
-                                                    (tc-context-registries
-                                                      next-ctx)
-                                                    ctfe-build-generation-before)
-                                                    [(CompilerCtfeSpliceExtensionResult.SemanticRejected)
-                                                      (compiler-typecheck-ctfe-env-rebuild-for-splice!
-                                                        next-ctx
-                                                        1)]
-                                                    [(CompilerCtfeSpliceExtensionResult.CacheUnavailable)
-                                                      (compiler-typecheck-ctfe-env-rebuild-for-splice!
-                                                        next-ctx
-                                                        1)]
-                                                    [_ unit])
-                                                  unit)
-                                                (set! cur-ctx next-ctx)
-                                                (if incremental?
-                                                  unit
-                                                  (set!
-                                                    cur-orig-decls
-                                                    next-decls))
-                                                (set! cur-top-env next-top-env)
-                                                unit)]
-                                            [(ResultMacroSpliceRebuild.Err diag)
-                                              (begin
-                                                (set!
-                                                  result
-                                                  (ResultMacroDeclsWithPaths.Err
-                                                    diag))
-                                                (set! done true))])
-                                          unit)))]))]
+                                                result
+                                                (ResultMacroDeclsWithPaths.Err
+                                                  diag))
+                                              (set! done true))])
+                                        unit)))])]
                             [(ResultMacroDeclExpansion.Err diag)
                               (begin
                                 (set!

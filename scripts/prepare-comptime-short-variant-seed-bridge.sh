@@ -37,6 +37,24 @@ mkdir -p "$OUT/tests"
 cp "$ROOT/tests/bootstrap_ctfe_while_probe.tl" \
     "$OUT/tests/bootstrap_ctfe_while_probe.tl"
 
+# Seeds carrying structured macro provenance wrap every captured Expr in a
+# caller-origin node. That predates the private place bridge and can make a
+# composite operand such as `(array-ref map.slots i)` alias its dotted child.
+# The temporary mirror can use the seed's legacy public source spellings, so
+# rewrite only these reserved bridge calls before compiling the one-generation
+# compatibility compiler.
+PYTHON=
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON=python3
+elif command -v python >/dev/null 2>&1; then
+    PYTHON=python
+else
+    echo "comptime seed bridge requires python3 or python" >&2
+    exit 1
+fi
+"$PYTHON" "$ROOT/scripts/rewrite-private-place-seed-bridge.py" \
+    "$OUT/src" "$OUT/stdlib" "$OUT/bootstrap" "$OUT/tests"
+
 # GNU sed is present on both supported bootstrap hosts (Linux and Git Bash).
 # Word boundaries keep compiler-internal names such as AstExpr.Var and
 # AstPattern.Variant unchanged. A seed that already accepts the short

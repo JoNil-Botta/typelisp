@@ -2587,7 +2587,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-struct-get-nonstruct-source)
-        "typecheck: field projection requires struct")
+        "typecheck: field projection .x requires struct, got i64")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -10353,6 +10353,25 @@
     (take-handle (tuple-ref (tuple-ref p 0) 0))
     (take-handle (tuple-ref (tuple-ref p 0) 1))))")
 
+(define (compiler-typecheck-move-owner-tuple-ref-overwrite-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (bad-owner-tuple-ref-overwrite [p : (Tuple FileHandle i64)]) : unit
+  (set! (tuple-ref p 0) (FileHandle 2)))")
+
+(define (compiler-typecheck-move-owner-tuple-ref-reinit-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-tuple-ref-reinit [p : (Tuple FileHandle i64)]) : unit
+  (begin
+    (take-handle (tuple-ref p 0))
+    (set! (tuple-ref p 0) (FileHandle 2))))")
+
 (define (compiler-typecheck-move-owner-array-ref-other-element-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -11457,6 +11476,15 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-move-owner-tuple-ref-nested-sibling-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-owner-tuple-ref-overwrite-source)
+        "typecheck: cannot overwrite initialized cleanup-owning place; move or clean up the old value first")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-tuple-ref-reinit-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

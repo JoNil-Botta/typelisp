@@ -1638,6 +1638,18 @@
             (ast.ast-borrow-lifetime-to-id
               (ast.AstBorrowLifetime.Named borrow-lifetime-id))
             sum))]
+      [tuple-set : i64
+        (ast.ast-node-pool-context-expr-push
+          source-pools
+          (ast.AstExpr.StructSet
+            left
+            (ast.ast-tuple-set-field-id-from-index 3)
+            right))]
+      [body-items : (__tl_dyn-array i64) (make-array i64 2)]
+      [combined-body : i64
+        (ast.ast-node-pool-context-expr-push
+          source-pools
+          (ast.AstExpr.Begin (ast.AstExprList body-items 2)))]
       [macro-type-kinds : ast.AstMacroTypeKindList
         (ast.ast-macro-type-kind-list-with-length 3)]
       [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
@@ -1650,6 +1662,8 @@
       [module-slots : (__tl_dyn-array i64) (make-array i64 2)]
       [key-modules : (__tl_dyn-array String) (make-array String 1)]
       (begin
+        (set! (array-ref body-items 0) body)
+        (set! (array-ref body-items 1) tuple-set)
         (ast.ast-macro-type-kind-list-set!
           (&mut macro-type-kinds)
           0
@@ -1679,7 +1693,7 @@
             fn-id
             (ast.AstParamList view-param-slots 1)
             borrowed-slice
-            body
+            combined-body
             ast.AstFnMetadata.No))
         (set!
           (array-ref decl-slots 1)
@@ -1758,7 +1772,7 @@
                                   (=
                                     (ast.ast-node-pool-context-expr-len
                                       hydration.pools)
-                                    4)
+                                    6)
                                   (=
                                     (ast.ast-decl-list-len (& hydration.decls))
                                     2)
@@ -1802,28 +1816,37 @@
                                         (match (ast.ast-node-pool-context-expr-get
                                           hydration.pools
                                           hydrated-body)
-                                          [(ast.AstExpr.Borrow
-                                              mutable
-                                              lifetime-id
-                                              hydrated-sum)
-                                            (and
-                                              (not mutable)
-                                              (match (ast.ast-borrow-lifetime-from-id
-                                                lifetime-id)
-                                                [(ast.AstBorrowLifetime.Named
-                                                    name)
-                                                  (surface_identity.surface-identity-string-eq?
-                                                    (ci.intern-str name)
-                                                    "borrow-region")]
-                                                [_ false])
-                                              (match (ast.ast-node-pool-context-expr-get
-                                                hydration.pools
-                                                hydrated-sum)
-                                                [(ast.AstExpr.Binary op _ _)
-                                                  (match op
-                                                    [(ast.AstBinOp.Add) true]
-                                                    [_ false])]
-                                                [_ false]))]
+                                          [(ast.AstExpr.Begin hydrated-items)
+                                            (match (ast.ast-node-pool-context-expr-get
+                                              hydration.pools
+                                              (ast.ast-expr-list-get
+                                                hydrated-items
+                                                0
+                                                0))
+                                              [(ast.AstExpr.Borrow
+                                                  mutable
+                                                  lifetime-id
+                                                  hydrated-sum)
+                                                (and
+                                                  (not mutable)
+                                                  (match (ast.ast-borrow-lifetime-from-id
+                                                    lifetime-id)
+                                                    [(ast.AstBorrowLifetime.Named
+                                                        name)
+                                                      (surface_identity.surface-identity-string-eq?
+                                                        (ci.intern-str name)
+                                                        "borrow-region")]
+                                                    [_ false])
+                                                  (match (ast.ast-node-pool-context-expr-get
+                                                    hydration.pools
+                                                    hydrated-sum)
+                                                    [(ast.AstExpr.Binary op _ _)
+                                                      (match op
+                                                        [(ast.AstBinOp.Add)
+                                                          true]
+                                                        [_ false])]
+                                                    [_ false]))]
+                                              [_ false])]
                                           [_ false]))]
                                     [_ false])
                                   (match (array-ref hydration.decls.slots 1)
@@ -1886,6 +1909,23 @@
                                                     0))
                                                 "type-var"))]
                                           [_ false]))]
+                                    [_ false])
+                                  (match (ast.ast-node-pool-context-expr-get
+                                    hydration.pools
+                                    tuple-set)
+                                    [(ast.AstExpr.StructSet
+                                        hydrated-target
+                                        hydrated-field
+                                        hydrated-value)
+                                      (and
+                                        (= hydrated-target left)
+                                        (ast.ast-tuple-set-field-id?
+                                          hydrated-field)
+                                        (=
+                                          (ast.ast-tuple-set-index-from-field-id
+                                            hydrated-field)
+                                          3)
+                                        (= hydrated-value right))]
                                     [_ false]))]))])))])]))))))
 
 (cfg

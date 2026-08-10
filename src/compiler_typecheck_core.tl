@@ -3486,9 +3486,7 @@
     [origin-path-id : i64
       (string.>int (tc-located-error-field message origin-start origin-end))]
     [claim-origin : bool
-      (and
-        (>= origin-path-id 0)
-        (not inner-decoded.primary-origin-claimed))]
+      (and (>= origin-path-id 0) (not inner-decoded.primary-origin-claimed))]
     [origin-diag : cdiag.CompilerDiagnostic
       (if claim-origin
         (cdiag.compiler-diagnostic-with-path
@@ -3518,9 +3516,7 @@
       (or inner-decoded.primary-origin-claimed claim-origin))))
 
 (define (tc-macro-framed-error-diag [message : String]) : cdiag.CompilerDiagnostic
-  (__tl-project-field
-    (tc-macro-framed-error-decode message)
-    diagnostic))
+  (__tl-project-field (tc-macro-framed-error-decode message) diagnostic))
 
 (define (tc-ty-node-pool-exhausted-diagnostic) : cdiag.CompilerDiagnostic
   (tc-diag-at-start (ast.ty-node-pool-exhausted-message)))
@@ -52134,7 +52130,7 @@
     [(ast.AstType.Ref lifetime referent-ty)
       (match (tc-struct-get-result-type-id
         ctx
-        (ast.ty-node-get referent-ty)
+        (tc-context-type-get ctx referent-ty)
         field-id)
         [(ResultTcType.Ok field-ty)
           (ResultTcType.Ok (tc-tag-region lifetime field-ty))]
@@ -52142,7 +52138,7 @@
     [(ast.AstType.MutRef lifetime referent-ty)
       (match (tc-struct-get-result-type-id
         ctx
-        (ast.ty-node-get referent-ty)
+        (tc-context-type-get ctx referent-ty)
         field-id)
         [(ResultTcType.Ok field-ty)
           (ResultTcType.Ok (tc-tag-region lifetime field-ty))]
@@ -52177,8 +52173,22 @@
             "MatchArmList"
             (tc-macro-match-arm-type)
             field-id)]
-        [else (ResultTcType.Err "typecheck: field projection requires struct")])]
-    [_ (ResultTcType.Err "typecheck: field projection requires struct")]))
+        [else
+          (ResultTcType.Err
+            (str_cat.str-cat
+              "typecheck: field projection ."
+              (ci.intern-str field-id)
+              " requires struct, got "
+              (tc-type-render
+                (tc-type-strip-region (tc-resolve-type ctx receiver-ty)))))])]
+    [_
+      (ResultTcType.Err
+        (str_cat.str-cat
+          "typecheck: field projection ."
+          (ci.intern-str field-id)
+          " requires struct, got "
+          (tc-type-render
+            (tc-type-strip-region (tc-resolve-type ctx receiver-ty)))))]))
 
 (define (tc-borrow-place-var-by-value [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
   (match (tc-type-outer-region ty)
@@ -57636,7 +57646,13 @@
             (tc-project-from-region-container receiver-ty elem-ty))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstType.MutRef _ referent-ty)
-      (tc-tuple-set-element-type ctx (ast.ty-node-get referent-ty) index)]
+      (let
+        [referent : ast.AstType (tc-context-type-get ctx referent-ty)]
+        (match (tc-type-strip-region (tc-resolve-type ctx referent))
+          [(ast.AstType.Tuple _) (tc-tuple-set-element-type ctx referent index)]
+          [_
+            (ResultTcType.Err
+              "typecheck: set! tuple element mutable reference requires tuple")]))]
     [(ast.AstType.Ref _ _)
       (ResultTcType.Err
         "typecheck: set! tuple element requires mutable tuple access")]
@@ -70180,7 +70196,11 @@
                   expr-bases
                   env
                   moved1
-                  (ast.AstExpr.StructGet receiver-box field))
+                  (if (ast.ast-tuple-set-field-id? field)
+                    (ast.AstExpr.TupleRef
+                      receiver-box
+                      (ast.ast-tuple-set-index-from-field-id field))
+                    (ast.AstExpr.StructGet receiver-box field)))
                   [(ResultTcUnit.Ok)
                     (match (tc-move-check-expr
                       ctx
@@ -80046,7 +80066,7 @@
     [(TcMaybeAstSourceSpan.No) diag]))
 
 (define (macro-active-decl-path-id [ctx : TcContext]) : i64
-  (struct-get
+  (__tl-project-field
     (tc-macro-call-site-state-active-decl
       (tc-job-state-macro-call-sites (tc-context-job-state ctx)))
     path-id))
@@ -80098,9 +80118,7 @@
     [state : TcMacroCallSiteState
       (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
     [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
-    (match (tc_i64_i64_map.get
-      (& data.definition-paths)
-      macro-display-name-id)
+    (match (tc_i64_i64_map.get (& data.definition-paths) macro-display-name-id)
       [(tc_i64_i64_map.LookupFound path-id) path-id]
       [(tc_i64_i64_map.LookupMissing) (macro-active-decl-path-id ctx)])))
 
@@ -85155,16 +85173,31 @@
         [(ResultMacroSexpr.Ok sreceiver)
           (match (macro-child-to-spanned-sexpr value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
-              (ResultMacroSexpr.Ok
-                (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 157)
+              (let
+                [starget : reader.SpannedSexpr
+                  (if (ast.ast-tuple-set-field-id? field)
+                    (let
+                      [index : i64
+                        (ast.ast-tuple-set-index-from-field-id field)]
+                      (macro-form2-id
+                        (cbi.compiler-builtin-ctfe-ref 188)
+                        sreceiver
+                        (reader.SpannedSexpr.Int
+                          index
+                          (string.int->string index)
+                          span)
+                        span))
+                    (macro-form2-id
+                      (ci.intern "__tl_struct-get")
+                      sreceiver
+                      (macro-spanned-symbol-id field span)
+                      span))]
+                (ResultMacroSexpr.Ok
                   (macro-form2-id
-                    (ci.intern "__tl_struct-get")
-                    sreceiver
-                    (macro-spanned-symbol-id field span)
-                    span)
-                  svalue
-                  span))]
+                    (cbi.compiler-builtin-ctfe-ref 157)
+                    starget
+                    svalue
+                    span)))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Cast inner-id ty-id)
@@ -92157,9 +92190,7 @@
                     ctx
                     (tc-expr-diag
                       arg
-                      (macro-operand-mismatch-message
-                        resolved-expected
-                        actual))))))]
+                      (macro-operand-mismatch-message resolved-expected actual))))))]
           [(ResultTcType.Err message)
             (ResultMacroCheck.Err
               (box
@@ -92402,8 +92433,7 @@
   [clauses : ast.AstExprBindingClauseList]) : ast.AstExprBindingClauseList
   (let
     [out : ast.AstExprBindingClauseList
-      (ast.ast-expr-binding-clause-list-with-capacity
-        clauses.len)]
+      (ast.ast-expr-binding-clause-list-with-capacity clauses.len)]
     [index : i64 0]
     (begin
       (while (< index clauses.len)
@@ -92453,7 +92483,7 @@
           (begin
             (ast.ast-expr-list-push
               (&mut out)
-              (macro-captured-expr-node ctx pools arg-id arg))
+              (macro-captured-expr-node ctx pools arg-id arg true))
             (set! index (+ index 1)))))
       out)))
 
@@ -92477,12 +92507,18 @@
     [first-id : i64 clause.first]
     [second-id : i64 clause.second]
     (ast.AstExprClause
-      (macro-captured-expr-node ctx pools first-id (ast.ast-node-get first-id))
+      (macro-captured-expr-node
+        ctx
+        pools
+        first-id
+        (ast.ast-node-get first-id)
+        true)
       (macro-captured-expr-node
         ctx
         pools
         second-id
-        (ast.ast-node-get second-id)))))
+        (ast.ast-node-get second-id)
+        true))))
 
 (define (macro-caller-origin-expr-clause-list
   [ctx : TcContext]
@@ -92667,11 +92703,20 @@
 ;; code can inspect without evaluating. Keep its literal node in the active
 ;; CTFE pool instead of passing a transient macro-expansion proxy variable.
 ;; Other expressions retain their original node and hygiene unchanged.
+(define (macro-private-place-bridge-name? [macro-name : String]) : bool
+  (or
+    (string.eq macro-name "stdlib.core_macros/__tl-project-field")
+    (string.eq macro-name "stdlib.core_macros/__tl-project-set-field")
+    (string.eq macro-name "stdlib.core_macros/__tl-project-field-name")
+    (string.eq macro-name "stdlib.core_macros/__tl-project-set-field-name")
+    (string.eq macro-name "stdlib.core_macros/__tl-box-place")))
+
 (define (macro-captured-expr-node
   [ctx : TcContext]
   [pools : ast.AstNodePoolContext]
   [arg-id : i64]
-  [arg-expr : ast.AstExpr]) : i64
+  [arg-expr : ast.AstExpr]
+  [record-caller-origin : bool]) : i64
   (let
     [captured : i64
       (match arg-expr
@@ -92691,18 +92736,20 @@
             (ast.AstExpr.Literal (ast.AstLiteral.String string-id)))]
         [_ arg-id])]
     [path-id : i64 (macro-active-decl-path-id ctx)]
-    (match (tc-expr-maybe-span arg-expr)
-      [(TcMaybeAstSourceSpan.Some span)
-        (ast.ast-expr-spanned-with-pools
-          pools
-          (ast.ast-node-pool-context-expr-push
+    (if record-caller-origin
+      (match (tc-expr-maybe-span arg-expr)
+        [(TcMaybeAstSourceSpan.Some span)
+          (ast.ast-expr-spanned-with-pools
             pools
-            (ast.AstExpr.MacroExpansion
-              captured
-              (macro-expansion-provenance-id -1 path-id)
-              -1))
-          span)]
-      [(TcMaybeAstSourceSpan.No) captured])))
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.MacroExpansion
+                captured
+                (macro-expansion-provenance-id -1 path-id)
+                -1))
+            span)]
+        [(TcMaybeAstSourceSpan.No) captured])
+      captured)))
 
 (define (macro-env-extend-captured-param
   [env : ctfe_support.CtfeEnv]
@@ -92804,7 +92851,8 @@
                       ctx
                       (tc-context-pools ctx)
                       arg-id
-                      arg-expr)
+                      arg-expr
+                      (not (macro-private-place-bridge-name? macro-name)))
                     (macro-captured-expr-produced-type
                       ctx
                       type-env
@@ -95309,12 +95357,18 @@
     call-expr)
     [(ResultMacroExpr.Ok expanded)
       (ResultMacroExpr.Ok
-        (ast.ast-expr-macro-expansion
+        (if (macro-private-place-bridge-name? macro-name)
+          ;; These private one-epoch source bridges only materialize parser AST
+          ;; operations. Keeping their expansion transparent avoids treating an
+          ;; implementation spelling as a user-facing diagnostic frame and
+          ;; preserves nested place operands in the caller pool.
           expanded
-          (macro-expansion-provenance-id
-            (macro-active-decl-path-id ctx)
-            (macro-definition-path-id ctx (ci.intern macro-name)))
-          (ci.intern macro-name)))]
+          (ast.ast-expr-macro-expansion
+            expanded
+            (macro-expansion-provenance-id
+              (macro-active-decl-path-id ctx)
+              (macro-definition-path-id ctx (ci.intern macro-name)))
+            (ci.intern macro-name))))]
     [(ResultMacroExpr.Err diag)
       (ResultMacroExpr.Err
         (box

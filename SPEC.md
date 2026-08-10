@@ -3589,8 +3589,8 @@ move-only values and as copies for copyable values:
   by-value positions, but the compatibility transition is not yet uniform for
   every move-only type. Fixed-array literals follow the current-state matrix
   below.
-- Fixed-array element stores. Both `(set! (array-ref place index) value)` and
-  the transitional `array-set!` spelling follow the current-state matrix below.
+- Fixed-array element stores. `(set! (array-ref place index) value)` follows
+  the current-state matrix below.
 - `array-take!` fixed-array elements. `(array-take! items index)` transfers the
   old element value to its result and immediately writes `(init : T)` back to
   the same slot, so the source place remains fully initialized and is not
@@ -3631,7 +3631,7 @@ ownership model:
 | Ordinary `(array-ref items index)` value use | A `Copyable` element is copied. In a non-consuming compatibility context, a move-only element is also representation-copied and its slot remains initialized. This can create an owning-handle alias; it is transitional behavior, not an implicit deep `clone`. The separate rule for non-Copy global places still rejects a by-value read from a global array. |
 | Consuming `(array-ref items literal-index)` use | A consuming context, including a `(:consume)` parameter or a type in the closed transition set, moves the exact literal-index path. Reusing that element is rejected, while disjoint literal elements remain usable. A later literal-index store reinitializes that exact path after its receiver, index, and value have been checked. |
 | Consuming `(array-ref items computed-index)` use | Rejected because the checker cannot identify one exact moved path. Consuming a compatibility dynamic-array element is likewise rejected. Use the checked fixed-array `array-take!` operation when immediate `init` replacement is suitable. |
-| `(set! (array-ref items index) value)` / `array-set!` | Non-`Copyable` elements are accepted, but the current store compatibility-copies its right-hand-side representation instead of consuming it. This includes cleanup-owning values, so the source can remain usable and alias the stored owner. Literal-index stores still update exact-path reinitialization facts. |
+| `(set! (array-ref items index) value)` | Non-`Copyable` elements are accepted, but the current store compatibility-copies its right-hand-side representation instead of consuming it. This includes cleanup-owning values, so the source can remain usable and alias the stored owner. Literal-index stores still update exact-path reinitialization facts. |
 
 The target semantics are intentionally stricter. #6215 makes structural
 `Copyable`/`MoveOnly` classification apply uniformly and removes compatibility
@@ -4106,7 +4106,7 @@ guards.
   safe-indirection writes use `(set! (tuple-ref place index) value)`,
   `(set! (array-ref place index) value)`, and
   `(set! (deref place) value)` respectively. The legacy explicit struct and
-  array write forms remain transitional parser aliases during migration.
+  array write forms are removed and produce focused migration diagnostics.
 - Aggregate mutation through place forms follows the receiver's ownership
   mode: array-element, tuple-element, and field assignment require an owned
   place or a mutable reference receiver; immutable references are rejected.

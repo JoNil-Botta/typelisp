@@ -535,11 +535,22 @@
           (codec.surface-ast-write-i64! out target)
           (codec.surface-ast-write-name! out context field))]
       [(ast.AstExpr.StructSet target field value)
-        (begin
-          (codec.surface-ast-write-i64! out 35)
-          (codec.surface-ast-write-i64! out target)
-          (codec.surface-ast-write-name! out context field)
-          (codec.surface-ast-write-i64! out value))]
+        (if (ast.ast-tuple-set-field-id? field)
+          (begin
+            ;; Append-only surface tag for the private tuple-place encoding.
+            ;; Tag 35 remains the portable struct-field form and therefore
+            ;; continues to carry a relocatable identity instead of a raw ID.
+            (codec.surface-ast-write-i64! out 83)
+            (codec.surface-ast-write-i64! out target)
+            (codec.surface-ast-write-i64!
+              out
+              (ast.ast-tuple-set-index-from-field-id field))
+            (codec.surface-ast-write-i64! out value))
+          (begin
+            (codec.surface-ast-write-i64! out 35)
+            (codec.surface-ast-write-i64! out target)
+            (codec.surface-ast-write-name! out context field)
+            (codec.surface-ast-write-i64! out value)))]
       [(ast.AstExpr.WithRegion region body)
         (begin
           (codec.surface-ast-write-i64! out 36)
@@ -1040,6 +1051,12 @@
             (surface-ast-read-optional-name! reader)
             (surface-ast-read-optional-name! reader))
           (surface-ast-read-optional-name! reader))]
+      [(= tag 83)
+        (ast.AstExpr.StructSet
+          (codec.surface-ast-read-i64! reader)
+          (ast.ast-tuple-set-field-id-from-index
+            (codec.surface-ast-read-i64! reader))
+          (codec.surface-ast-read-i64! reader))]
       [else
         (begin
           (codec.surface-ast-reader-fail!

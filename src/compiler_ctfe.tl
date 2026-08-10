@@ -2374,7 +2374,10 @@
   [expr : ast.AstExpr]
   [fuel : i64]) : ResultCtfe
   (match lit
-    [(ast.AstLiteral.Int n _) (ResultCtfe.Ok (CompilerCtfeValue.I64 n) fuel)]
+    [(ast.AstLiteral.Int n text)
+      (ResultCtfe.Ok
+        (CompilerCtfeValue.I64 (ast.ast-int-literal-value-or-payload n text))
+        fuel)]
     [(ast.AstLiteral.Bool b) (ResultCtfe.Ok (CompilerCtfeValue.Bool b) fuel)]
     [(ast.AstLiteral.Char c) (ResultCtfe.Ok (CompilerCtfeValue.Char c) fuel)]
     [(ast.AstLiteral.Unit) (ResultCtfe.Ok (CompilerCtfeValue.Unit) fuel)]
@@ -5324,7 +5327,7 @@
         [(ResultCtfeStringArg.Ok text _ arg-fuel)
           (ResultCtfe.Ok (CompilerCtfeValue.I64 (string.>int text)) arg-fuel)]))
     (ResultCtfe.Err
-      (box (ctfe-diagnostic-at-expr expr "string->int expects one string")))))
+      (box (ctfe-diagnostic-at-expr expr "string.>int expects one string")))))
 
 (define (ctfe-eval-int-to-string-call
   [args : ast.AstExprList]
@@ -5414,8 +5417,7 @@
 (define (ctfe-string-to-int-helper-name-id? [name : String] [name-id : i64]) : bool
   (or
     (ctfe-builtin-string-to-int-id? name-id)
-    (ctfe-stdlib-string-helper-name? name ">int")
-    (ctfe-stdlib-string-helper-name? name "string->int")))
+    (ctfe-stdlib-string-helper-name? name ">int")))
 
 ;; Names recognized as comptime helper/accessor calls. `expr-list-length` and
 ;; `expr-list-nth` (and their clause/binding-clause variants) are handled by the
@@ -9863,9 +9865,10 @@
   [lit : ast.AstLiteral]
   [value : CompilerCtfeValue]) : bool
   (match lit
-    [(ast.AstLiteral.Int n _)
+    [(ast.AstLiteral.Int n text)
       (match value
-        [(CompilerCtfeValue.I64 actual) (= actual n)]
+        [(CompilerCtfeValue.I64 actual)
+          (= actual (ast.ast-int-literal-value-or-payload n text))]
         [_ false])]
     [(ast.AstLiteral.Bool b)
       (match value
@@ -9939,11 +9942,13 @@
               (ctfe-value-list1 (CompilerCtfeValue.Bool b))
               env)
             (CtfePatternMatch.No))]
-        [(ast.AstLiteral.Int n _)
+        [(ast.AstLiteral.Int n text)
           (if (ctfe-pattern-variant-name? variant "Int")
             (ctfe-match-pattern-list
               args
-              (ctfe-value-list1 (CompilerCtfeValue.I64 n))
+              (ctfe-value-list1
+                (CompilerCtfeValue.I64
+                  (ast.ast-int-literal-value-or-payload n text)))
               env)
             (CtfePatternMatch.No))]
         [_ (CtfePatternMatch.No)])]
@@ -10579,12 +10584,12 @@
               [len-expr : ast.AstExpr
                 (ctfe-ast-get env (ast.ast-expr-list-get (& args) 1 0))]
               (match (ctfe-expr-unspan env len-expr)
-                [(ast.AstExpr.Literal (ast.AstLiteral.Int count _))
+                [(ast.AstExpr.Literal (ast.AstLiteral.Int count text))
                   (ResultCtfeQuoteType.Ok
                     (ast.ast-ty-array-with-pools
                       (ctfe-env-pools env)
                       elem-ty
-                      count)
+                      (ast.ast-int-literal-value-or-payload count text))
                     elem-fuel)]
                 [_ (ctfe-type-expr-error origin)])))]
         [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)]))
@@ -12593,9 +12598,12 @@
 ;; EQ -------------------------------------------------------------------------
 (define (ctfe-literal-eq [a : ast.AstLiteral] [b : ast.AstLiteral]) : bool
   (match a
-    [(ast.AstLiteral.Int a-n _)
+    [(ast.AstLiteral.Int a-n a-text)
       (match b
-        [(ast.AstLiteral.Int b-n _) (= a-n b-n)]
+        [(ast.AstLiteral.Int b-n b-text)
+          (=
+            (ast.ast-int-literal-value-or-payload a-n a-text)
+            (ast.ast-int-literal-value-or-payload b-n b-text))]
         [_ false])]
     [(ast.AstLiteral.Bool a-b)
       (match b

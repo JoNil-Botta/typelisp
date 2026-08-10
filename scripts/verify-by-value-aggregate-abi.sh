@@ -70,6 +70,58 @@ assert_count_eq() {
     fi
 }
 
+# Require one correlated 24-byte shallow copy. Counting an offset-16 load by
+# itself is not stable: an unrelated stack home can legitimately land at
+# 16(%rsp). Tie the vector and final-word instructions to the same source and
+# destination bases instead.
+assert_copy24_sequence_once() {
+    _file=$1
+    _label=$2
+    _got=$(awk '
+        function bare_reg(text) {
+            gsub(/[,()]/, "", text)
+            return text
+        }
+        function offset_base(text) {
+            text = bare_reg(text)
+            sub(/^16/, "", text)
+            return text
+        }
+        $1 == "movups" && $2 ~ /^\(%r[a-z0-9]+\),$/ && $3 ~ /^%xmm[0-9]+$/ {
+            source = bare_reg($2)
+            vector = $3
+            state = 1
+            next
+        }
+        state == 1 && $1 == "movups" && $2 ~ /^%xmm[0-9]+,$/ && $3 ~ /^\(%r[a-z0-9]+\)$/ {
+            if (bare_reg($2) == vector) {
+                destination = bare_reg($3)
+                state = 2
+                next
+            }
+            state = 0
+        }
+        state == 2 && $1 == "movq" && $2 ~ /^16\(%r[a-z0-9]+\),$/ && $3 ~ /^%r[a-z0-9]+$/ {
+            if (offset_base($2) == source) {
+                word = $3
+                state = 3
+                next
+            }
+            state = 0
+        }
+        state == 3 && $1 == "movq" && $2 ~ /^%r[a-z0-9]+,$/ && $3 ~ /^16\(%r[a-z0-9]+\)$/ {
+            if (bare_reg($2) == word && offset_base($3) == destination) {
+                copies++
+            }
+            state = 0
+        }
+        END { print copies + 0 }
+    ' "$_file")
+    if [ "$_got" -ne 1 ]; then
+        fail "$_label expected one correlated 24-byte copy, got $_got"
+    fi
+}
+
 compile_target() {
     _target=$1
     _suffix=$2
@@ -221,8 +273,7 @@ check_memory_array() {
     # and its final word are ABI invariants.
     assert_count_eq "$_body" '^[[:space:]]+movups[[:space:]]+\([^)]*\),[[:space:]]*%xmm[0-9]+$' 1 "$_name 16-byte load"
     assert_count_eq "$_body" '^[[:space:]]+movups[[:space:]]+%xmm[0-9]+,[[:space:]]*\([^)]*\)$' 1 "$_name 16-byte store"
-    assert_count_eq "$_body" '^[[:space:]]+movq[[:space:]]+16\(%r[a-z0-9]+\),[[:space:]]*%r[a-z0-9]+$' 1 "$_name offset-16 load"
-    assert_count_eq "$_body" '^[[:space:]]+movq[[:space:]]+%r[a-z0-9]+,[[:space:]]*16\(%r[a-z0-9]+\)$' 1 "$_name offset-16 store"
+    assert_copy24_sequence_once "$_body" "$_name copy shape"
     assert_matches "$_body" '^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rax$' "$_name return-pointer"
     assert_not_matches "$_body" '^[[:space:]]+call[[:space:]].*(clone|memcpy)' "$_name no clone/memcpy helper"
 }

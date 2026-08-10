@@ -6,7 +6,7 @@
 ;; `token.tl`/`calc.tl`), but the surface TypeLisp source is actually written in
 ;; - balanced parentheses, integer/float/char/string literals, and *symbols*. In an s-expression
 ;; language an operator like `+`, a comparison like `<=`, a keyword like
-;; `define`, and a name like `string->int` are ALL one token kind: a symbol. So
+;; `define`, and a name like `value->text` are ALL one token kind: a symbol. So
 ;; the kinds collapse to parens / int / float / symbol / end-of-stream, and the lexer's
 ;; job is to slice each symbol/int/float lexeme out of the source rather than to
 ;; recognise a fixed operator alphabet.

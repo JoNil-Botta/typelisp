@@ -90,7 +90,7 @@
       "patterns": [
         {
           "name": "keyword.operator.arrow.typelisp",
-          "comment": "Function-type arrow, only in head position so it never matches inside names like string->int.",
+          "comment": "Function-type arrow, only in head position so it never matches inside names like value->text.",
           "match": "(?<=\\()->(?=[\\s)])"
         },
         {

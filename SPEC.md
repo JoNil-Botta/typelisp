@@ -2522,7 +2522,7 @@ and owned `String` results for allocation sites.
 
 | Category | Members | Ownership contract |
 |----------|---------|--------------------|
-| Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
+| Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string.>int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
 | Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Text-to-binary I/O conversion is explicit. |
 | Active-arena owned string results | `arg`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
@@ -5991,7 +5991,7 @@ imported:
 | `string-length` | `String → i64` / `(& r str) → i64` | String byte length |
 | `string-ref` / `char-at` | `(& r str) i64 → char` | Read byte from string (bounds checked) |
 | `string-eq` / `string=?` | `(& l str) (& r str) → bool` | Byte-wise string comparison |
-| `string->int` | `(& r str) → i64` | Decimal parse; legacy decimal parser rules |
+| `string.>int` | `(& r str) → i64` | Decimal parse; legacy decimal parser rules |
 
 These helpers lower through private compiler-owned intrinsics
 (`__tl_string_length`, `__tl_string_ref`, `__tl_string_eq`,
@@ -6647,7 +6647,7 @@ from escaping.
 
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
-| Non-allocating inspection | `length`/`array-length`; `stdlib.string` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, and string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
+| Non-allocating inspection | `length`/`array-length`; `stdlib.string` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string.>int`, and string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
 | Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib.string` `string-replace` when no match is found; `stdlib.io` `read-file-or` when the path is missing | Returns the caller-provided aggregate unchanged. Reference-typed signatures express the caller-owned result; without lifetime information in the signature, the conservative arena-tagging rule above applies inside a scoped arena. |
 | Mutates caller-provided storage | `array-set!`, `byte-buf-set!`/`bytes-set!` mutation helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |

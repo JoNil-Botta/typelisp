@@ -181,7 +181,7 @@ Inline stdlib coverage:
 - `string.tl` owns inline tests for the borrowed `str` gate, scoped arena
   string allocation policy, public equality/parsing predicates, trimming
   helpers, replacement paths, prefix checks, borrowed/owned substring helpers,
-  and legacy `string->int` / `int->string` edge cases.
+  and canonical `string.>int` / `int->string` edge cases.
 - `str_cat.tl` owns inline tests for empty, single, two-operand, many-operand,
   variable-operand, nested `str-cat` expansion, and generated helper hygiene.
   `tests/inline/str_cat_hashmap_declaration_ordering.tl` keeps the declaration-

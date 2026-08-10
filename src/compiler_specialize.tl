@@ -1,4 +1,5 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.array)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
@@ -589,13 +590,11 @@
     [with-declaration : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-note
         diag
-        (string.append
-          "generated declaration: "
-          (string.append item (string.append " from " generator))))]
+        (str_cat.str-cat "generated declaration: " item " from " generator))]
     (if (> (string.string-length key) 0)
       (cdiag.compiler-diagnostic-with-note
         with-declaration
-        (string.append "generated identity: " key))
+        (str_cat.str-cat "generated identity: " key))
       with-declaration)))
 
 (define (spec-param-comptime? [param : ast.AstParam]) : bool
@@ -894,7 +893,7 @@
 
 (define (spec-int-key [n : i64]) : String
   (if (< n 0)
-    (string.append "m" (string.int->string (- 0 n)))
+    (str_cat.str-cat "m" (string.int->string (- 0 n)))
     (string.int->string n)))
 
 ;; Build the "_<code>" tail into `buf` without re-copying the accumulated
@@ -931,11 +930,12 @@
   [index : i64]) : String
   (if (>= index (ast.ast-type-list-len types))
     "nil"
-    (string.append
+    (str_cat.str-cat
       (spec-type-key
         (ast.ty-node-get
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (string.append "_" (spec-type-list-key-at types (+ index 1))))))
+      "_"
+      (spec-type-list-key-at types (+ index 1)))))
 
 (define (spec-type-list-key [types : ast.AstTypeList]) : String
   (spec-type-list-key-at (& types) 0))
@@ -945,10 +945,11 @@
   [index : i64]) : String
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     "nil"
-    (string.append
+    (str_cat.str-cat
       (spec_ci.intern-str
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
-      (string.append "_" (spec-lifetime-list-key-at lifetimes (+ index 1))))))
+      "_"
+      (spec-lifetime-list-key-at lifetimes (+ index 1)))))
 
 (define (spec-lifetime-list-key [lifetimes : ast.AstLifetimeList]) : String
   (spec-lifetime-list-key-at (& lifetimes) 0))
@@ -975,78 +976,72 @@
     [(ast.AstType.Expr) "Expr"]
     [(ast.AstType.ExprList) "ExprList"]
     [(ast.AstType.Func args ret)
-      (string.append
+      (str_cat.str-cat
         "fn_"
-        (string.append
-          (spec-type-list-key (__tl-box-place args))
-          (string.append "_to_" (spec-type-key (ast.ty-node-get ret)))))]
+        (spec-type-list-key (__tl-box-place args))
+        "_to_"
+        (spec-type-key (ast.ty-node-get ret)))]
     [(ast.AstType.Tuple elems)
-      (string.append "tuple_" (spec-type-list-key (__tl-box-place elems)))]
+      (str_cat.str-cat "tuple_" (spec-type-list-key (__tl-box-place elems)))]
     [(ast.AstType.Array elem count)
-      (string.append
+      (str_cat.str-cat
         "array_"
-        (string.append
-          (spec-type-key (ast.ty-node-get elem))
-          (string.append "_" (spec-int-key count))))]
+        (spec-type-key (ast.ty-node-get elem))
+        "_"
+        (spec-int-key count))]
     [(ast.AstType.DynArray elem)
-      (string.append "dynarray_" (spec-type-key (ast.ty-node-get elem)))]
+      (str_cat.str-cat "dynarray_" (spec-type-key (ast.ty-node-get elem)))]
     [(ast.AstType.Slice elem)
-      (string.append "slice_" (spec-type-key (ast.ty-node-get elem)))]
+      (str_cat.str-cat "slice_" (spec-type-key (ast.ty-node-get elem)))]
     [(ast.AstType.Box elem)
-      (string.append "box_" (spec-type-key (ast.ty-node-get elem)))]
+      (str_cat.str-cat "box_" (spec-type-key (ast.ty-node-get elem)))]
     [(ast.AstType.Ptr elem)
-      (string.append "ptr_" (spec-type-key (ast.ty-node-get elem)))]
+      (str_cat.str-cat "ptr_" (spec-type-key (ast.ty-node-get elem)))]
     [(ast.AstType.MutPtr elem)
-      (string.append "mutptr_" (spec-type-key (ast.ty-node-get elem)))]
+      (str_cat.str-cat "mutptr_" (spec-type-key (ast.ty-node-get elem)))]
     [(ast.AstType.Ref region inner)
-      (string.append
+      (str_cat.str-cat
         "ref_"
-        (string.append
-          (spec_ci.intern-str region)
-          (string.append "_" (spec-type-key (ast.ty-node-get inner)))))]
+        (spec_ci.intern-str region)
+        "_"
+        (spec-type-key (ast.ty-node-get inner)))]
     [(ast.AstType.MutRef region inner)
-      (string.append
+      (str_cat.str-cat
         "mutref_"
-        (string.append
-          (spec_ci.intern-str region)
-          (string.append "_" (spec-type-key (ast.ty-node-get inner)))))]
+        (spec_ci.intern-str region)
+        "_"
+        (spec-type-key (ast.ty-node-get inner)))]
     [(ast.AstType.Region region inner)
-      (string.append
+      (str_cat.str-cat
         "region_"
-        (string.append
-          (spec_ci.intern-str region)
-          (string.append "_" (spec-type-key (ast.ty-node-get inner)))))]
+        (spec_ci.intern-str region)
+        "_"
+        (spec-type-key (ast.ty-node-get inner)))]
     [(ast.AstType.Enum name)
-      (string.append "enum_" (ast.ast-nominal-name-id-display name))]
+      (str_cat.str-cat "enum_" (ast.ast-nominal-name-id-display name))]
     [(ast.AstType.EnumArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "enumargs_"
-        (string.append
-          (ast.ast-nominal-name-id-display name)
-          (string.append
-            "_"
-            (spec-lifetime-list-key (__tl-box-place lifetimes)))))]
+        (ast.ast-nominal-name-id-display name)
+        "_"
+        (spec-lifetime-list-key (__tl-box-place lifetimes)))]
     [(ast.AstType.Struct name)
-      (string.append "struct_" (ast.ast-nominal-name-id-display name))]
+      (str_cat.str-cat "struct_" (ast.ast-nominal-name-id-display name))]
     [(ast.AstType.StructArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "structargs_"
-        (string.append
-          (ast.ast-nominal-name-id-display name)
-          (string.append
-            "_"
-            (spec-lifetime-list-key (__tl-box-place lifetimes)))))]
-    [(ast.AstType.Var name) (string.append "var_" (spec_ci.intern-str name))]
+        (ast.ast-nominal-name-id-display name)
+        "_"
+        (spec-lifetime-list-key (__tl-box-place lifetimes)))]
+    [(ast.AstType.Var name) (str_cat.str-cat "var_" (spec_ci.intern-str name))]
     [(ast.AstType.VarArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "varargs_"
-        (string.append
-          (spec_ci.intern-str name)
-          (string.append
-            "_"
-            (spec-lifetime-list-key (__tl-box-place lifetimes)))))]
+        (spec_ci.intern-str name)
+        "_"
+        (spec-lifetime-list-key (__tl-box-place lifetimes)))]
     [(ast.AstType.Consume inner)
-      (string.append "consume_" (spec-type-key (ast.ty-node-get inner)))]))
+      (str_cat.str-cat "consume_" (spec-type-key (ast.ty-node-get inner)))]))
 
 (define (spec-type-list-key-at-with-owner
   [owner : SpecOwnerContext]
@@ -1054,15 +1049,14 @@
   [index : i64]) : String
   (if (>= index (ast.ast-type-list-len types))
     "nil"
-    (string.append
+    (str_cat.str-cat
       (spec-type-key-with-owner
         owner
         (spec-owner-type-get
           owner
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (string.append
-        "_"
-        (spec-type-list-key-at-with-owner owner types (+ index 1))))))
+      "_"
+      (spec-type-list-key-at-with-owner owner types (+ index 1)))))
 
 (define (spec-type-list-key-with-owner
   [owner : SpecOwnerContext]
@@ -1075,13 +1069,12 @@
   [index : i64]) : String
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     "nil"
-    (string.append
+    (str_cat.str-cat
       (spec_ci.intern-compat-state-str
         (spec-owner-intern-state owner)
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
-      (string.append
-        "_"
-        (spec-lifetime-list-key-at-with-owner owner lifetimes (+ index 1))))))
+      "_"
+      (spec-lifetime-list-key-at-with-owner owner lifetimes (+ index 1)))))
 
 (define (spec-lifetime-list-key-with-owner
   [owner : SpecOwnerContext]
@@ -1110,131 +1103,111 @@
     [(ast.AstType.Expr) "Expr"]
     [(ast.AstType.ExprList) "ExprList"]
     [(ast.AstType.Func args ret)
-      (string.append
+      (str_cat.str-cat
         "fn_"
-        (string.append
-          (spec-type-list-key-with-owner owner (__tl-box-place args))
-          (string.append
-            "_to_"
-            (spec-type-key-with-owner owner (spec-owner-type-get owner ret)))))]
+        (spec-type-list-key-with-owner owner (__tl-box-place args))
+        "_to_"
+        (spec-type-key-with-owner owner (spec-owner-type-get owner ret)))]
     [(ast.AstType.Tuple elems)
-      (string.append
+      (str_cat.str-cat
         "tuple_"
         (spec-type-list-key-with-owner owner (__tl-box-place elems)))]
     [(ast.AstType.Array elem count)
-      (string.append
+      (str_cat.str-cat
         "array_"
-        (string.append
-          (spec-type-key-with-owner owner (spec-owner-type-get owner elem))
-          (string.append "_" (spec-int-key count))))]
+        (spec-type-key-with-owner owner (spec-owner-type-get owner elem))
+        "_"
+        (spec-int-key count))]
     [(ast.AstType.DynArray elem)
-      (string.append
+      (str_cat.str-cat
         "dynarray_"
         (spec-type-key-with-owner owner (spec-owner-type-get owner elem)))]
     [(ast.AstType.Slice elem)
-      (string.append
+      (str_cat.str-cat
         "slice_"
         (spec-type-key-with-owner owner (spec-owner-type-get owner elem)))]
     [(ast.AstType.Box elem)
-      (string.append
+      (str_cat.str-cat
         "box_"
         (spec-type-key-with-owner owner (spec-owner-type-get owner elem)))]
     [(ast.AstType.Ptr elem)
-      (string.append
+      (str_cat.str-cat
         "ptr_"
         (spec-type-key-with-owner owner (spec-owner-type-get owner elem)))]
     [(ast.AstType.MutPtr elem)
-      (string.append
+      (str_cat.str-cat
         "mutptr_"
         (spec-type-key-with-owner owner (spec-owner-type-get owner elem)))]
     [(ast.AstType.Ref region inner)
-      (string.append
+      (str_cat.str-cat
         "ref_"
-        (string.append
-          (spec_ci.intern-compat-state-str
-            (spec-owner-intern-state owner)
-            region)
-          (string.append
-            "_"
-            (spec-type-key-with-owner owner (spec-owner-type-get owner inner)))))]
+        (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) region)
+        "_"
+        (spec-type-key-with-owner owner (spec-owner-type-get owner inner)))]
     [(ast.AstType.MutRef region inner)
-      (string.append
+      (str_cat.str-cat
         "mutref_"
-        (string.append
-          (spec_ci.intern-compat-state-str
-            (spec-owner-intern-state owner)
-            region)
-          (string.append
-            "_"
-            (spec-type-key-with-owner owner (spec-owner-type-get owner inner)))))]
+        (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) region)
+        "_"
+        (spec-type-key-with-owner owner (spec-owner-type-get owner inner)))]
     [(ast.AstType.Region region inner)
-      (string.append
+      (str_cat.str-cat
         "region_"
-        (string.append
-          (spec_ci.intern-compat-state-str
-            (spec-owner-intern-state owner)
-            region)
-          (string.append
-            "_"
-            (spec-type-key-with-owner owner (spec-owner-type-get owner inner)))))]
+        (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) region)
+        "_"
+        (spec-type-key-with-owner owner (spec-owner-type-get owner inner)))]
     [(ast.AstType.Enum name)
-      (string.append
+      (str_cat.str-cat
         "enum_"
         (ast.ast-nominal-name-id-display-with-intern-state
           (spec-owner-intern-state owner)
           name))]
     [(ast.AstType.EnumArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "enumargs_"
-        (string.append
-          (ast.ast-nominal-name-id-display-with-intern-state
-            (spec-owner-intern-state owner)
-            name)
-          (string.append
-            "_"
-            (spec-lifetime-list-key-with-owner owner (__tl-box-place lifetimes)))))]
+        (ast.ast-nominal-name-id-display-with-intern-state
+          (spec-owner-intern-state owner)
+          name)
+        "_"
+        (spec-lifetime-list-key-with-owner owner (__tl-box-place lifetimes)))]
     [(ast.AstType.Struct name)
-      (string.append
+      (str_cat.str-cat
         "struct_"
         (ast.ast-nominal-name-id-display-with-intern-state
           (spec-owner-intern-state owner)
           name))]
     [(ast.AstType.StructArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "structargs_"
-        (string.append
-          (ast.ast-nominal-name-id-display-with-intern-state
-            (spec-owner-intern-state owner)
-            name)
-          (string.append
-            "_"
-            (spec-lifetime-list-key-with-owner owner (__tl-box-place lifetimes)))))]
+        (ast.ast-nominal-name-id-display-with-intern-state
+          (spec-owner-intern-state owner)
+          name)
+        "_"
+        (spec-lifetime-list-key-with-owner owner (__tl-box-place lifetimes)))]
     [(ast.AstType.Var name)
-      (string.append
+      (str_cat.str-cat
         "var_"
         (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) name))]
     [(ast.AstType.VarArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "varargs_"
-        (string.append
-          (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) name)
-          (string.append
-            "_"
-            (spec-lifetime-list-key-with-owner owner (__tl-box-place lifetimes)))))]
+        (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) name)
+        "_"
+        (spec-lifetime-list-key-with-owner owner (__tl-box-place lifetimes)))]
     [(ast.AstType.Consume inner)
-      (string.append
+      (str_cat.str-cat
         "consume_"
         (spec-type-key-with-owner owner (spec-owner-type-get owner inner)))]))
 
 (define (spec-value-key [value : ctfe.CompilerCtfeValue]) : String
   (match value
-    [(ctfe.CompilerCtfeValue.I64 n) (string.append "i64_" (spec-int-key n))]
+    [(ctfe.CompilerCtfeValue.I64 n) (str_cat.str-cat "i64_" (spec-int-key n))]
     [(ctfe.CompilerCtfeValue.F64 n)
-      (string.append
+      (str_cat.str-cat
         "f64_"
         (spec-string-key (cfloat.compiler-float-format-f64 n)))]
     [(ctfe.CompilerCtfeValue.F32 n)
-      (string.append
+      (str_cat.str-cat
         "f32_"
         (spec-string-key
           (cfloat.compiler-float-format-f64
@@ -1244,12 +1217,12 @@
         "bool_1"
         "bool_0")]
     [(ctfe.CompilerCtfeValue.Char c)
-      (string.append "char_" (string.int->string (cast c : i64)))]
+      (str_cat.str-cat "char_" (string.int->string (cast c : i64)))]
     [(ctfe.CompilerCtfeValue.String text _) (spec-string-key text)]
     [(ctfe.CompilerCtfeValue.Name text _) (spec-string-key text)]
     [(ctfe.CompilerCtfeValue.Unit) "unit"]
     [(ctfe.CompilerCtfeValue.Type ty)
-      (string.append "type_" (spec-type-key ty))]
+      (str_cat.str-cat "type_" (spec-type-key ty))]
     [(ctfe.CompilerCtfeValue.Expr _ _) "Expr"]
     [(ctfe.CompilerCtfeValue.CapturedExpr _ _ _) "Expr"]
     [(ctfe.CompilerCtfeValue.ExprList _) "expr-list"]
@@ -1268,9 +1241,9 @@
     [(ctfe.CompilerCtfeValue.LetBinding _) "let-binding"]
     [(ctfe.CompilerCtfeValue.LetBindingList _) "let-binding-list"]
     [(ctfe.CompilerCtfeValue.TypeInfo ty)
-      (string.append "typeinfo_" (spec-type-key ty))]
+      (str_cat.str-cat "typeinfo_" (spec-type-key ty))]
     [(ctfe.CompilerCtfeValue.TypeInfoBox ty)
-      (string.append "typeinfo-box_" (spec-type-key ty))]
+      (str_cat.str-cat "typeinfo-box_" (spec-type-key ty))]
     [(ctfe.CompilerCtfeValue.TypeInfoList _) "typeinfo-list"]
     [(ctfe.CompilerCtfeValue.TypeField _ _) "type-field"]
     [(ctfe.CompilerCtfeValue.TypeFieldList _) "type-field-list"]
@@ -1286,29 +1259,28 @@
 (define (spec-values-key-at [values : SpecValueList] [at : i64]) : String
   (if (>= at values.len)
     "none"
-    (string.append
+    (str_cat.str-cat
       (spec-value-key (array.ref values.slots at))
-      (string.append "_" (spec-values-key-at values (+ at 1))))))
+      "_"
+      (spec-values-key-at values (+ at 1)))))
 
 (define (spec-specialization-key [name : String] [values : SpecValueList]) : String
-  (string.append name (string.append ":" (spec-values-key values))))
+  (str_cat.str-cat name ":" (spec-values-key values)))
 
 (define (spec-specialized-name [name : String] [values : SpecValueList]) : String
-  (string.append
-    "__tl_specialized_"
-    (string.append name (string.append "_" (spec-values-key values)))))
+  (str_cat.str-cat "__tl_specialized_" name "_" (spec-values-key values)))
 
 (define (spec-value-key-with-owner
   [owner : SpecOwnerContext]
   [value : ctfe.CompilerCtfeValue]) : String
   (match value
-    [(ctfe.CompilerCtfeValue.I64 n) (string.append "i64_" (spec-int-key n))]
+    [(ctfe.CompilerCtfeValue.I64 n) (str_cat.str-cat "i64_" (spec-int-key n))]
     [(ctfe.CompilerCtfeValue.F64 n)
-      (string.append
+      (str_cat.str-cat
         "f64_"
         (spec-string-key (cfloat.compiler-float-format-f64 n)))]
     [(ctfe.CompilerCtfeValue.F32 n)
-      (string.append
+      (str_cat.str-cat
         "f32_"
         (spec-string-key
           (cfloat.compiler-float-format-f64
@@ -1318,12 +1290,12 @@
         "bool_1"
         "bool_0")]
     [(ctfe.CompilerCtfeValue.Char c)
-      (string.append "char_" (string.int->string (cast c : i64)))]
+      (str_cat.str-cat "char_" (string.int->string (cast c : i64)))]
     [(ctfe.CompilerCtfeValue.String text _) (spec-string-key text)]
     [(ctfe.CompilerCtfeValue.Name text _) (spec-string-key text)]
     [(ctfe.CompilerCtfeValue.Unit) "unit"]
     [(ctfe.CompilerCtfeValue.Type ty)
-      (string.append "type_" (spec-type-key-with-owner owner ty))]
+      (str_cat.str-cat "type_" (spec-type-key-with-owner owner ty))]
     [(ctfe.CompilerCtfeValue.Expr _ _) "Expr"]
     [(ctfe.CompilerCtfeValue.CapturedExpr _ _ _) "Expr"]
     [(ctfe.CompilerCtfeValue.ExprList _) "expr-list"]
@@ -1342,9 +1314,9 @@
     [(ctfe.CompilerCtfeValue.LetBinding _) "let-binding"]
     [(ctfe.CompilerCtfeValue.LetBindingList _) "let-binding-list"]
     [(ctfe.CompilerCtfeValue.TypeInfo ty)
-      (string.append "typeinfo_" (spec-type-key-with-owner owner ty))]
+      (str_cat.str-cat "typeinfo_" (spec-type-key-with-owner owner ty))]
     [(ctfe.CompilerCtfeValue.TypeInfoBox ty)
-      (string.append "typeinfo-box_" (spec-type-key-with-owner owner ty))]
+      (str_cat.str-cat "typeinfo-box_" (spec-type-key-with-owner owner ty))]
     [(ctfe.CompilerCtfeValue.TypeInfoList _) "typeinfo-list"]
     [(ctfe.CompilerCtfeValue.TypeField _ _) "type-field"]
     [(ctfe.CompilerCtfeValue.TypeFieldList _) "type-field-list"]
@@ -1360,9 +1332,10 @@
   [at : i64]) : String
   (if (>= at values.len)
     "none"
-    (string.append
+    (str_cat.str-cat
       (spec-value-key-with-owner owner (array.ref values.slots at))
-      (string.append "_" (spec-values-key-with-owner-at owner values (+ at 1))))))
+      "_"
+      (spec-values-key-with-owner-at owner values (+ at 1)))))
 
 (define (spec-values-key-with-owner
   [owner : SpecOwnerContext]
@@ -1373,11 +1346,11 @@
   [owner : SpecOwnerContext]
   [name : String]
   [values : SpecValueList]) : String
-  (string.append
+  (str_cat.str-cat
     "__tl_specialized_"
-    (string.append
-      name
-      (string.append "_" (spec-values-key-with-owner owner values)))))
+    name
+    "_"
+    (spec-values-key-with-owner owner values)))
 
 ;; Structural specialization records use only the pair/triple record kinds
 ;; supplied by compiler_intern. A negative tag in the left lane gives every
@@ -3073,9 +3046,7 @@
                 head-fuel)
                 [(ResultGenKey.Ok tail tail-fuel)
                   (ResultGenKey.Ok
-                    (string.append
-                      (spec-string-key text)
-                      (string.append "_" tail))
+                    (str_cat.str-cat (spec-string-key text) "_" tail)
                     tail-fuel)]
                 [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
             [(ctfe.CompilerCtfeValue.Name text _)
@@ -3087,9 +3058,7 @@
                 head-fuel)
                 [(ResultGenKey.Ok tail tail-fuel)
                   (ResultGenKey.Ok
-                    (string.append
-                      (spec-string-key text)
-                      (string.append "_" tail))
+                    (str_cat.str-cat (spec-string-key text) "_" tail)
                     tail-fuel)]
                 [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
             [_
@@ -3105,17 +3074,15 @@
   [generator : String]
   [item : String]
   [arg-key : String]) : String
-  (string.append
+  (str_cat.str-cat
     "generated:"
-    (string.append
-      (spec-string-key module)
-      (string.append
-        ":"
-        (string.append
-          (spec-string-key generator)
-          (string.append
-            ":"
-            (string.append (spec-string-key item) (string.append ":" arg-key))))))))
+    (spec-string-key module)
+    ":"
+    (spec-string-key generator)
+    ":"
+    (spec-string-key item)
+    ":"
+    arg-key))
 
 (define (gen-key-prefix? [key : String] [prefix : String]) : bool
   (let
@@ -3147,11 +3114,12 @@
     (cdiag.compiler-diagnostic-with-note
       (cdiag.compiler-diagnostic-at-start
         ""
-        (string.append
+        (str_cat.str-cat
           "generated-decl: duplicate generated key for "
-          (string.append item " has incompatible payload")))
-      (string.append "conflicting generated item: " item))
-    (string.append "generated identity: " key)))
+          item
+          " has incompatible payload"))
+      (str_cat.str-cat "conflicting generated item: " item))
+    (str_cat.str-cat "generated identity: " key)))
 
 (define (gen-register-generated-decl-with-owner
   [owner : SpecOwnerContext]
@@ -3206,9 +3174,10 @@
                     owner
                     template
                     args
-                    (string.append
+                    (str_cat.str-cat
                       "generated-decl: duplicate generated key for "
-                      (string.append item " has incompatible payload")))
+                      item
+                      " has incompatible payload"))
                   generator
                   item
                   key)))))])))
@@ -3264,11 +3233,11 @@
                   owner
                   (gen-decl-runtime-template decl)
                   args
-                  (string.append
+                  (str_cat.str-cat
                     "generated-decl: metadata item "
-                    (string.append
-                      item
-                      (string.append " does not match payload " actual-name))))
+                    item
+                    " does not match payload "
+                    actual-name))
                 generator
                 item
                 meta-key)))
@@ -4359,11 +4328,10 @@
         (box
           (spec-diagnostic-at-expr
             origin
-            (string.append
+            (str_cat.str-cat
               "cannot substitute compile-time type value "
-              (string.append
-                (spec-type-key-with-owner owner ty)
-                " into runtime expression")))))]
+              (spec-type-key-with-owner owner ty)
+              " into runtime expression"))))]
     [(ctfe.CompilerCtfeValue.Expr _ _)
       (ResultSpecSubExpr.Err
         (box
@@ -4740,17 +4708,14 @@
                           (box
                             (spec-diagnostic-at-expr
                               arg
-                              (string.append
+                              (str_cat.str-cat
                                 "comptime argument '"
-                                (string.append
-                                  (spec_ci.intern-compat-state-str
-                                    (spec-state-intern state)
-                                    param-name)
-                                  (string.append
-                                    "' for function '"
-                                    (string.append
-                                      fn-name
-                                      "' must be a type value such as `(type i64)`")))))))])
+                                (spec_ci.intern-compat-state-str
+                                  (spec-state-intern state)
+                                  param-name)
+                                "' for function '"
+                                fn-name
+                                "' must be a type value such as `(type i64)`"))))])
                     (if (spec-value-runtime-type-matches? state value param-ty)
                       (match (spec-rewrite-specialized-args-at
                         params
@@ -4769,25 +4734,19 @@
                         (box
                           (spec-diagnostic-at-expr
                             arg
-                            (string.append
+                            (str_cat.str-cat
                               "comptime argument '"
-                              (string.append
-                                (spec_ci.intern-compat-state-str
-                                  (spec-state-intern state)
-                                  param-name)
-                                (string.append
-                                  "' for function '"
-                                  (string.append
-                                    fn-name
-                                    (string.append
-                                      "' has type "
-                                      (string.append
-                                        (spec-value-type-label value)
-                                        (string.append
-                                          ", expected "
-                                          (spec-type-key-with-owner
-                                            (spec-state-owner state)
-                                            param-ty)))))))))))))]
+                              (spec_ci.intern-compat-state-str
+                                (spec-state-intern state)
+                                param-name)
+                              "' for function '"
+                              fn-name
+                              "' has type "
+                              (spec-value-type-label value)
+                              ", expected "
+                              (spec-type-key-with-owner
+                                (spec-state-owner state)
+                                param-ty)))))))]
                 [(ctfe.ResultCtfe.Err diag) (ResultSpecArgs.Err diag)])
               (match (spec-rewrite-expr arg templates state)
                 [(ResultSpecExpr.Ok rewritten-arg arg-state)
@@ -6537,13 +6496,12 @@
               (box
                 (spec-diagnostic-at-expr
                   expr
-                  (string.append
+                  (str_cat.str-cat
                     "cannot assign to comptime parameter '"
-                    (string.append
-                      (spec_ci.intern-compat-state-str
-                        (spec-owner-intern-state owner)
-                        name)
-                      "'")))))]
+                    (spec_ci.intern-compat-state-str
+                      (spec-owner-intern-state owner)
+                      name)
+                    "'"))))]
           [(SpecMaybeId.None)
             (match (spec-substitute-values-expr-with-owner owner value subs)
               [(ResultSpecSubExpr.Ok rewritten)
@@ -6942,13 +6900,12 @@
               (box
                 (spec-diagnostic-at-expr
                   expr
-                  (string.append
+                  (str_cat.str-cat
                     "cannot take address of comptime value parameter '"
-                    (string.append
-                      (spec_ci.intern-compat-state-str
-                        (spec-owner-intern-state owner)
-                        name-id)
-                      "'")))))]
+                    (spec_ci.intern-compat-state-str
+                      (spec-owner-intern-state owner)
+                      name-id)
+                    "'"))))]
           [(SpecMaybeId.None)
             (match (spec-substitute-values-expr-with-owner owner place subs)
               [(ResultSpecSubExpr.Ok rewritten)
@@ -7382,13 +7339,12 @@
             (box
               (spec-diagnostic-at-expr
                 expr
-                (string.append
+                (str_cat.str-cat
                   "type-valued comptime parameter '"
-                  (string.append
-                    (spec_ci.intern-compat-state-str
-                      (spec-owner-intern-state owner)
-                      name)
-                    "' cannot be used as a runtime value")))))]
+                  (spec_ci.intern-compat-state-str
+                    (spec-owner-intern-state owner)
+                    name)
+                  "' cannot be used as a runtime value"))))]
         [(SpecMaybeId.None)
           (ResultSpecSubExpr.Ok (spec-owner-expr-push owner expr))])]
     [(ast.AstExpr.Literal _)
@@ -7957,13 +7913,12 @@
               (box
                 (spec-diagnostic-at-expr
                   expr
-                  (string.append
+                  (str_cat.str-cat
                     "type-valued comptime parameter '"
-                    (string.append
-                      (spec_ci.intern-compat-state-str
-                        (spec-owner-intern-state owner)
-                        name)
-                      "' cannot be assigned")))))]
+                    (spec_ci.intern-compat-state-str
+                      (spec-owner-intern-state owner)
+                      name)
+                    "' cannot be assigned"))))]
           [(SpecMaybeId.None)
             (match (spec-substitute-types-expr-with-owner owner value subs)
               [(ResultSpecSubExpr.Ok rewritten)
@@ -9599,7 +9554,7 @@
     ""
     "sample-family"
     "Box_String"
-    (string.append (spec-string-key "String") "_none")))
+    (str_cat.str-cat (spec-string-key "String") "_none")))
 
 (define (compiler-generated-decl-mark!
   [program : ast.AstProgram]
@@ -9743,7 +9698,7 @@
               (= (cdiag.compiler-diagnostic-note-list-count notes) 2)
               (string.eq
                 (cdiag.compiler-diagnostic-note-list-get notes 0)
-                (string.append
+                (str_cat.str-cat
                   "generated identity: "
                   (compiler-generated-decl-expected-string-key)))
               (string.eq

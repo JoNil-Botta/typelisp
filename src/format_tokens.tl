@@ -3,6 +3,7 @@
 ;; This lexer is separate from lex.tl because a formatter must keep source
 ;; spelling and comments. Whitespace is skipped; comments are retained
 ;; as trivia tokens so later layout rules can place them deliberately.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.result)
@@ -500,14 +501,10 @@
           (fmt-source-error-at
             src
             start
-            (string.append
+            (str_cat.str-cat
               (string.substring "format lexer: malformed integer literal" 0 24)
-              (string.append
-                "number"
-                (string.substring
-                  "format lexer: malformed integer literal"
-                  31
-                  8)))))
+              "number"
+              (string.substring "format lexer: malformed integer literal" 31 8))))
         (result_fmt_i64.Ok end)))))
 
 (define (fmt-scan-symbol-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64

@@ -1,4 +1,5 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.fs)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -358,11 +359,10 @@
       "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"shutdown\"}"]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
-      (string.append
+      (str_cat.str-cat
         (lsp-transcript-frame initialize)
-        (string.append
-          (lsp-transcript-frame shutdown)
-          (lsp-transcript-frame exit)))]
+        (lsp-transcript-frame shutdown)
+        (lsp-transcript-frame exit))]
     [ordered : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [out : String ordered.stdout]
     [first-id : String "\"id\":41"]
@@ -372,7 +372,7 @@
     [next-initialize : String
       "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"initialize\",\"params\":{}}"]
     [next-input : String
-      (string.append
+      (str_cat.str-cat
         (lsp-transcript-frame next-initialize)
         (lsp-transcript-frame exit))]
     [next : lsp_frame_core.LspTranscriptResult (lsp-transcript-run next-input)]
@@ -422,11 +422,10 @@
   (let
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
-      (string.append
+      (str_cat.str-cat
         (lsp-transcript-frame (lsp-transcript-did-open uri text))
-        (string.append
-          (lsp-transcript-frame (lsp-transcript-check uri id))
-          (lsp-transcript-frame exit)))]
+        (lsp-transcript-frame (lsp-transcript-check uri id))
+        (lsp-transcript-frame exit))]
     (lsp-transcript-run input)))
 
 (define (lsp-transcript-reset-leakage-smoke-ok?) : bool
@@ -441,7 +440,7 @@
       (lsp-transcript-check-session uri invalid-source 72)]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [missing-input : String
-      (string.append
+      (str_cat.str-cat
         (lsp-transcript-frame (lsp-transcript-check uri 73))
         (lsp-transcript-frame exit))]
     [missing : lsp_frame_core.LspTranscriptResult
@@ -520,12 +519,11 @@
       (lsp-smoke-write-text dep-b-path "(define broken-b : i64 \"bad\")")
       (let
         [input : String
-          (string.append
+          (str_cat.str-cat
             (lsp-transcript-frame (lsp-transcript-did-open root-uri source))
-            (string.append
-              (lsp-transcript-frame
-                (lsp-transcript-did-change root-uri valid-source 2))
-              (lsp-transcript-frame exit)))]
+            (lsp-transcript-frame
+              (lsp-transcript-did-change root-uri valid-source 2))
+            (lsp-transcript-frame exit))]
         [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
         [out : String result.stdout]
         [message-a : String
@@ -1315,13 +1313,11 @@
     [source : String "(define (fun) : i64\\n  1)\\n"]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
-      (string.append
+      (str_cat.str-cat
         (lsp-transcript-frame (lsp-transcript-did-open uri source))
-        (string.append
-          (lsp-transcript-frame (lsp-transcript-folding-range uri 81))
-          (string.append
-            (lsp-transcript-frame (lsp-transcript-folding-range missing-uri 82))
-            (lsp-transcript-frame exit))))]
+        (lsp-transcript-frame (lsp-transcript-folding-range uri 81))
+        (lsp-transcript-frame (lsp-transcript-folding-range missing-uri 82))
+        (lsp-transcript-frame exit))]
     [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [found : String
       "\"id\":81,\"result\":[{\"startLine\":0,\"startCharacter\":1,\"endLine\":1,\"endCharacter\":3}]"]
@@ -1342,17 +1338,17 @@
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [default-result : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run
-        (string.append
+        (str_cat.str-cat
           (lsp-transcript-frame missing)
           (lsp-transcript-frame exit)))]
     [utf8-result : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run
-        (string.append
+        (str_cat.str-cat
           (lsp-transcript-frame offered)
           (lsp-transcript-frame exit)))]
     [fallback-result : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run
-        (string.append
+        (str_cat.str-cat
           (lsp-transcript-frame unsupported)
           (lsp-transcript-frame exit)))]
     [utf16 : String "\"positionEncoding\":\"utf-16\""]
@@ -1693,18 +1689,15 @@
       "(define (render-value [value : i64]) : i64\\n  value)\\n\\n(define (main) : i64\\n  (render-vaule 42))"]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
-      (string.append
+      (str_cat.str-cat
         (lsp-transcript-frame (lsp-transcript-did-open uri source))
-        (string.append
-          (lsp-transcript-frame
-            (lsp-transcript-code-action uri 91 1 4 0 "quickfix"))
-          (string.append
-            (lsp-transcript-frame
-              (lsp-transcript-code-action uri 92 0 4 0 "quickfix"))
-            (string.append
-              (lsp-transcript-frame
-                (lsp-transcript-code-action uri 93 1 4 0 "refactor"))
-              (lsp-transcript-frame exit)))))]
+        (lsp-transcript-frame
+          (lsp-transcript-code-action uri 91 1 4 0 "quickfix"))
+        (lsp-transcript-frame
+          (lsp-transcript-code-action uri 92 0 4 0 "quickfix"))
+        (lsp-transcript-frame
+          (lsp-transcript-code-action uri 93 1 4 0 "refactor"))
+        (lsp-transcript-frame exit))]
     [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [action : String
       "\"id\":91,\"result\":[{\"title\":\"Replace misspelled name\",\"kind\":\"quickfix\""]
@@ -1733,12 +1726,11 @@
       "(define (render-value [value : i64]) : i64\\n  value)\\n\\n(define (first) : i64\\n  (render-vaule 1))\\n\\n(define (second) : i64\\n  (render-vlaue 2))\\n\\n(define (main) : i64 0)"]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
-      (string.append
+      (str_cat.str-cat
         (lsp-transcript-frame (lsp-transcript-did-open uri source))
-        (string.append
-          (lsp-transcript-frame
-            (lsp-transcript-code-action uri 94 1 7 1 "quickfix"))
-          (lsp-transcript-frame exit)))]
+        (lsp-transcript-frame
+          (lsp-transcript-code-action uri 94 1 7 1 "quickfix"))
+        (lsp-transcript-frame exit))]
     [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [out : String result.stdout]
     [action : String

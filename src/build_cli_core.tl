@@ -1774,7 +1774,7 @@
   "target/typelisp/cache/packages/v1")
 
 (define (build-package-cache-manifest-path [entry-path : (& entry-path str)]) : String
-  (string.append entry-path "/typelisp.pkg"))
+  (str_cat.str-cat-scoped entry-path "/typelisp.pkg"))
 
 (define (build-ensure-package-cache-root
   [manifest-dir : String]
@@ -4518,7 +4518,7 @@
         (begin
           (set!
             out
-            (string.append
+            (str_cat.str-cat
               out
               (build-package-transcript-field
                 "arg"
@@ -4635,7 +4635,8 @@
                 (begin
                   (set! ok false)
                   (set! error message))]
-              [(ResultBuildString.Ok text) (set! out (string.append out text))])
+              [(ResultBuildString.Ok text)
+                (set! out (str_cat.str-cat out text))])
             (set! index (+ index 1)))))
       (if ok
         (ResultBuildString.Ok out)
@@ -4659,7 +4660,7 @@
           [(backend.CompilerBackendTarget.Linux)
             (str_cat.str-cat "lib" library ".a")]
           [(backend.CompilerBackendTarget.Windows)
-            (string.append library ".lib")]))]
+            (str_cat.str-cat library ".lib")]))]
     [second : String
       (build-package-link-library-candidate
         dir
@@ -4674,7 +4675,7 @@
           [(ResultBuildString.Err message) (ResultBuildString.Err message)]
           [(ResultBuildString.Ok first-text)
             (if (= (string.string-length second) 0)
-              (ResultBuildString.Ok (string.append direct-text first-text))
+              (ResultBuildString.Ok (str_cat.str-cat direct-text first-text))
               (match (build-package-link-path-transcript second)
                 [(ResultBuildString.Err message)
                   (ResultBuildString.Err message)]
@@ -4712,7 +4713,7 @@
                     (set! ok false)
                     (set! error message))]
                 [(ResultBuildString.Ok text)
-                  (set! out (string.append out text))])
+                  (set! out (str_cat.str-cat out text))])
               (while (and ok (< dir-index dir-count))
                 (begin
                   (match (build-package-link-library-file-transcript
@@ -4724,7 +4725,7 @@
                         (set! ok false)
                         (set! error message))]
                     [(ResultBuildString.Ok text)
-                      (set! out (string.append out text))])
+                      (set! out (str_cat.str-cat out text))])
                   (set! dir-index (+ dir-index 1)))))
             (set! library-index (+ library-index 1)))))
       (if ok
@@ -4740,7 +4741,7 @@
       (match (build-package-link-library-files-transcript target inputs)
         [(ResultBuildString.Err message) (ResultBuildString.Err message)]
         [(ResultBuildString.Ok library-text)
-          (ResultBuildString.Ok (string.append raw-text library-text))])]))
+          (ResultBuildString.Ok (str_cat.str-cat raw-text library-text))])]))
 
 (define (build-package-assembler-command-for
   [target : backend.CompilerBackendTarget]
@@ -4880,7 +4881,7 @@
             [(ResultBuildString.Err message) (ResultBuildString.Err message)]
             [(ResultBuildString.Ok assembler-text)
               (build-package-runtime-input-transcript-after-assembler
-                (string.append base assembler-text)
+                (str_cat.str-cat base assembler-text)
                 kind
                 target
                 obj-path
@@ -5044,7 +5045,7 @@
   (begin
     (fs.try-remove-file-if-exists (& path))
     (let
-      [backup : String (string.append path ".previous")]
+      [backup : String (str_cat.str-cat path ".previous")]
       (fs.try-remove-file-if-exists (& backup)))
     unit))
 
@@ -5076,7 +5077,7 @@
         (BuildPackageCommitFile
           final-path
           staged-path
-          (string.append staged-path ".previous")
+          (str_cat.str-cat staged-path ".previous")
           false))
       (BuildPackageCommitPlan files (+ index 1)))))
 

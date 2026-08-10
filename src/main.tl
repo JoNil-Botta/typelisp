@@ -17,6 +17,7 @@
 ;; (`compiler_check_core` ->
 ;; `compiler_typecheck`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
+(import stdlib.str_cat_runtime as str_cat)
 (cfg
   compile-startup-profile
   (import compiler_startup_profile as startup_profile))
@@ -59,7 +60,7 @@
   (string.eq left right))
 
 (define (cli-cat [left : (& left str)] [right : (& right str)]) : String
-  (string.append left right))
+  (str_cat.str-cat-scoped left right))
 
 ;; Keeps the shipped stage0 help surface stable while individual commands route
 ;; through selfhost entry points. The unified selfhost CLI presents the same

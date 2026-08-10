@@ -1,4 +1,5 @@
 ;; format_rules_doc_compat.tl - Doc-algebra parity checks for formatter rules.
+(import stdlib.str_cat_runtime as str_cat)
 (import format_tokens as tokens)
 (import format_cst as cst)
 (import format_rules as rules)
@@ -466,7 +467,7 @@
       (let
         [name : String (rules.format-rules-node-symbol-name key)]
         (if (> (string-length name) 0)
-          (format-rules-inline-form-doc (string.append ":" name) tail)
+          (format-rules-inline-form-doc (str_cat.str-cat ":" name) tail)
           (format-rules-delimited-doc "(" items ")")))]
     [_ (format-rules-delimited-doc "(" items ")")]))
 

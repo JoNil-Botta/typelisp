@@ -11,6 +11,7 @@
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -203,7 +204,7 @@
   [has-current : bool]
   [line : String]) : String
   (if has-current
-    (string.append current (string.append "\n" line))
+    (str_cat.str-cat current "\n" line)
     line))
 
 (define (doc-comment-body

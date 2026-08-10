@@ -5,6 +5,7 @@
 ;; src/types.rs closely enough for the Sexpr -> real-AST parser to target them.
 ;; Parser result/error wrappers, typechecker registries, inferred types, and
 ;; lowered IR metadata live elsewhere.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
 (import stdlib.array)
@@ -64,22 +65,16 @@
         (ci.intern-composite-rendered-name-record!
           name-id
           (if (ci.intern-composite-triple-id? name-id)
-            (string.append
+            (str_cat.str-cat
               (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
-              (string.append
-                "/"
-                (string.append
-                  (ci.intern-str
-                    (ci.intern-composite-middle-id-unchecked name-id))
-                  (string.append
-                    "."
-                    (ci.intern-str
-                      (ci.intern-composite-right-id-unchecked name-id))))))
-            (string.append
+              "/"
+              (ci.intern-str (ci.intern-composite-middle-id-unchecked name-id))
+              "."
+              (ci.intern-str (ci.intern-composite-right-id-unchecked name-id)))
+            (str_cat.str-cat
               (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
-              (string.append
-                "/"
-                (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))))))
+              "/"
+              (ci.intern-str (ci.intern-composite-right-id-unchecked name-id)))))))
     (if (ci.intern-renderable-id? name-id)
       (ci.intern-str name-id)
       "<structural-nominal>")))
@@ -103,40 +98,36 @@
           state
           name-id
           (if (ci.intern-compat-state-composite-triple-id? state name-id)
-            (string.append
+            (str_cat.str-cat
               (ci.intern-compat-state-str
                 state
                 (ci.intern-compat-state-composite-left-id-unchecked
                   state
                   name-id))
-              (string.append
-                "/"
-                (string.append
-                  (ci.intern-compat-state-str
-                    state
-                    (ci.intern-compat-state-composite-middle-id-unchecked
-                      state
-                      name-id))
-                  (string.append
-                    "."
-                    (ci.intern-compat-state-str
-                      state
-                      (ci.intern-compat-state-composite-right-id-unchecked
-                        state
-                        name-id))))))
-            (string.append
+              "/"
+              (ci.intern-compat-state-str
+                state
+                (ci.intern-compat-state-composite-middle-id-unchecked
+                  state
+                  name-id))
+              "."
+              (ci.intern-compat-state-str
+                state
+                (ci.intern-compat-state-composite-right-id-unchecked
+                  state
+                  name-id)))
+            (str_cat.str-cat
               (ci.intern-compat-state-str
                 state
                 (ci.intern-compat-state-composite-left-id-unchecked
                   state
                   name-id))
-              (string.append
-                "/"
-                (ci.intern-compat-state-str
+              "/"
+              (ci.intern-compat-state-str
+                state
+                (ci.intern-compat-state-composite-right-id-unchecked
                   state
-                  (ci.intern-compat-state-composite-right-id-unchecked
-                    state
-                    name-id))))))))
+                  name-id)))))))
     (if (ci.intern-renderable-id? name-id)
       (ci.intern-compat-state-str state name-id)
       "<structural-nominal>")))

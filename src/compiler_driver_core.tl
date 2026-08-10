@@ -1104,7 +1104,7 @@
 (cfg
   compile-profile
   (define (compiler-driver-profile-field [value : i64]) : String
-    (string.append "|" (string.int->string value))))
+    (str_cat.str-cat "|" (string.int->string value))))
 
 (cfg
   compile-profile
@@ -1114,17 +1114,14 @@
     [alloc-delta : i64]
     [live-delta : i64]
     [peak-delta : i64]) : String
-    (string.append
+    (str_cat.str-cat
       "compile-profile|"
-      (string.append
-        phase
-        (string.append
-          (compiler-driver-profile-field elapsed-ms)
-          (string.append
-            (compiler-driver-profile-field alloc-delta)
-            (string.append
-              (compiler-driver-profile-field live-delta)
-              (string.append (compiler-driver-profile-field peak-delta) "\n"))))))))
+      phase
+      (compiler-driver-profile-field elapsed-ms)
+      (compiler-driver-profile-field alloc-delta)
+      (compiler-driver-profile-field live-delta)
+      (compiler-driver-profile-field peak-delta)
+      "\n")))
 
 (cfg
   compile-profile
@@ -1137,27 +1134,18 @@
     [peak-delta : i64]
     [live-bytes : i64]
     [baseline-delta : i64]) : String
-    (string.append
+    (str_cat.str-cat
       "\ncompile-batch-profile|"
-      (string.append
-        (string.int->string ordinal)
-        (string.append
-          "|"
-          (string.append
-            marker
-            (string.append
-              (compiler-driver-profile-field elapsed-ms)
-              (string.append
-                (compiler-driver-profile-field alloc-delta)
-                (string.append
-                  (compiler-driver-profile-field live-delta)
-                  (string.append
-                    (compiler-driver-profile-field peak-delta)
-                    (string.append
-                      (compiler-driver-profile-field live-bytes)
-                      (string.append
-                        (compiler-driver-profile-field baseline-delta)
-                        "\n"))))))))))))
+      (string.int->string ordinal)
+      "|"
+      marker
+      (compiler-driver-profile-field elapsed-ms)
+      (compiler-driver-profile-field alloc-delta)
+      (compiler-driver-profile-field live-delta)
+      (compiler-driver-profile-field peak-delta)
+      (compiler-driver-profile-field live-bytes)
+      (compiler-driver-profile-field baseline-delta)
+      "\n")))
 
 (cfg
   compile-profile
@@ -1367,123 +1355,102 @@
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.slice|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern-slice
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-slice-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern-slice
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-slice-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.generated|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern-generated
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-generated-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern-generated
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-generated-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.render|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern-render
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-render-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern-render
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-render-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.lookup|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern-lookup
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-lookup-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern-lookup
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-lookup-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.pool|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern-pool-len
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-pool-len-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern-pool-len
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-pool-len-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.invalid_str_ids|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string (ci.intern-profile-invalid-str-value))
-                    "\n"))))))))))
+              phase
+              "|"
+              (string.int->string (ci.intern-profile-invalid-str-value))
+              "\n")))))))
 
 (cfg
   compile-profile
@@ -1530,38 +1497,36 @@
       unit
       (begin
         (io.print-error
-          (string.append
+          (str_cat.str-cat
             "compile-profile-detail|prelude.source_pipeline_entries|"
-            (string.append
-              (string.int->string
-                compiler-driver-profile-prelude-source-pipeline-entries)
-              "\n")))
+            (string.int->string
+              compiler-driver-profile-prelude-source-pipeline-entries)
+            "\n"))
         (io.print-error
-          (string.append
+          (str_cat.str-cat
             "compile-profile-detail|prelude.hydrations|"
-            (string.append
-              (string.int->string compiler-driver-profile-prelude-hydrations)
-              "\n")))))))
+            (string.int->string compiler-driver-profile-prelude-hydrations)
+            "\n"))))))
 
 (cfg
   compile-profile
   (define (compiler-driver-profile-intern-line [name : String] [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|intern."
-        (string.append
-          name
-          (string.append (compiler-driver-profile-field value) "|0|0|0\n"))))))
+        name
+        (compiler-driver-profile-field value)
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
   (define (compiler-driver-profile-ctfe-env-line [name : String] [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|ctfe_env."
-        (string.append
-          name
-          (string.append (compiler-driver-profile-field value) "|0|0|0\n"))))))
+        name
+        (compiler-driver-profile-field value)
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
@@ -4231,9 +4196,7 @@
       (compiler_load.ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
-  (string.append
-    name
-    (string.append " " (string.append (string.int->string value) "\n"))))
+  (str_cat.str-cat name " " (string.int->string value) "\n"))
 
 (define (compiler-driver-ir-summary-render
   [summary : compiler_ir_types.CompilerIrSummary]) : String
@@ -4242,7 +4205,7 @@
     (begin
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "globals"
@@ -4250,7 +4213,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "functions"
@@ -4258,7 +4221,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "externs"
@@ -4266,7 +4229,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "blocks"
@@ -4274,7 +4237,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "instructions"
@@ -4282,7 +4245,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "vars"
@@ -4290,7 +4253,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "empty-blocks"
@@ -4298,7 +4261,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "max-instructions-function"
@@ -4307,7 +4270,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "max-instructions-block"
@@ -4316,7 +4279,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "call-arg-entries"
@@ -4324,13 +4287,13 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "phi-input-entries"
             (compiler_ir_types.compiler-ir-summary-phi-input-entries summary))
           ""))
-      (string.concat3
+      (str_cat.str-cat
         out
         (compiler-driver-ir-summary-line
           "score"
@@ -4456,7 +4419,7 @@
         (box
           (compiler_diagnostic.compiler-diagnostic-at-start
             ""
-            (string.append "IR verification failed: " verify-error))))
+            (str_cat.str-cat "IR verification failed: " verify-error))))
       (let
         [text : String
           (if (> (string.string-length dump-pass) 0)
@@ -4609,8 +4572,7 @@
         (cfg
           compile-profile
           (compiler-driver-profile-finish-total _profile-state))
-        (io.print-string
-          (string.append "Wrote " (string.append output-path "\n")))
+        (io.print-string (str_cat.str-cat "Wrote " output-path "\n"))
         0)]
     [(ResultCompilerDriver.Err diag)
       (begin
@@ -4644,8 +4606,7 @@
             (compiler-driver-profile-finish-total _profile-state))
           (if (= status 0)
             (begin
-              (io.print-string
-                (string.append "Wrote " (string.append output-path "\n")))
+              (io.print-string (str_cat.str-cat "Wrote " output-path "\n"))
               0)
             status)))]
     [(ResultCompilerDriverBuffer.Err diag)
@@ -4659,7 +4620,7 @@
         1)]))
 
 (define (compiler-driver-pic-fixups-path [output-path : String]) : String
-  (string.append output-path ".fixups"))
+  (str_cat.str-cat output-path ".fixups"))
 
 (define (compiler-driver-write-pic-result
   [_profile-state : profile_state.CompilerProfileState]
@@ -4685,10 +4646,8 @@
           (cfg
             compile-profile
             (compiler-driver-profile-finish-total _profile-state))
-          (io.print-string
-            (string.append "Wrote " (string.append output-path "\n")))
-          (io.print-string
-            (string.append "Wrote " (string.append fixups-path "\n")))
+          (io.print-string (str_cat.str-cat "Wrote " output-path "\n"))
+          (io.print-string (str_cat.str-cat "Wrote " fixups-path "\n"))
           0))]
     [(ResultCompilerDriverPic.Err diag)
       (begin

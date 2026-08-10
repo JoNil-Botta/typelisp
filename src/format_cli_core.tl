@@ -3,6 +3,7 @@
 ;; The formatter CLI logic, factored out of `format.tl` so both the retained
 ;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
 ;; can run the `fmt` command without duplicating a `main`.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -31,9 +32,7 @@
   false)
 
 (define (fmt-write-error-message [path : String] [error : io.IoError]) : String
-  (string.append
-    "fmt: failed to write "
-    (string.append path (string.append ": " (io.error-message error)))))
+  (str_cat.str-cat "fmt: failed to write " path ": " (io.error-message error)))
 
 (define (fmt-try-write-formatted-file [path : String] [formatted : String]) : ResultFmtWrite
   (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& formatted)))
@@ -46,7 +45,7 @@
     [(ResultFmtWrite.Ok) 0]
     [(ResultFmtWrite.Err message)
       (begin
-        (io.print-error (string.append message "\n"))
+        (io.print-error (str_cat.str-cat message "\n"))
         1)]))
 
 (define (fmt-source-error-message
@@ -54,17 +53,14 @@
   [err : tokens.FormatSourceError]) : String
   (let
     [span : tokens.FormatSourceSpan (tokens.format-source-error-span err)]
-    (string.append
+    (str_cat.str-cat
       path
-      (string.append
-        ":"
-        (string.append
-          (string.int->string (tokens.format-source-span-start-line span))
-          (string.append
-            ":"
-            (string.append
-              (string.int->string (tokens.format-source-span-start-col span))
-              (string.append ": " (tokens.format-source-error-message err)))))))))
+      ":"
+      (string.int->string (tokens.format-source-span-start-line span))
+      ":"
+      (string.int->string (tokens.format-source-span-start-col span))
+      ": "
+      (tokens.format-source-error-message err))))
 
 (test
   fmt-write-failure-diagnostic-includes-path-and-reason
@@ -189,7 +185,7 @@
                         manifest-path
                         has-manifest))]
                   [(target_cfg.ResultCompilerTargetCfg.Err message)
-                    (ResultFmtConfig.Err (string.append "fmt: " message))]))]
+                    (ResultFmtConfig.Err (str_cat.str-cat "fmt: " message))]))]
             [_
               ;; Formatting is CST-based and intentionally retains every cfg
               ;; branch; these options are accepted for source-tool CLI parity.
@@ -223,7 +219,8 @@
                     (io.arg (+ idx 1))
                     true)))]
             [(fmt-flag? current)
-              (ResultFmtConfig.Err (string.append "fmt: unknown flag " current))]
+              (ResultFmtConfig.Err
+                (str_cat.str-cat "fmt: unknown flag " current))]
             [else
               (begin
                 (fmt_svec.push (&mut paths) current)
@@ -327,21 +324,16 @@
   [src-count : i64]
   [dst-start : i64]
   [dst-count : i64]) : String
-  (string.append
+  (str_cat.str-cat
     "@@ -"
-    (string.append
-      (string.int->string src-start)
-      (string.append
-        ","
-        (string.append
-          (string.int->string src-count)
-          (string.append
-            " +"
-            (string.append
-              (string.int->string dst-start)
-              (string.append
-                ","
-                (string.append (string.int->string dst-count) " @@\n")))))))))
+    (string.int->string src-start)
+    ","
+    (string.int->string src-count)
+    " +"
+    (string.int->string dst-start)
+    ","
+    (string.int->string dst-count)
+    " @@\n"))
 
 (define (fmt-unified-diff
   [path : String]
@@ -399,10 +391,10 @@
             0
             (begin
               (io.print-error
-                (string.append
-                  (string.append
-                    "fmt: would reformat "
-                    (string.append path "\n"))
+                (str_cat.str-cat
+                  "fmt: would reformat "
+                  path
+                  "\n"
                   (fmt-unified-diff path source formatted)))
               1))
           (if (string.eq source formatted)
@@ -411,7 +403,7 @@
       [(format_rules.ResultFormatString.Err err)
         (begin
           (io.print-error
-            (string.append (fmt-source-error-message path err) "\n"))
+            (str_cat.str-cat (fmt-source-error-message path err) "\n"))
           1)])))
 
 ;; Parsing and rendering retain a complete CST and document tree. Reclaim that
@@ -472,7 +464,7 @@
     has-manifest)
     [(package_source_core.ResultPackageSourceSet.Err message)
       (begin
-        (io.print-error (string.append message "\n"))
+        (io.print-error (str_cat.str-cat message "\n"))
         1)]
     [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (fmt-package-files check source-set.sources 0)]))
@@ -488,5 +480,5 @@
           (fmt-package check manifest-path has-manifest)])]
     [(ResultFmtConfig.Err message)
       (begin
-        (io.print-error (string.append message "\n"))
+        (io.print-error (str_cat.str-cat message "\n"))
         1)]))

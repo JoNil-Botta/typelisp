@@ -3,6 +3,7 @@
 ;; This module models the lockfile data needed after remote package pins are
 ;; resolved. It parses and emits `typelisp.lock` S-expressions only; build-time
 ;; fetch/replay behavior remains owned by the package build pipeline.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -195,7 +196,7 @@
       (package-lock-entry-list-insert-position (& next) entry.alias 0)]
     (if (< index 0)
       (ResultPackageLockEntryList.Err
-        (string.concat3
+        (str_cat.str-cat
           "package-lock: duplicate dependency alias `"
           entry.alias
           "`"))
@@ -215,19 +216,19 @@
               (ResultPackageLockString.Ok (reader.symbol-text-for-id val-id))]
             [_
               (ResultPackageLockString.Err
-                (string.concat3
+                (str_cat.str-cat
                   "package-lock: field `"
                   fname
                   "` takes a single string value"))])]
         [_
           (ResultPackageLockString.Err
-            (string.concat3
+            (str_cat.str-cat
               "package-lock: field `"
               fname
               "` must have a string value"))])]
     [_
       (ResultPackageLockString.Err
-        (string.concat3
+        (str_cat.str-cat
           "package-lock: field `"
           fname
           "` must have a string value"))]))
@@ -419,7 +420,7 @@
                           true)]))]
                 [else
                   (ResultPackageLockEntry.Err
-                    (string.concat3
+                    (str_cat.str-cat
                       "package-lock: unknown dependency field `"
                       (package-lock-symbol-text fname)
                       "`"))])]
@@ -492,7 +493,7 @@
             "package-lock: missing required field `version`")]
         [(not (string.eq version package-lock-version))
           (ResultPackageLockFile.Err
-            (string.concat3 "package-lock: unsupported version `" version "`"))]
+            (str_cat.str-cat "package-lock: unsupported version `" version "`"))]
         [(not has-deps)
           (ResultPackageLockFile.Err
             "package-lock: missing required field `dependencies`")]
@@ -530,7 +531,7 @@
                           parsed
                           true)]))
                   (ResultPackageLockFile.Err
-                    (string.concat3
+                    (str_cat.str-cat
                       "package-lock: unknown field `"
                       (package-lock-symbol-text fname)
                       "`"))))]
@@ -553,7 +554,7 @@
               (package_lock_entry_vec.new)
               false)
             (ResultPackageLockFile.Err
-              (string.concat3
+              (str_cat.str-cat
                 "expected `typelisp-lock` form, got `"
                 (package-lock-symbol-text name)
                 "`")))]
@@ -567,7 +568,7 @@
 (define (package-lock-parse [source : String]) : ResultPackageLockFile
   (match (reader.result (lexer.lex source))
     [(reader.ResultSexpr.Err message)
-      (ResultPackageLockFile.Err (string.append "package-lock: " message))]
+      (ResultPackageLockFile.Err (str_cat.str-cat "package-lock: " message))]
     [(reader.ResultSexpr.Ok form) (package-lock-from-form form)]))
 
 (define (package-lock-quote-text) : String
@@ -589,73 +590,53 @@
           (let
             [code : i64 (package-lock-char-code-at text i)]
             (cond
-              [(= code 34)
-                (set! out (string.concat3 out (string.append slash quote) ""))]
-              [(= code 92)
-                (set! out (string.concat3 out (string.append slash slash) ""))]
-              [(= code 10)
-                (set! out (string.concat3 out (string.append slash "n") ""))]
-              [(= code 9)
-                (set! out (string.concat3 out (string.append slash "t") ""))]
-              [(= code 13)
-                (set! out (string.concat3 out (string.append slash "r") ""))]
+              [(= code 34) (set! out (str_cat.str-cat out slash quote ""))]
+              [(= code 92) (set! out (str_cat.str-cat out slash slash ""))]
+              [(= code 10) (set! out (str_cat.str-cat out slash "n" ""))]
+              [(= code 9) (set! out (str_cat.str-cat out slash "t" ""))]
+              [(= code 13) (set! out (str_cat.str-cat out slash "r" ""))]
               [else
-                (set! out (string.concat3 out (string.substring text i 1) ""))]))
+                (set! out (str_cat.str-cat out (string.substring text i 1) ""))]))
           (set! i (+ i 1))))
       out)))
 
 (define (package-lock-quote-string [text : String]) : String
-  (string.append
+  (str_cat.str-cat
     (package-lock-quote-text)
-    (string.append (package-lock-escape-string text) (package-lock-quote-text))))
+    (package-lock-escape-string text)
+    (package-lock-quote-text)))
 
 (define (package-lock-emit-string-field [field : String] [value : String]) : String
-  (string.append
-    "      ("
-    (string.append
-      field
-      (string.append
-        " "
-        (string.append (package-lock-quote-string value) ")\n")))))
+  (str_cat.str-cat "      (" field " " (package-lock-quote-string value) ")\n"))
 
 (define (package-lock-emit-final-string-field [field : String] [value : String]) : String
-  (string.append
-    "      ("
-    (string.append
-      field
-      (string.append
-        " "
-        (string.append (package-lock-quote-string value) "))\n")))))
+  (str_cat.str-cat "      (" field " " (package-lock-quote-string value) "))\n"))
 
 (define (package-lock-emit-pin-field [kind-name : String] [value : String]) : String
-  (string.append
+  (str_cat.str-cat
     "      (pin ("
-    (string.append
-      kind-name
-      (string.append
-        " "
-        (string.append (package-lock-quote-string value) "))\n")))))
+    kind-name
+    " "
+    (package-lock-quote-string value)
+    "))\n"))
 
 (define (package-lock-emit-entry [entry : PackageLockEntry]) : String
   (let
     [kind-name : String
       (package_cache_core.package-cache-pin-kind-name entry.pin-kind)]
-    (string.append
+    (str_cat.str-cat
       "    (dependency\n"
-      (string.append
-        (package-lock-emit-string-field "alias" entry.alias)
-        (string.append
-          (package-lock-emit-string-field "url" entry.url)
-          (string.append
-            (package-lock-emit-pin-field kind-name entry.pin-value)
-            (package-lock-emit-final-string-field "commit" entry.commit)))))))
+      (package-lock-emit-string-field "alias" entry.alias)
+      (package-lock-emit-string-field "url" entry.url)
+      (package-lock-emit-pin-field kind-name entry.pin-value)
+      (package-lock-emit-final-string-field "commit" entry.commit))))
 
 (define (package-lock-emit-entries-from
   [entries : (& entries package_lock_entry_vec.Vec)]
   [index : i64]) : String
   (if (>= index (package_lock_entry_vec.len entries))
     ""
-    (string.append
+    (str_cat.str-cat
       (package-lock-emit-entry
         (package_lock_entry_vec.get
           entries
@@ -667,13 +648,12 @@
   (package-lock-emit-entries-from (& entries) 0))
 
 (define (package-lock-emit [lock : PackageLockFile]) : String
-  (string.append
+  (str_cat.str-cat
     "(typelisp-lock\n"
-    (string.append
-      "  (version \"v1\")\n"
-      (string.append
-        "  (dependencies\n"
-        (string.append (package-lock-emit-entries lock.entries) "  ))\n")))))
+    "  (version \"v1\")\n"
+    "  (dependencies\n"
+    (package-lock-emit-entries lock.entries)
+    "  ))\n"))
 
 (define (package-lock-valid-source) : String
   "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"zeta\") (url \"https://github.com/owner/zeta.git\") (pin (rev \"abcdef0123456789abcdef0123456789abcdef01\")) (commit \"abcdef0123456789abcdef0123456789abcdef01\")) (dependency (alias \"alpha\") (url \"https://github.com/owner/alpha.git\") (pin (branch \"main\")) (commit \"1111111111111111111111111111111111111111\"))))")
@@ -684,17 +664,13 @@
     "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"foxtrot\") (url \"u\") (pin (rev \"f\")) (commit \"f\")) (dependency (alias \"alpha\") (url \"u\") (pin (rev \"a\")) (commit \"a\")) (dependency (alias \"echo\") (url \"u\") (pin (rev \"e\")) (commit \"e\")) (dependency (alias \"bravo\") (url \"u\") (pin (rev \"b\")) (commit \"b\")) (dependency (alias \"delta\") (url \"u\") (pin (rev \"d\")) (commit \"d\")) (dependency (alias \"charlie\") (url \"u\") (pin (rev \"c\")) (commit \"c\"))))"))
 
 (define (package-lock-expected-emitted) : String
-  (string.append
+  (str_cat.str-cat
     "(typelisp-lock\n"
-    (string.append
-      "  (version \"v1\")\n"
-      (string.append
-        "  (dependencies\n"
-        (string.append
-          "    (dependency\n      (alias \"alpha\")\n      (url \"https://github.com/owner/alpha.git\")\n      (pin (branch \"main\"))\n      (commit \"1111111111111111111111111111111111111111\"))\n"
-          (string.append
-            "    (dependency\n      (alias \"zeta\")\n      (url \"https://github.com/owner/zeta.git\")\n      (pin (rev \"abcdef0123456789abcdef0123456789abcdef01\"))\n      (commit \"abcdef0123456789abcdef0123456789abcdef01\"))\n"
-            "  ))\n"))))))
+    "  (version \"v1\")\n"
+    "  (dependencies\n"
+    "    (dependency\n      (alias \"alpha\")\n      (url \"https://github.com/owner/alpha.git\")\n      (pin (branch \"main\"))\n      (commit \"1111111111111111111111111111111111111111\"))\n"
+    "    (dependency\n      (alias \"zeta\")\n      (url \"https://github.com/owner/zeta.git\")\n      (pin (rev \"abcdef0123456789abcdef0123456789abcdef01\"))\n      (commit \"abcdef0123456789abcdef0123456789abcdef01\"))\n"
+    "  ))\n"))
 
 (define (package-lock-entry-matches?
   [entry : PackageLockEntry]

@@ -1,4 +1,5 @@
 ;; doc_expand.tl - Expansion-aware generated-module docs.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -17,13 +18,13 @@
 (import compiler_typecheck_api)
 
 (define (doc-cat2 [a : String] [b : String]) : String
-  (string.concat3 a b ""))
+  (str_cat.str-cat a b ""))
 
 (define (doc-cat3 [a : String] [b : String] [c : String]) : String
-  (string.concat3 a b c))
+  (str_cat.str-cat a b c))
 
 (define (doc-cat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (string.concat3 a b (string.concat3 c d "")))
+  (str_cat.str-cat a b c d ""))
 
 (define (doc-cat5
   [a : String]
@@ -31,7 +32,7 @@
   [c : String]
   [d : String]
   [e : String]) : String
-  (string.concat3 a b (string.concat3 c d e)))
+  (str_cat.str-cat a b c d e))
 
 (define (doc-cat6
   [a : String]
@@ -40,7 +41,7 @@
   [d : String]
   [e : String]
   [f : String]) : String
-  (string.concat3 a b (string.concat3 c d (string.concat3 e f ""))))
+  (str_cat.str-cat a b c d e f ""))
 
 (defenum DocMaybeItem
   (No)

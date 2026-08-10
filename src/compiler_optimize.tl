@@ -255,7 +255,7 @@
 (cfg
   compile-profile
   (define (compiler-opt-profile-field [value : i64]) : String
-    (string.append "|" (string.int->string value))))
+    (str_cat.str-cat "|" (string.int->string value))))
 
 (cfg
   compile-profile
@@ -351,7 +351,7 @@
   compile-profile
   (define (compiler-opt-load-cse-profile-line [name : String] [value : i64]) : unit
     (io.print-error
-      (string.concat5
+      (str_cat.str-cat
         "compile-profile|optimize.load_cse."
         name
         "|"
@@ -419,32 +419,29 @@
             state
             compiler-opt-profile-start-live-metric))]
       (io.print-error
-        (string.append
+        (str_cat.str-cat
           "compile-profile|optimize."
-          (string.append
-            phase
-            (string.append
-              (compiler-opt-profile-field
-                (-
-                  end-ms
-                  (profile_state.compiler-profile-state-metric-value
-                    state
-                    compiler-opt-profile-start-ms-metric)))
-              (string.append
-                (compiler-opt-profile-field
-                  (-
-                    end-total
-                    (profile_state.compiler-profile-state-metric-value
-                      state
-                      compiler-opt-profile-start-total-metric)))
-                (string.append
-                  (compiler-opt-profile-field
-                    (-
-                      end-live
-                      (profile_state.compiler-profile-state-metric-value
-                        state
-                        compiler-opt-profile-start-live-metric)))
-                  (string.append (compiler-opt-profile-field peak-delta) "\n"))))))))))
+          phase
+          (compiler-opt-profile-field
+            (-
+              end-ms
+              (profile_state.compiler-profile-state-metric-value
+                state
+                compiler-opt-profile-start-ms-metric)))
+          (compiler-opt-profile-field
+            (-
+              end-total
+              (profile_state.compiler-profile-state-metric-value
+                state
+                compiler-opt-profile-start-total-metric)))
+          (compiler-opt-profile-field
+            (-
+              end-live
+              (profile_state.compiler-profile-state-metric-value
+                state
+                compiler-opt-profile-start-live-metric)))
+          (compiler-opt-profile-field peak-delta)
+          "\n")))))
 
 (cfg
   compile-profile
@@ -485,15 +482,14 @@
           unit)
         (if (>= elapsed 1)
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|optimize."
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string elapsed)
-                    (string.append "|" (string.append name "\n")))))))
+              phase
+              "|"
+              (string.int->string elapsed)
+              "|"
+              name
+              "\n"))
           unit)))))
 
 (cfg
@@ -514,17 +510,14 @@
           elapsed)
         (if (>= elapsed 1)
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|optimize.pass."
-              (string.append
-                pass
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string elapsed)
-                    (string.append
-                      "|"
-                      (string.append (ir.compiler-ir-symbol-text name) "\n")))))))
+              pass
+              "|"
+              (string.int->string elapsed)
+              "|"
+              (ir.compiler-ir-symbol-text name)
+              "\n"))
           unit)))))
 
 (cfg
@@ -540,12 +533,16 @@
         compile-profile-summary
         unit
         (io.print-error
-          (string.concat5
+          (str_cat.str-cat
             "compile-profile-detail|optimize.escape."
             phase
             "|"
             (string.int->string elapsed)
-            (string.concat5 "|" (string.int->string level) "|" name "\n")))))))
+            "|"
+            (string.int->string level)
+            "|"
+            name
+            "\n"))))))
 
 (cfg
   compile-profile
@@ -13348,7 +13345,7 @@
     [entry : i64 (opt-cfg-entry-label blocks)]
     [preheader : i64
       (ir.compiler-ir-label
-        (string.append (ir.compiler-ir-label-text entry) "__ssa_entry"))]
+        (str_cat.str-cat (ir.compiler-ir-label-text entry) "__ssa_entry"))]
     (if (or
       (not (ir.compiler-ir-label-some? entry))
       (opt-cfg-block-exists? blocks preheader))
@@ -13370,7 +13367,7 @@
         (opt-cfg-block-exists?
           blocks
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text entry) "__ssa_entry")))))))
+            (str_cat.str-cat (ir.compiler-ir-label-text entry) "__ssa_entry")))))))
 
 (define (opt-ssa-construct-function
   [type-segment-bases : i64]
@@ -16111,10 +16108,11 @@
 (define (opt-loop-preheaders-candidate-label [header : i64] [suffix : i64]) : i64
   (ir.compiler-ir-label
     (if (= suffix 0)
-      (string.append (ir.compiler-ir-label-text header) "__preheader")
-      (string.append
+      (str_cat.str-cat (ir.compiler-ir-label-text header) "__preheader")
+      (str_cat.str-cat
         (ir.compiler-ir-label-text header)
-        (string.append "__preheader" (string.int->string suffix))))))
+        "__preheader"
+        (string.int->string suffix)))))
 
 (define (opt-loop-preheaders-fresh-label
   [blocks : ir.CompilerIrBlockList]
@@ -17103,7 +17101,7 @@
 
 (define (opt-rotate-ssa-land-label [header : i64]) : i64
   (ir.compiler-ir-label
-    (string.append (ir.compiler-ir-label-text header) "__rotate_land")))
+    (str_cat.str-cat (ir.compiler-ir-label-text header) "__rotate_land")))
 
 (define (opt-rotate-ssa-only-label? [set : OptLabelSet] [label : i64]) : bool
   (and (= (opt-label-count set) 1) (opt-label-contains set label)))
@@ -20212,7 +20210,7 @@
   [label : i64]) : i64
   (if (opt-label-contains body-labels label)
     (ir.compiler-ir-label
-      (string.append
+      (str_cat.str-cat
         (ir.compiler-ir-label-text label)
         (opt-licm-unswitch-suffix)))
     label))
@@ -20602,7 +20600,7 @@
           (if (opt-label-contains all-labels ok-label)
             ok-label
             (ir.compiler-ir-label
-              (string.append
+              (str_cat.str-cat
                 (ir.compiler-ir-label-text ok-label)
                 (opt-licm-unswitch-suffix))))))]
     [(ir.CompilerIrInstr.Phi dst inputs ty)
@@ -26194,9 +26192,10 @@
   [source-label : i64]
   [suffix : i64]) : i64
   (ir.compiler-ir-label
-    (string.append
+    (str_cat.str-cat
       (ir.compiler-ir-label-text source-label)
-      (string.append "__bool_and." (string.int->string suffix)))))
+      "__bool_and."
+      (string.int->string suffix))))
 
 (define (opt-bool-branch-chain-labels
   [blocks : ir.CompilerIrBlockList]
@@ -31154,7 +31153,7 @@
                       (let
                         [trap-label : i64
                           (ir.compiler-ir-label
-                            (string.append
+                            (str_cat.str-cat
                               "match_total_trap__"
                               (ir.compiler-ir-label-text label)))]
                         ;; Switch formation removes at least four compare
@@ -40416,11 +40415,11 @@
     (opt-cfg-block-exists?
       blocks
       (ir.compiler-ir-label
-        (string.append (ir.compiler-ir-label-text label) "__unroll_guard")))
+        (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_guard")))
     (opt-cfg-block-exists?
       blocks
       (ir.compiler-ir-label
-        (string.append (ir.compiler-ir-label-text label) "__unroll_body")))
+        (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_body")))
     (not (opt-unroll-pred-retargetable? blocks pred-label)))
     (OptUnrollMaybeShape.No)
     (match (opt-unroll-collect-other-phis
@@ -40653,7 +40652,7 @@
                       (opt-cfg-block-exists?
                         blocks
                         (ir.compiler-ir-label
-                          (string.append
+                          (str_cat.str-cat
                             (ir.compiler-ir-label-text label)
                             "__bce_fast")))))
                     (opt-unroll-shape-scan blocks label instrs count cond-var)
@@ -40714,7 +40713,7 @@
       fresh)))
 
 (define (opt-unroll-copy-suffix [copy : i64]) : String
-  (string.append "__u" (string.int->string copy)))
+  (str_cat.str-cat "__u" (string.int->string copy)))
 
 ;; Clone one whitelisted body instruction: substitute uses through the remap
 ;; first, then allocate a fresh dst and record it. Only the kinds accepted by
@@ -40868,7 +40867,7 @@
         (opt-unroll-subst-value remap index)
         (opt-unroll-subst-value remap length)
         (ir.compiler-ir-label
-          (string.append
+          (str_cat.str-cat
             (ir.compiler-ir-label-text ok-label)
             (opt-unroll-copy-suffix copy))))]
     [_ instr]))
@@ -41288,10 +41287,10 @@
         [pred-label : i64 shape.pred-label]
         [guard-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__unroll_guard"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_guard"))]
         [unrolled-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__unroll_body"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_body"))]
         [remap : (__tl_dyn-array ir.CompilerIrValue)
           (array.make-array ir.CompilerIrValue frame)]
         [_fill : unit (opt-unroll-remap-fill remap 0)]
@@ -41793,7 +41792,7 @@
   [pred-label : i64]) : bool
   (let
     [pred : String (ir.compiler-ir-label-text pred-label)]
-    [want : String (string.append prefix "__bce_")]
+    [want : String (str_cat.str-cat prefix "__bce_")]
     [n : i64 (string.string-length (& pred))]
     [m : i64 (string.string-length (& want))]
     (and
@@ -41802,7 +41801,7 @@
       (string.eq (string.substring (& pred) 0 m) want)
       (opt-cfg-block-exists?
         blocks
-        (ir.compiler-ir-label (string.append prefix "__bce_guard"))))))
+        (ir.compiler-ir-label (str_cat.str-cat prefix "__bce_guard"))))))
 
 ;; The body must be exactly: one `store_ptr <gep(base, iphi)>, K`, plus copies
 ;; and the counter arithmetic. Any Load, BoundsCheck, second store, call or
@@ -42834,7 +42833,7 @@
                       (opt-cfg-block-exists?
                         blocks
                         (ir.compiler-ir-label
-                          (string.append
+                          (str_cat.str-cat
                             (ir.compiler-ir-label-text label)
                             "__bce_fast"))))
                       (OptUnrollConstMaybeShape.No)
@@ -43893,7 +43892,7 @@
       (opt-cfg-block-exists?
         blocks
         (ir.compiler-ir-label
-          (string.append (ir.compiler-ir-label-text label) "__bce_guard")))
+          (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_guard")))
       (not (opt-unroll-const-guard-exit-ok? blocks exit-label)))
       (OptUcePlan.No)
       (let
@@ -44240,12 +44239,14 @@
               [pred-label : i64 shape.pred-label]
               [guard-label : i64
                 (ir.compiler-ir-label
-                  (string.append
+                  (str_cat.str-cat
                     (ir.compiler-ir-label-text label)
                     "__bce_guard"))]
               [fast-label : i64
                 (ir.compiler-ir-label
-                  (string.append (ir.compiler-ir-label-text label) "__bce_fast"))]
+                  (str_cat.str-cat
+                    (ir.compiler-ir-label-text label)
+                    "__bce_fast"))]
               [copies : ir.CompilerIrInstrList
                 (opt-unroll-const-copies
                   instrs
@@ -44662,21 +44663,21 @@
                                       (opt-cfg-block-exists?
                                         blocks
                                         (ir.compiler-ir-label
-                                          (string.append
+                                          (str_cat.str-cat
                                             (ir.compiler-ir-label-text label)
                                             "__unroll_guard"))))
                                     (not
                                       (opt-cfg-block-exists?
                                         blocks
                                         (ir.compiler-ir-label
-                                          (string.append
+                                          (str_cat.str-cat
                                             (ir.compiler-ir-label-text label)
                                             "__unroll_body"))))
                                     (not
                                       (opt-cfg-block-exists?
                                         blocks
                                         (ir.compiler-ir-label
-                                          (string.append
+                                          (str_cat.str-cat
                                             (ir.compiler-ir-label-text label)
                                             "__unroll_exit")))))
                                     (match (opt-unroll-simd-outside-pred
@@ -45132,13 +45133,13 @@
         [tail-label : i64 shape.tail-label]
         [guard-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__unroll_guard"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_guard"))]
         [unrolled-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__unroll_body"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_body"))]
         [exit-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__unroll_exit"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_exit"))]
         [memory-bases : OptUnrollSimdMemoryList shape.memory-bases]
         [memory-count : i64 shape.memory-count]
         [remap : (__tl_dyn-array ir.CompilerIrValue)
@@ -48675,14 +48676,14 @@
                   (opt-cfg-block-exists?
                     blocks
                     (ir.compiler-ir-label
-                      (string.append
+                      (str_cat.str-cat
                         (ir.compiler-ir-label-text label)
                         "__bce_guard"))))
                 (not
                   (opt-cfg-block-exists?
                     blocks
                     (ir.compiler-ir-label
-                      (string.append
+                      (str_cat.str-cat
                         (ir.compiler-ir-label-text label)
                         "__bce_fast"))))
                 (opt-unroll-pred-retargetable? blocks pred-label))
@@ -49199,10 +49200,10 @@
             [_ label])]
         [guard-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__bce_guard"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_guard"))]
         [fast-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__bce_fast"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast"))]
         [defs : opt_i64_i64_map.Map
           (opt-unroll-block-defs
             instrs.slots
@@ -50110,7 +50111,7 @@
         (if (opt-cfg-block-exists?
           blocks
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__bce_fast")))
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast")))
           false
           (opt-bce-mb-fast-labels-fresh? blocks (opt-label-tail body-labels))))]))
 
@@ -50191,7 +50192,7 @@
       (opt-cfg-block-exists?
         blocks
         (ir.compiler-ir-label
-          (string.append (ir.compiler-ir-label-text header) "__bce_guard")))
+          (str_cat.str-cat (ir.compiler-ir-label-text header) "__bce_guard")))
       (opt-bce-mb-has-nested-loop? loops header body-labels)
       (opt-bce-mb-body-has-total-enum-switch? body-blocks)
       (not (opt-bce-mb-fast-labels-fresh? blocks body-labels))
@@ -50494,7 +50495,9 @@
               (opt-cfg-block-exists?
                 blocks
                 (ir.compiler-ir-label
-                  (string.append (ir.compiler-ir-label-text stub) "__bce_fast"))))
+                  (str_cat.str-cat
+                    (ir.compiler-ir-label-text stub)
+                    "__bce_fast"))))
               false
               (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
                 [(ir.CompilerIrInstr.Jump target)
@@ -52855,7 +52858,7 @@
 (define (opt-bce-mb-fast-label [body-labels : OptLabelSet] [label : i64]) : i64
   (if (opt-label-contains body-labels label)
     (ir.compiler-ir-label
-      (string.append (ir.compiler-ir-label-text label) "__bce_fast"))
+      (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast"))
     label))
 
 ;; Pass A: allocate a fresh id for every def in the loop BEFORE any clone
@@ -53052,7 +53055,9 @@
           (if (opt-label-contains all-labels ok-label)
             ok-label
             (ir.compiler-ir-label
-              (string.append (ir.compiler-ir-label-text ok-label) "__bce_fast")))))]
+              (str_cat.str-cat
+                (ir.compiler-ir-label-text ok-label)
+                "__bce_fast")))))]
     ;; unreachable: the shape scan whitelisted every loop instruction
     [_ instr]))
 
@@ -53157,7 +53162,7 @@
           (ir.compiler-ir-block-cons
             (ir.compiler-ir-block
               (ir.compiler-ir-label
-                (string.append (ir.compiler-ir-label-text label) "__bce_fast"))
+                (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast"))
               (opt-bce-mb-clone-instrs
                 label
                 instrs
@@ -53211,7 +53216,7 @@
             (ir.compiler-ir-phi-input-cons
               (opt-unroll-subst-value remap value)
               (ir.compiler-ir-label
-                (string.append (ir.compiler-ir-label-text label) "__bce_fast"))
+                (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast"))
               tail))
           (ir.compiler-ir-phi-input-cons value label tail)))]))
 
@@ -53282,7 +53287,7 @@
                           0
                           shape.preheader
                           (ir.compiler-ir-label
-                            (string.append
+                            (str_cat.str-cat
                               (ir.compiler-ir-label-text shape.header)
                               "__bce_guard"))))
                       tail)))]
@@ -53295,7 +53300,7 @@
                       0
                       shape.header
                       (ir.compiler-ir-label
-                        (string.append
+                        (str_cat.str-cat
                           (ir.compiler-ir-label-text shape.header)
                           "__bce_guard"))))
                   tail)]
@@ -53342,7 +53347,7 @@
         (opt-label-add
           acc
           (ir.compiler-ir-label
-            (string.append
+            (str_cat.str-cat
               (ir.compiler-ir-label-text (opt-label-ref labels 0))
               "__bce_fast"))))]))
 
@@ -53775,7 +53780,7 @@
               (=
                 label
                 (ir.compiler-ir-label
-                  (string.append
+                  (str_cat.str-cat
                     (ir.compiler-ir-label-text shape.header)
                     "__bce_guard")))
               (opt-label-contains
@@ -54225,7 +54230,7 @@
           [_alloc : unit (opt-bce-mb-alloc-defs! body-blocks remap cell)]
           [guard-label : i64
             (ir.compiler-ir-label
-              (string.append
+              (str_cat.str-cat
                 (ir.compiler-ir-label-text shape.header)
                 "__bce_guard"))]
           [fast-blocks : ir.CompilerIrBlockList
@@ -54243,7 +54248,7 @@
               guard-instrs
               guard-value
               (ir.compiler-ir-label
-                (string.append
+                (str_cat.str-cat
                   (ir.compiler-ir-label-text shape.header)
                   "__bce_fast"))
               shape.header)]
@@ -54263,7 +54268,7 @@
                   shape.header
                   shape.preheader
                   (ir.compiler-ir-label
-                    (string.append
+                    (str_cat.str-cat
                       (ir.compiler-ir-label-text shape.header)
                       "__bce_guard"))
                   (opt-bce-mb-canon-value blocks shape.seed)
@@ -54650,14 +54655,14 @@
   [copy : i64]) : i64
   (if (opt-label-contains body-labels label)
     (ir.compiler-ir-label
-      (string.append
+      (str_cat.str-cat
         (ir.compiler-ir-label-text label)
         (opt-unroll-mb-copy-suffix copy)))
     label))
 
 (define (opt-unroll-mb-guard-label [header : i64]) : i64
   (ir.compiler-ir-label
-    (string.append (ir.compiler-ir-label-text header) "__unroll2_guard")))
+    (str_cat.str-cat (ir.compiler-ir-label-text header) "__unroll2_guard")))
 
 (define (opt-unroll-mb-block-terminator-ok? [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -54764,14 +54769,14 @@
             (opt-cfg-block-exists?
               blocks
               (ir.compiler-ir-label
-                (string.append
+                (str_cat.str-cat
                   (ir.compiler-ir-label-text label)
                   (opt-unroll-mb-copy-suffix 0)))))
           (not
             (opt-cfg-block-exists?
               blocks
               (ir.compiler-ir-label
-                (string.append
+                (str_cat.str-cat
                   (ir.compiler-ir-label-text label)
                   (opt-unroll-mb-copy-suffix 1)))))
           (opt-unroll-mb-labels-fresh? blocks (opt-label-tail labels))))]))
@@ -65453,9 +65458,7 @@
   (if (string.eq prefix "")
     label
     (ir.compiler-ir-label
-      (string.append
-        (string.append prefix ".")
-        (ir.compiler-ir-label-text label)))))
+      (str_cat.str-cat prefix "." (ir.compiler-ir-label-text label)))))
 
 (define (opt-inline-clone-instr
   [instr : ir.CompilerIrInstr]
@@ -65856,17 +65859,17 @@
   [block-label : i64]
   [pos : i64]
   [_callee-name : i64]) : String
-  (string.append
-    (string.append
-      (string.append "inl." (ir.compiler-ir-label-text block-label))
-      ".")
+  (str_cat.str-cat
+    "inl."
+    (ir.compiler-ir-label-text block-label)
+    "."
     (string.int->string pos)))
 
 (define (opt-inline-prefix-label [prefix : String] [label : i64]) : i64
   (opt-inline-maybe-prefix-label prefix label))
 
 (define (opt-inline-cont-label [prefix : String]) : i64
-  (ir.compiler-ir-label (string.append prefix ".cont")))
+  (ir.compiler-ir-label (str_cat.str-cat prefix ".cont")))
 
 (define (opt-inline-remap-phi-inputs
   [inputs : ir.CompilerIrPhiInputList]
@@ -75982,27 +75985,24 @@
     [allocs : i64]
     [bytes : i64]
     [reason : String]) : String
-    (string.concat5
+    (str_cat.str-cat
       "compile-profile-detail|scratch_region|"
       status
       "|scope="
       scope
-      (string.concat5
-        "|function="
-        function
-        "|label="
-        (ir.compiler-ir-label-text label)
-        (string.concat5
-          "|latch="
-          (ir.compiler-ir-label-text latch)
-          "|allocs="
-          (string.int->string allocs)
-          (string.concat5
-            "|known_bytes="
-            (string.int->string bytes)
-            "|blocker="
-            reason
-            "\n"))))))
+      "|function="
+      function
+      "|label="
+      (ir.compiler-ir-label-text label)
+      "|latch="
+      (ir.compiler-ir-label-text latch)
+      "|allocs="
+      (string.int->string allocs)
+      "|known_bytes="
+      (string.int->string bytes)
+      "|blocker="
+      reason
+      "\n")))
 
 (cfg
   compile-profile

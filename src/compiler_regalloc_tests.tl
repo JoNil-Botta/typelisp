@@ -4,6 +4,7 @@
 ;; Only blocks gated on exactly `test` moved. The regalloc-census blocks and
 ;; the `(any regalloc-census test)` ones stay in the production module: they
 ;; compile into instrumentation builds, so they are not self-test code.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_regalloc as reg)
 (import compiler_abi as cabi)
 (import compiler_liveness as live)
@@ -12,7 +13,7 @@
 (import compiler_intern as ci)
 (import stdlib.io)
 (import stdlib.array)
-(import stdlib.string)
+(cfg test (import stdlib.string))
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as reg_string_i64_map)
 (import (hashmap.hashmap i64 i64) as reg_i64_i64_map)
@@ -859,7 +860,7 @@
               params
               (ir.compiler-ir-param-cons
                 (ir.CompilerIrParam.Param
-                  (string.append "p" (string.int->string i))
+                  (str_cat.str-cat "p" (string.int->string i))
                   (compiler-reg-i64-ty)
                   i)
                 params))
@@ -6272,7 +6273,7 @@
       [(reg.CompilerRegColoring.None) false])))
 
 (define (compiler-regalloc-self-test-failure-message [name : String]) : String
-  (string.append "regalloc self-test failed: " name))
+  (str_cat.str-cat "regalloc self-test failed: " name))
 
 (define (compiler-regalloc-self-test-require! [name : String] [ok : bool]) : unit
   (if ok

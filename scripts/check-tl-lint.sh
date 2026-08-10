@@ -211,3 +211,117 @@ if [ "$lint_status" -ne 0 ]; then
 fi
 
 echo "TypeLisp lint check passed for $count file(s); 0 finding(s)."
+
+# Keep compiler/tooling sources on the current String construction surface.
+# Other repository trees own their migration rules separately (for example,
+# verify-stdlib.sh runs check-stdlib-concat-lint.sh), so scope this opt-in rule
+# to the tracked src/**/*.tl set instead of changing fixture semantics.
+SRC_CONCAT_FILES="$WORKDIR/src-concat-files.txt"
+SRC_CONCAT_CHUNK_DIR="$WORKDIR/src-concat-chunks"
+SRC_CONCAT_STDOUT="$WORKDIR/src-concat.stdout"
+SRC_CONCAT_STDERR="$WORKDIR/src-concat.stderr"
+SRC_CONCAT_PROBE="$WORKDIR/src-concat-probe.tl"
+SRC_CONCAT_PROBE_STDOUT="$WORKDIR/src-concat-probe.stdout"
+SRC_CONCAT_PROBE_STDERR="$WORKDIR/src-concat-probe.stderr"
+
+git ls-files -- 'src/*.tl' | LC_ALL=C sort > "$SRC_CONCAT_FILES"
+if [ ! -s "$SRC_CONCAT_FILES" ]; then
+    echo "src deprecated-concat lint selected no tracked TypeLisp files" >&2
+    exit 1
+fi
+if grep -v '^src/.*\.tl$' "$SRC_CONCAT_FILES" >/dev/null 2>&1; then
+    echo "src deprecated-concat lint selected a path outside src/**/*.tl" >&2
+    exit 1
+fi
+
+rm -rf "$SRC_CONCAT_CHUNK_DIR"
+mkdir -p "$SRC_CONCAT_CHUNK_DIR"
+awk -v outdir="$SRC_CONCAT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
+    {
+        chunk = int((NR - 1) / size) + 1
+        path = sprintf("%s/lint.%04d.txt", outdir, chunk)
+        print $0 >> path
+        if (NR % size == 0) close(path)
+    }
+' "$SRC_CONCAT_FILES"
+
+: > "$SRC_CONCAT_STDOUT"
+: > "$SRC_CONCAT_STDERR"
+src_concat_status=0
+src_concat_chunk_index=0
+for lint_chunk in "$SRC_CONCAT_CHUNK_DIR"/lint.*.txt; do
+    [ -f "$lint_chunk" ] || continue
+    set --
+    while IFS= read -r lint_source; do
+        [ -n "$lint_source" ] || continue
+        set -- "$@" "$lint_source"
+    done < "$lint_chunk"
+    [ "$#" -gt 0 ] || continue
+    src_concat_chunk_index=$((src_concat_chunk_index + 1))
+    if ci_timing_run "src-concat-chunk-$src_concat_chunk_index" lint \
+        "$COMPILER" lint \
+            --format flat \
+            --check \
+            --deprecated-string-concat \
+            --stdlib-root "$ROOT/stdlib" \
+            "$@" >> "$SRC_CONCAT_STDOUT" 2>> "$SRC_CONCAT_STDERR"; then
+        :
+    else
+        chunk_status=$?
+        [ "$src_concat_status" -ne 0 ] || src_concat_status=$chunk_status
+    fi
+done
+
+if [ "$src_concat_chunk_index" -eq 0 ]; then
+    echo "src deprecated-concat lint produced no non-empty batches" >&2
+    exit 1
+fi
+if [ "$src_concat_status" -ne 0 ]; then
+    echo "src deprecated-concat lint failed:" >&2
+    if [ -s "$SRC_CONCAT_STDERR" ]; then
+        echo "stderr:" >&2
+        sed 's/^/  /' "$SRC_CONCAT_STDERR" >&2 || true
+    fi
+    if [ -s "$SRC_CONCAT_STDOUT" ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$SRC_CONCAT_STDOUT" >&2 || true
+    fi
+    exit 1
+fi
+
+src_concat_count=$(wc -l < "$SRC_CONCAT_FILES" | tr -d ' ')
+
+# Exercise the complete opt-in command so an accidentally dropped flag cannot
+# turn the zero-finding source corpus into a false-green gate.
+cat > "$SRC_CONCAT_PROBE" <<'EOF'
+(define (main) : String
+  (string.append "left" "right"))
+EOF
+set +e
+"$COMPILER" lint \
+    --format flat \
+    --check \
+    --deprecated-string-concat \
+    --stdlib-root "$ROOT/stdlib" \
+    "$SRC_CONCAT_PROBE" > "$SRC_CONCAT_PROBE_STDOUT" 2> "$SRC_CONCAT_PROBE_STDERR"
+src_concat_probe_status=$?
+set -e
+if [ "$src_concat_probe_status" -eq 0 ]; then
+    echo "src deprecated-concat lint regression: primitive probe unexpectedly passed" >&2
+    exit 1
+fi
+if ! grep -F 'deprecated string concatenation primitive' \
+    "$SRC_CONCAT_PROBE_STDOUT" >/dev/null 2>&1; then
+    echo "src deprecated-concat lint regression returned the wrong diagnostic" >&2
+    if [ -s "$SRC_CONCAT_PROBE_STDOUT" ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$SRC_CONCAT_PROBE_STDOUT" >&2
+    fi
+    if [ -s "$SRC_CONCAT_PROBE_STDERR" ]; then
+        echo "stderr:" >&2
+        sed 's/^/  /' "$SRC_CONCAT_PROBE_STDERR" >&2
+    fi
+    exit 1
+fi
+
+echo "TypeLisp src deprecated-concat lint passed for $src_concat_count file(s) in $src_concat_chunk_index batch(es); 0 finding(s); rejection probe passed."

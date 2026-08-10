@@ -1,4 +1,5 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers.
+(cfg compile-profile (import stdlib.str_cat_runtime as str_cat))
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -38,16 +39,13 @@
   compile-profile
   (define (compiler-check-profile-finish [phase : String]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|check."
-        (string.append
-          phase
-          (string.append
-            "|"
-            (string.append
-              (string.int->string
-                (- (profile.now-ms) compiler-check-profile-start-ms))
-              "|0|0|0\n")))))))
+        phase
+        "|"
+        (string.int->string
+          (- (profile.now-ms) compiler-check-profile-start-ms))
+        "|0|0|0\n"))))
 
 (define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs

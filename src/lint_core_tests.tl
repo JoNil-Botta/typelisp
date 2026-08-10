@@ -5,6 +5,7 @@
 ;; flat-AST lint-test-* fixture helpers, the lint-name-set smoke check, and
 ;; the compiler-lint-self-test entry. The production module keeps the lint
 ;; engine, the rule registry, and the source scan passes.
+(import stdlib.str_cat_runtime as str_cat)
 (import lint_core)
 (import stdlib.io)
 (import stdlib.string)
@@ -722,9 +723,10 @@
         [(lint_core.LintMaybeFinding.Some finding)
           (if (string.eq
             finding.message
-            (string.append
+            (str_cat.str-cat
               "cascading and: prefer flat n-ary form ("
-              (string.append "core/and" " x y z)")))
+              "core/and"
+              " x y z)"))
             unit
             (io.panic "lint: core/and cascade should preserve callee spelling"))]
         [(lint_core.LintMaybeFinding.No)

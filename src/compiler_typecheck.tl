@@ -1,4 +1,5 @@
 ;; compiler_typecheck.tl - Self-tests for the compiler typechecker API.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import compiler_typecheck_api as tc_api)
@@ -33,7 +34,7 @@
   (tc_core.tc-inlay-hint-serial-adapters-ok?))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
-  (string.append
+  (str_cat.str-cat
     "(extern (io.print [arg0 : i64]) : unit)
 (extern (io.print-bool [arg0 : bool]) : unit)
 (extern (io.print-float [arg0 : f64]) : unit)
@@ -71,7 +72,7 @@
     src))
 
 (define (compiler-typecheck-with-alloc-string-helper-source [src : String]) : String
-  (string.append
+  (str_cat.str-cat
     "(define (string.int->string [value : i64]) : String
   (if (= value 0) \"0\" \"1\"))
 (define (string.substring [text : String] [start : i64] [len : i64]) : String
@@ -88,7 +89,7 @@
 (define (compiler-typecheck-with-fs-source [src : String]) : String
   (compiler-typecheck-with-io-source
     (compiler-typecheck-with-alloc-string-helper-source
-      (string.append
+      (str_cat.str-cat
         "(extern (mkdir-status [arg0 : String]) : i64)
 (extern (remove-file-status [arg0 : String]) : i64)
 (extern (remove-dir-status [arg0 : String]) : i64)
@@ -105,10 +106,10 @@
         src))))
 
 (define (compiler-typecheck-with-cpu-source [src : String]) : String
-  (string.append "(import stdlib.cpu)\n" src))
+  (str_cat.str-cat "(import stdlib.cpu)\n" src))
 
 (define (compiler-typecheck-with-env-source [src : String]) : String
-  (string.append
+  (str_cat.str-cat
     "(define (var-exists? [name : String]) : bool true)
 (define (var-value [name : String]) : String name)
 (define (path-separator) : String \":\")
@@ -116,7 +117,7 @@
     src))
 
 (define (compiler-typecheck-with-arena-source [src : String]) : String
-  (string.append
+  (str_cat.str-cat
     "(module stdlib.arena)
 (extern (tl_arena_make) : i64)
 (extern (tl_arena_make_atomic) : i64)
@@ -978,7 +979,7 @@
     (= (cdiag.compiler-diagnostic-note-list-count notes) 2)
     (string.eq
       (cdiag.compiler-diagnostic-note-list-get notes 0)
-      (string.append "generated identity: " want-key))
+      (str_cat.str-cat "generated identity: " want-key))
     (string.eq (cdiag.compiler-diagnostic-note-list-get notes 1) want-context)))
 
 (define (compiler-typecheck-generated-fallback-diagnostic-ok?) : bool
@@ -2441,7 +2442,7 @@
     [ok : bool true]
     (begin
       (if (compiler-typecheck-error-ok?
-        (string.concat3
+        (str_cat.str-cat
           (compiler-typecheck-inline-unboxed-tree-source)
           "\n"
           "(define (main [x : BadTree]) : i64 0)")
@@ -4746,9 +4747,10 @@
       (string.eq
         (tc_core.tc-type-render
           (ast.ast-ty-ref (ci.intern-capacity) (ast.AstType.I64)))
-        (string.append
+        (str_cat.str-cat
           "(& <id:"
-          (string.append (string.int->string (ci.intern-capacity)) "> i64)")))]
+          (string.int->string (ci.intern-capacity))
+          "> i64)"))]
     [nominal-lifetime-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
@@ -6765,11 +6767,10 @@
 ;; stay rejected, and type-valued comptime parameters specialize through
 ;; reflection when called with a type literal.
 (define (compiler-typecheck-unknown-type-policy-message [name : String]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: unknown type "
-    (string.append
-      name
-      "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead")))
+    name
+    "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead"))
 
 (define (compiler-typecheck-type-valued-comptime-source) : String
   "(defstruct Point (x i64))
@@ -6830,7 +6831,7 @@
   (Int i64))")
 
 (define (compiler-typecheck-stdlib-comptime-bad-expr-list-source) : String
-  (string.concat3
+  (str_cat.str-cat
     "(module stdlib.comptime)\n"
     (compiler-typecheck-stdlib-comptime-expr-decl-source)
     "\n(defenum ExprList
@@ -9013,7 +9014,7 @@
         [end : i64
           (compiler-typecheck-string-find-from source end-marker start)]
         (if (and (>= start 0) (> end start))
-          (string.append
+          (str_cat.str-cat
             "(module fixture.core_for)\n(import stdlib.comptime)\n"
             (string.substring source start (- end start)))
           (io.panic "typecheck: embedded scalar for macro source missing")))]
@@ -9021,7 +9022,7 @@
       (io.panic "typecheck: embedded core macro source missing")]))
 
 (define (compiler-typecheck-macro-prelude-for-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-macro-prelude-for-core-source)
     "(defstruct Bag (value i64))
 (defstruct Iter (:lifetimes source) (value (& source i64)) (done bool))
@@ -9069,25 +9070,25 @@
       sum)))"))
 
 (define (compiler-typecheck-macro-prelude-for-bad-annotation-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-macro-prelude-for-source)
     "
 (define (bad-for-annotation) : unit
   (for [item : bool (Bag 1)] unit))"))
 
 (define (compiler-typecheck-macro-prelude-for-no-binding-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-macro-prelude-for-core-source)
     "(define (main) : unit (for unit))"))
 
 (define (compiler-typecheck-macro-prelude-for-no-body-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-macro-prelude-for-core-source)
     "(defstruct NotIterable (value i64))
 (define (main) : unit (for [item (NotIterable 1)]))"))
 
 (define (compiler-typecheck-macro-prelude-and-or-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main [x : bool] [y : bool]) : i64
   (if (and x y)
@@ -9095,17 +9096,17 @@
     (if (or x y) 7 0)))"))
 
 (define (compiler-typecheck-macro-prelude-and-bad-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main [a : bool]) : bool (and a 1))"))
 
 (define (compiler-typecheck-macro-prelude-or-bad-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main [a : bool]) : bool (or 1 a))"))
 
 (define (compiler-typecheck-macro-forward-prelude-shadow-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main) : i64 (and 1 41))
 (defmacro (and [lhs : i64] [rhs : i64]) : i64
@@ -9929,7 +9930,7 @@
 ")
 
 (define (compiler-typecheck-move-cleanup-enum-owner-payload-one-shot-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (cleanup-enum-owner-payload-one-shot [m : MaybeHandle]) : unit
   (match m
@@ -9938,7 +9939,7 @@
     [(None) unit]))"))
 
 (define (compiler-typecheck-move-cleanup-enum-owner-payload-repeat-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (bad-cleanup-enum-owner-payload-repeat [m : MaybeHandle]) : unit
   (match m
@@ -9947,7 +9948,7 @@
     [(None) unit]))"))
 
 (define (compiler-typecheck-move-cleanup-enum-payload-copyable-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (cleanup-enum-payload-copyable [m : MaybeHandle]) : i64
   (match m
@@ -9956,7 +9957,7 @@
     [(None) 0]))"))
 
 (define (compiler-typecheck-move-cleanup-enum-payload-shadow-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (cleanup-enum-payload-shadow
   [h : FileHandle]
@@ -10678,7 +10679,7 @@
 ")
 
 (define (compiler-typecheck-live-borrow-holder-prefix) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-live-borrow-owner-prefix)
     "(defstruct Holder
   (:cleanup cleanup-holder)
@@ -10697,7 +10698,7 @@
     n))")
 
 (define (compiler-typecheck-live-borrow-owner-post-scope-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-live-borrow-owner-prefix)
     "(define (main [h : FileHandle]) : unit
   (begin
@@ -10713,7 +10714,7 @@
         n))))")
 
 (define (compiler-typecheck-live-borrow-whole-move-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-live-borrow-owner-prefix)
     "(define (bad [h : FileHandle]) : unit
   (let [r : (& h FileHandle) (& h)]
@@ -10730,7 +10731,7 @@
       (read-i64-ref r))))")
 
 (define (compiler-typecheck-live-borrow-aggregate-root-move-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [p : Holder]) : unit
   (let [r : (& p FileHandle) (& p.handle)]
@@ -10739,7 +10740,7 @@
       (read-handle-ref r))))"))
 
 (define (compiler-typecheck-live-borrow-aggregate-child-move-source) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [p : Holder]) : unit
   (let [r : (& p Holder) (& p)]
@@ -10790,8 +10791,8 @@
         (read-i64-ref borrowed)))))")
 
 (define (compiler-typecheck-live-borrow-resource-conflict-source) : String
-  (string.append
-    (compiler-typecheck-live-borrow-holder-prefix)
+  (str_cat.str-cat
+    (compiler-typecheck-live-borrow-owner-prefix)
     "(define (bad [fd : i64]) : i64
   (with ([h (Holder (FileHandle fd) 1) cleanup-holder])
     (let [borrowed : (& h Holder) (& h)]
@@ -11810,7 +11811,7 @@
             (and
               (string.contains
                 (cdiag.compiler-diagnostic-message value)
-                (string.append "symbols: duplicate type declaration " name))
+                (str_cat.str-cat "symbols: duplicate type declaration " name))
               (string.eq (cdiag.compiler-diagnostic-path value) "src/assets.tl")
               (= (cdiag.compiler-diagnostic-line value) 2)
               (= (cdiag.compiler-diagnostic-col value) 1)))]

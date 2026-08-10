@@ -6,6 +6,7 @@
 ;; with indexed operand access and a count-binding default arm (#5617).
 ;; A body outside the supported subset keeps the counted interpreted-fallback
 ;; shell.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_tlci_native_producer)
 
 ;; compiler_embedded_stdlib_tlci owns the loader import. Importing the same
@@ -765,7 +766,7 @@
                 [else "stdlib.string.concat5"])]
             [expected : String
               (if borrowed
-                (string.append expected-base "-borrowed")
+                (str_cat.str-cat expected-base "-borrowed")
                 expected-base)]
             [expected-count : i64
               (if (= count 2)
@@ -2248,14 +2249,14 @@
     (compiler_ctfe.ctfe-reflect-info-list-with-capacity 1)
     (if enum?
       (compiler_ctfe.CtfeReflectInfo.Enum
-        (string.append module-text (string.append "/" name-text))
+        (str_cat.str-cat module-text "/" name-text)
         module-text
         name-text
         canonical-id
         (compiler_ctfe.CtfeReflectCleanup.No)
         (compiler_ctfe.ctfe-reflect-variant-list-with-capacity 0))
       (compiler_ctfe.CtfeReflectInfo.Struct
-        (string.append module-text (string.append "/" name-text))
+        (str_cat.str-cat module-text "/" name-text)
         module-text
         name-text
         canonical-id
@@ -3254,7 +3255,7 @@
 (defmacro (scan [text : Expr]) : Expr (if (comptime.expr-string? text) (let [s : String (comptime.expr-string-value text)] [n : i64 (string.string-length s)] (if (= (cast (string.string-ref s 0) : i64) 123) `(brace ,(comptime.expr-int n)) `(plain ,(comptime.expr-string (comptime.string-slice s 1 (- n 1)))))) (comptime.comptime-error \"scan: expects a string literal\")))
 "]
     [source : String
-      (string.append
+      (str_cat.str-cat
         source-base
         "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n(defmacro (structset [target : Expr] [field : String] [value : Expr]) : Expr (comptime.expr-struct-set target field value))\n")]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
@@ -3295,7 +3296,7 @@
                       message)
                     (begin
                       (io.print-error
-                        (string.append "producer error: " message))
+                        (str_cat.str-cat "producer error: " message))
                       (io.print-error "\n")
                       false)]
                   [(compiler_tlci_native_producer.ResultProducerBytes.Ok bytes)
@@ -3306,7 +3307,7 @@
                       [(tlci_loader.ResultTlciLoadedImage.Err message)
                         (begin
                           (io.print-error
-                            (string.append "loader error: " message))
+                            (str_cat.str-cat "loader error: " message))
                           (io.print-error "\n")
                           false)]
                       [(tlci_loader.ResultTlciLoadedImage.Ok loaded)

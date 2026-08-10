@@ -147,7 +147,7 @@ tl_startup_profile_process_entry_tick:
   [profile : bool]
   [scratch-reg : String]) : String
   (if profile
-    (string.append
+    (str_cat.str-cat
       (str_cat.str-cat
         "    addq "
         size-reg
@@ -216,13 +216,14 @@ tl_startup_profile_process_entry_tick:
   [profile : bool]) : String
   (let
     [size-text : String (string.int->string size)]
-    [size-imm : String (string.append "$" size-text)]
+    [size-imm : String (str_cat.str-cat "$" size-text)]
     [label : String (compiler-backend-runtime-fast-alloc-label size)]
-    [slow-label : String (string.append label "_slow")]
-    [atomic-label : String (string.append label "_atomic")]
-    [atomic-cas-label : String (string.append label "_atomic_cas")]
-    [atomic-profile-label : String (string.append label "_atomic_profile_done")]
-    [profile-label : String (string.append label "_profile_done")]
+    [slow-label : String (str_cat.str-cat label "_slow")]
+    [atomic-label : String (str_cat.str-cat label "_atomic")]
+    [atomic-cas-label : String (str_cat.str-cat label "_atomic_cas")]
+    [atomic-profile-label : String
+      (str_cat.str-cat label "_atomic_profile_done")]
+    [profile-label : String (str_cat.str-cat label "_profile_done")]
     [prologue : String
       (str_cat.str-cat
         label
@@ -313,13 +314,13 @@ tl_startup_profile_process_entry_tick:
         ", "
         size-reg
         "\n    jmp tl_alloc\n")]
-    (string.append
+    (str_cat.str-cat
       prologue
-      (string.append
-        ordinary-body
-        (string.append
-          ordinary-profile
-          (string.append atomic-body (string.append atomic-profile slow-body)))))))
+      ordinary-body
+      ordinary-profile
+      atomic-body
+      atomic-profile
+      slow-body)))
 
 (define (compiler-backend-runtime-fast-alloc-functions
   [current-arena-load : String]
@@ -327,79 +328,72 @@ tl_startup_profile_process_entry_tick:
   [size-reg : String]
   [next-reg : String]
   [profile : bool]) : String
-  (string.append
-    (string.append
-      (compiler-backend-runtime-fast-alloc-function
-        current-arena-load
-        usable-end-offset
-        8
-        size-reg
-        next-reg
-        profile)
-      (compiler-backend-runtime-fast-alloc-function
-        current-arena-load
-        usable-end-offset
-        16
-        size-reg
-        next-reg
-        profile))
-    (string.append
-      (string.append
-        (compiler-backend-runtime-fast-alloc-function
-          current-arena-load
-          usable-end-offset
-          24
-          size-reg
-          next-reg
-          profile)
-        (compiler-backend-runtime-fast-alloc-function
-          current-arena-load
-          usable-end-offset
-          32
-          size-reg
-          next-reg
-          profile))
-      (string.append
-        (string.append
-          (compiler-backend-runtime-fast-alloc-function
-            current-arena-load
-            usable-end-offset
-            40
-            size-reg
-            next-reg
-            profile)
-          (compiler-backend-runtime-fast-alloc-function
-            current-arena-load
-            usable-end-offset
-            48
-            size-reg
-            next-reg
-            profile))
-        (string.append
-          (compiler-backend-runtime-fast-alloc-function
-            current-arena-load
-            usable-end-offset
-            56
-            size-reg
-            next-reg
-            profile)
-          (compiler-backend-runtime-fast-alloc-function
-            current-arena-load
-            usable-end-offset
-            64
-            size-reg
-            next-reg
-            profile))))))
+  (str_cat.str-cat
+    (compiler-backend-runtime-fast-alloc-function
+      current-arena-load
+      usable-end-offset
+      8
+      size-reg
+      next-reg
+      profile)
+    (compiler-backend-runtime-fast-alloc-function
+      current-arena-load
+      usable-end-offset
+      16
+      size-reg
+      next-reg
+      profile)
+    (compiler-backend-runtime-fast-alloc-function
+      current-arena-load
+      usable-end-offset
+      24
+      size-reg
+      next-reg
+      profile)
+    (compiler-backend-runtime-fast-alloc-function
+      current-arena-load
+      usable-end-offset
+      32
+      size-reg
+      next-reg
+      profile)
+    (compiler-backend-runtime-fast-alloc-function
+      current-arena-load
+      usable-end-offset
+      40
+      size-reg
+      next-reg
+      profile)
+    (compiler-backend-runtime-fast-alloc-function
+      current-arena-load
+      usable-end-offset
+      48
+      size-reg
+      next-reg
+      profile)
+    (compiler-backend-runtime-fast-alloc-function
+      current-arena-load
+      usable-end-offset
+      56
+      size-reg
+      next-reg
+      profile)
+    (compiler-backend-runtime-fast-alloc-function
+      current-arena-load
+      usable-end-offset
+      64
+      size-reg
+      next-reg
+      profile)))
 
 (define (compiler-backend-runtime-region-mark-functions
   [current-arena-load : String]) : String
-  (string.append
+  (str_cat.str-cat
     "    .globl tl_region_mark
 tl_region_mark:
 "
-    (string.append
-      current-arena-load
-      "    testq %rax, %rax
+    current-arena-load
+    "    testq %rax, %rax
     jz .L_tl_region_mark_zero
 .L_tl_region_mark_current:
     movq 56(%rax), %rax
@@ -410,7 +404,7 @@ tl_region_mark:
     xorq %rax, %rax
     ret
 
-")))
+"))
 
 (define (compiler-backend-runtime-profile-functions) : String
   "    .globl tl_profile_alloc_total

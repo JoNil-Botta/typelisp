@@ -3,6 +3,7 @@
 ;; This file is intentionally pass-dependency-free: regalloc and backend both
 ;; import it, so it must not depend on either pass. Helpers expose ABI facts by
 ;; index/count; pass-specific list types and allocation policy stay in callers.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 
 (defenum CompilerRegTargetAbi
@@ -227,15 +228,15 @@
     [(= reg-id compiler-reg-id-r14) "%r14"]
     [(= reg-id compiler-reg-id-r15) "%r15"]
     [(compiler-abi-xmm-register-id? reg-id)
-      (string.append
+      (str_cat.str-cat
         "%xmm"
         (string.int->string (- reg-id compiler-reg-id-xmm-base)))]
     [(compiler-abi-vector-register-id? reg-id)
-      (string.append
+      (str_cat.str-cat
         "%vec"
         (string.int->string (- reg-id compiler-reg-id-vec-base)))]
     [(compiler-abi-mask-register-id? reg-id)
-      (string.append
+      (str_cat.str-cat
         "%k"
         (string.int->string (- reg-id compiler-reg-id-mask-base)))]
     [else ""]))

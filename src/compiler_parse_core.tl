@@ -3,6 +3,7 @@
 ;; This module targets `compiler_ast_types.tl`, not the smaller
 ;; compile_smoke AST. It stays parser-only: the later selfhost passes consume
 ;; the parsed `AstProgram` for typechecking/lowering.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.array)
 (import stdlib.io)
 (import compiler_intern as ci)
@@ -961,21 +962,17 @@
     [(ci.intern-macro-global-structural-id? name-id)
       (ci.intern-str (ci.intern-macro-global-source-name-id name-id))]
     [(ci.intern-composite-pair-id? name-id)
-      (string.append
+      (str_cat.str-cat
         (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
-        (string.append
-          "/"
-          (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))]
+        "/"
+        (ci.intern-str (ci.intern-composite-right-id-unchecked name-id)))]
     [(ci.intern-composite-triple-id? name-id)
-      (string.append
+      (str_cat.str-cat
         (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
-        (string.append
-          "/"
-          (string.append
-            (ci.intern-str (ci.intern-composite-middle-id-unchecked name-id))
-            (string.append
-              "."
-              (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))))]
+        "/"
+        (ci.intern-str (ci.intern-composite-middle-id-unchecked name-id))
+        "."
+        (ci.intern-str (ci.intern-composite-right-id-unchecked name-id)))]
     [else (ci.intern-str name-id)]))
 
 (define (compiler-cfg-empty) : sym_i64_env.SymI64Env
@@ -1090,11 +1087,10 @@
     [(string.eq name "mask")
       "parse: public SPMD mask source types are deferred; masks remain compiler-internal"]
     [else
-      (string.append
+      (str_cat.str-cat
         "parse: unknown type constructor "
-        (string.append
-          name
-          "; TypeLisp has no source-level generic type constructors; use defmacro to generate concrete declarations instead"))]))
+        name
+        "; TypeLisp has no source-level generic type constructors; use defmacro to generate concrete declarations instead")]))
 
 (define (compiler-parse-policy-form? [name : i64]) : bool
   (or
@@ -1111,10 +1107,10 @@
       (cbi.compiler-builtin-ctfe-ref 271))))
 
 (define (compiler-parse-removed-compressed-include-name) : String
-  (string.append "include-str-comptime-" "lzss"))
+  (str_cat.str-cat "include-str-comptime-" "lzss"))
 
 (define (compiler-parse-removed-compressed-include-message) : String
-  (string.append
+  (str_cat.str-cat
     "parse: include-str-comptime-"
     "lzss is removed; use include-str-lzss"))
 
@@ -3361,7 +3357,7 @@
                         (> (string.string-length key-text) 0)
                         (= (string.string-ref key-text 0) ':'))
                         (ResultAstParam.Err
-                          (string.append
+                          (str_cat.str-cat
                             "parse: unknown parameter metadata "
                             key-text))
                         (ResultAstParam.Err
@@ -3514,10 +3510,11 @@
 (define (parse-ast-macro-type-kind-error
   [operand-name : String]
   [detail : String]) : String
-  (string.concat3
+  (str_cat.str-cat
     "parse: macro type operand "
     operand-name
-    (string.append " constraint :kind " detail)))
+    " constraint :kind "
+    detail))
 
 (define (parse-ast-macro-type-kind-sexpr-contains-id?
   [s : reader.Sexpr]
@@ -3550,7 +3547,7 @@
                   (ResultAstMacroTypeKindCount.Err
                     (parse-ast-macro-type-kind-error
                       operand-name
-                      (string.append
+                      (str_cat.str-cat
                         "has duplicate kind "
                         (ci.intern-str kind-name))))
                   (ResultAstMacroTypeKindCount.Ok (+ count 1)))]
@@ -3559,7 +3556,7 @@
             (ResultAstMacroTypeKindCount.Err
               (parse-ast-macro-type-kind-error
                 operand-name
-                (string.append "has unknown kind " (ci.intern-str kind-name)))))]
+                (str_cat.str-cat "has unknown kind " (ci.intern-str kind-name)))))]
         [_
           (ResultAstMacroTypeKindCount.Err
             (parse-ast-macro-type-kind-error
@@ -3618,12 +3615,11 @@
                 (ResultAstMacroTypeKindList.Err
                   (parse-ast-macro-type-kind-error operand-name "is malformed"))])
             (ResultAstMacroTypeKindList.Err
-              (string.concat3
+              (str_cat.str-cat
                 "parse: macro type operand "
                 operand-name
-                (string.append
-                  " has unknown constraint form "
-                  (ci.intern-str tag)))))]
+                " has unknown constraint form "
+                (ci.intern-str tag))))]
         [_
           (ResultAstMacroTypeKindList.Err
             (parse-ast-macro-type-kind-error operand-name "is malformed"))])]
@@ -3696,7 +3692,7 @@
                       name-text
                       "allows only one constraint form"))])
               (ResultAstMacroParam.Err
-                (string.concat3
+                (str_cat.str-cat
                   "parse: macro operand "
                   name-text
                   " constraint :kind is only legal on fixed type operands")))]
@@ -3834,7 +3830,7 @@
                     "parse: malformed field :owned metadata")])]
             [(compiler-parse-metadata-key? key)
               (ResultAstFieldCleanup.Err
-                (string.append
+                (str_cat.str-cat
                   "parse: unknown field metadata "
                   (compiler-parse-name-text key)))]
             [else
@@ -3878,7 +3874,7 @@
                     "parse: malformed enum payload :owned metadata")])]
             [(compiler-parse-metadata-key? key)
               (ResultAstVariantPayloadCleanup.Err
-                (string.append
+                (str_cat.str-cat
                   "parse: unknown enum payload metadata "
                   (compiler-parse-name-text key)))]
             [else
@@ -3969,7 +3965,7 @@
                 (if (= name (cbi.compiler-builtin-ctfe-ref 239))
                   (ResultAstStructRepr.Err "parse: packed repr is reserved")
                   (ResultAstStructRepr.Err
-                    (string.append
+                    (str_cat.str-cat
                       "parse: unknown struct repr "
                       (compiler-parse-name-text name)))))]
             [_ (ResultAstStructRepr.Err "parse: malformed :repr metadata")])]
@@ -4158,7 +4154,7 @@
                       (ResultAstStructDefParts.Err
                         "parse: packed repr is reserved")
                       (ResultAstStructDefParts.Err
-                        (string.append
+                        (str_cat.str-cat
                           "parse: unknown defstruct metadata "
                           (compiler-parse-name-text key)))))]
                 [else
@@ -4307,7 +4303,7 @@
               (ResultAstVariantDef.Err
                 "parse: defenum metadata must appear before variants")
               (ResultAstVariantDef.Err
-                (string.append
+                (str_cat.str-cat
                   "parse: unknown defenum metadata "
                   (compiler-parse-name-text name))))
             (match (parse-ast-variant-payload-parts
@@ -4333,7 +4329,7 @@
       (ResultAstDispatchIsa.Ok (ast.AstDispatchIsa.Avx512))]
     [else
       (ResultAstDispatchIsa.Err
-        (string.append
+        (str_cat.str-cat
           "parse: unknown defdispatch ISA "
           (compiler-parse-name-text name)))]))
 
@@ -4505,7 +4501,7 @@
                         (ResultAstEnumDefParts.Err message)]))]
                 [else
                   (ResultAstEnumDefParts.Err
-                    (string.append
+                    (str_cat.str-cat
                       "parse: unknown defenum metadata "
                       (compiler-parse-name-text key)))])]
             [_
@@ -5735,11 +5731,10 @@
       (ResultAstReduceOp.Ok (ast.AstReduceOp.Any))]
     [else
       (ResultAstReduceOp.Err
-        (string.append
+        (str_cat.str-cat
           "parse: unsupported spmd-reduce operator `"
-          (string.append
-            (compiler-parse-name-text name-id)
-            "`; expected one of sum, min, max, all, any")))]))
+          (compiler-parse-name-text name-id)
+          "`; expected one of sum, min, max, all, any"))]))
 
 (define (parse-ast-scan-op [name-id : i64]) : ResultAstReduceOp
   (cond
@@ -5755,11 +5750,10 @@
       (ResultAstReduceOp.Ok (ast.AstReduceOp.Any))]
     [else
       (ResultAstReduceOp.Err
-        (string.append
+        (str_cat.str-cat
           "parse: unsupported spmd-scan operator `"
-          (string.append
-            (compiler-parse-name-text name-id)
-            "`; expected one of sum, min, max, all, any")))]))
+          (compiler-parse-name-text name-id)
+          "`; expected one of sum, min, max, all, any"))]))
 
 (define (parse-ast-spmd-reduce-binding
   [dispatch : sym_i64_env.SymI64Env]
@@ -6486,14 +6480,10 @@
           (parse-ast-expr-with-pools dispatch pools expr)]
         [_
           (ResultAstExpr.Err
-            (string.append
-              "parse: "
-              (string.append name " expects exactly one expression")))])]
+            (str_cat.str-cat "parse: " name " expects exactly one expression"))])]
     [_
       (ResultAstExpr.Err
-        (string.append
-          "parse: "
-          (string.append name " expects exactly one expression")))]))
+        (str_cat.str-cat "parse: " name " expects exactly one expression"))]))
 
 (define (parse-ast-two-exprs
   [dispatch : sym_i64_env.SymI64Env]
@@ -6517,19 +6507,16 @@
                 [(ResultAstExpr.Err message) (ResultAstExprPair.Err message)])]
             [_
               (ResultAstExprPair.Err
-                (string.append
+                (str_cat.str-cat
                   "parse: "
-                  (string.append name " expects exactly two expressions")))])]
+                  name
+                  " expects exactly two expressions"))])]
         [_
           (ResultAstExprPair.Err
-            (string.append
-              "parse: "
-              (string.append name " expects exactly two expressions")))])]
+            (str_cat.str-cat "parse: " name " expects exactly two expressions"))])]
     [_
       (ResultAstExprPair.Err
-        (string.append
-          "parse: "
-          (string.append name " expects exactly two expressions")))]))
+        (str_cat.str-cat "parse: " name " expects exactly two expressions"))]))
 
 (define (parse-ast-string-data
   [dispatch : sym_i64_env.SymI64Env]
@@ -6567,7 +6554,7 @@
     [(reader.SpannedSexprView.Nil _) (ResultAstExpr.Ok expr)]
     [_
       (ResultAstExpr.Err
-        (string.append "parse: " (string.append name " expects no arguments")))]))
+        (str_cat.str-cat "parse: " name " expects no arguments"))]))
 
 (define (parse-ast-cpuid-like
   [dispatch : sym_i64_env.SymI64Env]
@@ -6641,11 +6628,10 @@
               (match (reader.spanned-sexpr-view body)
                 [(reader.SpannedSexprView.Nil _)
                   (ResultAstExpr.Err
-                    (string.append
+                    (str_cat.str-cat
                       "parse: with-arena '"
-                      (string.append
-                        (compiler-parse-name-text region)
-                        "' requires a non-empty body")))]
+                      (compiler-parse-name-text region)
+                      "' requires a non-empty body"))]
                 [_
                   (match (parse-ast-expr-list dispatch pools body)
                     [(ResultAstExprList.Ok exprs)
@@ -7703,7 +7689,7 @@
                             true))]))]
                 [else
                   (ResultAstSpmdSpecializationParseState.Err
-                    (string.append
+                    (str_cat.str-cat
                       "parse: unknown :spmd-callable specialization field "
                       (compiler-parse-name-text key)))])]
             [_
@@ -8016,7 +8002,7 @@
                             (ResultAstDecl.Err message)]))]
                     [(compiler-parse-metadata-key? key)
                       (ResultAstDecl.Err
-                        (string.append
+                        (str_cat.str-cat
                           "parse: unknown define metadata "
                           (compiler-parse-name-text key)))]
                     [else
@@ -8318,7 +8304,7 @@
                   (ResultAstExternAbi.Err
                     (parse-ast-extern-c-varargs-legacy-message))
                   (ResultAstExternAbi.Err
-                    (string.append
+                    (str_cat.str-cat
                       "parse: unknown extern ABI "
                       (compiler-parse-name-text name)))))]
             [(reader.SexprView.Cons fixed-node end)
@@ -8330,7 +8316,7 @@
                         (ResultAstExternAbi.Err
                           (parse-ast-extern-c-varargs-legacy-message))
                         (ResultAstExternAbi.Err
-                          (string.append
+                          (str_cat.str-cat
                             "parse: unknown extern ABI "
                             (compiler-parse-name-text name))))]
                     [_
@@ -8355,24 +8341,16 @@
                 (if (> (string.string-length value) 0)
                   (ResultAstExternSymbol.Ok value value-id)
                   (ResultAstExternSymbol.Err
-                    (string.append
-                      "parse: extern "
-                      (string.append key " must not be empty")))))]
+                    (str_cat.str-cat "parse: extern " key " must not be empty"))))]
             [_
               (ResultAstExternSymbol.Err
-                (string.append
-                  "parse: malformed extern "
-                  (string.append key " metadata")))])]
+                (str_cat.str-cat "parse: malformed extern " key " metadata"))])]
         [_
           (ResultAstExternSymbol.Err
-            (string.append
-              "parse: malformed extern "
-              (string.append key " metadata")))])]
+            (str_cat.str-cat "parse: malformed extern " key " metadata"))])]
     [_
       (ResultAstExternSymbol.Err
-        (string.append
-          "parse: malformed extern "
-          (string.append key " metadata")))]))
+        (str_cat.str-cat "parse: malformed extern " key " metadata"))]))
 
 (define (parse-ast-extern-symbol-tail [tail : reader.Sexpr]) : ResultAstExternSymbol
   (parse-ast-extern-string-tail ":symbol" tail))
@@ -8508,7 +8486,7 @@
                         (ResultAstExternParts.Err message)])]
                   [(compiler-parse-metadata-key? key)
                     (ResultAstExternParts.Err
-                      (string.append
+                      (str_cat.str-cat
                         "parse: unknown extern metadata "
                         (compiler-parse-name-text key)))]
                   [else
@@ -8660,7 +8638,7 @@
                       (ResultAstExternParts.Err message)])]
                 [(compiler-parse-metadata-key? key)
                   (ResultAstExternParts.Err
-                    (string.append
+                    (str_cat.str-cat
                       "parse: unknown extern metadata "
                       (compiler-parse-name-text key)))]
                 [else (ResultAstExternParts.Err "parse: malformed extern")])]
@@ -8819,7 +8797,7 @@
                         (ResultAstExternParts.Err message)])]
                   [(compiler-parse-metadata-key? key)
                     (ResultAstExternParts.Err
-                      (string.append
+                      (str_cat.str-cat
                         "parse: unknown extern metadata "
                         (compiler-parse-name-text key)))]
                   [else
@@ -10838,11 +10816,10 @@
 
 (define (compiler-parse-removed-compressed-include-rejected?) : bool
   (compiler-parse-error-ok?
-    (string.append
+    (str_cat.str-cat
       "("
-      (string.append
-        (compiler-parse-removed-compressed-include-name)
-        " payload \"data.txt\")"))
+      (compiler-parse-removed-compressed-include-name)
+      " payload \"data.txt\")")
     (compiler-parse-removed-compressed-include-message)))
 
 (define (compiler-parse-include-bin-ok?) : bool
@@ -12484,7 +12461,7 @@
 (define (compiler-parse-place-migration-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
-      "(define (main [p : i64]) : i64 (struct-get p value))"
+      "(define (main [p : i64]) : i64 p.value)"
       "parse: struct-get was removed; use dotted field projection value.field")
     (compiler-parse-error-ok?
       "(define (main [p : i64]) : unit (struct-set p value 1))"
@@ -12496,7 +12473,7 @@
       "(define (main [xs : (Array i64 1)]) : unit (array-set! xs 0 1))"
       "parse: array-set! was removed; use (set! (array-ref array index) value)")
     (compiler-parse-error-ok?
-      "(define (main [b : (Box i64)]) : i64 (box-get b))"
+      "(define (main [b : (Box i64)]) : i64 (__tl-box-place b))"
       "parse: box-get was removed; use (deref box)")
     (compiler-parse-error-ok?
       "(define (main [b : (Box i64)]) : i64 (box-take b))"

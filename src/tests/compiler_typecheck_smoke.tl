@@ -1,4 +1,5 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
@@ -73,7 +74,7 @@
   [limit : i64]
   [out : String]) : String
   (if (>= index limit)
-    (string.append
+    (str_cat.str-cat
       out
       "(define (main) : unit
   (let
@@ -83,15 +84,13 @@
     (compiler-typecheck-lambda-large-global-env-source-from
       (+ index 1)
       limit
-      (string.append
+      (str_cat.str-cat
         out
-        (string.append
-          "(define (lambda-global-"
-          (string.append
-            (string.int->string index)
-            (string.append
-              ") : i64 "
-              (string.append (string.int->string index) ")\n"))))))))
+        "(define (lambda-global-"
+        (string.int->string index)
+        ") : i64 "
+        (string.int->string index)
+        ")\n"))))
 
 (define (compiler-typecheck-lambda-large-global-env-source) : String
   (compiler-typecheck-lambda-large-global-env-source-from 0 192 ""))
@@ -3617,7 +3616,7 @@
         name)]
     (if (>= name-id 0)
       name-id
-      (io.panic (string.append context name)))))
+      (io.panic (str_cat.str-cat context name)))))
 
 (define (compiler-typecheck-smoke-module-key-id
   [ctx : tc_core.TcContext]

@@ -33,15 +33,14 @@
 ;; The `typelisp.pkg` manifest text, matching the `(package ...)` form parsed by
 ;; compiler_load.tl: name, version, kind ("bin"|"staticlib"), and entry path.
 (define (scaffold-manifest [name : String] [kind : String] [entry : String]) : String
-  (string.append
+  (str_cat.str-cat
     "(package (name \""
-    (string.append
-      name
-      (string.append
-        "\") (version \"0.1.0\") (kind \""
-        (string.append
-          kind
-          (string.append "\") (entry \"" (string.append entry "\"))\n")))))))
+    name
+    "\") (version \"0.1.0\") (kind \""
+    kind
+    "\") (entry \""
+    entry
+    "\"))\n"))
 
 (define (scaffold-bin-source) : String
   "(import stdlib.io)\n(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n\n(define (main) : i64\n  (begin\n    (io.print-string \"Hello, TypeLisp!\\n\")\n    0))\n")
@@ -87,18 +86,17 @@
   (if (io.file-exists? path)
     (begin
       (io.print-error
-        (string.append
+        (str_cat.str-cat
           "scaffold: refusing to overwrite existing file: "
-          (string.append path "\n")))
+          path
+          "\n"))
       1)
     (match (scaffold-try-write-file path contents)
       [(io.OkIoUnit) 0]
       [(io.ErrIoUnit _)
         (begin
           (io.print-error
-            (string.append
-              "scaffold: could not write "
-              (string.append path "\n")))
+            (str_cat.str-cat "scaffold: could not write " path "\n"))
           1)])))
 
 ;; Create the package-local build-output ignore without changing an existing
@@ -120,9 +118,9 @@
       (if is-lib
         "src/lib.tl"
         "src/main.tl")]
-    [src-dir : String (string.append root "/src")]
-    [pkg-path : String (string.append root "/typelisp.pkg")]
-    [src-path : String (string.append root (string.append "/" entry))]
+    [src-dir : String (str_cat.str-cat root "/src")]
+    [pkg-path : String (str_cat.str-cat root "/typelisp.pkg")]
+    [src-path : String (str_cat.str-cat root "/" entry)]
     [gitignore-path : String (str_cat.str-cat root "/.gitignore")]
     [source : String
       (if is-lib
@@ -132,9 +130,10 @@
       [(io.ErrIoUnit _)
         (begin
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "scaffold: could not create directory "
-              (string.append src-dir "\n")))
+              src-dir
+              "\n"))
           1)]
       [(io.OkIoUnit)
         (let
@@ -165,17 +164,13 @@
   (if (not (scaffold-name-ok? name))
     (begin
       (io.print-error
-        (string.append
-          "scaffold: invalid package name: "
-          (string.append name "\n")))
+        (str_cat.str-cat "scaffold: invalid package name: " name "\n"))
       2)
     (match (scaffold-ensure-dir name)
       [(io.ErrIoUnit _)
         (begin
           (io.print-error
-            (string.append
-              "scaffold: could not create directory "
-              (string.append name "\n")))
+            (str_cat.str-cat "scaffold: could not create directory " name "\n"))
           1)]
       [(io.OkIoUnit) (scaffold-emit name name is-lib)])))
 
@@ -183,9 +178,7 @@
   (if (not (scaffold-name-ok? name))
     (begin
       (io.print-error
-        (string.append
-          "scaffold: invalid package name: "
-          (string.append name "\n")))
+        (str_cat.str-cat "scaffold: invalid package name: " name "\n"))
       2)
     (scaffold-emit "." name is-lib)))
 

@@ -38602,7 +38602,7 @@
             (compiler_ir_types.CompilerIrValue.Var a)
             (compiler_ir_types.CompilerIrValue.Var 2)
             (compiler_ir_types.compiler-ir-label
-              (string.append "lc_b" (string.int->string j))))
+              (str_cat.str-cat "lc_b" (string.int->string j))))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Gep
               g
@@ -41677,7 +41677,7 @@
 ;; invocation must schedule across loop boundaries.
 (define (opt-loop-budget-label [prefix : String] [k : i64]) : i64
   (compiler_ir_types.compiler-ir-label
-    (string.append prefix (string.int->string k))))
+    (str_cat.str-cat prefix (string.int->string k))))
 
 ;; loop_k of the unroll fixture: i/acc phis, acc += i, i += 1, i' < n -- the
 ;; canonical counted self-loop the guarded x16 arm rewrites.

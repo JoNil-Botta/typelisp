@@ -25,6 +25,7 @@
 ;; abandons it. Parse and type errors report diagnostics, discard only the
 ;; failing input, and return to the prompt with previously accepted declarations
 ;; intact.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.fs)
@@ -187,13 +188,12 @@
   [index : i64]) : String
   (if (>= index (ast.ast-type-list-len types))
     ""
-    (string.append
+    (str_cat.str-cat
       " "
-      (string.append
-        (repl-type-render
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-        (repl-type-list-render-spaced-at types (+ index 1))))))
+      (repl-type-render
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+      (repl-type-list-render-spaced-at types (+ index 1)))))
 
 (define (repl-type-list-render-spaced [types : ast.AstTypeList]) : String
   (repl-type-list-render-spaced-at (& types) 0))
@@ -203,15 +203,11 @@
   [index : i64]) : String
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     ""
-    (string.append
+    (str_cat.str-cat
       " "
-      (string.append
-        (tc.tc-hygiene-name-text-id
-          (ast.ast-lifetime-list-get
-            lifetimes
-            index
-            (ast.ast-lifetime-fallback)))
-        (repl-lifetime-list-render-spaced-at lifetimes (+ index 1))))))
+      (tc.tc-hygiene-name-text-id
+        (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
+      (repl-lifetime-list-render-spaced-at lifetimes (+ index 1)))))
 
 (define (repl-lifetime-list-render-spaced [lifetimes : ast.AstLifetimeList]) : String
   (repl-lifetime-list-render-spaced-at (& lifetimes) 0))
@@ -238,101 +234,81 @@
     [(ast.AstType.Expr) "Expr"]
     [(ast.AstType.ExprList) "ExprList"]
     [(ast.AstType.Func args ret)
-      (string.append
+      (str_cat.str-cat
         "(->"
-        (string.append
-          (repl-type-list-render-spaced (__tl-box-place args))
-          (string.append
-            " "
-            (string.append (repl-type-render (ast.ty-node-get ret)) ")"))))]
+        (repl-type-list-render-spaced (__tl-box-place args))
+        " "
+        (repl-type-render (ast.ty-node-get ret))
+        ")")]
     [(ast.AstType.Tuple elems)
-      (string.append
+      (str_cat.str-cat
         "(Tuple"
-        (string.append
-          (repl-type-list-render-spaced (__tl-box-place elems))
-          ")"))]
+        (repl-type-list-render-spaced (__tl-box-place elems))
+        ")")]
     [(ast.AstType.Array elem count)
-      (string.append
+      (str_cat.str-cat
         "(Array "
-        (string.append
-          (repl-type-render (ast.ty-node-get elem))
-          (string.append " " (string.append (string.int->string count) ")"))))]
+        (repl-type-render (ast.ty-node-get elem))
+        " "
+        (string.int->string count)
+        ")")]
     [(ast.AstType.DynArray elem)
-      (string.append
-        "(Array "
-        (string.append (repl-type-render (ast.ty-node-get elem)) ")"))]
+      (str_cat.str-cat "(Array " (repl-type-render (ast.ty-node-get elem)) ")")]
     [(ast.AstType.Slice elem)
-      (string.append
-        "(Slice "
-        (string.append (repl-type-render (ast.ty-node-get elem)) ")"))]
+      (str_cat.str-cat "(Slice " (repl-type-render (ast.ty-node-get elem)) ")")]
     [(ast.AstType.Box elem)
-      (string.append
-        "(Box "
-        (string.append (repl-type-render (ast.ty-node-get elem)) ")"))]
+      (str_cat.str-cat "(Box " (repl-type-render (ast.ty-node-get elem)) ")")]
     [(ast.AstType.Ptr elem)
-      (string.append
-        "(Ptr "
-        (string.append (repl-type-render (ast.ty-node-get elem)) ")"))]
+      (str_cat.str-cat "(Ptr " (repl-type-render (ast.ty-node-get elem)) ")")]
     [(ast.AstType.MutPtr elem)
-      (string.append
-        "(MutPtr "
-        (string.append (repl-type-render (ast.ty-node-get elem)) ")"))]
+      (str_cat.str-cat "(MutPtr " (repl-type-render (ast.ty-node-get elem)) ")")]
     [(ast.AstType.Ref region inner)
-      (string.append
+      (str_cat.str-cat
         "(& "
-        (string.append
-          (tc.tc-hygiene-name-text-id region)
-          (string.append
-            " "
-            (string.append (repl-type-render (ast.ty-node-get inner)) ")"))))]
+        (tc.tc-hygiene-name-text-id region)
+        " "
+        (repl-type-render (ast.ty-node-get inner))
+        ")")]
     [(ast.AstType.MutRef region inner)
-      (string.append
+      (str_cat.str-cat
         "(&mut "
-        (string.append
-          (tc.tc-hygiene-name-text-id region)
-          (string.append
-            " "
-            (string.append (repl-type-render (ast.ty-node-get inner)) ")"))))]
+        (tc.tc-hygiene-name-text-id region)
+        " "
+        (repl-type-render (ast.ty-node-get inner))
+        ")")]
     [(ast.AstType.Region region inner)
-      (string.append
+      (str_cat.str-cat
         "(in "
-        (string.append
-          (tc.tc-hygiene-name-text-id region)
-          (string.append
-            " "
-            (string.append (repl-type-render (ast.ty-node-get inner)) ")"))))]
+        (tc.tc-hygiene-name-text-id region)
+        " "
+        (repl-type-render (ast.ty-node-get inner))
+        ")")]
     [(ast.AstType.Enum name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.EnumArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "("
-        (string.append
-          (ast.ast-nominal-name-id-display name)
-          (string.append
-            (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
-            ")")))]
+        (ast.ast-nominal-name-id-display name)
+        (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
+        ")")]
     [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "("
-        (string.append
-          (ast.ast-nominal-name-id-display name)
-          (string.append
-            (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
-            ")")))]
-    [(ast.AstType.Var name)
-      (string.append "'" (string.append (ci.intern-str name) "'"))]
+        (ast.ast-nominal-name-id-display name)
+        (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
+        ")")]
+    [(ast.AstType.Var name) (str_cat.str-cat "'" (ci.intern-str name) "'")]
     [(ast.AstType.VarArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "("
-        (string.append
-          (ci.intern-str name)
-          (string.append
-            (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
-            ")")))]
+        (ci.intern-str name)
+        (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
+        ")")]
     [(ast.AstType.Consume inner)
-      (string.append
+      (str_cat.str-cat
         "(:consume "
-        (string.append (repl-type-render (ast.ty-node-get inner)) ")"))]))
+        (repl-type-render (ast.ty-node-get inner))
+        ")")]))
 
 (define (repl-print-error-line [message : String]) : unit
   (repl-stderr-write-line message))
@@ -430,47 +406,41 @@
     [_ ""]))
 
 (define (repl-aggregate-display-body [ty : ast.AstType] [expr-source : String]) : String
-  (string.append
+  (str_cat.str-cat
     "(begin\n  "
-    (string.append
-      expr-source
-      (string.append
-        "\n  (io.print-string \"<value: "
-        (string.append (repl-type-render ty) ">\")\n  (io.print-newline))")))))
+    expr-source
+    "\n  (io.print-string \"<value: "
+    (repl-type-render ty)
+    ">\")\n  (io.print-newline))"))
 
 (define (repl-display-body [ty : ast.AstType] [expr-source : String]) : ResultReplString
   (match ty
     [(ast.AstType.I64)
-      (ResultReplString.Ok
-        (string.append "(io.print\n" (string.append expr-source "\n)")))]
+      (ResultReplString.Ok (str_cat.str-cat "(io.print\n" expr-source "\n)"))]
     [(ast.AstType.I32)
       (ResultReplString.Ok
-        (string.append
-          "(io.print\n(cast\n"
-          (string.append expr-source "\n: i64)\n)")))]
+        (str_cat.str-cat "(io.print\n(cast\n" expr-source "\n: i64)\n)"))]
     [(ast.AstType.Bool)
       (ResultReplString.Ok
-        (string.append "(io.print-bool\n" (string.append expr-source "\n)")))]
+        (str_cat.str-cat "(io.print-bool\n" expr-source "\n)"))]
     [(ast.AstType.F64)
       (ResultReplString.Ok
-        (string.append
-          "(__tl_repl_print_f64\n"
-          (string.append expr-source "\n)")))]
+        (str_cat.str-cat "(__tl_repl_print_f64\n" expr-source "\n)"))]
     [(ast.AstType.F32)
       (ResultReplString.Ok
-        (string.append
+        (str_cat.str-cat
           "(__tl_repl_print_f64\n(cast\n"
-          (string.append expr-source "\n: f64)\n)")))]
+          expr-source
+          "\n: f64)\n)"))]
     [(ast.AstType.Char)
       (ResultReplString.Ok
-        (string.append
-          "(__tl_repl_print_char\n"
-          (string.append expr-source "\n)")))]
+        (str_cat.str-cat "(__tl_repl_print_char\n" expr-source "\n)"))]
     [(ast.AstType.String)
       (ResultReplString.Ok
-        (string.append
+        (str_cat.str-cat
           "(begin\n  (io.print-string\n"
-          (string.append expr-source "\n  )\n  (io.print-newline))")))]
+          expr-source
+          "\n  )\n  (io.print-newline))"))]
     [(ast.AstType.Unit) (ResultReplString.Ok expr-source)]
     [(ast.AstType.Tuple _)
       (ResultReplString.Ok (repl-aggregate-display-body ty expr-source))]
@@ -486,14 +456,12 @@
       (ResultReplString.Ok (repl-aggregate-display-body ty expr-source))]
     [_
       (ResultReplString.Err
-        (string.append
+        (str_cat.str-cat
           "Error: cannot display a value of type "
           (repl-type-render ty)))]))
 
 (define (repl-scratch-main-source [body : String]) : String
-  (string.append
-    "(define (main) : i64\n  (begin\n    "
-    (string.append body "\n    0))\n")))
+  (str_cat.str-cat "(define (main) : i64\n  (begin\n    " body "\n    0))\n"))
 
 (define (repl-scratch-source
   [session-source : String]
@@ -502,15 +470,12 @@
   (match (repl-display-body ty expr-source)
     [(ResultReplString.Ok body)
       (ResultReplString.Ok
-        (string.append
+        (str_cat.str-cat
           "(import stdlib.io)\n(import stdlib.string)\n"
-          (string.append
-            session-source
-            (string.append
-              "\n"
-              (string.append
-                (repl-display-helpers-source ty)
-                (repl-scratch-main-source body))))))]
+          session-source
+          "\n"
+          (repl-display-helpers-source ty)
+          (repl-scratch-main-source body)))]
     [(ResultReplString.Err message) (ResultReplString.Err message)]))
 
 (define (repl-clean-scratch-source [temp-dir : String] [source-path : String]) : unit
@@ -549,7 +514,7 @@
     (begin
       (repl-stderr-write "\n")
       (repl-print-error-line
-        (string.append
+        (str_cat.str-cat
           "REPL evaluation exited with status "
           (string.int->string status))))))
 
@@ -585,7 +550,7 @@
                 (repl-report-run-status status)))]))]
     [(build_run_core.ResultSourceToolString.Err message)
       (repl-print-error-line
-        (string.append "repl: failed to create scratch temp dir: " message))]))
+        (str_cat.str-cat "repl: failed to create scratch temp dir: " message))]))
 
 (define (repl-evaluate-expr
   [session-source : String]
@@ -600,9 +565,9 @@
               (repl-run-scratch-source scratch-source)]
             [(ResultReplString.Err message) (repl-print-error-line message)])]
         [(tc.ResultTcType.Err message)
-          (repl-print-error-line (string.append "Error: " message))])]
+          (repl-print-error-line (str_cat.str-cat "Error: " message))])]
     [(ResultReplDeclList.Err message)
-      (repl-print-error-line (string.append "Error: " message))]))
+      (repl-print-error-line (str_cat.str-cat "Error: " message))]))
 
 (define (repl-handle-type-command
   [session-source : String]
@@ -624,14 +589,14 @@
                   [(tc.ResultTcType.Ok ty)
                     (repl-stdout-write-line (repl-type-render ty))]
                   [(tc.ResultTcType.Err message)
-                    (repl-print-error-line (string.append "Error: " message))])]
+                    (repl-print-error-line (str_cat.str-cat "Error: " message))])]
               [(ResultReplDeclList.Err message)
-                (repl-print-error-line (string.append "Error: " message))])])]
+                (repl-print-error-line (str_cat.str-cat "Error: " message))])])]
       [(parser.ResultAstReplItem.Err message)
-        (repl-print-error-line (string.append "Error: " message))])))
+        (repl-print-error-line (str_cat.str-cat "Error: " message))])))
 
 (define (repl-session-candidate [session-source : String] [input : String]) : String
-  (string.append session-source (string.append input "\n")))
+  (str_cat.str-cat session-source input "\n"))
 
 (define (repl-handle-load-command [session-source : String] [path : String]) : String
   (if (string.eq path "")
@@ -646,7 +611,7 @@
           (match (repl-typecheck-session-source candidate)
             [(tc.ResultCompilerTypecheck.Ok _)
               (begin
-                (repl-stdout-write-line (string.append "Loaded " path))
+                (repl-stdout-write-line (str_cat.str-cat "Loaded " path))
                 candidate)]
             [(tc.ResultCompilerTypecheck.Err diag)
               (begin
@@ -655,7 +620,7 @@
       [(io.ErrIoBytes error)
         (begin
           (repl-print-error-line
-            (string.append "Error: .load failed: " (io.error-message error)))
+            (str_cat.str-cat "Error: .load failed: " (io.error-message error)))
           session-source)])))
 
 (define (repl-handle-input [session-source : String] [input : String]) : String
@@ -677,7 +642,7 @@
             session-source)])]
     [(parser.ResultAstReplItem.Err message)
       (begin
-        (repl-print-error-line (string.append "REPL parse error: " message))
+        (repl-print-error-line (str_cat.str-cat "REPL parse error: " message))
         session-source)]))
 
 ;; Completeness tracking mirrors the Rust REPL's delimiter check closely enough
@@ -875,7 +840,7 @@
 (define (repl-append-pending [pending : String] [line : String]) : String
   (if (string.eq pending "")
     line
-    (string.append pending (string.append "\n" line))))
+    (str_cat.str-cat pending "\n" line)))
 
 (define (repl-handle-source-line
   [session-source : String]
@@ -915,7 +880,7 @@
                 (if (repl-dot-command? line)
                   (begin
                     (repl-stderr-write
-                      (string.append "Unknown REPL command: " line))
+                      (str_cat.str-cat "Unknown REPL command: " line))
                     (repl-stderr-write "\nType .help for commands.\n")
                     (ReplLineResult.Line session-source ""))
                   (repl-handle-source-line session-source pending line)))])]))

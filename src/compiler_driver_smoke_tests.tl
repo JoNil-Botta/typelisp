@@ -1,4 +1,5 @@
 ;; compiler_driver_smoke_tests.tl - Shared driver/lowering integration smokes.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.string)
 (import stdlib.io)
@@ -530,7 +531,7 @@
 
 (define (compiler-driver-reader-context-smoke-fail [message : String]) : bool
   (begin
-    (io.print-string (string.append "driver reader-context smoke: " message))
+    (io.print-string (str_cat.str-cat "driver reader-context smoke: " message))
     (io.print-string "\n")
     false))
 
@@ -653,13 +654,13 @@
               [else true])]
           [(compiler_backend.ResultCompilerBackend.Err diag)
             (compiler-driver-reader-context-smoke-fail
-              (string.append
+              (str_cat.str-cat
                 "state A backend failed: "
                 (compiler_diagnostic.compiler-diagnostic-render
                   (__tl-box-place diag))))]))]
     [(compiler_backend.ResultCompilerBackend.Err diag)
       (compiler-driver-reader-context-smoke-fail
-        (string.append
+        (str_cat.str-cat
           "state B backend failed: "
           (compiler_diagnostic.compiler-diagnostic-render (__tl-box-place diag))))]))
 
@@ -788,13 +789,13 @@
               ok))]
         [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
           (compiler-driver-reader-context-smoke-fail
-            (string.append
+            (str_cat.str-cat
               "state B lower failed: "
               (compiler_diagnostic.compiler-diagnostic-render
                 (__tl-box-place diag))))])]
     [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
       (compiler-driver-reader-context-smoke-fail
-        (string.append
+        (str_cat.str-cat
           "state A lower failed: "
           (compiler_diagnostic.compiler-diagnostic-render (__tl-box-place diag))))]))
 
@@ -949,7 +950,7 @@
                         state-b)))))]
             [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
               (compiler-driver-reader-context-smoke-fail
-                (string.append
+                (str_cat.str-cat
                   "state A lower failed: "
                   (compiler_diagnostic.compiler-diagnostic-render
                     (__tl-box-place diag))))]))))))
@@ -1133,7 +1134,7 @@
 (define (main) : i64 (helper))")
       [(compiler_lower.ResultCompilerLower.Err diag)
         (compiler-driver-reader-context-smoke-fail
-          (string.append
+          (str_cat.str-cat
             "lower state A failed: "
             (compiler_diagnostic.compiler-diagnostic-render
               (__tl-box-place diag))))]

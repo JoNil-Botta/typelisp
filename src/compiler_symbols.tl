@@ -3,6 +3,7 @@
 ;; Handles are packed as kind * stride + declaration index, where index is the
 ;; source-order position among supported declarations. Import declarations have
 ;; no top-level symbol name here and do not consume an index.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.arena)
 (import compiler_builtin_ids as cbi)
@@ -662,24 +663,24 @@
       (CompilerSymbols values types macros decls owner-module-ids decl-count)]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
-  (string.append "symbols: duplicate value declaration " name))
+  (str_cat.str-cat "symbols: duplicate value declaration " name))
 
 (define (compiler-symbols-duplicate-type-message [name : String]) : String
-  (string.append "symbols: duplicate type declaration " name))
+  (str_cat.str-cat "symbols: duplicate type declaration " name))
 
 (define (compiler-symbols-duplicate-macro-message [name : String]) : String
-  (string.append "symbols: duplicate macro declaration " name))
+  (str_cat.str-cat "symbols: duplicate macro declaration " name))
 
 (define (compiler-symbols-duplicate-macro-value-message [name : String]) : String
-  (string.append "symbols: duplicate macro/value declaration " name))
+  (str_cat.str-cat "symbols: duplicate macro/value declaration " name))
 
 (define (compiler-registries-duplicate-variant-message [name : String]) : String
-  (string.append "symbols: duplicate enum variant " name))
+  (str_cat.str-cat "symbols: duplicate enum variant " name))
 
 (define (compiler-struct-field-key [struct-name : String] [field-name : String]) : String
   ;; Flat field registry key. Field names may repeat across structs because the
   ;; struct name is part of the key.
-  (string.append (string.append struct-name ".") field-name))
+  (str_cat.str-cat struct-name "." field-name))
 
 (define (compiler-composite-pair-key-id [left-id : i64] [right-id : i64]) : i64
   (ci.intern-composite-pair-id left-id right-id))
@@ -740,14 +741,14 @@
 (define (compiler-registries-duplicate-field-message
   [struct-name : String]
   [field-name : String]) : String
-  (string.append
+  (str_cat.str-cat
     "symbols: duplicate field "
     (compiler-struct-field-key struct-name field-name)))
 
 (define (compiler-symbol-module-key [module : String] [name : String]) : String
   (if (= (string.string-length module) 0)
     name
-    (string.append module (string.append "/" name))))
+    (str_cat.str-cat module "/" name)))
 
 (define (compiler-symbol-root-module-id) : i64
   -1)
@@ -782,7 +783,7 @@
 (define (compiler-enum-qualified-variant-name
   [enum-name : String]
   [variant-name : String]) : String
-  (string.append enum-name (string.append "." variant-name)))
+  (str_cat.str-cat enum-name "." variant-name))
 
 (define (compiler-enum-qualified-variant-name-id
   [enum-name-id : i64]
@@ -1381,18 +1382,19 @@
   (match meta
     [(ast.AstGeneratedDeclMeta.Some generator item _ key)
       (if (> (string.string-length key) 0)
-        (string.append " (generated identity: " (string.append key ")"))
-        (string.append
+        (str_cat.str-cat " (generated identity: " key ")")
+        (str_cat.str-cat
           " (generated declaration: "
-          (string.append
-            item
-            (string.append " from " (string.append generator ")")))))]
+          item
+          " from "
+          generator
+          ")"))]
     [(ast.AstGeneratedDeclMeta.No) ""]))
 
 (define (compiler-symbols-with-generated-context
   [message : String]
   [meta : ast.AstGeneratedDeclMeta]) : String
-  (string.append message (compiler-symbols-generated-meta-suffix meta)))
+  (str_cat.str-cat message (compiler-symbols-generated-meta-suffix meta)))
 
 (define (compiler-symbols-add-struct-cleanup-in-module-id
   [symbols : CompilerSymbols]
@@ -2392,14 +2394,15 @@
   [duplicate-path : String]) : String
   (if (> (string.string-length first-path) 0)
     (if (> (string.string-length duplicate-path) 0)
-      (string.append
+      (str_cat.str-cat
         " (first declared in "
-        (string.append
-          first-path
-          (string.append "; duplicate in " (string.append duplicate-path ")"))))
-      (string.append " (first declared in " (string.append first-path ")")))
+        first-path
+        "; duplicate in "
+        duplicate-path
+        ")")
+      (str_cat.str-cat " (first declared in " first-path ")"))
     (if (> (string.string-length duplicate-path) 0)
-      (string.append " (duplicate in " (string.append duplicate-path ")"))
+      (str_cat.str-cat " (duplicate in " duplicate-path ")")
       "")))
 
 (define (compiler-symbols-duplicate-value-message-with-paths
@@ -2426,7 +2429,7 @@
           [display-name : String
             (compiler-symbol-module-key-by-id module-id name-id)]
           (CompilerSomeString
-            (string.append
+            (str_cat.str-cat
               (compiler-symbols-duplicate-value-message display-name)
               (compiler-symbols-duplicate-location-suffix first-path decl-path)))))]
     [(option_i64.None) CompilerNoString]))

@@ -8,6 +8,7 @@
 ;; Evaluation threads persistent environment snapshots through recursion, and
 ;; the step budget ("fuel") through results, so the evaluator stays
 ;; deterministic without a mutable fuel counter.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as ctfe_key_map)
 (import stdlib.arena)
@@ -670,7 +671,7 @@
           (ci.intern-dotted-prefix-id suffix-id))
         empty-id)]
     (ci.intern-generated-canonical-dotted-name
-      (string.append "." suffix)
+      (str_cat.str-cat "." suffix)
       empty-id
       prefix-id
       suffix-id)))
@@ -688,7 +689,7 @@
           member-id)
         member-id)]
     (ci.intern-generated-canonical-dotted-name
-      (string.append prefix (string.append "." member))
+      (str_cat.str-cat prefix "." member)
       (if (ci.intern-dotted? prefix-id)
         (ci.intern-leading-dot-id prefix-id)
         prefix-id)
@@ -712,7 +713,7 @@
   [right : String]
   [right-id : i64]) : CompilerCtfeValue
   (let
-    [text : String (string.append left right)]
+    [text : String (str_cat.str-cat left right)]
     [right-len : i64 (string.string-length right)]
     (cond
       [(and
@@ -1797,7 +1798,7 @@
 (define (ctfe-symbol-module-key [module : String] [name : String]) : String
   (if (= (ctfe-private-string-length module) 0)
     name
-    (string.append module (string.append "/" name))))
+    (str_cat.str-cat module "/" name)))
 
 (define ctfe-module-macro-export-keys : (Box ctfe_key_map.Map)
   (box (ctfe_key_map.with-capacity 1)))
@@ -2010,7 +2011,7 @@
     [key : String
       (if (= (string.string-length module) 0)
         name-str
-        (string.append module (string.append "/" name-str)))]
+        (str_cat.str-cat module "/" name-str))]
     [key-id : i64
       (if (= (string.string-length module) 0)
         name
@@ -2037,7 +2038,7 @@
     [key : String
       (if (= (string.string-length module) 0)
         name-str
-        (string.append module (string.append "/" name-str)))]
+        (str_cat.str-cat module "/" name-str))]
     [key-id : i64
       (if (= (string.string-length module) 0)
         name
@@ -2646,9 +2647,10 @@
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.append
+        (str_cat.str-cat
           "this operation is not supported on "
-          (string.append label " in compile-time evaluation"))))))
+          label
+          " in compile-time evaluation")))))
 
 ;; Dispatch a binary op over two already-evaluated operands.
 (define (ctfe-apply-binop
@@ -3381,7 +3383,7 @@
 
 (define (ctfe-int-key [n : i64]) : String
   (if (< n 0)
-    (string.append "m" (string.int->string (- 0 n)))
+    (str_cat.str-cat "m" (string.int->string (- 0 n)))
     (string.int->string n)))
 
 (define (ctfe-type-list-key-with-pools
@@ -3397,26 +3399,26 @@
   [index : i64]) : String
   (if (>= index (ast.ast-type-list-len types))
     "nil"
-    (string.append
+    (str_cat.str-cat
       (ctfe-type-key-with-reflections-and-pools
         pools
         infos
         (ast.ast-node-pool-context-type-get
           pools
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (string.append
-        "_"
-        (ctfe-type-list-key-with-pools-at pools infos types (+ index 1))))))
+      "_"
+      (ctfe-type-list-key-with-pools-at pools infos types (+ index 1)))))
 
 (define (ctfe-lifetime-list-key-at
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]) : String
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     "nil"
-    (string.append
+    (str_cat.str-cat
       (ci.intern-str
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
-      (string.append "_" (ctfe-lifetime-list-key-at lifetimes (+ index 1))))))
+      "_"
+      (ctfe-lifetime-list-key-at lifetimes (+ index 1)))))
 
 (define (ctfe-lifetime-list-key [lifetimes : ast.AstLifetimeList]) : String
   (ctfe-lifetime-list-key-at (& lifetimes) 0))
@@ -3465,128 +3467,114 @@
     [(ast.AstType.Unit) "unit"]
     [(ast.AstType.Never) "never"]
     [(ast.AstType.Func args ret)
-      (string.append
+      (str_cat.str-cat
         "fn_"
-        (string.append
-          (ctfe-type-list-key-with-pools pools infos (__tl-box-place args))
-          (string.append
-            "_to_"
-            (ctfe-type-key-with-reflections-and-pools
-              pools
-              infos
-              (ast.ast-node-pool-context-type-get pools ret)))))]
+        (ctfe-type-list-key-with-pools pools infos (__tl-box-place args))
+        "_to_"
+        (ctfe-type-key-with-reflections-and-pools
+          pools
+          infos
+          (ast.ast-node-pool-context-type-get pools ret)))]
     [(ast.AstType.Tuple elems)
-      (string.append
+      (str_cat.str-cat
         "tuple_"
         (ctfe-type-list-key-with-pools pools infos (__tl-box-place elems)))]
     [(ast.AstType.Array elem count)
-      (string.append
+      (str_cat.str-cat
         "array_"
-        (string.append
-          (ctfe-type-key-with-reflections-and-pools
-            pools
-            infos
-            (ast.ast-node-pool-context-type-get pools elem))
-          (string.append "_" (ctfe-int-key count))))]
+        (ctfe-type-key-with-reflections-and-pools
+          pools
+          infos
+          (ast.ast-node-pool-context-type-get pools elem))
+        "_"
+        (ctfe-int-key count))]
     [(ast.AstType.DynArray elem)
-      (string.append
+      (str_cat.str-cat
         "dynarray_"
         (ctfe-type-key-with-reflections-and-pools
           pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Slice elem)
-      (string.append
+      (str_cat.str-cat
         "slice_"
         (ctfe-type-key-with-reflections-and-pools
           pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Box elem)
-      (string.append
+      (str_cat.str-cat
         "box_"
         (ctfe-type-key-with-reflections-and-pools
           pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Ptr elem)
-      (string.append
+      (str_cat.str-cat
         "ptr_"
         (ctfe-type-key-with-reflections-and-pools
           pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.MutPtr elem)
-      (string.append
+      (str_cat.str-cat
         "mutptr_"
         (ctfe-type-key-with-reflections-and-pools
           pools
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
     [(ast.AstType.Ref region inner)
-      (string.append
+      (str_cat.str-cat
         "ref_"
-        (string.append
-          (ci.intern-str region)
-          (string.append
-            "_"
-            (ctfe-type-key-with-reflections-and-pools
-              pools
-              infos
-              (ast.ast-node-pool-context-type-get pools inner)))))]
+        (ci.intern-str region)
+        "_"
+        (ctfe-type-key-with-reflections-and-pools
+          pools
+          infos
+          (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.MutRef region inner)
-      (string.append
+      (str_cat.str-cat
         "mutref_"
-        (string.append
-          (ci.intern-str region)
-          (string.append
-            "_"
-            (ctfe-type-key-with-reflections-and-pools
-              pools
-              infos
-              (ast.ast-node-pool-context-type-get pools inner)))))]
+        (ci.intern-str region)
+        "_"
+        (ctfe-type-key-with-reflections-and-pools
+          pools
+          infos
+          (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.Region region inner)
-      (string.append
+      (str_cat.str-cat
         "region_"
-        (string.append
-          (ci.intern-str region)
-          (string.append
-            "_"
-            (ctfe-type-key-with-reflections-and-pools
-              pools
-              infos
-              (ast.ast-node-pool-context-type-get pools inner)))))]
+        (ci.intern-str region)
+        "_"
+        (ctfe-type-key-with-reflections-and-pools
+          pools
+          infos
+          (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.Enum name)
-      (string.append "enum_" (ast.ast-nominal-name-id-display name))]
+      (str_cat.str-cat "enum_" (ast.ast-nominal-name-id-display name))]
     [(ast.AstType.EnumArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "enumargs_"
-        (string.append
-          (ast.ast-nominal-name-id-display name)
-          (string.append
-            "_"
-            (ctfe-lifetime-list-key (__tl-box-place lifetimes)))))]
+        (ast.ast-nominal-name-id-display name)
+        "_"
+        (ctfe-lifetime-list-key (__tl-box-place lifetimes)))]
     [(ast.AstType.Struct name)
-      (string.append "struct_" (ast.ast-nominal-name-id-display name))]
+      (str_cat.str-cat "struct_" (ast.ast-nominal-name-id-display name))]
     [(ast.AstType.StructArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "structargs_"
-        (string.append
-          (ast.ast-nominal-name-id-display name)
-          (string.append
-            "_"
-            (ctfe-lifetime-list-key (__tl-box-place lifetimes)))))]
-    [(ast.AstType.Var name) (string.append "var_" (ci.intern-str name))]
+        (ast.ast-nominal-name-id-display name)
+        "_"
+        (ctfe-lifetime-list-key (__tl-box-place lifetimes)))]
+    [(ast.AstType.Var name) (str_cat.str-cat "var_" (ci.intern-str name))]
     [(ast.AstType.VarArgs name lifetimes)
-      (string.append
+      (str_cat.str-cat
         "varargs_"
-        (string.append
-          (ci.intern-str name)
-          (string.append
-            "_"
-            (ctfe-lifetime-list-key (__tl-box-place lifetimes)))))]
+        (ci.intern-str name)
+        "_"
+        (ctfe-lifetime-list-key (__tl-box-place lifetimes)))]
     [(ast.AstType.Consume inner)
-      (string.append
+      (str_cat.str-cat
         "consume_"
         (ctfe-type-key-with-reflections-and-pools
           pools
@@ -3669,7 +3657,7 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.append name " expects a type argument"))))])]))
+                (str_cat.str-cat name " expects a type argument"))))])]))
 
 (define (ctfe-eval-i64-arg
   [arg : ast.AstExpr]
@@ -3688,7 +3676,7 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.append name " expects an i64 index"))))])]))
+                (str_cat.str-cat name " expects an i64 index"))))])]))
 
 (define (ctfe-eval-string-arg
   [arg : ast.AstExpr]
@@ -3709,7 +3697,7 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.append name " expects a String argument"))))])]))
+                (str_cat.str-cat name " expects a String argument"))))])]))
 
 ;; Binding-oriented syntax constructors preserve an inspected or explicitly
 ;; fresh `Name` identity. Ordinary strings retain the public spelling lookup
@@ -3739,7 +3727,7 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.append name " expects a String argument"))))])]))
+                (str_cat.str-cat name " expects a String argument"))))])]))
 
 (define (ctfe-expr-arg-count [args : ast.AstExprList]) : i64
   args.len)
@@ -4098,11 +4086,10 @@
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.append
+            (str_cat.str-cat
               "'"
-              (string.append
-                (ctfe-describe-expr expr)
-                "' is not supported in compile-time evaluation")))))]))
+              (ctfe-describe-expr expr)
+              "' is not supported in compile-time evaluation"))))]))
 
 ;; Type size / alignment in bytes for CTFE layout queries. Builtins mirror the
 ;; lowerer ABI; user-defined names come from the layout table carried in `env`.
@@ -4332,19 +4319,19 @@
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
-                        (string.append name " expects a known type argument"))))
+                        (str_cat.str-cat name " expects a known type argument"))))
                   (ResultCtfe.Ok (CompilerCtfeValue.I64 answer) arg-fuel)))]
             [_
               (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
-                    (string.append name " expects a type argument"))))])]))
+                    (str_cat.str-cat name " expects a type argument"))))])]))
     (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr
           expr
-          (string.append name " expects exactly one type argument"))))))
+          (str_cat.str-cat name " expects exactly one type argument"))))))
 
 (define (ctfe-offset-field-name [expr : ast.AstExpr] [env : CtfeEnv]) : CtfeMaybeFieldName
   (match expr
@@ -4392,7 +4379,7 @@
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  (string.append
+                  (str_cat.str-cat
                     "offset-of unknown field "
                     (ci.intern-str field-name-id)))))
             (ResultCtfe.Ok (CompilerCtfeValue.I64 offset) fuel)))
@@ -4750,21 +4737,23 @@
       (box
         (ctfe-diagnostic-at-expr
           expr
-          (string.append name " expects exactly one type argument"))))))
+          (str_cat.str-cat name " expects exactly one type argument"))))))
 
 (define (ctfe-struct-field-arity-error [name : String] [expr : ast.AstExpr]) : ResultCtfe
   (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.append name " expects exactly one type argument and one index")))))
+        (str_cat.str-cat
+          name
+          " expects exactly one type argument and one index")))))
 
 (define (ctfe-struct-field-kind-error [name : String] [expr : ast.AstExpr]) : ResultCtfe
   (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.append name " requires struct type")))))
+        (str_cat.str-cat name " requires struct type")))))
 
 (define (ctfe-eval-struct-field-from-fields
   [name : String]
@@ -4781,18 +4770,14 @@
       [(ResultCtfeNameLookup.Err message)
         (ResultCtfe.Err
           (box
-            (ctfe-diagnostic-at-expr
-              expr
-              (string.append name (string.append " " message)))))])
+            (ctfe-diagnostic-at-expr expr (str_cat.str-cat name " " message))))])
     (match (ctfe-reflect-field-type-at fields pools infos index)
       [(ResultCtfeTypeLookup.Ok field-ty)
         (ResultCtfe.Ok (CompilerCtfeValue.Type field-ty) fuel)]
       [(ResultCtfeTypeLookup.Err message)
         (ResultCtfe.Err
           (box
-            (ctfe-diagnostic-at-expr
-              expr
-              (string.append name (string.append " " message)))))])))
+            (ctfe-diagnostic-at-expr expr (str_cat.str-cat name " " message))))])))
 
 (define (ctfe-eval-struct-field-from-type
   [name : String]
@@ -4848,12 +4833,16 @@
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.append name " expects exactly one type argument and one index")))))
+        (str_cat.str-cat
+          name
+          " expects exactly one type argument and one index")))))
 
 (define (ctfe-enum-variant-kind-error [name : String] [expr : ast.AstExpr]) : ResultCtfe
   (ResultCtfe.Err
     (box
-      (ctfe-diagnostic-at-expr expr (string.append name " requires enum type")))))
+      (ctfe-diagnostic-at-expr
+        expr
+        (str_cat.str-cat name " requires enum type")))))
 
 (define (ctfe-eval-enum-variant-from-variants
   [name : String]
@@ -4868,9 +4857,7 @@
       [(ResultCtfeNameLookup.Err message)
         (ResultCtfe.Err
           (box
-            (ctfe-diagnostic-at-expr
-              expr
-              (string.append name (string.append " " message)))))])
+            (ctfe-diagnostic-at-expr expr (str_cat.str-cat name " " message))))])
     (match (ctfe-reflect-variant-payloads-at variants index)
       [(ResultCtfeTypeListLookup.Ok payloads)
         (ResultCtfe.Ok
@@ -4879,9 +4866,7 @@
       [(ResultCtfeTypeListLookup.Err message)
         (ResultCtfe.Err
           (box
-            (ctfe-diagnostic-at-expr
-              expr
-              (string.append name (string.append " " message)))))])))
+            (ctfe-diagnostic-at-expr expr (str_cat.str-cat name " " message))))])))
 
 (define (ctfe-eval-enum-variant-from-type
   [name : String]
@@ -4957,13 +4942,13 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.append "enum-variant-payload-type " message))))])]
+                (str_cat.str-cat "enum-variant-payload-type " message))))])]
     [(ResultCtfeTypeListLookup.Err message)
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.append "enum-variant-payload-type " message))))]))
+            (str_cat.str-cat "enum-variant-payload-type " message))))]))
 
 (define (ctfe-eval-enum-payload-type-from-type
   [ty : ast.AstType]
@@ -5068,7 +5053,7 @@
                         (box
                           (ctfe-diagnostic-at-expr
                             expr
-                            (string.append "function-param-type " message))))])]
+                            (str_cat.str-cat "function-param-type " message))))])]
                 [_
                   (ResultCtfe.Err
                     (box
@@ -5116,7 +5101,7 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.append "tuple-element-type " message))))])]
+                (str_cat.str-cat "tuple-element-type " message))))])]
     [_ (ctfe-tuple-element-type-kind-error expr)]))
 
 (define (ctfe-eval-tuple-element-type-reflection
@@ -5890,12 +5875,10 @@
   "__typelisp_embedded_stdlib_lzss_v1__")
 
 (define (ctfe-embedded-stdlib-binary-data-bytes [source : String]) : String
-  (string.append
-    (string.append
-      (string.append
-        (ctfe-embedded-stdlib-compressed-prefix)
-        (string.int->string (string.string-length source)))
-      "\n")
+  (str_cat.str-cat
+    (ctfe-embedded-stdlib-compressed-prefix)
+    (string.int->string (string.string-length source))
+    "\n"
     (ctfe-embedded-stdlib-lzss-compress source)))
 
 ;; `(expr-binary-data bytes)` builds an opaque static `(Array u8)` payload.
@@ -6078,9 +6061,11 @@
           "module-export-macro? expects exactly two args")))))
 
 (define (ctfe-module-value-missing-message [module : String] [name : String]) : String
-  (string.append
+  (str_cat.str-cat
     "module-value-type: module "
-    (string.append module (string.append " does not define value " name))))
+    module
+    " does not define value "
+    name))
 
 (define (ctfe-eval-module-value-call
   [query-name : String]
@@ -6118,12 +6103,14 @@
       (box
         (ctfe-diagnostic-at-expr
           expr
-          (string.append query-name " expects exactly two args"))))))
+          (str_cat.str-cat query-name " expects exactly two args"))))))
 
 (define (ctfe-module-hook-missing-message [module : String] [name : String]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: strategy module "
-    (string.append module (string.append " does not export hook " name))))
+    module
+    " does not export hook "
+    name))
 
 (define (ctfe-eval-module-hook-call
   [args : ast.AstExprList]
@@ -6393,13 +6380,13 @@
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
-                    (string.append builder-name " expects Expr"))))))]
+                    (str_cat.str-cat builder-name " expects Expr"))))))]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr
           expr
-          (string.append builder-name " expects exactly one arg"))))))
+          (str_cat.str-cat builder-name " expects exactly one arg"))))))
 
 ;; `(expr-array-ref target index)` builds an ordinary checked array-reference
 ;; syntax node without attaching the macro implementation's source location.
@@ -6712,13 +6699,13 @@
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
-                    (string.append name " expects ExprClauseList"))))])]
+                    (str_cat.str-cat name " expects ExprClauseList"))))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr
           expr
-          (string.append name " expects exactly one arg"))))))
+          (str_cat.str-cat name " expects exactly one arg"))))))
 
 (define (ctfe-eval-expr-binding-clause-list-inspector-call
   [name : String]
@@ -6742,13 +6729,13 @@
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
-                    (string.append name " expects ExprBindingClauseList"))))])]
+                    (str_cat.str-cat name " expects ExprBindingClauseList"))))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr
           expr
-          (string.append name " expects exactly one arg"))))))
+          (str_cat.str-cat name " expects exactly one arg"))))))
 
 ;; Binding-clause inspectors are direct CTFE operations. Their historical
 ;; source-helper mirror builds a temporary `clause` expression in the macro
@@ -6795,13 +6782,13 @@
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
-                    (string.append name " expects ExprBindingClause"))))])]
+                    (str_cat.str-cat name " expects ExprBindingClause"))))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr
           expr
-          (string.append name " expects exactly one arg"))))))
+          (str_cat.str-cat name " expects exactly one arg"))))))
 
 ;; `(expr-list-length seq)` and its clause/binding-clause variants return the
 ;; element count as a comptime i64, exactly matching `seq.len`.
@@ -6847,13 +6834,13 @@
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
-                    (string.append name " expects a comptime sequence"))))])]
+                    (str_cat.str-cat name " expects a comptime sequence"))))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr
           expr
-          (string.append name " expects exactly one arg"))))))
+          (str_cat.str-cat name " expects exactly one arg"))))))
 
 ;; `(expr-list-nth seq index)` and its clause/binding-clause variants return the
 ;; indexed element, exactly matching `(array-ref seq.items index)`.
@@ -6888,14 +6875,14 @@
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
-                        (string.append name " index must be i64"))))])]
+                        (str_cat.str-cat name " index must be i64"))))])]
             [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr
           expr
-          (string.append name " expects a sequence and an index"))))))
+          (str_cat.str-cat name " expects a sequence and an index"))))))
 
 (define (ctfe-eval-expr-list-type-node
   [pools : ast.AstNodePoolContext]
@@ -7824,7 +7811,8 @@
           (ast.ast-pattern-list-push
             (&mut patterns)
             (let
-              [name : String (string.append prefix (string.int->string index))]
+              [name : String
+                (str_cat.str-cat prefix (string.int->string index))]
               [name-id : i64 (ctfe-materialize-generated-name-id name)]
               (ctfe-pat-binding-id
                 (ctfe-string-syntax-name-id
@@ -8136,7 +8124,7 @@
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  (string.append builder-name " expects Expr arguments"))))
+                  (str_cat.str-cat builder-name " expects Expr arguments"))))
             (match (ctfe-eval-syntax-expr-args
               args
               (+ index 1)
@@ -8210,11 +8198,11 @@
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.append
+            (str_cat.str-cat
               builder-name
-              (string.append
-                " expects exactly "
-                (string.append (string.int->string expected-count) " args")))))))))
+              " expects exactly "
+              (string.int->string expected-count)
+              " args")))))))
 
 (define (ctfe-eval-expr-let-scope-call
   [args : ast.AstExprList]
@@ -8797,8 +8785,8 @@
 
 (define (ctfe-comptime-source-helper-arity-message [name : String]) : String
   (if (= (ctfe-comptime-source-helper-arity name) 1)
-    (string.append name " expects exactly one arg")
-    (string.append name " expects exactly two args")))
+    (str_cat.str-cat name " expects exactly one arg")
+    (str_cat.str-cat name " expects exactly two args")))
 
 (define (ctfe-comptime-source-helper-arity-error
   [name : String]
@@ -8884,19 +8872,15 @@
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.append
+        (str_cat.str-cat
           "unsupported compile-time call "
-          (string.append
-            raw-name
-            (string.append
-              "#"
-              (string.append
-                (string.int->string raw-id)
-                (string.append
-                  " resolved as "
-                  (string.append
-                    call-name
-                    (string.append "#" (string.int->string call-id))))))))))))
+          raw-name
+          "#"
+          (string.int->string raw-id)
+          " resolved as "
+          call-name
+          "#"
+          (string.int->string call-id))))))
 
 (define (ctfe-float-sqrt-unsupported [expr : ast.AstExpr]) : ResultCtfe
   (ResultCtfe.Err
@@ -9185,11 +9169,10 @@
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.append
+        (str_cat.str-cat
           "'"
-          (string.append
-            (ctfe-describe-expr expr)
-            "' is not supported in compile-time evaluation"))))))
+          (ctfe-describe-expr expr)
+          "' is not supported in compile-time evaluation")))))
 
 (define (ctfe-eval-var
   [name-id : i64]
@@ -9225,9 +9208,10 @@
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.append
+            (str_cat.str-cat
               "compile-time evaluation cannot reference runtime variable '"
-              (string.append (ci.intern-str name-id) "'")))))]))
+              (ci.intern-str name-id)
+              "'"))))]))
 
 ;; Dotted public places remain parser-owned Var nodes until semantic context can
 ;; distinguish a bound leading local from a module-qualified name. CTFE has the
@@ -9286,9 +9270,10 @@
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.append
+        (str_cat.str-cat
           "unsupported stdlib.comptime field '"
-          (string.append (ci.intern-str field) "'"))))))
+          (ci.intern-str field)
+          "'")))))
 
 (define (ctfe-comptime-struct-get-type-error [expr : ast.AstExpr]) : ResultCtfe
   (ResultCtfe.Err
@@ -9871,8 +9856,8 @@
     [actual : String (ci.intern-str name)]
     (or
       (string.eq actual expected)
-      (ctfe-string-suffix? actual (string.append "." expected))
-      (ctfe-string-suffix? actual (string.append "/" expected)))))
+      (ctfe-string-suffix? actual (str_cat.str-cat "." expected))
+      (ctfe-string-suffix? actual (str_cat.str-cat "/" expected)))))
 
 (define (ctfe-literal-matches-value?
   [lit : ast.AstLiteral]

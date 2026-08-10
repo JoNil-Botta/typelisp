@@ -5,6 +5,7 @@
 ;; the selfhost-lint-*-source fixture getters, the fixture-decls builders, the
 ;; finding helpers, and the six lint driver self-test entries. The production
 ;; module keeps the lint driver itself.
+(import stdlib.str_cat_runtime as str_cat)
 (import lint_driver_core)
 (import lint_core)
 (import stdlib.io)
@@ -301,11 +302,12 @@
 (define (suppressed-visible-helper) : i64 2)")
 
 (define (selfhost-lint-package-dead-source-b) : String
-  (string.append
+  (str_cat.str-cat
     "(define (cross-file-helper [x : i64]) : i64 (+ x 1))
 (define (test-only-helper) : i64 3)
 "
-    (string.append "(cfg test (te" "st \"test-only\" (test-only-helper)))")))
+    "(cfg test (te"
+    "st \"test-only\" (test-only-helper)))"))
 
 (define (selfhost-lint-package-dead-entry-source) : String
   "(define (main) : i64 42)

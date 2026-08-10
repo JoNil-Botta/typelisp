@@ -3449,6 +3449,10 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-nest-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-nest-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-pipeline-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-pipeline-self-test)
       42)
@@ -3729,6 +3733,13 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
     42
     "multi-block versioning rejections"))
+
+(test
+  bce-version-multiblock-loop-nest
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-nest-self-test)
+    42
+    "multi-block versioning admits loop nests under the nest budget"))
 
 (test
   bce-version-multiblock-pipeline

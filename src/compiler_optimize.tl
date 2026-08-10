@@ -50101,6 +50101,21 @@
 ;; block order so intra-loop fallthroughs clone correctly, and the guard
 ;; sits immediately before the slow header so a fallthrough preheader lands
 ;; on it.
+;;
+;; LOOP NESTS. A candidate body holding another loop's header is admitted:
+;; the natural loop's block set already IS the nest, the clone group copies it
+;; whole (an inner header phi's inputs name inner-loop labels, which remap to
+;; their fast twins exactly like every other intra-loop edge), and every
+;; derivation reasons only about THIS loop's counter and its invariants -- an
+;; inner counter is defined inside the body, so it is neither the counter phi
+;; nor loop-invariant and can never be folded into the guard. An inner header
+;; phi cannot pose as this loop's bounded phi either: the recovery demands a
+;; two-input phi split as (this preheader, this latch), which an inner header
+;; never has. What a nest changes is economics, not soundness, and that is
+;; handled outside the shape scan: the nest budgets
+;; (opt-bce-mb-nest-instr-max / -nest-block-max) cap the duplicated region,
+;; and the scan offers flat loops before nests so an inner loop that can
+;; version on its own always gets the slot first.
 (defenum OptBceMbMaybeInstr
   (No)
   (Some ir.CompilerIrInstr))
@@ -50157,6 +50172,20 @@
 ;; walks -- inside the sizes those structures are tuned for.
 (define (opt-bce-mb-block-max) : i64
   24)
+
+;; A loop NEST (the candidate body contains another loop's header) clones the
+;; same way -- the inner loop is just more blocks in the group -- but its
+;; economics differ: the removed checks are at most one per OUTER iteration
+;; while the duplicated region contains a whole inner loop whose trip count is
+;; unbounded. Both budgets below already measure the whole nest (`body-blocks`
+;; is every block of the natural loop, nested ones included); these are the
+;; same gate with the tighter constant a nest gets, so a big nest is refused
+;; on SIZE, never on shape.
+(define (opt-bce-mb-nest-instr-max) : i64
+  64)
+
+(define (opt-bce-mb-nest-block-max) : i64
+  16)
 
 ;; The (SSA single-def) instruction defining var anywhere in the loop.
 (define (opt-bce-mb-find-def-instrs
@@ -50764,11 +50793,13 @@
                     step))
                 (OptBceMbMaybeShape.No))])])]))
 
-;; No nested natural loop inside the candidate body: versioning an OUTER
-;; loop only removes its own per-iteration checks (few next to a whole inner
-;; loop's work) while the guard and fast-region prologue cost is paid at
-;; every outer entry -- a measured net loss (array_sum's outer loop). Flat
-;; loops keep the full win.
+;; Does another natural loop's header sit inside this candidate's body? A
+;; nest is admitted (the clone is just more blocks -- see the nest note on
+;; `opt-bce-mb-nest-instr-max`), but the scan offers FLAT loops first and
+;; nests only when none of them versioned, so an inner loop that can version
+;; on its own always wins the slot: its checks run per INNER iteration, and
+;; versioning it first is what kept array_sum's hot inner scan versioned
+;; while the outer round loop stayed alone.
 (define (opt-bce-mb-has-nested-loop?
   [loops : OptNaturalLoopList]
   [header : i64]
@@ -50786,7 +50817,7 @@
 
 (define (opt-bce-mb-loop-shape-with-preheader
   [blocks : ir.CompilerIrBlockList]
-  [loops : OptNaturalLoopList]
+  [nested? : bool]
   [header : i64]
   [latch : i64]
   [body : OptLoopBody]
@@ -50794,15 +50825,22 @@
   (let
     [body-labels : OptLabelSet (struct-get body labels)]
     [body-blocks : ir.CompilerIrBlockList (struct-get body blocks)]
+    [block-max : i64
+      (if nested?
+        (opt-bce-mb-nest-block-max)
+        (opt-bce-mb-block-max))]
+    [instr-max : i64
+      (if nested?
+        (opt-bce-mb-nest-instr-max)
+        (opt-bce-mb-instr-max))]
     (if (or
       (< (opt-label-count body-labels) 2)
-      (> (opt-label-count body-labels) (opt-bce-mb-block-max))
-      (> (opt-bce-mb-body-instrs body-blocks 0) (opt-bce-mb-instr-max))
+      (> (opt-label-count body-labels) block-max)
+      (> (opt-bce-mb-body-instrs body-blocks 0) instr-max)
       (opt-cfg-block-exists?
         blocks
         (ir.compiler-ir-label
           (str_cat.str-cat (ir.compiler-ir-label-text header) "__bce_guard")))
-      (opt-bce-mb-has-nested-loop? loops header body-labels)
       (opt-bce-mb-body-has-total-enum-switch? body-blocks)
       (not (opt-bce-mb-fast-labels-fresh? blocks body-labels))
       (not (opt-bce-mb-fallthroughs-ok? blocks body-labels)))
@@ -50852,28 +50890,42 @@
                   body-blocks
                   (opt-bce-mb-counter-step body-blocks defs latch pred cond-var)))])]))))
 
+;; `nested?` selects the scan phase: false offers only loops whose body holds
+;; no other loop header, true only the nests. Every loop belongs to exactly
+;; one phase, and the driver runs the flat phase first (see
+;; `opt-bce-mb-loops-scan-phased`).
 (define (opt-bce-mb-loop-shape
   [blocks : ir.CompilerIrBlockList]
   [loops : OptNaturalLoopList]
   [entry-label : i64]
+  [nested? : bool]
   [loop : OptNaturalLoop]) : OptBceMbMaybeShape
   (match loop
     [(OptNaturalLoop.Loop header latch body preheader)
       (match preheader
         [(OptLoopPreheader.No) (OptBceMbMaybeShape.No)]
         [(OptLoopPreheader.Some pred)
-          (if (or
-            ;; single-block self-loops belong to the dedicated pass above
-            (= header latch)
-            (= header entry-label))
-            (OptBceMbMaybeShape.No)
-            (opt-bce-mb-loop-shape-with-preheader
-              blocks
-              loops
-              header
-              latch
-              body
-              pred))])]))
+          (let
+            [nest? : bool
+              (opt-bce-mb-has-nested-loop?
+                loops
+                header
+                (struct-get body labels))]
+            (if (or
+              ;; single-block self-loops belong to the dedicated pass above
+              (= header latch)
+              (= header entry-label)
+              (if nested?
+                (not nest?)
+                nest?))
+              (OptBceMbMaybeShape.No)
+              (opt-bce-mb-loop-shape-with-preheader
+                blocks
+                nested?
+                header
+                latch
+                body
+                pred)))])]))
 
 ;; --- outside uses --------------------------------------------------------------
 ;; Uses of loop defs anywhere outside the loop, except as the loop-edge
@@ -54984,11 +55036,12 @@
   [all-loops : OptNaturalLoopList]
   [loops : OptNaturalLoopList]
   [entry-label : i64]
+  [nested? : bool]
   [frame : i64]) : OptUnrollResult
   (match loops
     [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
     [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-bce-mb-loop-shape blocks all-loops entry-label loop)
+      (match (opt-bce-mb-loop-shape blocks all-loops entry-label nested? loop)
         [(OptBceMbMaybeShape.Some shape)
           (match (opt-bce-mb-apply descriptor pred-map blocks shape frame)
             [(OptUnrollResult.Result next-blocks next-frame changed)
@@ -55001,6 +55054,7 @@
                   all-loops
                   (box-get rest)
                   entry-label
+                  nested?
                   frame))])]
         [(OptBceMbMaybeShape.No)
           (opt-bce-mb-loops-scan
@@ -55010,7 +55064,46 @@
             all-loops
             (box-get rest)
             entry-label
+            nested?
             frame)])]))
+
+;; Flat loops first, loop NESTS second. Both phases version the same way (the
+;; clone group is the natural loop's whole block set, so an inner loop simply
+;; clones along with everything else), but the order is what keeps the nest
+;; admission from taking work away from the inner loops: an inner loop that
+;; versions on its own removes checks per INNER iteration, strictly more than
+;; the outer loop's one-per-outer-iteration, and its `__bce_fast` blocks then
+;; make the enclosing nest ineligible anyway (cloning the outer body would
+;; have to re-create labels that now exist). So a nest is offered only when no
+;; flat loop in the function took the slot this round.
+(define (opt-bce-mb-loops-scan-phased
+  [descriptor : OptBceMbDescriptor]
+  [pred-map : OptPredMap]
+  [blocks : ir.CompilerIrBlockList]
+  [all-loops : OptNaturalLoopList]
+  [entry-label : i64]
+  [frame : i64]) : OptUnrollResult
+  (match (opt-bce-mb-loops-scan
+    descriptor
+    pred-map
+    blocks
+    all-loops
+    all-loops
+    entry-label
+    false
+    frame)
+    [(OptUnrollResult.Result flat-blocks flat-frame flat-changed)
+      (if flat-changed
+        (OptUnrollResult.Result flat-blocks flat-frame true)
+        (opt-bce-mb-loops-scan
+          descriptor
+          pred-map
+          blocks
+          all-loops
+          all-loops
+          entry-label
+          true
+          frame))]))
 
 ;; --- prescan ---------------------------------------------------------------------
 (define (opt-bce-mb-blocks-have-check? [blocks : ir.CompilerIrBlockList]) : bool
@@ -55122,11 +55215,10 @@
                   type-segment-bases
                   params
                   blocks)))]
-          (match (opt-bce-mb-loops-scan
+          (match (opt-bce-mb-loops-scan-phased
             descriptor
             (struct-get context pred-map)
             blocks
-            loops
             loops
             (opt-cfg-entry-label blocks)
             frame)

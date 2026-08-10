@@ -28980,6 +28980,385 @@
       [(not (= (compiler_ir_types.compiler-ir-block-list-count too-big) 11)) 2]
       [else 42])))
 
+;; --- loop-nest fixture --------------------------------------------------------
+;;
+;; A counted OUTER loop (do-while latch "merge", counter %3, bounded phi %4)
+;; whose body branches into a whole inner loop before merging back. `mode`
+;; picks the inner loop's relationship to the outer one:
+;;   0  the inner header is entered straight from the outer header, so the
+;;      inner loop has no dedicated preheader and can never version on its
+;;      own -- the ln-set-count shape, and the one where the outer NEST
+;;      versions
+;;   1  an "inner_pre" forwarder gives the inner loop its own preheader, so
+;;      the inner loop versions first and the outer nest is left alone
+;;   2  a Call in the inner body: the clonable whitelist applies across the
+;;      whole nest, so nothing versions
+;; `pad` adds dead movs to the inner body -- the knob that drives the NEST
+;; instruction budget without moving the block count. Vars: 0-2 params, 3-10
+;; the outer loop, 11-13 the inner loop, 14 the mode-2 call, pad movs from 15.
+;; Where the outer header branches to reach the inner loop.
+(define (opt-bce-mb-test-nest-inner-entry [mode : i64]) : i64
+  (if (= mode 1)
+    (compiler_ir_types.compiler-ir-label "inner_pre")
+    (compiler_ir_types.compiler-ir-label "inner_header")))
+
+;; The inner header's entering predecessor, the label its phi carries.
+(define (opt-bce-mb-test-nest-inner-pred [mode : i64]) : i64
+  (if (= mode 1)
+    (compiler_ir_types.compiler-ir-label "inner_pre")
+    (compiler_ir_types.compiler-ir-label "body")))
+
+(define (opt-bce-mb-test-nest-header-block [mode : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "body")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        3
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          4
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ir_types.compiler-ir-label "merge")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "mb_nest_ok0"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.I64 4)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "then")
+                (opt-bce-mb-test-nest-inner-entry mode))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))))))
+
+(define (opt-bce-mb-test-nest-then-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "then")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "mb_nest_ok1"))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          6
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-mb-test-nest-inner-header-block [mode : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "inner_header")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        11
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (opt-bce-mb-test-nest-inner-pred mode)
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 13)
+            (compiler_ir_types.compiler-ir-label "inner_body")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          12
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ir_types.compiler-ir-label "inner_body")
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+;; The inner body: an inner-counter check (which the OUTER loop's guard can
+;; never derive -- %11 is neither the outer counter nor loop-invariant), the
+;; mode-2 call, and the pad movs.
+(define (opt-bce-mb-test-nest-inner-body-block [mode : i64] [pad : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "inner_body")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "mb_nest_inner_ok"))
+      (let
+        [tail : compiler_ir_types.CompilerIrInstrList
+          (opt-bce-mb-test-pad-instrs
+            pad
+            15
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                13
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 11)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "inner_header"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))]
+        (if (= mode 2)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Call
+              14
+              (opt-test-symbol "mb_nest_callee")
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.I64))
+            tail)
+          tail)))))
+
+(define (opt-bce-mb-test-nest-merge-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "merge")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        7
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 6)
+          (compiler_ir_types.compiler-ir-label "then")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.compiler-ir-label "inner_header")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          8
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+(define (opt-bce-mb-test-nest-exit-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "exit")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        10
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          (compiler_ir_types.compiler-ir-label "merge")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 10)))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-bce-mb-test-nest-tail-blocks [mode : i64] [pad : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bce-mb-test-nest-inner-header-block mode)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bce-mb-test-nest-inner-body-block mode pad)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb-test-nest-merge-block)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-mb-test-nest-exit-block)
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-bce-mb-test-nest-blocks [mode : i64] [pad : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bce-mb-test-jump-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-label "body"))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bce-mb-test-nest-header-block mode)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb-test-nest-then-block)
+        (if (= mode 1)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bce-mb-test-jump-block
+              (compiler_ir_types.compiler-ir-label "inner_pre")
+              (compiler_ir_types.compiler-ir-label "inner_header"))
+            (opt-bce-mb-test-nest-tail-blocks mode pad))
+          (opt-bce-mb-test-nest-tail-blocks mode pad))))))
+
+(define (opt-bce-mb-test-nest-function [mode : i64] [pad : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_mb_nest_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    (+ 15 pad)
+    (opt-bce-mb-test-nest-blocks mode pad)))
+
+(define (opt-bce-mb-test-nest-versioned [mode : i64] [pad : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-bce-version-function
+    (opt-bce-mb-test-nest-function mode pad)))
+
+;; The nest admission (M2). The outer loop of a nest versions like any other
+;; counted loop -- the inner loop is simply more blocks in the clone group --
+;; with the guard derived only from the OUTER loop's own counter facts, the
+;; nest instruction budget (not the loop's shape) deciding how big a nest may
+;; clone, and the flat-first scan order keeping an independently versionable
+;; inner loop ahead of its enclosing nest.
+(define (compiler-optimize-bce-version-mb-nest-self-test) : i64
+  (let
+    [nested : compiler_ir_types.CompilerIrFunction
+      (opt-bce-mb-test-nest-versioned 0 0)]
+    [out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks nested)]
+    ;; 54 cloned instructions: a big nest, still inside the nest budget.
+    [big : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-bce-mb-test-nest-versioned 0 40))]
+    ;; 69 cloned instructions across FIVE blocks: over the nest budget of 64
+    ;; and under the flat loop's 96, so the nest budget -- and nothing else --
+    ;; rejects it.
+    [too-big : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-bce-mb-test-nest-versioned 0 55))]
+    ;; The inner loop gets its own preheader and versions first.
+    [inner-first : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-bce-mb-test-nest-versioned 1 0))]
+    ;; A Call in the inner body: the clonable whitelist reaches through the
+    ;; nest, so neither loop versions.
+    [with-call : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-bce-mb-test-nest-versioned 2 0))]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function nested)))
+        1]
+      ;; entry + guard + five fast clones + five slow blocks + exit
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count out) 13)) 2]
+      [(match (compiler_optimize.opt-cfg-find-block
+          out
+          (compiler_ir_types.compiler-ir-label "body__bce_guard"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        3]
+      ;; the WHOLE nest cloned: the inner loop's blocks came along.
+      [(not
+          (opt-block-list-has-label?
+            out
+            (compiler_ir_types.compiler-ir-label "inner_header__bce_fast")))
+        4]
+      [(not
+          (opt-block-list-has-label?
+            out
+            (compiler_ir_types.compiler-ir-label "inner_body__bce_fast")))
+        5]
+      ;; the outer loop's own checks -- the counter and the bounded phi --
+      ;; are gone from the fast clone ...
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        6]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            0))
+        7]
+      ;; ... while the INNER loop's own check, whose index is the inner
+      ;; counter, is not covered by the outer guard and stays in the clone.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "inner_body__bce_fast"))
+            1))
+        8]
+      ;; the slow nest is untouched.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        9]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler_ir_types.compiler-ir-label "inner_body"))
+            1))
+        10]
+      ;; the exit phi gained the parallel fast-edge input.
+      [(not
+          (=
+            (opt-bce-version-test-exit-phi-inputs
+              out
+              (compiler_ir_types.compiler-ir-label "exit"))
+            2))
+        11]
+      ;; size, not shape: 40 pad movs still fit ...
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count big) 13)) 12]
+      ;; ... 55 do not, and the rejection leaves the function untouched.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count too-big) 7)) 13]
+      [(opt-block-list-has-label?
+          too-big
+          (compiler_ir_types.compiler-ir-label "body__bce_guard"))
+        14]
+      ;; Flat before nested: the inner loop versions and the outer nest, whose
+      ;; clone would have to re-create `inner_header__bce_fast`, does not.
+      [(not
+          (opt-block-list-has-label?
+            inner-first
+            (compiler_ir_types.compiler-ir-label "inner_header__bce_guard")))
+        15]
+      [(opt-block-list-has-label?
+          inner-first
+          (compiler_ir_types.compiler-ir-label "body__bce_guard"))
+        16]
+      ;; original eight blocks + the inner guard + two inner fast clones
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count inner-first) 11))
+        17]
+      ;; the unclonable call rejects the whole nest.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count with-call) 7))
+        18]
+      [else 42])))
+
 ;; Partial versioning: the swap check's store+1 index does not derive, but the
 ;; body's counter check does -- the loop versions, the fast clone drops only
 ;; the counter check and KEEPS the swap check (remapped).

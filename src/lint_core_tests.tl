@@ -61,6 +61,179 @@
       (string.eq (lint_core.lint-name-set-get many 0) "one")
       (string.eq (lint_core.lint-name-set-get many 4) "five"))))
 
+(define (lint-test-expect-registry-text
+  [actual : String]
+  [expected : String]
+  [failure : String]) : unit
+  (unless (string.eq actual expected) (io.panic failure)))
+
+;; Registry metadata has no flat-AST fixture dependency. Keep its exhaustive
+;; message/suggestion coverage separate from the expression-walk smoke below.
+(define (lint-rule-registry-smoke) : unit
+  (begin
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-nested-if-ladder-id))
+      "prefer cond (value/guard ladders) or match (variant dispatch)"
+      "lint: nested-if-ladder suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message (lint_core.lint-rule-nested-if-ladder-id))
+      "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)"
+      "lint: nested-if-ladder message should be registered")
+    (match (lint_core.lint-rule-find (lint_core.lint-rule-nested-if-ladder-id))
+      [(lint_core.LintMaybeRule.Found rule)
+        (unless
+          (and
+            (string.eq
+              (struct-get rule rule-id)
+              (lint_core.lint-rule-nested-if-ladder-id))
+            (string.eq
+              (struct-get rule message)
+              (lint_core.lint-rule-nested-if-ladder-message))
+            (string.eq
+              (struct-get rule suggestion)
+              (lint_core.lint-rule-nested-if-ladder-suggestion)))
+          (io.panic
+            "lint: nested-if-ladder registry entry should match metadata"))]
+      [(lint_core.LintMaybeRule.NotFound)
+        (io.panic "lint: nested-if-ladder should be registered")])
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-nested-let-id))
+      "merge the nested let bindings into one sequential let"
+      "lint: nested-let suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-single-begin-id))
+      "remove the begin wrapper"
+      "lint: single-begin suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message (lint_core.lint-rule-single-begin-id))
+      "single begin: begin with one expression is redundant"
+      "lint: single-begin message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion
+        (lint_core.lint-rule-return-path-chain-id))
+      "prefer early return guards with (return ...)"
+      "lint: return-path-chain suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-unit-if-guard-id))
+      "prefer when/unless for unit guard branches"
+      "lint: unit-if-guard suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-no-effect-id))
+      "remove the expression or use its value"
+      "lint: no-effect suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message (lint_core.lint-rule-no-effect-id))
+      "no-effect expression: value is discarded"
+      "lint: no-effect message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-unreachable-code-id))
+      "remove the unreachable expression or move it before the terminal expression"
+      "lint: unreachable-code suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message (lint_core.lint-rule-unreachable-code-id))
+      "unreachable code: expression follows a terminal expression"
+      "lint: unreachable-code message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion
+        (lint_core.lint-rule-redundant-divergence-padding-id))
+      "remove the trailing dead expression and the stale unreachable-code lint allow"
+      "lint: redundant-divergence-padding suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message
+        (lint_core.lint-rule-redundant-divergence-padding-id))
+      "redundant divergence padding: trailing expressions after panic/error are dead"
+      "lint: redundant-divergence-padding message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion
+        (lint_core.lint-rule-deprecated-string-concat-id))
+      "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops"
+      "lint: deprecated-string-concat suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-nested-str-cat-id))
+      "flatten nested str-cat operands into the outer call"
+      "lint: nested-str-cat suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-cascading-and-or-id))
+      "flatten same-operator and/or operands, e.g. (and a b c)"
+      "lint: cascading-and-or suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion
+        (lint_core.lint-rule-transitional-core-macro-qualifier-id))
+      (lint_core.lint-rule-transitional-core-macro-qualifier-suggestion)
+      "lint: transitional-core-macro-qualifier suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message
+        (lint_core.lint-rule-transitional-core-macro-qualifier-id))
+      (lint_core.lint-rule-transitional-core-macro-qualifier-message)
+      "lint: transitional-core-macro-qualifier message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-unused-import-id))
+      "remove the import or prefix an intentionally unused alias with _"
+      "lint: unused-import suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message (lint_core.lint-rule-unused-import-id))
+      "unused import: imported module alias is never referenced"
+      "lint: unused-import message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion
+        (lint_core.lint-rule-redundant-import-alias-id))
+      "remove the explicit as clause"
+      "lint: redundant-import-alias suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message
+        (lint_core.lint-rule-redundant-import-alias-id))
+      "redundant import alias: dotted module import already binds that alias"
+      "lint: redundant-import-alias message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-unused-variable-id))
+      "remove the binding or prefix an intentionally unused name with _"
+      "lint: unused-variable suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message (lint_core.lint-rule-unused-variable-id))
+      "unused variable: parameter or local binding is never used"
+      "lint: unused-variable message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion
+        (lint_core.lint-rule-single-element-array-cell-id))
+      "replace the one-element array cell with Box T, &mut, or an explicit returned value"
+      "lint: single-element-array-cell suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message
+        (lint_core.lint-rule-single-element-array-cell-id))
+      "single-element array scalar cell: prefer Box T, &mut, or return-value refactoring"
+      "lint: single-element-array-cell message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion
+        (lint_core.lint-rule-prefer-dynamic-array-literal-id))
+      "replace the allocation and consecutive array-set! calls with a dynamic array literal"
+      "lint: prefer-dynamic-array-literal suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message
+        (lint_core.lint-rule-prefer-dynamic-array-literal-id))
+      "hand-filled dynamic array: prefer (make-array v0 v1 ...)"
+      "lint: prefer-dynamic-array-literal message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-unused-unsafe-id))
+      "remove the unsafe wrapper"
+      "lint: unused-unsafe suggestion should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message (lint_core.lint-rule-unused-unsafe-id))
+      "unused unsafe block: body does not require unsafe context"
+      "lint: unused-unsafe message should be registered")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion "unknown-rule")
+      ""
+      "lint: unknown rule should have no suggestion")
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-message "unknown-rule")
+      ""
+      "lint: unknown rule should have no message")
+    (match (lint_core.lint-rule-find "unknown-rule")
+      [(lint_core.LintMaybeRule.NotFound) unit]
+      [(lint_core.LintMaybeRule.Found _)
+        (io.panic "lint: unknown rule should not be found")])
+    unit))
+
 (define (compiler-lint-self-test) : i64
   (let
     [vx : i64 (lint-test-var "x")]
@@ -954,208 +1127,5 @@
         unit
         (io.panic
           "lint: branch-local return should not make following code unreachable"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-nested-if-ladder-id))
-        "prefer cond (value/guard ladders) or match (variant dispatch)")
-        unit
-        (io.panic "lint: nested-if-ladder suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message (lint_core.lint-rule-nested-if-ladder-id))
-        "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)")
-        unit
-        (io.panic "lint: nested-if-ladder message should be registered"))
-      (match (lint_core.lint-rule-find
-        (lint_core.lint-rule-nested-if-ladder-id))
-        [(lint_core.LintMaybeRule.Found rule)
-          (if (and
-            (string.eq
-              (struct-get rule rule-id)
-              (lint_core.lint-rule-nested-if-ladder-id))
-            (string.eq
-              (struct-get rule message)
-              (lint_core.lint-rule-nested-if-ladder-message))
-            (string.eq
-              (struct-get rule suggestion)
-              (lint_core.lint-rule-nested-if-ladder-suggestion)))
-            unit
-            (io.panic
-              "lint: nested-if-ladder registry entry should match metadata"))]
-        [(lint_core.LintMaybeRule.NotFound)
-          (io.panic "lint: nested-if-ladder should be registered")])
-      (if (string.eq
-        (lint_core.lint-rule-suggestion (lint_core.lint-rule-nested-let-id))
-        "merge the nested let bindings into one sequential let")
-        unit
-        (io.panic "lint: nested-let suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion (lint_core.lint-rule-single-begin-id))
-        "remove the begin wrapper")
-        unit
-        (io.panic "lint: single-begin suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message (lint_core.lint-rule-single-begin-id))
-        "single begin: begin with one expression is redundant")
-        unit
-        (io.panic "lint: single-begin message should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-return-path-chain-id))
-        "prefer early return guards with (return ...)")
-        unit
-        (io.panic "lint: return-path-chain suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion (lint_core.lint-rule-unit-if-guard-id))
-        "prefer when/unless for unit guard branches")
-        unit
-        (io.panic "lint: unit-if-guard suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion (lint_core.lint-rule-no-effect-id))
-        "remove the expression or use its value")
-        unit
-        (io.panic "lint: no-effect suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message (lint_core.lint-rule-no-effect-id))
-        "no-effect expression: value is discarded")
-        unit
-        (io.panic "lint: no-effect message should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-unreachable-code-id))
-        "remove the unreachable expression or move it before the terminal expression")
-        unit
-        (io.panic "lint: unreachable-code suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message (lint_core.lint-rule-unreachable-code-id))
-        "unreachable code: expression follows a terminal expression")
-        unit
-        (io.panic "lint: unreachable-code message should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-redundant-divergence-padding-id))
-        "remove the trailing dead expression and the stale unreachable-code lint allow")
-        unit
-        (io.panic
-          "lint: redundant-divergence-padding suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message
-          (lint_core.lint-rule-redundant-divergence-padding-id))
-        "redundant divergence padding: trailing expressions after panic/error are dead")
-        unit
-        (io.panic
-          "lint: redundant-divergence-padding message should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-deprecated-string-concat-id))
-        "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
-        unit
-        (io.panic
-          "lint: deprecated-string-concat suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion (lint_core.lint-rule-nested-str-cat-id))
-        "flatten nested str-cat operands into the outer call")
-        unit
-        (io.panic "lint: nested-str-cat suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-cascading-and-or-id))
-        "flatten same-operator and/or operands, e.g. (and a b c)")
-        unit
-        (io.panic "lint: cascading-and-or suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-transitional-core-macro-qualifier-id))
-        (lint_core.lint-rule-transitional-core-macro-qualifier-suggestion))
-        unit
-        (io.panic
-          "lint: transitional-core-macro-qualifier suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message
-          (lint_core.lint-rule-transitional-core-macro-qualifier-id))
-        (lint_core.lint-rule-transitional-core-macro-qualifier-message))
-        unit
-        (io.panic
-          "lint: transitional-core-macro-qualifier message should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion (lint_core.lint-rule-unused-import-id))
-        "remove the import or prefix an intentionally unused alias with _")
-        unit
-        (io.panic "lint: unused-import suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message (lint_core.lint-rule-unused-import-id))
-        "unused import: imported module alias is never referenced")
-        unit
-        (io.panic "lint: unused-import message should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-redundant-import-alias-id))
-        "remove the explicit as clause")
-        unit
-        (io.panic
-          "lint: redundant-import-alias suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message
-          (lint_core.lint-rule-redundant-import-alias-id))
-        "redundant import alias: dotted module import already binds that alias")
-        unit
-        (io.panic "lint: redundant-import-alias message should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-unused-variable-id))
-        "remove the binding or prefix an intentionally unused name with _")
-        unit
-        (io.panic "lint: unused-variable suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message (lint_core.lint-rule-unused-variable-id))
-        "unused variable: parameter or local binding is never used")
-        unit
-        (io.panic "lint: unused-variable message should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-single-element-array-cell-id))
-        "replace the one-element array cell with Box T, &mut, or an explicit returned value")
-        unit
-        (io.panic
-          "lint: single-element-array-cell suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message
-          (lint_core.lint-rule-single-element-array-cell-id))
-        "single-element array scalar cell: prefer Box T, &mut, or return-value refactoring")
-        unit
-        (io.panic
-          "lint: single-element-array-cell message should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion
-          (lint_core.lint-rule-prefer-dynamic-array-literal-id))
-        "replace the allocation and consecutive array-set! calls with a dynamic array literal")
-        unit
-        (io.panic
-          "lint: prefer-dynamic-array-literal suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message
-          (lint_core.lint-rule-prefer-dynamic-array-literal-id))
-        "hand-filled dynamic array: prefer (make-array v0 v1 ...)")
-        unit
-        (io.panic
-          "lint: prefer-dynamic-array-literal message should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-suggestion (lint_core.lint-rule-unused-unsafe-id))
-        "remove the unsafe wrapper")
-        unit
-        (io.panic "lint: unused-unsafe suggestion should be registered"))
-      (if (string.eq
-        (lint_core.lint-rule-message (lint_core.lint-rule-unused-unsafe-id))
-        "unused unsafe block: body does not require unsafe context")
-        unit
-        (io.panic "lint: unused-unsafe message should be registered"))
-      (if (string.eq (lint_core.lint-rule-suggestion "unknown-rule") "")
-        unit
-        (io.panic "lint: unknown rule should have no suggestion"))
-      (if (string.eq (lint_core.lint-rule-message "unknown-rule") "")
-        unit
-        (io.panic "lint: unknown rule should have no message"))
-      (match (lint_core.lint-rule-find "unknown-rule")
-        [(lint_core.LintMaybeRule.NotFound) unit]
-        [(lint_core.LintMaybeRule.Found _)
-          (io.panic "lint: unknown rule should not be found")])
+      (lint-rule-registry-smoke)
       42)))

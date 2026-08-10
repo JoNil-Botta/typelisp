@@ -628,7 +628,7 @@
         2
         "main"
         "function doc"
-        "(define (main [argc : i64]))")
+        "(define (main [argc : i64])")
       (return false))
     (unless
       (doc-item-ok?

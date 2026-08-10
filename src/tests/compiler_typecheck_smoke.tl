@@ -1185,8 +1185,8 @@
       "move of `p.inner.handle` happened here")
     (compiler-typecheck-labeled-move-error-ok?
       (compiler_typecheck.compiler-typecheck-move-owner-projection-deep-mixed-repeat-source)
-      "typecheck: use of moved value `p.mixed.0[1].0.handle`"
-      "move of `p.mixed.0[1].0.handle` happened here")
+      "typecheck: use of moved value `p.mixed.0[1].0`"
+      "move of `p.mixed.0[1].0` happened here")
     (compiler-typecheck-labeled-move-error-ok?
       (compiler_typecheck.compiler-typecheck-move-owner-projection-nested-parent-after-child-source)
       "typecheck: use of moved value `p.inner`"
@@ -1458,12 +1458,14 @@
 (import (boxmod Pair) as bp2)
 (import (boxmod Other) as bo)
 (define (main) : i64
-  (+ (bi.read (bi.make 20))
-    (+ (bi2.read (bi2.make 1))
-      (+ (__tl_string_length (bs.read (bs.make \"typed\")))
-          (+ (__tl-project-field (bp.read (bp.make (Pair 7))) value)
-            (+ (__tl-project-field (bp2.read (bp2.make (Pair 8))) value)
-              (__tl-project-field (bo.read (bo.make (Other 9))) value)))))))")
+  (let
+    [first : Pair (bp.read (bp.make (Pair 7)))]
+    [second : Pair (bp2.read (bp2.make (Pair 8)))]
+    [other : Other (bo.read (bo.make (Other 9)))]
+    (+ (bi.read (bi.make 20))
+      (+ (bi2.read (bi2.make 1))
+        (+ (__tl_string_length (bs.read (bs.make \"typed\")))
+          (+ first.value (+ second.value other.value)))))))")
 
 (define (compiler-typecheck-smoke-module-macro-nested-vector-import-source) : String
   "(defmacro (vector [T : type]) : Module
@@ -1494,7 +1496,7 @@
         [items : vec.Vec (vec.new)]
         (begin
           (vec.push (&mut items) value)
-          (__tl-project-field-name (vec.get (& items) 0 (T 0)) \"value\"))))))
+          (let [item : T (vec.get (& items) 0 (T 0))] item.value))))))
 (import (vector-user) as user)
 (define (main) : i64
   (user.score (user.make 42)))")
@@ -1518,7 +1520,9 @@
         [items : vec.Vec (vec.new)]
         (begin
           (vec.push (&mut items) value)
-          (__tl-project-field-name (vec.get (& items) 0 (provider.T 0)) \"value\"))))))
+          (let
+            [item : provider.T (vec.get (& items) 0 (provider.T 0))]
+            item.value))))))
 (import (vector-user) as user)
 (define (main) : i64
   (user.score (user.make 42)))")
@@ -1611,7 +1615,7 @@
       (init : ,T))))
 (import (init-user InitPerson) as init_user)
 (define (main) : i64
-  (__tl-project-field (__tl-project-field (init_user.make) home) zip))")
+  (let [person : InitPerson (init_user.make)] person.home.zip))")
 
 (define (compiler-typecheck-smoke-module-macro-generated-replay-normalized-source) : String
   "(defstruct ReplayAddress
@@ -1725,7 +1729,7 @@
           [items : vec.Vec (vec.new)]
           (begin
             (vec.push (&mut items) value)
-            (__tl-project-field-name (vec.get (& items) 0 (T 0)) \"value\")))))))
+            (let [item : T (vec.get (& items) 0 (T 0))] item.value)))))))
 (import (make vector) as gen)
 (define (main) : i64
   (gen.score (gen.make 42)))")
@@ -2029,8 +2033,8 @@
 (emit-pair Pair)
 (emit-cast i64)
 (define (main) : i64
-  (+ (typed-cast 1)
-    (__tl-project-field (typed-id (Pair 41)) value)))")
+  (let [pair : Pair (typed-id (Pair 41))]
+    (+ (typed-cast 1) pair.value)))")
 
 (define (compiler-typecheck-smoke-type-macro-param-tests-ok?) : bool
   (compiler_typecheck.compiler-typecheck-ok?
@@ -2102,7 +2106,7 @@
 (box-family i64 IntBox int-box)
 (box-family i64 IntBox int-box)
 (define (main) : i64
-  (__tl-project-field (int-box 42) value))")
+  (let [boxed : IntBox (int-box 42)] boxed.value))")
 
 (define (compiler-typecheck-smoke-decls-macro-cross-module-distinct-source) : String
   "(module bundle.left)
@@ -3401,7 +3405,9 @@
 (import shared.types as item)
 (import bridge.api as bridge)
 (define (main) : i64
-  (__tl-project-field (bridge.round-trip (item.Item 42)) value))")
+  (let
+    [value : item.Item (bridge.round-trip (item.Item 42))]
+    value.value))")
 
 (define (compiler-typecheck-smoke-nested-dotted-nominal-ok?) : bool
   (compiler_typecheck.compiler-typecheck-ok?

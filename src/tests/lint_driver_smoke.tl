@@ -409,7 +409,7 @@
 
 (define (lint-driver-smoke-unsafe-surface-parse-error-source) : String
   "(define (main) : i64
-  (unsafe (+ 1 2)))")
+  (unsafe (+ 1 2))")
 
 (define (lint-driver-smoke-copy-on-update-struct-source) : String
   "(defstruct Point

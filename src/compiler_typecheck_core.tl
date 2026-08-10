@@ -19423,6 +19423,128 @@
     (tc-dotted-local-field-set-expr-id-after-check name-id value)
     (ResultTcExprId.Err "")))
 
+;; Typed macro operands are checked before they are captured. Dotted-place
+;; checking normally canonicalizes the source node in place, but retaining that
+;; canonical StructGet in a captured operand makes hygiene treat its synthetic
+;; receiver as transformer-produced syntax. Journal those focused rewrites and
+;; restore the caller's spelling after the operand check; the expanded result
+;; is normalized permanently when it is checked in its final lexical context.
+(define tc-dotted-macro-journal-pools : (__tl_dyn-array ast.AstNodePoolContext)
+  (array.make-array ast.AstNodePoolContext 16))
+(define tc-dotted-macro-journal-ids : (__tl_dyn-array i64)
+  (array.make-array i64 16))
+(define tc-dotted-macro-journal-exprs : (__tl_dyn-array ast.AstExpr)
+  (array.make-array ast.AstExpr 16))
+(define tc-dotted-macro-journal-len : i64
+  0)
+(define tc-dotted-macro-journal-depth : i64
+  0)
+
+(define (tc-dotted-macro-journal-pools-shared-view) : (__tl_dyn-array
+    ast.AstNodePoolContext)
+  (unsafe
+    (ptr-read (ptr-addr-of tc-dotted-macro-journal-pools))))
+
+(define (tc-dotted-macro-journal-exprs-shared-view) : (__tl_dyn-array
+    ast.AstExpr)
+  (unsafe
+    (ptr-read (ptr-addr-of tc-dotted-macro-journal-exprs))))
+
+(define (tc-dotted-macro-journal-grow-copy!
+  [next-pools : (&mut next-pools (__tl_dyn-array ast.AstNodePoolContext))]
+  [next-ids : (&mut next-ids (__tl_dyn-array i64))]
+  [next-exprs : (&mut next-exprs (__tl_dyn-array ast.AstExpr))]
+  [index : i64]) : unit
+  (if (>= index tc-dotted-macro-journal-len)
+    unit
+    (begin
+      (set!
+        (array-ref next-pools index)
+        (array-ref (tc-dotted-macro-journal-pools-shared-view) index))
+      (set!
+        (array-ref next-ids index)
+        (array-ref tc-dotted-macro-journal-ids index))
+      (set!
+        (array-ref next-exprs index)
+        (array-ref (tc-dotted-macro-journal-exprs-shared-view) index))
+      (tc-dotted-macro-journal-grow-copy!
+        next-pools
+        next-ids
+        next-exprs
+        (+ index 1)))))
+
+(define (tc-dotted-macro-journal-grow!) : unit
+  (let
+    [old-capacity : i64 (array.length tc-dotted-macro-journal-ids)]
+    [next-capacity : i64 (* old-capacity 2)]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [_persistent : unit
+      (unsafe
+        (arena.tl_arena_set (cload.compiler-load-provenance-arena)))]
+    [next-pools : (__tl_dyn-array ast.AstNodePoolContext)
+      (array.make-array ast.AstNodePoolContext next-capacity)]
+    [next-ids : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    [next-exprs : (__tl_dyn-array ast.AstExpr)
+      (array.make-array ast.AstExpr next-capacity)]
+    (begin
+      (tc-dotted-macro-journal-grow-copy!
+        (&mut next-pools)
+        (&mut next-ids)
+        (&mut next-exprs)
+        0)
+      (set! tc-dotted-macro-journal-pools next-pools)
+      (set! tc-dotted-macro-journal-ids next-ids)
+      (set! tc-dotted-macro-journal-exprs next-exprs)
+      (unsafe
+        (arena.tl_arena_set previous-arena)))))
+
+(define (tc-dotted-macro-journal-active-pools) : ast.AstNodePoolContext
+  (if (ast.ast-node-pool-compat-context-active?)
+    (ast.ast-node-pool-compat-context-current)
+    (if (ast.ast-node-pool-has-active-context?)
+      (ast.ast-node-pool-context-active-live)
+      (ast.ast-node-pool-context-capture-active))))
+
+(define (tc-dotted-macro-journal-record! [expr-id : i64] [expr : ast.AstExpr]) : unit
+  (if (< tc-dotted-macro-journal-depth 1)
+    unit
+    (begin
+      (if (>=
+        tc-dotted-macro-journal-len
+        (array.length tc-dotted-macro-journal-ids))
+        (tc-dotted-macro-journal-grow!)
+        unit)
+      (set!
+        (array-ref tc-dotted-macro-journal-pools tc-dotted-macro-journal-len)
+        (tc-dotted-macro-journal-active-pools))
+      (set!
+        (array-ref tc-dotted-macro-journal-ids tc-dotted-macro-journal-len)
+        expr-id)
+      (set!
+        (array-ref tc-dotted-macro-journal-exprs tc-dotted-macro-journal-len)
+        expr)
+      (set! tc-dotted-macro-journal-len (+ tc-dotted-macro-journal-len 1)))))
+
+(define (tc-dotted-macro-journal-start!) : i64
+  (let
+    [mark : i64 tc-dotted-macro-journal-len]
+    (begin
+      (set! tc-dotted-macro-journal-depth (+ tc-dotted-macro-journal-depth 1))
+      mark)))
+
+(define (tc-dotted-macro-journal-restore-to! [mark : i64]) : unit
+  (begin
+    (while (> tc-dotted-macro-journal-len mark)
+      (let
+        [index : i64 (- tc-dotted-macro-journal-len 1)]
+        (begin
+          (ast.ast-node-pool-context-expr-set!
+            (array-ref (tc-dotted-macro-journal-pools-shared-view) index)
+            (array-ref tc-dotted-macro-journal-ids index)
+            (array-ref (tc-dotted-macro-journal-exprs-shared-view) index))
+          (set! tc-dotted-macro-journal-len index))))
+    (set! tc-dotted-macro-journal-depth (- tc-dotted-macro-journal-depth 1))))
+
 ;; Local dotted fields must become ordinary projection nodes before the
 ;; move/borrow/lower passes see them.  Keeping `root.field` as a raw Var and
 ;; teaching each later pass to rebuild it independently loses the rooted place
@@ -19444,6 +19566,7 @@
           (match (tc-dotted-local-field-expr-id-after-check name)
             [(ResultTcExprId.Ok projection-id)
               (begin
+                (tc-dotted-macro-journal-record! expr-id (ast.AstExpr.Var name))
                 (ast.ast-node-set! expr-id (ast.ast-node-get projection-id))
                 ResultTcUnit.Ok)]
             [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
@@ -19457,6 +19580,9 @@
           (match (tc-dotted-local-field-set-expr-id-after-check name value-box)
             [(ResultTcExprId.Ok projection-id)
               (begin
+                (tc-dotted-macro-journal-record!
+                  expr-id
+                  (ast.AstExpr.Set name value-box))
                 (ast.ast-node-set! expr-id (ast.ast-node-get projection-id))
                 ResultTcUnit.Ok)]
             [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
@@ -89654,23 +89780,29 @@
   [arg : ast.AstExpr]) : ResultMacroCheck
   (if (tc-type-eq resolved-expected (ast.AstType.Expr))
     ResultMacroCheck.Ok
-    (match (tc-expr-with-expected-or-actual ctx env arg resolved-expected)
-      [(ResultTcType.Ok actual)
-        (if (tc-type-compatible? resolved-expected actual)
-          ResultMacroCheck.Ok
-          (ResultMacroCheck.Err
-            (box
-              (tc-expr-diag
-                arg
-                (macro-operand-mismatch-message resolved-expected actual)))))]
-      [(ResultTcType.Err message)
-        (ResultMacroCheck.Err
-          (box
-            (tc-expr-diag
-              arg
-              (string.append
-                "typecheck: macro operand typecheck failed: "
-                message))))])))
+    (let
+      [journal-mark : i64 (tc-dotted-macro-journal-start!)]
+      [result : ResultMacroCheck
+        (match (tc-expr-with-expected-or-actual ctx env arg resolved-expected)
+          [(ResultTcType.Ok actual)
+            (if (tc-type-compatible? resolved-expected actual)
+              ResultMacroCheck.Ok
+              (ResultMacroCheck.Err
+                (box
+                  (tc-expr-diag
+                    arg
+                    (macro-operand-mismatch-message resolved-expected actual)))))]
+          [(ResultTcType.Err message)
+            (ResultMacroCheck.Err
+              (box
+                (tc-expr-diag
+                  arg
+                  (string.append
+                    "typecheck: macro operand typecheck failed: "
+                    message))))])]
+      (begin
+        (tc-dotted-macro-journal-restore-to! journal-mark)
+        result))))
 
 (define (macro-operand-bracket-clause? [arg : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan arg)

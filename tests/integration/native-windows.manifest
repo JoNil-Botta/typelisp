@@ -233,12 +233,12 @@ integer_literal_u64_full_range|tests/integration/integer_literal_u64_full_range.
 inline_alloc_scavenge_live_through|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl
 parser|tests/integration/parser.tl|14|-|-|-
 process_runtime|tests/integration/process_runtime.tl|42|inherit-stdout\n|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|expected-stderr:inherit-stderr\n
-read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1543:8: panic: tl: read-file failed\n
+read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1539:8: panic: tl: read-file failed\n
 write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed: io: not found: tests/integration/missing-parent-zzz/output.txt\n
-selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1472:8: panic: tl: argv index out of bounds\n
+selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1468:8: panic: tl: argv index out of bounds\n
 tl_alloc_huge_trap|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 windows_allocation_abort|tests/integration/windows_allocation_abort.tl|134|-|-|-|expected-stderr:tl: allocation failed: arena=atomic operation=growth-commit requested=18446744073709551615 reserved=18446744073709551614 committed=9223372036854775808 windows-error=4294967295\n
-stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1741:6: panic: tl: stdin failed\n
+stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1737:6: panic: tl: stdin failed\n
 region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
 region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl
 region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|stdlib/string.tl
@@ -260,15 +260,15 @@ valid_scalar_shift_matrix|tests/integration/valid_scalar_shift_matrix.tl|42|-|-|
 runtime_panic_site_trap|tests/integration/runtime_panic_site_trap.tl|134|-|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/windows/runtime_panic_site_trap/runtime_panic_site_trap.tl:4:4: panic: boom\n
 spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|spmd_vec_support.tl
 spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|spmd_vec_support.tl
-spmd_gather_oob|tests/integration/spmd_gather_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_gather_oob/spmd_gather_oob.tl:29:55: array index out of bounds: index=9223372036854775807 length=8\n
-spmd_gather_lane_offset_oob|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_gather_lane_offset_oob/spmd_gather_lane_offset_oob.tl:29:33: array index out of bounds: index=-9223372036854775808 length=8\n
+spmd_gather_oob|tests/integration/spmd_gather_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_gather_oob/spmd_gather_oob.tl:31:33: array index out of bounds: index=9223372036854775807 length=8\n
+spmd_gather_lane_offset_oob|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_gather_lane_offset_oob/spmd_gather_lane_offset_oob.tl:28:33: array index out of bounds: index=-9223372036854775808 length=8\n
 spmd_atomic_scatter|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl spmd_vec_support.tl
 spmd_scalar_for_native|tests/integration/spmd_scalar_for_native.tl|42|-|-|-
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|spmd_vec_support.tl
 spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|spmd_vec_support.tl
 spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|spmd_vec_support.tl
 spmd_scan_negative_start_trap|tests/integration/spmd_scan_negative_start_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_scan_negative_start_trap/spmd_scan_negative_start_trap.tl:18:29: array index out of bounds: index=-1 length=4\n
-spmd_scan_short_output_trap|tests/integration/spmd_scan_short_output_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_scan_short_output_trap/spmd_scan_short_output_trap.tl:19:31: array index out of bounds: index=6 length=6\n
+spmd_scan_short_output_trap|tests/integration/spmd_scan_short_output_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/windows/spmd_scan_short_output_trap/spmd_scan_short_output_trap.tl:19:36: array index out of bounds: index=6 length=6\n
 spmd_shuffle_scalar|tests/integration/spmd_shuffle_scalar.tl|42|-|-|spmd_vec_support.tl
 spmd_shuffle_simd|tests/integration/spmd_shuffle_simd.tl|42|-|-|spmd_vec_support.tl
 spmd_shuffle_types|tests/integration/spmd_shuffle_types.tl|42|-|-|spmd_vec_support.tl

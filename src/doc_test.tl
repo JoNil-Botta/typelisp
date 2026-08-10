@@ -2404,8 +2404,8 @@
     (let
       [first : DocTestExample (doc-test-example-list-ref examples 0)]
       [second : DocTestExample (doc-test-example-list-ref examples 1)]
-      (if (doc-test-example-ok? first 1 2 false "(define (main))")
-        (doc-test-example-ok? second 2 9 true "(define (bad))")
+      (if (doc-test-example-ok? first 1 2 false "(define (main)")
+        (doc-test-example-ok? second 2 9 true "(define (bad)")
         false))
     false))
 
@@ -2487,7 +2487,7 @@
                 0
                 "hello\n"
                 "error\tline\r"
-                "(define (main))")
+                "(define (main)")
               (return false))
             (doc-test-runnable-example-ok?
               second
@@ -2496,7 +2496,7 @@
               42
               ""
               ""
-              "(define (main))"))))]))
+              "(define (main)"))))]))
 
 (define (doc-test-runnable-malformed-smoke-ok?) : bool
   (match (doc-test-extract-source (doc-test-runnable-malformed-source))

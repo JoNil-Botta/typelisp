@@ -281,10 +281,11 @@
 
 (define (compiler-lower-fixed-array-aggregate-literal-source) : String
   "(defstruct Pair (x i64) (y i64))
+(define (pair-y [pair : (& pair Pair)]) : i64 pair.y)
 (define (main) : i64
   (let
     [items : (Array Pair 2) (array (Pair 1 2) (Pair 3 4))]
-    (__tl-project-field (array-ref items 1) y)))")
+    (pair-y (& (array-ref items 1)))))")
 
 (define (compiler-lower-fixed-array-return-source) : String
   "(define (main) : (Array i64 3)
@@ -1977,13 +1978,15 @@
   "(defstruct Pair (a i64) (b i64))
 (define (id-pair [p : Pair]) : Pair p)
 (define (main) : i64
-  (__tl-project-field (id-pair (Pair 20 22)) b))")
+  (let [pair : Pair (id-pair (Pair 20 22))] pair.b))")
 
 (define (compiler-lower-inline-mixed16-copy-source) : String
   "(defstruct Mixed16 (tag u32) (value f32) (tail i64))
 (define (id-mixed [p : Mixed16]) : Mixed16 p)
 (define (main) : i64
-  (__tl-project-field (id-mixed (Mixed16 (cast 1 : u32) 2.0 40)) tail))")
+  (let
+    [mixed : Mixed16 (id-mixed (Mixed16 (cast 1 : u32) 2.0 40))]
+    mixed.tail))")
 
 (define (compiler-lower-inline-sret-return-copy-source) : String
   "(defstruct Return216
@@ -1994,17 +1997,20 @@
   (f24 i64) (f25 i64) (f26 i64))
 (define (return216-id [value : Return216]) : Return216 value)
 (define (main) : i64
-  (__tl-project-field (return216-id
-      (Return216
-        0 1 2 3 4 5 6 7 8 9 10 11 12 13
-        14 15 16 17 18 19 20 21 22 23 24 25 42)) f26))")
+  (let
+    [value : Return216
+      (return216-id
+        (Return216
+          0 1 2 3 4 5 6 7 8 9 10 11 12 13
+          14 15 16 17 18 19 20 21 22 23 24 25 42))]
+    value.f26))")
 
 (define (compiler-lower-inline-sret-struct-constructor-source) : String
   "(defstruct Wide (a i64) (b i64) (c i64))
 (define (make-wide [x : i64]) : Wide
   (Wide x (+ x 1) (+ x 2)))
 (define (main) : i64
-  (__tl-project-field (make-wide 40) c))")
+  (let [wide : Wide (make-wide 40)] wide.c))")
 
 (define (compiler-lower-inline-sret-enum-constructor-source) : String
   "(defenum WideChoice (Some i64 i64 i64) (None))
@@ -2023,7 +2029,7 @@
     [(Make n) (Wide n (+ n 1) (+ n 2))]
     [Zero (Wide 0 1 2)]))
 (define (main) : i64
-  (__tl-project-field (from-choice (Make 40)) c))")
+  (let [wide : Wide (from-choice (Make 40))] wide.c))")
 
 (define (compiler-lower-inline-sret-enum-match-generic-source) : String
   "(defstruct Wide (a i64) (b i64) (c i64))
@@ -2033,7 +2039,7 @@
     [(Make n) (Wide n (+ n 1) (+ n 2))]
     [(Wrap w) w]))
 (define (main) : i64
-  (__tl-project-field (from-choice (Make 40)) c))")
+  (let [wide : Wide (from-choice (Make 40))] wide.c))")
 
 ;; Internal structural ABI smoke: tuple register groups and fixed-array memory
 ;; aggregates must cross ordinary (non-extern) calls using the classifier's

@@ -609,8 +609,8 @@
   (begin
     (flush-stdout)
     (if (stdin-eof?)
-        (__tl-project-field (read-stdin-line) len)
-        (__tl-project-field (io.read-stdin-bytes 3) len))))"))
+        (let [buffer : ByteBuf (read-stdin-line)] buffer.len)
+        (let [buffer : ByteBuf (io.read-stdin-bytes 3)] buffer.len))))"))
 
 (define (compiler-typecheck-env-source) : String
   (compiler-typecheck-with-env-source
@@ -968,7 +968,7 @@
     (define (make-point [x : i64]) : Point (Point x))))
 (generate-point-api)
 (define (main) : i64
-  (__tl-project-field (make-point 7) x))")
+  (let [point : Point (make-point 7)] point.x))")
 
 (define (compiler-typecheck-generated-notes-ok?
   [notes : cdiag.CompilerDiagnosticNoteList]
@@ -1061,7 +1061,8 @@
 (define bad : Point (Point 1))")
 
 (define (compiler-typecheck-struct-get-nonstruct-source) : String
-  "(define (main) : i64 (__tl-project-field 1 x))")
+  "(define (main) : i64
+  (let [value : i64 1] value.x))")
 
 (define (compiler-typecheck-recursive-enum-boxed-source) : String
   "(defenum Tree
@@ -2976,7 +2977,7 @@
   "(define (main) : i64
   (let
     [cell : (Box i64) (box 21)]
-    [view : (& view i64) (& (deref cell))]
+    [view : (& cell i64) (& (deref cell))]
     (+ (deref view) (deref cell))))")
 
 (define (compiler-typecheck-deref-mut-reference-write-source) : String
@@ -2990,12 +2991,14 @@
 
 (define (compiler-typecheck-box-set-field-source) : String
   "(defstruct Pair (x i64) (y i64))
+(define (set-x [pair : (&mut pair Pair)]) : i64
+  (begin
+    (set! pair.x 9)
+    pair.x))
 (define (main) : i64
   (let
     [b : (Box Pair) (box (Pair 1 2))]
-    (begin
-      (set! (__tl-project-field (deref b) x) 9)
-      (__tl-project-field (deref b) x))))")
+    (set-x (&mut (deref b)))))")
 
 (define (compiler-typecheck-box-set-mismatch-source) : String
   "(define (main) : unit
@@ -6430,7 +6433,11 @@
 (define (compiler-typecheck-lambda-capture-struct-source) : String
   "(defstruct P (a i64))
 (define (main) : i64
-  (let [p : P (P 9)] (let [g : (-> P) (lambda () : P p)] (__tl-project-field (g) a))))")
+  (let [p : P (P 9)]
+    (let
+      [g : (-> P) (lambda () : P p)]
+      [result : P (g)]
+      result.a)))")
 
 (define (compiler-typecheck-lambda-capture-dyn-array-source) : String
   "(define (main [n : i64]) : i64
@@ -6509,7 +6516,10 @@
 (define (compiler-typecheck-lambda-aggregate-return-source) : String
   "(defstruct P (a i64))
 (define (main) : i64
-  (let [mk : (-> P) (lambda () : P (P 5))] (__tl-project-field (mk) a)))")
+  (let
+    [mk : (-> P) (lambda () : P (P 5))]
+    [result : P (mk)]
+    result.a))")
 
 (define (compiler-typecheck-lambda-tests-ok?) : bool
   (and
@@ -8996,7 +9006,7 @@
     [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource source)
       (let
         [start-marker : String
-          "(defmacro (for [bindings : ExprBindingClause ...]]]"]
+          "(defmacro (for [bindings : ExprBindingClause ...]"]
         [end-marker : String "(cfg\n  test\n  (defmacro (core-macros-user-fold"]
         [start : i64
           (compiler-typecheck-string-find-from source start-marker 0)]
@@ -10100,21 +10110,21 @@
 (defstruct Holder
   (:cleanup cleanup-holder)
   (mixed (Tuple (Array (Tuple Leaf i64) 2) i64)))
-(define (take-handle [h : FileHandle]) : unit unit)
+(define (take-leaf [leaf : Leaf]) : unit unit)
 (define (bad-owner-projection-deep-mixed-repeat [p : Holder]) : unit
   (begin
-    (take-handle
-      (__tl-project-field (tuple-ref
-          (array-ref
-            (tuple-ref p.mixed 0)
-            1)
-          0) handle))
-    (take-handle
-      (__tl-project-field (tuple-ref
-          (array-ref
-            (tuple-ref p.mixed 0)
-            1)
-          0) handle))))")
+    (take-leaf
+      (tuple-ref
+        (array-ref
+          (tuple-ref p.mixed 0)
+          1)
+        0))
+    (take-leaf
+      (tuple-ref
+        (array-ref
+          (tuple-ref p.mixed 0)
+          1)
+        0))))")
 
 (define (compiler-typecheck-move-owner-projection-nested-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10209,11 +10219,13 @@
   (inner Inner (:owned))
   (size i64))
 (define (take-handle [h : FileHandle]) : unit unit)
-(define (owner-projection-nested-set-reset [p : Holder]) : unit
-  (begin
-    (take-handle p.inner.handle)
-    (set! p (Holder (Inner (FileHandle 10) 11) 12))
-    (take-handle p.inner.handle)))")
+(define (owner-projection-nested-set-reset) : unit
+  (with ([p (Holder (Inner (FileHandle 1) 2) 3) cleanup-holder])
+    (begin
+      (take-handle p.inner.handle)
+      (set! p.inner.handle (FileHandle 10))
+      (take-handle p.inner.handle)
+      (set! p.inner.handle (FileHandle 20)))))")
 
 (define (compiler-typecheck-move-owner-projection-nested-shadow-reset-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10281,11 +10293,11 @@
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-key-collision
   [p : Holder]
-  [p.handle : Holder]
-  [p.__tl_partial : Holder]) : i64
+  [p.handle.shadow : i64]
+  [p.__tl_partial : i64]) : i64
   (begin
     (take-handle p.handle)
-    (+ p.handle.size p.__tl_partial.size)))")
+    (+ p.size (+ p.handle.shadow p.__tl_partial))))")
 
 (define (compiler-typecheck-move-owner-tuple-ref-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10346,10 +10358,11 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
+(define (handle-fd [h : (& h FileHandle)]) : i64 h.fd)
 (define (owner-array-ref-other-element [items : (Array FileHandle 2)]) : i64
   (begin
     (take-handle (array-ref items 0))
-    (__tl-project-field (array-ref items 1) fd)))")
+    (handle-fd (& (array-ref items 1)))))")
 
 (define (compiler-typecheck-move-owner-array-ref-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10395,6 +10408,7 @@
 (define (bad-owner-array-ref-reinit-sibling [items : (Array FileHandle 2) (:consume)]) : unit
   (begin
     (take-handle (array-ref items 0))
+    (take-handle (array-ref items 1))
     (set! (array-ref items 1) (FileHandle 7))
     (take-handle (array-ref items 0))))")
 
@@ -10777,13 +10791,13 @@
 
 (define (compiler-typecheck-live-borrow-resource-conflict-source) : String
   (string.append
-    (compiler-typecheck-live-borrow-owner-prefix)
+    (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [fd : i64]) : i64
-  (with ([h (FileHandle fd) cleanup-file-handle])
-    (let [borrowed : (& h FileHandle) (& h)]
+  (with ([h (Holder (FileHandle fd) 1) cleanup-holder])
+    (let [borrowed : (& h Holder) (& h)]
       (begin
-        (set! h (FileHandle 2))
-        (read-handle-ref borrowed)
+        (set! h.size 2)
+        (read-holder-ref borrowed)
         0))))"))
 
 (define (compiler-typecheck-live-borrow-array-set-source) : String
@@ -10913,7 +10927,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-borrow-resource-conflict-source)
-        "typecheck: cannot assign to borrowed place `h`")
+        "typecheck: cannot assign to borrowed place `h.size`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -11382,7 +11396,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-projection-deep-mixed-repeat-source)
-        "typecheck: use of moved value `p.mixed.0[1].0.handle`")
+        "typecheck: use of moved value `p.mixed.0[1].0`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -11468,7 +11482,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-array-ref-reinit-nonliteral-source)
-        "typecheck: use of moved value `items[0]`")
+        "typecheck: cannot overwrite initialized cleanup-owning place; move or clean up the old value first")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -11503,9 +11517,8 @@
         (compiler-typecheck-move-box-get-copyable-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-owner-box-get-call-source)
-        "typecheck: cannot move owner-consuming value out of box")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-box-get-call-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -11513,9 +11526,8 @@
         "typecheck: ordinary let cannot own cleanup-required resource; use with")
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-move-owner-box-get-return-source)
-        "typecheck: cannot move owner-consuming value out of box")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-owner-box-get-return-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

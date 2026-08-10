@@ -2671,7 +2671,7 @@
   (let
     [buf : (MutPtr u8) (tl_alloc 64)]
     [n : i32 (snprintf buf 64 (snprintf-format) 1.5)]
-    (cast n : i64)))\""))
+    (cast n : i64)))"))
 
 (define (compiler-backend-varargs-ffi-linux-source) : String
   (compiler-backend-varargs-ffi-common-source "snprintf"))
@@ -4400,8 +4400,9 @@
 (define (mk-point) : Point (Point 1 2))
 (define (mk-string) : String \"hi\")
 (define (main) : i64
-  (+ (match (mk-shape) [(Circle r) r] [(Square s) s] [Nothing 0])
-     (+ (__tl-project-field (mk-point) y) (__tl_string_length (mk-string)))))")
+  (let [point : Point (mk-point)]
+    (+ (match (mk-shape) [(Circle r) r] [(Square s) s] [Nothing 0])
+      (+ point.y (__tl_string_length (mk-string))))))")
 
 (define (compiler-backend-aggregate-return-shape-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source
@@ -4556,10 +4557,10 @@
         [mk-enum : (-> Box) __tl_lambda_main_1]
         [mk-array : (-> (Array i64)) __tl_lambda_main_2]
         [mk-struct : (-> Pair) __tl_lambda_main_3]
+        [pair : Pair (mk-struct)]
     (+ (__tl_string_length (mk-string))
-       (+ (match (mk-enum) [(BoxI n) n])
-          (+ (array-length (mk-array))
-             (__tl-project-field (mk-struct) y))))))")
+      (+ (match (mk-enum) [(BoxI n) n])
+        (+ (array-length (mk-array)) pair.y)))))")
 
 (define (compiler-backend-closure-literal-shape-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source

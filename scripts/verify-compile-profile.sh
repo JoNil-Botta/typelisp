@@ -1109,6 +1109,13 @@ fi
 # Reconciled with #6371's fixture relocation, the combined tree remains at 52
 # segments: the authoritative Windows probe measured 3,362,558 used nodes,
 # 3,407,872 capacity, and 109,051,904 physical payload bytes.
+# #6159's explicit 30-cell lower-state owner and state-isolation coverage
+# crossed ast_expr_pool.macro_expand from 52 to 53 segments; after replacing
+# the first reflective state aggregate with the final typed-cell directory, the
+# authoritative Windows CI probe measured 3,410,813 used nodes, 3,473,408
+# capacity, and 111,149,056 physical payload bytes. The same final source tree
+# crossed ast_expr_pool.typecheck from 31 to 32 segments: 2,039,958 used nodes,
+# 2,097,152 capacity, and 67,108,864 physical payload bytes.
 # #5937's persistent typechecker list storage and focused wide/deep tests
 # crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
 # Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload
@@ -1135,6 +1142,10 @@ fi
 # #6193's dotted-module migration crossed the next type-pool typecheck boundary,
 # 7 -> 8 segments: the authoritative Windows selfhost probe measured 7346 used
 # nodes, 8192 capacity, and 196608 physical payload bytes.
+# Reconciled with current main through #6425, #6159's lower-state owner crosses
+# the next type-pool typecheck boundary from 8 to 9 segments: the authoritative
+# Windows CI probe measured 8193 used nodes, 9216 capacity, and 221184 physical
+# payload bytes.
 # #6293's derived-symbol table (moving ~50k generated spellings out of the
 # pinned intern pool, plus its tests) crossed the expr typecheck boundary
 # from 29 to 30 segments: the authoritative Windows probe measured 1,902,698
@@ -1269,7 +1280,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 52 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 53 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
@@ -1278,7 +1289,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 8 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 9 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

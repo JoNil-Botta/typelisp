@@ -51131,7 +51131,7 @@
                 ctx
                 fallthrough
                 (ResultCompilerBackend.Ok
-                  (string.append
+                  (str_cat.str-cat
                     cmp-asm
                     (compiler-backend-emit-compare-branch-jumps
                       ctx.function

@@ -13726,7 +13726,7 @@
 ;; still refuses every one; at the floor the callee's own weight is the
 ;; argument and every site takes it.
 (define (opt-inline-dominant-caller-text [index : i64]) : String
-  (string.append "dominant_caller_" (string.int->string index)))
+  (str_cat.str-cat "dominant_caller_" (string.int->string index)))
 
 (define (opt-inline-dominant-caller-names-from [index : i64] [count : i64]) : compiler_optimize.OptSlotList
   (if (>= index count)
@@ -13806,13 +13806,13 @@
 ;; same shape opt-inline-dup-absorb-ok? serves.
 (define (opt-inline-chain-hit-label [index : i64]) : i64
   (compiler_ir_types.compiler-ir-label
-    (string.append "hit" (string.int->string index))))
+    (str_cat.str-cat "hit" (string.int->string index))))
 
 (define (opt-inline-chain-test-label [index : i64]) : i64
   (if (= index 0)
     (compiler_ir_types.compiler-ir-label "entry")
     (compiler_ir_types.compiler-ir-label
-      (string.append "chain" (string.int->string index)))))
+      (str_cat.str-cat "chain" (string.int->string index)))))
 
 ;; hit_i and the miss block all reach `join`, so the phi carries one input per
 ;; arm. Built newest-first from the miss edge inward.
@@ -29285,7 +29285,7 @@
     [(compiler_optimize.OptMaybeBlock.Some _) true]))
 
 (define (opt-bce-fold-test-fast-label [text : String]) : i64
-  (compiler_ir_types.compiler-ir-label (string.append text "__bce_fast")))
+  (compiler_ir_types.compiler-ir-label (str_cat.str-cat text "__bce_fast")))
 
 (define (compiler-optimize-bce-version-fold-self-test) : i64
   (let

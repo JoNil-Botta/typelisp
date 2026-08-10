@@ -140,7 +140,7 @@
   [name-id : i64]) : i64
   (if (and (ci.intern-renderable-id? name-id) (ci.intern-dotted? name-id))
     (let
-      [aliases : clone_id_map.Map (struct-get names aliases)]
+      [aliases : clone_id_map.Map names.aliases]
       [alias-id : i64 (ci.intern-leading-dot-id name-id)]
       [key-id : i64 (clone-import-alias-key-id module-id alias-id)]
       (match (clone_id_map.get (& aliases) key-id)
@@ -209,10 +209,10 @@
   (CloneNameSet (clone_id_map.with-capacity capacity) aliases))
 
 (define (clone-name-set-map [names : CloneNameSet]) : clone_id_map.Map
-  (struct-get names map))
+  names.map)
 
 (define (clone-name-set-aliases [names : CloneNameSet]) : clone_id_map.Map
-  (struct-get names aliases))
+  names.aliases)
 
 (define (clone-name-set-insert-id [names : CloneNameSet] [key-id : i64]) : CloneNameSet
   (let
@@ -342,12 +342,13 @@
   (match roots
     [(CloneRootEntries.Empty) 0]
     [(CloneRootEntries.Dense store _ _)
-      (array-length (struct-get (box-get store) entries))]))
+      (array-length (__tl-project-field (__tl-box-place store) entries))]))
 
 (define (clone-root-entries-physical-len [roots : CloneRootEntries]) : i64
   (match roots
     [(CloneRootEntries.Empty) 0]
-    [(CloneRootEntries.Dense store _ _) (struct-get (box-get store) len)]))
+    [(CloneRootEntries.Dense store _ _)
+      (__tl-project-field (__tl-box-place store) len)]))
 
 (define (clone-root-entries-store-new) : (Box CloneRootEntryStore)
   (let
@@ -369,16 +370,16 @@
     (begin
       (while (< cursor count)
         (begin
-          (array-set! dst cursor (array-ref src cursor))
+          (set! (array-ref dst cursor) (array-ref src cursor))
           (set! cursor (+ cursor 1))))
       unit)))
 
 (define (clone-root-entries-store-grow!
   [store : (&mut store CloneRootEntryStore)]) : unit
   (let
-    [owner : i64 (struct-get store arena)]
+    [owner : i64 store.arena]
     [previous-arena : i64 (arena.tl_arena_current)]
-    [old-capacity : i64 (array-length (struct-get store entries))]
+    [old-capacity : i64 (array-length store.entries)]
     [new-capacity : i64
       (if (< old-capacity 1)
         1
@@ -394,17 +395,17 @@
           ;; dense handle and retain their old start/length bounds.
           (clone-root-entries-store-copy-range!
             (&mut bigger)
-            (& (struct-get store entries))
+            (& store.entries)
             0
-            (struct-get store len))
-          (set! (struct-get store entries) bigger)))
+            store.len)
+          (set! store.entries bigger)))
       (clone-root-entries-arena-restore-after-owner-alloc! previous-arena owner))))
 
 (define (clone-root-entries-store-entry-at
   [store : (& store CloneRootEntryStore)]
   [index : i64]) : CloneRootEntry
   (unsafe
-    (ptr-read (ptr-offset (array-data (struct-get store entries)) index))))
+    (ptr-read (ptr-offset (array-data store.entries) index))))
 
 (define (clone-root-entries-entry-at-or
   [roots : CloneRootEntries]
@@ -416,14 +417,16 @@
       (if (and (>= logical-index 0) (< logical-index len))
         (let
           [physical : i64 (+ start (- len (+ logical-index 1)))]
-          (clone-root-entries-store-entry-at (& (box-get store)) physical))
+          (clone-root-entries-store-entry-at
+            (& (__tl-box-place store))
+            physical))
         fallback)]))
 
 (define (clone-root-entries-key-id-at-or
   [roots : CloneRootEntries]
   [logical-index : i64]
   [fallback : i64]) : i64
-  (struct-get
+  (__tl-project-field
     (clone-root-entries-entry-at-or
       roots
       logical-index
@@ -434,7 +437,7 @@
   [roots : CloneRootEntries]
   [logical-index : i64]
   [fallback : i64]) : i64
-  (struct-get
+  (__tl-project-field
     (clone-root-entries-entry-at-or
       roots
       logical-index
@@ -448,7 +451,7 @@
   [key-id : i64]) : i64
   (if (< key-id 0)
     -1
-    (match (clone_id_map.get (& (struct-get store key-index)) key-id)
+    (match (clone_id_map.get (& store.key-index) key-id)
       [(clone_id_map.LookupFound physical)
         (if (and (>= physical start) (< physical (+ start len)))
           physical
@@ -463,7 +466,7 @@
     [(CloneRootEntries.Dense store start len)
       (>=
         (clone-root-entries-store-index-in-view-or
-          (& (box-get store))
+          (& (__tl-box-place store))
           start
           len
           key-id)
@@ -479,14 +482,16 @@
       (let
         [physical : i64
           (clone-root-entries-store-index-in-view-or
-            (& (box-get store))
+            (& (__tl-box-place store))
             start
             len
             key-id)]
         (if (< physical 0)
           fallback
-          (struct-get
-            (clone-root-entries-store-entry-at (& (box-get store)) physical)
+          (__tl-project-field
+            (clone-root-entries-store-entry-at
+              (& (__tl-box-place store))
+              physical)
             helper-id)))]))
 
 ;; Recover an imported nominal's canonical key when a generated declaration
@@ -538,24 +543,35 @@
               ;; index is logical; physical materialization is easiest by
               ;; writing in reverse logical order to physical 0..len-1.
               (if (<
-                (struct-get (box-get out-store) len)
-                (array-length (struct-get (box-get out-store) entries)))
+                (__tl-project-field (__tl-box-place out-store) len)
+                (array-length
+                  (__tl-project-field (__tl-box-place out-store) entries)))
                 unit
-                (clone-root-entries-store-grow! (&mut (box-get out-store))))
+                (clone-root-entries-store-grow!
+                  (&mut (__tl-box-place out-store))))
               (let
-                [physical : i64 (struct-get (box-get out-store) len)]
-                (array-set!
-                  (struct-get (box-get out-store) entries)
-                  physical
+                [physical : i64
+                  (__tl-project-field (__tl-box-place out-store) len)]
+                (set!
+                  (array-ref
+                    (__tl-project-field (__tl-box-place out-store) entries)
+                    physical)
                   entry)
-                (set! (struct-get (box-get out-store) len) (+ physical 1))
+                (__tl-project-set-field
+                  (__tl-box-place out-store)
+                  len
+                  (+ physical 1))
                 (let
-                  [key-id : i64 (struct-get entry key-id)]
-                  [map (struct-get (box-get out-store) key-index)]
+                  [key-id : i64 entry.key-id]
+                  [map
+                    (__tl-project-field (__tl-box-place out-store) key-index)]
                   (if (not (clone_id_map.contains? (& map) key-id))
                     (clone_id_map.insert-ref! (&mut map) key-id physical)
                     unit)
-                  (set! (struct-get (box-get out-store) key-index) map))))
+                  (__tl-project-set-field
+                    (__tl-box-place out-store)
+                    key-index
+                    map))))
             (set! index (- index 1)))
           (CloneRootEntries.Dense out-store 0 len)))]))
 
@@ -572,19 +588,20 @@
           (let
             [store : (Box CloneRootEntryStore) (clone-root-entries-store-new)]
             (begin
-              (array-set!
-                (struct-get (box-get store) entries)
-                0
+              (set!
+                (array-ref
+                  (__tl-project-field (__tl-box-place store) entries)
+                  0)
                 (CloneRootEntry key-id helper-id))
-              (set! (struct-get (box-get store) len) 1)
+              (__tl-project-set-field (__tl-box-place store) len 1)
               (clone_id_map.insert-ref!
-                (&mut (struct-get (box-get store) key-index))
+                (&mut (__tl-project-field (__tl-box-place store) key-index))
                 key-id
                 0)
               (CloneRootEntries.Dense store 0 1)))]
         [(CloneRootEntries.Dense store start len)
           (let
-            [store-len : i64 (struct-get (box-get store) len)]
+            [store-len : i64 (__tl-project-field (__tl-box-place store) len)]
             [tail? : bool (and (= start 0) (= len store-len))]
             [target : CloneRootEntries
               (if tail?
@@ -593,29 +610,41 @@
             (match target
               [(CloneRootEntries.Dense target-store target-start target-len)
                 (let
-                  [owner : i64 (struct-get (box-get target-store) arena)]
+                  [owner : i64
+                    (__tl-project-field (__tl-box-place target-store) arena)]
                   [previous-arena : i64 (arena.tl_arena_current)]
                   (begin
                     (unsafe
                       (arena.tl_arena_set
                         (clone-root-entries-arena-owner-current-head owner)))
                     (if (>=
-                      (struct-get (box-get target-store) len)
-                      (array-length (struct-get (box-get target-store) entries)))
+                      (__tl-project-field (__tl-box-place target-store) len)
+                      (array-length
+                        (__tl-project-field
+                          (__tl-box-place target-store)
+                          entries)))
                       (clone-root-entries-store-grow!
-                        (&mut (box-get target-store)))
+                        (&mut (__tl-box-place target-store)))
                       unit)
                     (let
-                      [physical : i64 (struct-get (box-get target-store) len)]
-                      (array-set!
-                        (struct-get (box-get target-store) entries)
-                        physical
-                        (CloneRootEntry key-id helper-id))
+                      [physical : i64
+                        (__tl-project-field (__tl-box-place target-store) len)]
                       (set!
-                        (struct-get (box-get target-store) len)
+                        (array-ref
+                          (__tl-project-field
+                            (__tl-box-place target-store)
+                            entries)
+                          physical)
+                        (CloneRootEntry key-id helper-id))
+                      (__tl-project-set-field
+                        (__tl-box-place target-store)
+                        len
                         (+ physical 1))
                       (clone_id_map.insert-ref!
-                        (&mut (struct-get (box-get target-store) key-index))
+                        (&mut
+                          (__tl-project-field
+                            (__tl-box-place target-store)
+                            key-index))
                         key-id
                         physical)
                       (clone-root-entries-arena-restore-after-owner-alloc!
@@ -873,7 +902,7 @@
     [(ast.AstType.Never) true]
     [(ast.AstType.String) true]
     [(ast.AstType.Tuple elems)
-      (clone-field-type-list-able? pools (box-get elems) names module-id)]
+      (clone-field-type-list-able? pools (__tl-box-place elems) names module-id)]
     [(ast.AstType.Array elem _)
       (clone-field-type-able-id?
         pools
@@ -1006,7 +1035,7 @@
     [current-module-id : i64 module-id]
     [index : i64 0]
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-offset : i64 decls.offset]
     (begin
       (while (< index count)
         (begin
@@ -1018,7 +1047,7 @@
             (& decls)
             index)
             (match (ast.ast-decl-unwrapped
-              (array-ref (struct-get decls slots) (+ decl-offset index)))
+              (array-ref decls.slots (+ decl-offset index)))
               [(ast.AstDecl.Module next-module)
                 (set! current-module-id next-module)]
               [(ast.AstDecl.DefEnum decl-meta name _ variants)
@@ -1067,7 +1096,7 @@
     [current-module-id : i64 module-id]
     [index : i64 0]
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-offset : i64 decls.offset]
     (begin
       (while (< index count)
         (begin
@@ -1076,7 +1105,7 @@
             (& decls)
             index)
             (match (ast.ast-decl-unwrapped
-              (array-ref (struct-get decls slots) (+ decl-offset index)))
+              (array-ref decls.slots (+ decl-offset index)))
               [(ast.AstDecl.Module next-module)
                 (set! current-module-id next-module)]
               [(ast.AstDecl.DefEnum decl-meta name _ _)
@@ -1342,7 +1371,7 @@
         decls
         able
         roots
-        (box-get elems)
+        (__tl-box-place elems)
         module-id)]
     [(ast.AstType.Array elem _)
       (clone-root-add-type

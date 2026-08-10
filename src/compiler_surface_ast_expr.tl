@@ -17,14 +17,12 @@
     [items : ast.AstExprList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get items len)]
+      [count : i64 items.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
           (begin
-            (codec.surface-ast-write-i64!
-              out
-              (array-ref (struct-get items slots) index))
+            (codec.surface-ast-write-i64! out (array-ref items.slots index))
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-expr-list! [reader : codec.SurfaceAstReader]) : ast.AstExprList
@@ -35,7 +33,7 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (codec.surface-ast-read-i64! reader))
+          (set! (array-ref slots index) (codec.surface-ast-read-i64! reader))
           (set! index (+ index 1))))
       (ast.AstExprList slots count))))
 
@@ -68,7 +66,7 @@
     [params : ast.AstParamList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get params len)]
+      [count : i64 params.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
@@ -76,7 +74,7 @@
             (surface-ast-write-param!
               out
               context
-              (array-ref (struct-get params slots) index))
+              (array-ref params.slots index))
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-param-list! [reader : codec.SurfaceAstReader]) : ast.AstParamList
@@ -87,7 +85,7 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (surface-ast-read-param! reader))
+          (set! (array-ref slots index) (surface-ast-read-param! reader))
           (set! index (+ index 1))))
       (ast.AstParamList slots count))))
 
@@ -99,7 +97,7 @@
     [patterns : ast.AstPatternList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get patterns len)]
+      [count : i64 patterns.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
@@ -107,7 +105,7 @@
             (surface-ast-write-pattern!
               out
               context
-              (array-ref (struct-get patterns slots) index))
+              (array-ref patterns.slots index))
             (set! index (+ index 1))))))))
 
 (cfg
@@ -125,11 +123,11 @@
       [(ast.AstPattern.Tuple items)
         (begin
           (codec.surface-ast-write-i64! out 1)
-          (surface-ast-write-pattern-list! out context (box-get items)))]
+          (surface-ast-write-pattern-list! out context (__tl-box-place items)))]
       [(ast.AstPattern.Array items)
         (begin
           (codec.surface-ast-write-i64! out 6)
-          (surface-ast-write-pattern-list! out context (box-get items)))]
+          (surface-ast-write-pattern-list! out context (__tl-box-place items)))]
       [(ast.AstPattern.Wildcard) (codec.surface-ast-write-i64! out 2)]
       [(ast.AstPattern.Binding name)
         (begin
@@ -139,7 +137,7 @@
         (begin
           (codec.surface-ast-write-i64! out 4)
           (codec.surface-ast-write-name! out context name)
-          (surface-ast-write-pattern-list! out context (box-get items)))]
+          (surface-ast-write-pattern-list! out context (__tl-box-place items)))]
       [(ast.AstPattern.Literal literal)
         (begin
           (codec.surface-ast-write-i64! out 5)
@@ -153,7 +151,7 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (surface-ast-read-pattern! reader))
+          (set! (array-ref slots index) (surface-ast-read-pattern! reader))
           (set! index (+ index 1))))
       (ast.AstPatternList slots count))))
 
@@ -192,11 +190,11 @@
     [bindings : ast.AstLetBindingList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get bindings len)]
+      [count : i64 bindings.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
-          (match (array-ref (struct-get bindings slots) index)
+          (match (array-ref bindings.slots index)
             [(ast.AstLetBinding.Binding name maybe-ty value)
               (begin
                 (codec.surface-ast-write-name! out context name)
@@ -213,9 +211,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            slots
-            index
+          (set!
+            (array-ref slots index)
             (ast.AstLetBinding.Binding
               (codec.surface-ast-read-name! reader)
               (codec.surface-ast-read-maybe-type! reader)
@@ -231,11 +228,11 @@
     [bindings : ast.AstResourceBindingList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get bindings len)]
+      [count : i64 bindings.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
-          (match (array-ref (struct-get bindings slots) index)
+          (match (array-ref bindings.slots index)
             [(ast.AstResourceBinding.Binding name init cleanup fallible)
               (begin
                 (codec.surface-ast-write-name! out context name)
@@ -254,9 +251,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            slots
-            index
+          (set!
+            (array-ref slots index)
             (ast.AstResourceBinding.Binding
               (codec.surface-ast-read-name! reader)
               (codec.surface-ast-read-i64! reader)
@@ -273,11 +269,11 @@
     [arms : ast.AstMatchArmList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get arms len)]
+      [count : i64 arms.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
-          (match (array-ref (struct-get arms slots) index)
+          (match (array-ref arms.slots index)
             [(ast.AstMatchArm.Arm pattern body)
               (begin
                 (surface-ast-write-pattern! out context pattern)
@@ -293,9 +289,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            slots
-            index
+          (set!
+            (array-ref slots index)
             (ast.AstMatchArm.Arm
               (surface-ast-read-pattern! reader)
               (codec.surface-ast-read-i64! reader)))
@@ -345,14 +340,14 @@
           (codec.surface-ast-write-i64! out then-expr)
           (codec.surface-ast-write-i64! out else-expr))]
       [(ast.AstExpr.Let payload)
-        (match (box-get payload)
+        (match (__tl-box-place payload)
           [(ast.AstLet.Let bindings body)
             (begin
               (codec.surface-ast-write-i64! out 7)
               (surface-ast-write-let-binding-list! out context bindings)
               (codec.surface-ast-write-i64! out body))])]
       [(ast.AstExpr.Lambda payload)
-        (match (box-get payload)
+        (match (__tl-box-place payload)
           [(ast.AstLambda.Lambda params ret body)
             (begin
               (codec.surface-ast-write-i64! out 8)
@@ -451,14 +446,14 @@
             (ast.ast-borrow-lifetime-from-id lifetime-id))
           (codec.surface-ast-write-i64! out inner))]
       [(ast.AstExpr.Match payload)
-        (match (box-get payload)
+        (match (__tl-box-place payload)
           [(ast.AstMatch.Match scrutinee arms)
             (begin
               (codec.surface-ast-write-i64! out 26)
               (codec.surface-ast-write-i64! out scrutinee)
               (surface-ast-write-match-arm-list! out context arms))])]
       [(ast.AstExpr.Foreach payload)
-        (match (box-get payload)
+        (match (__tl-box-place payload)
           [(ast.AstForeach.Foreach name index-ty start end body)
             (begin
               (codec.surface-ast-write-i64! out 27)
@@ -468,7 +463,7 @@
               (codec.surface-ast-write-i64! out end)
               (codec.surface-ast-write-i64! out body))])]
       [(ast.AstExpr.SpmdReduce payload)
-        (match (box-get payload)
+        (match (__tl-box-place payload)
           [(ast.AstSpmdReduce.Reduce op index index-ty start end init value)
             (begin
               (codec.surface-ast-write-i64! out 28)
@@ -480,7 +475,7 @@
               (codec.surface-ast-write-i64! out init)
               (codec.surface-ast-write-i64! out value))])]
       [(ast.AstExpr.SpmdScan payload)
-        (match (box-get payload)
+        (match (__tl-box-place payload)
           [(ast.AstSpmdScan.Scan
               op
               index
@@ -547,7 +542,7 @@
           (codec.surface-ast-write-i64! out arena)
           (surface-ast-write-expr-list! out body))]
       [(ast.AstExpr.WithResource payload)
-        (match (box-get payload)
+        (match (__tl-box-place payload)
           [(ast.AstWithResource.WithResource bindings body)
             (begin
               (codec.surface-ast-write-i64! out 40)

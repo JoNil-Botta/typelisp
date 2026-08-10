@@ -64,42 +64,38 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (format-cst-vec-copy-range! dst src (+ index 1) count))))
 
 (define (format-cst-vec-grow! [v : (&mut v FormatCstVec)]) : unit
   (let
-    [count : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [count : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array FormatCst) (make-array FormatCst new-cap)]
     (begin
-      (format-cst-vec-copy-range!
-        (&mut bigger)
-        (& (struct-get v slots))
-        0
-        count)
-      (set! (struct-get v slots) bigger))))
+      (format-cst-vec-copy-range! (&mut bigger) (& v.slots) 0 count)
+      (set! v.slots bigger))))
 
 (define (format-cst-vec-push! [v : (&mut v FormatCstVec)] [value : FormatCst]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (format-cst-vec-grow! v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! v.len (+ index 1))))))
 
 (define (fmt-cst-list-nil) : FormatCstList
   (FormatCstList (make-array FormatCst 0) 0 0))
 
 (define (fmt-cst-list-from-vec [items : FormatCstVec]) : FormatCstList
-  (FormatCstList (struct-get items slots) 0 (struct-get items len)))
+  (FormatCstList items.slots 0 items.len))
 
 (define (fmt-cst-vec-push-list!
   [v : (&mut v FormatCstVec)]
@@ -121,28 +117,29 @@
 
 (define (fmt-cst-list-step [items : FormatCstList]) : FormatCstListStep
   (let
-    [start : i64 (struct-get items start)]
-    [count : i64 (struct-get items len)]
+    [start : i64 items.start]
+    [count : i64 items.len]
     (if (<= count 0)
       (FormatCstListStep.Empty)
       (FormatCstListStep.Item
-        (array-ref (struct-get items slots) start)
-        (FormatCstList (struct-get items slots) (+ start 1) (- count 1))))))
+        (array-ref items.slots start)
+        (FormatCstList items.slots (+ start 1) (- count 1))))))
 
 (define (fmt-cst-list-empty? [items : FormatCstList]) : bool
-  (<= (struct-get items len) 0))
+  (<= items.len 0))
 
 (define (fmt-list-count [items : FormatCstList]) : i64
-  (struct-get items len))
+  items.len)
 
 (define (fmt-cst-count [node : FormatCst]) : i64
   (match node
     [(FormatCst.Atom _) 1]
     [(FormatCst.Comment _) 1]
-    [(FormatCst.Prefix _ child) (+ 1 (fmt-cst-count (box-get child)))]
-    [(FormatCst.List items) (+ 1 (fmt-cst-list-total (box-get items)))]
-    [(FormatCst.BracketList items) (+ 1 (fmt-cst-list-total (box-get items)))]
-    [(FormatCst.Forms items) (+ 1 (fmt-cst-list-total (box-get items)))]))
+    [(FormatCst.Prefix _ child) (+ 1 (fmt-cst-count (__tl-box-place child)))]
+    [(FormatCst.List items) (+ 1 (fmt-cst-list-total (__tl-box-place items)))]
+    [(FormatCst.BracketList items)
+      (+ 1 (fmt-cst-list-total (__tl-box-place items)))]
+    [(FormatCst.Forms items) (+ 1 (fmt-cst-list-total (__tl-box-place items)))]))
 
 (define (fmt-cst-list-total [items : FormatCstList]) : i64
   (match (fmt-cst-list-step items)
@@ -154,10 +151,12 @@
   (match node
     [(FormatCst.Atom _) 0]
     [(FormatCst.Comment _) 1]
-    [(FormatCst.Prefix _ child) (fmt-cst-comment-count (box-get child))]
-    [(FormatCst.List items) (fmt-cst-list-comment-count (box-get items))]
-    [(FormatCst.BracketList items) (fmt-cst-list-comment-count (box-get items))]
-    [(FormatCst.Forms items) (fmt-cst-list-comment-count (box-get items))]))
+    [(FormatCst.Prefix _ child) (fmt-cst-comment-count (__tl-box-place child))]
+    [(FormatCst.List items) (fmt-cst-list-comment-count (__tl-box-place items))]
+    [(FormatCst.BracketList items)
+      (fmt-cst-list-comment-count (__tl-box-place items))]
+    [(FormatCst.Forms items)
+      (fmt-cst-list-comment-count (__tl-box-place items))]))
 
 (define (fmt-cst-list-comment-count [items : FormatCstList]) : i64
   (match (fmt-cst-list-step items)
@@ -169,11 +168,12 @@
   (match node
     [(FormatCst.Atom _) 0]
     [(FormatCst.Comment _) 0]
-    [(FormatCst.Prefix _ child) (fmt-cst-bracket-count (box-get child))]
-    [(FormatCst.List items) (fmt-cst-list-bracket-count (box-get items))]
+    [(FormatCst.Prefix _ child) (fmt-cst-bracket-count (__tl-box-place child))]
+    [(FormatCst.List items) (fmt-cst-list-bracket-count (__tl-box-place items))]
     [(FormatCst.BracketList items)
-      (+ 1 (fmt-cst-list-bracket-count (box-get items)))]
-    [(FormatCst.Forms items) (fmt-cst-list-bracket-count (box-get items))]))
+      (+ 1 (fmt-cst-list-bracket-count (__tl-box-place items)))]
+    [(FormatCst.Forms items)
+      (fmt-cst-list-bracket-count (__tl-box-place items))]))
 
 (define (fmt-cst-list-bracket-count [items : FormatCstList]) : i64
   (match (fmt-cst-list-step items)
@@ -428,11 +428,12 @@
   (match (parse-format-source "(a b c)")
     [(FormatCst.Forms forms)
       (and
-        (= (fmt-list-count (box-get forms)) 1)
-        (match (fmt-cst-list-step (box-get forms))
+        (= (fmt-list-count (__tl-box-place forms)) 1)
+        (match (fmt-cst-list-step (__tl-box-place forms))
           [(FormatCstListStep.Item node _)
             (match node
-              [(FormatCst.List items) (= (fmt-list-count (box-get items)) 3)]
+              [(FormatCst.List items)
+                (= (fmt-list-count (__tl-box-place items)) 3)]
               [_ false])]
           [_ false]))]
     [_ false]))

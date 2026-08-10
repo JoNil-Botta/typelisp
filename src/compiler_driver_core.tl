@@ -132,12 +132,14 @@
       (unsafe
         (arena.tl_arena_set previous-arena))]
     (begin
-      (array-set! expr-cell 0 expr-pool)
-      (array-set! type-cell 0 type-pool)
-      (array-set! intern-cell 0 intern-state)
-      (array-set! builtin-cell 0 (cbi.state-new))
-      (array-set! lower-cell 0 (compiler_lower.compiler-lower-arena-state-new))
-      (array-set! pool-arena-cell 0 pool-arena)
+      (set! (array-ref expr-cell 0) expr-pool)
+      (set! (array-ref type-cell 0) type-pool)
+      (set! (array-ref intern-cell 0) intern-state)
+      (set! (array-ref builtin-cell 0) (cbi.state-new))
+      (set!
+        (array-ref lower-cell 0)
+        (compiler_lower.compiler-lower-arena-state-new))
+      (set! (array-ref pool-arena-cell 0) pool-arena)
       (CompilerDriverState
         expr-cell
         type-cell
@@ -210,33 +212,31 @@
         pool-arena)]
     [state : CompilerDriverState
       (compiler-driver-state-new-from-pools-and-arena
-        (array-ref (struct-get pools expr-pool) 0)
-        (array-ref (struct-get pools type-pool) 0)
+        (array-ref pools.expr-pool 0)
+        (array-ref pools.type-pool 0)
         (compiler_ast_types.ast-node-pool-context-base-arena pools))]
     (begin
-      (cbi.state-capture-from-globals!
-        (array-ref (struct-get state builtin-ids) 0))
+      (cbi.state-capture-from-globals! (array-ref state.builtin-ids 0))
       (compiler_lower.compiler-lower-arena-state-capture-from-globals!
-        (array-ref (struct-get state lower-arenas) 0))
+        (array-ref state.lower-arenas 0))
       state)))
 
 (define (compiler-driver-state-session-cache-enabled?
   [state : CompilerDriverState]) : bool
-  (compiler_load.compiler-load-session-state-cache-enabled?
-    (struct-get state load-session)))
+  (compiler_load.compiler-load-session-state-cache-enabled? state.load-session))
 
 (define (compiler-driver-state-profile [state : CompilerDriverState]) : profile_state.CompilerProfileState
-  (struct-get state profile-state))
+  state.profile-state)
 
 (define (compiler-driver-state-backend [state : CompilerDriverState]) : compiler_backend.CompilerBackendState
-  (struct-get state backend-state))
+  state.backend-state)
 
 (define (compiler-driver-state-typecheck-prefix-cache
   [state : CompilerDriverState]) : compiler_typecheck_core.TcPrefixSnapshotCacheState
-  (struct-get state typecheck-prefix-cache))
+  state.typecheck-prefix-cache)
 
 (define (compiler-driver-state-typecheck [state : CompilerDriverState]) : compiler_typecheck_core.TcJobState
-  (struct-get state typecheck-state))
+  state.typecheck-state)
 
 (define (compiler-driver-state-reset-typecheck! [state : CompilerDriverState]) : unit
   (compiler_typecheck_core.tc-job-state-reset-file-state!
@@ -268,26 +268,24 @@
   [state : CompilerDriverState]) : CompilerDriverState
   (begin
     (compiler_load.compiler-load-session-state-program-cache-disable!
-      (struct-get state load-session))
+      state.load-session)
     state))
 
 (define (compiler-driver-state-apply-session-flags!
   [state : CompilerDriverState]) : unit
   (compiler_load.compiler-load-session-state-use-with-intern-state!
-    (struct-get state load-session)
-    (array-ref (struct-get state intern-state) 0)))
+    state.load-session
+    (array-ref state.intern-state 0)))
 
 ;; Legacy/test adapter for compiler phases that still use the active pool
 ;; globals. State-owned reset/adopt operations must not call this helper.
 (define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
   (begin
-    (array-set!
-      compiler-driver-active-state-pool-arena
-      0
+    (set!
+      (array-ref compiler-driver-active-state-pool-arena 0)
       (compiler-driver-state-owned-pool-arena state))
-    (array-set!
-      compiler-driver-active-state-surface-arena
-      0
+    (set!
+      (array-ref compiler-driver-active-state-surface-arena 0)
       (compiler-driver-state-surface-arena state))
     (compiler_ast_types.ast-node-pool-context-install!
       (compiler-driver-state-pool-context state))))
@@ -306,8 +304,7 @@
 ;; State-owned table and persistent-arena maintenance uses the explicit
 ;; `InternCompatState` APIs and must happen before this boundary.
 (define (compiler-driver-state-install-interns! [state : CompilerDriverState]) : unit
-  (ci.intern-compat-state-install!
-    (array-ref (struct-get state intern-state) 0)))
+  (ci.intern-compat-state-install! (array-ref state.intern-state 0)))
 
 (define (compiler-driver-node-pool-base-arena) : i64
   (compiler_ast_types.ast-node-pool-base-arena-handle))
@@ -453,15 +450,15 @@
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : compiler_ast_types.AstNodePoolContext
   (compiler_ast_types.ast-node-pool-context-from-cells
-    (struct-get state expr-pool)
-    (struct-get state type-pool)
-    (array-ref (struct-get state pool-arena) 0)))
+    state.expr-pool
+    state.type-pool
+    (array-ref state.pool-arena 0)))
 
 (define (compiler-driver-state-owned-pool-arena [state : CompilerDriverState]) : i64
-  (array-ref (struct-get state pool-arena) 0))
+  (array-ref state.pool-arena 0))
 
 (define (compiler-driver-state-surface-arena [state : CompilerDriverState]) : i64
-  (struct-get state surface-arena))
+  state.surface-arena)
 
 (define (compiler-driver-state-has-owned-pool-arena?
   [state : CompilerDriverState]) : bool
@@ -471,22 +468,14 @@
   [state : CompilerDriverState]
   [pools : compiler_ast_types.AstNodePoolContext]) : unit
   (begin
-    (array-set!
-      (struct-get state pool-arena)
-      0
+    (set!
+      (array-ref state.pool-arena 0)
       (compiler_ast_types.ast-node-pool-context-base-arena pools))
-    (array-set!
-      compiler-driver-active-state-pool-arena
-      0
+    (set!
+      (array-ref compiler-driver-active-state-pool-arena 0)
       (compiler_ast_types.ast-node-pool-context-base-arena pools))
-    (array-set!
-      (struct-get state expr-pool)
-      0
-      (array-ref (struct-get pools expr-pool) 0))
-    (array-set!
-      (struct-get state type-pool)
-      0
-      (array-ref (struct-get pools type-pool) 0))))
+    (set! (array-ref state.expr-pool 0) (array-ref pools.expr-pool 0))
+    (set! (array-ref state.type-pool 0) (array-ref pools.type-pool 0))))
 
 (define (compiler-driver-state-can-release-checked-lower-source-pools?
   [state : CompilerDriverState]) : bool
@@ -583,14 +572,14 @@
   [state : CompilerDriverState]) : unit
   (begin
     (compiler_load.compiler-load-session-state-floors-set!
-      (struct-get state load-session)
+      state.load-session
       0
       0
       0)
     (compiler_load.compiler-load-session-state-program-cache-clear!
-      (struct-get state load-session))
+      state.load-session)
     (compiler_load.compiler-load-session-state-runtime-prelude-cache-clear!
-      (struct-get state load-session))
+      state.load-session)
     (compiler_typecheck_core.tc-prefix-snapshot-cache-invalidate-for-state!
       (compiler-driver-state-typecheck-prefix-cache state))))
 
@@ -644,25 +633,17 @@
               type-capacity
               new-arena)]
           (begin
-            (array-set!
-              (struct-get state pool-arena)
-              0
+            (set!
+              (array-ref state.pool-arena 0)
               (compiler_ast_types.ast-node-pool-context-base-arena pools))
             ;; Keep the snapshot handle naming a live arena: the old pool
             ;; chain was destroyed above, and the next entry's load-phase
             ;; state-pool-arena row walks this global before any reinstall.
-            (array-set!
-              compiler-driver-active-state-pool-arena
-              0
+            (set!
+              (array-ref compiler-driver-active-state-pool-arena 0)
               (compiler_ast_types.ast-node-pool-context-base-arena pools))
-            (array-set!
-              (struct-get state expr-pool)
-              0
-              (array-ref (struct-get pools expr-pool) 0))
-            (array-set!
-              (struct-get state type-pool)
-              0
-              (array-ref (struct-get pools type-pool) 0))))))))
+            (set! (array-ref state.expr-pool 0) (array-ref pools.expr-pool 0))
+            (set! (array-ref state.type-pool 0) (array-ref pools.type-pool 0))))))))
 
 (define (compiler-driver-state-reset-owned-pool-arena-if-uncached!
   [state : CompilerDriverState]) : unit
@@ -687,37 +668,36 @@
     (compiler-driver-state-session-cache-enabled? state))
     unit
     (ci.intern-compat-state-persistent-arena-reset!
-      (array-ref (struct-get state intern-state) 0))))
+      (array-ref state.intern-state 0))))
 
 ;; The state's owned builtin/CTFE id snapshot.
 (define (compiler-driver-state-owned-builtins [state : CompilerDriverState]) : cbi.CompilerBuiltinIdsState
-  (array-ref (struct-get state builtin-ids) 0))
+  (array-ref state.builtin-ids 0))
 
 ;; The state's owned lower scratch/IR arena carrier.
 (define (compiler-driver-state-owned-lower-arenas [state : CompilerDriverState]) : compiler_lower.CompilerLowerArenaState
-  (array-ref (struct-get state lower-arenas) 0))
+  (array-ref state.lower-arenas 0))
 
 (define (compiler-driver-state-install-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler_lower.compiler-lower-arena-state-install!
-    (array-ref (struct-get state lower-arenas) 0)))
+    (array-ref state.lower-arenas 0)))
 
 ;; Legacy/test capture paired with `compiler-driver-state-install-interns!`.
 (define (compiler-driver-state-capture-active-interns!
   [state : CompilerDriverState]) : unit
   (ci.intern-compat-state-capture-from-globals!
-    (array-ref (struct-get state intern-state) 0)))
+    (array-ref state.intern-state 0)))
 
 (define (compiler-driver-state-intern-generation [state : CompilerDriverState]) : i64
-  (ci.intern-compat-state-generation
-    (array-ref (struct-get state intern-state) 0)))
+  (ci.intern-compat-state-generation (array-ref state.intern-state 0)))
 
 (define (compiler-driver-state-owned-interns [state : CompilerDriverState]) : ci.InternCompatState
-  (array-ref (struct-get state intern-state) 0))
+  (array-ref state.intern-state 0))
 
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
-  (cbi.state-capture-from-globals! (array-ref (struct-get state builtin-ids) 0)))
+  (cbi.state-capture-from-globals! (array-ref state.builtin-ids 0)))
 
 ;; State-owned builtin reset: clears the state's own metadata and, only when
 ;; this state's table is the installed one, invalidates the compatibility
@@ -737,7 +717,7 @@
 (define (compiler-driver-state-capture-active-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler_lower.compiler-lower-arena-state-capture-from-globals!
-    (array-ref (struct-get state lower-arenas) 0)))
+    (array-ref state.lower-arenas 0)))
 
 ;; Session-floor snapshot after a batch entry: refresh the state's builtin and
 ;; lower-arena cells from the compatibility globals the phases just used, so a
@@ -911,11 +891,11 @@
         (compiler-driver-state-pool-context state)]
       (begin
         (compiler_load.compiler-load-session-state-reset-pools-with-pools!
-          (struct-get state load-session)
+          state.load-session
           pools)
         (compiler_load.compiler-load-session-state-reset-interns-with-state!
-          (struct-get state load-session)
-          (array-ref (struct-get state intern-state) 0))
+          state.load-session
+          (array-ref state.intern-state 0))
         (compiler-driver-state-reset-typecheck! state)
         (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
         ;; Builtin/CTFE ids and lowerer arenas are state-owned: reset/release
@@ -945,11 +925,11 @@
         (compiler-driver-state-pool-context state)]
       (begin
         (compiler_load.compiler-load-session-state-reset-pools-with-pools!
-          (struct-get state load-session)
+          state.load-session
           pools)
         (compiler_load.compiler-load-session-state-reset-interns-with-state!
-          (struct-get state load-session)
-          (array-ref (struct-get state intern-state) 0))
+          state.load-session
+          (array-ref state.intern-state 0))
         (compiler-driver-state-reset-typecheck! state)
         (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
         ;; State-owned builtin/CTFE reset and lowerer-arena release, exactly as
@@ -980,11 +960,11 @@
           (compiler-driver-state-pool-context state)]
         (begin
           (compiler_load.compiler-load-session-state-reset-pools-with-pools!
-            (struct-get state load-session)
+            state.load-session
             pools)
           (compiler_load.compiler-load-session-state-reset-interns-with-state!
-            (struct-get state load-session)
-            (array-ref (struct-get state intern-state) 0))
+            state.load-session
+            (array-ref state.intern-state 0))
           (compiler-driver-state-reset-typecheck! state)
           (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
           (compiler-driver-state-reset-builtins! state)
@@ -1714,8 +1694,7 @@
   [target : compiler_backend.CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [intern-state : ci.InternCompatState
-      (array-ref (struct-get state intern-state) 0)]
+    [intern-state : ci.InternCompatState (array-ref state.intern-state 0)]
     (match target
       [(compiler_backend.CompilerBackendTarget.Linux)
         (compiler-driver-enable-linux-cfgs-with-intern-state cfgs intern-state)]
@@ -1858,7 +1837,7 @@
                       (ResultCompilerDriver.Err
                         (box
                           (compiler_diagnostic.compiler-diagnostic-with-path
-                            (box-get diag)
+                            (__tl-box-place diag)
                             input-path))))]))))]))))
 
 (define (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
@@ -1952,7 +1931,7 @@
                       (ResultCompilerDriverBuffer.Err
                         (box
                           (compiler_diagnostic.compiler-diagnostic-with-path
-                            (box-get diag)
+                            (__tl-box-place diag)
                             input-path))))]))))]))))
 
 (define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
@@ -2039,7 +2018,7 @@
                       (ResultCompilerDriverObject.Err
                         (box
                           (compiler_diagnostic.compiler-diagnostic-with-path
-                            (box-get diag)
+                            (__tl-box-place diag)
                             input-path))))]))))]))))
 
 (define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state
@@ -2156,7 +2135,7 @@
                       (ResultCompilerDriverPic.Err
                         (box
                           (compiler_diagnostic.compiler-diagnostic-with-path
-                            (box-get diag)
+                            (__tl-box-place diag)
                             input-path))))]))))]))))
 
 ;; Serial/test compatibility adapters. Driver-owned compile paths carry the
@@ -2642,11 +2621,11 @@
     [expected-source-hash : String]
     [configuration : String]) : bool
     (and
-      (string.eq (struct-get key package-name) "stdlib.prelude")
-      (string.eq (struct-get key compiler-build) outer-build)
-      (string.eq (struct-get key configuration) configuration)
+      (string.eq key.package-name "stdlib.prelude")
+      (string.eq key.compiler-build outer-build)
+      (string.eq key.configuration configuration)
       (> (string.string-length expected-source-hash) 0)
-      (string.eq (struct-get key source-hash) expected-source-hash))))
+      (string.eq key.source-hash expected-source-hash))))
 
 (cfg
   embedded-stdlib-tlci
@@ -2687,17 +2666,16 @@
                 [(compiler_surface_hydrate.ResultCompilerSurfaceHydration.Ok
                     hydration)
                   (let
-                    [ast : surface_ast.SurfaceAstHydration
-                      (struct-get hydration ast)]
+                    [ast : surface_ast.SurfaceAstHydration hydration.ast]
                     [facts : compiler_surface_facts.SurfaceTypecheckFacts
-                      (struct-get hydration facts)]
+                      hydration.facts]
                     (if (compiler_surface_facts.surface-typecheck-facts-publish!
                       facts)
                       (CompilerDriverPreludeSurface.Ok
-                        (struct-get ast decls)
-                        (struct-get ast paths)
-                        (struct-get ast modules)
-                        (struct-get ast seen))
+                        ast.decls
+                        ast.paths
+                        ast.modules
+                        ast.seen)
                       CompilerDriverPreludeSurface.Missing))]))])]
       [_ CompilerDriverPreludeSurface.Missing])))
 
@@ -3451,12 +3429,11 @@
             (arena.tl_arena_set frontend-arena)))
         unit)]
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
-    [parser-state : compiler_parse_core.CompilerParseState
-      (struct-get state parser-state)]
+    [parser-state : compiler_parse_core.CompilerParseState state.parser-state]
     [parse-cfgs : sym_i64_env.SymI64Env
       (compiler_parse_core.compiler-parse-state-cfgs parser-state cfgs)]
     (match (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
-      (struct-get state load-session)
+      state.load-session
       input-path
       stdlib-roots
       parse-cfgs
@@ -3529,7 +3506,7 @@
             [_clear-source-floors : unit
               (if release-source-pools?
                 (compiler_load.compiler-load-session-state-floors-set!
-                  (struct-get state load-session)
+                  state.load-session
                   0
                   0
                   0)
@@ -3549,9 +3526,9 @@
                 (compiler_lower.compiler-lower-checked-dest-pools-clear!))]
             [lowered : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
-                (struct-get state load-session)
-                (struct-get state typecheck-prefix-cache)
-                (struct-get state typecheck-state)
+                state.load-session
+                state.typecheck-prefix-cache
+                state.typecheck-state
                 input-path
                 (compiler_ast_types.ast-program decls)
                 (compiler_ast_types.ast-decl-path-list-with-modules
@@ -3709,12 +3686,11 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler-driver-state-pool-context state)]
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
-    [parser-state : compiler_parse_core.CompilerParseState
-      (struct-get state parser-state)]
+    [parser-state : compiler_parse_core.CompilerParseState state.parser-state]
     [parse-cfgs : sym_i64_env.SymI64Env
       (compiler_parse_core.compiler-parse-state-cfgs parser-state cfgs)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
-      (struct-get state load-session)
+      state.load-session
       input-path
       stdlib-roots
       parse-cfgs
@@ -3783,7 +3759,7 @@
             [_clear-source-floors : unit
               (if release-source-pools?
                 (compiler_load.compiler-load-session-state-floors-set!
-                  (struct-get state load-session)
+                  state.load-session
                   0
                   0
                   0)
@@ -3801,9 +3777,9 @@
                 (compiler_lower.compiler-lower-checked-dest-pools-clear!))]
             [lowered : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
-                (struct-get state load-session)
-                (struct-get state typecheck-prefix-cache)
-                (struct-get state typecheck-state)
+                state.load-session
+                state.typecheck-prefix-cache
+                state.typecheck-state
                 input-path
                 (compiler_ast_types.ast-program decls)
                 (compiler_ast_types.ast-decl-path-list-with-modules
@@ -4625,7 +4601,7 @@
           compile-profile
           (compiler-driver-profile-finish-total _profile-state))
         (io.print-error
-          (compiler-driver-render-source-diagnostic (box-get diag)))
+          (compiler-driver-render-source-diagnostic (__tl-box-place diag)))
         1)]))
 
 (define (compiler-driver-write-buffer-result
@@ -4662,7 +4638,7 @@
           compile-profile
           (compiler-driver-profile-finish-total _profile-state))
         (io.print-error
-          (compiler-driver-render-source-diagnostic (box-get diag)))
+          (compiler-driver-render-source-diagnostic (__tl-box-place diag)))
         1)]))
 
 (define (compiler-driver-pic-fixups-path [output-path : String]) : String
@@ -4681,8 +4657,8 @@
             compile-profile
             (compiler-driver-profile-start-phase _profile-state))
           (let
-            [asm : String (struct-get output asm)]
-            [fixups : String (struct-get output fixups)]
+            [asm : String output.asm]
+            [fixups : String output.fixups]
             (begin
               (io.write-file output-path (byte_buf.str-as-bytes (& asm)))
               (io.write-file fixups-path (byte_buf.str-as-bytes (& fixups)))))
@@ -4703,5 +4679,5 @@
           compile-profile
           (compiler-driver-profile-finish-total _profile-state))
         (io.print-error
-          (compiler-driver-render-source-diagnostic (box-get diag)))
+          (compiler-driver-render-source-diagnostic (__tl-box-place diag)))
         1)]))

@@ -10,8 +10,8 @@
   (let
     [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     [bag : Bag (Bag items 42)]
-    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut (struct-get bag left))]
-    [right : i64 (struct-get bag right)]
+    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut bag.left)]
+    [right : i64 bag.right]
     (begin
-      (array-set! borrowed 0 41)
+      (set! (array-ref borrowed 0) 41)
       right)))

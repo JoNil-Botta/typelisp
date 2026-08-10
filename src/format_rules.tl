@@ -37,7 +37,7 @@
 (define (format-rules-node-colon-list? [node : cst.FormatCst]) : bool
   (match node
     [(cst.FormatCst.List items)
-      (match (cst.fmt-cst-list-step (box-get items))
+      (match (cst.fmt-cst-list-step (__tl-box-place items))
         [(cst.FormatCstListStep.Item head _) (format-rules-node-colon? head)]
         [_ false])]
     [_ false]))
@@ -45,7 +45,7 @@
 (define (format-rules-node-spmd-callable? [node : cst.FormatCst]) : bool
   (match node
     [(cst.FormatCst.List items)
-      (match (cst.fmt-cst-list-step (box-get items))
+      (match (cst.fmt-cst-list-step (__tl-box-place items))
         [(cst.FormatCstListStep.Item colon rest)
           (and
             (format-rules-node-colon? colon)
@@ -93,7 +93,7 @@
 (define (format-rules-top-form-family [node : cst.FormatCst]) : String
   (match node
     [(cst.FormatCst.List items)
-      (format-rules-top-form-family-list (box-get items))]
+      (format-rules-top-form-family-list (__tl-box-place items))]
     [_ ""]))
 
 (define (format-rules-adjacent-top-forms?
@@ -137,14 +137,14 @@
     [(cst.FormatCstListStep.Item first tail)
       (match first
         [(cst.FormatCst.List bindings)
-          (match (cst.fmt-cst-list-step (box-get bindings))
+          (match (cst.fmt-cst-list-step (__tl-box-place bindings))
             [(cst.FormatCstListStep.Empty)
               (cst.fmt-cst-list-cons
                 (cst.FormatCst.BracketList (box (cst.fmt-cst-list-nil)))
                 tail)]
             [_
-              (if (format-rules-bracket-binding-list? (box-get bindings))
-                (format-rules-list-append (box-get bindings) tail)
+              (if (format-rules-bracket-binding-list? (__tl-box-place bindings))
+                (format-rules-list-append (__tl-box-place bindings) tail)
                 rest)])]
         [_ rest])]
     [_ rest]))
@@ -233,7 +233,7 @@
       (format-rules-layout-text text emit width indent col flat limit buf)]
     [(cst.FormatCst.Prefix tok child)
       (format-rules-layout-cst
-        (box-get child)
+        (__tl-box-place child)
         emit
         width
         indent
@@ -251,7 +251,7 @@
         buf)]
     [(cst.FormatCst.List items)
       (format-rules-layout-list
-        (box-get items)
+        (__tl-box-place items)
         emit
         width
         indent
@@ -262,7 +262,7 @@
     [(cst.FormatCst.BracketList items)
       (format-rules-layout-delimited
         "["
-        (box-get items)
+        (__tl-box-place items)
         "]"
         emit
         width
@@ -273,7 +273,7 @@
         buf)]
     [(cst.FormatCst.Forms items)
       (format-rules-layout-forms
-        (box-get items)
+        (__tl-box-place items)
         emit
         width
         indent
@@ -483,9 +483,9 @@
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
   (format-rules-layout-inline-tail-dense
-    (struct-get items slots)
-    (struct-get items start)
-    (struct-get items len)
+    items.slots
+    items.start
+    items.len
     emit
     width
     indent
@@ -579,9 +579,9 @@
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
   (format-rules-layout-hard-tail-dense
-    (struct-get items slots)
-    (struct-get items start)
-    (struct-get items len)
+    items.slots
+    items.start
+    items.len
     emit
     width
     indent
@@ -744,9 +744,9 @@
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
   (format-rules-layout-list-items-dense
-    (struct-get items slots)
-    (struct-get items start)
-    (struct-get items len)
+    items.slots
+    items.start
+    items.len
     emit
     width
     indent
@@ -1365,7 +1365,7 @@
   (match node
     [(cst.FormatCst.BracketList items)
       (format-rules-layout-let-item-list
-        (box-get items)
+        (__tl-box-place items)
         emit
         width
         indent
@@ -1430,9 +1430,9 @@
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
   (format-rules-layout-let-tail-dense
-    (struct-get items slots)
-    (struct-get items start)
-    (struct-get items len)
+    items.slots
+    items.start
+    items.len
     emit
     width
     indent
@@ -2322,9 +2322,9 @@
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
   (format-rules-layout-forms-dense
-    (struct-get items slots)
-    (struct-get items start)
-    (struct-get items len)
+    items.slots
+    items.start
+    items.len
     emit
     width
     indent
@@ -2421,9 +2421,9 @@
   [col : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
   (format-rules-render-forms-into-dense
-    (struct-get items slots)
-    (struct-get items start)
-    (struct-get items len)
+    items.slots
+    items.start
+    items.len
     width
     indent
     col
@@ -2435,7 +2435,12 @@
     (begin
       (match node
         [(cst.FormatCst.Forms items)
-          (format-rules-render-forms-into (box-get items) width 0 0 (&mut buf))]
+          (format-rules-render-forms-into
+            (__tl-box-place items)
+            width
+            0
+            0
+            (&mut buf))]
         [_ (format-rules-render-node-fragment-into node width 0 0 (&mut buf))])
       (fmt_buf.fmt-render-buf-string buf))))
 
@@ -2571,12 +2576,12 @@
     [dense-slots : (__tl_dyn-array cst.FormatCst) (make-array cst.FormatCst 3)]
     [offset-slots : (__tl_dyn-array cst.FormatCst) (make-array cst.FormatCst 5)]
     (begin
-      (array-set! dense-slots 0 head)
-      (array-set! dense-slots 1 colon)
-      (array-set! dense-slots 2 typ)
-      (array-set! offset-slots 1 head)
-      (array-set! offset-slots 2 colon)
-      (array-set! offset-slots 3 typ)
+      (set! (array-ref dense-slots 0) head)
+      (set! (array-ref dense-slots 1) colon)
+      (set! (array-ref dense-slots 2) typ)
+      (set! (array-ref offset-slots 1) head)
+      (set! (array-ref offset-slots 2) colon)
+      (set! (array-ref offset-slots 3) typ)
       (let
         [dense-render : String
           (format-rules-render-width

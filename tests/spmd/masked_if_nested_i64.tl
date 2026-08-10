@@ -4,19 +4,19 @@
 
 (define (init-xs [xs : (__tl_dyn-array i64)]) : unit
   (begin
-    (array-set! xs 0 -3)
-    (array-set! xs 1 4)
-    (array-set! xs 2 0)
-    (array-set! xs 3 12)
-    (array-set! xs 4 -1)
-    (array-set! xs 5 8)
-    (array-set! xs 6 2)
-    (array-set! xs 7 -9)
-    (array-set! xs 8 0)
-    (array-set! xs 9 7)
-    (array-set! xs 10 13)
-    (array-set! xs 11 -2)
-    (array-set! xs 12 5)))
+    (set! (array-ref xs 0) -3)
+    (set! (array-ref xs 1) 4)
+    (set! (array-ref xs 2) 0)
+    (set! (array-ref xs 3) 12)
+    (set! (array-ref xs 4) -1)
+    (set! (array-ref xs 5) 8)
+    (set! (array-ref xs 6) 2)
+    (set! (array-ref xs 7) -9)
+    (set! (array-ref xs 8) 0)
+    (set! (array-ref xs 9) 7)
+    (set! (array-ref xs 10) 13)
+    (set! (array-ref xs 11) -2)
+    (set! (array-ref xs 12) 5)))
 
 (define (fill-masked
   [xs : (__tl_dyn-array i64)]
@@ -27,10 +27,10 @@
     (let
       [x : i64 (array-ref xs i)]
       (cond
-        [(< x 0) (array-set! out i -10)]
-        [(= x 0) (array-set! out i 0)]
-        [(< x 6) (array-set! out i 6)]
-        [else (array-set! out i 12)]))))
+        [(< x 0) (set! (array-ref out i) -10)]
+        [(= x 0) (set! (array-ref out i) 0)]
+        [(< x 6) (set! (array-ref out i) 6)]
+        [else (set! (array-ref out i) 12)]))))
 
 (define (fill-scalar
   [xs : (__tl_dyn-array i64)]
@@ -43,10 +43,10 @@
         (let
           [x : i64 (array-ref xs i)]
           (cond
-            [(< x 0) (array-set! out i -10)]
-            [(= x 0) (array-set! out i 0)]
-            [(< x 6) (array-set! out i 6)]
-            [else (array-set! out i 12)]))
+            [(< x 0) (set! (array-ref out i) -10)]
+            [(= x 0) (set! (array-ref out i) 0)]
+            [(< x 6) (set! (array-ref out i) 6)]
+            [else (set! (array-ref out i) 12)]))
         (set! i (+ i 1))))))
 
 (define (arrays-eq

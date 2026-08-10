@@ -23,7 +23,7 @@
         (arena.tl_arena_set handle))]
     [values : (__tl_dyn-array i64) (array.make-array i64 1024)]
     (begin
-      (array-set! values 1023 42)
+      (set! (array-ref values 1023) 42)
       (array-ref values 1023))))
 
 (define (compiler-arena-debug-fixture-reset-mark) : i64

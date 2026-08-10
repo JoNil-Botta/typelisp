@@ -17,7 +17,7 @@
   [_result : (Array f32)]) : unit
   (foreach
     ([i : i64 0 count])
-    (array-set! values i (array-ref zeros (program-index)))))
+    (set! (array-ref values i) (array-ref zeros (program-index)))))
 
 (define (stores-detect-width [values : (Array f32)]) : i64
   (let
@@ -48,7 +48,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! values i value)
+        (set! (array-ref values i) value)
         (set! i (+ i 1))))))
 
 (define (stores-init-zeros! [zeros : (Array f32)] [count : i64]) : unit
@@ -56,7 +56,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! zeros i (stores-zero i))
+        (set! (array-ref zeros i) (stores-zero i))
         (set! i (+ i 1))))))
 
 (define (stores-output-matches?

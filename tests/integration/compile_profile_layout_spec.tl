@@ -49,9 +49,7 @@
         (+ (size-of (type ProfileWide)) (size-of (type ProfileChoice)))))))
 
 (define (profile-layout-use [value : ProfileWide]) : i64
-  (+
-    (struct-get value left)
-    (+ (struct-get value right) profile-struct-layout-score)))
+  (+ value.left (+ value.right profile-struct-layout-score)))
 
 (define (main) : i64
   42)

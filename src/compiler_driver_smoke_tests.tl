@@ -72,11 +72,12 @@
         [head : i64 (compiler_lower.lower-name-arena-owner-current-head owner)]
         [store : (Box compiler_lower.LowerNameStore)
           (box (compiler_lower.lower-name-store-new))]
-        [store-owner : i64 (struct-get (box-get store) arena)]
+        [store-owner : i64 (__tl-project-field (__tl-box-place store) arena)]
         (begin
           (unsafe
             (arena.tl_arena_set home))
-          (compiler_lower.lower-name-store-add-segment! (&mut (box-get store)))
+          (compiler_lower.lower-name-store-add-segment!
+            (&mut (__tl-box-place store)))
           (let
             [home-restored? : bool
               (=
@@ -85,7 +86,8 @@
                 (compiler_lower.lower-name-arena-owner-root home))]
             [owner-head : i64
               (compiler_lower.lower-name-arena-owner-current-head owner)]
-            [segment-count : i64 (struct-get (box-get store) segment-count)]
+            [segment-count : i64
+              (__tl-project-field (__tl-box-place store) segment-count)]
             (begin
               (unsafe
                 (arena.tl_arena_set home)
@@ -115,13 +117,13 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (match (compiler_ast_types.ast-decl-list-get
-            (& (box-get decls-box))
+            (& (__tl-box-place decls-box))
             0
             (compiler_ast_types.ast-decl-fallback))
             [(compiler_ast_types.AstDecl.Extern _ _ _ metadata _)
               (=
                 (compiler_ast_types.ast-extern-metadata-symbol-matches-source?
-                  (box-get metadata))
+                  (__tl-box-place metadata))
                 want)]
             [_ false])])]
     [(compiler_parse_core.ResultAstProgram.Err _) false]))
@@ -383,8 +385,8 @@
 (define (compiler-driver-pic-smoke-output-ok?
   [output : compiler_backend.CompilerBackendPicOutput]) : bool
   (let
-    [asm : String (struct-get output asm)]
-    [fixups : String (struct-get output fixups)]
+    [asm : String output.asm]
+    [fixups : String output.fixups]
     (and
       (> (string.string-length asm) 0)
       (compiler-driver-pic-smoke-contains? asm ".L_tl_pic_image_base:\n")
@@ -477,7 +479,7 @@
     [(compiler_driver_core.ResultCompilerDriver.Err diag)
       (let
         [rendered : String
-          (compiler_diagnostic.compiler-diagnostic-render (box-get diag))]
+          (compiler_diagnostic.compiler-diagnostic-render (__tl-box-place diag))]
         (and
           (compiler-driver-pic-smoke-contains?
             rendered
@@ -649,12 +651,13 @@
             (compiler-driver-reader-context-smoke-fail
               (string.append
                 "state A backend failed: "
-                (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]))]
+                (compiler_diagnostic.compiler-diagnostic-render
+                  (__tl-box-place diag))))]))]
     [(compiler_backend.ResultCompilerBackend.Err diag)
       (compiler-driver-reader-context-smoke-fail
         (string.append
           "state B backend failed: "
-          (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]))
+          (compiler_diagnostic.compiler-diagnostic-render (__tl-box-place diag))))]))
 
 (define (compiler-driver-reader-context-smoke-optimized-ok?
   [pools-a : compiler_ast_types.AstNodePoolContext]
@@ -783,12 +786,13 @@
           (compiler-driver-reader-context-smoke-fail
             (string.append
               "state B lower failed: "
-              (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))])]
+              (compiler_diagnostic.compiler-diagnostic-render
+                (__tl-box-place diag))))])]
     [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
       (compiler-driver-reader-context-smoke-fail
         (string.append
           "state A lower failed: "
-          (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]))
+          (compiler_diagnostic.compiler-diagnostic-render (__tl-box-place diag))))]))
 
 (define (compiler-driver-reader-context-smoke-backend-state-idle?
   [state : compiler_driver_core.CompilerDriverState]) : bool
@@ -944,7 +948,7 @@
                 (string.append
                   "state A lower failed: "
                   (compiler_diagnostic.compiler-diagnostic-render
-                    (box-get diag))))]))))))
+                    (__tl-box-place diag))))]))))))
 
 (define (compiler-driver-reader-context-smoke-main) : i64
   (begin
@@ -1206,7 +1210,7 @@
     [(compiler_driver_core.ResultCompilerDriverPic.Ok _) false]
     [(compiler_driver_core.ResultCompilerDriverPic.Err diag)
       (compiler-driver-pic-smoke-contains?
-        (compiler_diagnostic.compiler-diagnostic-render (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-render (__tl-box-place diag))
         "backend: --pic supports only internal references")]))
 
 (define (compiler-driver-pic-smoke-user-cfg-keeps-runtime-prelude?) : bool

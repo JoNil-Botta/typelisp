@@ -25,7 +25,7 @@
   [ctx : (__tl_dyn-array i64)]
   [slot : i64]
   [value : i64]) : unit
-  (array-set! ctx slot value))
+  (set! (array-ref ctx slot) value))
 
 (define (atomic-counter-worker [ctx : i64]) : i64
   (let
@@ -71,7 +71,7 @@
     [ctx-b : (__tl_dyn-array i64) (array.make-array i64 2)]
     [counter-addr : i64 (atomic-counter-array-i64-addr counter)]
     (begin
-      (array-set! counter 0 0)
+      (set! (array-ref counter 0) 0)
       (atomic-counter-write-slot! ctx-a 0 counter-addr)
       (atomic-counter-write-slot! ctx-a 1 atomic-counter-iterations)
       (atomic-counter-write-slot! ctx-b 0 counter-addr)

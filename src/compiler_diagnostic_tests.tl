@@ -209,12 +209,11 @@
         (compiler_diagnostic.compiler-diagnostic-note-list-get notes 1)
         "first note")
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-span-path
-          (& (struct-get first-label span)))
+        (compiler_diagnostic.compiler-diagnostic-span-path (& first-label.span))
         "other.tl")
       (string.eq
         (compiler_diagnostic.compiler-diagnostic-span-path
-          (& (struct-get second-label span)))
+          (& second-label.span))
         "first.tl")
       (match (compiler_diagnostic.compiler-diagnostic-code diag)
         [(compiler_diagnostic.CompilerDiagnosticSomeString code)

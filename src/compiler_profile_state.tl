@@ -59,9 +59,8 @@
       [storage : (__tl_dyn-array CompilerProfileStateStorage)
         (make-array CompilerProfileStateStorage 1)]
       (begin
-        (array-set!
-          storage
-          0
+        (set!
+          (array-ref storage 0)
           (CompilerProfileStateStorage
             (make-array i64 compiler-profile-state-metric-capacity)
             (make-array i64 compiler-profile-state-summary-row-capacity)
@@ -86,7 +85,7 @@
 (cfg
   (any compile-profile compile-profile-summary test)
   (define (compiler-profile-state-storage [state : CompilerProfileState]) : CompilerProfileStateStorage
-    (array-ref (struct-get state storage) 0)))
+    (array-ref state.storage 0)))
 
 (cfg
   (any compile-profile test)
@@ -94,7 +93,7 @@
     [state : CompilerProfileState]
     [metric : i64]) : i64
     (array-ref
-      (struct-get (compiler-profile-state-storage state) metrics)
+      (__tl-project-field (compiler-profile-state-storage state) metrics)
       metric)))
 
 (cfg
@@ -103,9 +102,10 @@
     [state : CompilerProfileState]
     [metric : i64]
     [value : i64]) : unit
-    (array-set!
-      (struct-get (compiler-profile-state-storage state) metrics)
-      metric
+    (set!
+      (array-ref
+        (__tl-project-field (compiler-profile-state-storage state) metrics)
+        metric)
       value)))
 
 (cfg
@@ -136,85 +136,103 @@
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-keys [state : CompilerProfileState]) : (__tl_dyn-array
       i64)
-    (struct-get (compiler-profile-state-storage state) summary-keys)))
+    (__tl-project-field (compiler-profile-state-storage state) summary-keys)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-names [state : CompilerProfileState]) : (__tl_dyn-array
       String)
-    (struct-get (compiler-profile-state-storage state) summary-names)))
+    (__tl-project-field (compiler-profile-state-storage state) summary-names)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-elapsed
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (struct-get (compiler-profile-state-storage state) summary-elapsed)))
+    (__tl-project-field (compiler-profile-state-storage state) summary-elapsed)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-calls [state : CompilerProfileState]) : (__tl_dyn-array
       i64)
-    (struct-get (compiler-profile-state-storage state) summary-calls)))
+    (__tl-project-field (compiler-profile-state-storage state) summary-calls)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-counts [state : CompilerProfileState]) : (__tl_dyn-array
       i64)
-    (struct-get (compiler-profile-state-storage state) summary-counts)))
+    (__tl-project-field (compiler-profile-state-storage state) summary-counts)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-total-elapsed
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (struct-get (compiler-profile-state-storage state) summary-total-elapsed)))
+    (__tl-project-field
+      (compiler-profile-state-storage state)
+      summary-total-elapsed)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-total-calls
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (struct-get (compiler-profile-state-storage state) summary-total-calls)))
+    (__tl-project-field
+      (compiler-profile-state-storage state)
+      summary-total-calls)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-slots
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (struct-get (compiler-profile-state-storage state) summary-exact-slots)))
+    (__tl-project-field
+      (compiler-profile-state-storage state)
+      summary-exact-slots)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-counts
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (struct-get (compiler-profile-state-storage state) summary-exact-counts)))
+    (__tl-project-field
+      (compiler-profile-state-storage state)
+      summary-exact-counts)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-names
     [state : CompilerProfileState]) : (__tl_dyn-array String)
-    (struct-get (compiler-profile-state-storage state) summary-exact-names)))
+    (__tl-project-field
+      (compiler-profile-state-storage state)
+      summary-exact-names)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-keys
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (struct-get (compiler-profile-state-storage state) summary-exact-keys)))
+    (__tl-project-field
+      (compiler-profile-state-storage state)
+      summary-exact-keys)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-elapsed
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (struct-get (compiler-profile-state-storage state) summary-exact-elapsed)))
+    (__tl-project-field
+      (compiler-profile-state-storage state)
+      summary-exact-elapsed)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-calls
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (struct-get (compiler-profile-state-storage state) summary-exact-calls)))
+    (__tl-project-field
+      (compiler-profile-state-storage state)
+      summary-exact-calls)))
 
 (cfg
   (any compile-profile-summary test)
   (define (compiler-profile-state-summary-exact-top
     [state : CompilerProfileState]) : (__tl_dyn-array i64)
-    (struct-get (compiler-profile-state-storage state) summary-exact-top)))
+    (__tl-project-field
+      (compiler-profile-state-storage state)
+      summary-exact-top)))
 
 (cfg
   test

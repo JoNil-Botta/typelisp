@@ -22,7 +22,9 @@
     [out-slots (i64v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set! out-slots i (+ (array-ref a-slots i) (array-ref b-slots i))))))
+      (set!
+        (array-ref out-slots i)
+        (+ (array-ref a-slots i) (array-ref b-slots i))))))
 
 (define (fill-slice-foreach
   [a : (& a (Slice i64))]
@@ -31,7 +33,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 
 (define (checksum [v : (& v i64v.Vec)] [n : i64]) : i64
   (let

@@ -34,8 +34,8 @@
   (let
     [value : TupleArray (TupleArray (tuple 7 true) (array 1 2 3))]
     [borrowed (& value)]
-    [pair-value (struct-get borrowed pair)]
-    [array-value (struct-get borrowed items)]
+    [pair-value borrowed.pair]
+    [array-value borrowed.items]
     [mixed : EnumTupleArray
       (EnumTupleArray (Number 5) (tuple 11 4) (array 6 9))]
     [nested : Outer (Outer 2 (Inner (tuple 8 12) (array 3 4 7)) 13)]
@@ -43,18 +43,12 @@
       (io.print (cast (tuple-ref pair-value 0) : i64))
       (io.print (cast (array-ref array-value 2) : i64))
       (if (and
-        (= (marker-value (struct-get mixed marker)) 5)
-        (= (cast (tuple-ref (struct-get mixed pair) 0) : i64) 11)
-        (= (cast (array-ref (struct-get mixed items) 1) : i64) 9)
-        (= (cast (struct-get nested prefix) : i64) 2)
-        (=
-          (cast (tuple-ref (struct-get (struct-get nested inner) pair) 1) : i64)
-          12)
-        (=
-          (cast
-            (array-ref (struct-get (struct-get nested inner) items) 2)
-            : i64)
-          7)
-        (= (cast (struct-get nested suffix) : i64) 13))
+        (= (marker-value mixed.marker) 5)
+        (= (cast (tuple-ref mixed.pair 0) : i64) 11)
+        (= (cast (array-ref mixed.items 1) : i64) 9)
+        (= (cast nested.prefix : i64) 2)
+        (= (cast (tuple-ref nested.inner.pair 1) : i64) 12)
+        (= (cast (array-ref nested.inner.items 2) : i64) 7)
+        (= (cast nested.suffix : i64) 13))
         0
         1))))

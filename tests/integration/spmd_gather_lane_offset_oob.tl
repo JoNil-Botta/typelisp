@@ -23,8 +23,7 @@
         [out-slots (i64v.slots-mut (&mut out))]
         (foreach
           ([i : i64 1 9])
-          (array-set!
-            out-slots
-            i
+          (set!
+            (array-ref out-slots i)
             (array-ref xs-slots (+ i (array-ref offset-slots (program-index)))))))
       1)))

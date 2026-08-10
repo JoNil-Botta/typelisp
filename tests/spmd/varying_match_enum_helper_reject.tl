@@ -14,13 +14,12 @@
     [items : (__tl_dyn-array Choice) (array.make-array Choice 2)]
     [out : (__tl_dyn-array i64) (array.make-array i64 2)]
     (begin
-      (array-set! items 0 Zero)
-      (array-set! items 1 One)
+      (set! (array-ref items 0) Zero)
+      (set! (array-ref items 1) One)
       (foreach
         ([i : i64 0 2])
-        (array-set!
-          out
-          i
+        (set!
+          (array-ref out i)
           (match (read-choice items i)
             [Zero 11]
             [One 31])))

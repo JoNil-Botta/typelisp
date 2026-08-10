@@ -11,5 +11,5 @@
     (let
       [j : i64 (array-ref ix i)]
       (if (> (array-ref xs i) 0)
-        (array-set! out j (array-ref xs i))
-        (array-set! out i 0)))))
+        (set! (array-ref out j) (array-ref xs i))
+        (set! (array-ref out i) 0)))))

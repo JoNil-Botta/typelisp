@@ -41,14 +41,14 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (sym-i64-store-copy-range dst src (+ index 1) count))))
 
 (define (sym-i64-store-grow! [store : (&mut store SymI64Store)]) : unit
   (let
-    [len : i64 (struct-get store len)]
-    [capacity : i64 (array-length (struct-get store slots))]
-    [owner : i64 (struct-get store arena)]
+    [len : i64 store.len]
+    [capacity : i64 (array-length store.slots)]
+    [owner : i64 store.arena]
     (in-arena
       (arena.Arena owner)
       (let
@@ -59,25 +59,21 @@
               8
               (* capacity 2)))]
         (begin
-          (sym-i64-store-copy-range
-            (&mut bigger)
-            (& (struct-get store slots))
-            0
-            len)
-          (set! (struct-get store slots) bigger))))))
+          (sym-i64-store-copy-range (&mut bigger) (& store.slots) 0 len)
+          (set! store.slots bigger))))))
 
 (define (sym-i64-store-push!
   [store : (&mut store SymI64Store)]
   [binding : SymI64Binding]) : i64
   (begin
-    (if (< (struct-get store len) (array-length (struct-get store slots)))
+    (if (< store.len (array-length store.slots))
       unit
       (sym-i64-store-grow! store))
     (let
-      [index : i64 (struct-get store len)]
+      [index : i64 store.len]
       (begin
-        (array-set! (struct-get store slots) index binding)
-        (set! (struct-get store len) (+ index 1))
+        (set! (array-ref store.slots index) binding)
+        (set! store.len (+ index 1))
         index))))
 
 (define (sym-i64-empty) : SymI64Env
@@ -89,13 +85,15 @@
       (let
         [store : (Box SymI64Store) (box (sym-i64-store-new))]
         [head : i64
-          (sym-i64-store-push! (&mut (box-get store)) (SymI64Binding k v -1))]
+          (sym-i64-store-push!
+            (&mut (__tl-box-place store))
+            (SymI64Binding k v -1))]
         (SymI64Dense store head))]
     [(SymI64Dense store parent)
       (let
         [head : i64
           (sym-i64-store-push!
-            (&mut (box-get store))
+            (&mut (__tl-box-place store))
             (SymI64Binding k v parent))]
         (SymI64Dense store head))]))
 
@@ -105,16 +103,16 @@
     [(SymI64Dense store head)
       (let
         [slots : (__tl_dyn-array SymI64Binding)
-          (struct-get (box-get store) slots)]
+          (__tl-project-field (__tl-box-place store) slots)]
         ; Heads and parent indices are returned only by sym-i64-store-push!.
         [binding : SymI64Binding
           (unsafe
             (ptr-read (ptr-offset (array-data slots) head)))]
         (SymI64ViewBind
-          (struct-get binding key)
-          (struct-get binding value)
+          binding.key
+          binding.value
           (let
-            [parent : i64 (struct-get binding parent)]
+            [parent : i64 binding.parent]
             (if (< parent 0)
               SymI64Nil
               (SymI64Dense store parent)))))]))
@@ -129,7 +127,7 @@
       (let
         [cursor : i64 head]
         [slots : (__tl_dyn-array SymI64Binding)
-          (struct-get (box-get store) slots)]
+          (__tl-project-field (__tl-box-place store) slots)]
         [bindings : (Ptr SymI64Binding)
           (unsafe
             (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
@@ -139,9 +137,9 @@
               [binding : SymI64Binding
                 (unsafe
                   (ptr-read (ptr-offset bindings cursor)))]
-              (if (= (struct-get binding key) k)
-                (return (option_i64.Some (struct-get binding value)))
-                (set! cursor (struct-get binding parent)))))
+              (if (= binding.key k)
+                (return (option_i64.Some binding.value))
+                (set! cursor binding.parent))))
           option_i64.None))]))
 
 (define (sym-i64-lookup-id-or [e : SymI64Env] [k : i64] [fallback : i64]) : i64
@@ -151,7 +149,7 @@
       (let
         [cursor : i64 head]
         [slots : (__tl_dyn-array SymI64Binding)
-          (struct-get (box-get store) slots)]
+          (__tl-project-field (__tl-box-place store) slots)]
         [bindings : (Ptr SymI64Binding)
           (unsafe
             (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
@@ -161,9 +159,9 @@
               [binding : SymI64Binding
                 (unsafe
                   (ptr-read (ptr-offset bindings cursor)))]
-              (if (= (struct-get binding key) k)
-                (return (struct-get binding value))
-                (set! cursor (struct-get binding parent)))))
+              (if (= binding.key k)
+                (return binding.value)
+                (set! cursor binding.parent))))
           fallback))]))
 
 (define (sym-i64-contains-id [e : SymI64Env] [k : i64]) : bool
@@ -173,7 +171,7 @@
       (let
         [cursor : i64 head]
         [slots : (__tl_dyn-array SymI64Binding)
-          (struct-get (box-get store) slots)]
+          (__tl-project-field (__tl-box-place store) slots)]
         [bindings : (Ptr SymI64Binding)
           (unsafe
             (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
@@ -183,7 +181,7 @@
               [binding : SymI64Binding
                 (unsafe
                   (ptr-read (ptr-offset bindings cursor)))]
-              (if (= (struct-get binding key) k)
+              (if (= binding.key k)
                 (return true)
-                (set! cursor (struct-get binding parent)))))
+                (set! cursor binding.parent))))
           false))]))

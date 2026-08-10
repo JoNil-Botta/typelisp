@@ -40,10 +40,10 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! u64-slots i (cast (+ (* i 11) 7) : u64))
-        (array-set! u32-slots i (cast (+ (* i 13) 9) : u32))
-        (array-set! f64-slots i (math.f64-from-bits (f64-bits i)))
-        (array-set! f32-slots i (math.f32-from-bits (f32-bits i)))
+        (set! (array-ref u64-slots i) (cast (+ (* i 11) 7) : u64))
+        (set! (array-ref u32-slots i) (cast (+ (* i 13) 9) : u32))
+        (set! (array-ref f64-slots i) (math.f64-from-bits (f64-bits i)))
+        (set! (array-ref f32-slots i) (math.f32-from-bits (f32-bits i)))
         (set! i (+ i 1))))))
 
 (define (same
@@ -109,25 +109,33 @@
         [dst (u64v.slots-mut (&mut out64))]
         (foreach
           ([i : i64 0 n])
-          (array-set! dst i (spmd-shuffle (array-ref src i) (program-index)))))
+          (set!
+            (array-ref dst i)
+            (spmd-shuffle (array-ref src i) (program-index)))))
       (let
         [src (u32v.slots (& u32s))]
         [dst (u32v.slots-mut (&mut out32))]
         (foreach
           ([i : i64 0 n])
-          (array-set! dst i (spmd-shuffle (array-ref src i) (program-index)))))
+          (set!
+            (array-ref dst i)
+            (spmd-shuffle (array-ref src i) (program-index)))))
       (let
         [src (f64v.slots (& f64s))]
         [dst (f64v.slots-mut (&mut outf64))]
         (foreach
           ([i : i64 0 n])
-          (array-set! dst i (spmd-shuffle (array-ref src i) (program-index)))))
+          (set!
+            (array-ref dst i)
+            (spmd-shuffle (array-ref src i) (program-index)))))
       (let
         [src (f32v.slots (& f32s))]
         [dst (f32v.slots-mut (&mut outf32))]
         (foreach
           ([i : i64 0 n])
-          (array-set! dst i (spmd-shuffle (array-ref src i) (program-index)))))
+          (set!
+            (array-ref dst i)
+            (spmd-shuffle (array-ref src i) (program-index)))))
       (if (same
         (& u64s)
         (& out64)

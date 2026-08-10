@@ -340,9 +340,7 @@
 (define (compiler-object-coff-section-virtual-size
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : i64
-  (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data instrs)
       (match kind
         [(cobj.CompilerObjectSectionKind.Text)
@@ -486,7 +484,7 @@
 (define (compiler-object-coff-symbol-index
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64
-  (compiler-object-coff-symbol-index-from (struct-get image symbols) name 0))
+  (compiler-object-coff-symbol-index-from image.symbols name 0))
 
 (define (compiler-object-coff-data-label-offset-from
   [records : cobj.CompilerObjectDataRecordList]
@@ -554,9 +552,7 @@
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]
   [label : String]) : i64
-  (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data instrs)
       (match kind
         [(cobj.CompilerObjectSectionKind.Text)
@@ -676,7 +672,7 @@
 (define (compiler-object-coff-text-targets-known?
   [image : cobj.CompilerObjectImage]) : bool
   (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
+    image.sections
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-coff-instr-targets-known? image instrs)]))
@@ -684,7 +680,7 @@
 (define (compiler-object-coff-text-instr-relocation-count
   [image : cobj.CompilerObjectImage]) : i64
   (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
+    image.sections
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-coff-instrs-relocation-count instrs)]))
@@ -693,19 +689,16 @@
   [image : cobj.CompilerObjectImage]) : bool
   (=
     (compiler-object-coff-relocation-count
-      (struct-get image relocations)
+      image.relocations
       (cobj.CompilerObjectSectionKind.Text))
     (compiler-object-coff-text-instr-relocation-count image)))
 
 (define (compiler-object-coff-image-supported?
   [image : cobj.CompilerObjectImage]) : bool
   (and
-    (compiler-object-coff-sections-supported? (struct-get image sections))
-    (compiler-object-coff-relocation-list-supported?
-      (struct-get image relocations))
-    (compiler-object-coff-relocation-sites-known?
-      image
-      (struct-get image relocations))
+    (compiler-object-coff-sections-supported? image.sections)
+    (compiler-object-coff-relocation-list-supported? image.relocations)
+    (compiler-object-coff-relocation-sites-known? image image.relocations)
     (compiler-object-coff-text-targets-known? image)
     (compiler-object-coff-text-relocation-count-matches? image)))
 
@@ -740,10 +733,7 @@
   (match kind
     [(cobj.CompilerObjectSectionKind.Text)
       (compiler-object-coff-text-instr-relocation-count image)]
-    [_
-      (compiler-object-coff-relocation-count
-        (struct-get image relocations)
-        kind)]))
+    [_ (compiler-object-coff-relocation-count image.relocations kind)]))
 
 (define (compiler-object-coff-total-relocation-count
   [image : cobj.CompilerObjectImage]) : i64
@@ -979,7 +969,7 @@
       (compiler-object-coff-symbol-table-pointer image))
     (compiler-object-coff-push-u32!
       out
-      (cobj.compiler-object-symbol-list-count (struct-get image symbols)))
+      (cobj.compiler-object-symbol-list-count image.symbols))
     (compiler-object-coff-push-u16! out 0)
     (compiler-object-coff-push-u16! out 0)))
 
@@ -1248,9 +1238,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : unit
-  (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data instrs)
       (match kind
         [(cobj.CompilerObjectSectionKind.Text)
@@ -1486,7 +1474,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : cobj.CompilerObjectImage]) : unit
   (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
+    image.sections
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-coff-render-text-instr-relocations! out image instrs 0)]))
@@ -1521,32 +1509,32 @@
     (compiler-object-coff-render-relocations-for-section!
       out
       image
-      (struct-get image relocations)
+      image.relocations
       (cobj.CompilerObjectSectionKind.Data))
     (compiler-object-coff-render-relocations-for-section!
       out
       image
-      (struct-get image relocations)
+      image.relocations
       (cobj.CompilerObjectSectionKind.Rodata))
     (compiler-object-coff-render-relocations-for-section!
       out
       image
-      (struct-get image relocations)
+      image.relocations
       (cobj.CompilerObjectSectionKind.Bss))
     (compiler-object-coff-render-relocations-for-section!
       out
       image
-      (struct-get image relocations)
+      image.relocations
       (cobj.CompilerObjectSectionKind.Pdata))
     (compiler-object-coff-render-relocations-for-section!
       out
       image
-      (struct-get image relocations)
+      image.relocations
       (cobj.CompilerObjectSectionKind.Xdata))
     (compiler-object-coff-render-relocations-for-section!
       out
       image
-      (struct-get image relocations)
+      image.relocations
       (cobj.CompilerObjectSectionKind.Rsrc))))
 
 (define (compiler-object-coff-symbol-name-long? [name : String]) : bool
@@ -1584,10 +1572,7 @@
 (define (compiler-object-coff-symbol-string-offset
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64
-  (compiler-object-coff-symbol-string-offset-from
-    (struct-get image symbols)
-    name
-    4))
+  (compiler-object-coff-symbol-string-offset-from image.symbols name 4))
 
 (define (compiler-object-coff-push-symbol-name!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -1722,10 +1707,8 @@
   (begin
     (compiler-object-coff-push-u32!
       out
-      (compiler-object-coff-string-table-size (struct-get image symbols)))
-    (compiler-object-coff-render-string-table-symbols!
-      out
-      (struct-get image symbols))))
+      (compiler-object-coff-string-table-size image.symbols))
+    (compiler-object-coff-render-string-table-symbols! out image.symbols)))
 
 (define (compiler-object-coff-bytes-string
   [out : (& out byte_buf_core.ByteBufBuilder)]) : String
@@ -1740,10 +1723,7 @@
         (compiler-object-coff-push-section-headers! (&mut out) image)
         (compiler-object-coff-render-sections! (&mut out) image)
         (compiler-object-coff-render-relocations! (&mut out) image)
-        (compiler-object-coff-render-symbols!
-          (&mut out)
-          image
-          (struct-get image symbols))
+        (compiler-object-coff-render-symbols! (&mut out) image image.symbols)
         (compiler-object-coff-render-string-table! (&mut out) image)
         (ResultCompilerObjectCoff.Ok
           (compiler-object-coff-bytes-string (& out)))))

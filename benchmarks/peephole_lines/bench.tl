@@ -82,7 +82,7 @@
   [items : (&mut items i64vec.Vec)]
   [index : i64]
   [value : i64]) : unit
-  (array-set! (i64vec.slots-mut items) index value))
+  (set! (array-ref (i64vec.slots-mut items) index) value))
 
 (defmacro (pl-ref [items : Expr] [index : Expr]) : Expr
   `(pl-vec-ref (& ,items) ,index))
@@ -764,96 +764,83 @@
                 (pl-owner-key dst-start end dst-base)
                 0)]
             (begin
-              (array-set! slot pl-f-start start)
-              (array-set! slot pl-f-end end)
-              (array-set!
-                slot
-                pl-f-newline
+              (set! (array-ref slot pl-f-start) start)
+              (set! (array-ref slot pl-f-end) end)
+              (set!
+                (array-ref slot pl-f-newline)
                 (if newline
                   1
                   0))
-              (array-set! slot pl-f-owned 0)
-              (array-set! slot pl-f-mn-start ms)
-              (array-set! slot pl-f-mn-len mlen)
-              (array-set!
-                slot
-                pl-f-movq
+              (set! (array-ref slot pl-f-owned) 0)
+              (set! (array-ref slot pl-f-mn-start) ms)
+              (set! (array-ref slot pl-f-mn-len) mlen)
+              (set!
+                (array-ref slot pl-f-movq)
                 (if is-movq
                   1
                   0))
-              (array-set!
-                slot
-                pl-f-label
+              (set!
+                (array-ref slot pl-f-label)
                 (if is-label
                   1
                   0))
-              (array-set!
-                slot
-                pl-f-abort
+              (set!
+                (array-ref slot pl-f-abort)
                 (if (and call? (pl-noreturn-abort? start end))
                   1
                   0))
-              (array-set!
-                slot
-                pl-f-clears
+              (set!
+                (array-ref slot pl-f-clears)
                 (if clears
                   1
                   0))
-              (array-set!
-                slot
-                pl-f-call
+              (set!
+                (array-ref slot pl-f-call)
                 (if call?
                   1
                   0))
-              (array-set!
-                slot
-                pl-f-single
+              (set!
+                (array-ref slot pl-f-single)
                 (if single?
                   1
                   0))
-              (array-set!
-                slot
-                pl-f-zext
+              (set!
+                (array-ref slot pl-f-zext)
                 (if zext?
                   1
                   0))
-              (array-set!
-                slot
-                pl-f-hasops
+              (set!
+                (array-ref slot pl-f-hasops)
                 (if has-operands
                   1
                   0))
-              (array-set! slot pl-f-src-start src-start)
-              (array-set! slot pl-f-src-end src-end)
-              (array-set! slot pl-f-dst-start dst-start)
-              (array-set! slot pl-f-dst-end end)
-              (array-set! slot pl-f-src-key src-key)
-              (array-set! slot pl-f-dst-key dst-key)
-              (array-set!
-                slot
-                pl-f-src-flags
+              (set! (array-ref slot pl-f-src-start) src-start)
+              (set! (array-ref slot pl-f-src-end) src-end)
+              (set! (array-ref slot pl-f-dst-start) dst-start)
+              (set! (array-ref slot pl-f-dst-end) end)
+              (set! (array-ref slot pl-f-src-key) src-key)
+              (set! (array-ref slot pl-f-dst-key) dst-key)
+              (set!
+                (array-ref slot pl-f-src-flags)
                 (if is-movq
                   (pl-operand-flags src-start src-end src-key src-base)
                   0))
-              (array-set!
-                slot
-                pl-f-dst-flags
+              (set!
+                (array-ref slot pl-f-dst-flags)
                 (if is-movq
                   (pl-operand-flags dst-start end dst-key dst-base)
                   0))
-              (array-set!
-                slot
-                pl-f-src-reg
+              (set!
+                (array-ref slot pl-f-src-reg)
                 (if is-movq
                   (pl-reg-index src-start src-end)
                   -1))
-              (array-set!
-                slot
-                pl-f-dst-reg
+              (set!
+                (array-ref slot pl-f-dst-reg)
                 (if is-movq
                   (pl-reg-index dst-start end)
                   -1))
-              (array-set! slot pl-f-last-reg last-reg))))))))
+              (set! (array-ref slot pl-f-last-reg) last-reg))))))))
 
 ;; compiler-backend-peephole-owned-line for the synthesized `    movq SRC, DST`
 ;; that rules 3 and 4 and the cross-register reload rewrite build. The two
@@ -872,37 +859,35 @@
     [src-key : i64 (pl-owner-key src-start src-end src-base)]
     [dst-key : i64 (pl-owner-key dst-start dst-end dst-base)]
     (begin
-      (array-set! slot pl-f-start -1)
-      (array-set! slot pl-f-end -1)
-      (array-set! slot pl-f-newline newline)
-      (array-set! slot pl-f-owned 1)
-      (array-set! slot pl-f-mn-start -1)
-      (array-set! slot pl-f-mn-len 4)
-      (array-set! slot pl-f-movq 1)
-      (array-set! slot pl-f-label 0)
-      (array-set! slot pl-f-abort 0)
-      (array-set! slot pl-f-clears 1)
-      (array-set! slot pl-f-call 0)
-      (array-set! slot pl-f-single 0)
-      (array-set! slot pl-f-zext 0)
-      (array-set! slot pl-f-hasops 1)
-      (array-set! slot pl-f-src-start src-start)
-      (array-set! slot pl-f-src-end src-end)
-      (array-set! slot pl-f-dst-start dst-start)
-      (array-set! slot pl-f-dst-end dst-end)
-      (array-set! slot pl-f-src-key src-key)
-      (array-set! slot pl-f-dst-key dst-key)
-      (array-set!
-        slot
-        pl-f-src-flags
+      (set! (array-ref slot pl-f-start) -1)
+      (set! (array-ref slot pl-f-end) -1)
+      (set! (array-ref slot pl-f-newline) newline)
+      (set! (array-ref slot pl-f-owned) 1)
+      (set! (array-ref slot pl-f-mn-start) -1)
+      (set! (array-ref slot pl-f-mn-len) 4)
+      (set! (array-ref slot pl-f-movq) 1)
+      (set! (array-ref slot pl-f-label) 0)
+      (set! (array-ref slot pl-f-abort) 0)
+      (set! (array-ref slot pl-f-clears) 1)
+      (set! (array-ref slot pl-f-call) 0)
+      (set! (array-ref slot pl-f-single) 0)
+      (set! (array-ref slot pl-f-zext) 0)
+      (set! (array-ref slot pl-f-hasops) 1)
+      (set! (array-ref slot pl-f-src-start) src-start)
+      (set! (array-ref slot pl-f-src-end) src-end)
+      (set! (array-ref slot pl-f-dst-start) dst-start)
+      (set! (array-ref slot pl-f-dst-end) dst-end)
+      (set! (array-ref slot pl-f-src-key) src-key)
+      (set! (array-ref slot pl-f-dst-key) dst-key)
+      (set!
+        (array-ref slot pl-f-src-flags)
         (pl-operand-flags src-start src-end src-key src-base))
-      (array-set!
-        slot
-        pl-f-dst-flags
+      (set!
+        (array-ref slot pl-f-dst-flags)
         (pl-operand-flags dst-start dst-end dst-key dst-base))
-      (array-set! slot pl-f-src-reg (pl-reg-index src-start src-end))
-      (array-set! slot pl-f-dst-reg (pl-reg-index dst-start dst-end))
-      (array-set! slot pl-f-last-reg -1))))
+      (set! (array-ref slot pl-f-src-reg) (pl-reg-index src-start src-end))
+      (set! (array-ref slot pl-f-dst-reg) (pl-reg-index dst-start dst-end))
+      (set! (array-ref slot pl-f-last-reg) -1))))
 
 ;; compiler-backend-peephole-line-copy
 (define (pl-copy-line
@@ -912,7 +897,7 @@
     [i : i64 0]
     (while (< i pl-f-count)
       (begin
-        (array-set! dst i (array-ref src i))
+        (set! (array-ref dst i) (array-ref src i))
         (set! i (+ i 1))))))
 
 ;; compiler-backend-peephole-line-self-move-desc?

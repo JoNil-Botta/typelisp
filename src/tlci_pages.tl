@@ -125,14 +125,14 @@
   (define (tlci-pages-linux-protect [region : TlciPageRegion] [prot : i64]) : bool
     (tlci-pages-linux-status-ok?
       (unsafe
-        (syscall 10 (struct-get region addr) (struct-get region size) prot)))))
+        (syscall 10 region.addr region.size prot)))))
 
 (cfg
   (not windows)
   (define (tlci-pages-linux-release [region : TlciPageRegion]) : bool
     (tlci-pages-linux-status-ok?
       (unsafe
-        (syscall 11 (struct-get region addr) (struct-get region size))))))
+        (syscall 11 region.addr region.size)))))
 
 (cfg
   windows
@@ -150,8 +150,8 @@
       [old : (__tl_dyn-array i32) (make-array i32 1)]
       [ok : i32
         (tlci-pages-win-virtual-protect
-          (struct-get region addr)
-          (struct-get region size)
+          region.addr
+          region.size
           protect
           (unsafe
             (ptr-cast (array-data old) : (MutPtr i32))))]
@@ -163,7 +163,7 @@
     (not
       (=
         (tlci-pages-win-virtual-free
-          (struct-get region addr)
+          region.addr
           0
           tlci-pages-windows-mem-release)
         (cast 0 : i32)))))
@@ -215,45 +215,35 @@
   [bytes : (__tl_dyn-array u8)]) : ResultTlciPageUnit
   (let
     [count : i64 (array-length bytes)]
-    (if (not (struct-get region writable))
+    (if (not region.writable)
       (ResultTlciPageUnit.Err "tlci pages: cannot copy into protected region")
-      (if (> count (struct-get region size))
+      (if (> count region.size)
         (ResultTlciPageUnit.Err "tlci pages: byte buffer exceeds mapped region")
         (begin
           (tlci-pages-copy-bytes!
-            (tlci-pages-addr->mut-u8 (struct-get region addr))
+            (tlci-pages-addr->mut-u8 region.addr)
             (tlci-pages-array-ptr bytes)
             count)
           (ResultTlciPageUnit.Ok))))))
 
 (define (tlci-pages-protect-code-executable [region : TlciPageRegion]) : ResultTlciPageRegion
   (cond
-    [(not (struct-get region code))
+    [(not region.code)
       (ResultTlciPageRegion.Err "tlci pages: data pages cannot be executable")]
-    [(struct-get region executable)
+    [region.executable
       (ResultTlciPageRegion.Err "tlci pages: code page is already executable")]
     [(tlci-pages-platform-protect-code region)
       (ResultTlciPageRegion.Ok
-        (TlciPageRegion
-          (struct-get region addr)
-          (struct-get region size)
-          true
-          false
-          true))]
+        (TlciPageRegion region.addr region.size true false true))]
     [else (ResultTlciPageRegion.Err "tlci pages: code page protection failed")]))
 
 (define (tlci-pages-protect-data-readonly [region : TlciPageRegion]) : ResultTlciPageRegion
-  (if (struct-get region code)
+  (if region.code
     (ResultTlciPageRegion.Err
       "tlci pages: code pages cannot use data protection")
     (if (tlci-pages-platform-protect-data-readonly region)
       (ResultTlciPageRegion.Ok
-        (TlciPageRegion
-          (struct-get region addr)
-          (struct-get region size)
-          false
-          false
-          false))
+        (TlciPageRegion region.addr region.size false false false))
       (ResultTlciPageRegion.Err "tlci pages: data page protection failed"))))
 
 (define (tlci-pages-release [region : TlciPageRegion]) : ResultTlciPageUnit
@@ -285,8 +275,7 @@
 
 (define (tlci-pages-read-byte [region : TlciPageRegion] [offset : i64]) : u8
   (unsafe
-    (ptr-read
-      (ptr-offset (tlci-pages-addr->ptr-u8 (struct-get region addr)) offset))))
+    (ptr-read (ptr-offset (tlci-pages-addr->ptr-u8 region.addr) offset))))
 
 (define (tlci-pages-test-bytes [a : u8] [b : u8] [c : u8]) : (__tl_dyn-array u8)
   (make-array a b c))
@@ -325,10 +314,7 @@
               (= (cast (tlci-pages-read-byte region 1) : i64) 34)
               (= (cast (tlci-pages-read-byte region 2) : i64) 51))]
           [flags-ok : bool
-            (and
-              (not (struct-get region code))
-              (struct-get region writable)
-              (not (struct-get region executable)))]
+            (and (not region.code) region.writable (not region.executable))]
           [exec-rejected : bool
             (match (tlci-pages-protect-code-executable region)
               [(ResultTlciPageRegion.Err _) true]
@@ -355,10 +341,7 @@
               (= (cast (tlci-pages-read-byte region 1) : i64) 144)
               (= (cast (tlci-pages-read-byte region 2) : i64) 144))]
           [flags-ok : bool
-            (and
-              (struct-get region code)
-              (not (struct-get region writable))
-              (struct-get region executable))]
+            (and region.code (not region.writable) region.executable)]
           [copy-rejected : bool
             (match (tlci-pages-copy-from-array! region bytes)
               [(ResultTlciPageUnit.Err _) true]

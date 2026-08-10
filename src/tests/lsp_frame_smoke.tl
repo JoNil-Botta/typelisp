@@ -97,7 +97,7 @@
           (match (lsp_frame_core.lsp-server-state-declaration-at state index)
             [(lsp_vector_families.LspWorkspaceDeclLookup.Missing) unit]
             [(lsp_vector_families.LspWorkspaceDeclLookup.Found row)
-              (if (string.eq (struct-get (struct-get row decl) name) name)
+              (if (string.eq row.decl.name name)
                 (set! count (+ count 1))
                 unit)])
           (set! index (+ index 1))))
@@ -108,8 +108,7 @@
   [index : i64]) : String
   (match (lsp_frame_core.lsp-server-state-declaration-at state index)
     [(lsp_vector_families.LspWorkspaceDeclLookup.Missing) ""]
-    [(lsp_vector_families.LspWorkspaceDeclLookup.Found row)
-      (struct-get (struct-get row decl) name)]))
+    [(lsp_vector_families.LspWorkspaceDeclLookup.Found row) row.decl.name]))
 
 (define (lsp-smoke-state-row-matches?
   [state : (& state lsp_vector_families.LspServerState)]
@@ -129,11 +128,11 @@
             [(lsp_vector_families.LspWorkspaceDeclLookup.Missing) unit]
             [(lsp_vector_families.LspWorkspaceDeclLookup.Found row)
               (if (and
-                (string.eq (struct-get (struct-get row decl) name) name)
-                (string.eq (struct-get row module) module)
-                (string.eq (struct-get row root-uri) root-uri)
-                (= (struct-get row explicit-module) explicit-module)
-                (= (struct-get row overlay) overlay))
+                (string.eq row.decl.name name)
+                (string.eq row.module module)
+                (string.eq row.root-uri root-uri)
+                (= row.explicit-module explicit-module)
+                (= row.overlay overlay))
                 (set! found true)
                 unit)])
           (set! index (+ index 1))))
@@ -149,7 +148,7 @@
     [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri normalized)]
     [docs : lsp_document_vec.Vec
       (lsp_frame_core.lsp-documents-set-versioned
-        (struct-get state documents)
+        state.documents
         uri
         normalized
         text
@@ -169,7 +168,7 @@
   (let
     [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
     [docs : lsp_document_vec.Vec
-      (lsp_frame_core.lsp-documents-remove (struct-get state documents) uri)]
+      (lsp_frame_core.lsp-documents-remove state.documents uri)]
     (match (lsp_frame_core.lsp-server-state-refresh-document-result
       state
       (lsp_frame_core.LspDocumentHandleResult.Continue docs)
@@ -221,21 +220,17 @@
 
 (define (lsp-smoke-state-root-count
   [state : (& state lsp_vector_families.LspServerState)]) : i64
-  (lsp_frame_core.lsp-workspace-roots-len
-    (& (struct-get (struct-get state workspace) roots))))
+  (lsp_frame_core.lsp-workspace-roots-len (& state.workspace.roots)))
 
 (define (lsp-smoke-state-source-count
   [state : (& state lsp_vector_families.LspServerState)]) : i64
-  (lsp_frame_core.lsp-workspace-sources-len
-    (& (struct-get (struct-get state workspace) sources))))
+  (lsp_frame_core.lsp-workspace-sources-len (& state.workspace.sources)))
 
 (define (lsp-smoke-state-root-uri-at
   [state : (& state lsp_vector_families.LspServerState)]
   [index : i64]) : String
-  (struct-get
-    (lsp_frame_core.lsp-workspace-roots-get
-      (& (struct-get (struct-get state workspace) roots))
-      index)
+  (__tl-project-field
+    (lsp_frame_core.lsp-workspace-roots-get (& state.workspace.roots) index)
     uri))
 
 (define (lsp-smoke-string-vec-contains?
@@ -270,6 +265,10 @@
       (lsp-smoke-string-vec-contains? names "answer")
       (lsp-smoke-string-vec-contains? keywords "define")
       (lsp-smoke-string-vec-contains? builtins "make-array")
+      (lsp-smoke-string-vec-contains? builtins "deref")
+      (not (lsp-smoke-string-vec-contains? builtins "struct-get"))
+      (not (lsp-smoke-string-vec-contains? builtins "array-set!"))
+      (not (lsp-smoke-string-vec-contains? builtins "box-get"))
       (lsp-smoke-string-vec-contains? types "i64"))))
 
 (define (lsp-smoke-index-of [haystack : String] [needle : String]) : i64
@@ -301,7 +300,7 @@
 (define (lsp-transcript-result-contains?
   [result : lsp_frame_core.LspTranscriptResult]
   [needle : String]) : bool
-  (string.contains (& (struct-get result stdout)) (& needle)))
+  (string.contains (& result.stdout) (& needle)))
 
 (define (lsp-smoke-count-substring [text : String] [needle : String]) : i64
   (let
@@ -332,25 +331,23 @@
       (lsp-transcript-run (lsp-transcript-frame "{]"))]
     [parse-code : String "\"code\":-32700"]
     (and
-      (= (struct-get clean status) 0)
-      (string.eq (struct-get clean stdout) "")
-      (string.eq (struct-get clean stderr) "")
-      (= (struct-get unterminated status) 1)
-      (string.eq
-        (struct-get unterminated stderr)
-        "lsp: EOF before header terminator")
+      (= clean.status 0)
+      (string.eq clean.stdout "")
+      (string.eq clean.stderr "")
+      (= unterminated.status 1)
+      (string.eq unterminated.stderr "lsp: EOF before header terminator")
       (lsp-transcript-result-contains? unterminated parse-code)
-      (= (struct-get missing status) 1)
-      (string.eq (struct-get missing stderr) "lsp: missing Content-Length")
+      (= missing.status 1)
+      (string.eq missing.stderr "lsp: missing Content-Length")
       (lsp-transcript-result-contains? missing parse-code)
-      (= (struct-get invalid status) 1)
-      (string.eq (struct-get invalid stderr) "lsp: invalid Content-Length")
+      (= invalid.status 1)
+      (string.eq invalid.stderr "lsp: invalid Content-Length")
       (lsp-transcript-result-contains? invalid parse-code)
-      (= (struct-get truncated status) 1)
-      (string.eq (struct-get truncated stderr) "lsp: truncated payload")
+      (= truncated.status 1)
+      (string.eq truncated.stderr "lsp: truncated payload")
       (lsp-transcript-result-contains? truncated parse-code)
-      (= (struct-get malformed status) 0)
-      (string.eq (struct-get malformed stderr) "")
+      (= malformed.status 0)
+      (string.eq malformed.stderr "")
       (lsp-transcript-result-contains? malformed parse-code))))
 
 (define (lsp-transcript-order-and-id-smoke-ok?) : bool
@@ -367,7 +364,7 @@
           (lsp-transcript-frame shutdown)
           (lsp-transcript-frame exit)))]
     [ordered : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
-    [out : String (struct-get ordered stdout)]
+    [out : String ordered.stdout]
     [first-id : String "\"id\":41"]
     [second-id : String "\"id\":42"]
     [first-pos : i64 (lsp-smoke-index-of out first-id)]
@@ -382,11 +379,11 @@
     [old-id : String "\"id\":41"]
     [new-id : String "\"id\":3"]
     (and
-      (= (struct-get ordered status) 0)
-      (string.eq (struct-get ordered stderr) "")
+      (= ordered.status 0)
+      (string.eq ordered.stderr "")
       (>= first-pos 0)
       (> second-pos first-pos)
-      (= (struct-get next status) 0)
+      (= next.status 0)
       (lsp-transcript-result-contains? next new-id)
       (not (lsp-transcript-result-contains? next old-id)))))
 
@@ -453,11 +450,11 @@
     [failure : String "\"success\":false"]
     [unreadable : String "Could not read document"]
     (and
-      (= (struct-get first status) 0)
+      (= first.status 0)
       (lsp-transcript-result-contains? first success)
-      (= (struct-get second status) 0)
+      (= second.status 0)
       (lsp-transcript-result-contains? second failure)
-      (= (struct-get missing status) 0)
+      (= missing.status 0)
       (lsp-transcript-result-contains? missing unreadable)
       (not lsp_frame_core.lsp-frame-memory-active)
       (= lsp_frame_core.lsp-document-cache-arena 0))))
@@ -472,11 +469,9 @@
       (lsp-transcript-check-session uri source 74)]
     [compiler-source : String "\"source\":\"typelisp\""]
     (and
-      (= (struct-get result status) 0)
-      (string.eq (struct-get result stderr) "")
-      (=
-        (lsp-smoke-count-substring (struct-get result stdout) compiler-source)
-        2))))
+      (= result.status 0)
+      (string.eq result.stderr "")
+      (= (lsp-smoke-count-substring result.stdout compiler-source) 2))))
 
 (define (lsp-parser-recovery-diagnostics-smoke-ok?) : bool
   (let
@@ -486,7 +481,7 @@
       "(define)\\n(define (later-a) : i64 missing-a)\\n(define (later-b) : i64 missing-b)\\n(define (main) : i64 0)"]
     [result : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-check-session uri source 75)]
-    [out : String (struct-get result stdout)]
+    [out : String result.stdout]
     [compiler-source : String "\"source\":\"typelisp\""]
     [parse-message : String "parse: malformed define"]
     [first-message : String "typecheck: unbound name missing-a"]
@@ -495,8 +490,8 @@
     [first-pos : i64 (lsp-smoke-index-of out first-message)]
     [second-pos : i64 (lsp-smoke-index-of out second-message)]
     (and
-      (= (struct-get result status) 0)
-      (string.eq (struct-get result stderr) "")
+      (= result.status 0)
+      (string.eq result.stderr "")
       (= (lsp-smoke-count-substring out compiler-source) 3)
       (>= parse-pos 0)
       (> first-pos parse-pos)
@@ -532,14 +527,14 @@
                 (lsp-transcript-did-change root-uri valid-source 2))
               (lsp-transcript-frame exit)))]
         [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
-        [out : String (struct-get result stdout)]
+        [out : String result.stdout]
         [message-a : String
           "typecheck: value definition type mismatch: expected i64, found bool"]
         [message-b : String
           "typecheck: value definition type mismatch: expected i64, found String"]
         (and
-          (= (struct-get result status) 0)
-          (string.eq (struct-get result stderr) "")
+          (= result.status 0)
+          (string.eq result.stderr "")
           (string.contains (& out) (& message-a))
           (string.contains (& out) (& message-b))
           (= (lsp-smoke-count-substring out dep-a-uri) 2)
@@ -553,9 +548,9 @@
       (lsp-transcript-run (lsp-transcript-frame exit))]
     (and
       (= (arena.tl_arena_current) home)
-      (= (struct-get result status) 0)
-      (string.eq (struct-get result stdout) "")
-      (string.eq (struct-get result stderr) "")
+      (= result.status 0)
+      (string.eq result.stdout "")
+      (string.eq result.stderr "")
       (not lsp_frame_core.lsp-frame-memory-active))))
 
 (define (lsp-inlay-smoke-ok?) : bool
@@ -607,6 +602,46 @@
               (begin
                 (tc_core.tc-inlay-hints-reset-for-state! inlay-state)
                 ok))))))))
+
+(define (lsp-inlay-transcript-smoke-ok?) : bool
+  (let
+    [uri : String "file:///C:/tmp/typelisp-inlay-smoke.tl"]
+    [source : String
+      "(define prefix : String \"λ€𝄞\") (define foo : i64 1) (import stdlib.io)\n(define (use) : i64 foo)\n(define (hints) : i32 (begin \"λ€𝄞\" (let [total 41] total)))\n(define s : String \"λ€𝄞\") (define (fold) : i64\n  1)"]
+    [initialize : String
+      "{\"jsonrpc\":\"2.0\",\"id\":70,\"method\":\"initialize\",\"params\":{\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-8\"]}}}}"]
+    [open : String
+      (lsp_frame_core.lsp-str7
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\""
+        uri
+        "\",\"languageId\":\"typelisp\",\"version\":1,\"text\":"
+        (json.stringify (json.JsonString source))
+        "}}}"
+        ""
+        "")]
+    [inlay : String
+      (lsp_frame_core.lsp-str5
+        "{\"jsonrpc\":\"2.0\",\"id\":71,\"method\":\"textDocument/inlayHint\",\"params\":{\"textDocument\":{\"uri\":\""
+        uri
+        "\"},\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":5,\"character\":0}}}}"
+        ""
+        "")]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [input : String
+      (string.append
+        (lsp-transcript-frame initialize)
+        (string.append
+          (lsp-transcript-frame open)
+          (string.append
+            (lsp-transcript-frame inlay)
+            (lsp-transcript-frame exit))))]
+    [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
+    [expected : String
+      "\"id\":71,\"result\":[{\"position\":{\"line\":2,\"character\":53},\"label\":\": i32\""]
+    (and
+      (= result.status 0)
+      (string.eq result.stderr "")
+      (lsp-transcript-result-contains? result expected))))
 
 (define (lsp-formatting-smoke-ok?) : bool
   (let
@@ -777,12 +812,12 @@
       (lsp_document_vec.get (& docs3) 0 (lsp_frame_core.lsp-document-fallback))]
     (and
       (= (lsp_decl_vec.len (& empty-decls)) 0)
-      (struct-get cached-empty-doc decls-valid)
-      (= (lsp_decl_vec.len (struct-get cached-empty-doc decls)) 0)
-      (struct-get same-text-doc decls-valid)
-      (not (struct-get changed-doc decls-valid))
+      cached-empty-doc.decls-valid
+      (= (lsp_decl_vec.len cached-empty-doc.decls) 0)
+      same-text-doc.decls-valid
+      (not changed-doc.decls-valid)
       (= (lsp_decl_vec.len (& changed-decls)) 1)
-      (struct-get cached-changed-doc decls-valid))))
+      cached-changed-doc.decls-valid)))
 
 (define (lsp-document-disk-resync-ok?) : bool
   (let
@@ -825,8 +860,8 @@
             (lsp_frame_core.lsp-document-fallback))]
         [cache-ok : bool
           (and
-            (string.contains (& (struct-get cached-doc text)) (& fresh-name))
-            (not (struct-get cached-doc decls-valid)))]
+            (string.contains (& cached-doc.text) (& fresh-name))
+            (not cached-doc.decls-valid))]
         [decls-ok : bool
           (match (lsp_frame_core.lsp-get-document-decls params docs)
             [(lsp_frame_core.LspDocumentDeclsLookup.Found _ text _ decls)
@@ -839,7 +874,7 @@
                 (and
                   (string.contains (& text) (& fresh-name))
                   (= (lsp_decl_vec.len (& decls)) 1)
-                  (string.eq (struct-get entry name) fresh-name)))]
+                  (string.eq entry.name fresh-name)))]
             [(lsp_frame_core.LspDocumentDeclsLookup.Missing) false])]
         [cached-decls-doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get
@@ -871,7 +906,7 @@
                 (and
                   (string.contains (& text) (& overlay-name))
                   (= (lsp_decl_vec.len (& decls)) 1)
-                  (string.eq (struct-get entry name) overlay-name)))]
+                  (string.eq entry.name overlay-name)))]
             [(lsp_frame_core.LspDocumentDeclsLookup.Missing) false])]
         [versioned-cached-doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get
@@ -882,12 +917,12 @@
           lookup-ok
           cache-ok
           decls-ok
-          (struct-get cached-decls-doc decls-valid)
+          cached-decls-doc.decls-valid
           versioned-lookup-ok
           versioned-decls-ok
-          (string.eq (struct-get versioned-cached-doc text) overlay-text)
-          (= (struct-get versioned-cached-doc version) 7)
-          (struct-get versioned-cached-doc decls-valid))))))
+          (string.eq versioned-cached-doc.text overlay-text)
+          (= versioned-cached-doc.version 7)
+          versioned-cached-doc.decls-valid)))))
 
 (define (lsp-edit-save-doc-smoke-ok?) : bool
   (let
@@ -923,8 +958,8 @@
                 (lsp_frame_core.lsp-document-fallback))]
             (and
               (string.eq disk-text updated)
-              (string.eq (struct-get cached-doc text) updated)
-              (not (struct-get cached-doc decls-valid))))]
+              (string.eq cached-doc.text updated)
+              (not cached-doc.decls-valid)))]
         [(lsp_frame_core.LspSaveResult.Err _) false]))))
 
 (define (lsp-scan-decls-cache-local-smoke-ok?) : bool
@@ -947,16 +982,16 @@
     (and
       (= (lsp_decl_vec.len (& first-decls)) 1)
       (= (lsp_decl_vec.len (& second-decls)) 2)
-      (string.eq (struct-get wide name) "wide")
-      (= (struct-get wide form-start-line) 5)
-      (= (struct-get wide form-start-col) 1)
-      (= (struct-get wide name-line) 5)
-      (= (struct-get wide name-col) 10)
-      (string.eq (struct-get next name) "next")
-      (= (struct-get next form-start-line) 6)
-      (= (struct-get next form-start-col) 1)
-      (= (struct-get next name-line) 6)
-      (= (struct-get next name-col) 10))))
+      (string.eq wide.name "wide")
+      (= wide.form-start-line 5)
+      (= wide.form-start-col 1)
+      (= wide.name-line 5)
+      (= wide.name-col 10)
+      (string.eq next.name "next")
+      (= next.form-start-line 6)
+      (= next.form-start-col 1)
+      (= next.name-line 6)
+      (= next.name-col 10))))
 
 (define (lsp-document-symbol-smoke-ok?) : bool
   (let
@@ -1292,7 +1327,7 @@
       "\"id\":81,\"result\":[{\"startLine\":0,\"startCharacter\":1,\"endLine\":1,\"endCharacter\":3}]"]
     [empty : String "\"id\":82,\"result\":[]"]
     (and
-      (= (struct-get result status) 0)
+      (= result.status 0)
       (lsp-transcript-result-contains? result found)
       (lsp-transcript-result-contains? result empty))))
 
@@ -1350,9 +1385,9 @@
             (= (lsp_frame_core.lsp-offset-at-position source 0 3) 6)
             (= (lsp_frame_core.lsp-offset-at-position source 0 4) 10)
             (= (lsp_frame_core.lsp-offset-at-position source 0 5) 10)
-            (= (struct-get after-two col) 3)
-            (= (struct-get after-three col) 4)
-            (= (struct-get after-four col) 6))))
+            (= after-two.col 3)
+            (= after-three.col 4)
+            (= after-four.col 6))))
       (lsp_frame_core.lsp-position-encoding-use-utf8!)
       (set! cache (lsp_frame_core.LspLineColCache -1 1 1))
       (let
@@ -1368,9 +1403,9 @@
             (= (lsp_frame_core.lsp-offset-at-position source 0 3) 3)
             (= (lsp_frame_core.lsp-offset-at-position source 0 6) 6)
             (= (lsp_frame_core.lsp-offset-at-position source 0 10) 10)
-            (= (struct-get after-two col) 4)
-            (= (struct-get after-three col) 7)
-            (= (struct-get after-four col) 11))))
+            (= after-two.col 4)
+            (= after-three.col 7)
+            (= after-four.col 11))))
       (lsp_frame_core.lsp-position-encoding-use-utf16!)
       (and utf16-ok utf8-ok))))
 
@@ -1409,9 +1444,9 @@
     [slots : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit)
       (make-array cdiag.CompilerDiagnosticTextEdit 3)]
     (begin
-      (array-set! slots 0 first)
-      (array-set! slots 1 second)
-      (array-set! slots 2 third)
+      (set! (array-ref slots 0) first)
+      (set! (array-ref slots 1) second)
+      (set! (array-ref slots 2) third)
       (cdiag.CompilerDiagnosticTextEditSeq slots 3))))
 
 ;; Compiler fixes preserve byte-accurate Unicode ranges, group multiple edits
@@ -1553,8 +1588,8 @@
     [insertion : String
       "\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":0}"]
     (begin
-      (array-set! slots 0 finding)
-      (array-set! slots 1 finding)
+      (set! (array-ref slots 0) finding)
+      (set! (array-ref slots 1) finding)
       (let
         [findings : lint_core.LintFindings (lint_core.LintFindings slots 2)]
         (and
@@ -1681,8 +1716,8 @@
     [capabilities : String
       (json.stringify (lsp_frame_core.lsp-initialize-result))]
     (and
-      (= (struct-get result status) 0)
-      (string.eq (struct-get result stderr) "")
+      (= result.status 0)
+      (string.eq result.stderr "")
       (lsp-transcript-result-contains? result action)
       (lsp-transcript-result-contains? result replacement)
       (lsp-transcript-result-contains? result versioned-edit)
@@ -1705,14 +1740,14 @@
             (lsp-transcript-code-action uri 94 1 7 1 "quickfix"))
           (lsp-transcript-frame exit)))]
     [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
-    [out : String (struct-get result stdout)]
+    [out : String result.stdout]
     [action : String
       "\"id\":94,\"result\":[{\"title\":\"Replace misspelled name\",\"kind\":\"quickfix\""]
     [replacement : String "\"newText\":\"render-value\""]
     [second-index : String "\"index\":1"]
     (and
-      (= (struct-get result status) 0)
-      (string.eq (struct-get result stderr) "")
+      (= result.status 0)
+      (string.eq result.stderr "")
       (string.contains (& out) (& action))
       (string.contains (& out) (& replacement))
       (string.contains (& out) (& second-index)))))
@@ -1822,7 +1857,7 @@
                 (set! open-index (+ open-index 1))))))
         (if (and
           (= (lsp-smoke-state-root-count (& single-state)) 0)
-          (= (lsp_document_vec.len (& (struct-get single-state documents))) 17)
+          (= (lsp_document_vec.len (& single-state.documents)) 17)
           (= (lsp-smoke-state-source-count (& single-state)) 17)
           (=
             (lsp_frame_core.lsp-server-state-declaration-count (& single-state))
@@ -1973,7 +2008,7 @@
         [iteration : i64 1]
         (while (< iteration 21)
           (let
-            [owner : i64 (struct-get state owner-arena)]
+            [owner : i64 state.owner-arena]
             [name : String
               (lsp_frame_core.lsp-str3
                 "refresh-value-"
@@ -1985,7 +2020,7 @@
               (lsp-smoke-write-text refresh-path source)
               (set! state (lsp-smoke-state-watch state refresh-path 2))
               (if (and
-                (not (= owner (struct-get state owner-arena)))
+                (not (= owner state.owner-arena))
                 (= (lsp-smoke-state-source-count (& state)) 3)
                 (=
                   (lsp_frame_core.lsp-server-state-declaration-count (& state))
@@ -2075,6 +2110,7 @@
       (begin
         (unless (lsp-completion-smoke-ok?) (return 6))
         (unless (lsp-inlay-smoke-ok?) (return 7))
+        (unless (lsp-inlay-transcript-smoke-ok?) (return 44))
         (unless (lsp-formatting-smoke-ok?) (return 8))
         (unless (lsp-format-edit-text-smoke-ok?) (return 14))
         (unless (lsp-check-smoke-ok?) (return 9))

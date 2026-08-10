@@ -57,7 +57,8 @@
       (match result
         [(compiler_lower.ResultCompilerLower.Err diag)
           (string.eq
-            (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+            (compiler_diagnostic.compiler-diagnostic-message
+              (__tl-box-place diag))
             "compiler-backend-lower-source-for-target: standalone resetting compiler entry cannot run inside an active compiler load session")]
         [(compiler_lower.ResultCompilerLower.Ok _ _) false]))))
 
@@ -215,8 +216,8 @@
                 liveness
                 label)]
             [after-items : (__tl_dyn-array compiler_liveness.CompilerLiveI64Set)
-              (struct-get live-afters items)]
-            [count : i64 (struct-get instrs len)]
+              live-afters.items]
+            [count : i64 instrs.len]
             (begin
               (if (> count 0)
                 (compiler_regalloc.compiler-reg-extend-set-words
@@ -229,7 +230,7 @@
                   point)
                 unit)
               (compiler-backend-test-scavenge-seed-block-liveins
-                (box-get rest)
+                (__tl-box-place rest)
                 liveness
                 (+ point (* 2 count))
                 starts
@@ -315,9 +316,9 @@
   [vars : i64]
   [point : i64]) : i64
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignment-index present)]
+    [present : (__tl_dyn-array i64) assignment-index.present]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      (struct-get assignment-index items)]
+      assignment-index.items]
     [limit : i64 (array-length present)]
     [v : i64 0]
     [mask : i64 0]
@@ -380,9 +381,8 @@
   [ty : compiler_ast_types.AstType]
   [bits : u64]) : bool
   (let
-    [slots : (__tl_dyn-array compiler_backend.BackendFloatEntry)
-      (struct-get items slots)]
-    [count : i64 (struct-get items len)]
+    [slots : (__tl_dyn-array compiler_backend.BackendFloatEntry) items.slots]
+    [count : i64 items.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -391,8 +391,8 @@
           (begin
             (when
               (and
-                (compiler-backend-test-float-type-eq? (struct-get entry ty) ty)
-                (= (struct-get entry bits) bits))
+                (compiler-backend-test-float-type-eq? entry.ty ty)
+                (= entry.bits bits))
               (return true))
             (set! index (+ index 1)))))
       false)))
@@ -692,7 +692,7 @@
       (let
         [items : (MutPtr i64) (unsafe (ptr-cast bytes : (MutPtr i64)))]
         (begin
-          (array-set! keep 0 0)
+          (set! (array-ref keep 0) 0)
           (write-i64 items 0 7)
           (write-i64 items 1 35)
           (write-i64 items 2 100)
@@ -1240,7 +1240,7 @@
 (define (make-point [x : i64] [y : i64]) : Point
   (Point x y))
 (define (get-y [p : Point]) : i64
-  (struct-get p y))
+  p.y)
 (define (make-none) : Shape
   Nothing)
 (define (make-none-call) : Shape
@@ -1460,7 +1460,7 @@
   (let
     [items : (Array i64) (make-array i64 1)]
     (begin
-      (array-set! items 0 answer)
+      (set! (array-ref items 0) answer)
       (+
         foreign-data
         (+
@@ -1479,10 +1479,9 @@
     (compiler-backend-object-image-source))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
-        [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
-        [relocs : cobj.CompilerObjectRelocationList
-          (struct-get image relocations)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
+        [symbols : cobj.CompilerObjectSymbolList image.symbols]
+        [relocs : cobj.CompilerObjectRelocationList image.relocations]
         (and
           (cobj.compiler-object-image-dense? image)
           (compiler_backend.backend-and8
@@ -1654,7 +1653,7 @@
       (object_linux.compiler-backend-object-tlci-macro-entry-bytes)]
     [enabled : cobj.CompilerObjectX64InstrList
       (cobj.compiler-object-instr-builder-finish
-        (struct-get
+        (__tl-project-field
           (object_target.compiler-backend-object-add-tlci-entry-runtime-text
             (object_target.compiler-backend-object-parts-empty)
             (object_linux.compiler-backend-object-tlci-entry-bytes)
@@ -1663,7 +1662,7 @@
           text))]
     [disabled : cobj.CompilerObjectX64InstrList
       (cobj.compiler-object-instr-builder-finish
-        (struct-get
+        (__tl-project-field
           (object_target.compiler-backend-object-add-tlci-entry-runtime-text
             (object_target.compiler-backend-object-parts-empty)
             (object_linux.compiler-backend-object-tlci-entry-bytes)
@@ -1695,7 +1694,7 @@
     (compiler_backend.CompilerBackendTarget.Windows))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
         (and
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -1726,8 +1725,8 @@
     (compiler-backend-pic-source))
     [(compiler_backend.ResultCompilerBackendPic.Ok output)
       (let
-        [asm : String (struct-get output asm)]
-        [fixups : String (struct-get output fixups)]
+        [asm : String output.asm]
+        [fixups : String output.fixups]
         [data-label : String
           (compiler_backend.compiler-backend-string-data-label "hi")]
         [fat-label : String
@@ -1774,7 +1773,7 @@
     [(compiler_backend.ResultCompilerBackendPic.Ok _) false]
     [(compiler_backend.ResultCompilerBackendPic.Err diag)
       (compiler_backend.compiler-backend-string-contains?
-        (compiler_diagnostic.compiler-diagnostic-render (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-render (__tl-box-place diag))
         "backend: --pic supports only internal references")]))
 
 (define (compiler-backend-pic-object-helper-ok?) : bool
@@ -1850,9 +1849,9 @@
 (define (compiler-backend-windows-object-manifest-resource-ok?
   [image : cobj.CompilerObjectImage]) : bool
   (let
-    [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
-    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
-    [relocs : cobj.CompilerObjectRelocationList (struct-get image relocations)]
+    [sections : cobj.CompilerObjectSectionList image.sections]
+    [symbols : cobj.CompilerObjectSymbolList image.symbols]
+    [relocs : cobj.CompilerObjectRelocationList image.relocations]
     [manifest : String
       (string.copy (& object_windows.compiler-backend-object-utf8-manifest))]
     [manifest-size : i64 (string.string-length manifest)]
@@ -1971,10 +1970,9 @@
     (compiler_backend.CompilerBackendTarget.Windows))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
-        [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
-        [relocs : cobj.CompilerObjectRelocationList
-          (struct-get image relocations)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
+        [symbols : cobj.CompilerObjectSymbolList image.symbols]
+        [relocs : cobj.CompilerObjectRelocationList image.relocations]
         [shape-ok : bool
           (and
             (cobj.compiler-object-image-dense? image)
@@ -2219,7 +2217,7 @@
     (compiler_backend.CompilerBackendTarget.Windows))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
         (and
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -2238,7 +2236,7 @@
     (compiler_backend.CompilerBackendTarget.Windows))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
         (compiler_backend.backend-and4
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -2673,7 +2671,7 @@
   (let
     [buf : (MutPtr u8) (tl_alloc 64)]
     [n : i32 (snprintf buf 64 (snprintf-format) 1.5)]
-    (cast n : i64)))"))
+    (cast n : i64)))\""))
 
 (define (compiler-backend-varargs-ffi-linux-source) : String
   (compiler-backend-varargs-ffi-common-source "snprintf"))
@@ -2696,12 +2694,12 @@
     [weighted : i64 (color-use c)]
     [sum : i64
       (+
-        (cast (struct-get c r) : i64)
+        (cast c.r : i64)
         (+
-          (cast (struct-get c g) : i64)
+          (cast c.g : i64)
           (+
-            (cast (struct-get c b) : i64)
-            (cast (struct-get c a) : i64))))]
+            (cast c.b : i64)
+            (cast c.a : i64))))]
     (if (= weighted 104)
       (if (= sum 36) 42 2)
       1)))")
@@ -2807,7 +2805,7 @@
 (extern (wide-make [a : u32] [b : u32] [c : u32] [d : u32] [tag : u64]) : Wide (:symbol \"tl_cabi_wide_make\"))
 (extern wide-maker (:symbol \"tl_cabi_wide_make_ptr\") : (-> u32 u32 u32 u32 u64 Wide))
 (define (wide-score [value : Wide]) : i64
-  (+ (cast (struct-get value a) : i64) (cast (struct-get value b) : i64)))
+  (+ (cast value.a : i64) (cast value.b : i64)))
 (define (main) : i64
   (let
     [direct : Wide
@@ -3031,7 +3029,7 @@
     [made : Vec2 (vec2-make 5)]
     (+ (outer-use outer)
        (+ (mixed-use mixed)
-          (+ (vec2-use vec) (cast (struct-get made x) : i64))))))")
+          (+ (vec2-use vec) (cast made.x : i64))))))")
 
 (define (compiler-backend-c-abi-sysv-register-aggregate-arg-linux-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source-for-target
@@ -3115,7 +3113,7 @@
     [made : WideMem (wide-mem-make (cast 9 : u64))]
     (+ direct
       (+ via-ptr
-        (+ (nested-mem-score nested) (cast (struct-get made a) : i64))))))")
+        (+ (nested-mem-score nested) (cast made.a : i64))))))")
 
 (define (compiler-backend-c-abi-sysv-memory-aggregate-arg-linux-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source-for-target
@@ -3201,14 +3199,14 @@
     [pair2 : PairI64 (pair-i64-maker 4)]
     [mixed : MixIF (mix-if-make 2)]
     [floats : PairF64 (pair-f64-make 3)]
-    (+ (struct-get pair lo)
-      (+ (struct-get pair hi)
-        (+ (struct-get pair2 lo)
-          (+ (struct-get pair2 hi)
-            (+ (cast (struct-get mixed tag) : i64)
-              (+ (cast (struct-get mixed value) : i64)
-                (+ (cast (struct-get floats x) : i64)
-                   (cast (struct-get floats y) : i64))))))))))")
+    (+ pair.lo
+      (+ pair.hi
+        (+ pair2.lo
+          (+ pair2.hi
+            (+ (cast mixed.tag : i64)
+              (+ (cast mixed.value : i64)
+                (+ (cast floats.x : i64)
+                   (cast floats.y : i64))))))))))")
 
 (define (compiler-backend-c-abi-sysv-two-register-return-linux-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source-for-target
@@ -3470,7 +3468,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
         (compiler_backend.compiler-backend-state-function-state backend-state))]
@@ -3698,7 +3696,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     [_abi : unit
       (compiler_backend.compiler-backend-set-current-fn-abi!
         backend-state
@@ -3709,7 +3707,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
         (compiler_backend.compiler-backend-state-function-state backend-state))]
@@ -4403,7 +4401,7 @@
 (define (mk-string) : String \"hi\")
 (define (main) : i64
   (+ (match (mk-shape) [(Circle r) r] [(Square s) s] [Nothing 0])
-     (+ (struct-get (mk-point) y) (__tl_string_length (mk-string)))))")
+     (+ (__tl-project-field (mk-point) y) (__tl_string_length (mk-string)))))")
 
 (define (compiler-backend-aggregate-return-shape-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source
@@ -4446,10 +4444,10 @@
 
 (define (main) : i64
   (+ (+ (+ (__tl_string_length greeting) (length cells))
-        (+ (struct-get pair x) (struct-get pair y)))
+        (+ pair.x pair.y))
      (+ (match choice [(Some n) n] [None 0])
-        (+ (__tl_string_length (struct-get nested label))
-           (match (struct-get nested choice) [(Some n) n] [None 0])))))")
+        (+ (__tl_string_length nested.label)
+           (match nested.choice [(Some n) n] [None 0])))))")
 
 (define (compiler-backend-runtime-global-shape-ok?
   [asm : String]
@@ -4561,7 +4559,7 @@
     (+ (__tl_string_length (mk-string))
        (+ (match (mk-enum) [(BoxI n) n])
           (+ (array-length (mk-array))
-             (struct-get (mk-struct) y))))))")
+             (__tl-project-field (mk-struct) y))))))")
 
 (define (compiler-backend-closure-literal-shape-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source
@@ -5397,21 +5395,21 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! g-reachable i 0)
-          (array-set! g-postorder i -1)
-          (array-set! g-rpo i -1)
-          (array-set! g-rpo-num i -1)
+          (set! (array-ref g-reachable i) 0)
+          (set! (array-ref g-postorder i) -1)
+          (set! (array-ref g-rpo i) -1)
+          (set! (array-ref g-rpo-num i) -1)
           (set! i (+ i 1))))
       (set! post g-reach-count)
       (set! i 0)
       (while (< i post)
         (begin
-          (array-set! g-rpo i (array-ref g-postorder (- (- post 1) i)))
+          (set! (array-ref g-rpo i) (array-ref g-postorder (- (- post 1) i)))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i post)
         (begin
-          (array-set! g-rpo-num (array-ref g-rpo i) i)
+          (set! (array-ref g-rpo-num (array-ref g-rpo i)) i)
           (set! i (+ i 1))))
       post)))
 
@@ -6507,8 +6505,7 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
-    [backend-state : compiler_backend.CompilerBackendState
-      (struct-get index backend-state)]
+    [backend-state : compiler_backend.CompilerBackendState index.backend-state]
     (and
       (match (compiler_backend.compiler-backend-emit-mov
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -6568,7 +6565,7 @@
         index
         2
         ""
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
@@ -6589,7 +6586,7 @@
         index
         2
         ""
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
@@ -7035,7 +7032,7 @@
     [asm : compiler_backend.ResultCompilerBackend
       (begin
         (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
-          (struct-get index backend-state)
+          index.backend-state
           "%xmm11")
         (compiler_backend.compiler-backend-emit-call-args
           bases
@@ -7054,7 +7051,7 @@
           diag
           index
           1
-          (struct-get index backend-state)))]
+          index.backend-state))]
     [asm-text : String
       (match asm
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -7091,7 +7088,7 @@
         diag
         index
         1
-        (struct-get index backend-state))]
+        index.backend-state)]
     [asm9-text : String
       (match asm9
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -7128,7 +7125,7 @@
         diag
         index
         1
-        (struct-get index backend-state))]
+        index.backend-state)]
     [asm11-text : String
       (match asm11
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -7166,10 +7163,10 @@
         0
         index
         2
-        (struct-get index backend-state))]
+        index.backend-state)]
     [_reset-xmm : unit
       (compiler_backend.compiler-backend-test-set-compiler-backend-current-c-memory-planned-xmm!
-        (struct-get index backend-state)
+        index.backend-state
         "")]
     [param-text : String
       (match params-asm
@@ -7616,10 +7613,11 @@
       index
       4
       ""
-      (struct-get index backend-state))
+      index.backend-state)
       [(compiler_backend.ResultCompilerBackend.Err diag)
         (string.eq
-          (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+          (compiler_diagnostic.compiler-diagnostic-message
+            (__tl-box-place diag))
           want)]
       [(compiler_backend.ResultCompilerBackend.Ok _) false])))
 
@@ -7648,10 +7646,11 @@
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       index
       4
-      (struct-get index backend-state))
+      index.backend-state)
       [(compiler_backend.ResultCompilerBackend.Err diag)
         (string.eq
-          (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+          (compiler_diagnostic.compiler-diagnostic-message
+            (__tl-box-place diag))
           "backend: register-group call argument requires var operand")]
       [(compiler_backend.ResultCompilerBackend.Ok _) false])))
 
@@ -7892,10 +7891,10 @@
     [_group-enable : unit
       (begin
         (compiler_backend.compiler-backend-current-slot-vars-set!
-          (struct-get index backend-state)
+          index.backend-state
           3)
         (compiler_backend.compiler-backend-group-vars-enable!
-          (struct-get index backend-state)
+          index.backend-state
           (compiler_liveness.compiler-live-set1 0)
           (compiler_liveness.compiler-live-set-empty)))]
     [packed : compiler_backend.ResultCompilerBackend
@@ -7914,7 +7913,7 @@
         ""
         ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-        (struct-get index backend-state))]
+        index.backend-state)]
     [data : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-word
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -7926,7 +7925,7 @@
         3
         ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-        (struct-get index backend-state))]
+        index.backend-state)]
     [length : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-word
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -7938,10 +7937,10 @@
         3
         ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-        (struct-get index backend-state))]
+        index.backend-state)]
     [_group-disable : unit
       (compiler_backend.compiler-backend-group-vars-disable!
-        (struct-get index backend-state))]
+        index.backend-state)]
     (and
       (match packed
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -8008,10 +8007,10 @@
     [_group-enable : unit
       (begin
         (compiler_backend.compiler-backend-current-slot-vars-set!
-          (struct-get index backend-state)
+          index.backend-state
           4)
         (compiler_backend.compiler-backend-group-vars-enable!
-          (struct-get index backend-state)
+          index.backend-state
           (compiler_liveness.compiler-live-set-insert
             (compiler_liveness.compiler-live-set1 0)
             3)
@@ -8032,7 +8031,7 @@
         ""
         ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-        (struct-get index backend-state))]
+        index.backend-state)]
     [data : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-word
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -8044,7 +8043,7 @@
         4
         ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-        (struct-get index backend-state))]
+        index.backend-state)]
     [length : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-word
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -8056,7 +8055,7 @@
         4
         ""
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-        (struct-get index backend-state))]
+        index.backend-state)]
     [copied : compiler_backend.ResultCompilerBackend
       (compiler_backend.compiler-backend-emit-mov
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -8067,10 +8066,10 @@
         index
         4
         ""
-        (struct-get index backend-state))]
+        index.backend-state)]
     [_group-disable : unit
       (compiler_backend.compiler-backend-group-vars-disable!
-        (struct-get index backend-state))]
+        index.backend-state)]
     (and
       (match packed
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -8160,7 +8159,7 @@
     true)
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
         [renders : bool
           (match target
             [(compiler_backend.CompilerBackendTarget.Linux)
@@ -8563,14 +8562,12 @@
     [call-array : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
       (array.make-array compiler_ir_types.CompilerIrValue 2)]
     (begin
-      (array-set!
-        call-array
-        0
+      (set!
+        (array-ref call-array 0)
         (compiler_ir_types.CompilerIrValue.F64
           (compiler-backend-test-f64-bits "8.5")))
-      (array-set!
-        call-array
-        1
+      (set!
+        (array-ref call-array 1)
         (compiler_ir_types.CompilerIrValue.Bytes "arg-bytes"))
       (let
         [instrs : compiler_ir_types.CompilerIrInstrSeq
@@ -8776,8 +8773,7 @@
         plan
         index)]
     [relocs : cobj.CompilerObjectRelocationList
-      (cobj.compiler-object-relocation-builder-finish
-        (struct-get worded relocations))]
+      (cobj.compiler-object-relocation-builder-finish worded.relocations)]
     (and
       (cobj.compiler-object-relocation-list-contains?
         relocs
@@ -8944,17 +8940,17 @@
   [session : CompilerBackendPeepholeTestSession]) : unit
   (begin
     (compiler_backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
-      (struct-get session backend-state)
-      (struct-get session stream))
-    (compiler_backend.compiler-backend-sweep-reset! (struct-get session stream))))
+      session.backend-state
+      session.stream)
+    (compiler_backend.compiler-backend-sweep-reset! session.stream)))
 
 (define (compiler-backend-peephole-test-session-asm
   [session : CompilerBackendPeepholeTestSession]
   [asm : String]) : String
   (text_buf.render
     (compiler_backend.compiler-backend-peephole-asm-buffer-with-state
-      (struct-get session backend-state)
-      (struct-get session stream)
+      session.backend-state
+      session.stream
       asm
       false)))
 
@@ -8967,8 +8963,8 @@
   [em-used-count : i64]
   [outgoing : i64]) : unit
   (compiler_backend.compiler-backend-sweep-record-win64!
-    (struct-get session backend-state)
-    (struct-get session stream)
+    session.backend-state
+    session.stream
     symbol
     frame
     slot-vars
@@ -9014,7 +9010,7 @@
     (begin
       (compiler-backend-peephole-test-session-reset! session)
       (compiler_backend.compiler-backend-sweep-record-fpo!
-        (struct-get session stream)
+        session.stream
         symbol
         frame
         push-count
@@ -9022,7 +9018,7 @@
         em-slot-offset
         em-used-count
         outgoing
-        (struct-get session backend-state))
+        session.backend-state)
       (compiler-backend-peephole-test-session-asm session asm))))
 
 ;; then the reload with it, so the clobbered value is consumed by
@@ -9212,8 +9208,8 @@
       (compiler-backend-peephole-test-session-reset! session)]
     [_carry-safe : unit
       (compiler_backend.compiler-backend-peephole-carry-safe-insert!
-        (struct-get session backend-state)
-        (struct-get session stream)
+        session.backend-state
+        session.stream
         ".Lf7_carry")]
     [label-got : String
       (compiler-backend-peephole-test-session-asm session label-input)]
@@ -10361,9 +10357,9 @@
           (compiler_ir_types.compiler-source-spans-empty))
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
         use-counts
-        (struct-get program-index backend-state)
+        program-index.backend-state
         (compiler_backend.compiler-backend-state-function-state
-          (struct-get program-index backend-state)))
+          program-index.backend-state))
       (compiler_backend.CompilerBackendMaybeLabel.No)
       instrs)))
 
@@ -10474,17 +10470,15 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            slots
-            index
+          (set!
+            (array-ref slots index)
             (compiler_ir_types.CompilerIrInstr.Mov
               index
               (compiler_ir_types.CompilerIrValue.I64 index)
               (compiler_ast_types.AstType.I64)))
           (set! index (+ index 1))))
-      (array-set!
-        slots
-        count
+      (set!
+        (array-ref slots count)
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
             (compiler_ir_types.CompilerIrValue.Var (- count 1)))))
@@ -10513,7 +10507,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     (match (compiler-backend-test-emit-instrs-text
       (compiler_backend.CompilerBackendEmissionContext
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -11809,7 +11803,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     [_targets : unit
       (compiler_backend.compiler-backend-test-set-compiler-backend-current-phi-targets!
         backend-state
@@ -12007,7 +12001,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     (compiler-backend-test-emit-instrs-text
       (compiler_backend.CompilerBackendEmissionContext
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -12367,7 +12361,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     (match (compiler-backend-test-emit-instrs-text
       (compiler_backend.CompilerBackendEmissionContext
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -12427,7 +12421,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     [prev-count : i64
       (compiler_backend.compiler-backend-function-scratch-fixture-get-cycle-temp-used-count
         (compiler_backend.compiler-backend-state-function-state backend-state))]
@@ -12537,7 +12531,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     [prev-count : i64
       (compiler_backend.compiler-backend-function-scratch-fixture-get-cycle-temp-used-count
         (compiler_backend.compiler-backend-state-function-state backend-state))]
@@ -12611,7 +12605,7 @@
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     [prev-count : i64
       (compiler_backend.compiler-backend-function-scratch-fixture-get-cycle-temp-used-count
         (compiler_backend.compiler-backend-state-function-state backend-state))]
@@ -12681,8 +12675,7 @@
   (let
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
-    [backend-state : compiler_backend.CompilerBackendState
-      (struct-get index backend-state)]
+    [backend-state : compiler_backend.CompilerBackendState index.backend-state]
     [ty : compiler_ast_types.AstType
       (compiler-backend-register-group-test-type)]
     [blocks : compiler_ir_types.CompilerIrBlockList
@@ -13626,7 +13619,7 @@
     (compiler_backend.CompilerBackendTarget.Windows))
     [(compiler_backend.ResultCompilerBackend.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         "backend: syscall is only supported on the linux-x86_64 target")]
     [(compiler_backend.ResultCompilerBackend.Ok _) false]))
 
@@ -13648,7 +13641,8 @@
   (match (compiler_backend.compiler-backend-emit-source src)
     [(compiler_backend.ResultCompilerBackend.Err message)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get message))
+        (compiler_diagnostic.compiler-diagnostic-message
+          (__tl-box-place message))
         want)]
     [(compiler_backend.ResultCompilerBackend.Ok _) false]))
 
@@ -13760,7 +13754,7 @@
         spans)]
     [disabled-ok : bool
       (and
-        (match (struct-get disabled-index debug-files)
+        (match disabled-index.debug-files
           [(compiler_backend.CompilerBackendDebugFileIndex.No) true]
           [_ false])
         (=
@@ -13778,7 +13772,7 @@
           [(compiler_ir_types.CompilerMaybeSourceSpan.No) false]))]
     [enabled-ok : bool
       (and
-        (match (struct-get enabled-index debug-files)
+        (match enabled-index.debug-files
           [(compiler_backend.CompilerBackendDebugFileIndex.Files _ _ count)
             (= count 2)]
           [(compiler_backend.CompilerBackendDebugFileIndex.No) false])
@@ -13949,7 +13943,7 @@
         (arena.destroy nested))]
     [debug-ok : bool
       (and
-        (match (struct-get enabled-index debug-files)
+        (match enabled-index.debug-files
           [(compiler_backend.CompilerBackendDebugFileIndex.Files _ _ count)
             (= count 2)]
           [(compiler_backend.CompilerBackendDebugFileIndex.No) false])
@@ -14080,7 +14074,7 @@
   [result : compiler_backend.ResultCompilerBackendPic]) : String
   (match result
     [(compiler_backend.ResultCompilerBackendPic.Ok output)
-      (str_cat.str-cat (struct-get output asm) (struct-get output fixups))]
+      (str_cat.str-cat output.asm output.fixups)]
     [(compiler_backend.ResultCompilerBackendPic.Err _) ""]))
 
 (define (compiler-backend-explicit-state-own-symbols-ok?
@@ -14568,7 +14562,8 @@
       (match duplicate-result
         [(compiler_backend.ResultCompilerBackendBuffer.Err diag)
           (compiler_backend.compiler-backend-string-contains?
-            (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+            (compiler_diagnostic.compiler-diagnostic-message
+              (__tl-box-place diag))
             "duplicate emitted function symbol")]
         [(compiler_backend.ResultCompilerBackendBuffer.Ok _) false])]
     [duplicate-stream-retired : bool
@@ -14653,13 +14648,14 @@
       [(compiler_backend.ResultCompilerBackend.Err diag)
         (and
           (string.eq
-            (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+            (compiler_diagnostic.compiler-diagnostic-message
+              (__tl-box-place diag))
             want-message)
           (=
-            (compiler_diagnostic.compiler-diagnostic-line (box-get diag))
+            (compiler_diagnostic.compiler-diagnostic-line (__tl-box-place diag))
             want-line)
           (=
-            (compiler_diagnostic.compiler-diagnostic-col (box-get diag))
+            (compiler_diagnostic.compiler-diagnostic-col (__tl-box-place diag))
             want-col))]
       [(compiler_backend.ResultCompilerBackend.Ok _) false])))
 
@@ -15006,7 +15002,7 @@
     true)
     [(compiler_backend.ResultCompilerBackendPic.Ok output)
       (let
-        [asm : String (struct-get output asm)]
+        [asm : String output.asm]
         [body : String (compiler-backend-asm-function-body asm "main")]
         (and
           (compiler_backend.compiler-backend-string-contains?
@@ -15031,9 +15027,8 @@
     (compiler_ir_types.compiler-source-spans-empty))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
-        [relocs : cobj.CompilerObjectRelocationList
-          (struct-get image relocations)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
+        [relocs : cobj.CompilerObjectRelocationList image.relocations]
         (and
           (not
             (cobj.compiler-object-section-contains-bytes?
@@ -15066,7 +15061,7 @@
       (compiler_ir_types.compiler-source-spans-empty))
       [(compiler_backend.ResultCompilerBackendObject.Ok image)
         (cobj.compiler-object-section-contains-bytes?
-          (struct-get image sections)
+          image.sections
           (compiler_backend.compiler-backend-object-cmp-imm32-rax-bytes 5))]
       [(compiler_backend.ResultCompilerBackendObject.Err _) false])))
 
@@ -15226,7 +15221,7 @@
     (compiler-backend-switch-bad-shape-program))
     [(compiler_backend.ResultCompilerBackend.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         (compiler_backend.compiler-backend-switch-shape-message))]
     [(compiler_backend.ResultCompilerBackend.Ok _) false]))
 
@@ -15312,10 +15307,9 @@
     (compiler_ir_types.compiler-source-spans-empty))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
-        [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
-        [relocs : cobj.CompilerObjectRelocationList
-          (struct-get image relocations)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
+        [symbols : cobj.CompilerObjectSymbolList image.symbols]
+        [relocs : cobj.CompilerObjectRelocationList image.relocations]
         [table-label : String ".Lf0_entry_switch_table"]
         (and
           (elf.compiler-object-elf-image-supported? image)
@@ -15371,7 +15365,7 @@
     (compiler_ir_types.compiler-source-spans-empty))
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
         (and
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -15387,7 +15381,7 @@
     (compiler_ir_types.compiler-source-spans-empty))
     [(compiler_backend.ResultCompilerBackendObject.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         (compiler_backend.compiler-backend-switch-shape-message))]
     [(compiler_backend.ResultCompilerBackendObject.Ok _) false]))
 
@@ -15397,7 +15391,7 @@
     (compiler_ir_types.compiler-source-spans-empty))
     [(compiler_backend.ResultCompilerBackendObject.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         (compiler_backend.compiler-backend-switch-phi-target-message))]
     [(compiler_backend.ResultCompilerBackendObject.Ok _) false]))
 
@@ -15472,7 +15466,7 @@
     ")] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))"))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))"))
 
 (define (compiler-backend-uniform-map-source [elem : String]) : String
   (str_cat.str-cat
@@ -15487,23 +15481,23 @@
     "]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))"))
+    (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))"))
 
 (define (compiler-backend-uniform-zip-source) : String
   "(define (fill [a : (Array i64)] [b : (Array i64)] [c : (Array i64)] [out : (Array i64)] [n : i64] [r : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))")
+    (set! (array-ref out i) (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))")
 
 (define (compiler-backend-lane-id-rodata-source) : String
   "(define (fill [out : (Array i64)] [other : (Array i64)] [n : i64]) : unit
   (begin
     (foreach
       ([i : i64 0 n])
-      (array-set! out i (program-index)))
+      (set! (array-ref out i) (program-index)))
     (foreach
       ([j : i64 0 n])
-      (array-set! other j (program-index)))))")
+      (set! (array-ref other j) (program-index)))))")
 
 (define (compiler-backend-lane-id-rodata-shape-ok?
   [lower-mode : compiler_lower.CompilerLowerMode]
@@ -16641,16 +16635,16 @@
     [bits : compiler_regalloc.CompilerRegScratchRequirement
       (compiler-backend-avx512-vector-prefix-bool-scratch-requirement 1 4)]
     (and
-      (match (struct-get carry role)
+      (match carry.role
         [(compiler_regalloc.CompilerRegScratchRole.VectorPrefixCarry) true]
         [_ false])
-      (match (struct-get bits role)
+      (match bits.role
         [(compiler_regalloc.CompilerRegScratchRole.VectorPrefixBits) true]
         [_ false])
-      (match (struct-get (struct-get carry constraint) register-class)
+      (match carry.constraint.register-class
         [(compiler_regalloc.CompilerRegScratchClass.Gp) true]
         [_ false])
-      (match (struct-get (struct-get bits constraint) register-class)
+      (match bits.constraint.register-class
         [(compiler_regalloc.CompilerRegScratchClass.Gp) true]
         [_ false]))))
 
@@ -16871,8 +16865,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i
-      (+ (array-ref a0 i)
+    (set! (array-ref out i) (+ (array-ref a0 i)
         (+ (array-ref a1 i)
           (+ (array-ref a2 i)
             (+ (array-ref a3 i)
@@ -16984,8 +16977,8 @@
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
       (and
-        (string.eq (struct-get addr-plan asm) want-asm)
-        (string.eq (struct-get addr-plan addr) want-addr))]
+        (string.eq addr-plan.asm want-asm)
+        (string.eq addr-plan.addr want-addr))]
     [(compiler_backend.ResultCompilerBackendSimdIndexedAddress.Err _) false]))
 
 (define (compiler-backend-simd-indexed-address-emits?
@@ -17079,19 +17072,17 @@
                   homed)
                 (and
                   (string.eq
-                    (struct-get dynamic asm)
+                    dynamic.asm
                     "    movq -64(%rbp), %r14\n    movq -72(%rbp), %r13\n")
-                  (string.eq (struct-get dynamic addr) "(%r14,%r13,8)")
-                  (string.eq
-                    (struct-get constant asm)
-                    "    movq -64(%rbp), %r14\n")
-                  (string.eq (struct-get constant addr) "32(%r14)")
+                  (string.eq dynamic.addr "(%r14,%r13,8)")
+                  (string.eq constant.asm "    movq -64(%rbp), %r14\n")
+                  (string.eq constant.addr "32(%r14)")
                   (not
                     (compiler_backend.compiler-backend-string-contains?
-                      (struct-get constant asm)
+                      constant.asm
                       "%r13"))
-                  (string.eq (struct-get homed asm) "")
-                  (string.eq (struct-get homed addr) "32(%rdi)")
+                  (string.eq homed.asm "")
+                  (string.eq homed.addr "32(%rdi)")
                   (=
                     (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-pending-count
                       (compiler_backend.compiler-backend-state-function-state
@@ -17175,39 +17166,38 @@
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs i) 0)
-      (array-set! out i 0)
-      (array-set! out i (+ (array-ref xs i) 1)))))")
+      (set! (array-ref out i) 0)
+      (set! (array-ref out i) (+ (array-ref xs i) 1)))))")
 
 (define (compiler-backend-avx512-masked-if-offset-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs (+ i 1)) 0)
-      (array-set! out (+ i 1) 0)
-      (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))))")
+      (set! (array-ref out (+ i 1)) 0)
+      (set! (array-ref out (+ i 1)) (+ (array-ref xs (+ i 1)) 1)))))")
 
 (define (compiler-backend-avx512-masked-if-index-value-source) : String
   "(define (fill [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 6)
-      (array-set! out i i)
-      (array-set! out i (+ i 1)))))")
+      (set! (array-ref out i) i)
+      (set! (array-ref out i) (+ i 1)))))")
 
 (define (compiler-backend-avx512-masked-if-index-mod-source) : String
   "(define (fill [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (= (% i 2) 0)
-      (array-set! out i (+ i 10))
-      (array-set! out i (+ i 100)))))")
+      (set! (array-ref out i) (+ i 10))
+      (set! (array-ref out i) (+ i 100)))))")
 
 (define (compiler-backend-avx512-masked-if-value-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i
-      (if (< (array-ref xs i) 0)
+    (set! (array-ref out i) (if (< (array-ref xs i) 0)
         0
         (+ (array-ref xs i) 1)))))")
 
@@ -17975,27 +17965,27 @@
 (define (compiler-backend-vector-shuffle-ok?) : bool
   (and
     (compiler-backend-identity-shuffle-eliminated?
-      "(define (f [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
+      "(define (f [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
       (compiler_lower.CompilerLowerMode.Avx2)
       (compiler_backend.CompilerBackendMode.Avx2)
       "foreach_avx2_body")
     (compiler-backend-identity-shuffle-eliminated?
-      "(define (f [xs : (Array i32)] [out : (Array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
+      "(define (f [xs : (Array i32)] [out : (Array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
       (compiler_lower.CompilerLowerMode.Avx2)
       (compiler_backend.CompilerBackendMode.Avx2)
       "foreach_avx2_body")
     (compiler-backend-identity-shuffle-eliminated?
-      "(define (f [xs : (Array f64)] [out : (Array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
+      "(define (f [xs : (Array f64)] [out : (Array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
       (compiler_lower.CompilerLowerMode.Avx512)
       (compiler_backend.CompilerBackendMode.Avx512)
       "foreach_avx2_body")
     (compiler-backend-identity-shuffle-eliminated?
-      "(define (f [xs : (Array f32)] [out : (Array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
+      "(define (f [xs : (Array f32)] [out : (Array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
       (compiler_lower.CompilerLowerMode.Avx512)
       (compiler_backend.CompilerBackendMode.Avx512)
       "foreach_avx2_body")
     (compiler-backend-varying-shuffle-vector-check?
-      "(define (f [xs : (Array i64)] [selectors : (Array i64)] [out : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      "(define (f [xs : (Array i64)] [selectors : (Array i64)] [out : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
       (compiler_lower.CompilerLowerMode.Avx2)
       (compiler_backend.CompilerBackendMode.Avx2)
       "    vpermd "
@@ -18003,7 +17993,7 @@
       "    vpmovmskb "
       "    shll $1, ")
     (compiler-backend-varying-shuffle-vector-check?
-      "(define (f [xs : (Array i32)] [selectors : (Array i64)] [out : (Array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      "(define (f [xs : (Array i32)] [selectors : (Array i64)] [out : (Array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
       (compiler_lower.CompilerLowerMode.Avx2)
       (compiler_backend.CompilerBackendMode.Avx2)
       "    vpermd "
@@ -18011,7 +18001,7 @@
       "    vpmovmskb "
       "%rsp), %ymm0, %ymm")
     (compiler-backend-varying-shuffle-vector-check?
-      "(define (f [xs : (Array f64)] [selectors : (Array i64)] [out : (Array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      "(define (f [xs : (Array f64)] [selectors : (Array i64)] [out : (Array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
       (compiler_lower.CompilerLowerMode.Avx512)
       (compiler_backend.CompilerBackendMode.Avx512)
       "    vpermq "
@@ -18019,7 +18009,7 @@
       "    kmovw "
       "%zmm")
     (compiler-backend-varying-shuffle-vector-check?
-      "(define (f [xs : (Array f32)] [selectors : (Array i64)] [out : (Array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      "(define (f [xs : (Array f32)] [selectors : (Array i64)] [out : (Array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
       (compiler_lower.CompilerLowerMode.Avx512)
       (compiler_backend.CompilerBackendMode.Avx512)
       "    vpermd "
@@ -19624,7 +19614,7 @@
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackend.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         want)]
     [(compiler_backend.ResultCompilerBackend.Ok _) false]))
 
@@ -19647,7 +19637,7 @@
       (ci.intern-compat-state-capture-active)))
     [(compiler_backend.ResultCompilerBackend.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         want)]
     [(compiler_backend.ResultCompilerBackend.Ok _) false]))
 
@@ -19837,7 +19827,7 @@
   "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref a i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref a i)))))")
 
 (define (compiler-backend-avx2-loop-body [body : String]) : String
   (let
@@ -20025,14 +20015,15 @@
                 (and
                   (string.eq
                     (compiler_diagnostic.compiler-diagnostic-message
-                      (box-get diag))
+                      (__tl-box-place diag))
                     "backend: f64 values are not supported yet")
                   (=
                     (compiler_diagnostic.compiler-diagnostic-line
-                      (box-get diag))
+                      (__tl-box-place diag))
                     55)
                   (=
-                    (compiler_diagnostic.compiler-diagnostic-col (box-get diag))
+                    (compiler_diagnostic.compiler-diagnostic-col
+                      (__tl-box-place diag))
                     13))]
               [(compiler_backend.ResultCompilerBackend.Ok _) false])]))]
     (begin
@@ -20049,7 +20040,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
         (compiler_backend.compiler-backend-state-function-state backend-state))]
@@ -22928,7 +22919,7 @@
         index
         ""
         ""
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (string.eq asm "    movq $7, (%r12)\n")
@@ -22948,7 +22939,7 @@
         ""
         ""
         ""
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (string.eq asm "    movq $9, 8(%r12)\n")
@@ -22964,7 +22955,7 @@
         index
         ""
         ""
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (string.eq asm "    movq $11, (%r11)\n")
@@ -23955,7 +23946,7 @@
         ""
         ""
         ""
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movsbq %r12b, %rbx\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -23972,7 +23963,7 @@
         ""
         ""
         ""
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movzbq -48(%rbp), %rbx\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
@@ -24113,7 +24104,7 @@
         ""
         ""
         diag
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq %r12, %r14\n    movq %rbx, %r15\n")]
         [(compiler_backend.ResultCompilerBackend.Err _) false])
@@ -24128,7 +24119,7 @@
         ""
         ""
         diag
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm "")]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))))
 
@@ -26000,7 +25991,7 @@
 (define (compiler-backend-fixed-array-source) : String
   "(define (use-fixed [a : (Array i64 3) (:consume)]) : i64
   (begin
-    (array-set! a 0 42)
+    (set! (array-ref a 0) 42)
     (array-ref a 0)))
 (define (main) : i64 0)")
 
@@ -27058,10 +27049,9 @@
     target)
     [(compiler_backend.ResultCompilerBackendObject.Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
-        [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
-        [relocs : cobj.CompilerObjectRelocationList
-          (struct-get image relocations)]
+        [sections : cobj.CompilerObjectSectionList image.sections]
+        [symbols : cobj.CompilerObjectSymbolList image.symbols]
+        [relocs : cobj.CompilerObjectRelocationList image.relocations]
         [label : String (compiler_backend.compiler-backend-f64-sign-bit-label)]
         (and
           (compiler_backend.backend-and8
@@ -27342,14 +27332,14 @@
   (let
     [first : FloatBitsRow (float-bits-row 0)]
     [second : FloatBitsRow (float-bits-row 1)]
-    (if (= (struct-get first tail-bits) 0x3fb999999999999a)
-      (if (= (struct-get first head-bits) 0x0000000000000001)
-        (if (= (struct-get first scale-bits) 0x80000000)
-          (if (= (struct-get first offset-bits) 0x00000001)
-            (if (= (struct-get second tail-bits) 0xbfb999999999999a)
-              (if (= (struct-get second head-bits) 0x8000000000000001)
-                (if (= (struct-get second scale-bits) 0x3dcccccd)
-                  (if (= (struct-get second offset-bits) 0x80000001) 42 1)
+    (if (= first.tail-bits 0x3fb999999999999a)
+      (if (= first.head-bits 0x0000000000000001)
+        (if (= first.scale-bits 0x80000000)
+          (if (= first.offset-bits 0x00000001)
+            (if (= second.tail-bits 0xbfb999999999999a)
+              (if (= second.head-bits 0x8000000000000001)
+                (if (= second.scale-bits 0x3dcccccd)
+                  (if (= second.offset-bits 0x80000001) 42 1)
                   1)
                 1)
               1)
@@ -27383,14 +27373,14 @@
   (let
     [first : FloatBitsRow (float-bits-row 0)]
     [second : FloatBitsRow (float-bits-row 1)]
-    (if (= (struct-get first tail-bits) 0x3fb999999999999a)
-      (if (= (struct-get first head-bits) 0x0000000000000001)
-        (if (= (struct-get first scale-bits) 0x80000000)
-          (if (= (struct-get first offset-bits) 0x00000001)
-            (if (= (struct-get second tail-bits) 0xbfb999999999999a)
-              (if (= (struct-get second head-bits) 0x8000000000000001)
-                (if (= (struct-get second scale-bits) 0x3dcccccd)
-                  (if (= (struct-get second offset-bits) 0x80000001) 42 1)
+    (if (= first.tail-bits 0x3fb999999999999a)
+      (if (= first.head-bits 0x0000000000000001)
+        (if (= first.scale-bits 0x80000000)
+          (if (= first.offset-bits 0x00000001)
+            (if (= second.tail-bits 0xbfb999999999999a)
+              (if (= second.head-bits 0x8000000000000001)
+                (if (= second.scale-bits 0x3dcccccd)
+                  (if (= second.offset-bits 0x80000001) 42 1)
                   1)
                 1)
               1)
@@ -28168,7 +28158,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     [prev-starts : (__tl_dyn-array i64)
       (compiler_backend.compiler-backend-function-scratch-fixture-get-scavenge-ctx-starts
         (compiler_backend.compiler-backend-state-function-state backend-state))]
@@ -28208,10 +28198,10 @@
           (compiler_regalloc.compiler-reg-assignment-table-empty)))]
     [_ctx : unit
       (begin
-        (array-set! starts 0 0)
-        (array-set! starts 1 0)
-        (array-set! ends 0 2)
-        (array-set! ends 1 0)
+        (set! (array-ref starts 0) 0)
+        (set! (array-ref starts 1) 0)
+        (set! (array-ref ends 0) 2)
+        (set! (array-ref ends 1) 0)
         (compiler_backend.compiler-backend-set-scavenge-ctx!
           (compiler_backend.compiler-backend-state-function-state backend-state)
           starts
@@ -30904,9 +30894,9 @@
 (define (make-pair [x : f64] [y : f64]) : PairF64
   (PairF64 x y))
 (define (sum-pair [p : PairF64]) : f64
-  (+ (struct-get p x) (struct-get p y)))
+  (+ p.x p.y))
 (define (mixed [m : MixIF]) : f64
-  (struct-get m f))
+  m.f)
 (define (main) : i64
   (begin
     (set! global-pair (make-pair 3.0 4.0))
@@ -30962,13 +30952,13 @@
 (define (make-vec [x : f32] [y : f32]) : Vec2F32
   (Vec2F32 x y))
 (define (sum-vec [v : Vec2F32]) : f32
-  (+ (struct-get v x) (struct-get v y)))
+  (+ v.x v.y))
 (define (choose-vec [take-left : bool]) : Vec2F32
   (if take-left
     (Vec2F32 1.25 2.75)
     (Vec2F32 9.0 10.0)))
 (define (mixed [m : MixUF]) : f32
-  (struct-get m value))
+  m.value)
 (define (main) : i64
   (begin
     (set! global-vec (make-vec 3.5 4.5))
@@ -31302,7 +31292,7 @@
       ""
       ty
       index
-      (struct-get index backend-state))
+      index.backend-state)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
@@ -31351,7 +31341,7 @@
         0
         index
         1
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
@@ -31380,7 +31370,7 @@
         0
         index
         1
-        (struct-get index backend-state))
+        index.backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (and
             (compiler_backend.compiler-backend-string-contains?
@@ -31586,7 +31576,7 @@
         diag
         index
         1
-        (struct-get index backend-state))]
+        index.backend-state)]
     [pressure-call : String
       (match pressure-call-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -31616,7 +31606,7 @@
         0
         index
         7
-        (struct-get index backend-state))]
+        index.backend-state)]
     [pressure-param : String
       (match pressure-param-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -31626,10 +31616,10 @@
     [_memory-group-enable : unit
       (begin
         (compiler_backend.compiler-backend-current-slot-vars-set!
-          (struct-get index backend-state)
+          index.backend-state
           7)
         (compiler_backend.compiler-backend-group-vars-enable!
-          (struct-get index backend-state)
+          index.backend-state
           (compiler_liveness.compiler-live-set1 0)
           (compiler_liveness.compiler-live-set-empty)))]
     [memory-param-result : compiler_backend.ResultCompilerBackend
@@ -31644,14 +31634,14 @@
         0
         index
         7
-        (struct-get index backend-state))]
+        index.backend-state)]
     [memory-param : String
       (match memory-param-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
         [(compiler_backend.ResultCompilerBackend.Err _) ""])]
     [_memory-group-disable : unit
       (compiler_backend.compiler-backend-group-vars-disable!
-        (struct-get index backend-state))]
+        index.backend-state)]
     [mixed-types : compiler_ast_types.AstTypeList
       (compiler_ast_types.ast-type-cons
         mixed-group
@@ -31684,7 +31674,7 @@
         diag
         index
         1
-        (struct-get index backend-state))]
+        index.backend-state)]
     [mixed-call : String
       (match mixed-call-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -31703,7 +31693,7 @@
         0
         index
         1
-        (struct-get index backend-state))]
+        index.backend-state)]
     [mixed-param : String
       (match mixed-param-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -31751,7 +31741,7 @@
         diag
         index
         2
-        (struct-get index backend-state))]
+        index.backend-state)]
     [exhausted-call : String
       (match exhausted-call-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -31775,7 +31765,7 @@
         0
         index
         2
-        (struct-get index backend-state))]
+        index.backend-state)]
     [exhausted-param : String
       (match exhausted-param-result
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
@@ -32432,7 +32422,7 @@
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get program-index backend-state)]
+      program-index.backend-state]
     [_abi : unit
       (compiler_backend.compiler-backend-set-current-fn-abi!
         backend-state
@@ -32634,7 +32624,7 @@
           externs
           index
           (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-          (struct-get index backend-state))]
+          index.backend-state)]
       [(compiler_backend.ResultBackendRuntimePlan.Err message)
         (compiler_backend.ResultCompilerBackend.Err
           (box (compiler_diagnostic.compiler-diagnostic-at-start "" message)))])))
@@ -32857,8 +32847,7 @@
       (compiler-backend-known-function-call-functions)]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler-backend-known-function-call-index)]
-    [backend-state : compiler_backend.CompilerBackendState
-      (struct-get index backend-state)]
+    [backend-state : compiler_backend.CompilerBackendState index.backend-state]
     (compiler_backend.compiler-backend-emit-indirect-call
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       target
@@ -32885,8 +32874,7 @@
       (compiler-backend-known-function-call-functions)]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler-backend-known-function-call-index)]
-    [backend-state : compiler_backend.CompilerBackendState
-      (struct-get index backend-state)]
+    [backend-state : compiler_backend.CompilerBackendState index.backend-state]
     (compiler_backend.compiler-backend-emit-indirect-call
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       target
@@ -33140,7 +33128,7 @@
     (compiler-backend-clean-module-symbol-collision-program))
     [(compiler_backend.ResultCompilerBackend.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         "backend: duplicate emitted function symbol _tl_pkg_a_helper")]
     [(compiler_backend.ResultCompilerBackend.Ok _) false]))
 
@@ -33199,7 +33187,7 @@
 
 ;; Backend emit-shape coverage for arena-owned boxes. `(box 42)`
 ;; allocates `size-of(i64)` = 8 bytes via `tl_alloc` and stores the boxed value
-;; into that storage; `(box-get b)` loads the value back through the box pointer.
+;; into that storage; a BoxGet AST node loads the value through the box pointer.
 ;; Boxes reuse the existing `tl_alloc` / pointer store/load paths (no new IR or
 ;; runtime), so this locks down that the allocation, store, and load shapes are
 ;; emitted with no `# TODO` placeholder.
@@ -33207,7 +33195,7 @@
   "(define (main) : i64
   (let
     [b : (Box i64) (box 42)]
-    (box-get b)))")
+    (deref b)))")
 
 (define (compiler-backend-box-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source
@@ -33221,7 +33209,7 @@
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    movq %r8, (%r10)\n")
-          ;; (box-get b): load the boxed value back through the box pointer.
+          ;; BoxGet b: load the boxed value back through the box pointer.
           (compiler_backend.compiler-backend-string-contains?
             asm
             "    movq (%r10), %r8\n")
@@ -33515,19 +33503,19 @@
     [regs : (__tl_dyn-array i64)
       (make-array i64 compiler-backend-inline-fast-alloc-emergency-live-count)]
     (begin
-      (array-set! regs 0 compiler_abi.compiler-reg-id-r9)
-      (array-set! regs 1 compiler_abi.compiler-reg-id-rcx)
-      (array-set! regs 2 compiler_abi.compiler-reg-id-rdx)
-      (array-set! regs 3 compiler_abi.compiler-reg-id-r10)
-      (array-set! regs 4 compiler_abi.compiler-reg-id-r11)
-      (array-set! regs 5 compiler_abi.compiler-reg-id-r8)
-      (array-set! regs 6 compiler_abi.compiler-reg-id-r12)
-      (array-set! regs 7 compiler_abi.compiler-reg-id-r13)
-      (array-set! regs 8 compiler_abi.compiler-reg-id-r14)
-      (array-set! regs 9 compiler_abi.compiler-reg-id-r15)
-      (array-set! regs 10 compiler_abi.compiler-reg-id-rbx)
-      (array-set! regs 11 compiler_abi.compiler-reg-id-rsi)
-      (array-set! regs 12 compiler_abi.compiler-reg-id-rdi)
+      (set! (array-ref regs 0) compiler_abi.compiler-reg-id-r9)
+      (set! (array-ref regs 1) compiler_abi.compiler-reg-id-rcx)
+      (set! (array-ref regs 2) compiler_abi.compiler-reg-id-rdx)
+      (set! (array-ref regs 3) compiler_abi.compiler-reg-id-r10)
+      (set! (array-ref regs 4) compiler_abi.compiler-reg-id-r11)
+      (set! (array-ref regs 5) compiler_abi.compiler-reg-id-r8)
+      (set! (array-ref regs 6) compiler_abi.compiler-reg-id-r12)
+      (set! (array-ref regs 7) compiler_abi.compiler-reg-id-r13)
+      (set! (array-ref regs 8) compiler_abi.compiler-reg-id-r14)
+      (set! (array-ref regs 9) compiler_abi.compiler-reg-id-r15)
+      (set! (array-ref regs 10) compiler_abi.compiler-reg-id-rbx)
+      (set! (array-ref regs 11) compiler_abi.compiler-reg-id-rsi)
+      (set! (array-ref regs 12) compiler_abi.compiler-reg-id-rdi)
       regs)))
 
 (define (compiler-backend-inline-fast-alloc-emergency-assignments-from
@@ -33910,10 +33898,10 @@
 (define (id-color [c : Color]) : Color c)
 (define (use-color [c : Color]) : i64
   (+
-    (cast (struct-get c r) : i64)
+    (cast c.r : i64)
     (+
-      (cast (struct-get c g) : i64)
-      (+ (cast (struct-get c b) : i64) (cast (struct-get c a) : i64)))))
+      (cast c.g : i64)
+      (+ (cast c.b : i64) (cast c.a : i64)))))
 (define (id-swatch [s : Swatch]) : Swatch s)
 (define (score-swatch [s : Swatch]) : i64
   (match s
@@ -35155,16 +35143,16 @@
                     compiler_abi.compiler-reg-id-r8))
                 (compiler_regalloc.compiler-reg-assignment-table-empty))))))]
     (begin
-      (array-set! starts 0 0)
-      (array-set! starts 1 0)
-      (array-set! starts 2 0)
-      (array-set! starts 3 0)
-      (array-set! starts 4 0)
-      (array-set! ends 0 10)
-      (array-set! ends 1 10)
-      (array-set! ends 2 10)
-      (array-set! ends 3 10)
-      (array-set! ends 4 10)
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref starts 1) 0)
+      (set! (array-ref starts 2) 0)
+      (set! (array-ref starts 3) 0)
+      (set! (array-ref starts 4) 0)
+      (set! (array-ref ends 0) 10)
+      (set! (array-ref ends 1) 10)
+      (set! (array-ref ends 2) 10)
+      (set! (array-ref ends 3) 10)
+      (set! (array-ref ends 4) 10)
       (and
         (string.eq
           (compiler-backend-scavenge-pick
@@ -35252,16 +35240,16 @@
                     compiler_abi.compiler-reg-id-r8))
                 (compiler_regalloc.compiler-reg-assignment-table-empty))))))]
     (begin
-      (array-set! starts 0 0)
-      (array-set! starts 1 0)
-      (array-set! starts 2 0)
-      (array-set! starts 3 0)
-      (array-set! starts 4 0)
-      (array-set! ends 0 10)
-      (array-set! ends 1 10)
-      (array-set! ends 2 10)
-      (array-set! ends 3 10)
-      (array-set! ends 4 10)
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref starts 1) 0)
+      (set! (array-ref starts 2) 0)
+      (set! (array-ref starts 3) 0)
+      (set! (array-ref starts 4) 0)
+      (set! (array-ref ends 0) 10)
+      (set! (array-ref ends 1) 10)
+      (set! (array-ref ends 2) 10)
+      (set! (array-ref ends 3) 10)
+      (set! (array-ref ends 4) 10)
       (and
         (string.eq
           (compiler-backend-scavenge-pick
@@ -35332,20 +35320,20 @@
                       compiler_abi.compiler-reg-id-r14))
                   (compiler_regalloc.compiler-reg-assignment-table-empty)))))))]
     (begin
-      (array-set! starts 0 0)
-      (array-set! starts 1 0)
-      (array-set! starts 2 0)
-      (array-set! starts 3 0)
-      (array-set! starts 4 0)
-      (array-set! starts 5 0)
-      (array-set! starts 6 0)
-      (array-set! ends 0 10)
-      (array-set! ends 1 10)
-      (array-set! ends 2 10)
-      (array-set! ends 3 10)
-      (array-set! ends 4 10)
-      (array-set! ends 5 10)
-      (array-set! ends 6 10)
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref starts 1) 0)
+      (set! (array-ref starts 2) 0)
+      (set! (array-ref starts 3) 0)
+      (set! (array-ref starts 4) 0)
+      (set! (array-ref starts 5) 0)
+      (set! (array-ref starts 6) 0)
+      (set! (array-ref ends 0) 10)
+      (set! (array-ref ends 1) 10)
+      (set! (array-ref ends 2) 10)
+      (set! (array-ref ends 3) 10)
+      (set! (array-ref ends 4) 10)
+      (set! (array-ref ends 5) 10)
+      (set! (array-ref ends 6) 10)
       (and
         (string.eq
           (compiler-backend-scavenge-pick
@@ -35441,8 +35429,8 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! starts i start)
-          (array-set! ends i end)
+          (set! (array-ref starts i) start)
+          (set! (array-ref ends i) end)
           (set! i (+ i 1))))
       unit)))
 
@@ -35539,19 +35527,19 @@
     [picked : String ""]
     [ok : bool false]
     (begin
-      (array-set! regs 0 compiler_abi.compiler-reg-id-r9)
-      (array-set! regs 1 compiler_abi.compiler-reg-id-rcx)
-      (array-set! regs 2 compiler_abi.compiler-reg-id-rdx)
-      (array-set! regs 3 compiler_abi.compiler-reg-id-r10)
-      (array-set! regs 4 compiler_abi.compiler-reg-id-r11)
-      (array-set! regs 5 compiler_abi.compiler-reg-id-r8)
-      (array-set! regs 6 compiler_abi.compiler-reg-id-r12)
-      (array-set! regs 7 compiler_abi.compiler-reg-id-r13)
-      (array-set! regs 8 compiler_abi.compiler-reg-id-r14)
-      (array-set! regs 9 compiler_abi.compiler-reg-id-r15)
-      (array-set! regs 10 compiler_abi.compiler-reg-id-rbx)
-      (array-set! regs 11 compiler_abi.compiler-reg-id-rdi)
-      (array-set! regs 12 compiler_abi.compiler-reg-id-rax)
+      (set! (array-ref regs 0) compiler_abi.compiler-reg-id-r9)
+      (set! (array-ref regs 1) compiler_abi.compiler-reg-id-rcx)
+      (set! (array-ref regs 2) compiler_abi.compiler-reg-id-rdx)
+      (set! (array-ref regs 3) compiler_abi.compiler-reg-id-r10)
+      (set! (array-ref regs 4) compiler_abi.compiler-reg-id-r11)
+      (set! (array-ref regs 5) compiler_abi.compiler-reg-id-r8)
+      (set! (array-ref regs 6) compiler_abi.compiler-reg-id-r12)
+      (set! (array-ref regs 7) compiler_abi.compiler-reg-id-r13)
+      (set! (array-ref regs 8) compiler_abi.compiler-reg-id-r14)
+      (set! (array-ref regs 9) compiler_abi.compiler-reg-id-r15)
+      (set! (array-ref regs 10) compiler_abi.compiler-reg-id-rbx)
+      (set! (array-ref regs 11) compiler_abi.compiler-reg-id-rdi)
+      (set! (array-ref regs 12) compiler_abi.compiler-reg-id-rax)
       (compiler-backend-test-fill-live-range! starts ends 13 0 10)
       (set!
         assignments
@@ -37087,24 +37075,22 @@
               (= (compiler_regalloc.compiler-reg-plan-var-count out-plan 3) 4)
               (let
                 [item : compiler_regalloc.CompilerRegScratchAssignment
-                  (array-ref (struct-get scratch items) 0)]
+                  (array-ref scratch.items 0)]
                 [requirement : compiler_regalloc.CompilerRegScratchRequirement
-                  (struct-get item requirement)]
-                [assigned : i64 (struct-get item register)]
+                  item.requirement]
+                [assigned : i64 item.register]
                 (and
                   (string.eq
                     (compiler_abi.compiler-abi-register-spelling assigned)
                     reg)
-                  (= (struct-get requirement point) 0)
-                  (= (struct-get requirement ordinal) 0)
-                  (= (struct-get requirement lo) 0)
-                  (= (struct-get requirement hi) 1)
-                  (match (struct-get requirement role)
+                  (= requirement.point 0)
+                  (= requirement.ordinal 0)
+                  (= requirement.lo 0)
+                  (= requirement.hi 1)
+                  (match requirement.role
                     [(compiler_regalloc.CompilerRegScratchRole.CallTarget) true]
                     [_ false])
-                  (match (struct-get
-                    (struct-get requirement constraint)
-                    register-class)
+                  (match requirement.constraint.register-class
                     [(compiler_regalloc.CompilerRegScratchClass.Gp) true]
                     [_ false]))))])
         ;; Wrapping is per-function: the base runtime plan still exposes the
@@ -37172,20 +37158,16 @@
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
               (compiler_regalloc.compiler-reg-id-seq-contains?
-                (struct-get
-                  (struct-get
-                    (struct-get
-                      (array-ref (struct-get plan items) 0)
-                      requirement)
+                (__tl-project-field
+                  (__tl-project-field
+                    (__tl-project-field (array-ref plan.items 0) requirement)
                     constraint)
                   excluded)
                 compiler_abi.compiler-reg-id-r8)
               (compiler_regalloc.compiler-reg-id-seq-contains?
-                (struct-get
-                  (struct-get
-                    (struct-get
-                      (array-ref (struct-get plan items) 1)
-                      requirement)
+                (__tl-project-field
+                  (__tl-project-field
+                    (__tl-project-field (array-ref plan.items 1) requirement)
                     constraint)
                   excluded)
                 compiler_abi.compiler-reg-id-r8))])))
@@ -37199,10 +37181,10 @@
         (compiler-backend-scratch-vreg-aggregate-test-index)]
       [_counts : unit
         (compiler_regalloc.compiler-reg-set-group-counts!
-          (struct-get index group-word-counts))]
+          index.group-word-counts)]
       [_masks : unit
         (compiler_regalloc.compiler-reg-set-group-class-masks!
-          (struct-get index group-word-class-masks))]
+          index.group-word-class-masks)]
       [result : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_aggregate"
@@ -37242,26 +37224,26 @@
         (match result
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 0) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 0) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.AggregateWord) true]
                 [_ false])
-              (match (struct-get
-                (struct-get
-                  (struct-get (array-ref (struct-get plan items) 0) requirement)
+              (match (__tl-project-field
+                (__tl-project-field
+                  (__tl-project-field (array-ref plan.items 0) requirement)
                   constraint)
                 register-class)
                 [(compiler_regalloc.CompilerRegScratchClass.Xmm) true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 1) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 1) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.AggregateWord) true]
                 [_ false])
-              (match (struct-get
-                (struct-get
-                  (struct-get (array-ref (struct-get plan items) 1) requirement)
+              (match (__tl-project-field
+                (__tl-project-field
+                  (__tl-project-field (array-ref plan.items 1) requirement)
                   constraint)
                 register-class)
                 [(compiler_regalloc.CompilerRegScratchClass.Gp) true]
@@ -37355,13 +37337,13 @@
         (match result
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 0) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 0) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.PhiCycle) true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 1) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 1) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.PhiStage) true]
                 [_ false])
@@ -37369,22 +37351,22 @@
         (match float-linux
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 2) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 2) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.PhiCycleXmm) true]
                 [_ false])
-              (match (struct-get
-                (struct-get
-                  (struct-get (array-ref (struct-get plan items) 2) requirement)
+              (match (__tl-project-field
+                (__tl-project-field
+                  (__tl-project-field (array-ref plan.items 2) requirement)
                   constraint)
                 register-class)
                 [(compiler_regalloc.CompilerRegScratchClass.Xmm) true]
                 [_ false]))])
         (match float-branch
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
-            (match (struct-get
-              (struct-get (array-ref (struct-get plan items) 3) requirement)
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 3) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.PhiCycleXmm) true]
               [_ false])])))
@@ -37428,7 +37410,7 @@
           compiler_ir_types.CompilerIrFunctionList.Nil
           compiler_ir_types.CompilerIrExternList.Nil)]
       [backend-state : compiler_backend.CompilerBackendState
-        (struct-get index backend-state)]
+        index.backend-state]
       (match (compiler_backend.compiler-backend-emit-pack-words
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         cycle-assignments
@@ -37565,7 +37547,7 @@
           compiler_ir_types.CompilerIrFunctionList.Nil
           compiler_ir_types.CompilerIrExternList.Nil)]
       [backend-state : compiler_backend.CompilerBackendState
-        (struct-get index backend-state)]
+        index.backend-state]
       (match (compiler_backend.compiler-backend-emit-addr-of
         assignments
         2
@@ -37805,10 +37787,10 @@
       [r10 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r10")]
       [ok : bool false]
       (begin
-        (array-set! occupied 0 r8)
-        (array-set! occupied 1 (bit-or r8 r10))
-        (array-set! scratch 0 0)
-        (array-set! scratch 1 r10)
+        (set! (array-ref occupied 0) r8)
+        (set! (array-ref occupied 1) (bit-or r8 r10))
+        (set! (array-ref scratch 0) 0)
+        (set! (array-ref scratch 1) r10)
         (compiler_backend.compiler-backend-function-scratch-fixture-set-scavenge-ctx-occupied-masks!
           (compiler_backend.compiler-backend-state-function-state backend-state)
           occupied)
@@ -37905,7 +37887,7 @@
   (if (>= index (array-length items))
     true
     (and
-      (not (= reg (struct-get (array-ref items index) register)))
+      (not (= reg (__tl-project-field (array-ref items index) register)))
       (compiler-backend-scratch-items-registers-differ-from?
         items
         (+ index 1)
@@ -37917,7 +37899,7 @@
   (if (>= index (array-length items))
     true
     (let
-      [reg : i64 (struct-get (array-ref items index) register)]
+      [reg : i64 (__tl-project-field (array-ref items index) register)]
       (and
         (not (= reg compiler_abi.compiler-reg-id-invalid))
         (compiler-backend-scratch-items-registers-differ-from?
@@ -37939,24 +37921,24 @@
       [item : compiler_regalloc.CompilerRegScratchAssignment
         (array-ref items index)]
       [requirement : compiler_regalloc.CompilerRegScratchRequirement
-        (struct-get item requirement)]
+        item.requirement]
       [excluded : compiler_regalloc.CompilerRegIdSeq
-        (struct-get (struct-get requirement constraint) excluded)]
+        requirement.constraint.excluded]
       (and
         (< index (array-length dense-items))
-        (= (struct-get requirement lo) 0)
-        (= (struct-get requirement hi) 7)
+        (= requirement.lo 0)
+        (= requirement.hi 7)
         (compiler_regalloc.compiler-reg-id-seq-contains?
           excluded
           compiler_abi.compiler-reg-id-r8)
         (compiler_regalloc.compiler-reg-id-seq-contains?
           excluded
           compiler_abi.compiler-reg-id-r9)
-        (not (= (struct-get item register) compiler_abi.compiler-reg-id-r8))
-        (not (= (struct-get item register) compiler_abi.compiler-reg-id-r9))
+        (not (= item.register compiler_abi.compiler-reg-id-r8))
+        (not (= item.register compiler_abi.compiler-reg-id-r9))
         (=
-          (struct-get item register)
-          (struct-get (array-ref dense-items index) register))
+          item.register
+          (__tl-project-field (array-ref dense-items index) register))
         (compiler-backend-scratch-fused-items-shape-from?
           items
           dense-items
@@ -37991,10 +37973,10 @@
               (let
                 [items : (__tl_dyn-array
                   compiler_regalloc.CompilerRegScratchAssignment)
-                  (struct-get plan items)]
+                  plan.items]
                 [dense-items : (__tl_dyn-array
                   compiler_regalloc.CompilerRegScratchAssignment)
-                  (struct-get dense-plan items)]
+                  dense-plan.items]
                 (and
                   (= (array-length items) 7)
                   (= (compiler-backend-scratch-test-success-count listed) 7)
@@ -38087,14 +38069,12 @@
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (let
               [requirement : compiler_regalloc.CompilerRegScratchRequirement
-                (struct-get (array-ref (struct-get plan items) 2) requirement)]
+                (__tl-project-field (array-ref plan.items 2) requirement)]
               (and
-                (match (struct-get requirement role)
+                (match requirement.role
                   [(compiler_regalloc.CompilerRegScratchRole.CopyValueXmm) true]
                   [_ false])
-                (match (struct-get
-                  (struct-get requirement constraint)
-                  register-class)
+                (match requirement.constraint.register-class
                   [(compiler_regalloc.CompilerRegScratchClass.Xmm) true]
                   [_ false])))])))
     true))
@@ -38204,15 +38184,13 @@
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (let
               [requirement : compiler_regalloc.CompilerRegScratchRequirement
-                (struct-get (array-ref (struct-get plan items) 1) requirement)]
+                (__tl-project-field (array-ref plan.items 1) requirement)]
               (and
-                (match (struct-get requirement role)
+                (match requirement.role
                   [(compiler_regalloc.CompilerRegScratchRole.CallMemoryXmm)
                     true]
                   [_ false])
-                (match (struct-get
-                  (struct-get requirement constraint)
-                  register-class)
+                (match requirement.constraint.register-class
                   [(compiler_regalloc.CompilerRegScratchClass.Xmm) true]
                   [_ false])))])))
     true))
@@ -38230,11 +38208,11 @@
             0
             value-ordinal)]
         [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-          (struct-get plan items)]
+          plan.items]
         [value-item : compiler_regalloc.CompilerRegScratchAssignment
           (array-ref items value-ordinal)]
         [requirement : compiler_regalloc.CompilerRegScratchRequirement
-          (struct-get value-item requirement)]
+          value-item.requirement]
         (and
           (= (compiler-backend-scratch-test-plan-count result) expected)
           (= (compiler-backend-scratch-test-success-count result) expected)
@@ -38242,11 +38220,11 @@
             (compiler_abi.compiler-abi-register-spelling value-reg)
             "%xmm"
             0)
-          (match (struct-get requirement role)
+          (match requirement.role
             [(compiler_regalloc.CompilerRegScratchRole.FloatMemoryValueXmm)
               true]
             [_ false])
-          (match (struct-get (struct-get requirement constraint) register-class)
+          (match requirement.constraint.register-class
             [(compiler_regalloc.CompilerRegScratchClass.Xmm) true]
             [_ false])))]))
 
@@ -38301,7 +38279,7 @@
           compiler_ir_types.CompilerIrFunctionList.Nil
           compiler_ir_types.CompilerIrExternList.Nil)]
       [backend-state : compiler_backend.CompilerBackendState
-        (struct-get index backend-state)]
+        index.backend-state]
       (match (compiler_backend.compiler-backend-emit-load-instr
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         assignments
@@ -38575,42 +38553,38 @@
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (let
               [requirement : compiler_regalloc.CompilerRegScratchRequirement
-                (struct-get (array-ref (struct-get plan items) 0) requirement)]
+                (__tl-project-field (array-ref plan.items 0) requirement)]
               (and
-                (match (struct-get requirement role)
+                (match requirement.role
                   [(compiler_regalloc.CompilerRegScratchRole.FloatReturnResultXmm)
                     true]
                   [_ false])
                 (=
-                  (struct-get (struct-get requirement constraint) fixed)
+                  requirement.constraint.fixed
                   (compiler_abi.compiler-abi-xmm-register-id 0))
-                (match (struct-get
-                  (struct-get requirement constraint)
-                  register-class)
+                (match requirement.constraint.register-class
                   [(compiler_regalloc.CompilerRegScratchClass.Xmm) true]
                   [_ false])))])
         (match compare-return
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (let
               [requirement : compiler_regalloc.CompilerRegScratchRequirement
-                (struct-get (array-ref (struct-get plan items) 0) requirement)]
+                (__tl-project-field (array-ref plan.items 0) requirement)]
               (and
-                (match (struct-get requirement role)
+                (match requirement.role
                   [(compiler_regalloc.CompilerRegScratchRole.FloatReturnResultGp)
                     true]
                   [_ false])
                 (=
-                  (struct-get (struct-get requirement constraint) fixed)
+                  requirement.constraint.fixed
                   compiler_abi.compiler-reg-id-rax)
-                (match (struct-get
-                  (struct-get requirement constraint)
-                  register-class)
+                (match requirement.constraint.register-class
                   [(compiler_regalloc.CompilerRegScratchClass.Gp) true]
                   [_ false])))])
         (match arith
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
-            (match (struct-get
-              (struct-get (array-ref (struct-get plan items) 0) requirement)
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 0) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.FloatArithmeticResultXmm)
                 true]
@@ -38618,22 +38592,22 @@
         (match compare
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 0) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 0) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.FloatCompareLhsXmm)
                   true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 1) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 1) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.FloatCompareResultGp)
                   true]
                 [_ false]))])
         (match unop
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
-            (match (struct-get
-              (struct-get (array-ref (struct-get plan items) 0) requirement)
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 0) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.FloatUnaryResultXmm)
                 true]
@@ -38887,27 +38861,27 @@
         (match splat
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 0) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 0) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.SplatValueGp) true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 1) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 1) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.SplatValueXmm) true]
                 [_ false]))])
         (match reduce
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 0) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 0) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.VectorReduceAccumulator)
                   true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 1) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 1) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.VectorReduceScratch)
                   true]
@@ -38915,26 +38889,26 @@
         (match prefix
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 0) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 0) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.VectorPrefixCarry)
                   true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 1) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 1) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.VectorPrefixValue)
                   true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 2) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 2) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.VectorPrefixWork0)
                   true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 3) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 3) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.VectorPrefixWork1)
                   true]
@@ -38984,8 +38958,8 @@
   [base? : bool]) : bool
   (let
     [requirement : compiler_regalloc.CompilerRegScratchRequirement
-      (struct-get (array-ref (struct-get plan items) index) requirement)]
-    (match (struct-get requirement role)
+      (__tl-project-field (array-ref plan.items index) requirement)]
+    (match requirement.role
       [(compiler_regalloc.CompilerRegScratchRole.SimdAddressBase) base?]
       [(compiler_regalloc.CompilerRegScratchRole.SimdAddressIndex) (not base?)]
       [_ false])))
@@ -39050,12 +39024,12 @@
                             18
                             0)]
                         [fused-base : compiler_regalloc.CompilerRegScratchRequirement
-                          (struct-get
-                            (array-ref (struct-get fused-plan items) 0)
+                          (__tl-project-field
+                            (array-ref fused-plan.items 0)
                             requirement)]
                         [fused-index : compiler_regalloc.CompilerRegScratchRequirement
-                          (struct-get
-                            (array-ref (struct-get fused-plan items) 1)
+                          (__tl-project-field
+                            (array-ref fused-plan.items 1)
                             requirement)]
                         (and
                           (=
@@ -39132,10 +39106,10 @@
                             (compiler_backend.compiler-backend-scratch-plan-success-count
                               fused-plan)
                             2)
-                          (= (struct-get fused-base lo) 0)
-                          (= (struct-get fused-base hi) 3)
-                          (= (struct-get fused-index lo) 0)
-                          (= (struct-get fused-index hi) 3)
+                          (= fused-base.lo 0)
+                          (= fused-base.hi 3)
+                          (= fused-index.lo 0)
+                          (= fused-index.hi 3)
                           (=
                             (compiler_regalloc.compiler-reg-scratch-plan-register
                               fused-plan
@@ -39160,15 +39134,21 @@
   [plan : compiler_regalloc.CompilerRegScratchPlan]) : bool
   (let
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-      (struct-get plan items)]
+      plan.items]
     (and
-      (match (struct-get (struct-get (array-ref items 0) requirement) role)
+      (match (__tl-project-field
+        (__tl-project-field (array-ref items 0) requirement)
+        role)
         [(compiler_regalloc.CompilerRegScratchRole.TailMaskCount) true]
         [_ false])
-      (match (struct-get (struct-get (array-ref items 1) requirement) role)
+      (match (__tl-project-field
+        (__tl-project-field (array-ref items 1) requirement)
+        role)
         [(compiler_regalloc.CompilerRegScratchRole.TailMaskIndex) true]
         [_ false])
-      (match (struct-get (struct-get (array-ref items 2) requirement) role)
+      (match (__tl-project-field
+        (__tl-project-field (array-ref items 2) requirement)
+        role)
         [(compiler_regalloc.CompilerRegScratchRole.TailMaskBits) true]
         [_ false]))))
 
@@ -39545,50 +39525,50 @@
         (match cast
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 0) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 0) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.FloatCastValueXmm)
                   true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 1) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 1) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.FloatCastValueGp)
                   true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 2) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 2) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.FloatCastScratchGp)
                   true]
                 [_ false]))])
         (match gp-only
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
-            (match (struct-get
-              (struct-get (array-ref (struct-get plan items) 0) requirement)
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 0) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.FloatCastValueGp) true]
               [_ false])])
         (match bitcast
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 0) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 0) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.FloatBitcastValueXmm)
                   true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref (struct-get plan items) 1) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref plan.items 1) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.FloatBitcastValueGp)
                   true]
                 [_ false]))])
         (match mov
           [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
-            (match (struct-get
-              (struct-get (array-ref (struct-get plan items) 0) requirement)
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 0) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.FloatMoveValueXmm)
                 true]
@@ -39605,7 +39585,7 @@
           compiler_ir_types.CompilerIrFunctionList.Nil
           compiler_ir_types.CompilerIrExternList.Nil)]
       [backend-state : compiler_backend.CompilerBackendState
-        (struct-get index backend-state)]
+        index.backend-state]
       [cast-assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler-backend-scratch-vreg-cast-test-assignments)]
       [gp-only-assignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -39739,9 +39719,8 @@
         (compiler_regalloc.compiler-reg-fill-i64-array present 0)
         (compiler_regalloc.compiler-reg-fill-i64-array ref-counts 0)
         (compiler_regalloc.compiler-reg-fill-interval-seq-array! segments 0)
-        (array-set!
-          items
-          0
+        (set!
+          (array-ref items 0)
           (compiler_regalloc.CompilerRegScratchAssignment
             (compiler_regalloc.CompilerRegScratchRequirement
               0
@@ -39752,9 +39731,8 @@
               3
               0)
             compiler_abi.compiler-reg-id-invalid))
-        (array-set!
-          items
-          1
+        (set!
+          (array-ref items 1)
           (compiler_regalloc.CompilerRegScratchAssignment
             (compiler_regalloc.CompilerRegScratchRequirement
               2
@@ -39771,14 +39749,14 @@
           segments
           present
           types
-          (struct-get (array-ref items 0) requirement))
+          (__tl-project-field (array-ref items 0) requirement))
         (compiler_regalloc.compiler-reg-scratch-mark-requirement!
           starts
           ends
           segments
           present
           types
-          (struct-get (array-ref items 1) requirement))
+          (__tl-project-field (array-ref items 1) requirement))
         (compiler_regalloc.compiler-reg-scratch-assign-items!
           (compiler_abi.CompilerRegTargetAbi.Linux)
           items
@@ -39794,10 +39772,10 @@
           [partial? : bool
             (and
               (=
-                (struct-get (array-ref items 0) register)
+                (__tl-project-field (array-ref items 0) register)
                 compiler_abi.compiler-reg-id-rcx)
               (=
-                (struct-get (array-ref items 1) register)
+                (__tl-project-field (array-ref items 1) register)
                 compiler_abi.compiler-reg-id-invalid))]
           (begin
             (compiler_regalloc.compiler-reg-scratch-clear-incomplete-groups!
@@ -39806,10 +39784,10 @@
             (and
               partial?
               (=
-                (struct-get (array-ref items 0) register)
+                (__tl-project-field (array-ref items 0) register)
                 compiler_abi.compiler-reg-id-invalid)
               (=
-                (struct-get (array-ref items 1) register)
+                (__tl-project-field (array-ref items 1) register)
                 compiler_abi.compiler-reg-id-invalid))))))
     true))
 
@@ -39877,9 +39855,8 @@
         (compiler_regalloc.compiler-reg-fill-i64-array ref-counts 0)
         (compiler_regalloc.compiler-reg-fill-interval-seq-array! segments 0)
         ;; Fixed RCX lives across the complete region.
-        (array-set!
-          items
-          0
+        (set!
+          (array-ref items 0)
           (compiler_regalloc.CompilerRegScratchAssignment
             (compiler_regalloc.CompilerRegScratchRequirement
               0
@@ -39891,9 +39868,8 @@
               0)
             compiler_abi.compiler-reg-id-invalid))
         ;; Allowed {rcx,r10}, excluded {rcx}: selects r10.
-        (array-set!
-          items
-          1
+        (set!
+          (array-ref items 1)
           (compiler_regalloc.CompilerRegScratchAssignment
             (compiler_regalloc.CompilerRegScratchRequirement
               0
@@ -39905,9 +39881,8 @@
               1)
             compiler_abi.compiler-reg-id-invalid))
         ;; The same solver supports the XMM register file.
-        (array-set!
-          items
-          2
+        (set!
+          (array-ref items 2)
           (compiler_regalloc.CompilerRegScratchAssignment
             (compiler_regalloc.CompilerRegScratchRequirement
               0
@@ -39919,9 +39894,8 @@
               2)
             compiler_abi.compiler-reg-id-invalid))
         ;; A simultaneous fixed-RCX request fails explicitly.
-        (array-set!
-          items
-          3
+        (set!
+          (array-ref items 3)
           (compiler_regalloc.CompilerRegScratchAssignment
             (compiler_regalloc.CompilerRegScratchRequirement
               2
@@ -39933,9 +39907,8 @@
               3)
             compiler_abi.compiler-reg-id-invalid))
         ;; A later non-overlapping slot can reuse r10.
-        (array-set!
-          items
-          4
+        (set!
+          (array-ref items 4)
           (compiler_regalloc.CompilerRegScratchAssignment
             (compiler_regalloc.CompilerRegScratchRequirement
               3
@@ -39956,7 +39929,7 @@
                 segments
                 present
                 types
-                (struct-get (array-ref items i) requirement))
+                (__tl-project-field (array-ref items i) requirement))
               (set! i (+ i 1)))))
         (compiler_regalloc.compiler-reg-scratch-assign-items!
           (compiler_abi.CompilerRegTargetAbi.Linux)
@@ -39971,19 +39944,19 @@
           5)
         (and
           (=
-            (struct-get (array-ref items 0) register)
+            (__tl-project-field (array-ref items 0) register)
             compiler_abi.compiler-reg-id-rcx)
           (=
-            (struct-get (array-ref items 1) register)
+            (__tl-project-field (array-ref items 1) register)
             compiler_abi.compiler-reg-id-r10)
           (=
-            (struct-get (array-ref items 2) register)
+            (__tl-project-field (array-ref items 2) register)
             (compiler_abi.compiler-abi-xmm-register-id 0))
           (=
-            (struct-get (array-ref items 3) register)
+            (__tl-project-field (array-ref items 3) register)
             compiler_abi.compiler-reg-id-invalid)
           (=
-            (struct-get (array-ref items 4) register)
+            (__tl-project-field (array-ref items 4) register)
             compiler_abi.compiler-reg-id-r10))))
     true))
 
@@ -40004,8 +39977,8 @@
     [exclude : (__tl_dyn-array String)
       (compiler-backend-scavenge-emergency-exclude-fallback)]
     (begin
-      (array-set! starts 0 0)
-      (array-set! ends 0 10)
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref ends 0) 10)
       (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-pending!
         (compiler_backend.compiler-backend-state-function-state backend-state)
         false)
@@ -40223,20 +40196,20 @@
     [_fill : unit
       (begin
         ;; index 0: wide literal L, one site
-        (array-set! values 0 4242)
-        (array-set! wide 0 true)
+        (set! (array-ref values 0) 4242)
+        (set! (array-ref wide 0) true)
         ;; indices 1,3,5: magic M, three sites
-        (array-set! values 1 777)
-        (array-set! wide 1 false)
-        (array-set! values 3 777)
-        (array-set! wide 3 false)
-        (array-set! values 5 777)
-        (array-set! wide 5 false)
+        (set! (array-ref values 1) 777)
+        (set! (array-ref wide 1) false)
+        (set! (array-ref values 3) 777)
+        (set! (array-ref wide 3) false)
+        (set! (array-ref values 5) 777)
+        (set! (array-ref wide 5) false)
         ;; indices 2,4: magic N, two sites
-        (array-set! values 2 999)
-        (array-set! wide 2 false)
-        (array-set! values 4 999)
-        (array-set! wide 4 false))]
+        (set! (array-ref values 2) 999)
+        (set! (array-ref wide 2) false)
+        (set! (array-ref values 4) 999)
+        (set! (array-ref wide 4) false))]
     [awards : i64
       (compiler_backend.compiler-backend-const-hoist-award-order!
         values
@@ -40269,18 +40242,18 @@
     [tally : (__tl_dyn-array i64) (make-array i64 6)]
     [_fill : unit
       (begin
-        (array-set! values 0 5)
-        (array-set! wide 0 true)
-        (array-set! values 3 5)
-        (array-set! wide 3 true)
-        (array-set! values 1 5)
-        (array-set! wide 1 false)
-        (array-set! values 4 5)
-        (array-set! wide 4 false)
-        (array-set! values 2 6)
-        (array-set! wide 2 false)
-        (array-set! values 5 6)
-        (array-set! wide 5 false))]
+        (set! (array-ref values 0) 5)
+        (set! (array-ref wide 0) true)
+        (set! (array-ref values 3) 5)
+        (set! (array-ref wide 3) true)
+        (set! (array-ref values 1) 5)
+        (set! (array-ref wide 1) false)
+        (set! (array-ref values 4) 5)
+        (set! (array-ref wide 4) false)
+        (set! (array-ref values 2) 6)
+        (set! (array-ref wide 2) false)
+        (set! (array-ref values 5) 6)
+        (set! (array-ref wide 5) false))]
     [awards : i64
       (compiler_backend.compiler-backend-const-hoist-award-order!
         values
@@ -40386,9 +40359,8 @@
     [first : (__tl_dyn-array i64) (make-array i64 1)]
     [slots : (__tl_dyn-array i64) (make-array i64 1)]
     [_item : unit
-      (array-set!
-        items
-        0
+      (set!
+        (array-ref items 0)
         (compiler_regalloc.CompilerRegScratchAssignment
           (compiler_regalloc.CompilerRegScratchRequirement
             4
@@ -40614,16 +40586,16 @@
         assignments
         5)]
     (begin
-      (array-set! starts 0 0)
-      (array-set! ends 0 2)
-      (array-set! starts 1 3)
-      (array-set! ends 1 5)
-      (array-set! starts 2 4)
-      (array-set! ends 2 7)
-      (array-set! starts 3 0)
-      (array-set! ends 3 8)
-      (array-set! starts 4 2)
-      (array-set! ends 4 6)
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref ends 0) 2)
+      (set! (array-ref starts 1) 3)
+      (set! (array-ref ends 1) 5)
+      (set! (array-ref starts 2) 4)
+      (set! (array-ref ends 2) 7)
+      (set! (array-ref starts 3) 0)
+      (set! (array-ref ends 3) 8)
+      (set! (array-ref starts 4) 2)
+      (set! (array-ref ends 4) 6)
       (let
         [masks : (__tl_dyn-array i64)
           (compiler_backend.compiler-backend-scavenge-occupancy-build
@@ -40871,14 +40843,14 @@
             (compiler_regalloc.compiler-reg-assignment-table-empty))))]
     (begin
       ;; var 0: the dividend definition -- dead after point 10
-      (array-set! starts 0 9)
-      (array-set! ends 0 10)
+      (set! (array-ref starts 0) 9)
+      (set! (array-ref ends 0) 10)
       ;; var 1: the loop-carried home (phi-shared) -- spans the whole region
-      (array-set! starts 1 2)
-      (array-set! ends 1 30)
+      (set! (array-ref starts 1) 2)
+      (set! (array-ref ends 1) 30)
       ;; var 2: this instruction's own result -- opens on the def half-step
-      (array-set! starts 2 11)
-      (array-set! ends 2 20)
+      (set! (array-ref starts 2) 11)
+      (set! (array-ref ends 2) 20)
       (compiler_backend.compiler-backend-set-scavenge-ctx-index!
         (compiler_backend.compiler-backend-state-function-state backend-state)
         starts
@@ -41052,8 +41024,7 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
         compiler_ir_types.CompilerIrExternList.Nil)]
-    [backend-state : compiler_backend.CompilerBackendState
-      (struct-get index backend-state)]
+    [backend-state : compiler_backend.CompilerBackendState index.backend-state]
     (match (compiler_backend.compiler-backend-emit-param-spills
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_backend.CompilerBackendTarget.Windows)
@@ -41127,7 +41098,7 @@
           (let
             [items : (__tl_dyn-array
               compiler_regalloc.CompilerRegScratchAssignment)
-              (struct-get plan items)]
+              plan.items]
             [rax : String
               (compiler-backend-scratch-test-plan-register-string plan 0 0)]
             [rdx : String
@@ -41152,27 +41123,27 @@
               (not (string.eq temp0 "%rdx"))
               (not (string.eq temp0 "%r12"))
               (not (string.eq temp0 "%r13"))
-              (match (struct-get
-                (struct-get (array-ref items 0) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref items 0) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.FixedRax) true]
                 [_ false])
-              (match (struct-get
-                (struct-get (array-ref items 1) requirement)
+              (match (__tl-project-field
+                (__tl-project-field (array-ref items 1) requirement)
                 role)
                 [(compiler_regalloc.CompilerRegScratchRole.FixedRdx) true]
                 [_ false])
               (=
-                (struct-get
-                  (struct-get
-                    (struct-get (array-ref items 0) requirement)
+                (__tl-project-field
+                  (__tl-project-field
+                    (__tl-project-field (array-ref items 0) requirement)
                     constraint)
                   fixed)
                 compiler_abi.compiler-reg-id-rax)
               (=
-                (struct-get
-                  (struct-get
-                    (struct-get (array-ref items 1) requirement)
+                (__tl-project-field
+                  (__tl-project-field
+                    (__tl-project-field (array-ref items 1) requirement)
                     constraint)
                   fixed)
                 compiler_abi.compiler-reg-id-rdx)))]))
@@ -41212,8 +41183,8 @@
             (string.eq fixed "%rcx")
             (not (string.eq result ""))
             (not (string.eq result fixed))
-            (match (struct-get
-              (struct-get (array-ref (struct-get plan items) 0) requirement)
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 0) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.FixedRcx) true]
               [_ false])))])
@@ -41252,8 +41223,8 @@
             (string.eq
               (compiler-backend-scratch-test-plan-register-string plan 0 0)
               ""))
-          (match (struct-get
-            (struct-get (array-ref (struct-get plan items) 0) requirement)
+          (match (__tl-project-field
+            (__tl-project-field (array-ref plan.items 0) requirement)
             role)
             [(compiler_regalloc.CompilerRegScratchRole.ScalarPrimary) true]
             [_ false]))])
@@ -41316,12 +41287,12 @@
             (not (string.eq lhs rhs))
             (not (string.eq test ""))
             (=
-              (struct-get
-                (struct-get (array-ref (struct-get plan items) 0) requirement)
+              (__tl-project-field
+                (__tl-project-field (array-ref plan.items 0) requirement)
                 hi)
               3)
-            (match (struct-get
-              (struct-get (array-ref (struct-get plan items) 2) requirement)
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 2) requirement)
               role)
               [(compiler_regalloc.CompilerRegScratchRole.BranchTest) true]
               [_ false])))])
@@ -42048,59 +42019,58 @@
   [chunk : String]) : unit
   (begin
     (compiler_backend.compiler-backend-assembly-stream-begin-raw!
-      (struct-get session backend-state)
-      (struct-get session stream))
+      session.backend-state
+      session.stream)
     (compiler_backend.compiler-backend-assembly-stream-process-string!
       chunk
-      (struct-get session backend-state)
-      (struct-get session stream))
+      session.backend-state
+      session.stream)
     (unsafe
-      (arena.set! (struct-get session caller)))))
+      (arena.set! session.caller))))
 
 (define (compiler-backend-assembly-stream-test-session-finish-copy
   [session : CompilerBackendAssemblyStreamTestSession]) : String
   (let
     [out : text_buf.TextBuf
       (compiler_backend.compiler-backend-assembly-stream-finish!
-        (struct-get session backend-state)
-        (struct-get session stream))]
+        session.backend-state
+        session.stream)]
     [rendered : String (text_buf.render out)]
     (string.copy rendered)))
 
 (define (compiler-backend-assembly-stream-test-session-destroy!
   [session : CompilerBackendAssemblyStreamTestSession]) : unit
   (begin
-    (compiler_backend.compiler-backend-assembly-stream-abort!
-      (struct-get session stream))
+    (compiler_backend.compiler-backend-assembly-stream-abort! session.stream)
     (unsafe
-      (arena.set! (struct-get session caller)))
+      (arena.set! session.caller))
     (compiler_backend.compiler-backend-clear-scratch-escaped-emit-state!
-      (struct-get session backend-state))
+      session.backend-state)
     (unsafe
-      (arena.destroy (struct-get session raw)))
+      (arena.destroy session.raw))
     (unsafe
-      (arena.destroy (struct-get session peephole)))
+      (arena.destroy session.peephole))
     (unsafe
-      (arena.destroy (struct-get session home)))))
+      (arena.destroy session.home))))
 
 (define (compiler-backend-assembly-stream-test-seed-a!
   [session : CompilerBackendAssemblyStreamTestSession]) : unit
   (begin
     ;; Model a Linux scalar job and give only A the safe continuation label.
     (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
-      (struct-get session backend-state)
+      session.backend-state
       true)
     (compiler_backend.compiler-backend-state-set-absolute-switch-ok!
-      (struct-get session backend-state)
+      session.backend-state
       true)
     (compiler_backend.compiler-backend-peephole-carry-safe-insert!
-      (struct-get session backend-state)
-      (struct-get session stream)
+      session.backend-state
+      session.stream
       ".Lshared_carry")
     ;; The first A group is an audited Linux FPO function.  Its dead slot store
     ;; is swept; B deliberately has the same shape without sweep metadata.
     (compiler_backend.compiler-backend-sweep-record-fpo!
-      (struct-get session stream)
+      session.stream
       "a_sweep"
       48
       0
@@ -42108,7 +42078,7 @@
       0
       0
       0
-      (struct-get session backend-state))))
+      session.backend-state)))
 
 (define (compiler-backend-assembly-stream-test-seed-b!
   [session : CompilerBackendAssemblyStreamTestSession]) : unit
@@ -42116,10 +42086,10 @@
     ;; Model a Windows vector job.  These job-local policy bits must survive
     ;; alternating calls through A's differently configured backend state.
     (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
-      (struct-get session backend-state)
+      session.backend-state
       false)
     (compiler_backend.compiler-backend-state-set-absolute-switch-ok!
-      (struct-get session backend-state)
+      session.backend-state
       false)))
 
 (define (compiler-backend-assembly-stream-test-chunks [a? : bool]) : (__tl_dyn-array
@@ -42160,15 +42130,14 @@ b_keep:
 ")]
     [i : i64 1]
     (begin
-      (array-set! chunks 0 first)
+      (set! (array-ref chunks 0) first)
       (while (< i 65)
         (let
           [suffix : String (string.int->string i)]
           [symbol : String (str_cat.str-cat prefix suffix)]
           (begin
-            (array-set!
-              chunks
-              i
+            (set!
+              (array-ref chunks i)
               (str_cat.str-cat
                 ".globl "
                 symbol
@@ -42292,15 +42261,15 @@ b_keep:
                   out-b
                   "    movq %r9, %r10\n")
                 (compiler_backend.compiler-backend-state-scalar-registers-enabled?
-                  (struct-get session-a backend-state))
+                  session-a.backend-state)
                 (not
                   (compiler_backend.compiler-backend-state-scalar-registers-enabled?
-                    (struct-get session-b backend-state)))
+                    session-b.backend-state))
                 (compiler_backend.compiler-backend-state-absolute-switch-ok?
-                  (struct-get session-a backend-state))
+                  session-a.backend-state)
                 (not
                   (compiler_backend.compiler-backend-state-absolute-switch-ok?
-                    (struct-get session-b backend-state))))]
+                    session-b.backend-state)))]
             (begin
               (compiler-backend-assembly-stream-test-session-destroy! session-a)
               (compiler-backend-assembly-stream-test-session-destroy! session-b)
@@ -42342,11 +42311,11 @@ b_keep:
           (and
             (>=
               (compiler_backend.compiler-backend-stream-state-owner-capacity
-                (struct-get session stream))
+                session.stream)
               128)
             (>=
               (compiler_backend.compiler-backend-stream-state-owner-bytes-capacity
-                (struct-get session stream))
+                session.stream)
               4096)
             (compiler_backend.compiler-backend-string-contains?
               out
@@ -42360,9 +42329,8 @@ b_keep:
     [session : CompilerBackendPeepholeTestSession
       (compiler-backend-peephole-test-session-new)]
     [backend-state : compiler_backend.CompilerBackendState
-      (struct-get session backend-state)]
-    [stream : compiler_backend.CompilerBackendStreamState
-      (struct-get session stream)]
+      session.backend-state]
+    [stream : compiler_backend.CompilerBackendStreamState session.stream]
     [idle? : bool
       (=
         (compiler_backend.compiler-backend-stream-state-retained-table-bytes
@@ -42507,7 +42475,7 @@ b_keep:
         [retired? : bool
           (=
             (compiler_backend.compiler-backend-stream-state-record-capacity
-              (struct-get session stream))
+              session.stream)
             0)]
         (and retired? (string.eq actual expected))))))
 
@@ -42566,14 +42534,14 @@ b_keep:
       (compiler-backend-inline-fast-alloc-reused-vreg-instrs)]
     [_configure : unit
       (begin
-        (array-set! forward-a 4 17)
-        (array-set! forward-b 4 29)
-        (array-set! uses-a 4 31)
-        (array-set! uses-b 4 37)
-        (array-set! free-a 4 41)
-        (array-set! free-b 4 43)
-        (array-set! labels-a 0 4)
-        (array-set! labels-b 0 9)
+        (set! (array-ref forward-a 4) 17)
+        (set! (array-ref forward-b 4) 29)
+        (set! (array-ref uses-a 4) 31)
+        (set! (array-ref uses-b 4) 37)
+        (set! (array-ref free-a 4) 41)
+        (set! (array-ref free-b 4) 43)
+        (set! (array-ref labels-a 0) 4)
+        (set! (array-ref labels-b 0) 9)
         (compiler_backend.compiler-backend-set-current-mode!
           function-a
           (compiler_backend.CompilerBackendMode.Avx2))
@@ -42782,14 +42750,14 @@ b_keep:
           (compiler_backend.compiler-backend-test-get-compiler-backend-identity-tail-forwarder-active
             state-b))
         (=
-          (struct-get
+          (__tl-project-field
             (compiler_backend.compiler-backend-test-get-compiler-backend-current-phi-targets
               state-a)
             len)
           1)
         (=
           (array-ref
-            (struct-get
+            (__tl-project-field
               (compiler_backend.compiler-backend-test-get-compiler-backend-current-phi-targets
                 state-b)
               slots)
@@ -42810,11 +42778,11 @@ b_keep:
           (compiler_backend.compiler-backend-scavenge-xmm-candidates)))]
     [_scratch-configure : unit
       (begin
-        (array-set! scratch-occupied-a 0 scratch-all-mask-a)
-        (array-set! scratch-occupied-a 1 scratch-all-mask-a)
-        (array-set! scratch-inject-labels-b 0 73)
-        (array-set! scratch-inject-texts-b 0 "B_CONST\n")
-        (array-set! scratch-inject-pres-b 0 false)
+        (set! (array-ref scratch-occupied-a 0) scratch-all-mask-a)
+        (set! (array-ref scratch-occupied-a 1) scratch-all-mask-a)
+        (set! (array-ref scratch-inject-labels-b 0) 73)
+        (set! (array-ref scratch-inject-texts-b 0) "B_CONST\n")
+        (set! (array-ref scratch-inject-pres-b 0) false)
         (compiler_backend.compiler-backend-function-state-set-emit-instr-post-base!
           function-a
           0)
@@ -42939,7 +42907,8 @@ b_keep:
       (match failure-result
         [(compiler_backend.ResultCompilerBackendBuffer.Err diag)
           (string.eq
-            (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+            (compiler_diagnostic.compiler-diagnostic-message
+              (__tl-box-place diag))
             (compiler_backend.compiler-backend-switch-shape-message))]
         [(compiler_backend.ResultCompilerBackendBuffer.Ok _) false])]
     [failure-retired : bool
@@ -43018,7 +42987,7 @@ b_keep:
           state-a)
         0)
       (=
-        (struct-get
+        (__tl-project-field
           (compiler_backend.compiler-backend-test-get-compiler-backend-current-phi-targets
             state-a)
           len)

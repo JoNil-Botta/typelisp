@@ -1,11 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
-# Prepare a temporary old-spelling source mirror that the previously published
-# stage0 can compile.  The resulting compiler still resolves the new short
-# well-known names: only source-level enum references and the mirrored
-# stdlib.comptime declarations are rewritten.  This is a bootstrap boundary,
-# not a public compatibility surface.
+# Prepare a temporary source mirror that the previously published stage0 can
+# compile. The mirror can restore old well-known enum spellings/shapes and also
+# rewrites the rebuilt compiler's private StructGet parser name in
+# stdlib.comptime. This is a bootstrap boundary, not a public compatibility
+# surface.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -43,10 +43,18 @@ cp "$ROOT/tests/bootstrap_ctfe_while_probe.tl" \
 # qualified spelling may set this mode to 0; that keeps its name ABI while
 # still applying the old-shape TypeInfo enum bridge below.
 LEGACY_SHORT_VARIANTS=${COMPTIME_SHORT_VARIANT_SEED_BRIDGE_LEGACY:-1}
+REMOVE_TYPEINFO_SLICE=${COMPTIME_SEED_BRIDGE_REMOVE_SLICE:-1}
 case "$LEGACY_SHORT_VARIANTS" in
     0 | 1) ;;
     *)
         echo "comptime short-variant seed bridge mode must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
+case "$REMOVE_TYPEINFO_SLICE" in
+    0 | 1) ;;
+    *)
+        echo "comptime TypeInfo Slice seed bridge mode must be 0 or 1" >&2
         exit 2
         ;;
 esac
@@ -80,7 +88,9 @@ if [ "$LEGACY_SHORT_VARIANTS" = 1 ]; then
 fi
 
 COMPTIME="$OUT/stdlib/comptime.tl"
-if [ "$LEGACY_SHORT_VARIANTS" = 1 ]; then
+sed -i -e 's/(__tl_struct-get /(struct-get /g' "$COMPTIME"
+
+if [ "$REMOVE_TYPEINFO_SLICE" = 1 ] && [ "$LEGACY_SHORT_VARIANTS" = 1 ]; then
   sed -i \
       -e 's/^  (Bool bool)$/  (ExprBool bool)/' \
       -e 's/^  (Int i64)$/  (ExprInt i64)/' \
@@ -106,14 +116,14 @@ if [ "$LEGACY_SHORT_VARIANTS" = 1 ]; then
       -e '/^  (Slice (Box TypeInfo)))$/d' \
       -e 's/^  (Opaque String)$/  (TypeInfoOpaque String))/' \
       "$COMPTIME"
-else
+elif [ "$REMOVE_TYPEINFO_SLICE" = 1 ]; then
   sed -i \
       -e '/^  (Slice (Box TypeInfo)))$/d' \
       -e 's/^  (Opaque String)$/  (Opaque String))/' \
       "$COMPTIME"
 fi
 
-if [ "$LEGACY_SHORT_VARIANTS" = 1 ]; then
+if [ "$REMOVE_TYPEINFO_SLICE" = 1 ] && [ "$LEGACY_SHORT_VARIANTS" = 1 ]; then
   grep -qF '(ExprBool bool)' "$COMPTIME" || {
     echo "seed bridge did not restore the legacy Expr declaration" >&2
     exit 1
@@ -130,17 +140,26 @@ if [ "$LEGACY_SHORT_VARIANTS" = 1 ]; then
     echo "seed bridge did not restore the final legacy TypeInfo Opaque variant" >&2
     exit 1
   }
-else
+elif [ "$REMOVE_TYPEINFO_SLICE" = 1 ]; then
   grep -qF '(Opaque String))' "$COMPTIME" || {
     echo "seed bridge did not restore the final short TypeInfo Opaque variant" >&2
     exit 1
   }
 fi
-if grep -qF '(TypeInfoSlice' "$COMPTIME" || \
-    grep -qF '(Slice (Box TypeInfo))' "$COMPTIME"; then
+if [ "$REMOVE_TYPEINFO_SLICE" = 1 ] && \
+    { grep -qF '(TypeInfoSlice' "$COMPTIME" || \
+      grep -qF '(Slice (Box TypeInfo))' "$COMPTIME"; }; then
     echo "seed bridge retained the new TypeInfo Slice variant" >&2
     exit 1
 fi
+if grep -qF '(__tl_struct-get ' "$COMPTIME"; then
+    echo "seed bridge retained the rebuilt compiler's private StructGet name" >&2
+    exit 1
+fi
+grep -qF '(struct-get items len)' "$COMPTIME" || {
+    echo "seed bridge did not restore the seed StructGet spelling" >&2
+    exit 1
+}
 grep -qF '(compiler-builtin-resolve-name insert-missing "Var")' \
     "$OUT/src/compiler_builtin_ids.tl" || {
     echo "seed bridge changed the new short-name compiler ABI" >&2

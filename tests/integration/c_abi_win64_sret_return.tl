@@ -13,7 +13,7 @@
   Wide))
 
 (define (wide-score [value : Wide]) : i64
-  (+ (cast (struct-get value a) : i64) (cast (struct-get value b) : i64)))
+  (+ (cast value.a : i64) (cast value.b : i64)))
 
 (define (main) : i64
   (let

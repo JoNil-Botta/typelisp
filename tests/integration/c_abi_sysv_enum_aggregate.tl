@@ -42,7 +42,7 @@
     [(SmallSome value) value]))
 
 (define (wrapped-small-value [w : WrappedSmall]) : i64
-  (small-value (struct-get w choice)))
+  (small-value w.choice))
 
 (define (float-value [f : FloatChoice]) : i64
   (match f

@@ -82,7 +82,7 @@
     names))
 
 (define (lower-capture-list-count [captures : compiler_lower.LowerCaptureList]) : i64
-  (struct-get captures count))
+  captures.count)
 
 (define (lower-capture-list-storage-entry?
   [captures : compiler_lower.LowerCaptureList]
@@ -90,9 +90,9 @@
   [name-id : i64]
   [var-id : i64]
   [offset : i64]) : bool
-  (if (or (< index 0) (>= index (struct-get captures count)))
+  (if (or (< index 0) (>= index captures.count))
     false
-    (match (array-ref (struct-get captures items) index)
+    (match (array-ref captures.items index)
       [(compiler_lower.LowerCapture.Capture
           capture-name-id
           capture-var-id
@@ -105,20 +105,18 @@
 
 (define (lower-cleanup-stack-count
   [cleanups : compiler_lower.LowerCleanupStack]) : i64
-  (struct-get cleanups count))
+  cleanups.count)
 
 (define (lower-cleanup-stack-entry?
   [cleanups : compiler_lower.LowerCleanupStack]
   [index : i64]
   [hidden-name-id : i64]
   [cleanup-name-id : i64]) : bool
-  (if (or (< index 0) (>= index (struct-get cleanups count)))
+  (if (or (< index 0) (>= index cleanups.count))
     false
     (and
-      (= (array-ref (struct-get cleanups hidden-name-ids) index) hidden-name-id)
-      (=
-        (array-ref (struct-get cleanups cleanup-name-ids) index)
-        cleanup-name-id))))
+      (= (array-ref cleanups.hidden-name-ids index) hidden-name-id)
+      (= (array-ref cleanups.cleanup-name-ids index) cleanup-name-id))))
 
 (define (compiler-lower-array-var-set-ok?) : bool
   (let
@@ -143,10 +141,10 @@
         1)]
     [merged : compiler_lower.LowerArrayVarSet
       (compiler_lower.lower-array-var-set-merge left right)]
-    [vars : (__tl_dyn-array i64) (struct-get merged vars)]
-    [offsets : (__tl_dyn-array i64) (struct-get merged offsets)]
+    [vars : (__tl_dyn-array i64) merged.vars]
+    [offsets : (__tl_dyn-array i64) merged.offsets]
     (and
-      (= (struct-get merged count) 3)
+      (= merged.count 3)
       (= (array-length vars) 3)
       (= (array-length offsets) 3)
       (= (array-ref vars 0) 10)
@@ -285,17 +283,17 @@
 (define (main) : i64
   (let
     [items : (Array Pair 2) (array (Pair 1 2) (Pair 3 4))]
-    (struct-get (array-ref items 1) y)))")
+    (__tl-project-field (array-ref items 1) y)))")
 
 (define (compiler-lower-fixed-array-return-source) : String
   "(define (main) : (Array i64 3)
   (array 1 2 3))")
 
 (define (compiler-lower-box-source) : String
-  "(define (main) : i64 (box-get (box 7)))")
+  "(define (main) : i64 (deref (box 7)))")
 
 (define (compiler-lower-box-get-source) : String
-  "(define (main [b : (Box i64)]) : i64 (box-get b))")
+  "(define (main [b : (Box i64)]) : i64 (deref b))")
 
 (define (compiler-lower-reference-source) : String
   "(define (take [r : (& n i64)]) : unit unit)
@@ -311,12 +309,12 @@
   "(defstruct Inner (value i64))
 (defstruct World (inner Inner))
 (define (set-inner [inner : (&mut inner Inner)]) : unit
-  (set! (struct-get inner value) 8))
+  (set! inner.value 8))
 (define (main) : i64
   (let [w : World (World (Inner 7))]
     (begin
       (set-inner (&mut w.inner))
-      (struct-get (struct-get w inner) value))))")
+      w.inner.value)))")
 
 (define (compiler-lower-reference-return-source) : String
   "(define (ref-return [n : i64]) : (& n i64) (& n))
@@ -340,7 +338,7 @@
 (define (compiler-lower-reference-place-source) : String
   "(defstruct Pair (left i64) (right i64))
 (define (borrow-pair [p : Pair]) : (& p i64)
-  (& (struct-get p left)))
+  (& p.left))
 (define (borrow-tuple [t : (Tuple i64 bool)]) : (& t i64)
   (& (tuple-ref t 0)))
 (define (borrow-array [items : (Array i64 2)]) : (& items i64)
@@ -360,9 +358,9 @@
   "(defstruct Inner (name String) (line i64))
 (defstruct Outer (prefix i64) (inner Inner))
 (define (take-inner [inner : (& inner Inner)]) : i64
-  (struct-get inner line))
+  inner.line)
 (define (main [outer : Outer]) : i64
-  (take-inner (& (struct-get outer inner))))")
+  (take-inner (& outer.inner)))")
 
 (define (compiler-lower-reference-struct-result-source) : String
   "(defstruct RefBox
@@ -375,9 +373,9 @@
 (define (ref-box-owned [text : (& text str)] [owned : String]) : (RefBox text)
   (RefBox text owned true))
 (define (ref-box-length [item : (RefBox text)]) : i64
-  (if (struct-get item is-owned)
-    (__tl_string_length (struct-get item owned))
-    (__tl_string_length (struct-get item borrowed))))
+  (if item.is-owned
+    (__tl_string_length item.owned)
+    (__tl_string_length item.borrowed)))
 (define (main [text : String] [owned : String]) : i64
   (let
     [borrowed : (RefBox text) (ref-box-borrowed (& text) owned)]
@@ -406,12 +404,12 @@
   (ReplaceResult text old replacement owned true))
 (define (replace-score [item : (ReplaceResult text old replacement)]) : i64
   (+
-    (__tl_string_length (struct-get item old-text))
+    (__tl_string_length item.old-text)
     (+
-      (__tl_string_length (struct-get item replacement-text))
-      (if (struct-get item is-owned)
-        (__tl_string_length (struct-get item owned))
-        (__tl_string_length (struct-get item borrowed))))))
+      (__tl_string_length item.replacement-text)
+      (if item.is-owned
+        (__tl_string_length item.owned)
+        (__tl_string_length item.borrowed)))))
 (define (main [text : String] [old : String] [replacement : String] [owned : String]) : i64
   (let
     [borrowed : (ReplaceResult text old replacement)
@@ -493,7 +491,7 @@
     [s : String \"hello\"]
     [a : (Array i64) (make-array i64 2)]
     (begin
-      (array-set! a 0 n)
+      (set! (array-ref a 0) n)
       ((lambda () : i64 (+ (__tl_string_length s) (array-ref a 0)))))))")
 
 (define (compiler-lower-capturing-lambda-aggregate-source) : String
@@ -509,7 +507,7 @@
        (+
          (tuple-ref t 0)
          (+
-           (struct-get p x)
+           p.x
            (+
              (array-ref a 1)
              (match s
@@ -611,7 +609,7 @@
   (match (compiler_lower.lower-compiler-source src)
     [(compiler_lower.ResultCompilerLower.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         want)]
     [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
 
@@ -636,7 +634,8 @@
       (match result
         [(compiler_lower.ResultCompilerLower.Err diag)
           (string.eq
-            (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+            (compiler_diagnostic.compiler-diagnostic-message
+              (__tl-box-place diag))
             "lower-compiler-source-with-path-mode: standalone resetting compiler entry cannot run inside an active compiler load session")]
         [(compiler_lower.ResultCompilerLower.Ok _ _) false]))))
 
@@ -850,7 +849,7 @@
   (match (compiler_lower.lower-compiler-source-with-mode src mode)
     [(compiler_lower.ResultCompilerLower.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         want)]
     [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
 
@@ -863,7 +862,8 @@
   (match (compiler_lower.lower-compiler-source-with-mode src mode)
     [(compiler_lower.ResultCompilerLower.Err diag-box)
       (let
-        [diag : compiler_diagnostic.CompilerDiagnostic (box-get diag-box)]
+        [diag : compiler_diagnostic.CompilerDiagnostic
+          (__tl-box-place diag-box)]
         (and
           (string.eq
             (compiler_diagnostic.compiler-diagnostic-message diag)
@@ -878,7 +878,7 @@
     (compiler_lower.CompilerLowerMode.InlineAggregates))
     [(compiler_lower.ResultCompilerLower.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         want)]
     [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
 
@@ -888,7 +888,7 @@
     (compiler_lower.CompilerLowerMode.WindowsScalar))
     [(compiler_lower.ResultCompilerLower.Err diag)
       (string.eq
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag))
         want)]
     [(compiler_lower.ResultCompilerLower.Ok _ _) false]))
 
@@ -976,7 +976,7 @@
 ;; Taking the array as a parameter avoids needing `make-array` here.
 (define (compiler-lower-array-access-source) : String
   "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
-(define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
+(define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (set! (array-ref a i) v))
 (define (main) : i64 0)")
 
 ;; Private `__tl_array-take!` moves an element only when its companion liveness
@@ -1001,7 +1001,7 @@
 ;; dynamic-array fat `{ptr, len}` layout.
 (define (compiler-lower-fixed-array-access-source) : String
   "(define (get [a : (Array i64 3)] [i : i64]) : i64 (array-ref a i))
-(define (put [a : (Array i64 3) (:consume)] [i : i64] [v : i64]) : unit (array-set! a i v))
+(define (put [a : (Array i64 3) (:consume)] [i : i64] [v : i64]) : unit (set! (array-ref a i) v))
 (define (main) : i64 0)")
 
 ;; A direct fixed-array borrow must be packed into the two-word Slice ABI at a
@@ -1053,7 +1053,7 @@
   "(define (len [a : (& a (Array i64))]) : i64 (array-length a))
 (define (get [a : (& a (Array i64))] [i : i64]) : i64 (array-ref a i))
 (define (put [a : (&mut a (Array i64))] [i : i64] [v : i64]) : unit
-  (array-set! a i v))
+  (set! (array-ref a i) v))
 (define (grow [a : (&mut a (Array i64))] [v : i64]) : unit
   (array-push! a v))
 (define (main) : i64 0)")
@@ -1061,7 +1061,7 @@
 (define (compiler-lower-mut-ref-by-value-writeback-source) : String
   "(defstruct Pair (x i64) (y i64))
 (define (set-pair-x! [p : (&mut p Pair)] [value : i64]) : unit
-  (set! (struct-get p x) value))
+  (set! p.x value))
 (define (touch-scalar! [n : (&mut n i64)]) : unit unit)
 (define (main) : i64
   (let
@@ -1092,13 +1092,13 @@
   (items (&mut bag (Array i64)))
   (index i64))
 (define (array-bag-handle [bag : (&mut bag ArrayBag)] [index : i64]) : (ArrayBagHandle bag)
-  (ArrayBagHandle (&mut (struct-get bag items)) index))
+  (ArrayBagHandle (&mut bag.items) index))
 (define (len [handle : (ArrayBagHandle bag)]) : i64
-  (array-length (struct-get handle items)))
+  (array-length handle.items))
 (define (get [handle : (ArrayBagHandle bag)]) : i64
-  (array-ref (struct-get handle items) (struct-get handle index)))
+  (array-ref handle.items handle.index))
 (define (put [handle : (ArrayBagHandle bag)] [v : i64]) : unit
-  (array-set! (struct-get handle items) (struct-get handle index) v))
+  (set! (array-ref handle.items handle.index) v))
 (define (main) : i64 0)")
 
 ;; `array-push!` lowers to checked arena reallocation, a runtime-length copy,
@@ -1121,8 +1121,8 @@
   (let
     [a : (Array i64) (make-array i64 n)]
     (begin
-      (array-set! a 0 40)
-      (array-set! a 1 2)
+      (set! (array-ref a 0) 40)
+      (set! (array-ref a 1) 2)
       (+ (array-length a) (+ (array-ref a 0) (array-ref a 1))))))")
 
 (define (compiler-lower-make-array-init-source) : String
@@ -1489,10 +1489,10 @@
     [pair : Pair (Pair 3 4)]
     [wrap : Wrap (Wrap (Tiny (cast 7 : i32) (cast 8 : i32)))]
     [whole : (MutPtr Pair) (unsafe (ptr-addr-of pair))]
-    [tiny-field : (MutPtr i32) (unsafe (ptr-addr-of (struct-get tiny b)))]
-    [pair-field : (MutPtr i64) (unsafe (ptr-addr-of (struct-get pair y)))]
+    [tiny-field : (MutPtr i32) (unsafe (ptr-addr-of tiny.b))]
+    [pair-field : (MutPtr i64) (unsafe (ptr-addr-of pair.y))]
     [nested-field : (MutPtr i32)
-      (unsafe (ptr-addr-of (struct-get (struct-get wrap tiny) b)))]
+      (unsafe (ptr-addr-of wrap.tiny.b))]
     (unsafe
       (ptr-write! tiny-field (cast 5 : i32))
       (ptr-write! pair-field 6)
@@ -1537,7 +1537,7 @@
 (define (make-point [x : i64] [y : i64]) : Point
   (Point x y))
 (define (get-y [p : Point]) : i64
-  (struct-get p y))
+  p.y)
 (define (make-none) : Shape
   Nothing)
 (define (make-none-call) : Shape
@@ -1569,8 +1569,8 @@
     [boxed : (Box i64) (init)]
     [called : i64 (take (init))]
     (begin
-      (array-set! fixed 0 (init))
-      (+ n (+ called (+ (struct-get point x) (+ (struct-get constructed x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (box-get boxed))))))))))")
+      (set! (array-ref fixed 0) (init))
+      (+ n (+ called (+ point.x (+ constructed.x (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (deref boxed))))))))))")
 
 ;; Tuple construction + ref lowering: `(tuple true 42)` reserves
 ;; struct-shaped aggregate storage and stores each element at its field offset;
@@ -1648,7 +1648,7 @@
 (define (main [s : String]) : i64
   (let
     [item : NestedClone (make-nested s)]
-    (__tl_string_length (struct-get (struct-get item used) name))))")
+    (__tl_string_length item.used.name)))")
 
 ;; Eighteen independent aggregate roots force stdlib.clone's helper handoff
 ;; across the fixed 16-root chunk boundary.  Source-order field discovery
@@ -1915,10 +1915,10 @@
   (let
     [p : Packet (Packet 7 (cast 2 : u8) 40)]
     (+
-      (struct-get p tag)
+      p.tag
       (+
-        (cast (struct-get p small) : i64)
-        (struct-get p count)))))")
+        (cast p.small : i64)
+        p.count))))")
 
 (define (compiler-lower-inline-enum-source) : String
   "(defenum Choice (Empty) (Wide u8 i64))
@@ -1937,8 +1937,8 @@
     (match tree
       [(Leaf value) value]
       [(Branch left right)
-        (+ (match (box-get left) [(Leaf value) value] [_ 0])
-           (match (box-get right) [(Leaf value) value] [_ 0]))])))")
+        (+ (match (deref left) [(Leaf value) value] [_ 0])
+           (match (deref right) [(Leaf value) value] [_ 0]))])))")
 
 (define (compiler-lower-inline-imported-enum-payload-source) : String
   "(module stdlib.maybe_string)
@@ -1964,13 +1964,13 @@
   "(defstruct Pair (a i64) (b i64))
 (define (id-pair [p : Pair]) : Pair p)
 (define (main) : i64
-  (struct-get (id-pair (Pair 20 22)) b))")
+  (__tl-project-field (id-pair (Pair 20 22)) b))")
 
 (define (compiler-lower-inline-mixed16-copy-source) : String
   "(defstruct Mixed16 (tag u32) (value f32) (tail i64))
 (define (id-mixed [p : Mixed16]) : Mixed16 p)
 (define (main) : i64
-  (struct-get (id-mixed (Mixed16 (cast 1 : u32) 2.0 40)) tail))")
+  (__tl-project-field (id-mixed (Mixed16 (cast 1 : u32) 2.0 40)) tail))")
 
 (define (compiler-lower-inline-sret-return-copy-source) : String
   "(defstruct Return216
@@ -1981,19 +1981,17 @@
   (f24 i64) (f25 i64) (f26 i64))
 (define (return216-id [value : Return216]) : Return216 value)
 (define (main) : i64
-  (struct-get
-    (return216-id
+  (__tl-project-field (return216-id
       (Return216
         0 1 2 3 4 5 6 7 8 9 10 11 12 13
-        14 15 16 17 18 19 20 21 22 23 24 25 42))
-    f26))")
+        14 15 16 17 18 19 20 21 22 23 24 25 42)) f26))")
 
 (define (compiler-lower-inline-sret-struct-constructor-source) : String
   "(defstruct Wide (a i64) (b i64) (c i64))
 (define (make-wide [x : i64]) : Wide
   (Wide x (+ x 1) (+ x 2)))
 (define (main) : i64
-  (struct-get (make-wide 40) c))")
+  (__tl-project-field (make-wide 40) c))")
 
 (define (compiler-lower-inline-sret-enum-constructor-source) : String
   "(defenum WideChoice (Some i64 i64 i64) (None))
@@ -2012,7 +2010,7 @@
     [(Make n) (Wide n (+ n 1) (+ n 2))]
     [Zero (Wide 0 1 2)]))
 (define (main) : i64
-  (struct-get (from-choice (Make 40)) c))")
+  (__tl-project-field (from-choice (Make 40)) c))")
 
 (define (compiler-lower-inline-sret-enum-match-generic-source) : String
   "(defstruct Wide (a i64) (b i64) (c i64))
@@ -2022,7 +2020,7 @@
     [(Make n) (Wide n (+ n 1) (+ n 2))]
     [(Wrap w) w]))
 (define (main) : i64
-  (struct-get (from-choice (Make 40)) c))")
+  (__tl-project-field (from-choice (Make 40)) c))")
 
 ;; Internal structural ABI smoke: tuple register groups and fixed-array memory
 ;; aggregates must cross ordinary (non-extern) calls using the classifier's
@@ -2137,7 +2135,7 @@
         (let
           [p : Pair (Pair i (+ i 1))]
           (begin
-            (set! sum (+ sum (struct-get p y)))
+            (set! sum (+ sum p.y))
             (set! i (+ i 1)))))
       sum)))")
 
@@ -2146,16 +2144,16 @@
 (defstruct Holder (wide Wide) (tail i64))
 (define (direct-field [h : Holder (:consume)]) : i64
   (begin
-    (set! (struct-get h wide) (Wide 1 2 3))
+    (set! h.wide (Wide 1 2 3))
     0))
 (define (direct-init [h : Holder (:consume)]) : i64
   (begin
-    (set! (struct-get h wide) (init : Wide))
+    (set! h.wide (init : Wide))
     0))
 (define (direct-dyn-array [items : (Array Wide)] [i : i64]) : unit
-  (array-set! items i (Wide 4 5 6)))
+  (set! (array-ref items i) (Wide 4 5 6)))
 (define (direct-fixed-array [items : (Array Wide 2) (:consume)] [i : i64]) : unit
-  (array-set! items i (Wide 7 8 9)))
+  (set! (array-ref items i) (Wide 7 8 9)))
 (define (direct-fixed-literal) : (Array Wide 2)
   (array (Wide 10 11 12) (Wide 13 14 15)))")
 
@@ -2512,7 +2510,7 @@
 (define (make-point [x : i64] [y : i64]) : Point
   (Point x y))
 (define (get-y [p : Point]) : i64
-  (struct-get p y))
+  p.y)
 (define (make-pair [x : i64]) : Shape
   (Pair (Point x (+ x 1))))
 (define (main) : i64
@@ -2533,8 +2531,8 @@
     [inner : Inner (Inner (cast 1 : u8) (cast 41 : i32))]
     [outer : Outer (Outer (cast 2 : u8) inner (cast 3 : u16))]
     (+
-      (cast (struct-get (struct-get outer inner) b) : i64)
-      (cast (struct-get outer tail) : i64))))")
+      (cast outer.inner.b : i64)
+      (cast outer.tail : i64))))")
 
 (define (compiler-lower-enum-match-source) : String
   "(defenum Maybe (None) (Some i64) (Pair i64 i64))
@@ -2666,18 +2664,18 @@
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) SlotLookup.Missing)
 (define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotLookup.Found value))
 (define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
-  (match (& (array-ref (struct-get bag slots) 0))
+  (match (& (array-ref bag.slots 0))
     [(Occupied v) (let [same : (& bag i64) v] (slot-found same))]
     [Empty (slot-missing bag)]))
 (define (score [bag : (& bag Bag)]) : i64
-  (match (& (array-ref (struct-get bag slots) 0))
+  (match (& (array-ref bag.slots 0))
     [(Occupied v) (take v)]
     [Empty 0]))
 (define (main) : i64
   (let
     [slots : (Array Slot) (make-array Slot 1)]
     (begin
-      (array-set! slots 0 (Occupied 9))
+      (set! (array-ref slots 0) (Occupied 9))
       (let [bag : Bag (Bag slots)]
         (+ (score (& bag))
           (match (lookup (& bag))
@@ -2779,7 +2777,7 @@
   (fd i64 (:cleanup close-fd)))
 (define (main [use-ok : bool]) : result_i64_string.Result
   (with ([h (FileHandle 10) cleanup-file-handle])
-    (result_i64_string.Ok (try (use-fd use-ok (struct-get h fd))))))")
+    (result_i64_string.Ok (try (use-fd use-ok h.fd)))))")
 
 (define (compiler-lower-cleanup-struct-nested-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -2983,7 +2981,7 @@
         0)]
     [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [call-name (struct-get (box-get payload-box) name)]
+        [call-name (__tl-project-field (__tl-box-place payload-box) name)]
         (if (string.eq
           (compiler_ir_types.compiler-ir-symbol-text call-name)
           name)
@@ -3154,7 +3152,7 @@
   (match instr
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [op (struct-get (box-get payload-box) op)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
         (if (lower-test-binop-same? op want)
           1
           0))]
@@ -3205,9 +3203,8 @@
 (define (lower-test-instr-seq-spmd-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3228,16 +3225,15 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-spmd-call-count instrs)
-            (lower-test-blocks-spmd-call-count (box-get rest)))])]
+            (lower-test-blocks-spmd-call-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-block-seq-spmd-call-count seq)]))
 
 (define (lower-test-block-seq-spmd-call-count
   [blocks : compiler_ir_types.CompilerIrBlockSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
-      (struct-get blocks slots)]
-    [count : i64 (struct-get blocks len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrBlock) blocks.slots]
+    [count : i64 blocks.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3259,7 +3255,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-spmd-call-count blocks)
-            (lower-test-function-spmd-call-count (box-get rest) name))])]
+            (lower-test-function-spmd-call-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-seq-spmd-call-count seq name)]))
 
@@ -3267,9 +3263,8 @@
   [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrFunction)
-      (struct-get funcs slots)]
-    [count : i64 (struct-get funcs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrFunction) funcs.slots]
+    [count : i64 funcs.len]
     [index : i64 0]
     [result : i64 (- 0 1)]
     (begin
@@ -3305,8 +3300,8 @@
         0)]
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [actual-lanes (struct-get (box-get payload-box) lanes)]
-        [actual-ty (struct-get (box-get payload-box) ty)]
+        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
           1
           0))]
@@ -3321,36 +3316,36 @@
         0)]
     [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
       (let
-        [actual-lanes (struct-get (box-get payload-box) lanes)]
-        [actual-ty (struct-get (box-get payload-box) ty)]
+        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
           1
           0))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [actual-lanes (struct-get (box-get payload-box) lanes)]
-        [actual-ty (struct-get (box-get payload-box) ty)]
+        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
           1
           0))]
     [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [actual-lanes (struct-get (box-get payload-box) lanes)]
-        [actual-ty (struct-get (box-get payload-box) ty)]
+        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
           1
           0))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [actual-lanes (struct-get (box-get payload-box) lanes)]
-        [actual-ty (struct-get (box-get payload-box) ty)]
+        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
           1
           0))]
     [(compiler_ir_types.CompilerIrInstr.Select payload-box)
       (let
-        [actual-lanes (struct-get (box-get payload-box) lanes)]
-        [actual-ty (struct-get (box-get payload-box) ty)]
+        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
           1
           0))]
@@ -3525,9 +3520,8 @@
 (define (lower-test-instr-seq-phi-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3542,9 +3536,8 @@
 (define (lower-test-instr-seq-load-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3559,9 +3552,8 @@
 (define (lower-test-instr-seq-branch-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3576,9 +3568,8 @@
 (define (lower-test-instr-seq-total-enum-branch-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3595,9 +3586,8 @@
 (define (lower-test-instr-seq-bounds-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3612,9 +3602,8 @@
 (define (lower-test-instr-seq-return-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3629,9 +3618,8 @@
 (define (lower-test-instr-seq-pack-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3647,9 +3635,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [pools : compiler_ast_types.AstNodePoolContext]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3667,9 +3654,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3686,9 +3672,8 @@
   [first : String]
   [second : String]) : bool
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [seen-first : bool false]
     [done : bool false]
@@ -3711,9 +3696,8 @@
 (define (lower-test-instr-seq-cpuid-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3728,9 +3712,8 @@
 (define (lower-test-instr-seq-xgetbv-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3745,9 +3728,8 @@
 (define (lower-test-instr-seq-indirect-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3764,9 +3746,8 @@
 (define (lower-test-instr-seq-indirect-tail-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3784,9 +3765,8 @@
 (define (lower-test-instr-seq-indirect-c-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3803,9 +3783,8 @@
 (define (lower-test-instr-seq-indirect-unit-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3823,9 +3802,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [function-name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3845,9 +3823,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [function-name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3868,9 +3845,8 @@
   [call-name : String]
   [function-name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3891,9 +3867,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3910,9 +3885,8 @@
 (define (lower-test-instr-seq-store-ptr-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3927,9 +3901,8 @@
 (define (lower-test-instr-seq-copy-bytes-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3944,9 +3917,8 @@
 (define (lower-test-instr-seq-alloc-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3961,9 +3933,8 @@
 (define (lower-test-instr-seq-addr-of-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3978,9 +3949,8 @@
 (define (lower-test-instr-seq-vector-load-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3995,9 +3965,8 @@
 (define (lower-test-instr-seq-vector-binop-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4015,9 +3984,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : compiler_ir_types.CompilerIrBinOp]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4036,9 +4004,8 @@
 (define (lower-test-instr-seq-vector-reduce-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4055,9 +4022,8 @@
 (define (lower-test-instr-seq-vector-store-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4074,9 +4040,8 @@
 (define (lower-test-instr-seq-predicated-load-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4093,9 +4058,8 @@
 (define (lower-test-instr-seq-predicated-store-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4112,9 +4076,8 @@
 (define (lower-test-instr-seq-select-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4129,9 +4092,8 @@
 (define (lower-test-instr-seq-tail-mask-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4148,9 +4110,8 @@
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4170,9 +4131,8 @@
 (define (lower-test-instr-seq-u64-mov-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4188,9 +4148,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [op : compiler_ir_types.CompilerIrBinOp]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4206,9 +4165,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [op : compiler_ir_types.CompilerIrBinOp]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4225,9 +4183,8 @@
 (define (lower-test-instr-seq-cast-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4242,9 +4199,8 @@
 (define (lower-test-instr-seq-bitcast-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4260,9 +4216,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4285,7 +4240,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-phi-count instrs)
-            (lower-test-blocks-phi-count (box-get rest)))])]
+            (lower-test-blocks-phi-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-phi-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4299,7 +4254,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-load-count instrs)
-            (lower-test-blocks-load-count (box-get rest)))])]
+            (lower-test-blocks-load-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-load-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4313,7 +4268,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-branch-count instrs)
-            (lower-test-blocks-branch-count (box-get rest)))])]
+            (lower-test-blocks-branch-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-branch-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4327,7 +4282,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-total-enum-branch-count instrs)
-            (lower-test-blocks-total-enum-branch-count (box-get rest)))])]
+            (lower-test-blocks-total-enum-branch-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-total-enum-branch-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4341,7 +4296,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-bounds-count instrs)
-            (lower-test-blocks-bounds-count (box-get rest)))])]
+            (lower-test-blocks-bounds-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-bounds-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4355,7 +4310,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-return-count instrs)
-            (lower-test-blocks-return-count (box-get rest)))])]
+            (lower-test-blocks-return-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-return-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4369,7 +4324,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-pack-count instrs)
-            (lower-test-blocks-pack-count (box-get rest)))])]
+            (lower-test-blocks-pack-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-pack-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4384,7 +4339,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-pack-shape-count instrs pools)
-            (lower-test-blocks-pack-shape-count (box-get rest) pools))])]
+            (lower-test-blocks-pack-shape-count (__tl-box-place rest) pools))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-pack-shape-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4400,7 +4355,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-call-count instrs name)
-            (lower-test-blocks-call-count (box-get rest) name))])]
+            (lower-test-blocks-call-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-call-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4417,7 +4372,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (if (lower-test-instr-seq-call-before? instrs first second)
             true
-            (lower-test-blocks-call-before? (box-get rest) first second))])]
+            (lower-test-blocks-call-before? (__tl-box-place rest) first second))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-call-before?
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4433,7 +4388,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-cpuid-count instrs)
-            (lower-test-blocks-cpuid-count (box-get rest)))])]
+            (lower-test-blocks-cpuid-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-cpuid-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4447,7 +4402,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-xgetbv-count instrs)
-            (lower-test-blocks-xgetbv-count (box-get rest)))])]
+            (lower-test-blocks-xgetbv-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-xgetbv-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4461,7 +4416,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-indirect-call-count instrs)
-            (lower-test-blocks-indirect-call-count (box-get rest)))])]
+            (lower-test-blocks-indirect-call-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-indirect-call-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4475,7 +4430,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-indirect-tail-call-count instrs)
-            (lower-test-blocks-indirect-tail-call-count (box-get rest)))])]
+            (lower-test-blocks-indirect-tail-call-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-indirect-tail-call-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4489,7 +4444,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-indirect-c-call-count instrs)
-            (lower-test-blocks-indirect-c-call-count (box-get rest)))])]
+            (lower-test-blocks-indirect-c-call-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-indirect-c-call-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4503,7 +4458,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-indirect-unit-count instrs)
-            (lower-test-blocks-indirect-unit-count (box-get rest)))])]
+            (lower-test-blocks-indirect-unit-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-indirect-unit-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4519,7 +4474,7 @@
           (+
             (lower-test-instr-seq-return-function-count instrs function-name)
             (lower-test-blocks-return-function-count
-              (box-get rest)
+              (__tl-box-place rest)
               function-name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-return-function-count
@@ -4539,7 +4494,7 @@
               instrs
               function-name)
             (lower-test-blocks-indirect-callee-function-count
-              (box-get rest)
+              (__tl-box-place rest)
               function-name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-indirect-callee-function-count
@@ -4561,7 +4516,7 @@
               call-name
               function-name)
             (lower-test-blocks-call-arg-function-count
-              (box-get rest)
+              (__tl-box-place rest)
               call-name
               function-name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -4580,7 +4535,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-tail-call-count instrs name)
-            (lower-test-blocks-tail-call-count (box-get rest) name))])]
+            (lower-test-blocks-tail-call-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-tail-call-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4595,7 +4550,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-store-ptr-count instrs)
-            (lower-test-blocks-store-ptr-count (box-get rest)))])]
+            (lower-test-blocks-store-ptr-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-store-ptr-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4609,7 +4564,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-copy-bytes-count instrs)
-            (lower-test-blocks-copy-bytes-count (box-get rest)))])]
+            (lower-test-blocks-copy-bytes-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-copy-bytes-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4623,7 +4578,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-alloc-count instrs)
-            (lower-test-blocks-alloc-count (box-get rest)))])]
+            (lower-test-blocks-alloc-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-alloc-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4637,7 +4592,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-addr-of-count instrs)
-            (lower-test-blocks-addr-of-count (box-get rest)))])]
+            (lower-test-blocks-addr-of-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-addr-of-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4651,7 +4606,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-load-count instrs)
-            (lower-test-blocks-vector-load-count (box-get rest)))])]
+            (lower-test-blocks-vector-load-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-load-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4665,7 +4620,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-binop-count instrs)
-            (lower-test-blocks-vector-binop-count (box-get rest)))])]
+            (lower-test-blocks-vector-binop-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-binop-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4680,7 +4635,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-binop-op-count instrs want)
-            (lower-test-blocks-vector-binop-op-count (box-get rest) want))])]
+            (lower-test-blocks-vector-binop-op-count (__tl-box-place rest) want))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-binop-op-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4695,7 +4650,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-reduce-count instrs)
-            (lower-test-blocks-vector-reduce-count (box-get rest)))])]
+            (lower-test-blocks-vector-reduce-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-reduce-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4709,7 +4664,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-store-count instrs)
-            (lower-test-blocks-vector-store-count (box-get rest)))])]
+            (lower-test-blocks-vector-store-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-store-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4723,7 +4678,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-predicated-load-count instrs)
-            (lower-test-blocks-predicated-load-count (box-get rest)))])]
+            (lower-test-blocks-predicated-load-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-predicated-load-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4737,7 +4692,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-predicated-store-count instrs)
-            (lower-test-blocks-predicated-store-count (box-get rest)))])]
+            (lower-test-blocks-predicated-store-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-predicated-store-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4751,7 +4706,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-select-count instrs)
-            (lower-test-blocks-select-count (box-get rest)))])]
+            (lower-test-blocks-select-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-select-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4765,7 +4720,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-tail-mask-count instrs)
-            (lower-test-blocks-tail-mask-count (box-get rest)))])]
+            (lower-test-blocks-tail-mask-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-tail-mask-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4781,7 +4736,10 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-shape-count instrs lanes elem-ty)
-            (lower-test-blocks-vector-shape-count (box-get rest) lanes elem-ty))])]
+            (lower-test-blocks-vector-shape-count
+              (__tl-box-place rest)
+              lanes
+              elem-ty))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-shape-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4797,7 +4755,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-u64-mov-count instrs)
-            (lower-test-blocks-u64-mov-count (box-get rest)))])]
+            (lower-test-blocks-u64-mov-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-u64-mov-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4812,7 +4770,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-binop-op-count instrs op)
-            (lower-test-blocks-binop-op-count (box-get rest) op))])]
+            (lower-test-blocks-binop-op-count (__tl-box-place rest) op))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-binop-op-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4828,7 +4786,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-i64-binop-op-count instrs op)
-            (lower-test-blocks-i64-binop-op-count (box-get rest) op))])]
+            (lower-test-blocks-i64-binop-op-count (__tl-box-place rest) op))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-i64-binop-op-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4843,7 +4801,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-cast-count instrs)
-            (lower-test-blocks-cast-count (box-get rest)))])]
+            (lower-test-blocks-cast-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-cast-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4857,7 +4815,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-bitcast-count instrs)
-            (lower-test-blocks-bitcast-count (box-get rest)))])]
+            (lower-test-blocks-bitcast-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-bitcast-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4872,7 +4830,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-store-global-count instrs name)
-            (lower-test-blocks-store-global-count (box-get rest) name))])]
+            (lower-test-blocks-store-global-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-store-global-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4890,7 +4848,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ _)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             true
-            (lower-test-function-defined? (box-get rest) name))])]
+            (lower-test-function-defined? (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-defined?
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -4906,7 +4864,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname params _ _ _)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (compiler_ir_types.compiler-ir-param-list-count params)
-            (lower-test-function-param-count (box-get rest) name))])]
+            (lower-test-function-param-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-param-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -4925,7 +4883,7 @@
       (if (= index 0)
         (match param
           [(compiler_ir_types.CompilerIrParam.Param name _ _) name])
-        (lower-test-param-name-at (box-get rest) (- index 1)))]))
+        (lower-test-param-name-at (__tl-box-place rest) (- index 1)))]))
 
 (define (lower-test-function-param-name
   [funcs : compiler_ir_types.CompilerIrFunctionList]
@@ -4938,7 +4896,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname params _ _ _)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-param-name-at params index)
-            (lower-test-function-param-name (box-get rest) name index))])]
+            (lower-test-function-param-name (__tl-box-place rest) name index))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-param-name
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -4955,7 +4913,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-phi-count blocks)
-            (lower-test-function-phi-count (box-get rest) name))])]
+            (lower-test-function-phi-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-phi-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -4971,7 +4929,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-load-count blocks)
-            (lower-test-function-load-count (box-get rest) name))])]
+            (lower-test-function-load-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-load-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -4987,7 +4945,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-branch-count blocks)
-            (lower-test-function-branch-count (box-get rest) name))])]
+            (lower-test-function-branch-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-branch-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5003,7 +4961,9 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-total-enum-branch-count blocks)
-            (lower-test-function-total-enum-branch-count (box-get rest) name))])]
+            (lower-test-function-total-enum-branch-count
+              (__tl-box-place rest)
+              name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-total-enum-branch-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5019,7 +4979,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-bounds-count blocks)
-            (lower-test-function-bounds-count (box-get rest) name))])]
+            (lower-test-function-bounds-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-bounds-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5035,7 +4995,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-return-count blocks)
-            (lower-test-function-return-count (box-get rest) name))])]
+            (lower-test-function-return-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-return-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5051,7 +5011,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-pack-count blocks)
-            (lower-test-function-pack-count (box-get rest) name))])]
+            (lower-test-function-pack-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-pack-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5068,7 +5028,10 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-pack-shape-count blocks pools)
-            (lower-test-function-pack-shape-count (box-get rest) name pools))])]
+            (lower-test-function-pack-shape-count
+              (__tl-box-place rest)
+              name
+              pools))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-pack-shape-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5085,7 +5048,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
           (+
             (lower-test-blocks-call-count blocks name)
-            (lower-test-functions-call-count (box-get rest) name))])]
+            (lower-test-functions-call-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-functions-call-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5100,7 +5063,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
           (+
             (lower-test-blocks-branch-count blocks)
-            (lower-test-functions-branch-count (box-get rest)))])]
+            (lower-test-functions-branch-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-functions-branch-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq))]))
@@ -5114,7 +5077,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
           (+
             (lower-test-blocks-return-count blocks)
-            (lower-test-functions-return-count (box-get rest)))])]
+            (lower-test-functions-return-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-functions-return-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq))]))
@@ -5129,7 +5092,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
           (+
             (lower-test-blocks-tail-call-count blocks name)
-            (lower-test-functions-tail-call-count (box-get rest) name))])]
+            (lower-test-functions-tail-call-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-functions-tail-call-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5151,7 +5114,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
           (+
             (lower-test-blocks-cpuid-count blocks)
-            (lower-test-functions-cpuid-count (box-get rest)))])]
+            (lower-test-functions-cpuid-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-functions-cpuid-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq))]))
@@ -5165,7 +5128,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
           (+
             (lower-test-blocks-xgetbv-count blocks)
-            (lower-test-functions-xgetbv-count (box-get rest)))])]
+            (lower-test-functions-xgetbv-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-functions-xgetbv-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq))]))
@@ -5181,7 +5144,10 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-call-count blocks call-name)
-            (lower-test-function-call-count (box-get rest) name call-name))])]
+            (lower-test-function-call-count
+              (__tl-box-place rest)
+              name
+              call-name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-call-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5200,7 +5166,11 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-call-before? blocks first second)
-            (lower-test-function-call-before? (box-get rest) name first second))])]
+            (lower-test-function-call-before?
+              (__tl-box-place rest)
+              name
+              first
+              second))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-call-before?
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5218,7 +5188,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-indirect-call-count blocks)
-            (lower-test-function-indirect-call-count (box-get rest) name))])]
+            (lower-test-function-indirect-call-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-indirect-call-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5234,7 +5204,9 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-indirect-tail-call-count blocks)
-            (lower-test-function-indirect-tail-call-count (box-get rest) name))])]
+            (lower-test-function-indirect-tail-call-count
+              (__tl-box-place rest)
+              name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-indirect-tail-call-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5250,7 +5222,9 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-indirect-c-call-count blocks)
-            (lower-test-function-indirect-c-call-count (box-get rest) name))])]
+            (lower-test-function-indirect-c-call-count
+              (__tl-box-place rest)
+              name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-indirect-c-call-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5266,7 +5240,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-indirect-unit-count blocks)
-            (lower-test-function-indirect-unit-count (box-get rest) name))])]
+            (lower-test-function-indirect-unit-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-indirect-unit-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5284,7 +5258,7 @@
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-return-function-count blocks function-name)
             (lower-test-function-return-function-count
-              (box-get rest)
+              (__tl-box-place rest)
               name
               function-name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
@@ -5307,7 +5281,7 @@
               blocks
               function-name)
             (lower-test-function-indirect-callee-function-count
-              (box-get rest)
+              (__tl-box-place rest)
               name
               function-name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
@@ -5332,7 +5306,7 @@
               call-name
               function-name)
             (lower-test-function-call-arg-function-count
-              (box-get rest)
+              (__tl-box-place rest)
               name
               call-name
               function-name))])]
@@ -5354,7 +5328,10 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-tail-call-count blocks call-name)
-            (lower-test-function-tail-call-count (box-get rest) name call-name))])]
+            (lower-test-function-tail-call-count
+              (__tl-box-place rest)
+              name
+              call-name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-tail-call-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5379,7 +5356,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-store-ptr-count blocks)
-            (lower-test-function-store-ptr-count (box-get rest) name))])]
+            (lower-test-function-store-ptr-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-store-ptr-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5395,7 +5372,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-copy-bytes-count blocks)
-            (lower-test-function-copy-bytes-count (box-get rest) name))])]
+            (lower-test-function-copy-bytes-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-copy-bytes-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5411,7 +5388,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-alloc-count blocks)
-            (lower-test-function-alloc-count (box-get rest) name))])]
+            (lower-test-function-alloc-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-alloc-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5427,7 +5404,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-addr-of-count blocks)
-            (lower-test-function-addr-of-count (box-get rest) name))])]
+            (lower-test-function-addr-of-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-addr-of-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5443,7 +5420,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-vector-load-count blocks)
-            (lower-test-function-vector-load-count (box-get rest) name))])]
+            (lower-test-function-vector-load-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-vector-load-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5459,7 +5436,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-vector-binop-count blocks)
-            (lower-test-function-vector-binop-count (box-get rest) name))])]
+            (lower-test-function-vector-binop-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-vector-binop-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5476,7 +5453,10 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-vector-binop-op-count blocks want)
-            (lower-test-function-vector-binop-op-count (box-get rest) name want))])]
+            (lower-test-function-vector-binop-op-count
+              (__tl-box-place rest)
+              name
+              want))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-vector-binop-op-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5493,7 +5473,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-vector-reduce-count blocks)
-            (lower-test-function-vector-reduce-count (box-get rest) name))])]
+            (lower-test-function-vector-reduce-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-vector-reduce-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5509,7 +5489,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-vector-store-count blocks)
-            (lower-test-function-vector-store-count (box-get rest) name))])]
+            (lower-test-function-vector-store-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-vector-store-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5525,7 +5505,9 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-predicated-load-count blocks)
-            (lower-test-function-predicated-load-count (box-get rest) name))])]
+            (lower-test-function-predicated-load-count
+              (__tl-box-place rest)
+              name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-predicated-load-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5541,7 +5523,9 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-predicated-store-count blocks)
-            (lower-test-function-predicated-store-count (box-get rest) name))])]
+            (lower-test-function-predicated-store-count
+              (__tl-box-place rest)
+              name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-predicated-store-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5557,7 +5541,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-select-count blocks)
-            (lower-test-function-select-count (box-get rest) name))])]
+            (lower-test-function-select-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-select-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5573,7 +5557,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-tail-mask-count blocks)
-            (lower-test-function-tail-mask-count (box-get rest) name))])]
+            (lower-test-function-tail-mask-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-tail-mask-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5592,7 +5576,7 @@
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-vector-shape-count blocks lanes elem-ty)
             (lower-test-function-vector-shape-count
-              (box-get rest)
+              (__tl-box-place rest)
               name
               lanes
               elem-ty))])]
@@ -5613,7 +5597,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-u64-mov-count blocks)
-            (lower-test-function-u64-mov-count (box-get rest) name))])]
+            (lower-test-function-u64-mov-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-u64-mov-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5630,7 +5614,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-binop-op-count blocks op)
-            (lower-test-function-binop-op-count (box-get rest) name op))])]
+            (lower-test-function-binop-op-count (__tl-box-place rest) name op))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-binop-op-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5648,7 +5632,10 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-i64-binop-op-count blocks op)
-            (lower-test-function-i64-binop-op-count (box-get rest) name op))])]
+            (lower-test-function-i64-binop-op-count
+              (__tl-box-place rest)
+              name
+              op))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-i64-binop-op-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5665,7 +5652,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-cast-count blocks)
-            (lower-test-function-cast-count (box-get rest) name))])]
+            (lower-test-function-cast-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-cast-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5681,7 +5668,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-bitcast-count blocks)
-            (lower-test-function-bitcast-count (box-get rest) name))])]
+            (lower-test-function-bitcast-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-bitcast-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -5696,7 +5683,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
           (+
             (lower-test-blocks-bitcast-count blocks)
-            (lower-test-functions-bitcast-count (box-get rest)))])]
+            (lower-test-functions-bitcast-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-functions-bitcast-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq))]))
@@ -5713,7 +5700,7 @@
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-store-global-count blocks global-name)
             (lower-test-function-store-global-count
-              (box-get rest)
+              (__tl-box-place rest)
               name
               global-name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
@@ -5734,7 +5721,7 @@
             (compiler_ir_types.compiler-ir-symbol-text global-name)
             name)
             true
-            (lower-test-global-list-has-name? (box-get rest) name))])]
+            (lower-test-global-list-has-name? (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrGlobalList.Array seq)
       (lower-test-global-list-has-name?
         (compiler_ir_types.compiler-ir-global-seq-to-list seq)
@@ -5918,7 +5905,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             [args : compiler_ast_types.AstExprList
               (compiler_ast_types.ast-expr-list-new)]
             (begin
@@ -5927,9 +5914,8 @@
                 (compiler_ast_types.ast-node-push
                   (compiler_ast_types.AstExpr.Literal
                     (compiler_ast_types.ast-lit-generated-string "same"))))
-              (array-set!
-                (struct-get decls slots)
-                (struct-get decls offset)
+              (set!
+                (array-ref decls.slots decls.offset)
                 (compiler_ast_types.ast-decl-comptime-decl-with-meta
                   (compiler_ast_types.AstGeneratedDeclMeta.Some
                     "point-family"
@@ -5940,9 +5926,8 @@
                     (& decls)
                     0
                     (compiler_ast_types.ast-decl-fallback))))
-              (array-set!
-                (struct-get decls slots)
-                (+ (struct-get decls offset) 1)
+              (set!
+                (array-ref decls.slots (+ decls.offset 1))
                 (compiler_ast_types.ast-decl-comptime-decl-with-meta
                   (compiler_ast_types.AstGeneratedDeclMeta.Some
                     "point-family"
@@ -6091,7 +6076,7 @@
     (d.get)
     (+
       (let [p : d.Point (d.Point 7)]
-        (struct-get p x))
+        p.x)
       (match (d.Maybe.Some 3)
         [(d.Maybe.Some v) v]
         [d.Maybe.None 0]))))")
@@ -6132,7 +6117,7 @@
 (import pkg.string)
 (defstruct ArgsOptionSpec (long String))
 (define (args-option-spec-long [spec : ArgsOptionSpec]) : String
-  (struct-get spec long))
+  spec.long)
 (define (args-option-spec-matches-long? [spec : ArgsOptionSpec] [name : String]) : bool
   (if (not (string.eq (args-option-spec-long spec) \"\"))
     (string.eq (args-option-spec-long spec) name)
@@ -6158,7 +6143,7 @@
   (let [c : data.Candidate
     (data.cand-nth
       (make-array (data.Candidate 7)))]
-    (struct-get c number)))")
+    c.number))")
 
 (define (compiler-lower-module-function-returning-struct-ok?) : bool
   (match (compiler_lower.lower-compiler-source
@@ -6218,7 +6203,7 @@
     (define (make [value : i64]) : Box1
       (Box1 value))
     (define (double [b : Box1]) : i64
-      (* (struct-get b value) 2))
+      (* b.value 2))
     (define (bumped [b : Box1]) : i64
       (+ (double b) 1))))
 (import (int-box) as ib)
@@ -6875,12 +6860,12 @@
     (step (- n 1) (+ acc 1))))
 (define (main) : i64
   (let [value : Big (step 3 39)]
-    (struct-get value c)))")
+    value.c))")
 
 (define (compiler-lower-tail-aggregate-param-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (finish [x : Big] [n : i64]) : i64
-  (+ (struct-get x a) n))
+  (+ x.a n))
 (define (step [x : Big] [n : i64]) : i64
   (if (= n 0)
     (finish x n)
@@ -6891,7 +6876,7 @@
 (define (compiler-lower-tail-aggregate-local-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (finish [x : Big] [n : i64]) : i64
-  (+ (struct-get x a) n))
+  (+ x.a n))
 (define (step [n : i64]) : i64
   (finish (Big n (+ n 1) (+ n 2)) n))
 (define (main) : i64 (step 39))")
@@ -6899,7 +6884,7 @@
 (define (compiler-lower-tail-aggregate-reassigned-param-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (finish [x : Big] [n : i64]) : i64
-  (+ (struct-get x a) n))
+  (+ x.a n))
 (define (step [x : Big] [n : i64]) : i64
   (begin
     (set! x (Big n (+ n 1) (+ n 2)))
@@ -6916,7 +6901,7 @@
 (define (compiler-lower-tail-indirect-aggregate-param-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (finish [x : Big]) : i64
-  (struct-get x b))
+  x.b)
 (define (step [f : (-> Big i64)] [x : Big]) : i64
   (f x))
 (define (main) : i64
@@ -6930,7 +6915,7 @@
   (f x))
 (define (main) : i64
   (let [value : Big (step finish 39)]
-    (struct-get value c)))")
+    value.c))")
 
 (define (compiler-lower-tail-cleanup-source) : String
   "(define (finish [x : i64]) : i64 x)
@@ -7175,9 +7160,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : i64]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -7195,9 +7179,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : u64]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -7214,9 +7197,8 @@
 (define (lower-test-instr-seq-binop-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -7232,9 +7214,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : i64]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -7258,7 +7239,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-i64-mov-count instrs want)
-            (lower-test-blocks-i64-mov-count (box-get rest) want))])]
+            (lower-test-blocks-i64-mov-count (__tl-box-place rest) want))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-i64-mov-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -7274,7 +7255,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-f64-mov-count instrs want)
-            (lower-test-blocks-f64-mov-count (box-get rest) want))])]
+            (lower-test-blocks-f64-mov-count (__tl-box-place rest) want))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-f64-mov-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -7289,7 +7270,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-binop-count instrs)
-            (lower-test-blocks-binop-count (box-get rest)))])]
+            (lower-test-blocks-binop-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-binop-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -7304,7 +7285,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-gep-offset-count instrs want)
-            (lower-test-blocks-gep-offset-count (box-get rest) want))])]
+            (lower-test-blocks-gep-offset-count (__tl-box-place rest) want))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-gep-offset-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -7321,7 +7302,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-i64-mov-count blocks want)
-            (lower-test-function-i64-mov-count (box-get rest) name want))])]
+            (lower-test-function-i64-mov-count (__tl-box-place rest) name want))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-i64-mov-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -7339,7 +7320,10 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-f64-mov-count blocks want)
-            (lower-test-function-f64-mov-count-bits (box-get rest) name want))])]
+            (lower-test-function-f64-mov-count-bits
+              (__tl-box-place rest)
+              name
+              want))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-f64-mov-count-bits
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -7356,7 +7340,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-binop-count blocks)
-            (lower-test-function-binop-count (box-get rest) name))])]
+            (lower-test-function-binop-count (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-binop-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -7373,7 +7357,10 @@
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (lower-test-blocks-gep-offset-count blocks want)
-            (lower-test-function-gep-offset-count (box-get rest) name want))])]
+            (lower-test-function-gep-offset-count
+              (__tl-box-place rest)
+              name
+              want))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (lower-test-function-gep-offset-count
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -8671,8 +8658,8 @@
 (define (arena-make) : Arena (Arena (tl_arena_make)))
 (define (arena-current) : Arena (Arena (tl_arena_current)))
 (define (arena-mark) : ArenaMark (ArenaMark (tl_region_mark)))
-(define (arena-raw-handle [arena : Arena]) : i64 (struct-get arena handle))
-(define (arena-mark-raw-handle [mark : ArenaMark]) : i64 (struct-get mark handle))
+(define (arena-raw-handle [arena : Arena]) : i64 arena.handle)
+(define (arena-mark-raw-handle [mark : ArenaMark]) : i64 mark.handle)
 (unsafe (define (arena-set! [arena : Arena]) : unit (unsafe (tl_arena_set (arena-raw-handle arena)))))
 (unsafe (define (arena-rewind [mark : ArenaMark]) : unit (unsafe (tl_region_reset (arena-mark-raw-handle mark)))))
 (define (string.int->string [value : i64]) : String \"42\")
@@ -8702,8 +8689,8 @@
       (let
         [items : (Array String) (make-array String 2)]
         (begin
-          (array-set! items 0 (string.int->string 1))
-          (array-set! items 1 (string.int->string 2))
+          (set! (array-ref items 0) (string.int->string 1))
+          (set! (array-ref items 1) (string.int->string 2))
           items)))))"))
 
 (define (compiler-lower-with-escape-box-source) : String
@@ -8729,8 +8716,8 @@
       (let
         [items : (Array String) (make-array String 2)]
         (begin
-          (array-set! items 0 (string.int->string 1))
-          (array-set! items 1 (string.int->string 2))
+          (set! (array-ref items 0) (string.int->string 1))
+          (set! (array-ref items 1) (string.int->string 2))
           (EscapeResult.Ok
             (EscapePayload
               (string.int->string 3)
@@ -8904,8 +8891,8 @@
     (let
       [items : (Array String) (make-array String 2)]
         (begin
-          (array-set! items 0 (string.int->string 1))
-          (array-set! items 1 (string.int->string 2))
+          (set! (array-ref items 0) (string.int->string 1))
+          (set! (array-ref items 1) (string.int->string 2))
         (ScratchResult.Ok
           (ScratchPayload
             (string.int->string 3)
@@ -9178,163 +9165,163 @@
   "(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-foreach-borrowed-array-map-source) : String
   "(define (fill [a : (& a (Array i64))] [b : (& b (Array i64))] [out : (&mut out (Array i64))] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-i32-source) : String
   "(define (fill [a : (Array i32)] [b : (Array i32)] [out : (Array i32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-u64-source) : String
   "(define (fill [a : (Array u64)] [b : (Array u64)] [out : (Array u64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-u32-source) : String
   "(define (fill [a : (Array u32)] [b : (Array u32)] [out : (Array u32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-i16-source) : String
   "(define (fill [a : (Array i16)] [b : (Array i16)] [out : (Array i16)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-u16-source) : String
   "(define (fill [a : (Array u16)] [b : (Array u16)] [out : (Array u16)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-f64-source) : String
   "(define (fill [a : (Array f64)] [b : (Array f64)] [out : (Array f64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-f32-source) : String
   "(define (fill [a : (Array f32)] [b : (Array f32)] [out : (Array f32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-i8-source) : String
   "(define (fill [a : (Array i8)] [b : (Array i8)] [out : (Array i8)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-u8-source) : String
   "(define (fill [a : (Array u8)] [b : (Array u8)] [out : (Array u8)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-source) : String
   "(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64] [r : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+    (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-i32-source) : String
   "(define (fill [a : (Array i32)] [b : (Array i32)] [out : (Array i32)] [n : i64] [r : i32]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+    (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-u64-source) : String
   "(define (fill [a : (Array u64)] [b : (Array u64)] [out : (Array u64)] [n : i64] [r : u64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (* (array-ref b i) r)) (cast 7 : u64)))))")
+    (set! (array-ref out i) (+ (+ (array-ref a i) (* (array-ref b i) r)) (cast 7 : u64)))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-u32-source) : String
   "(define (fill [a : (Array u32)] [b : (Array u32)] [out : (Array u32)] [n : i64] [r : u32]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (* (array-ref b i) r)) (cast 7 : u32)))))")
+    (set! (array-ref out i) (+ (+ (array-ref a i) (* (array-ref b i) r)) (cast 7 : u32)))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-i16-source) : String
   "(define (fill [a : (Array i16)] [b : (Array i16)] [out : (Array i16)] [n : i64] [r : i16]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+    (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-u16-source) : String
   "(define (fill [a : (Array u16)] [b : (Array u16)] [out : (Array u16)] [n : i64] [r : u16]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+    (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-f64-source) : String
   "(define (fill [a : (Array f64)] [b : (Array f64)] [out : (Array f64)] [n : i64] [r : f64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+    (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-f32-source) : String
   "(define (fill [a : (Array f32)] [b : (Array f32)] [out : (Array f32)] [n : i64] [r : f32]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+    (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-i8-source) : String
   "(define (fill [a : (Array i8)] [b : (Array i8)] [out : (Array i8)] [n : i64] [r : i8]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+    (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-map-uniform-u8-source) : String
   "(define (fill [a : (Array u8)] [b : (Array u8)] [out : (Array u8)] [n : i64] [r : u8]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r))))")
+    (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))")
 
 (define (compiler-lower-avx2-foreach-zip-uniform-source) : String
   "(define (fill [a : (Array i64)] [b : (Array i64)] [c : (Array i64)] [out : (Array i64)] [n : i64] [r : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))")
+    (set! (array-ref out i) (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))")
 
 (define (compiler-lower-spmd-broadcast-source) : String
   "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64] [lane : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (spmd-broadcast (array-ref a i) lane))))")
+    (set! (array-ref out i) (spmd-broadcast (array-ref a i) lane))))")
 
 (define (compiler-lower-spmd-broadcast-u64-source) : String
   "(define (fill [a : (Array u64)] [out : (Array u64)] [n : i64] [lane : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (spmd-broadcast (array-ref a i) lane))))")
+    (set! (array-ref out i) (spmd-broadcast (array-ref a i) lane))))")
 
 (define (compiler-lower-spmd-broadcast-u32-source) : String
   "(define (fill [a : (Array u32)] [out : (Array u32)] [n : i64] [lane : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (spmd-broadcast (array-ref a i) lane))))")
+    (set! (array-ref out i) (spmd-broadcast (array-ref a i) lane))))")
 
 (define (compiler-lower-spmd-shuffle-source) : String
   "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (spmd-shuffle (array-ref a i) i))))")
+    (set! (array-ref out i) (spmd-shuffle (array-ref a i) i))))")
 
 (define (compiler-lower-avx2-foreach-scalar-fallback-source) : String
   "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a (+ i 1)) 1))))")
+    (set! (array-ref out i) (+ (array-ref a (+ i 1)) 1))))")
 
 (define (compiler-lower-avx2-foreach-map-source-shape-ok?
   [src : String]
@@ -9870,39 +9857,38 @@
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs i) 0)
-      (array-set! out i 0)
-      (array-set! out i (+ (array-ref xs i) 1)))))")
+      (set! (array-ref out i) 0)
+      (set! (array-ref out i) (+ (array-ref xs i) 1)))))")
 
 (define (compiler-lower-avx512-masked-if-offset-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs (+ i 1)) 0)
-      (array-set! out (+ i 1) 0)
-      (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))))")
+      (set! (array-ref out (+ i 1)) 0)
+      (set! (array-ref out (+ i 1)) (+ (array-ref xs (+ i 1)) 1)))))")
 
 (define (compiler-lower-avx512-masked-if-index-value-source) : String
   "(define (fill [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 6)
-      (array-set! out i i)
-      (array-set! out i (+ i 1)))))")
+      (set! (array-ref out i) i)
+      (set! (array-ref out i) (+ i 1)))))")
 
 (define (compiler-lower-avx512-masked-if-index-mod-source) : String
   "(define (fill [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (= (% i 2) 0)
-      (array-set! out i (+ i 10))
-      (array-set! out i (+ i 100)))))")
+      (set! (array-ref out i) (+ i 10))
+      (set! (array-ref out i) (+ i 100)))))")
 
 (define (compiler-lower-avx512-masked-if-value-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i
-      (if (< (array-ref xs i) 0)
+    (set! (array-ref out i) (if (< (array-ref xs i) 0)
         0
         (+ (array-ref xs i) 1)))))")
 
@@ -9910,8 +9896,7 @@
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64] [bias : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i
-      (if (= (bit-and (array-ref xs i) 1) 1)
+    (set! (array-ref out i) (if (= (bit-and (array-ref xs i) 1) 1)
         (+ (array-ref xs i) bias)
         (- (array-ref xs i) bias)))))")
 
@@ -9921,8 +9906,7 @@
     ([i : i64 0 n])
     (let
       [x : i64 (array-ref xs i)]
-      (array-set! out i
-        (if (< x 8)
+      (set! (array-ref out i) (if (< x 8)
           (bit-or 1 x)
           (match (bit-and x 3)
             [0 (bit-xor x 3)]
@@ -9939,8 +9923,7 @@
     (let
       [x : i64 (array-ref xs i)]
       [count : i64 (array-ref counts i)]
-      (array-set! out i
-        (if (< x 0)
+      (set! (array-ref out i) (if (< x 0)
           (shr x count)
           (shl x count))))))")
 
@@ -9953,8 +9936,7 @@
     ([i : i64 0 n])
     (let
       [x : i16 (array-ref xs i)]
-      (array-set! out i
-        (if (< x 0)
+      (set! (array-ref out i) (if (< x 0)
           (shr x 1)
           (shl x 1))))))")
 
@@ -9965,12 +9947,12 @@
     (let
       [x : i64 (array-ref xs i)]
       (if (< x 0)
-        (array-set! out i -10)
+        (set! (array-ref out i) -10)
         (if (= x 0)
-          (array-set! out i 0)
+          (set! (array-ref out i) 0)
           (if (< x 6)
-            (array-set! out i 6)
-            (array-set! out i 12)))))))")
+            (set! (array-ref out i) 6)
+            (set! (array-ref out i) 12)))))))")
 
 (define (compiler-lower-avx512-masked-if-source-shape-ok? [src : String]) : bool
   (match (compiler_lower.lower-compiler-source-with-mode
@@ -10272,7 +10254,7 @@
               true))])]
     [(compiler_lower.ResultCompilerLower.Err diag)
       (io.panic
-        (compiler_diagnostic.compiler-diagnostic-message (box-get diag)))]))
+        (compiler_diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))
 
 (define (compiler-lower-masked-if-narrow-shift-diagnostic-ok?
   [mode : compiler_lower.CompilerLowerMode]
@@ -10401,7 +10383,7 @@
   "(define (fill [zeros : (Array f32)] [out : (Array f32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (array-ref zeros (program-index)))))")
+    (set! (array-ref out i) (array-ref zeros (program-index)))))")
 
 (define (compiler-lower-spmd-lane-array-shape-ok?
   [mode : compiler_lower.CompilerLowerMode]
@@ -10454,7 +10436,7 @@
   "(define (heavy [x : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7))
 (define (fill [out : (Array i64)] [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (heavy i))))")
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (heavy i))))")
 
 (define (compiler-lower-spmd-out-of-line-unit-source) : String
   "(define (touch-heavy [x : i64]) : unit
@@ -10471,8 +10453,8 @@
   (foreach
     ([i : i64 0 n])
     (if (< i 4)
-      (array-set! out i (heavy i))
-      (array-set! out i 0))))")
+      (set! (array-ref out i) (heavy i))
+      (set! (array-ref out i) 0))))")
 
 (define (compiler-lower-spmd-source-call-count
   [src : String]
@@ -10502,7 +10484,7 @@
     (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7)
     unit))
 (define (fill-value [out : (Array i64)] [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (heavy i))))
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (heavy i))))
 (define (fill-unit [n : i64]) : unit
   (foreach ([i : i64 0 n]) (touch-heavy i)))")
 
@@ -10514,7 +10496,7 @@
     ([i : i64 0 n])
     (let
       [x : i64 (+ i 1)]
-      (array-set! out i (heavy x)))))")
+      (set! (array-ref out i) (heavy x)))))")
 
 (define (compiler-lower-spmd-uniform-arg-call-source) : String
   "(define (heavy [x : i64]) : i64
@@ -10522,7 +10504,7 @@
 (define (fill [out : (Array i64)] [n : i64] [offset : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (heavy (+ offset 1)))))")
+    (set! (array-ref out i) (heavy (+ offset 1)))))")
 
 (define (compiler-lower-imported-spmd-selection-error-contains?
   [result : compiler_lower.ResultLowerImportedSpmdSpecialization]
@@ -10532,7 +10514,8 @@
     [(compiler_lower.ResultLowerImportedSpmdSpecialization.Err diag)
       (let
         [message : String
-          (compiler_diagnostic.compiler-diagnostic-message (box-get diag))]
+          (compiler_diagnostic.compiler-diagnostic-message
+            (__tl-box-place diag))]
         (string.contains (& message) (& fragment)))]))
 
 (define (compiler-lower-imported-spmd-selection-smoke-ok?) : bool
@@ -10615,7 +10598,7 @@
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Ok selected)
             (and
               (string.eq
-                (ci.intern-str (struct-get selected symbol))
+                (ci.intern-str selected.symbol)
                 "_tl___fixture_helper_scalar")
               (string.eq
                 (ci.intern-str
@@ -10636,7 +10619,8 @@
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Err diag)
             (let
               [message : String
-                (compiler_diagnostic.compiler-diagnostic-message (box-get diag))]
+                (compiler_diagnostic.compiler-diagnostic-message
+                  (__tl-box-place diag))]
               (string.contains (& message) (& missing-message-fragment)))])
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
@@ -10816,7 +10800,7 @@
       (compiler-lower-ok?
         "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
       (compiler-lower-ok?
-        "(define (f [a : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! a i i)))")
+        "(define (f [a : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref a i) i)))")
       (compiler-lower-ok?
         "(define (main) : i64 (begin (foreach ([i : i64 0 0]) unit) 0))")
       (compiler-lower-ok?
@@ -11779,7 +11763,7 @@
               (lower-test-decl-list-defines? rest name))]
           [(compiler_ast_types.AstDecl.Unsafe inner-box)
             (let
-              [inner : compiler_ast_types.AstDecl (box-get inner-box)]
+              [inner : compiler_ast_types.AstDecl (__tl-box-place inner-box)]
               (if (lower-test-decl-list-defines?
                 (compiler_ast_types.ast-decl-cons
                   inner
@@ -12035,7 +12019,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               (compiler_ast_types.ast-decl-path-list-new)
@@ -12052,7 +12036,7 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (box-get kept-box)]
+              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
               (and
                 (lower-test-decl-list-defines? kept "ExprClauseList")
                 (lower-test-decl-list-defines? kept "main")
@@ -12455,7 +12439,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               (compiler_ast_types.ast-decl-path-list-new)
@@ -12465,7 +12449,7 @@
       (match no-main-program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               (compiler_ast_types.ast-decl-path-list-new)
@@ -12490,12 +12474,13 @@
             (match kept-program
               [(compiler_ast_types.AstProgram.Program kept-box)
                 (let
-                  [kept : compiler_ast_types.AstDeclList (box-get kept-box)]
+                  [kept : compiler_ast_types.AstDeclList
+                    (__tl-box-place kept-box)]
                   (match kept-no-main
                     [(compiler_ast_types.AstProgram.Program no-main-kept-box)
                       (let
                         [no-main-kept : compiler_ast_types.AstDeclList
-                          (box-get no-main-kept-box)]
+                          (__tl-box-place no-main-kept-box)]
                         (and
                           (= (lower-test-decl-list-count kept) 4)
                           (lower-test-decl-list-defines? kept "main")
@@ -12514,7 +12499,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               paths
@@ -12527,7 +12512,7 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (box-get kept-box)]
+              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
               (and
                 (= (lower-test-decl-list-count kept) 3)
                 (lower-test-decl-list-defines? kept "main")
@@ -12546,7 +12531,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               paths
@@ -12559,7 +12544,7 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (box-get kept-box)]
+              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
               (and
                 (= (lower-test-decl-list-count kept) 2)
                 (lower-test-decl-list-defines? kept "main")
@@ -12576,7 +12561,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               paths
@@ -12589,7 +12574,7 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (box-get kept-box)]
+              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
               (and
                 (lower-test-decl-list-defines? kept "main")
                 (lower-test-decl-list-defines? kept "ThreadBox")
@@ -12607,7 +12592,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               paths
@@ -12620,7 +12605,7 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (box-get kept-box)]
+              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
               (and
                 (= (lower-test-decl-list-count kept) 3)
                 (lower-test-decl-list-defines? kept "main")
@@ -12637,7 +12622,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               paths
@@ -12650,7 +12635,7 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (box-get kept-box)]
+              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
               (and
                 (lower-test-decl-list-defines? kept "main")
                 (lower-test-decl-list-defines? kept "QPoint")
@@ -12664,7 +12649,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               (compiler_ast_types.ast-decl-path-list-new)
@@ -12681,7 +12666,7 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (box-get kept-box)]
+              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
               (and
                 (= (lower-test-decl-list-count kept) 2)
                 (lower-test-decl-list-defines? kept "main")
@@ -12718,7 +12703,7 @@
       (match program
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (box-get decls-box)]
+            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
             [names : compiler_lower.LowerNameEnv
               (compiler_lower.lower-name-env-from-decls
                 decls
@@ -12735,7 +12720,8 @@
               [(compiler_lower.LowerPrunedProgram.Program kept-program _)
                 (match kept-program
                   [(compiler_ast_types.AstProgram.Program kept-box)
-                    (compiler-lower-unsafe-ast-dce-kept-ok? (box-get kept-box))])]))])]
+                    (compiler-lower-unsafe-ast-dce-kept-ok?
+                      (__tl-box-place kept-box))])]))])]
     [(compiler_parse_core.ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-name-env-dense-snapshots-ok?) : bool
@@ -12961,14 +12947,13 @@
     [bindings : compiler_ast_types.AstLetBindingList
       (compiler_ast_types.ast-let-binding-list-with-capacity 1)]
     (begin
-      (array-set!
-        (struct-get bindings slots)
-        0
+      (set!
+        (array-ref bindings.slots 0)
         (compiler_ast_types.AstLetBinding.Binding
           binder-id
           (compiler_ast_types.AstMaybeType.No)
           init-id))
-      (set! (struct-get bindings len) 1)
+      (set! bindings.len 1)
       (compiler_ast_types.AstExpr.Let
         (box (compiler_ast_types.AstLet.Let bindings body-id))))))
 

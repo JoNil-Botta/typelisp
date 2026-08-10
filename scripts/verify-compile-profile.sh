@@ -1154,6 +1154,11 @@ fi
 # #6277's function-owned backend scratch context crossed that boundary from 31
 # to 32 segments: the authoritative Windows CI probe measured 2,031,667 used
 # nodes, 2,097,152 capacity, and 67,108,864 physical payload bytes.
+# #6240's public dotted CTFE projection and native BoxTake template callback
+# crossed the macro-expand Expr boundary from 52 to 53 segments: the
+# authoritative Windows probe measured 3,469,666 used nodes, 3,473,408
+# capacity, and 111,149,056 physical payload bytes. The typecheck Expr pool
+# remains at 32 segments.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1215,7 +1220,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 52 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 53 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
@@ -1973,8 +1978,8 @@ if [ "$SCOPED_CAT_STATUS" -ne 42 ]; then
 fi
 
 # The same native-vs-interpreted comparison over the template node kinds the
-# json/serialize/text_buf/math hooks use (#5605): `return`, `box`/`box-get`,
-# `(set! (struct-get ...) ...)`, and float literals inside quasiquotes. The
+# json/serialize/text_buf/math hooks use (#5605): `return`, `box`/`deref`,
+# dotted `set!` places, and float literals inside quasiquotes. The
 # array fixture above exercises none of them, so a reconstruction divergence
 # in those node kinds would otherwise reach the bootstrap unchecked.
 echo "[compile-profile] verify template node kind routing differential (#5605)"

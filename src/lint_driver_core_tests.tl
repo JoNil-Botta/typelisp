@@ -453,7 +453,7 @@ end
   (let
     [cur : (Array i64 1) (array 0)]
     (begin
-      (array-set! cur 0 3)
+      (set! (array-ref cur 0) 3)
       (array-ref cur 0))))")
 
 (define (selfhost-lint-single-element-array-param-source) : String
@@ -465,7 +465,7 @@ end
   (let
     [cur : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
-      (array-set! cur 0 3)
+      (set! (array-ref cur 0) 3)
       (array-ref cur 0))))")
 
 (define (selfhost-lint-single-element-array-dotted-source) : String
@@ -473,7 +473,7 @@ end
   (let
     [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
     (begin
-      (array-set! cur 0 3)
+      (set! (array-ref cur 0) 3)
       (array.ref cur 0))))")
 
 (define (selfhost-lint-single-element-array-nonzero-source) : String
@@ -514,9 +514,9 @@ end
   (let
     [items : (__tl_dyn-array i64) (array.make-array i64 3)]
     (begin
-      (array-set! items 0 a)
-      (array-set! items 1 b)
-      (array-set! items 2 c)
+      (set! (array-ref items 0) a)
+      (set! (array-ref items 1) b)
+      (set! (array-ref items 2) c)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-bare-source) : String
@@ -524,8 +524,8 @@ end
   (let
     [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
-      (array-set! items 0 4)
-      (array-set! items 1 7)
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 1) 7)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-return-source) : String
@@ -533,8 +533,8 @@ end
   (let
     [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
-      (array-set! items 0 4)
-      (array-set! items 1 7)
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 1) 7)
       (return items))))")
 
 (define (selfhost-lint-dynamic-array-literal-assignment-source) : String
@@ -542,8 +542,8 @@ end
   (let
     [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
-      (array-set! items 0 4)
-      (array-set! items 1 7)
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 1) 7)
       (set! result items))))")
 
 (define (selfhost-lint-dynamic-array-literal-ambiguous-two-var-source) : String
@@ -551,8 +551,8 @@ end
   (let
     [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
-      (array-set! items 0 first)
-      (array-set! items 1 second)
+      (set! (array-ref items 0) first)
+      (set! (array-ref items 1) second)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-read-before-complete-source) : String
@@ -560,9 +560,9 @@ end
   (let
     [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
-      (array-set! items 0 4)
+      (set! (array-ref items 0) 4)
       (array-ref items 0)
-      (array-set! items 1 7)
+      (set! (array-ref items 1) 7)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-computed-index-source) : String
@@ -570,8 +570,8 @@ end
   (let
     [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
-      (array-set! items index 4)
-      (array-set! items 1 7)
+      (set! (array-ref items index) 4)
+      (set! (array-ref items 1) 7)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-duplicate-index-source) : String
@@ -579,9 +579,9 @@ end
   (let
     [items : (__tl_dyn-array i64) (make-array i64 3)]
     (begin
-      (array-set! items 0 4)
-      (array-set! items 0 7)
-      (array-set! items 2 9)
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 0) 7)
+      (set! (array-ref items 2) 9)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-gapped-index-source) : String
@@ -589,9 +589,9 @@ end
   (let
     [items : (__tl_dyn-array i64) (make-array i64 3)]
     (begin
-      (array-set! items 0 4)
-      (array-set! items 2 7)
-      (array-set! items 1 9)
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 2) 7)
+      (set! (array-ref items 1) 9)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-partial-source) : String
@@ -599,7 +599,7 @@ end
   (let
     [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
-      (array-set! items 0 4)
+      (set! (array-ref items 0) 4)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-escape-source) : String
@@ -608,9 +608,9 @@ end
   (let
     [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
-      (array-set! items 0 4)
+      (set! (array-ref items 0) 4)
       (consume items)
-      (array-set! items 1 7)
+      (set! (array-ref items 1) 7)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-suppressed-source) : String
@@ -619,8 +619,8 @@ end
     ;; lint-allow: prefer-dynamic-array-literal
     [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
-      (array-set! items 0 4)
-      (array-set! items 1 7)
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 1) 7)
       items)))")
 
 (define (selfhost-lint-nested-let-source) : String
@@ -766,7 +766,7 @@ end
           findings
           rule-id
           (+ index 1)
-          (if (string.eq (struct-get finding rule-id) rule-id)
+          (if (string.eq finding.rule-id rule-id)
             (+ count 1)
             count))]
       [(lint_core.LintMaybeFinding.No)
@@ -799,13 +799,11 @@ end
   (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan finding.span]
         (and
           (= (lint_core.lint-findings-count findings) 1)
           (> (ast.ast-source-span-start-line fspan) 0)
-          (string.eq
-            (struct-get finding rule-id)
-            (lint_core.lint-rule-unused-import-id))))]
+          (string.eq finding.rule-id (lint_core.lint-rule-unused-import-id))))]
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-unused-imports-self-test) : i64
@@ -977,8 +975,8 @@ end
     [scan : lint_driver_core.SelfhostLintDeadScan
       (lint_driver_core.selfhost-lint-package-dead-add-kind-roots scan-b kind)]
     (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      (struct-get scan decls)
-      (struct-get scan roots)
+      scan.decls
+      scan.roots
       0)))
 
 (define (selfhost-lint-package-dead-code-test-root-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
@@ -1006,8 +1004,8 @@ end
         scan-test
         CompilerPkgKindBin)]
     (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      (struct-get scan decls)
-      (struct-get scan roots)
+      scan.decls
+      scan.roots
       0)))
 
 (define (selfhost-lint-package-dead-code-manifest-root-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
@@ -1035,8 +1033,8 @@ end
     [scan : lint_driver_core.SelfhostLintDeadScan
       (lint_driver_core.selfhost-lint-dead-scan-add-roots scan-source roots)]
     (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      (struct-get scan decls)
-      (struct-get scan roots)
+      scan.decls
+      scan.roots
       0)))
 
 (define (selfhost-lint-package-dead-code-explicit-root-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
@@ -1056,8 +1054,8 @@ end
         scan-source
         CompilerPkgKindBin)]
     (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      (struct-get scan decls)
-      (struct-get scan roots)
+      scan.decls
+      scan.roots
       0)))
 
 (define (selfhost-lint-package-dead-code-cfg-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
@@ -1077,8 +1075,8 @@ end
         scan-source
         CompilerPkgKindBin)]
     (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      (struct-get scan decls)
-      (struct-get scan roots)
+      scan.decls
+      scan.roots
       0)))
 
 (define (selfhost-lint-package-dead-qualified-import-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
@@ -1114,8 +1112,8 @@ end
         scan-main
         CompilerPkgKindBin)]
     (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      (struct-get scan decls)
-      (struct-get scan roots)
+      scan.decls
+      scan.roots
       0)))
 
 (define (selfhost-lint-package-dead-moduleless-import-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
@@ -1151,8 +1149,8 @@ end
         scan-main
         CompilerPkgKindBin)]
     (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      (struct-get scan decls)
-      (struct-get scan roots)
+      scan.decls
+      scan.roots
       0)))
 
 (define (selfhost-lint-package-dead-import-closure-fixture-ok?) : bool
@@ -1224,7 +1222,7 @@ end
                   (lint_driver_core.selfhost-lint-package-dead-code
                     dead-source-set
                     roots
-                    (struct-get (struct-get source-set manifest) kind))]
+                    source-set.manifest.kind)]
                 [core-count : i64
                   (lint_driver_core.selfhost-lint-package-dead-count-for-source
                     (compiler_load.compiler-load-normalize-path core-path)
@@ -1336,7 +1334,7 @@ end
         moduleless-import-decls)]
     [finding : lint_core.LintFinding
       (lint_core.lint-dead-code-finding "unused" (lint_core.lint-no-span))]
-    [finding-message : String (struct-get finding message)]
+    [finding-message : String finding.message]
     [dead-suggestion : String (lint_core.lint-rule-dead-code-suggestion)]
     [private-needle : String "private"]
     [export-needle : String "export"]
@@ -1359,7 +1357,7 @@ end
       [(or
           (< ordinary-mode-index 0)
           (not
-            (struct-get
+            (__tl-project-field
               (lint_driver_core.selfhost-lint-dead-decls-ref
                 cfg-bin-decls
                 ordinary-mode-index)
@@ -1617,14 +1615,12 @@ end
   (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan finding.span]
         (and
-          (= (struct-get finding depth) depth)
+          (= finding.depth depth)
           (> (ast.ast-source-span-start-line fspan) 0)
-          (string.eq
-            (struct-get finding rule-id)
-            (lint_core.lint-rule-nested-if-ladder-id))
-          (string.eq (struct-get finding message) message)))]
+          (string.eq finding.rule-id (lint_core.lint-rule-nested-if-ladder-id))
+          (string.eq finding.message message)))]
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-nested-let-finding-ok?
@@ -1632,12 +1628,10 @@ end
   (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan finding.span]
         (and
           (> (ast.ast-source-span-start-line fspan) 0)
-          (string.eq
-            (struct-get finding rule-id)
-            (lint_core.lint-rule-nested-let-id))))]
+          (string.eq finding.rule-id (lint_core.lint-rule-nested-let-id))))]
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-return-path-finding-ok?
@@ -1645,26 +1639,22 @@ end
   (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan finding.span]
         (and
-          (= (struct-get finding depth) 3)
+          (= finding.depth 3)
           (> (ast.ast-source-span-start-line fspan) 0)
-          (string.eq
-            (struct-get finding rule-id)
-            (lint_core.lint-rule-return-path-chain-id))))]
+          (string.eq finding.rule-id (lint_core.lint-rule-return-path-chain-id))))]
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-unit-if-finding-ok? [findings : lint_core.LintFindings]) : bool
   (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan finding.span]
         (and
-          (= (struct-get finding depth) 1)
+          (= finding.depth 1)
           (> (ast.ast-source-span-start-line fspan) 0)
-          (string.eq
-            (struct-get finding rule-id)
-            (lint_core.lint-rule-unit-if-guard-id))))]
+          (string.eq finding.rule-id (lint_core.lint-rule-unit-if-guard-id))))]
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-cascading-and-or-finding-ok?
@@ -1673,14 +1663,12 @@ end
   (match (lint_core.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan finding.span]
         (and
-          (= (struct-get finding depth) 3)
+          (= finding.depth 3)
           (> (ast.ast-source-span-start-line fspan) 0)
-          (string.eq
-            (struct-get finding rule-id)
-            (lint_core.lint-rule-cascading-and-or-id))
-          (string.eq (struct-get finding message) message)))]
+          (string.eq finding.rule-id (lint_core.lint-rule-cascading-and-or-id))
+          (string.eq finding.message message)))]
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-transitional-core-macro-finding-ok?
@@ -1690,10 +1678,10 @@ end
       (and
         (= (lint_core.lint-findings-count findings) 5)
         (string.eq
-          (struct-get finding rule-id)
+          finding.rule-id
           (lint_core.lint-rule-transitional-core-macro-qualifier-id))
         (string.eq
-          (struct-get finding message)
+          finding.message
           "transitional core macro qualifier: use when instead of core.when"))]
     [(lint_core.LintMaybeFinding.No) false]))
 

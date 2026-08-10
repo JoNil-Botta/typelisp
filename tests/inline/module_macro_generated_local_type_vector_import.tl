@@ -16,7 +16,7 @@
         [items : vec.Vec (vec.new)]
         (begin
           (vec.push (&mut items) value)
-          (struct-get (vec.get (& items) 0 (T 0)) value))))))
+          (__tl-project-field-name (vec.get (& items) 0 (T 0)) "value"))))))
 
 (import (vector-user) as user)
 

@@ -25,8 +25,8 @@
       (unsafe
         (ptr-cast (array-data pairs) : (MutPtr Pair)))]
     (begin
-      (array-set! slots 0 (Occupied 11 22 33))
-      (array-set! pairs 0 (Pair 44 55))
+      (set! (array-ref slots 0) (Occupied 11 22 33))
+      (set! (array-ref pairs 0) (Pair 44 55))
       (unsafe
         (ptr-write! (ptr-offset data 1) (ptr-read (ptr-cast data : (Ptr Slot)))))
       (unsafe
@@ -38,9 +38,7 @@
           (if (and (= key 11) (= value 22) (= hash 33))
             (let
               [pair : Pair (array-ref pairs 1)]
-              (if (and
-                (= (struct-get pair left) 44)
-                (= (struct-get pair right) 55))
+              (if (and (= pair.left 44) (= pair.right 55))
                 0
                 3))
             1)]

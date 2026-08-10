@@ -123,7 +123,7 @@
     -1))
 
 (define (thread-api-bounded-wait-run [sem : thread.ThreadSemaphore]) : i64
-  (match (thread.spawn thread-api-bounded-wait-worker (struct-get sem handle))
+  (match (thread.spawn thread-api-bounded-wait-worker sem.handle)
     [(thread.ThreadSpawnErr _) 14]
     [(thread.ThreadSpawnOk worker)
       (let
@@ -215,14 +215,14 @@
     [out-b : (Array i64) (array.make-array i64 1)]
     [ctx-a : (Array i64) (array.make-array i64 3)]
     [ctx-b : (Array i64) (array.make-array i64 3)]
-    [sem-handle : i64 (struct-get sem handle)]
+    [sem-handle : i64 sem.handle]
     (begin
-      (array-set! ctx-a 0 (test-array-i64-addr out-a))
-      (array-set! ctx-a 1 11)
-      (array-set! ctx-a 2 sem-handle)
-      (array-set! ctx-b 0 (test-array-i64-addr out-b))
-      (array-set! ctx-b 1 31)
-      (array-set! ctx-b 2 sem-handle)
+      (set! (array-ref ctx-a 0) (test-array-i64-addr out-a))
+      (set! (array-ref ctx-a 1) 11)
+      (set! (array-ref ctx-a 2) sem-handle)
+      (set! (array-ref ctx-b 0) (test-array-i64-addr out-b))
+      (set! (array-ref ctx-b 1) 31)
+      (set! (array-ref ctx-b 2) sem-handle)
       (let
         [a-spawn : thread.ThreadSpawnResult
           (thread.spawn thread-api-worker (test-array-i64-addr ctx-a))]

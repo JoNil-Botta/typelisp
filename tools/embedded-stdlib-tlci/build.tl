@@ -109,10 +109,14 @@
             params
             body)))]
     [(ast.AstDecl.Unsafe inner)
-      (embedded-stdlib-tlci-collect-decl! (box-get inner) module names captures)]
+      (embedded-stdlib-tlci-collect-decl!
+        (__tl-box-place inner)
+        module
+        names
+        captures)]
     [(ast.AstDecl.ModuleBody nested body)
       (embedded-stdlib-tlci-collect-decls!
-        (box-get body)
+        (__tl-box-place body)
         (ci.intern-str nested)
         names
         captures)]
@@ -165,7 +169,7 @@
             (match program
               [(ast.AstProgram.Program decls)
                 (embedded-stdlib-tlci-collect-decls!
-                  (box-get decls)
+                  (__tl-box-place decls)
                   module
                   names
                   captures)])])))))
@@ -325,9 +329,8 @@
                 (begin
                   (while (< name-index name-count)
                     (begin
-                      (array-set!
-                        name-array
-                        name-index
+                      (set!
+                        (array-ref name-array name-index)
                         (svec.get (& names) name-index ""))
                       (set! name-index (+ name-index 1))))
                   (embedded-native-write

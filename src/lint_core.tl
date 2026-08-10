@@ -203,16 +203,16 @@
   "copy-on-update struct mutation: prefer in-place field assignment")
 
 (define (lint-rule-copy-on-update-struct-suggestion) : String
-  "replace same-struct reassignment with (set! (struct-get value field) new-value)")
+  "replace same-struct reassignment with (set! value.field new-value)")
 
 (define (lint-rule-prefer-dotted-field-id) : String
   "prefer-dotted-field")
 
 (define (lint-rule-prefer-dotted-field-message) : String
-  "prefer dotted field syntax for simple local struct field access")
+  "dotted field syntax is required for struct field access")
 
 (define (lint-rule-prefer-dotted-field-suggestion) : String
-  "replace (struct-get p field) with p.field or (set! (struct-get p field) value) with (set! p.field value)")
+  "use value.field for reads and (set! value.field new-value) for writes")
 
 (define (lint-rule-prefer-dynamic-array-literal-id) : String
   "prefer-dynamic-array-literal")
@@ -221,7 +221,7 @@
   "hand-filled dynamic array: prefer (make-array v0 v1 ...)")
 
 (define (lint-rule-prefer-dynamic-array-literal-suggestion) : String
-  "replace the allocation and consecutive array-set! calls with a dynamic array literal")
+  "replace the allocation and consecutive array element assignments with a dynamic array literal")
 
 (define (lint-rule-single-element-array-cell-id) : String
   "single-element-array-cell")
@@ -503,11 +503,11 @@
   [rules : LintRuleList]
   [rule-id : String]
   [index : i64]) : LintMaybeRule
-  (if (>= index (struct-get rules len))
+  (if (>= index rules.len)
     LintMaybeRule.NotFound
     (let
-      [rule : LintRule (array-ref (struct-get rules slots) index)]
-      (if (string.eq (struct-get rule rule-id) rule-id)
+      [rule : LintRule (array-ref rules.slots index)]
+      (if (string.eq rule.rule-id rule-id)
         (LintMaybeRule.Found rule)
         (lint-rule-find-at rules rule-id (+ index 1))))))
 
@@ -520,13 +520,13 @@
 ;: Rule registry message lookup. Unknown ids return the empty string.
 (define (lint-rule-message [rule-id : String]) : String
   (match (lint-rule-find rule-id)
-    [(LintMaybeRule.Found rule) (struct-get rule message)]
+    [(LintMaybeRule.Found rule) rule.message]
     [(LintMaybeRule.NotFound) ""]))
 
 ;: Rule registry suggestion lookup. Unknown ids return the empty string.
 (define (lint-rule-suggestion [rule-id : String]) : String
   (match (lint-rule-find rule-id)
-    [(LintMaybeRule.Found rule) (struct-get rule suggestion)]
+    [(LintMaybeRule.Found rule) rule.suggestion]
     [(LintMaybeRule.NotFound) ""]))
 
 ;: Growable findings buffer. The backing array stores findings in discovery
@@ -541,11 +541,11 @@
 
 (define (lint-findings-slots [items : LintFindings]) : (__tl_dyn-array
     LintFinding)
-  (struct-get items slots))
+  items.slots)
 
 ;: Number of live findings in `items`.
 (define (lint-findings-count [items : LintFindings]) : i64
-  (struct-get items len))
+  items.len)
 
 (define (lint-findings-capacity [items : LintFindings]) : i64
   (array-length (lint-findings-slots items)))
@@ -569,7 +569,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (lint-findings-copy-range dst src (+ index 1) count))))
 
 (define (lint-findings-grow [items : LintFindings]) : LintFindings
@@ -588,7 +588,7 @@
       [slots : (__tl_dyn-array LintFinding) (lint-findings-slots items)]
       [n : i64 (lint-findings-count items)]
       (begin
-        (array-set! slots n finding)
+        (set! (array-ref slots n) finding)
         (LintFindings slots (+ n 1))))
     (lint-findings-add finding (lint-findings-grow items))))
 
@@ -647,7 +647,7 @@
     [_ false]))
 
 (define (lint-single-arg-call? [args : ast.AstExprList]) : bool
-  (= (struct-get (& args) len) 1))
+  (= args.len 1))
 
 (define (lint-not-call? [expr : ast.AstExpr]) : bool
   (match expr
@@ -684,7 +684,7 @@
 (define (lint-expr-list-has-return-at?
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (let
       [head : ast.AstExpr
@@ -743,7 +743,7 @@
 (define (lint-expr-list-has-side-effect-at?
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (let
       [head : ast.AstExpr
@@ -754,7 +754,7 @@
 
 (define (lint-expr-list-last-guard-branch? [exprs : ast.AstExprList]) : bool
   (let
-    [n : i64 (struct-get (& exprs) len)]
+    [n : i64 exprs.len]
     (if (= n 0)
       true
       (lint-guard-ladder-branch?
@@ -785,7 +785,7 @@
 
 (define (lint-expr-list-last-value-branch? [exprs : ast.AstExprList]) : bool
   (let
-    [n : i64 (struct-get (& exprs) len)]
+    [n : i64 exprs.len]
     (if (= n 0)
       false
       (lint-value-ladder-branch?
@@ -1002,7 +1002,7 @@
       "hand-filled dynamic array: "
       (string.append
         name
-        " is initialized by consecutive array-set! calls; prefer (make-array v0 v1 ...)"))
+        " is initialized by consecutive array element assignments; prefer (make-array v0 v1 ...)"))
     (lint-rule-prefer-dynamic-array-literal-id)
     0
     span))
@@ -1473,7 +1473,7 @@
   [head : ast.AstExpr]
   [rest : ast.AstExprList]
   [acc : LintFindings]) : LintFindings
-  (if (= (struct-get (& rest) len) 0)
+  (if (= rest.len 0)
     acc
     (if (lint-diverging-call-expr? head)
       (lint-findings-add
@@ -1707,7 +1707,7 @@
 (define (lint-expr-list-render-at
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : String
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     ""
     (let
       [head-expr : ast.AstExpr
@@ -1773,7 +1773,7 @@
   [op : String]
   [args : (& args ast.AstExprList)]
   [index : i64]) : bool
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     false
     (let
       [head-expr : ast.AstExpr
@@ -1800,7 +1800,7 @@
 (define (lint-str-cat-args-have-nested-at?
   [args : (& args ast.AstExprList)]
   [index : i64]) : bool
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     false
     (let
       [head-expr : ast.AstExpr
@@ -1834,7 +1834,7 @@
   [op : String]
   [args : (& args ast.AstExprList)]
   [index : i64]) : String
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     ""
     (let
       [head-expr : ast.AstExpr
@@ -1868,7 +1868,7 @@
   [op : String]
   [args : (& args ast.AstExprList)]
   [index : i64]) : i64
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     0
     (let
       [head-expr : ast.AstExpr
@@ -1956,8 +1956,8 @@
                         (lint-deprecated-string-concat-name? name)]
                       (begin
                         (set! depth (+ depth 1))
-                        (array-set! loop-stack depth is-loop)
-                        (array-set! concat-stack depth is-concat)
+                        (set! (array-ref loop-stack depth) is-loop)
+                        (set! (array-ref concat-stack depth) is-concat)
                         (if is-concat
                           (set!
                             findings
@@ -2099,11 +2099,11 @@
     [(ast.AstType.Expr) false]
     [(ast.AstType.ExprList) false]
     [(ast.AstType.Func args ret)
-      (if (lint-type-list-uses-import? (box-get args) alias module-name)
+      (if (lint-type-list-uses-import? (__tl-box-place args) alias module-name)
         true
         (lint-type-id-uses-import? ret alias module-name))]
     [(ast.AstType.Tuple items)
-      (lint-type-list-uses-import? (box-get items) alias module-name)]
+      (lint-type-list-uses-import? (__tl-box-place items) alias module-name)]
     [(ast.AstType.Array elem _)
       (lint-type-id-uses-import? elem alias module-name)]
     [(ast.AstType.DynArray elem)
@@ -2190,7 +2190,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     false
     (if (lint-pattern-uses-import?
       (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
@@ -2207,15 +2207,18 @@
     [(ast.AstPattern.Var _ maybe-ty)
       (lint-maybe-type-uses-import? maybe-ty alias module-name)]
     [(ast.AstPattern.Tuple items)
-      (lint-pattern-list-uses-import? (box-get items) alias module-name)]
+      (lint-pattern-list-uses-import? (__tl-box-place items) alias module-name)]
     [(ast.AstPattern.Array items)
-      (lint-pattern-list-uses-import? (box-get items) alias module-name)]
+      (lint-pattern-list-uses-import? (__tl-box-place items) alias module-name)]
     [(ast.AstPattern.Wildcard) false]
     [(ast.AstPattern.Binding _) false]
     [(ast.AstPattern.Variant name items)
       (if (lint-name-id-uses-import? name alias module-name)
         true
-        (lint-pattern-list-uses-import? (box-get items) alias module-name))]
+        (lint-pattern-list-uses-import?
+          (__tl-box-place items)
+          alias
+          module-name))]
     [(ast.AstPattern.Literal _) false]))
 
 (define (lint-unused-unsafe-candidate-sentinel?
@@ -2233,7 +2236,7 @@
     (string.eq module-name "")))
 
 (define (lint-expr-list-requires-enclosing-unsafe? [exprs : ast.AstExprList]) : bool
-  (struct-get
+  (__tl-project-field
     (lint-unsafe-scan-expr-list
       exprs
       (LintUnsafeScope (lint-name-set-empty) false))
@@ -2250,7 +2253,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     false
     (let
       [head : ast.AstExpr
@@ -2298,7 +2301,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body)
@@ -2371,13 +2374,13 @@
             alias
             module-name)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (if (lint-let-bindings-use-import? bindings alias module-name)
             true
             (lint-expr-uses-import? (ast.ast-node-get body) alias module-name))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params ret body)
           (if (lint-param-list-uses-import? params alias module-name)
             true
@@ -2477,7 +2480,7 @@
     [(ast.AstExpr.Borrow _ _ place)
       (lint-expr-uses-import? (ast.ast-node-get place) alias module-name)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (if (lint-expr-uses-import?
             (ast.ast-node-get scrutinee)
@@ -2486,7 +2489,7 @@
             true
             (lint-match-arms-use-import? arms alias module-name))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ index-ty start end body)
           (cond
             [(lint-type-uses-import? index-ty alias module-name) true]
@@ -2497,7 +2500,7 @@
             [else
               (lint-expr-uses-import? (ast.ast-node-get body) alias module-name)])])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ index-ty start end init value)
           (cond
             [(lint-type-uses-import? index-ty alias module-name) true]
@@ -2513,7 +2516,7 @@
                 alias
                 module-name)])])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             _
@@ -2565,7 +2568,7 @@
         true
         (lint-expr-list-uses-import? body alias module-name))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (if (lint-resource-bindings-use-import? bindings alias module-name)
             true
@@ -2727,7 +2730,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     false
     (match (ast.ast-field-def-list-get
       fields
@@ -2787,7 +2790,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     false
     (if (lint-variant-payload-cleanup-uses-import?
       (ast.ast-variant-payload-cleanup-list-get
@@ -2814,7 +2817,7 @@
   [alias : String]
   [module-name : String]
   [index : i64]) : bool
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     false
     (match (ast.ast-variant-def-list-get
       variants
@@ -2839,7 +2842,7 @@
   [index : i64]
   [alias : String]
   [module-name : String]) : bool
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     false
     (match (ast.ast-dispatch-variant-list-get
       variants
@@ -2880,7 +2883,7 @@
   (match decl
     [(ast.AstDecl.Module _) false]
     [(ast.AstDecl.ModuleBody _ body)
-      (lint-decl-list-uses-import? (box-get body) alias module-name)]
+      (lint-decl-list-uses-import? (__tl-box-place body) alias module-name)]
     [(ast.AstDecl.Def decl-meta _ maybe-ty body)
       (if (lint-maybe-type-uses-import? maybe-ty alias module-name)
         true
@@ -2898,7 +2901,10 @@
           true
           (lint-expr-uses-import? (ast.ast-node-get body) alias module-name)))]
     [(ast.AstDecl.Extern decl-meta _ _ meta ty)
-      (if (lint-extern-metadata-uses-import? (box-get meta) alias module-name)
+      (if (lint-extern-metadata-uses-import?
+        (__tl-box-place meta)
+        alias
+        module-name)
         true
         (lint-type-uses-import? ty alias module-name))]
     [(ast.AstDecl.DefEnum decl-meta _ cleanup variants)
@@ -2940,7 +2946,7 @@
     [(ast.AstDecl.Test _ body _)
       (lint-expr-uses-import? (ast.ast-node-get body) alias module-name)]
     [(ast.AstDecl.Unsafe inner)
-      (lint-decl-uses-import? (box-get inner) alias module-name)]))
+      (lint-decl-uses-import? (__tl-box-place inner) alias module-name)]))
 
 (define (lint-decl-uses-import?
   [decl : ast.AstDecl]
@@ -3054,61 +3060,72 @@
   [name : String]
   [requires-unsafe : bool]) : unit
   (let
-    [n : i64 (struct-get lint-unused-unsafe-exact-names len)]
-    (if (< n (array-length (struct-get lint-unused-unsafe-exact-names slots)))
+    [n : i64 (__tl-project-field lint-unused-unsafe-exact-names len)]
+    (if (<
+      n
+      (array-length (__tl-project-field lint-unused-unsafe-exact-names slots)))
       (begin
-        (array-set!
-          (struct-get lint-unused-unsafe-exact-names slots)
-          n
+        (set!
+          (array-ref
+            (__tl-project-field lint-unused-unsafe-exact-names slots)
+            n)
           (LintUnusedUnsafeExactName name requires-unsafe))
-        (set! (struct-get lint-unused-unsafe-exact-names len) (+ n 1)))
+        (__tl-project-set-field lint-unused-unsafe-exact-names len (+ n 1)))
       (let
         [bigger : (__tl_dyn-array LintUnusedUnsafeExactName)
           (make-array
             LintUnusedUnsafeExactName
             (lint-grown-capacity
-              (array-length (struct-get lint-unused-unsafe-exact-names slots))))]
+              (array-length
+                (__tl-project-field lint-unused-unsafe-exact-names slots))))]
         [index : i64 0]
         (begin
           (while (< index n)
             (begin
-              (array-set!
-                bigger
-                index
+              (set!
+                (array-ref bigger index)
                 (array-ref
-                  (struct-get lint-unused-unsafe-exact-names slots)
+                  (__tl-project-field lint-unused-unsafe-exact-names slots)
                   index))
               (set! index (+ index 1))))
-          (array-set! bigger n (LintUnusedUnsafeExactName name requires-unsafe))
+          (set!
+            (array-ref bigger n)
+            (LintUnusedUnsafeExactName name requires-unsafe))
           (set!
             lint-unused-unsafe-exact-names
             (LintUnusedUnsafeExactNames bigger (+ n 1))))))))
 
 (define (lint-unused-unsafe-classifier-add-unknown-root! [name : String]) : unit
   (let
-    [n : i64 (struct-get lint-unused-unsafe-unknown-roots len)]
-    (if (< n (array-length (struct-get lint-unused-unsafe-unknown-roots slots)))
+    [n : i64 (__tl-project-field lint-unused-unsafe-unknown-roots len)]
+    (if (<
+      n
+      (array-length (__tl-project-field lint-unused-unsafe-unknown-roots slots)))
       (begin
-        (array-set! (struct-get lint-unused-unsafe-unknown-roots slots) n name)
-        (set! (struct-get lint-unused-unsafe-unknown-roots len) (+ n 1)))
+        (set!
+          (array-ref
+            (__tl-project-field lint-unused-unsafe-unknown-roots slots)
+            n)
+          name)
+        (__tl-project-set-field lint-unused-unsafe-unknown-roots len (+ n 1)))
       (let
         [bigger : (__tl_dyn-array String)
           (make-array
             String
             (lint-grown-capacity
-              (array-length (struct-get lint-unused-unsafe-unknown-roots slots))))]
+              (array-length
+                (__tl-project-field lint-unused-unsafe-unknown-roots slots))))]
         [index : i64 0]
         (begin
           (while (< index n)
             (begin
-              (array-set!
-                bigger
-                index
+              (set!
+                (array-ref bigger index)
                 (array-ref
-                  (struct-get lint-unused-unsafe-unknown-roots slots)
+                  (__tl-project-field lint-unused-unsafe-unknown-roots slots)
                   index))
               (set! index (+ index 1))))
-          (array-set! bigger n name)
+          (set! (array-ref bigger n) name)
           (set!
             lint-unused-unsafe-unknown-roots
             (LintUnusedUnsafeUnknownRoots bigger (+ n 1))))))))
@@ -3127,39 +3144,44 @@
   [required : bool]) : unit
   (if lint-unused-unsafe-classifier-enabled
     (let
-      [n : i64 (struct-get lint-unused-unsafe-block-stack len)]
-      (if (< n (array-length (struct-get lint-unused-unsafe-block-stack slots)))
+      [n : i64 (__tl-project-field lint-unused-unsafe-block-stack len)]
+      (if (<
+        n
+        (array-length (__tl-project-field lint-unused-unsafe-block-stack slots)))
         (begin
-          (array-set!
-            (struct-get lint-unused-unsafe-block-stack slots)
-            n
+          (set!
+            (array-ref
+              (__tl-project-field lint-unused-unsafe-block-stack slots)
+              n)
             (LintUnusedUnsafeBlock span required false))
-          (set! (struct-get lint-unused-unsafe-block-stack len) (+ n 1)))
+          (__tl-project-set-field lint-unused-unsafe-block-stack len (+ n 1)))
         (let
           [bigger : (__tl_dyn-array LintUnusedUnsafeBlock)
             (make-array
               LintUnusedUnsafeBlock
               (lint-grown-capacity
-                (array-length (struct-get lint-unused-unsafe-block-stack slots))))]
+                (array-length
+                  (__tl-project-field lint-unused-unsafe-block-stack slots))))]
           [index : i64 0]
           (begin
             (while (< index n)
               (begin
-                (array-set!
-                  bigger
-                  index
+                (set!
+                  (array-ref bigger index)
                   (array-ref
-                    (struct-get lint-unused-unsafe-block-stack slots)
+                    (__tl-project-field lint-unused-unsafe-block-stack slots)
                     index))
                 (set! index (+ index 1))))
-            (array-set! bigger n (LintUnusedUnsafeBlock span required false))
+            (set!
+              (array-ref bigger n)
+              (LintUnusedUnsafeBlock span required false))
             (set!
               lint-unused-unsafe-block-stack
               (LintUnusedUnsafeBlockStack bigger (+ n 1)))))))
     unit))
 
 (define (lint-unused-unsafe-block-top-index) : i64
-  (- (struct-get lint-unused-unsafe-block-stack len) 1))
+  (- (__tl-project-field lint-unused-unsafe-block-stack len) 1))
 
 (define (lint-unused-unsafe-block-mark-required!) : unit
   (if lint-unused-unsafe-classifier-enabled
@@ -3167,12 +3189,15 @@
       [top : i64 (lint-unused-unsafe-block-top-index)]
       (if (< top 0)
         unit
-        (array-set!
-          (struct-get lint-unused-unsafe-block-stack slots)
-          top
+        (set!
+          (array-ref
+            (__tl-project-field lint-unused-unsafe-block-stack slots)
+            top)
           (LintUnusedUnsafeBlock
-            (struct-get
-              (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+            (__tl-project-field
+              (array-ref
+                (__tl-project-field lint-unused-unsafe-block-stack slots)
+                top)
               span)
             true
             false))))
@@ -3184,17 +3209,20 @@
       [top : i64 (lint-unused-unsafe-block-top-index)]
       (if (< top 0)
         unit
-        (if (struct-get
-          (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+        (if (__tl-project-field
+          (array-ref
+            (__tl-project-field lint-unused-unsafe-block-stack slots)
+            top)
           required)
           unit
-          (array-set!
-            (struct-get lint-unused-unsafe-block-stack slots)
-            top
+          (set!
+            (array-ref
+              (__tl-project-field lint-unused-unsafe-block-stack slots)
+              top)
             (LintUnusedUnsafeBlock
-              (struct-get
+              (__tl-project-field
                 (array-ref
-                  (struct-get lint-unused-unsafe-block-stack slots)
+                  (__tl-project-field lint-unused-unsafe-block-stack slots)
                   top)
                 span)
               false
@@ -3209,17 +3237,21 @@
       (if (< top 0)
         findings
         (begin
-          (set! (struct-get lint-unused-unsafe-block-stack len) top)
-          (if (struct-get
-            (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+          (__tl-project-set-field lint-unused-unsafe-block-stack len top)
+          (if (__tl-project-field
+            (array-ref
+              (__tl-project-field lint-unused-unsafe-block-stack slots)
+              top)
             required)
             (begin
               (set!
                 lint-unused-unsafe-classified-required-count
                 (+ lint-unused-unsafe-classified-required-count 1))
               findings)
-            (if (struct-get
-              (array-ref (struct-get lint-unused-unsafe-block-stack slots) top)
+            (if (__tl-project-field
+              (array-ref
+                (__tl-project-field lint-unused-unsafe-block-stack slots)
+                top)
               unknown)
               (begin
                 (set!
@@ -3232,9 +3264,11 @@
                   (+ lint-unused-unsafe-classified-unused-count 1))
                 (lint-findings-add
                   (lint-unused-unsafe-finding
-                    (struct-get
+                    (__tl-project-field
                       (array-ref
-                        (struct-get lint-unused-unsafe-block-stack slots)
+                        (__tl-project-field
+                          lint-unused-unsafe-block-stack
+                          slots)
                         top)
                       span))
                   findings)))))))))
@@ -3391,9 +3425,10 @@
                         (lint-module-default-alias module-name))
                       (lint-import-span-has-explicit-alias?
                         source
-                        (box-get span)))
+                        (__tl-box-place span)))
                       (lint-findings-add
-                        (lint-redundant-import-alias-finding (box-get span))
+                        (lint-redundant-import-alias-finding
+                          (__tl-box-place span))
                         acc)
                       acc)]))])]
         [_ acc])]))
@@ -3435,7 +3470,7 @@
                         (lint-unused-import-finding
                           (ci.intern-str module-name)
                           (ci.intern-str alias)
-                          (box-get span))
+                          (__tl-box-place span))
                         acc)))])]))])))
 
 (define (lint-unused-imports-in-decl-list
@@ -3512,9 +3547,9 @@
   [items : LintNameSet]
   [name : String]
   [index : i64]) : bool
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     false
-    (if (string.eq (array-ref (struct-get items slots) index) name)
+    (if (string.eq (array-ref items.slots index) name)
       true
       (lint-name-set-contains-from? items name (+ index 1)))))
 
@@ -3525,8 +3560,8 @@
   (if (lint-name-set-contains? items name)
     items
     (let
-      [n : i64 (struct-get items len)]
-      [slots : (__tl_dyn-array String) (struct-get items slots)]
+      [n : i64 items.len]
+      [slots : (__tl_dyn-array String) items.slots]
       (begin
         (if (< n (array-length slots))
           unit
@@ -3537,17 +3572,17 @@
             (begin
               (while (< index n)
                 (begin
-                  (array-set! bigger index (array-ref slots index))
+                  (set! (array-ref bigger index) (array-ref slots index))
                   (set! index (+ index 1))))
               (set! slots bigger))))
-        (array-set! slots n name)
+        (set! (array-ref slots n) name)
         (LintNameSet slots (+ n 1))))))
 
 (define (lint-name-set-count [items : LintNameSet]) : i64
-  (struct-get items len))
+  items.len)
 
 (define (lint-name-set-get [items : LintNameSet] [index : i64]) : String
-  (array-ref (struct-get items slots) index))
+  (array-ref items.slots index))
 
 (define (lint-param-list-add-locals
   [params : ast.AstParamList]
@@ -3611,46 +3646,38 @@
   [left : LintUnsafeScan]
   [right : LintUnsafeScan]) : LintUnsafeScan
   (LintUnsafeScan
-    (or (struct-get left requires) (struct-get right requires))
-    (or (struct-get left candidate) (struct-get right candidate))
-    (or
-      (struct-get left stdlib-string-bare-use)
-      (struct-get right stdlib-string-bare-use))))
+    (or left.requires right.requires)
+    (or left.candidate right.candidate)
+    (or left.stdlib-string-bare-use right.stdlib-string-bare-use)))
 
 (define (lint-unsafe-scan-require [children : LintUnsafeScan]) : LintUnsafeScan
-  (LintUnsafeScan
-    true
-    (struct-get children candidate)
-    (struct-get children stdlib-string-bare-use)))
+  (LintUnsafeScan true children.candidate children.stdlib-string-bare-use))
 
 (define (lint-unsafe-scan-note-stdlib-string-bare-use
   [children : LintUnsafeScan]) : LintUnsafeScan
-  (LintUnsafeScan
-    (struct-get children requires)
-    (struct-get children candidate)
-    true))
+  (LintUnsafeScan children.requires children.candidate true))
 
 (define (lint-unsafe-scope-add-id [scope : LintUnsafeScope] [name-id : i64]) : LintUnsafeScope
   (LintUnsafeScope
-    (lint-name-set-add (struct-get scope shadowed) (ci.intern-str name-id))
-    (struct-get scope ambiguous)))
+    (lint-name-set-add scope.shadowed (ci.intern-str name-id))
+    scope.ambiguous))
 
 (define (lint-unsafe-scope-with-ambiguous [scope : LintUnsafeScope]) : LintUnsafeScope
-  (LintUnsafeScope (struct-get scope shadowed) true))
+  (LintUnsafeScope scope.shadowed true))
 
 (define (lint-unsafe-scope-add-params
   [scope : LintUnsafeScope]
   [params : ast.AstParamList]) : LintUnsafeScope
   (LintUnsafeScope
-    (lint-param-list-add-locals params (struct-get scope shadowed))
-    (struct-get scope ambiguous)))
+    (lint-param-list-add-locals params scope.shadowed)
+    scope.ambiguous))
 
 (define (lint-unsafe-scope-add-macro-params
   [scope : LintUnsafeScope]
   [params : ast.AstMacroParamList]) : LintUnsafeScope
   (LintUnsafeScope
-    (lint-macro-param-list-add-locals params (struct-get scope shadowed))
-    (struct-get scope ambiguous)))
+    (lint-macro-param-list-add-locals params scope.shadowed)
+    scope.ambiguous))
 
 (define (lint-unsafe-pattern-add-bindings
   [pattern : ast.AstPattern]
@@ -3658,20 +3685,20 @@
   (match pattern
     [(ast.AstPattern.Var name _) (lint-unsafe-scope-add-id scope name)]
     [(ast.AstPattern.Tuple items)
-      (lint-unsafe-pattern-list-add-bindings (box-get items) scope 0)]
+      (lint-unsafe-pattern-list-add-bindings (__tl-box-place items) scope 0)]
     [(ast.AstPattern.Array items)
-      (lint-unsafe-pattern-list-add-bindings (box-get items) scope 0)]
+      (lint-unsafe-pattern-list-add-bindings (__tl-box-place items) scope 0)]
     [(ast.AstPattern.Wildcard) scope]
     [(ast.AstPattern.Binding name) (lint-unsafe-scope-add-id scope name)]
     [(ast.AstPattern.Variant _ items)
-      (lint-unsafe-pattern-list-add-bindings (box-get items) scope 0)]
+      (lint-unsafe-pattern-list-add-bindings (__tl-box-place items) scope 0)]
     [(ast.AstPattern.Literal _) scope]))
 
 (define (lint-unsafe-pattern-list-add-bindings
   [patterns : ast.AstPatternList]
   [scope : LintUnsafeScope]
   [index : i64]) : LintUnsafeScope
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     scope
     (lint-unsafe-pattern-list-add-bindings
       patterns
@@ -3684,11 +3711,8 @@
   [name-id : i64]
   [scope : LintUnsafeScope]) : bool
   (and
-    (not (struct-get scope ambiguous))
-    (not
-      (lint-name-set-contains?
-        (struct-get scope shadowed)
-        (ci.intern-str name-id)))))
+    (not scope.ambiguous)
+    (not (lint-name-set-contains? scope.shadowed (ci.intern-str name-id)))))
 
 (define (lint-unsafe-call-unshadowed? [name-id : i64] [scope : LintUnsafeScope]) : bool
   (and
@@ -3731,7 +3755,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [scope : LintUnsafeScope]
   [index : i64]) : LintUnsafeScan
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (lint-unsafe-scan-empty)
     (lint-unsafe-scan-combine
       (lint-unsafe-scan-node (ast.ast-expr-list-get exprs index 0) scope)
@@ -3761,7 +3785,7 @@
   [arms : ast.AstMatchArmList]
   [scope : LintUnsafeScope]
   [index : i64]) : LintUnsafeScan
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (lint-unsafe-scan-empty)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body)
@@ -3823,11 +3847,11 @@
     [(ast.AstExpr.If cond then-branch else-branch)
       (lint-unsafe-scan-three-nodes cond then-branch else-branch scope)]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (lint-unsafe-scan-let-bindings bindings body scope 0)])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body)
           (lint-unsafe-scan-node
             body
@@ -3868,32 +3892,32 @@
         [inside : LintUnsafeScan (lint-unsafe-scan-expr-list items scope)]
         (LintUnsafeScan
           false
-          (or (not (struct-get inside requires)) (struct-get inside candidate))
-          (struct-get inside stdlib-string-bare-use)))]
+          (or (not inside.requires) inside.candidate)
+          inside.stdlib-string-bare-use))]
     [(ast.AstExpr.Set _ value) (lint-unsafe-scan-node value scope)]
     [(ast.AstExpr.Ann inner _) (lint-unsafe-scan-node inner scope)]
     [(ast.AstExpr.Cast inner _) (lint-unsafe-scan-node inner scope)]
     [(ast.AstExpr.Borrow _ _ place) (lint-unsafe-scan-node place scope)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (lint-unsafe-scan-combine
             (lint-unsafe-scan-node scrutinee scope)
             (lint-unsafe-scan-match-arms arms scope 0))])]
     [(ast.AstExpr.Foreach foreach-box)
-      (match (box-get foreach-box)
+      (match (__tl-box-place foreach-box)
         [(ast.AstForeach.Foreach index _ start end body)
           (lint-unsafe-scan-combine
             (lint-unsafe-scan-two-nodes start end scope)
             (lint-unsafe-scan-node body (lint-unsafe-scope-add-id scope index)))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ index _ start end init value)
           (lint-unsafe-scan-combine
             (lint-unsafe-scan-three-nodes start end init scope)
             (lint-unsafe-scan-node value (lint-unsafe-scope-add-id scope index)))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ index _ start end prefix _ init value body)
           (let
             ;; Scan each ancestor before retaining descendants that share its
@@ -3931,7 +3955,7 @@
         (lint-unsafe-scan-node arena scope)
         (lint-unsafe-scan-expr-list body scope))]
     [(ast.AstExpr.WithResource resource-box)
-      (match (box-get resource-box)
+      (match (__tl-box-place resource-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-unsafe-scan-resource-bindings bindings body scope 0)])]
     [(ast.AstExpr.Box inner) (lint-unsafe-scan-node inner scope)]
@@ -4025,7 +4049,7 @@
       (lint-name-set-add names (ci.intern-str name))]
     [(ast.AstDecl.Test name _ _) (lint-name-set-add names (ci.intern-str name))]
     [(ast.AstDecl.Unsafe inner)
-      (lint-unsafe-decl-add-global (box-get inner) names)]))
+      (lint-unsafe-decl-add-global (__tl-box-place inner) names)]))
 
 (define (lint-unsafe-decl-list-globals
   [decls : ast.AstDeclList]
@@ -4047,7 +4071,7 @@
       (if (match decl
         [(ast.AstDecl.Import _ spec) (lint-unsafe-import-ambiguous? spec)]
         [(ast.AstDecl.Unsafe inner)
-          (match (box-get inner)
+          (match (__tl-box-place inner)
             [(ast.AstDecl.Import _ spec) (lint-unsafe-import-ambiguous? spec)]
             [_ false])]
         [_ false])
@@ -4068,7 +4092,7 @@
     (match decl
       [(ast.AstDecl.Module _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.ModuleBody _ body)
-        (lint-unsafe-scan-decl-list (box-get body))]
+        (lint-unsafe-scan-decl-list (__tl-box-place body))]
       [(ast.AstDecl.Def _ _ _ body) (lint-unsafe-scan-node body body-scope)]
       [(ast.AstDecl.DefFn _ _ params _ body _)
         (lint-unsafe-scan-node
@@ -4098,7 +4122,8 @@
       [(ast.AstDecl.IncludeBin _ _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.DefDispatch _ _ _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.Test _ body _) (lint-unsafe-scan-node body body-scope)]
-      [(ast.AstDecl.Unsafe inner) (lint-unsafe-scan-decl (box-get inner) scope)])))
+      [(ast.AstDecl.Unsafe inner)
+        (lint-unsafe-scan-decl (__tl-box-place inner) scope)])))
 
 (define (lint-unsafe-scan-decls-with-scope
   [decls : ast.AstDeclList]
@@ -4121,7 +4146,9 @@
 (define (lint-unsafe-program-has-candidate? [program : ast.AstProgram]) : bool
   (match program
     [(ast.AstProgram.Program decls)
-      (struct-get (lint-unsafe-scan-decl-list (box-get decls)) candidate)]))
+      (__tl-project-field
+        (lint-unsafe-scan-decl-list (__tl-box-place decls))
+        candidate)]))
 
 (define (lint-stdlib-string-decl-list-globals-at
   [decls : ast.AstDeclList]
@@ -4185,7 +4212,7 @@
           cbi.compiler-builtin-id-fix-empty
           (lint-name-set-empty))
         false)]
-    (struct-get
+    (__tl-project-field
       (lint-stdlib-string-scan-decls-at
         decls
         target-module-id
@@ -4241,16 +4268,15 @@
   (if (< index 0)
     LintCopyOnUpdateMaybeStruct.NoStruct
     (let
-      [shape : LintCopyOnUpdateStructShape
-        (array-ref (struct-get shapes slots) index)]
-      (if (string.eq (struct-get shape name) name)
+      [shape : LintCopyOnUpdateStructShape (array-ref shapes.slots index)]
+      (if (string.eq shape.name name)
         (LintCopyOnUpdateMaybeStruct.SomeStruct shape)
         (lint-copy-on-update-struct-find-at shapes name (- index 1))))))
 
 (define (lint-copy-on-update-struct-find
   [shapes : LintCopyOnUpdateStructList]
   [name : String]) : LintCopyOnUpdateMaybeStruct
-  (lint-copy-on-update-struct-find-at shapes name (- (struct-get shapes len) 1)))
+  (lint-copy-on-update-struct-find-at shapes name (- shapes.len 1)))
 
 (define (lint-copy-on-update-struct-known-name
   [shapes : LintCopyOnUpdateStructList]
@@ -4289,10 +4315,10 @@
   [locals : LintCopyOnUpdateLocalList]
   [name : String]
   [index : i64]) : i64
-  (if (>= index (struct-get locals len))
+  (if (>= index locals.len)
     (- 0 1)
     (if (string.eq
-      (struct-get (array-ref (struct-get locals slots) index) name)
+      (__tl-project-field (array-ref locals.slots index) name)
       name)
       index
       (lint-copy-on-update-local-index locals name (+ index 1)))))
@@ -4305,18 +4331,17 @@
     (if (< found 0)
       locals
       (let
-        [n : i64 (- (struct-get locals len) 1)]
+        [n : i64 (- locals.len 1)]
         [slots : (__tl_dyn-array LintCopyOnUpdateLocal)
           (make-array LintCopyOnUpdateLocal n)]
         [index : i64 0]
         (begin
           (while (< index n)
             (begin
-              (array-set!
-                slots
-                index
+              (set!
+                (array-ref slots index)
                 (array-ref
-                  (struct-get locals slots)
+                  locals.slots
                   (if (< index found)
                     index
                     (+ index 1))))
@@ -4333,19 +4358,16 @@
     (if (string.eq type-name "")
       without
       (let
-        [n : i64 (struct-get without len)]
+        [n : i64 without.len]
         [slots : (__tl_dyn-array LintCopyOnUpdateLocal)
           (make-array LintCopyOnUpdateLocal (+ n 1))]
         [index : i64 0]
         (begin
           (while (< index n)
             (begin
-              (array-set!
-                slots
-                index
-                (array-ref (struct-get without slots) index))
+              (set! (array-ref slots index) (array-ref without.slots index))
               (set! index (+ index 1))))
-          (array-set! slots n (LintCopyOnUpdateLocal name type-name))
+          (set! (array-ref slots n) (LintCopyOnUpdateLocal name type-name))
           (LintCopyOnUpdateLocalList slots (+ n 1)))))))
 
 (define (lint-copy-on-update-local-type
@@ -4355,7 +4377,7 @@
     [found : i64 (lint-copy-on-update-local-index locals name 0)]
     (if (< found 0)
       ""
-      (struct-get (array-ref (struct-get locals slots) found) type-name))))
+      (__tl-project-field (array-ref locals.slots found) type-name))))
 
 (define (lint-copy-on-update-param-locals
   [params : ast.AstParamList]
@@ -4452,10 +4474,10 @@
   [index : i64]
   [target-name : String]) : LintCopyOnUpdateArgCheck
   (if (>= index (lint-name-set-count fields))
-    (if (= index (struct-get args len))
+    (if (= index args.len)
       (LintCopyOnUpdateArgCheck true 0 0 "")
       (lint-copy-on-update-arg-check-invalid))
-    (if (>= index (struct-get args len))
+    (if (>= index args.len)
       (lint-copy-on-update-arg-check-invalid)
       (let
         [field : String (lint-name-set-get fields index)]
@@ -4467,27 +4489,27 @@
             args
             (+ index 1)
             target-name)]
-        (if (not (struct-get tail valid))
+        (if (not tail.valid)
           tail
           (if (lint-copy-on-update-copied-field? target-name field arg)
             (LintCopyOnUpdateArgCheck
               true
-              (+ (struct-get tail copied) 1)
-              (struct-get tail changed)
-              (struct-get tail changed-field))
+              (+ tail.copied 1)
+              tail.changed
+              tail.changed-field)
             (LintCopyOnUpdateArgCheck
               true
-              (struct-get tail copied)
-              (+ (struct-get tail changed) 1)
-              (if (= (struct-get tail changed) 0)
+              tail.copied
+              (+ tail.changed 1)
+              (if (= tail.changed 0)
                 field
-                (struct-get tail changed-field)))))))))
+                tail.changed-field))))))))
 
 (define (lint-copy-on-update-state-with
   [state : LintCopyOnUpdateState]
   [locals : LintCopyOnUpdateLocalList]
   [findings : LintFindings]) : LintCopyOnUpdateState
-  (LintCopyOnUpdateState (struct-get state shapes) locals findings))
+  (LintCopyOnUpdateState state.shapes locals findings))
 
 (define (lint-copy-on-update-add-finding
   [state : LintCopyOnUpdateState]
@@ -4496,10 +4518,10 @@
   [span : ast.AstSourceSpan]) : LintCopyOnUpdateState
   (lint-copy-on-update-state-with
     state
-    (struct-get state locals)
+    state.locals
     (lint-findings-add
       (lint-copy-on-update-struct-finding name field span)
-      (struct-get state findings))))
+      state.findings)))
 
 (define (lint-copy-on-update-add-set-if-needed
   [target : i64]
@@ -4509,7 +4531,7 @@
   (let
     [target-name : String (ci.intern-str target)]
     [type-name : String
-      (lint-copy-on-update-local-type (struct-get state locals) target-name)]
+      (lint-copy-on-update-local-type state.locals target-name)]
     (if (or (string.eq type-name "") (lint-underscore-prefixed? target-name))
       state
       (match value
@@ -4537,25 +4559,23 @@
               (lint-copy-on-update-expr-var-name (ast.ast-node-get callee))]
             (if (not (string.eq callee-name type-name))
               state
-              (match (lint-copy-on-update-struct-find
-                (struct-get state shapes)
-                type-name)
+              (match (lint-copy-on-update-struct-find state.shapes type-name)
                 [(LintCopyOnUpdateMaybeStruct.NoStruct) state]
                 [(LintCopyOnUpdateMaybeStruct.SomeStruct shape)
                   (let
                     [checked : LintCopyOnUpdateArgCheck
                       (lint-copy-on-update-check-args
-                        (struct-get shape fields)
+                        shape.fields
                         args
                         target-name)]
                     (if (and
-                      (struct-get checked valid)
-                      (= (struct-get checked changed) 1)
-                      (>= (struct-get checked copied) 1))
+                      checked.valid
+                      (= checked.changed 1)
+                      (>= checked.copied 1))
                       (lint-copy-on-update-add-finding
                         state
                         target-name
-                        (struct-get checked changed-field)
+                        checked.changed-field
                         span)
                       state))])))]
         [_ state]))))
@@ -4570,7 +4590,7 @@
       (let
         [annotated : String
           (lint-copy-on-update-struct-name-from-type
-            (struct-get state shapes)
+            state.shapes
             (ast.ty-node-get ty-id))]
         (if (string.eq annotated "")
           (lint-copy-on-update-init-type-name state (ast.ast-node-get inner))
@@ -4579,7 +4599,7 @@
       (let
         [casted : String
           (lint-copy-on-update-struct-name-from-type
-            (struct-get state shapes)
+            state.shapes
             (ast.ty-node-get ty-id))]
         (if (string.eq casted "")
           (lint-copy-on-update-init-type-name state (ast.ast-node-get inner))
@@ -4588,15 +4608,11 @@
       (let
         [callee-name : String
           (lint-copy-on-update-expr-var-name (ast.ast-node-get callee))]
-        (match (lint-copy-on-update-struct-find
-          (struct-get state shapes)
-          callee-name)
+        (match (lint-copy-on-update-struct-find state.shapes callee-name)
           [(LintCopyOnUpdateMaybeStruct.NoStruct) ""]
           [(LintCopyOnUpdateMaybeStruct.SomeStruct _) callee-name]))]
     [(ast.AstExpr.Var name)
-      (lint-copy-on-update-local-type
-        (struct-get state locals)
-        (ci.intern-str name))]
+      (lint-copy-on-update-local-type state.locals (ci.intern-str name))]
     [_ ""]))
 
 (define (lint-copy-on-update-local-type-from-binding
@@ -4605,9 +4621,7 @@
   [init : i64]) : String
   (let
     [annotated : String
-      (lint-copy-on-update-struct-name-from-maybe-type
-        (struct-get state shapes)
-        maybe-ty)]
+      (lint-copy-on-update-struct-name-from-maybe-type state.shapes maybe-ty)]
     (if (string.eq annotated "")
       (lint-copy-on-update-init-type-name state (ast.ast-node-get init))
       annotated)))
@@ -4621,7 +4635,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     state
     (lint-copy-on-update-expr-list-at
       exprs
@@ -4662,10 +4676,10 @@
             (lint-copy-on-update-state-with
               after-init
               (lint-copy-on-update-local-add
-                (struct-get after-init locals)
+                after-init.locals
                 (ci.intern-str name)
                 type-name)
-              (struct-get after-init findings))]
+              after-init.findings)]
           (lint-copy-on-update-let-bindings-at bindings with-local (+ index 1)))])))
 
 (define (lint-copy-on-update-let
@@ -4674,15 +4688,12 @@
   [state : LintCopyOnUpdateState]
   [span : ast.AstSourceSpan]) : LintCopyOnUpdateState
   (let
-    [outer-locals : LintCopyOnUpdateLocalList (struct-get state locals)]
+    [outer-locals : LintCopyOnUpdateLocalList state.locals]
     [with-bindings : LintCopyOnUpdateState
       (lint-copy-on-update-let-bindings bindings state)]
     [with-body : LintCopyOnUpdateState
       (lint-copy-on-update-expr body with-bindings span)]
-    (lint-copy-on-update-state-with
-      with-body
-      outer-locals
-      (struct-get with-body findings))))
+    (lint-copy-on-update-state-with with-body outer-locals with-body.findings)))
 
 (define (lint-copy-on-update-match-arms
   [arms : ast.AstMatchArmList]
@@ -4693,7 +4704,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [state : LintCopyOnUpdateState]
   [index : i64]) : LintCopyOnUpdateState
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     state
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body)
@@ -4759,22 +4770,22 @@
           span)
         span)]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (lint-copy-on-update-let bindings (ast.ast-node-get body) state span)])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body)
           (let
-            [outer-locals : LintCopyOnUpdateLocalList (struct-get state locals)]
+            [outer-locals : LintCopyOnUpdateLocalList state.locals]
             [with-params : LintCopyOnUpdateState
               (lint-copy-on-update-state-with
                 state
                 (lint-copy-on-update-param-locals
                   params
-                  (struct-get state shapes)
+                  state.shapes
                   outer-locals)
-                (struct-get state findings))]
+                state.findings)]
             [with-body : LintCopyOnUpdateState
               (lint-copy-on-update-expr
                 (ast.ast-node-get body)
@@ -4783,7 +4794,7 @@
             (lint-copy-on-update-state-with
               with-body
               outer-locals
-              (struct-get with-body findings)))])]
+              with-body.findings))])]
     [(ast.AstExpr.Tuple exprs) (lint-copy-on-update-expr-list exprs state)]
     [(ast.AstExpr.TupleRef tuple _)
       (lint-copy-on-update-expr (ast.ast-node-get tuple) state span)]
@@ -4847,13 +4858,13 @@
     [(ast.AstExpr.Borrow _ _ place)
       (lint-copy-on-update-expr (ast.ast-node-get place) state span)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (lint-copy-on-update-match-arms
             arms
             (lint-copy-on-update-expr (ast.ast-node-get scrutinee) state span))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach name ty start end body)
           (let
             [after-range : LintCopyOnUpdateState
@@ -4861,24 +4872,21 @@
                 (ast.ast-node-get end)
                 (lint-copy-on-update-expr (ast.ast-node-get start) state span)
                 span)]
-            [outer-locals : LintCopyOnUpdateLocalList
-              (struct-get after-range locals)]
+            [outer-locals : LintCopyOnUpdateLocalList after-range.locals]
             [with-local : LintCopyOnUpdateState
               (lint-copy-on-update-state-with
                 after-range
                 (lint-copy-on-update-local-add
                   outer-locals
                   (ci.intern-str name)
-                  (lint-copy-on-update-struct-name-from-type
-                    (struct-get state shapes)
-                    ty))
-                (struct-get after-range findings))]
+                  (lint-copy-on-update-struct-name-from-type state.shapes ty))
+                after-range.findings)]
             [with-body : LintCopyOnUpdateState
               (lint-copy-on-update-expr (ast.ast-node-get body) with-local span)]
             (lint-copy-on-update-state-with
               with-body
               outer-locals
-              (struct-get with-body findings)))])]
+              with-body.findings))])]
     [(ast.AstExpr.StructGet receiver _)
       (lint-copy-on-update-expr (ast.ast-node-get receiver) state span)]
     [(ast.AstExpr.StructSet receiver _ value)
@@ -4897,7 +4905,7 @@
         body
         (lint-copy-on-update-expr (ast.ast-node-get arena) state span))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-copy-on-update-expr-list
             body
@@ -4938,7 +4946,7 @@
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]
   [names : LintNameSet]) : LintNameSet
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     names
     (match (ast.ast-field-def-list-get
       fields
@@ -4956,9 +4964,8 @@
   [shapes : LintCopyOnUpdateStructList]) : LintCopyOnUpdateStructList
   (let
     [names : LintNameSet (lint-copy-on-update-field-names fields)]
-    [n : i64 (struct-get shapes len)]
-    [slots : (__tl_dyn-array LintCopyOnUpdateStructShape)
-      (struct-get shapes slots)]
+    [n : i64 shapes.len]
+    [slots : (__tl_dyn-array LintCopyOnUpdateStructShape) shapes.slots]
     (begin
       (if (< n (array-length slots))
         unit
@@ -4971,12 +4978,11 @@
           (begin
             (while (< index n)
               (begin
-                (array-set! bigger index (array-ref slots index))
+                (set! (array-ref bigger index) (array-ref slots index))
                 (set! index (+ index 1))))
             (set! slots bigger))))
-      (array-set!
-        slots
-        n
+      (set!
+        (array-ref slots n)
         (LintCopyOnUpdateStructShape
           (ci.intern-str name)
           names
@@ -4992,7 +4998,9 @@
     [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ _ fields)
       (lint-copy-on-update-add-struct name fields shapes)]
     [(ast.AstDecl.Unsafe inner)
-      (lint-copy-on-update-collect-structs-in-decl (box-get inner) shapes)]
+      (lint-copy-on-update-collect-structs-in-decl
+        (__tl-box-place inner)
+        shapes)]
     [_ shapes]))
 
 (define (lint-copy-on-update-collect-structs
@@ -5011,14 +5019,14 @@
   [acc : LintFindings]) : LintFindings
   (match decl
     [(ast.AstDecl.Def decl-meta _ _ body)
-      (struct-get
+      (__tl-project-field
         (lint-copy-on-update-expr
           (ast.ast-node-get body)
           (LintCopyOnUpdateState shapes (lint-copy-on-update-locals-empty) acc)
           (lint-no-span))
         findings)]
     [(ast.AstDecl.DefFn decl-meta _ params _ body _)
-      (struct-get
+      (__tl-project-field
         (lint-copy-on-update-expr
           (ast.ast-node-get body)
           (LintCopyOnUpdateState
@@ -5031,7 +5039,7 @@
           (lint-no-span))
         findings)]
     [(ast.AstDecl.DefMacro decl-meta _ params _ body)
-      (struct-get
+      (__tl-project-field
         (lint-copy-on-update-expr
           (ast.ast-node-get body)
           (LintCopyOnUpdateState
@@ -5044,14 +5052,14 @@
           (lint-no-span))
         findings)]
     [(ast.AstDecl.Test _ body _)
-      (struct-get
+      (__tl-project-field
         (lint-copy-on-update-expr
           (ast.ast-node-get body)
           (LintCopyOnUpdateState shapes (lint-copy-on-update-locals-empty) acc)
           (lint-no-span))
         findings)]
     [(ast.AstDecl.Unsafe inner)
-      (lint-copy-on-update-structs-in-decl (box-get inner) shapes acc)]
+      (lint-copy-on-update-structs-in-decl (__tl-box-place inner) shapes acc)]
     [_ acc]))
 
 (define (lint-copy-on-update-structs-in-decl-list
@@ -5113,13 +5121,7 @@
     (LintFinding
       (string.append
         "prefer dotted field syntax: use "
-        (string.append
-          dotted
-          (string.append
-            " instead of (struct-get "
-            (string.append
-              receiver
-              (string.append " " (string.append field ")"))))))
+        (string.append dotted " for this field projection"))
       (lint-rule-prefer-dotted-field-id)
       0
       span)))
@@ -5133,13 +5135,7 @@
     (LintFinding
       (string.append
         "prefer dotted field syntax: use (set! "
-        (string.append
-          dotted
-          (string.append
-            " value) instead of (set! (struct-get "
-            (string.append
-              receiver
-              (string.append " " (string.append field ") value)"))))))
+        (string.append dotted " value) for this field assignment"))
       (lint-rule-prefer-dotted-field-id)
       1
       span)))
@@ -5185,7 +5181,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     acc
     (let
       [head : ast.AstExpr
@@ -5255,7 +5251,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     acc
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body)
@@ -5313,14 +5309,14 @@
             (lint-no-span)
             acc)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (lint-prefer-dotted-field-expr
             (ast.ast-node-get body)
             (lint-no-span)
             (lint-prefer-dotted-field-let-bindings bindings acc))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body)
           (lint-prefer-dotted-field-expr
             (ast.ast-node-get body)
@@ -5422,7 +5418,7 @@
         (lint-no-span)
         acc)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (lint-prefer-dotted-field-match-arms
             arms
@@ -5431,7 +5427,7 @@
               (lint-no-span)
               acc))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start end body)
           (lint-prefer-dotted-field-expr
             (ast.ast-node-get body)
@@ -5444,7 +5440,7 @@
                 (lint-no-span)
                 acc)))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start end init value)
           (lint-prefer-dotted-field-expr
             (ast.ast-node-get value)
@@ -5460,7 +5456,7 @@
                   (lint-no-span)
                   acc))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ _ _ start end _ _ init value body)
           (lint-prefer-dotted-field-expr
             (ast.ast-node-get body)
@@ -5528,7 +5524,7 @@
           (lint-no-span)
           acc))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-prefer-dotted-field-expr-list
             body
@@ -5693,7 +5689,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     acc
     (let
       [head : ast.AstExpr
@@ -5763,7 +5759,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     acc
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body)
@@ -5817,14 +5813,14 @@
             (lint-no-span)
             acc)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (lint-prefer-dotted-field-quasiquote-expr
             (ast.ast-node-get body)
             (lint-no-span)
             (lint-prefer-dotted-field-quasiquote-let-bindings bindings acc))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body)
           (lint-prefer-dotted-field-quasiquote-expr
             (ast.ast-node-get body)
@@ -5933,7 +5929,7 @@
         (lint-no-span)
         acc)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (lint-prefer-dotted-field-quasiquote-match-arms
             arms
@@ -5942,7 +5938,7 @@
               (lint-no-span)
               acc))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start end body)
           (lint-prefer-dotted-field-quasiquote-expr
             (ast.ast-node-get body)
@@ -5955,7 +5951,7 @@
                 (lint-no-span)
                 acc)))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start end init value)
           (lint-prefer-dotted-field-quasiquote-expr
             (ast.ast-node-get value)
@@ -5971,7 +5967,7 @@
                   (lint-no-span)
                   acc))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ _ _ start end _ _ init value body)
           (lint-prefer-dotted-field-quasiquote-expr
             (ast.ast-node-get body)
@@ -6037,7 +6033,7 @@
           (lint-no-span)
           acc))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-prefer-dotted-field-quasiquote-expr-list
             body
@@ -6212,9 +6208,9 @@
     [(ast.AstDecl.Test _ body _)
       (lint-prefer-dotted-field-expr (ast.ast-node-get body) (lint-no-span) acc)]
     [(ast.AstDecl.Unsafe inner)
-      (lint-prefer-dotted-field-decl (box-get inner) acc)]
+      (lint-prefer-dotted-field-decl (__tl-box-place inner) acc)]
     [(ast.AstDecl.ModuleBody _ body)
-      (lint-prefer-dotted-field-decl-list (box-get body) acc)]
+      (lint-prefer-dotted-field-decl-list (__tl-box-place body) acc)]
     [_ acc]))
 
 (define (lint-prefer-dotted-field-decl-list
@@ -6232,7 +6228,7 @@
   [acc : LintFindings]) : LintFindings
   (match program
     [(ast.AstProgram.Program decls)
-      (lint-prefer-dotted-field-decl-list (box-get decls) acc)]))
+      (lint-prefer-dotted-field-decl-list (__tl-box-place decls) acc)]))
 
 (defstruct LintSingleElementArrayCandidate
   (name String)
@@ -6255,12 +6251,12 @@
 (define (lint-single-element-array-state-with-candidates
   [state : LintSingleElementArrayState]
   [candidates : LintSingleElementArrayCandidateList]) : LintSingleElementArrayState
-  (LintSingleElementArrayState candidates (struct-get state findings)))
+  (LintSingleElementArrayState candidates state.findings))
 
 (define (lint-single-element-array-state-with-findings
   [state : LintSingleElementArrayState]
   [findings : LintFindings]) : LintSingleElementArrayState
-  (LintSingleElementArrayState (struct-get state candidates) findings))
+  (LintSingleElementArrayState state.candidates findings))
 
 (define (lint-single-element-array-candidates-empty) : LintSingleElementArrayCandidateList
   (LintSingleElementArrayCandidateList
@@ -6271,11 +6267,9 @@
   [items : LintSingleElementArrayCandidateList]
   [name : String]
   [index : i64]) : i64
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     (- 0 1)
-    (if (string.eq
-      (struct-get (array-ref (struct-get items slots) index) name)
-      name)
+    (if (string.eq (__tl-project-field (array-ref items.slots index) name) name)
       index
       (lint-single-element-array-candidate-index items name (+ index 1)))))
 
@@ -6292,18 +6286,17 @@
     (if (< found 0)
       items
       (let
-        [n : i64 (- (struct-get items len) 1)]
+        [n : i64 (- items.len 1)]
         [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
           (make-array LintSingleElementArrayCandidate n)]
         [index : i64 0]
         (begin
           (while (< index n)
             (begin
-              (array-set!
-                slots
-                index
+              (set!
+                (array-ref slots index)
                 (array-ref
-                  (struct-get items slots)
+                  items.slots
                   (if (< index found)
                     index
                     (+ index 1))))
@@ -6317,18 +6310,17 @@
   (let
     [without : LintSingleElementArrayCandidateList
       (lint-single-element-array-candidate-remove items name)]
-    [n : i64 (struct-get without len)]
+    [n : i64 without.len]
     [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
       (make-array LintSingleElementArrayCandidate (+ n 1))]
     [index : i64 0]
     (begin
       (while (< index n)
         (begin
-          (array-set! slots index (array-ref (struct-get without slots) index))
+          (set! (array-ref slots index) (array-ref without.slots index))
           (set! index (+ index 1))))
-      (array-set!
-        slots
-        n
+      (set!
+        (array-ref slots n)
         (LintSingleElementArrayCandidate name span true false))
       (LintSingleElementArrayCandidateList slots (+ n 1)))))
 
@@ -6337,16 +6329,16 @@
   [found : i64]
   [item : LintSingleElementArrayCandidate]) : LintSingleElementArrayCandidateList
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
       (make-array LintSingleElementArrayCandidate n)]
     [index : i64 0]
     (begin
       (while (< index n)
         (begin
-          (array-set! slots index (array-ref (struct-get items slots) index))
+          (set! (array-ref slots index) (array-ref items.slots index))
           (set! index (+ index 1))))
-      (array-set! slots found item)
+      (set! (array-ref slots found) item)
       (LintSingleElementArrayCandidateList slots n))))
 
 (define (lint-single-element-array-candidate-mark-use
@@ -6357,16 +6349,11 @@
     (if (< found 0)
       items
       (let
-        [item : LintSingleElementArrayCandidate
-          (array-ref (struct-get items slots) found)]
+        [item : LintSingleElementArrayCandidate (array-ref items.slots found)]
         (lint-single-element-array-candidate-replace
           items
           found
-          (LintSingleElementArrayCandidate
-            (struct-get item name)
-            (struct-get item span)
-            (struct-get item valid)
-            true))))))
+          (LintSingleElementArrayCandidate item.name item.span item.valid true))))))
 
 (define (lint-single-element-array-candidate-invalidate
   [items : LintSingleElementArrayCandidateList]
@@ -6376,41 +6363,30 @@
     (if (< found 0)
       items
       (let
-        [item : LintSingleElementArrayCandidate
-          (array-ref (struct-get items slots) found)]
+        [item : LintSingleElementArrayCandidate (array-ref items.slots found)]
         (lint-single-element-array-candidate-replace
           items
           found
-          (LintSingleElementArrayCandidate
-            (struct-get item name)
-            (struct-get item span)
-            false
-            (struct-get item used)))))))
+          (LintSingleElementArrayCandidate item.name item.span false item.used))))))
 
 (define (lint-single-element-array-note-use
   [state : LintSingleElementArrayState]
   [name : String]) : LintSingleElementArrayState
   (lint-single-element-array-state-with-candidates
     state
-    (lint-single-element-array-candidate-mark-use
-      (struct-get state candidates)
-      name)))
+    (lint-single-element-array-candidate-mark-use state.candidates name)))
 
 (define (lint-single-element-array-note-escape
   [state : LintSingleElementArrayState]
   [name : String]) : LintSingleElementArrayState
   (lint-single-element-array-state-with-candidates
     state
-    (lint-single-element-array-candidate-invalidate
-      (struct-get state candidates)
-      name)))
+    (lint-single-element-array-candidate-invalidate state.candidates name)))
 
 (define (lint-single-element-array-note-var
   [state : LintSingleElementArrayState]
   [name : String]) : LintSingleElementArrayState
-  (if (lint-single-element-array-candidate-tracked?
-    (struct-get state candidates)
-    name)
+  (if (lint-single-element-array-candidate-tracked? state.candidates name)
     (lint-single-element-array-note-escape state name)
     state))
 
@@ -6472,7 +6448,7 @@
     [_ false]))
 
 (define (lint-single-element-array-expr-list-count [exprs : ast.AstExprList]) : i64
-  (struct-get (& exprs) len))
+  exprs.len)
 
 (define (lint-single-element-array-callee-name [expr : ast.AstExpr]) : String
   (match expr
@@ -6510,14 +6486,14 @@
 (define (lint-single-element-array-args-second-int?
   [args : ast.AstExprList]
   [value : i64]) : bool
-  (if (> (struct-get (& args) len) 1)
+  (if (> args.len 1)
     (lint-single-element-array-int-literal?
       (ast.ast-node-get (ast.ast-expr-list-get (& args) 1 0))
       value)
     false))
 
 (define (lint-single-element-array-first-arg-name [args : ast.AstExprList]) : String
-  (if (> (struct-get (& args) len) 0)
+  (if (> args.len 0)
     (lint-single-element-array-var-name
       (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0)))
     ""))
@@ -6559,14 +6535,12 @@
     [base : LintSingleElementArrayState
       (lint-single-element-array-state-with-candidates
         state
-        (lint-single-element-array-candidate-remove
-          (struct-get state candidates)
-          name))]
+        (lint-single-element-array-candidate-remove state.candidates name))]
     (if (lint-single-element-array-local-candidate? maybe-ty init)
       (lint-single-element-array-state-with-candidates
         base
         (lint-single-element-array-candidate-add
-          (struct-get base candidates)
+          base.candidates
           name
           (lint-single-element-array-binding-span init)))
       base)))
@@ -6605,17 +6579,14 @@
   (if (< index 0)
     acc
     (let
-      [item : LintSingleElementArrayCandidate
-        (array-ref (struct-get items slots) index)]
+      [item : LintSingleElementArrayCandidate (array-ref items.slots index)]
       [next : LintFindings
         (if (and
-          (struct-get item valid)
-          (struct-get item used)
-          (not (lint-underscore-prefixed? (struct-get item name))))
+          item.valid
+          item.used
+          (not (lint-underscore-prefixed? item.name)))
           (lint-findings-add
-            (lint-single-element-array-cell-finding
-              (struct-get item name)
-              (struct-get item span))
+            (lint-single-element-array-cell-finding item.name item.span)
             acc)
           acc)]
       (lint-single-element-array-finalize-candidates-at items next (- index 1)))))
@@ -6623,16 +6594,13 @@
 (define (lint-single-element-array-finalize-candidates
   [items : LintSingleElementArrayCandidateList]
   [acc : LintFindings]) : LintFindings
-  (lint-single-element-array-finalize-candidates-at
-    items
-    acc
-    (- (struct-get items len) 1)))
+  (lint-single-element-array-finalize-candidates-at items acc (- items.len 1)))
 
 (define (lint-single-element-array-finalize-state
   [state : LintSingleElementArrayState]) : LintFindings
   (lint-single-element-array-finalize-candidates
-    (struct-get state candidates)
-    (struct-get state findings)))
+    state.candidates
+    state.findings))
 
 (define (lint-single-element-array-expr-list
   [exprs : ast.AstExprList]
@@ -6643,7 +6611,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     state
     (lint-single-element-array-expr-list-at
       exprs
@@ -6696,7 +6664,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [state : LintSingleElementArrayState]
   [index : i64]) : LintSingleElementArrayState
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     state
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body)
@@ -6732,7 +6700,7 @@
             (lint-single-element-array-state-with-candidates
               after-cleanup
               (lint-single-element-array-candidate-remove
-                (struct-get after-cleanup candidates)
+                after-cleanup.candidates
                 (ci.intern-str name)))]
           (lint-single-element-array-resource-bindings-at
             bindings
@@ -6746,9 +6714,7 @@
     [name : String (lint-single-element-array-first-arg-name args)]
     (if (and
       (= (lint-single-element-array-expr-list-count args) 2)
-      (lint-single-element-array-candidate-tracked?
-        (struct-get state candidates)
-        name)
+      (lint-single-element-array-candidate-tracked? state.candidates name)
       (lint-single-element-array-args-second-int? args 0))
       (lint-single-element-array-expr-list-after-two
         args
@@ -6762,9 +6728,7 @@
     [name : String (lint-single-element-array-first-arg-name args)]
     (if (and
       (= (lint-single-element-array-expr-list-count args) 3)
-      (lint-single-element-array-candidate-tracked?
-        (struct-get state candidates)
-        name)
+      (lint-single-element-array-candidate-tracked? state.candidates name)
       (lint-single-element-array-args-second-int? args 0))
       (lint-single-element-array-expr-list-after-two
         args
@@ -6847,7 +6811,7 @@
   [name : String]) : bool
   (let
     [items : LintSingleElementArrayCandidateList
-      (struct-get
+      (__tl-project-field
         (lint-single-element-array-expr
           expr
           (LintSingleElementArrayState
@@ -6857,13 +6821,12 @@
               (lint-no-span))
             (lint-findings-empty)))
         candidates)]
-    [top : i64 (- (struct-get items len) 1)]
+    [top : i64 (- items.len 1)]
     (if (< top 0)
       false
       (let
-        [item : LintSingleElementArrayCandidate
-          (array-ref (struct-get items slots) top)]
-        (or (struct-get item used) (not (struct-get item valid)))))))
+        [item : LintSingleElementArrayCandidate (array-ref items.slots top)]
+        (or item.used (not item.valid))))))
 
 (define (lint-prefer-dynamic-array-literal-set-callee? [name : String]) : bool
   (or
@@ -7027,7 +6990,7 @@
                   (lint-prefer-dynamic-array-literal-finding
                     name
                     (lint-no-effect-span (ast.ast-node-get init)))
-                  (struct-get state findings)))
+                  state.findings))
               state)]
           (lint-prefer-dynamic-array-literals-in-let-bindings-at
             bindings
@@ -7069,7 +7032,7 @@
           (ast.ast-node-get then-branch)
           (lint-single-element-array-expr (ast.ast-node-get cond) state)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (let
             [with-dynamic-array-literals : LintSingleElementArrayState
@@ -7083,7 +7046,7 @@
                 bindings
                 with-dynamic-array-literals)))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body)
           (lint-single-element-array-expr (ast.ast-node-get body) state)])]
     [(ast.AstExpr.Tuple exprs)
@@ -7101,9 +7064,7 @@
         [name : String
           (lint-single-element-array-var-name (ast.ast-node-get array))]
         (if (and
-          (lint-single-element-array-candidate-tracked?
-            (struct-get state candidates)
-            name)
+          (lint-single-element-array-candidate-tracked? state.candidates name)
           (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
           (lint-single-element-array-note-use state name)
           (lint-single-element-array-expr
@@ -7114,9 +7075,7 @@
         [name : String
           (lint-single-element-array-var-name (ast.ast-node-get array))]
         (if (and
-          (lint-single-element-array-candidate-tracked?
-            (struct-get state candidates)
-            name)
+          (lint-single-element-array-candidate-tracked? state.candidates name)
           (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
           (lint-single-element-array-expr
             (ast.ast-node-get value)
@@ -7131,9 +7090,7 @@
         [name : String
           (lint-single-element-array-var-name (ast.ast-node-get array))]
         (if (and
-          (lint-single-element-array-candidate-tracked?
-            (struct-get state candidates)
-            name)
+          (lint-single-element-array-candidate-tracked? state.candidates name)
           (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
           (lint-single-element-array-expr
             (ast.ast-node-get live)
@@ -7148,9 +7105,7 @@
         [name : String
           (lint-single-element-array-var-name (ast.ast-node-get array))]
         (if (and
-          (lint-single-element-array-candidate-tracked?
-            (struct-get state candidates)
-            name)
+          (lint-single-element-array-candidate-tracked? state.candidates name)
           (lint-single-element-array-int-literal? (ast.ast-node-get index) 0))
           (lint-single-element-array-note-use state name)
           (lint-single-element-array-expr
@@ -7199,13 +7154,13 @@
     [(ast.AstExpr.Borrow _ _ place)
       (lint-single-element-array-expr (ast.ast-node-get place) state)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (lint-single-element-array-match-arms
             arms
             (lint-single-element-array-expr (ast.ast-node-get scrutinee) state))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start end body)
           (lint-single-element-array-expr
             (ast.ast-node-get body)
@@ -7213,7 +7168,7 @@
               (ast.ast-node-get end)
               (lint-single-element-array-expr (ast.ast-node-get start) state)))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start end init value)
           (lint-single-element-array-expr
             (ast.ast-node-get value)
@@ -7223,7 +7178,7 @@
                 (ast.ast-node-get end)
                 (lint-single-element-array-expr (ast.ast-node-get start) state))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ _ _ start end _ _ init value body)
           (lint-single-element-array-expr
             (ast.ast-node-get body)
@@ -7263,7 +7218,7 @@
         body
         (lint-single-element-array-expr (ast.ast-node-get arena) state))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-single-element-array-expr-list
             body
@@ -7384,7 +7339,7 @@
             (lint-single-element-array-candidates-empty)
             acc)))]
     [(ast.AstDecl.Unsafe inner)
-      (lint-single-element-array-cells-in-decl (box-get inner) acc)]
+      (lint-single-element-array-cells-in-decl (__tl-box-place inner) acc)]
     [_ acc]))
 
 (define (lint-single-element-array-cells-in-decl-list
@@ -7404,11 +7359,9 @@
   [items : LintPendingAssignmentList]
   [name : String]
   [index : i64]) : i64
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     (- 0 1)
-    (if (string.eq
-      (struct-get (array-ref (struct-get items slots) index) name)
-      name)
+    (if (string.eq (__tl-project-field (array-ref items.slots index) name) name)
       index
       (lint-pending-assignment-index items name (+ index 1)))))
 
@@ -7419,8 +7372,7 @@
     [found : i64 (lint-pending-assignment-index items name 0)]
     (if (< found 0)
       LintMaybePendingAssignment.No
-      (LintMaybePendingAssignment.Some
-        (array-ref (struct-get items slots) found)))))
+      (LintMaybePendingAssignment.Some (array-ref items.slots found)))))
 
 (define (lint-pending-assignment-remove
   [items : LintPendingAssignmentList]
@@ -7430,18 +7382,17 @@
     (if (< found 0)
       items
       (let
-        [n : i64 (- (struct-get items len) 1)]
+        [n : i64 (- items.len 1)]
         [slots : (__tl_dyn-array LintPendingAssignment)
           (make-array LintPendingAssignment n)]
         [index : i64 0]
         (begin
           (while (< index n)
             (begin
-              (array-set!
-                slots
-                index
+              (set!
+                (array-ref slots index)
                 (array-ref
-                  (struct-get items slots)
+                  items.slots
                   (if (< index found)
                     index
                     (+ index 1))))
@@ -7455,31 +7406,31 @@
   (let
     [without : LintPendingAssignmentList
       (lint-pending-assignment-remove items name)]
-    [n : i64 (struct-get without len)]
+    [n : i64 without.len]
     [slots : (__tl_dyn-array LintPendingAssignment)
       (make-array LintPendingAssignment (+ n 1))]
     [index : i64 0]
     (begin
       (while (< index n)
         (begin
-          (array-set! slots index (array-ref (struct-get without slots) index))
+          (set! (array-ref slots index) (array-ref without.slots index))
           (set! index (+ index 1))))
-      (array-set! slots n (LintPendingAssignment name span))
+      (set! (array-ref slots n) (LintPendingAssignment name span))
       (LintPendingAssignmentList slots (+ n 1)))))
 
 (define (lint-unused-assignment-state-with
   [state : LintUnusedAssignmentState]
   [pending : LintPendingAssignmentList]
   [findings : LintFindings]) : LintUnusedAssignmentState
-  (LintUnusedAssignmentState (struct-get state locals) pending findings))
+  (LintUnusedAssignmentState state.locals pending findings))
 
 (define (lint-unused-assignment-read-name
   [state : LintUnusedAssignmentState]
   [name : String]) : LintUnusedAssignmentState
   (lint-unused-assignment-state-with
     state
-    (lint-pending-assignment-remove (struct-get state pending) name)
-    (struct-get state findings)))
+    (lint-pending-assignment-remove state.pending name)
+    state.findings))
 
 (define (lint-unused-assignment-read-id
   [state : LintUnusedAssignmentState]
@@ -7490,23 +7441,23 @@
   [state : LintUnusedAssignmentState]
   [name : String]
   [span : ast.AstSourceSpan]) : LintUnusedAssignmentState
-  (if (not (lint-name-set-contains? (struct-get state locals) name))
+  (if (not (lint-name-set-contains? state.locals name))
     state
     (if (lint-underscore-prefixed? name)
       state
       (let
         [found : LintMaybePendingAssignment
-          (lint-pending-assignment-find (struct-get state pending) name)]
+          (lint-pending-assignment-find state.pending name)]
         [next-findings : LintFindings
           (match found
-            [(LintMaybePendingAssignment.No) (struct-get state findings)]
+            [(LintMaybePendingAssignment.No) state.findings]
             [(LintMaybePendingAssignment.Some pending)
               (lint-findings-add
-                (lint-unused-assignment-finding name (struct-get pending span))
-                (struct-get state findings))])]
+                (lint-unused-assignment-finding name pending.span)
+                state.findings)])]
         (lint-unused-assignment-state-with
           state
-          (lint-pending-assignment-add (struct-get state pending) name span)
+          (lint-pending-assignment-add state.pending name span)
           next-findings)))))
 
 (define (lint-unused-assignment-write-id
@@ -7520,15 +7471,12 @@
   (lint-unused-assignment-state-with
     state
     (lint-pending-assignment-empty)
-    (struct-get state findings)))
+    state.findings))
 
 (define (lint-unused-assignment-with-locals
   [state : LintUnusedAssignmentState]
   [locals : LintNameSet]) : LintUnusedAssignmentState
-  (LintUnusedAssignmentState
-    locals
-    (struct-get state pending)
-    (struct-get state findings)))
+  (LintUnusedAssignmentState locals state.pending state.findings))
 
 (define (lint-unused-assignment-note-reads-list
   [exprs : ast.AstExprList]
@@ -7539,7 +7487,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     state
     (lint-unused-assignment-note-reads-list-at
       exprs
@@ -7578,7 +7526,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [state : LintUnusedAssignmentState]
   [index : i64]) : LintUnusedAssignmentState
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     state
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body)
@@ -7637,14 +7585,14 @@
             (ast.ast-node-get then-branch)
             (lint-unused-assignment-note-reads (ast.ast-node-get cond) state))))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads
               (ast.ast-node-get body)
               (lint-unused-assignment-note-reads-let-bindings bindings state)))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads (ast.ast-node-get body) state))])]
@@ -7735,7 +7683,7 @@
     [(ast.AstExpr.Borrow _ _ place)
       (lint-unused-assignment-note-reads (ast.ast-node-get place) state)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads-match-arms
@@ -7744,7 +7692,7 @@
                 (ast.ast-node-get scrutinee)
                 state)))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start end body)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads
@@ -7755,7 +7703,7 @@
                   (ast.ast-node-get start)
                   state))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start end init value)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads
@@ -7768,7 +7716,7 @@
                     (ast.ast-node-get start)
                     state)))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ _ _ start end _ _ init value body)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads
@@ -7809,7 +7757,7 @@
         body
         (lint-unused-assignment-note-reads (ast.ast-node-get arena) state))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-unused-assignment-note-reads-list
             body
@@ -7921,7 +7869,7 @@
   [index : i64]
   [state : LintUnusedAssignmentState]
   [after-terminal : bool]) : LintUnusedAssignmentState
-  (if (or after-terminal (>= index (struct-get exprs len)))
+  (if (or after-terminal (>= index exprs.len))
     state
     (let
       [head-expr : ast.AstExpr
@@ -7956,18 +7904,16 @@
               (lint-unused-assignment-binding-span init))]
           [text : String (ci.intern-str name)]
           [binding-base : LintUnusedAssignmentState
-            (if (lint-name-set-contains? (struct-get after-init locals) text)
+            (if (lint-name-set-contains? after-init.locals text)
               (lint-unused-assignment-state-with
                 after-init
-                (lint-pending-assignment-remove
-                  (struct-get after-init pending)
-                  text)
-                (struct-get after-init findings))
+                (lint-pending-assignment-remove after-init.pending text)
+                after-init.findings)
               after-init)]
           [with-local : LintUnusedAssignmentState
             (lint-unused-assignment-with-locals
               binding-base
-              (lint-name-set-add (struct-get binding-base locals) text))]
+              (lint-name-set-add binding-base.locals text))]
           (lint-unused-assignment-let-bindings-at
             bindings
             (lint-unused-assignment-write-name
@@ -7988,9 +7934,9 @@
         (lint-unused-assignment-let-bindings bindings state)
         span)]
     (LintUnusedAssignmentState
-      (struct-get state locals)
+      state.locals
       (lint-pending-assignment-empty)
-      (struct-get inner findings))))
+      inner.findings)))
 
 (define (lint-unused-assignment-expr
   [expr : ast.AstExpr]
@@ -8003,7 +7949,7 @@
         state
         inner-span)]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (lint-unused-assignment-let
             bindings
@@ -8025,7 +7971,7 @@
         body
         (lint-unused-assignment-note-reads (ast.ast-node-get arena) state))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-unused-assignment-expr-list
             body
@@ -8047,14 +7993,14 @@
   [acc : LintFindings]) : LintFindings
   (match decl
     [(ast.AstDecl.Def decl-meta _ _ body)
-      (struct-get
+      (__tl-project-field
         (lint-unused-assignment-expr
           (ast.ast-node-get body)
           (lint-unused-assignment-state-empty (lint-name-set-empty) acc)
           (lint-no-span))
         findings)]
     [(ast.AstDecl.DefFn decl-meta _ params _ body _)
-      (struct-get
+      (__tl-project-field
         (lint-unused-assignment-expr
           (ast.ast-node-get body)
           (lint-unused-assignment-state-empty
@@ -8063,7 +8009,7 @@
           (lint-no-span))
         findings)]
     [(ast.AstDecl.DefMacro decl-meta _ params _ body)
-      (struct-get
+      (__tl-project-field
         (lint-unused-assignment-expr
           (ast.ast-node-get body)
           (lint-unused-assignment-state-empty
@@ -8072,14 +8018,14 @@
           (lint-no-span))
         findings)]
     [(ast.AstDecl.Test _ body _)
-      (struct-get
+      (__tl-project-field
         (lint-unused-assignment-expr
           (ast.ast-node-get body)
           (lint-unused-assignment-state-empty (lint-name-set-empty) acc)
           (lint-no-span))
         findings)]
     [(ast.AstDecl.Unsafe inner)
-      (lint-unused-assignments-in-decl (box-get inner) acc)]
+      (lint-unused-assignments-in-decl (__tl-box-place inner) acc)]
     [_ acc]))
 
 (define (lint-unused-assignments-in-decl-list
@@ -8121,12 +8067,12 @@
         [source-index : i64 0]
         [line-index : i64 1]
         (begin
-          (array-set! starts 0 0)
+          (set! (array-ref starts 0) 0)
           (while (< source-index source-len)
             (begin
               (if (= (string.string-ref source source-index) '\n')
                 (begin
-                  (array-set! starts line-index (+ source-index 1))
+                  (set! (array-ref starts line-index) (+ source-index 1))
                   (set! line-index (+ line-index 1)))
                 unit)
               (set! source-index (+ source-index 1))))
@@ -8205,7 +8151,7 @@
   (if (< index 0)
     (- 0 1)
     (if (string.eq
-      (struct-get (array-ref (struct-get bindings slots) index) name)
+      (__tl-project-field (array-ref bindings.slots index) name)
       name)
       index
       (lint-unused-variable-binding-index bindings name (- index 1)))))
@@ -8213,12 +8159,7 @@
 (define (lint-unused-unsafe-binding-list-contains?
   [bindings : LintUnusedVariableBindingList]
   [name : String]) : bool
-  (>=
-    (lint-unused-variable-binding-index
-      bindings
-      name
-      (- (struct-get bindings len) 1))
-    0))
+  (>= (lint-unused-variable-binding-index bindings name (- bindings.len 1)) 0))
 
 (define (lint-unused-unsafe-frame-list-contains-at?
   [frames : LintUnusedVariableFrameList]
@@ -8228,17 +8169,14 @@
     false
     (or
       (lint-unused-unsafe-binding-list-contains?
-        (array-ref (struct-get frames slots) index)
+        (array-ref frames.slots index)
         name)
       (lint-unused-unsafe-frame-list-contains-at? frames name (- index 1)))))
 
 (define (lint-unused-unsafe-frame-list-contains?
   [frames : LintUnusedVariableFrameList]
   [name : String]) : bool
-  (lint-unused-unsafe-frame-list-contains-at?
-    frames
-    name
-    (- (struct-get frames len) 1)))
+  (lint-unused-unsafe-frame-list-contains-at? frames name (- frames.len 1)))
 
 (define (lint-unused-unsafe-first-separator [name : String]) : i64
   (let
@@ -8265,10 +8203,10 @@
   [name : String]
   [roots : LintUnusedUnsafeUnknownRoots]
   [index : i64]) : bool
-  (if (>= index (struct-get roots len))
+  (if (>= index roots.len)
     false
     (or
-      (string.eq (array-ref (struct-get roots slots) index) name)
+      (string.eq (array-ref roots.slots index) name)
       (lint-unused-unsafe-unknown-root-at? name roots (+ index 1)))))
 
 (define (lint-unused-unsafe-unknown-root?
@@ -8282,11 +8220,10 @@
   [found : bool]
   [requires-unsafe : bool]
   [index : i64]) : LintUnusedUnsafeExactLookup
-  (if (< index (struct-get facts len))
+  (if (< index facts.len)
     (let
-      [fact : LintUnusedUnsafeExactName
-        (array-ref (struct-get facts slots) index)]
-      (if (string.eq (struct-get fact name) name)
+      [fact : LintUnusedUnsafeExactName (array-ref facts.slots index)]
+      (if (string.eq fact.name name)
         ;; A second declaration with the same visible name is conservatively
         ;; ambiguous even when both surfaces happen to have the same safety.
         (if found
@@ -8295,7 +8232,7 @@
             name
             facts
             true
-            (struct-get fact requires-unsafe)
+            fact.requires-unsafe
             (+ index 1)))
         (lint-unused-unsafe-exact-name-lookup-from
           name
@@ -8317,7 +8254,7 @@
     [root : String (lint-unused-unsafe-name-root name)]
     [qualified : bool (not (string.eq root name))]
     (if (or
-      (lint-unused-unsafe-frame-list-contains? (struct-get state frames) root)
+      (lint-unused-unsafe-frame-list-contains? state.frames root)
       (and
         qualified
         (lint-unused-unsafe-unknown-root?
@@ -8338,9 +8275,7 @@
         [root : String (lint-unused-unsafe-name-root name)]
         (if (and
           (string.eq root name)
-          (lint-unused-unsafe-frame-list-contains?
-            (struct-get state frames)
-            root))
+          (lint-unused-unsafe-frame-list-contains? state.frames root))
           ;; Reading a lexical value cannot itself require unsafe. Calls through
           ;; lexical values are handled separately because their function type
           ;; is not represented in the compact declaration surface.
@@ -8362,9 +8297,7 @@
         [root : String (lint-unused-unsafe-name-root name)]
         (if (and
           (string.eq root name)
-          (lint-unused-unsafe-frame-list-contains?
-            (struct-get state frames)
-            root))
+          (lint-unused-unsafe-frame-list-contains? state.frames root))
           (lint-unused-unsafe-block-mark-unknown!)
           unit))]
     [_ unit]))
@@ -8372,8 +8305,8 @@
 (define (lint-unused-unsafe-finish-state [state : LintUnusedVariableState]) : LintUnusedVariableState
   (lint-unused-variable-state-with
     state
-    (struct-get state frames)
-    (lint-unused-unsafe-block-pop-findings (struct-get state findings))))
+    state.frames
+    (lint-unused-unsafe-block-pop-findings state.findings)))
 
 (define (lint-source-prefix-at?
   [source : String]
@@ -8531,17 +8464,10 @@
   [limit : i64]) : LintNameCaseLocalScan
   (let
     [found : LintSourceNameSpan
-      (lint-source-name-span-between
-        (struct-get state source)
-        name
-        cursor
-        limit)]
+      (lint-source-name-span-between state.source name cursor limit)]
     (LintNameCaseLocalScan
-      (lint-unused-variable-add-local-name-case
-        state
-        name
-        (struct-get found span))
-      (struct-get found next-index))))
+      (lint-unused-variable-add-local-name-case state name found.span)
+      found.next-index)))
 
 (define (lint-unused-variable-scan-form-local-name
   [state : LintUnusedVariableState]
@@ -8549,8 +8475,8 @@
   [span : ast.AstSourceSpan]
   [form-head : String]) : LintNameCaseLocalScan
   (let
-    [start : i64 (lint-source-span-start-index (struct-get state source) span)]
-    [limit : i64 (lint-source-span-end-index (struct-get state source) span)]
+    [start : i64 (lint-source-span-start-index state.source span)]
+    [limit : i64 (lint-source-span-end-index state.source span)]
     (if (or (< start 0) (< limit 0))
       (LintNameCaseLocalScan state 0)
       (lint-unused-variable-scan-local-name
@@ -8569,7 +8495,7 @@
   (let
     [found : LintSourceNameSpan
       (lint-source-name-span-between source name cursor limit)]
-    [span : ast.AstSourceSpan (struct-get found span)]
+    [span : ast.AstSourceSpan found.span]
     [next : LintFindings
       (if (and
         report
@@ -8578,7 +8504,7 @@
         (not (lint-name-case-local-kebab? name)))
         (lint-findings-add (lint-local-name-case-finding name span) findings)
         findings)]
-    (LintNameCasePatternScan next (struct-get found next-index))))
+    (LintNameCasePatternScan next found.next-index)))
 
 (define (lint-name-case-pattern-list
   [patterns : ast.AstPatternList]
@@ -8595,7 +8521,7 @@
   [limit : i64]
   [findings : LintFindings]
   [index : i64]) : LintNameCasePatternScan
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     (LintNameCasePatternScan findings cursor)
     (let
       [scanned : LintNameCasePatternScan
@@ -8608,9 +8534,9 @@
       (lint-name-case-pattern-list-at
         patterns
         source
-        (struct-get scanned next-index)
+        scanned.next-index
         limit
-        (struct-get scanned findings)
+        scanned.findings
         (+ index 1)))))
 
 (define (lint-name-case-pattern
@@ -8637,9 +8563,19 @@
         findings
         true)]
     [(ast.AstPattern.Tuple items)
-      (lint-name-case-pattern-list (box-get items) source cursor limit findings)]
+      (lint-name-case-pattern-list
+        (__tl-box-place items)
+        source
+        cursor
+        limit
+        findings)]
     [(ast.AstPattern.Array items)
-      (lint-name-case-pattern-list (box-get items) source cursor limit findings)]
+      (lint-name-case-pattern-list
+        (__tl-box-place items)
+        source
+        cursor
+        limit
+        findings)]
     [(ast.AstPattern.Variant name items)
       (let
         [variant : LintNameCasePatternScan
@@ -8651,11 +8587,11 @@
             findings
             false)]
         (lint-name-case-pattern-list
-          (box-get items)
+          (__tl-box-place items)
           source
-          (struct-get variant next-index)
+          variant.next-index
           limit
-          (struct-get variant findings)))]
+          variant.findings))]
     [(ast.AstPattern.Wildcard) (LintNameCasePatternScan findings cursor)]
     [(ast.AstPattern.Literal _) (LintNameCasePatternScan findings cursor)]))
 
@@ -8821,12 +8757,12 @@
   (let
     [found : LintSourceNameSpan
       (lint-name-case-find-decl-name-from
-        (struct-get state source)
-        (struct-get state cursor)
+        state.source
+        state.cursor
         form
         name
         function-head)]
-    [span : ast.AstSourceSpan (struct-get found span)]
+    [span : ast.AstSourceSpan found.span]
     [valid : bool
       (cond
         [(= kind 0) (lint-name-case-kebab? name)]
@@ -8834,17 +8770,14 @@
         [else (lint-name-case-upper-camel? name)])]
     [next : LintFindings
       (if (or (not (lint-name-case-source-span? span)) valid)
-        (struct-get state findings)
+        state.findings
         (lint-findings-add
           (cond
             [(= kind 0) (lint-global-name-case-finding name span)]
             [(= kind 1) (lint-function-name-case-finding name span)]
             [else (lint-type-name-case-finding name span)])
-          (struct-get state findings)))]
-    (LintNameCaseDeclState
-      (struct-get state source)
-      (struct-get found next-index)
-      next)))
+          state.findings))]
+    (LintNameCaseDeclState state.source found.next-index next)))
 
 (define (lint-name-case-decl-state-after-body
   [state : LintNameCaseDeclState]
@@ -8852,13 +8785,10 @@
   (let
     [end : i64
       (lint-source-span-end-index
-        (struct-get state source)
+        state.source
         (lint-no-effect-span (ast.ast-node-get body)))]
-    (if (> end (struct-get state cursor))
-      (LintNameCaseDeclState
-        (struct-get state source)
-        end
-        (struct-get state findings))
+    (if (> end state.cursor)
+      (LintNameCaseDeclState state.source end state.findings)
       state)))
 
 (define (lint-name-case-in-decl
@@ -8928,8 +8858,9 @@
         false
         2)]
     [(ast.AstDecl.ModuleBody _ body)
-      (lint-name-case-in-decl-list (box-get body) state)]
-    [(ast.AstDecl.Unsafe inner) (lint-name-case-in-decl (box-get inner) state)]
+      (lint-name-case-in-decl-list (__tl-box-place body) state)]
+    [(ast.AstDecl.Unsafe inner)
+      (lint-name-case-in-decl (__tl-box-place inner) state)]
     [_ state]))
 
 (define (lint-name-case-in-decl-list
@@ -8944,7 +8875,7 @@
   [source : String]
   [decls : ast.AstDeclList]
   [acc : LintFindings]) : LintFindings
-  (struct-get
+  (__tl-project-field
     (lint-name-case-in-decl-list decls (LintNameCaseDeclState source 0 acc))
     findings))
 
@@ -8965,18 +8896,18 @@
   [state : LintRedundantFunctionNameState]
   [module-name : String]) : LintRedundantFunctionNameState
   (lint-redundant-function-name-state
-    (struct-get state source)
+    state.source
     module-name
-    (struct-get state cursor)
-    (struct-get state findings)))
+    state.cursor
+    state.findings))
 
 (define (lint-redundant-function-name-state-with-results
   [state : LintRedundantFunctionNameState]
   [cursor : i64]
   [findings : LintFindings]) : LintRedundantFunctionNameState
   (lint-redundant-function-name-state
-    (struct-get state source)
-    (struct-get state module-name)
+    state.source
+    state.module-name
     cursor
     findings))
 
@@ -9014,24 +8945,17 @@
   [name : String]
   [fallback : ast.AstSourceSpan]) : LintRedundantFunctionNameState
   (let
-    [module-name : String (struct-get state module-name)]
+    [module-name : String state.module-name]
     (if (lint-redundant-function-name? module-name name)
       (let
         [found : LintSourceNameSpan
-          (lint-source-name-span-from
-            (struct-get state source)
-            name
-            (struct-get state cursor)
-            fallback)]
+          (lint-source-name-span-from state.source name state.cursor fallback)]
         (lint-redundant-function-name-state-with-results
           state
-          (struct-get found next-index)
+          found.next-index
           (lint-findings-add
-            (lint-redundant-function-name-finding
-              module-name
-              name
-              (struct-get found span))
-            (struct-get state findings))))
+            (lint-redundant-function-name-finding module-name name found.span)
+            state.findings)))
       state)))
 
 (define (lint-redundant-function-name-callee [expr : ast.AstExpr]) : String
@@ -9040,7 +8964,7 @@
     [_ ""]))
 
 (define (lint-redundant-function-name-generated-head [args : ast.AstExprList]) : String
-  (if (= (struct-get (& args) len) 0)
+  (if (= args.len 0)
     ""
     (match (ast.ast-expr-unspan
       (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0)))
@@ -9049,7 +8973,7 @@
       [_ ""])))
 
 (define (lint-redundant-function-name-literal-module [args : ast.AstExprList]) : String
-  (if (= (struct-get (& args) len) 0)
+  (if (= args.len 0)
     ""
     (match (ast.ast-expr-unspan
       (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0)))
@@ -9065,7 +8989,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     state
     (lint-redundant-function-name-quoted-expr-list-at
       exprs
@@ -9083,7 +9007,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     state
     (lint-redundant-function-name-macro-expr-list-at
       exprs
@@ -9151,7 +9075,7 @@
             (ast.ast-node-get cond)
             state)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let _ body)
           (lint-redundant-function-name-quoted-expr
             (ast.ast-node-get body)
@@ -9187,7 +9111,7 @@
             (ast.ast-node-get cond)
             state)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (lint-redundant-function-name-macro-expr
             (ast.ast-node-get body)
@@ -9197,7 +9121,7 @@
     [(ast.AstExpr.Unsafe exprs)
       (lint-redundant-function-name-macro-expr-list exprs state)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (lint-redundant-function-name-macro-match-arms
             arms
@@ -9238,7 +9162,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [state : LintRedundantFunctionNameState]
   [index : i64]) : LintRedundantFunctionNameState
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     state
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body)
@@ -9270,7 +9194,7 @@
           (ci.intern-qualified-base name)
           (lint-no-effect-span (ast.ast-node-get body))))]
     [(ast.AstDecl.Unsafe inner)
-      (lint-redundant-function-name-decl (box-get inner) state)]
+      (lint-redundant-function-name-decl (__tl-box-place inner) state)]
     [_ state]))
 
 (define (lint-redundant-function-names-in-decl-list-state
@@ -9287,7 +9211,7 @@
   [source : String]
   [decls : ast.AstDeclList]
   [acc : LintFindings]) : LintFindings
-  (struct-get
+  (__tl-project-field
     (lint-redundant-function-names-in-decl-list-state
       decls
       (lint-redundant-function-name-state source "" 0 acc))
@@ -9301,7 +9225,7 @@
     [(ast.AstProgram.Program decls-box)
       (lint-redundant-function-names-in-decl-list
         source
-        (box-get decls-box)
+        (__tl-box-place decls-box)
         acc)]))
 
 (define (lint-unused-variable-binding
@@ -9315,9 +9239,8 @@
   [bindings : LintUnusedVariableBindingList]
   [binding : LintUnusedVariableBinding]) : LintUnusedVariableBindingList
   (let
-    [n : i64 (struct-get bindings len)]
-    [slots : (__tl_dyn-array LintUnusedVariableBinding)
-      (struct-get bindings slots)]
+    [n : i64 bindings.len]
+    [slots : (__tl_dyn-array LintUnusedVariableBinding) bindings.slots]
     (begin
       (if (< n (array-length slots))
         unit
@@ -9330,19 +9253,18 @@
           (begin
             (while (< index n)
               (begin
-                (array-set! bigger index (array-ref slots index))
+                (set! (array-ref bigger index) (array-ref slots index))
                 (set! index (+ index 1))))
             (set! slots bigger))))
-      (array-set! slots n binding)
+      (set! (array-ref slots n) binding)
       (LintUnusedVariableBindingList slots (+ n 1)))))
 
 (define (lint-unused-variable-frame-push
   [frames : LintUnusedVariableFrameList]
   [bindings : LintUnusedVariableBindingList]) : LintUnusedVariableFrameList
   (let
-    [n : i64 (struct-get frames len)]
-    [slots : (__tl_dyn-array LintUnusedVariableBindingList)
-      (struct-get frames slots)]
+    [n : i64 frames.len]
+    [slots : (__tl_dyn-array LintUnusedVariableBindingList) frames.slots]
     (begin
       (if (< n (array-length slots))
         unit
@@ -9355,10 +9277,10 @@
           (begin
             (while (< index n)
               (begin
-                (array-set! bigger index (array-ref slots index))
+                (set! (array-ref bigger index) (array-ref slots index))
                 (set! index (+ index 1))))
             (set! slots bigger))))
-      (array-set! slots n bindings)
+      (set! (array-ref slots n) bindings)
       (LintUnusedVariableFrameList slots (+ n 1)))))
 
 (define (lint-unused-variable-state-with
@@ -9366,11 +9288,11 @@
   [frames : LintUnusedVariableFrameList]
   [findings : LintFindings]) : LintUnusedVariableState
   (LintUnusedVariableState
-    (struct-get state source)
+    state.source
     frames
     findings
-    (struct-get state name-case)
-    (struct-get state report-unused)))
+    state.name-case
+    state.report-unused))
 
 (define (lint-name-case-source-span? [span : ast.AstSourceSpan]) : bool
   (and
@@ -9382,37 +9304,37 @@
   [name : String]
   [span : ast.AstSourceSpan]) : LintUnusedVariableState
   (if (and
-    (struct-get state name-case)
+    state.name-case
     (lint-name-case-source-span? span)
     (not (lint-name-case-local-kebab? name)))
     (lint-unused-variable-state-with
       state
-      (struct-get state frames)
+      state.frames
       (lint-findings-add
         (lint-local-name-case-finding name span)
-        (struct-get state findings)))
+        state.findings))
     state))
 
 (define (lint-unused-variable-add-binding-name-case
   [state : LintUnusedVariableState]
   [binding : LintUnusedVariableBinding]) : LintUnusedVariableState
   (let
-    [name : String (struct-get binding name)]
-    [type-operand : bool (struct-get binding type-operand)]
+    [name : String binding.name]
+    [type-operand : bool binding.type-operand]
     [valid : bool
       (if type-operand
         (lint-name-case-type-operand? name)
         (lint-name-case-local-kebab? name))]
     (if (and
-      (struct-get state name-case)
-      (lint-name-case-source-span? (struct-get binding span))
+      state.name-case
+      (lint-name-case-source-span? binding.span)
       (not valid))
       (lint-unused-variable-state-with
         state
-        (struct-get state frames)
+        state.frames
         (lint-findings-add
-          (lint-local-name-case-finding name (struct-get binding span))
-          (struct-get state findings)))
+          (lint-local-name-case-finding name binding.span)
+          state.findings))
       state)))
 
 (define (lint-unused-variable-add-binding-name-cases-at
@@ -9422,8 +9344,7 @@
   (if (< index 0)
     state
     (let
-      [binding : LintUnusedVariableBinding
-        (array-ref (struct-get bindings slots) index)]
+      [binding : LintUnusedVariableBinding (array-ref bindings.slots index)]
       (lint-unused-variable-add-binding-name-cases-at
         (lint-unused-variable-add-binding-name-case state binding)
         bindings
@@ -9435,34 +9356,30 @@
   (lint-unused-variable-add-binding-name-cases-at
     state
     bindings
-    (- (struct-get bindings len) 1)))
+    (- bindings.len 1)))
 
 (define (lint-unused-variable-binding-mark-used
   [binding : LintUnusedVariableBinding]) : LintUnusedVariableBinding
   (LintUnusedVariableBinding
-    (struct-get binding name)
-    (struct-get binding span)
+    binding.name
+    binding.span
     true
-    (struct-get binding reportable)
-    (struct-get binding type-operand)))
+    binding.reportable
+    binding.type-operand))
 
 (define (lint-unused-variable-mark-bindings
   [bindings : LintUnusedVariableBindingList]
   [name : String]) : LintUnusedVariableMarkBindingsResult
   (let
     [found : i64
-      (lint-unused-variable-binding-index
-        bindings
-        name
-        (- (struct-get bindings len) 1))]
+      (lint-unused-variable-binding-index bindings name (- bindings.len 1))]
     (if (< found 0)
       (LintUnusedVariableMarkBindingsResult bindings false)
       (begin
-        (array-set!
-          (struct-get bindings slots)
-          found
+        (set!
+          (array-ref bindings.slots found)
           (lint-unused-variable-binding-mark-used
-            (array-ref (struct-get bindings slots) found)))
+            (array-ref bindings.slots found)))
         (LintUnusedVariableMarkBindingsResult bindings true)))))
 
 (define (lint-unused-variable-mark-frames-at
@@ -9473,37 +9390,26 @@
     (LintUnusedVariableMarkFramesResult frames false)
     (let
       [marked : LintUnusedVariableMarkBindingsResult
-        (lint-unused-variable-mark-bindings
-          (array-ref (struct-get frames slots) index)
-          name)]
-      (if (struct-get marked found)
+        (lint-unused-variable-mark-bindings (array-ref frames.slots index) name)]
+      (if marked.found
         (begin
-          (array-set!
-            (struct-get frames slots)
-            index
-            (struct-get marked bindings))
+          (set! (array-ref frames.slots index) marked.bindings)
           (LintUnusedVariableMarkFramesResult frames true))
         (lint-unused-variable-mark-frames-at frames name (- index 1))))))
 
 (define (lint-unused-variable-mark-frames
   [frames : LintUnusedVariableFrameList]
   [name : String]) : LintUnusedVariableMarkFramesResult
-  (lint-unused-variable-mark-frames-at
-    frames
-    name
-    (- (struct-get frames len) 1)))
+  (lint-unused-variable-mark-frames-at frames name (- frames.len 1)))
 
 (define (lint-unused-variable-read-name
   [state : LintUnusedVariableState]
   [name : String]) : LintUnusedVariableState
   (let
     [marked : LintUnusedVariableMarkFramesResult
-      (lint-unused-variable-mark-frames (struct-get state frames) name)]
-    (if (struct-get marked found)
-      (lint-unused-variable-state-with
-        state
-        (struct-get marked frames)
-        (struct-get state findings))
+      (lint-unused-variable-mark-frames state.frames name)]
+    (if marked.found
+      (lint-unused-variable-state-with state marked.frames state.findings)
       state)))
 
 (define (lint-unused-variable-read-id
@@ -9543,8 +9449,8 @@
   [state : LintUnusedVariableState]
   [binding : LintUnusedVariableBinding]) : LintUnusedVariableState
   (let
-    [frames : LintUnusedVariableFrameList (struct-get state frames)]
-    [top : i64 (- (struct-get frames len) 1)]
+    [frames : LintUnusedVariableFrameList state.frames]
+    [top : i64 (- frames.len 1)]
     (if (< top 0)
       (lint-unused-variable-push-frame
         state
@@ -9552,11 +9458,10 @@
           (lint-unused-variable-bindings-empty)
           binding))
       (begin
-        (array-set!
-          (struct-get frames slots)
-          top
+        (set!
+          (array-ref frames.slots top)
           (lint-unused-variable-binding-push
-            (array-ref (struct-get frames slots) top)
+            (array-ref frames.slots top)
             binding))
         state))))
 
@@ -9565,8 +9470,8 @@
   [bindings : LintUnusedVariableBindingList]) : LintUnusedVariableState
   (lint-unused-variable-state-with
     state
-    (lint-unused-variable-frame-push (struct-get state frames) bindings)
-    (struct-get state findings)))
+    (lint-unused-variable-frame-push state.frames bindings)
+    state.findings))
 
 (define (lint-unused-variable-report-bindings-at
   [bindings : LintUnusedVariableBindingList]
@@ -9575,17 +9480,14 @@
   (if (< index 0)
     findings
     (let
-      [binding : LintUnusedVariableBinding
-        (array-ref (struct-get bindings slots) index)]
+      [binding : LintUnusedVariableBinding (array-ref bindings.slots index)]
       [next : LintFindings
         (if (and
-          (struct-get binding reportable)
-          (not (struct-get binding used))
-          (not (lint-underscore-prefixed? (struct-get binding name))))
+          binding.reportable
+          (not binding.used)
+          (not (lint-underscore-prefixed? binding.name)))
           (lint-findings-add
-            (lint-unused-variable-finding
-              (struct-get binding name)
-              (struct-get binding span))
+            (lint-unused-variable-finding binding.name binding.span)
             findings)
           findings)]
       (lint-unused-variable-report-bindings-at bindings next (- index 1)))))
@@ -9593,25 +9495,22 @@
 (define (lint-unused-variable-report-bindings
   [bindings : LintUnusedVariableBindingList]
   [findings : LintFindings]) : LintFindings
-  (lint-unused-variable-report-bindings-at
-    bindings
-    findings
-    (- (struct-get bindings len) 1)))
+  (lint-unused-variable-report-bindings-at bindings findings (- bindings.len 1)))
 
 (define (lint-unused-variable-pop-frame [state : LintUnusedVariableState]) : LintUnusedVariableState
   (let
-    [frames : LintUnusedVariableFrameList (struct-get state frames)]
-    [top : i64 (- (struct-get frames len) 1)]
+    [frames : LintUnusedVariableFrameList state.frames]
+    [top : i64 (- frames.len 1)]
     (if (< top 0)
       state
       (lint-unused-variable-state-with
         state
-        (LintUnusedVariableFrameList (struct-get frames slots) top)
-        (if (struct-get state report-unused)
+        (LintUnusedVariableFrameList frames.slots top)
+        (if state.report-unused
           (lint-unused-variable-report-bindings
-            (array-ref (struct-get frames slots) top)
-            (struct-get state findings))
-          (struct-get state findings))))))
+            (array-ref frames.slots top)
+            state.findings)
+          state.findings)))))
 
 (define (lint-unused-variable-param-bindings
   [params : ast.AstParamList]
@@ -9650,12 +9549,11 @@
           [found : LintSourceNameSpan
             (lint-source-name-span-from source text cursor fallback)]
           (begin
-            (array-set!
-              slots
-              (- (array-length slots) (+ index 1))
+            (set!
+              (array-ref slots (- (array-length slots) (+ index 1)))
               (lint-unused-variable-binding
                 text
-                (struct-get found span)
+                found.span
                 reportable
                 (and
                   is-comptime
@@ -9666,7 +9564,7 @@
             (lint-unused-variable-param-bindings-at
               params
               source
-              (struct-get found next-index)
+              found.next-index
               fallback
               reportable
               slots
@@ -9711,12 +9609,11 @@
           [found : LintSourceNameSpan
             (lint-source-name-span-from source text cursor fallback)]
           (begin
-            (array-set!
-              slots
-              (- (array-length slots) (+ index 1))
+            (set!
+              (array-ref slots (- (array-length slots) (+ index 1)))
               (lint-unused-variable-binding
                 text
-                (struct-get found span)
+                found.span
                 reportable
                 (match ty
                   [(ast.AstType.Var type-name)
@@ -9725,7 +9622,7 @@
             (lint-unused-variable-macro-param-bindings-at
               params
               source
-              (struct-get found next-index)
+              found.next-index
               fallback
               reportable
               slots
@@ -9740,7 +9637,7 @@
   [patterns : (& patterns ast.AstPatternList)]
   [state : LintUnusedVariableState]
   [index : i64]) : LintUnusedVariableState
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     state
     (lint-unused-variable-pattern-list-bindings-at
       patterns
@@ -9801,9 +9698,9 @@
     [(ast.AstType.Func args ret)
       (lint-unused-variable-type
         (ast.ty-node-get ret)
-        (lint-unused-variable-type-list (box-get args) state))]
+        (lint-unused-variable-type-list (__tl-box-place args) state))]
     [(ast.AstType.Tuple items)
-      (lint-unused-variable-type-list (box-get items) state)]
+      (lint-unused-variable-type-list (__tl-box-place items) state)]
     [(ast.AstType.Array elem _)
       (lint-unused-variable-type (ast.ty-node-get elem) state)]
     [(ast.AstType.DynArray elem)
@@ -9817,13 +9714,13 @@
     [(ast.AstType.MutRef name inner)
       (lint-unused-variable-type-lifetime name inner state)]
     [(ast.AstType.EnumArgs _ lifetimes)
-      (lint-unused-variable-lifetime-list (box-get lifetimes) state)]
+      (lint-unused-variable-lifetime-list (__tl-box-place lifetimes) state)]
     [(ast.AstType.StructArgs _ lifetimes)
-      (lint-unused-variable-lifetime-list (box-get lifetimes) state)]
+      (lint-unused-variable-lifetime-list (__tl-box-place lifetimes) state)]
     [(ast.AstType.Var name) (lint-unused-variable-read-id state name)]
     [(ast.AstType.VarArgs name lifetimes)
       (lint-unused-variable-lifetime-list
-        (box-get lifetimes)
+        (__tl-box-place lifetimes)
         (lint-unused-variable-read-id state name))]
     [(ast.AstType.Ptr elem)
       (lint-unused-variable-type (ast.ty-node-get elem) state)]
@@ -9898,9 +9795,9 @@
           false
           false))]
     [(ast.AstPattern.Tuple items)
-      (lint-unused-variable-pattern-list-bindings (box-get items) state)]
+      (lint-unused-variable-pattern-list-bindings (__tl-box-place items) state)]
     [(ast.AstPattern.Array items)
-      (lint-unused-variable-pattern-list-bindings (box-get items) state)]
+      (lint-unused-variable-pattern-list-bindings (__tl-box-place items) state)]
     [(ast.AstPattern.Wildcard) state]
     [(ast.AstPattern.Binding name)
       (lint-unused-variable-add-to-current-frame
@@ -9911,7 +9808,7 @@
           false
           false))]
     [(ast.AstPattern.Variant _ items)
-      (lint-unused-variable-pattern-list-bindings (box-get items) state)]
+      (lint-unused-variable-pattern-list-bindings (__tl-box-place items) state)]
     [(ast.AstPattern.Literal _) state]))
 
 (define (lint-unused-variable-expr-list
@@ -9923,7 +9820,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     state
     (lint-unused-variable-expr-list-at
       exprs
@@ -9942,7 +9839,7 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     state
     (lint-unused-variable-quasiquote-expr-list-at
       exprs
@@ -9981,7 +9878,7 @@
   [arms : (& arms ast.AstMatchArmList)]
   [state : LintUnusedVariableState]
   [index : i64]) : LintUnusedVariableState
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     state
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body)
@@ -10046,13 +9943,13 @@
           (ast.ast-node-get then-branch)
           (lint-unused-variable-quasiquote-expr (ast.ast-node-get cond) state)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (lint-unused-variable-quasiquote-expr
             (ast.ast-node-get body)
             (lint-unused-variable-quasiquote-let-bindings bindings state))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body)
           (lint-unused-variable-quasiquote-expr (ast.ast-node-get body) state)])]
     [(ast.AstExpr.Tuple exprs)
@@ -10110,7 +10007,7 @@
     [(ast.AstExpr.Borrow _ _ place)
       (lint-unused-variable-quasiquote-expr (ast.ast-node-get place) state)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (lint-unused-variable-quasiquote-match-arms
             arms
@@ -10118,7 +10015,7 @@
               (ast.ast-node-get scrutinee)
               state))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start end body)
           (lint-unused-variable-quasiquote-expr
             (ast.ast-node-get body)
@@ -10128,7 +10025,7 @@
                 (ast.ast-node-get start)
                 state)))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start end init value)
           (lint-unused-variable-quasiquote-expr
             (ast.ast-node-get value)
@@ -10140,7 +10037,7 @@
                   (ast.ast-node-get start)
                   state))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ _ _ start end _ _ init value body)
           (lint-unused-variable-quasiquote-expr
             (ast.ast-node-get body)
@@ -10180,7 +10077,7 @@
         body
         (lint-unused-variable-quasiquote-expr (ast.ast-node-get arena) state))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-unused-variable-quasiquote-expr-list
             body
@@ -10285,7 +10182,7 @@
           [text : String (ci.intern-str name)]
           [found : LintSourceNameSpan
             (lint-source-name-span-from
-              (struct-get state source)
+              state.source
               text
               cursor
               (lint-no-effect-span (ast.ast-node-get init)))]
@@ -10293,19 +10190,15 @@
             (lint-unused-variable-add-local-name-case
               after-init
               text
-              (struct-get found span))]
+              found.span)]
           [with-binding : LintUnusedVariableState
             (lint-unused-variable-add-to-current-frame
               with-case
-              (lint-unused-variable-binding
-                text
-                (struct-get found span)
-                true
-                false))]
+              (lint-unused-variable-binding text found.span true false))]
           (lint-unused-variable-let-bindings-at
             bindings
             with-binding
-            (struct-get found next-index)
+            found.next-index
             (+ index 1)))])))
 
 (define (lint-unused-variable-let
@@ -10316,8 +10209,7 @@
   (let
     [cursor : i64
       (let
-        [start : i64
-          (lint-source-span-start-index (struct-get state source) span)]
+        [start : i64 (lint-source-span-start-index state.source span)]
         (if (< start 0)
           0
           start))]
@@ -10336,7 +10228,7 @@
   [state : LintUnusedVariableState]
   [span : ast.AstSourceSpan]) : LintUnusedVariableState
   (let
-    [start : i64 (lint-source-span-start-index (struct-get state source) span)]
+    [start : i64 (lint-source-span-start-index state.source span)]
     (lint-unused-variable-resource-bindings-at
       (& bindings)
       state
@@ -10364,20 +10256,17 @@
           [init-span : ast.AstSourceSpan (lint-no-effect-span init-expr)]
           [cleanup-span : ast.AstSourceSpan (lint-no-effect-span cleanup-expr)]
           [init-start : i64
-            (lint-source-span-start-index (struct-get state source) init-span)]
+            (lint-source-span-start-index state.source init-span)]
           [found : LintSourceNameSpan
             (lint-source-name-span-between
-              (struct-get state source)
+              state.source
               text
               cursor
               (if (< init-start 0)
-                (string.string-length (struct-get state source))
+                (string.string-length state.source)
                 init-start))]
           [with-case : LintUnusedVariableState
-            (lint-unused-variable-add-local-name-case
-              state
-              text
-              (struct-get found span))]
+            (lint-unused-variable-add-local-name-case state text found.span)]
           [after-exprs : LintUnusedVariableState
             (lint-unused-variable-expr
               cleanup-expr
@@ -10386,18 +10275,14 @@
           [with-binding : LintUnusedVariableState
             (lint-unused-variable-add-to-current-frame
               after-exprs
-              (lint-unused-variable-binding
-                text
-                (struct-get found span)
-                false
-                false))]
+              (lint-unused-variable-binding text found.span false false))]
           [cleanup-end : i64
-            (lint-source-span-end-index (struct-get state source) cleanup-span)]
+            (lint-source-span-end-index state.source cleanup-span)]
           (lint-unused-variable-resource-bindings-at
             bindings
             with-binding
             (if (< cleanup-end 0)
-              (struct-get found next-index)
+              found.next-index
               cleanup-end)
             (+ index 1)))])))
 
@@ -10406,7 +10291,7 @@
   [state : LintUnusedVariableState]
   [span : ast.AstSourceSpan]) : LintUnusedVariableState
   (let
-    [start : i64 (lint-source-span-start-index (struct-get state source) span)]
+    [start : i64 (lint-source-span-start-index state.source span)]
     (lint-unused-variable-match-arms-at
       (& arms)
       state
@@ -10430,7 +10315,7 @@
   [state : LintUnusedVariableState]
   [cursor : i64]
   [index : i64]) : LintUnusedVariableState
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     state
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body)
@@ -10439,23 +10324,23 @@
             (lint-match-body-source-expr (ast.ast-node-get body))]
           [body-span : ast.AstSourceSpan (lint-no-effect-span body-expr)]
           [body-start : i64
-            (lint-source-span-start-index (struct-get state source) body-span)]
+            (lint-source-span-start-index state.source body-span)]
           [scanned : LintNameCasePatternScan
-            (if (struct-get state name-case)
+            (if state.name-case
               (lint-name-case-match-pattern
                 pattern
-                (struct-get state source)
+                state.source
                 cursor
                 (if (< body-start 0)
-                  (string.string-length (struct-get state source))
+                  (string.string-length state.source)
                   body-start)
-                (struct-get state findings))
-              (LintNameCasePatternScan (struct-get state findings) cursor))]
+                state.findings)
+              (LintNameCasePatternScan state.findings cursor))]
           [with-case-findings : LintUnusedVariableState
             (lint-unused-variable-state-with
               state
-              (struct-get state frames)
-              (struct-get scanned findings))]
+              state.frames
+              scanned.findings)]
           [with-frame : LintUnusedVariableState
             (lint-unused-variable-push-frame
               with-case-findings
@@ -10464,13 +10349,12 @@
             (lint-unused-variable-pattern-bindings pattern with-frame)]
           [with-body : LintUnusedVariableState
             (lint-unused-variable-expr body-expr with-pattern body-span)]
-          [body-end : i64
-            (lint-source-span-end-index (struct-get state source) body-span)]
+          [body-end : i64 (lint-source-span-end-index state.source body-span)]
           (lint-unused-variable-match-arms-at
             arms
             (lint-unused-variable-pop-frame with-body)
             (if (< body-end 0)
-              (struct-get scanned next-index)
+              scanned.next-index
               body-end)
             (+ index 1)))])))
 
@@ -10481,24 +10365,17 @@
   [state : LintUnusedVariableState]
   [span : ast.AstSourceSpan]) : LintUnusedVariableState
   (let
-    [start : i64 (lint-source-span-start-index (struct-get state source) span)]
+    [start : i64 (lint-source-span-start-index state.source span)]
     [cursor : i64
       (if (< start 0)
         0
         (+ start (string.string-length "(lambda")))]
     [built : LintUnusedVariableBindingBuild
-      (lint-unused-variable-param-bindings
-        params
-        (struct-get state source)
-        cursor
-        span
-        true)]
+      (lint-unused-variable-param-bindings params state.source cursor span true)]
     [with-cases : LintUnusedVariableState
-      (lint-unused-variable-add-binding-name-cases
-        state
-        (struct-get built bindings))]
+      (lint-unused-variable-add-binding-name-cases state built.bindings)]
     [with-frame : LintUnusedVariableState
-      (lint-unused-variable-push-frame with-cases (struct-get built bindings))]
+      (lint-unused-variable-push-frame with-cases built.bindings)]
     [with-param-types : LintUnusedVariableState
       (lint-unused-variable-maybe-type
         ret
@@ -10580,11 +10457,11 @@
           span)
         span)]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (lint-unused-variable-let bindings (ast.ast-node-get body) state span)])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params ret body)
           (lint-unused-variable-lambda
             params
@@ -10715,18 +10592,18 @@
           state)
         span)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (lint-unused-variable-match-arms
             arms
             (lint-unused-variable-expr (ast.ast-node-get scrutinee) state span)
             span)])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start end body)
           (let
             [scanned : LintNameCaseLocalScan
-              (if (struct-get state name-case)
+              (if state.name-case
                 (lint-unused-variable-scan-form-local-name
                   state
                   (ci.intern-str index)
@@ -10742,16 +10619,16 @@
                   (ast.ast-node-get end)
                   (lint-unused-variable-expr
                     (ast.ast-node-get start)
-                    (struct-get scanned state)
+                    scanned.state
                     span)
                   span))
               span))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ index index-ty start end init value)
           (let
             [scanned : LintNameCaseLocalScan
-              (if (struct-get state name-case)
+              (if state.name-case
                 (lint-unused-variable-scan-form-local-name
                   state
                   (ci.intern-str index)
@@ -10769,13 +10646,13 @@
                     (ast.ast-node-get end)
                     (lint-unused-variable-expr
                       (ast.ast-node-get start)
-                      (struct-get scanned state)
+                      scanned.state
                       span)
                     span)
                   span))
               span))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             index
@@ -10789,7 +10666,7 @@
             body)
           (let
             [index-scan : LintNameCaseLocalScan
-              (if (struct-get state name-case)
+              (if state.name-case
                 (lint-unused-variable-scan-form-local-name
                   state
                   (ci.intern-str index)
@@ -10797,18 +10674,17 @@
                   "(spmd-scan")
                 (LintNameCaseLocalScan state 0))]
             [prefix-scan : LintNameCaseLocalScan
-              (if (struct-get state name-case)
+              (if state.name-case
                 (let
-                  [limit : i64
-                    (lint-source-span-end-index (struct-get state source) span)]
+                  [limit : i64 (lint-source-span-end-index state.source span)]
                   (lint-unused-variable-scan-local-name
-                    (struct-get index-scan state)
+                    index-scan.state
                     (ci.intern-str prefix)
-                    (struct-get index-scan next-index)
+                    index-scan.next-index
                     (if (< limit 0)
-                      (string.string-length (struct-get state source))
+                      (string.string-length state.source)
                       limit)))
-                (LintNameCaseLocalScan (struct-get index-scan state) 0))]
+                (LintNameCaseLocalScan index-scan.state 0))]
             [base-state : LintUnusedVariableState
               (lint-unused-variable-type
                 prefix-ty
@@ -10820,7 +10696,7 @@
                       (ast.ast-node-get end)
                       (lint-unused-variable-expr
                         (ast.ast-node-get start)
-                        (struct-get prefix-scan state)
+                        prefix-scan.state
                         span)
                       span)
                     span)))]
@@ -10865,7 +10741,7 @@
         body
         (lint-unused-variable-expr (ast.ast-node-get arena) state span))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (let
             [with-frame : LintUnusedVariableState
@@ -11044,11 +10920,9 @@
         name-case
         report-unused)]
     [with-cases : LintUnusedVariableState
-      (lint-unused-variable-add-binding-name-cases
-        base-state
-        (struct-get built bindings))]
+      (lint-unused-variable-add-binding-name-cases base-state built.bindings)]
     [state : LintUnusedVariableState
-      (lint-unused-variable-push-frame with-cases (struct-get built bindings))]
+      (lint-unused-variable-push-frame with-cases built.bindings)]
     [with-param-types : LintUnusedVariableState
       (lint-unused-variable-type
         ret
@@ -11058,7 +10932,7 @@
         (ast.ast-node-get body)
         with-param-types
         body-span)]
-    (struct-get (lint-unused-variable-pop-frame with-body) findings)))
+    (__tl-project-field (lint-unused-variable-pop-frame with-body) findings)))
 
 (define (lint-unused-variable-decl-with-macro-param-frame
   [source : String]
@@ -11094,11 +10968,9 @@
         name-case
         report-unused)]
     [with-cases : LintUnusedVariableState
-      (lint-unused-variable-add-binding-name-cases
-        base-state
-        (struct-get built bindings))]
+      (lint-unused-variable-add-binding-name-cases base-state built.bindings)]
     [state : LintUnusedVariableState
-      (lint-unused-variable-push-frame with-cases (struct-get built bindings))]
+      (lint-unused-variable-push-frame with-cases built.bindings)]
     [with-param-types : LintUnusedVariableState
       (lint-unused-variable-type
         ret
@@ -11108,7 +10980,7 @@
         (ast.ast-node-get body)
         with-param-types
         body-span)]
-    (struct-get (lint-unused-variable-pop-frame with-body) findings)))
+    (__tl-project-field (lint-unused-variable-pop-frame with-body) findings)))
 
 (define (lint-unused-variables-in-decl
   [source : String]
@@ -11118,7 +10990,7 @@
   [report-unused : bool]) : LintFindings
   (match decl
     [(ast.AstDecl.Def decl-meta _ maybe-ty body)
-      (struct-get
+      (__tl-project-field
         (lint-unused-variable-expr
           (ast.ast-node-get body)
           (lint-unused-variable-maybe-type
@@ -11154,7 +11026,7 @@
         name-case
         report-unused)]
     [(ast.AstDecl.Test _ body _)
-      (struct-get
+      (__tl-project-field
         (lint-unused-variable-expr
           (ast.ast-node-get body)
           (LintUnusedVariableState
@@ -11168,7 +11040,7 @@
     [(ast.AstDecl.Unsafe inner)
       (lint-unused-variables-in-decl
         source
-        (box-get inner)
+        (__tl-box-place inner)
         acc
         name-case
         report-unused)]
@@ -11176,7 +11048,7 @@
       (if name-case
         (lint-unused-variables-in-decl-list
           source
-          (box-get body)
+          (__tl-box-place body)
           acc
           true
           false)
@@ -11211,7 +11083,7 @@
   [threshold : i64]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     acc
     (let
       [head : ast.AstExpr
@@ -11246,7 +11118,7 @@
   [acc : LintFindings]
   [after-terminal : bool]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     acc
     (let
       [head : ast.AstExpr
@@ -11327,7 +11199,7 @@
   [acc : LintFindings]
   [after-terminal : bool]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     acc
     (let
       [head : ast.AstExpr
@@ -11342,7 +11214,7 @@
           [with-padding : LintFindings
             (lint-add-redundant-divergence-padding head rest acc)]
           [walked : LintFindings
-            (if (= (struct-get (& rest) len) 0)
+            (if (= rest.len 0)
               (lint-walk-expr head threshold with-padding)
               (lint-walk-discarded-expr head threshold with-padding))]
           (lint-walk-value-sequence-expr-list-after-terminal-at
@@ -11359,7 +11231,7 @@
   (lint-walk-tail-sequence-expr-list-after-terminal exprs threshold acc false))
 
 (define (lint-expr-list-single? [exprs : ast.AstExprList]) : bool
-  (= (struct-get (& exprs) len) 1))
+  (= exprs.len 1))
 
 (define (lint-add-single-begin
   [exprs : ast.AstExprList]
@@ -11387,7 +11259,7 @@
   [acc : LintFindings]
   [after-terminal : bool]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     acc
     (let
       [head : ast.AstExpr
@@ -11402,7 +11274,7 @@
           [with-padding : LintFindings
             (lint-add-redundant-divergence-padding head rest acc)]
           [walked : LintFindings
-            (if (= (struct-get (& rest) len) 0)
+            (if (= rest.len 0)
               (lint-walk-tail-expr head threshold with-padding)
               (lint-walk-discarded-expr head threshold with-padding))]
           (lint-walk-tail-sequence-expr-list-after-terminal-at
@@ -11492,7 +11364,7 @@
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (lint-nested-let-shadows? outer inner))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let inner-bindings _)
           (lint-let-bindings-shadow-outer? outer inner-bindings)])]
     [_ false]))
@@ -11576,7 +11448,7 @@
   [threshold : i64]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     acc
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body-box)
@@ -11778,7 +11650,7 @@
   [acc : LintFindings]
   [after-terminal : bool]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     acc
     (let
       [head : ast.AstExpr
@@ -11793,7 +11665,7 @@
           [with-padding : LintFindings
             (lint-add-redundant-divergence-padding head rest acc)]
           [walked : LintFindings
-            (if (= (struct-get (& rest) len) 0)
+            (if (= rest.len 0)
               (lint-walk-tail-expr head threshold with-padding)
               (lint-walk-expr head threshold with-padding))]
           (lint-walk-tail-expr-list-after-terminal-at
@@ -11815,7 +11687,7 @@
   [threshold : i64]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     acc
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm _ body-box)
@@ -11853,7 +11725,7 @@
                 threshold
                 acc))]
           [(ast.AstExpr.Let let-box)
-            (match (box-get let-box)
+            (match (__tl-box-place let-box)
               [(ast.AstLet.Let bindings body-box)
                 (let
                   [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -11882,13 +11754,13 @@
           threshold
           acc))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
             (lint-walk-tail-let bindings body (lint-no-span) threshold acc))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -11908,7 +11780,7 @@
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (lint-walk-tail-expr inner threshold acc))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr (ast.ast-node-get scrutinee-box)]
@@ -11935,7 +11807,7 @@
           threshold
           (lint-walk-expr arena threshold acc)))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-walk-tail-sequence-expr-list
             body
@@ -11980,7 +11852,7 @@
   [threshold : i64]
   [acc : LintFindings]
   [index : i64]) : LintFindings
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     acc
     (let
       [head-expr : ast.AstExpr
@@ -12044,7 +11916,7 @@
                 threshold
                 acc))]
           [(ast.AstExpr.Let let-box)
-            (match (box-get let-box)
+            (match (__tl-box-place let-box)
               [(ast.AstLet.Let bindings body-box)
                 (let
                   [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -12092,13 +11964,13 @@
           threshold
           acc))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
             (lint-walk-let bindings body (lint-no-span) threshold acc))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
@@ -12198,7 +12070,7 @@
         [place : ast.AstExpr (ast.ast-node-get place-box)]
         (lint-walk-expr place threshold acc))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr (ast.ast-node-get scrutinee-box)]
@@ -12207,7 +12079,7 @@
               threshold
               (lint-walk-expr scrutinee threshold acc)))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach _ _ start-box end-box body-box)
           (let
             [start : ast.AstExpr (ast.ast-node-get start-box)]
@@ -12221,7 +12093,7 @@
                 threshold
                 (lint-walk-expr start threshold acc))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (let
             [start : ast.AstExpr (ast.ast-node-get start-box)]
@@ -12239,7 +12111,7 @@
                   threshold
                   (lint-walk-expr start threshold acc)))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             _
             _
@@ -12308,7 +12180,7 @@
           threshold
           (lint-walk-expr arena threshold acc)))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (lint-walk-value-sequence-expr-list
             body
@@ -12461,10 +12333,10 @@
         (lint-walk-tail-expr body threshold acc))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (lint-walk-decl inner threshold acc))]
     [(ast.AstDecl.ModuleBody _ body-box)
-      (lint-walk-decl-list (box-get body-box) threshold acc)]
+      (lint-walk-decl-list (__tl-box-place body-box) threshold acc)]
     [(ast.AstDecl.Module _) acc]
     [(ast.AstDecl.Extern decl-meta _ _ _ _) acc]
     [(ast.AstDecl.DefEnum decl-meta _ _ _) acc]
@@ -12499,7 +12371,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [_line-index : unit (lint-source-line-index-build! source)]
         [copy-on-update-shapes : LintCopyOnUpdateStructList
           (lint-copy-on-update-collect-structs

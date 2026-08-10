@@ -71,24 +71,24 @@
   (tlci-spmd-specializations-with-capacity 0))
 
 (define (tlci-spmd-specializations-len [seq : TlciSpmdSpecializations]) : i64
-  (tlci_specialization_vec.len (& (struct-get seq items))))
+  (tlci_specialization_vec.len (& seq.items)))
 
 (define (tlci-spmd-specializations-ref
   [seq : TlciSpmdSpecializations]
   [index : i64]) : TlciSpmdSpecialization
-  (array-ref (tlci_specialization_vec.slots (& (struct-get seq items))) index))
+  (array-ref (tlci_specialization_vec.slots (& seq.items)) index))
 
 (define (tlci-spmd-specializations-push
   [items : TlciSpmdSpecializations (:consume)]
   [item : TlciSpmdSpecialization]) : TlciSpmdSpecializations
   (begin
-    (tlci_specialization_vec.push (&mut (struct-get items items)) item)
+    (tlci_specialization_vec.push (&mut items.items) item)
     items))
 
 (define (tlci-spmd-specializations-push!
   [items : (&mut items TlciSpmdSpecializations)]
   [item : TlciSpmdSpecialization]) : unit
-  (tlci_specialization_vec.push (&mut (struct-get items items)) item))
+  (tlci_specialization_vec.push (&mut items.items) item))
 
 (define (tlci-make-spmd-callable
   [name : String]
@@ -103,22 +103,22 @@
   (tlci-spmd-callables-with-capacity 0))
 
 (define (tlci-spmd-callables-len [seq : TlciSpmdCallables]) : i64
-  (tlci_callable_vec.len (& (struct-get seq items))))
+  (tlci_callable_vec.len (& seq.items)))
 
 (define (tlci-spmd-callables-ref [seq : TlciSpmdCallables] [index : i64]) : TlciSpmdCallable
-  (array-ref (tlci_callable_vec.slots (& (struct-get seq items))) index))
+  (array-ref (tlci_callable_vec.slots (& seq.items)) index))
 
 (define (tlci-spmd-callables-push
   [items : TlciSpmdCallables (:consume)]
   [item : TlciSpmdCallable]) : TlciSpmdCallables
   (begin
-    (tlci_callable_vec.push (&mut (struct-get items items)) item)
+    (tlci_callable_vec.push (&mut items.items) item)
     items))
 
 (define (tlci-spmd-callables-push!
   [items : (&mut items TlciSpmdCallables)]
   [item : TlciSpmdCallable]) : unit
-  (tlci_callable_vec.push (&mut (struct-get items items)) item))
+  (tlci_callable_vec.push (&mut items.items) item))
 
 (defstruct TlciMetadata
   (version String)
@@ -738,9 +738,9 @@
 (define tlci-host-callback-name-local-expr-var? : String
   "local-expr-var?")
 
-;; Remaining binder-free template node kinds (refs #5605): expr-return,
-;; expr-box, and expr-box-get each pop one expression and push the node the
-;; parser produces for `(return e)`, `(box e)`, and `(box-get e)`;
+;; Remaining binder-free template node kinds (refs #5605, #6240): expr-return,
+;; expr-box, expr-box-get, and expr-box-take each pop one expression and push
+;; the corresponding AST node;
 ;; expr-float-literal pushes a float literal carrying the caller bytes, which
 ;; are the literal's exact source text (the interpreted quote preserves float
 ;; spelling verbatim). The embedded image and its consumer are always the same
@@ -751,6 +751,8 @@
   "expr-box")
 (define tlci-host-callback-name-expr-box-get : String
   "expr-box-get")
+(define tlci-host-callback-name-expr-box-take : String
+  "expr-box-take")
 (define tlci-host-callback-name-expr-float-literal : String
   "expr-float-literal")
 
@@ -988,23 +990,23 @@
 (define (tlci-host-callback-registry-error
   [table : (& table TlciHostCallbackTable)]) : String
   (let
-    [count : i64 (struct-get table import-count)]
+    [count : i64 table.import-count]
     [index : i64 0]
     [prior : i64 0]
     [error : String ""]
     (cond
       [(< count 0) "host callback registry count must not be negative"]
-      [(< (array-length (struct-get table import-names)) count)
+      [(< (array-length table.import-names) count)
         "host callback registry name storage is smaller than its count"]
-      [(< (array-length (struct-get table import-callbacks)) count)
+      [(< (array-length table.import-callbacks) count)
         "host callback registry address storage is smaller than its count"]
       [else
         (begin
           (while (and (= (string.string-length error) 0) (< index count))
             (cond
-              [(string.eq (array-ref (struct-get table import-names) index) "")
+              [(string.eq (array-ref table.import-names index) "")
                 (set! error "host callback registry name must not be empty")]
-              [(= (array-ref (struct-get table import-callbacks) index) 0)
+              [(= (array-ref table.import-callbacks index) 0)
                 (set! error "host callback registry address must be nonzero")]
               [else
                 (begin
@@ -1013,8 +1015,8 @@
                     (= (string.string-length error) 0)
                     (< prior index))
                     (if (string.eq
-                      (array-ref (struct-get table import-names) prior)
-                      (array-ref (struct-get table import-names) index))
+                      (array-ref table.import-names prior)
+                      (array-ref table.import-names index))
                       (set! error "duplicate host callback registry name")
                       (set! prior (+ prior 1))))
                   (set! index (+ index 1)))]))
@@ -1022,24 +1024,23 @@
 
 (define (tlci-validate-host-callback-table [table : TlciHostCallbackTable]) : ResultTlciHostAbi
   (cond
-    [(not (= (struct-get table magic) tlci-host-callback-table-magic))
+    [(not (= table.magic tlci-host-callback-table-magic))
       (ResultTlciHostAbi.Err "tlci host ABI: bad host callback table magic")]
-    [(not (= (struct-get table abi-version) tlci-host-abi-version))
-      (ResultTlciHostAbi.Err
-        (tlci-host-abi-version-error (struct-get table abi-version)))]
-    [(< (struct-get table byte-size) tlci-host-callback-table-size)
+    [(not (= table.abi-version tlci-host-abi-version))
+      (ResultTlciHostAbi.Err (tlci-host-abi-version-error table.abi-version))]
+    [(< table.byte-size tlci-host-callback-table-size)
       (ResultTlciHostAbi.Err
         "tlci host ABI: host callback table byte-size is smaller than v2")]
-    [(not (= (struct-get table reserved0) 0))
+    [(not (= table.reserved0 0))
       (ResultTlciHostAbi.Err
         "tlci host ABI: host callback table reserved0 must be zero")]
-    [(not (= (struct-get table reserved1) 0))
+    [(not (= table.reserved1 0))
       (ResultTlciHostAbi.Err
         "tlci host ABI: host callback table reserved1 must be zero")]
-    [(not (= (struct-get table reserved2) 0))
+    [(not (= table.reserved2 0))
       (ResultTlciHostAbi.Err
         "tlci host ABI: host callback table reserved2 must be zero")]
-    [(= (struct-get table abort-callback) 0)
+    [(= table.abort-callback 0)
       (ResultTlciHostAbi.Err
         "tlci host ABI: host abort callback must be nonzero")]
     [(not (string.eq (tlci-host-callback-registry-error (& table)) ""))
@@ -1052,28 +1053,28 @@
 (define (tlci-validate-image-registration
   [registration : TlciImageRegistration]) : ResultTlciHostAbi
   (cond
-    [(not (= (struct-get registration magic) tlci-image-registration-magic))
+    [(not (= registration.magic tlci-image-registration-magic))
       (ResultTlciHostAbi.Err "tlci host ABI: bad image registration magic")]
-    [(not (= (struct-get registration abi-version) tlci-host-abi-version))
+    [(not (= registration.abi-version tlci-host-abi-version))
       (ResultTlciHostAbi.Err
-        (tlci-host-abi-version-error (struct-get registration abi-version)))]
-    [(< (struct-get registration byte-size) tlci-image-registration-size)
+        (tlci-host-abi-version-error registration.abi-version))]
+    [(< registration.byte-size tlci-image-registration-size)
       (ResultTlciHostAbi.Err
         "tlci host ABI: image registration byte-size is smaller than v2")]
-    [(not (= (struct-get registration reserved0) 0))
+    [(not (= registration.reserved0 0))
       (ResultTlciHostAbi.Err
         "tlci host ABI: image registration reserved0 must be zero")]
-    [(not (= (struct-get registration reserved1) 0))
+    [(not (= registration.reserved1 0))
       (ResultTlciHostAbi.Err
         "tlci host ABI: image registration reserved1 must be zero")]
     [(and
-        (= (struct-get registration macro-entry-table) 0)
-        (not (= (struct-get registration macro-entry-count) 0)))
+        (= registration.macro-entry-table 0)
+        (not (= registration.macro-entry-count 0)))
       (ResultTlciHostAbi.Err
         "tlci host ABI: macro entry count requires a table")]
     [(and
-        (not (= (struct-get registration macro-entry-table) 0))
-        (= (struct-get registration macro-entry-count) 0))
+        (not (= registration.macro-entry-table 0))
+        (= registration.macro-entry-count 0))
       (ResultTlciHostAbi.Err
         "tlci host ABI: macro entry table requires a count")]
     [else (ResultTlciHostAbi.Ok)]))
@@ -1104,14 +1105,14 @@
 
 (define (tlci-set-u64! [out : (__tl_dyn-array u8)] [offset : i64] [value : i64]) : unit
   (begin
-    (array-set! out offset (tlci-byte value))
-    (array-set! out (+ offset 1) (tlci-byte (shr value 8)))
-    (array-set! out (+ offset 2) (tlci-byte (shr value 16)))
-    (array-set! out (+ offset 3) (tlci-byte (shr value 24)))
-    (array-set! out (+ offset 4) (tlci-byte (shr value 32)))
-    (array-set! out (+ offset 5) (tlci-byte (shr value 40)))
-    (array-set! out (+ offset 6) (tlci-byte (shr value 48)))
-    (array-set! out (+ offset 7) (tlci-byte (shr value 56)))))
+    (set! (array-ref out offset) (tlci-byte value))
+    (set! (array-ref out (+ offset 1)) (tlci-byte (shr value 8)))
+    (set! (array-ref out (+ offset 2)) (tlci-byte (shr value 16)))
+    (set! (array-ref out (+ offset 3)) (tlci-byte (shr value 24)))
+    (set! (array-ref out (+ offset 4)) (tlci-byte (shr value 32)))
+    (set! (array-ref out (+ offset 5)) (tlci-byte (shr value 40)))
+    (set! (array-ref out (+ offset 6)) (tlci-byte (shr value 48)))
+    (set! (array-ref out (+ offset 7)) (tlci-byte (shr value 56)))))
 
 (define (tlci-put-string!
   [bytes : (__tl_dyn-array u8)]
@@ -1123,9 +1124,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            bytes
-            (+ offset index)
+          (set!
+            (array-ref bytes (+ offset index))
             (cast (tlci-string-ref text index) : u8))
           (set! index (+ index 1))))
       unit)))
@@ -1166,11 +1166,10 @@
 (define (tlci-native-package-extend-code [input : TlciNativePackageInput]) : (__tl_dyn-array
     u8)
   (let
-    [code : (__tl_dyn-array u8) (struct-get input code)]
+    [code : (__tl_dyn-array u8) input.code]
     [code-len : i64 (array-length code)]
-    [count : i64 (struct-get input macro-count)]
-    [names-len : i64
-      (tlci-native-package-name-blob-len (struct-get input identities) count)]
+    [count : i64 input.macro-count]
+    [names-len : i64 (tlci-native-package-name-blob-len input.identities count)]
     [count-word : i64 (tlci-align-offset (+ code-len names-len) 8)]
     [table-offset : i64 (+ count-word 8)]
     [total : i64 (+ table-offset (* count tlci-macro-entry-record-size))]
@@ -1180,12 +1179,12 @@
     (begin
       (while (< index code-len)
         (begin
-          (array-set! out index (array-ref code index))
+          (set! (array-ref out index) (array-ref code index))
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index count)
         (let
-          [name : String (array-ref (struct-get input identities) index)]
+          [name : String (array-ref input.identities index)]
           [name-len : i64 (tlci-string-length name)]
           (begin
             (tlci-put-string! out name-cursor name)
@@ -1198,10 +1197,8 @@
 (define (tlci-native-package-count-word [input : TlciNativePackageInput]) : i64
   (tlci-align-offset
     (+
-      (array-length (struct-get input code))
-      (tlci-native-package-name-blob-len
-        (struct-get input identities)
-        (struct-get input macro-count)))
+      (array-length input.code)
+      (tlci-native-package-name-blob-len input.identities input.macro-count))
     8))
 
 (define (tlci-native-package-entries [input : TlciNativePackageInput]) : (__tl_dyn-array
@@ -1229,9 +1226,7 @@
   (make-array
     u8
     (*
-      (+
-        (struct-get input layout-fixup-count)
-        (* (struct-get input macro-count) 2))
+      (+ input.layout-fixup-count (* input.macro-count 2))
       tlci-section-fixup-record-size)))
 
 ;; Post-emit patch: resolve layout fixup slots and fill the macro table's name
@@ -1242,19 +1237,17 @@
   (let
     [code-offset : i64 (tlci-read-u64 bytes 88)]
     [fixups-offset : i64 (tlci-read-u64 bytes 104)]
-    [count : i64 (struct-get input macro-count)]
-    [layout-count : i64 (struct-get input layout-fixup-count)]
+    [count : i64 input.macro-count]
+    [layout-count : i64 input.layout-fixup-count]
     [count-word : i64 (tlci-native-package-count-word input)]
     [table-offset : i64 (+ count-word 8)]
-    [name-cursor : i64 (array-length (struct-get input code))]
+    [name-cursor : i64 (array-length input.code)]
     [index : i64 0]
     (begin
       (while (< index layout-count)
         (let
           [slot : i64
-            (+
-              code-offset
-              (array-ref (struct-get input layout-fixup-offsets) index))]
+            (+ code-offset (array-ref input.layout-fixup-offsets index))]
           (begin
             (tlci-set-u64!
               bytes
@@ -1269,7 +1262,7 @@
       (while (< index count)
         (let
           [name-len : i64
-            (tlci-string-length (array-ref (struct-get input identities) index))]
+            (tlci-string-length (array-ref input.identities index))]
           [record-slot : i64
             (+
               code-offset
@@ -1289,7 +1282,7 @@
             (tlci-set-u64!
               bytes
               entry-slot
-              (+ code-offset (array-ref (struct-get input entry-offsets) index)))
+              (+ code-offset (array-ref input.entry-offsets index)))
             (tlci-set-u64! bytes fixup-slot name-slot)
             (tlci-set-u64!
               bytes
@@ -1329,12 +1322,12 @@
       tlci-callback-abi-version
       compiler-build-hash
       metadata
-      (struct-get input rodata)
+      input.rodata
       (tlci-native-package-extend-code input)
       (tlci-native-package-fixups input)
       (tlci-native-package-entries input)
       (tlci-native-package-symbols)
-      (struct-get input imports)))
+      input.imports))
     [(ResultTlciBytes.Err message) (ResultTlciBytes.Err message)]
     [(ResultTlciBytes.Ok bytes)
       (begin
@@ -1385,7 +1378,7 @@
 (define (tlci-pad-to!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [offset : i64]) : unit
-  (tlci-push-zeroes! out (- offset (struct-get out len))))
+  (tlci-push-zeroes! out (- offset out.len)))
 
 (define (tlci-push-magic! [out : (&mut out byte_buf_core.ByteBufBuilder)]) : unit
   (begin
@@ -1441,7 +1434,7 @@
     (begin
       (while (< i len)
         (begin
-          (array-set! out i (array-ref bytes (+ offset i)))
+          (set! (array-ref out i) (array-ref bytes (+ offset i)))
           (set! i (+ i 1))))
       (unsafe
         (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) len)))))
@@ -1456,7 +1449,7 @@
     (begin
       (while (< i len)
         (begin
-          (array-set! out i (array-ref bytes (+ offset i)))
+          (set! (array-ref out i) (array-ref bytes (+ offset i)))
           (set! i (+ i 1))))
       out)))
 
@@ -1539,9 +1532,9 @@
           (while (and ok (< index count))
             (let
               [section : TlciAuxSection (array-ref sections index)]
-              [kind : i64 (struct-get section kind)]
-              [schema-version : i64 (struct-get section schema-version)]
-              [payload : (__tl_dyn-array u8) (struct-get section payload)]
+              [kind : i64 section.kind]
+              [schema-version : i64 section.schema-version]
+              [payload : (__tl_dyn-array u8) section.payload]
               (cond
                 [(<= kind previous-kind)
                   (begin
@@ -1557,20 +1550,22 @@
                       "tlci: auxiliary section schema version must be positive"))]
                 [else
                   (let
-                    [offset : i64 (tlci-align-offset (struct-get out len) 8)]
+                    [offset : i64 (tlci-align-offset out.len 8)]
                     [len : i64 (array-length payload)]
                     (begin
                       (tlci-pad-to! (&mut out) offset)
-                      (array-set! offsets index offset)
-                      (array-set! lengths index len)
+                      (set! (array-ref offsets index) offset)
+                      (set! (array-ref lengths index) len)
                       (tlci-append-bytes! (&mut out) payload)
-                      (array-set! hashes index (tlci-range-hash payload 0 len))
+                      (set!
+                        (array-ref hashes index)
+                        (tlci-range-hash payload 0 len))
                       (set! previous-kind kind)
                       (set! index (+ index 1))))]))))
         (if (not ok)
           (ResultTlciAuxBytes.Err message)
           (let
-            [directory-offset : i64 (tlci-align-offset (struct-get out len) 8)]
+            [directory-offset : i64 (tlci-align-offset out.len 8)]
             (begin
               (tlci-pad-to! (&mut out) directory-offset)
               (set! index 0)
@@ -1578,16 +1573,14 @@
                 (let
                   [section : TlciAuxSection (array-ref sections index)]
                   (begin
-                    (tlci-push-u64! (&mut out) (struct-get section kind))
-                    (tlci-push-u64!
-                      (&mut out)
-                      (struct-get section schema-version))
+                    (tlci-push-u64! (&mut out) section.kind)
+                    (tlci-push-u64! (&mut out) section.schema-version)
                     (tlci-push-u64! (&mut out) (array-ref offsets index))
                     (tlci-push-u64! (&mut out) (array-ref lengths index))
                     (tlci-push-u64! (&mut out) (array-ref hashes index))
                     (set! index (+ index 1)))))
               (let
-                [trailer-offset : i64 (struct-get out len)]
+                [trailer-offset : i64 out.len]
                 [total-len : i64 (+ trailer-offset tlci-aux-trailer-size)]
                 (begin
                   (tlci-push-u64! (&mut out) tlci-aux-magic)
@@ -1655,15 +1648,13 @@
   (let
     [index : i64 0]
     [previous-kind : i64 0]
-    [previous-end : i64 (tlci-align-offset (struct-get directory base-len) 8)]
+    [previous-end : i64 (tlci-align-offset directory.base-len 8)]
     [ok : bool true]
     (begin
-      (while (and ok (< index (struct-get directory count)))
+      (while (and ok (< index directory.count))
         (let
           [record : i64
-            (+
-              (struct-get directory directory-offset)
-              (* index tlci-aux-record-size))]
+            (+ directory.directory-offset (* index tlci-aux-record-size))]
           [kind : i64 (tlci-read-u64 rodata record)]
           [schema-version : i64 (tlci-read-u64 rodata (+ record 8))]
           [offset : i64 (tlci-read-u64 rodata (+ record 16))]
@@ -1675,8 +1666,8 @@
             (>= offset previous-end)
             (= (% offset 8) 0)
             (>= len 0)
-            (<= offset (struct-get directory directory-offset))
-            (<= len (- (struct-get directory directory-offset) offset))
+            (<= offset directory.directory-offset)
+            (<= len (- directory.directory-offset offset))
             (= expected-hash (tlci-range-hash rodata offset len)))
             (begin
               (set! previous-kind kind)
@@ -1696,12 +1687,10 @@
         (let
           [index : i64 0]
           (begin
-            (while (< index (struct-get directory count))
+            (while (< index directory.count)
               (let
                 [record : i64
-                  (+
-                    (struct-get directory directory-offset)
-                    (* index tlci-aux-record-size))]
+                  (+ directory.directory-offset (* index tlci-aux-record-size))]
                 [kind : i64 (tlci-read-u64 rodata record)]
                 (if (= kind wanted-kind)
                   (return
@@ -1897,13 +1886,13 @@
   [specialization : TlciSpmdSpecialization]
   [param-count : i64]) : String
   (let
-    [abi : String (struct-get specialization abi)]
-    [backend : String (struct-get specialization backend)]
-    [lanes : i64 (struct-get specialization lanes)]
-    [args : String (struct-get specialization args)]
-    [result : String (struct-get specialization result)]
-    [index-param : i64 (struct-get specialization index-param)]
-    [symbol : String (struct-get specialization symbol)]
+    [abi : String specialization.abi]
+    [backend : String specialization.backend]
+    [lanes : i64 specialization.lanes]
+    [args : String specialization.args]
+    [result : String specialization.result]
+    [index-param : i64 specialization.index-param]
+    [symbol : String specialization.symbol]
     (cond
       [(string.eq abi "") "tlci metadata: specialization ABI must not be empty"]
       [(and
@@ -1944,43 +1933,34 @@
   [left : TlciSpmdSpecialization]
   [right : TlciSpmdSpecialization]) : i64
   (let
-    [backend : i64
-      (tlci-string-compare (struct-get left backend) (struct-get right backend))]
+    [backend : i64 (tlci-string-compare left.backend right.backend)]
     (if (not (= backend 0))
       backend
       (let
-        [left-lanes : i64 (struct-get left lanes)]
-        [right-lanes : i64 (struct-get right lanes)]
+        [left-lanes : i64 left.lanes]
+        [right-lanes : i64 right.lanes]
         (if (not (= left-lanes right-lanes))
           (if (< left-lanes right-lanes)
             -1
             1)
           (let
-            [args : i64
-              (tlci-string-compare
-                (struct-get left args)
-                (struct-get right args))]
+            [args : i64 (tlci-string-compare left.args right.args)]
             (if (not (= args 0))
               args
               (let
-                [result : i64
-                  (tlci-string-compare
-                    (struct-get left result)
-                    (struct-get right result))]
+                [result : i64 (tlci-string-compare left.result right.result)]
                 (if (not (= result 0))
                   result
                   (let
-                    [left-index : i64 (struct-get left index-param)]
-                    [right-index : i64 (struct-get right index-param)]
+                    [left-index : i64 left.index-param]
+                    [right-index : i64 right.index-param]
                     (if (not (= left-index right-index))
                       (if (< left-index right-index)
                         -1
                         1)
                       (let
                         [symbol : i64
-                          (tlci-string-compare
-                            (struct-get left symbol)
-                            (struct-get right symbol))]
+                          (tlci-string-compare left.symbol right.symbol)]
                         (if (not (= symbol 0))
                           symbol
                           0)))))))))))))
@@ -1989,13 +1969,10 @@
   [left : TlciSpmdCallable]
   [right : TlciSpmdCallable]) : i64
   (let
-    [name : i64
-      (tlci-string-compare (struct-get left name) (struct-get right name))]
+    [name : i64 (tlci-string-compare left.name right.name)]
     (if (not (= name 0))
       name
-      (tlci-string-compare
-        (struct-get left signature)
-        (struct-get right signature)))))
+      (tlci-string-compare left.signature right.signature))))
 
 (define (tlci-spmd-specializations-validation-error
   [items : TlciSpmdSpecializations]
@@ -2047,8 +2024,8 @@
 
 (define (tlci-spmd-callable-validation-error [callable : TlciSpmdCallable]) : String
   (let
-    [name : String (struct-get callable name)]
-    [signature : String (struct-get callable signature)]
+    [name : String callable.name]
+    [signature : String callable.signature]
     [param-count : i64 (tlci-signature-param-count signature)]
     (cond
       [(string.eq name "") "tlci metadata: helper name must not be empty"]
@@ -2056,13 +2033,11 @@
         "tlci metadata: helper signature must not be empty"]
       [(< param-count 0)
         "tlci metadata: helper signature must be a function signature"]
-      [(=
-          (tlci-spmd-specializations-len (struct-get callable specializations))
-          0)
+      [(= (tlci-spmd-specializations-len callable.specializations) 0)
         "tlci metadata: helper requires at least one specialization"]
       [else
         (tlci-spmd-specializations-validation-error
-          (struct-get callable specializations)
+          callable.specializations
           param-count)])))
 
 (define (tlci-spmd-callables-validation-error [items : TlciSpmdCallables]) : String
@@ -2660,8 +2635,8 @@
                           rest
                           version
                           has-version
-                          (struct-get parsed package-name)
-                          (struct-get parsed package-version)
+                          parsed.package-name
+                          parsed.package-version
                           true
                           spmd-callables
                           has-spmd-callables)]))]
@@ -2779,25 +2754,25 @@
                 out
                 "    (specialization\n"
                 "      (abi "
-                (tlci-quote-string (struct-get item abi))
+                (tlci-quote-string item.abi)
                 ")\n"
                 "      (backend "
-                (tlci-quote-string (struct-get item backend))
+                (tlci-quote-string item.backend)
                 ")\n"
                 "      (lanes "
-                (string.int->string (struct-get item lanes))
+                (string.int->string item.lanes)
                 ")\n"
                 "      (args "
-                (tlci-quote-string (struct-get item args))
+                (tlci-quote-string item.args)
                 ")\n"
                 "      (result "
-                (tlci-quote-string (struct-get item result))
+                (tlci-quote-string item.result)
                 ")\n"
                 "      (index-param "
-                (string.int->string (struct-get item index-param))
+                (string.int->string item.index-param)
                 ")\n"
                 "      (symbol "
-                (tlci-quote-string (struct-get item symbol))
+                (tlci-quote-string item.symbol)
                 "))\n"))
             (set! index (+ index 1)))))
       out)))
@@ -2818,13 +2793,12 @@
                 out
                 "  (helper\n"
                 "    (name "
-                (tlci-quote-string (struct-get item name))
+                (tlci-quote-string item.name)
                 ")\n"
                 "    (signature "
-                (tlci-quote-string (struct-get item signature))
+                (tlci-quote-string item.signature)
                 ")\n"
-                (tlci-spmd-specializations-emit
-                  (struct-get item specializations))
+                (tlci-spmd-specializations-emit item.specializations)
                 "  )\n"))
             (set! index (+ index 1)))))
       out)))
@@ -2839,17 +2813,17 @@
 
 (define (tlci-metadata-validation-error [metadata : TlciMetadata]) : String
   (let
-    [version : String (struct-get metadata version)]
-    [callables : TlciSpmdCallables (struct-get metadata spmd-callables)]
+    [version : String metadata.version]
+    [callables : TlciSpmdCallables metadata.spmd-callables]
     (cond
       [(not
           (or
             (string.eq version tlci-metadata-version)
             (string.eq version tlci-metadata-version-v2)))
         (str_cat.str-cat "tlci metadata: unsupported version `" version "`")]
-      [(string.eq (struct-get metadata package-name) "")
+      [(string.eq metadata.package-name "")
         "tlci metadata: package name must not be empty"]
-      [(string.eq (struct-get metadata package-version) "")
+      [(string.eq metadata.package-version "")
         "tlci metadata: package version must not be empty"]
       [(and
           (string.eq version tlci-metadata-version)
@@ -2863,13 +2837,13 @@
       (str_cat.str-cat
         "(typelisp-tlci-metadata\n"
         "  (version "
-        (tlci-quote-string (struct-get metadata version))
+        (tlci-quote-string metadata.version)
         ")\n"
         "  (package (name "
-        (tlci-quote-string (struct-get metadata package-name))
+        (tlci-quote-string metadata.package-name)
         ") (version "
-        (tlci-quote-string (struct-get metadata package-version)))]
-    [callables : TlciSpmdCallables (struct-get metadata spmd-callables)]
+        (tlci-quote-string metadata.package-version))]
+    [callables : TlciSpmdCallables metadata.spmd-callables]
     (if (= (tlci-spmd-callables-len callables) 0)
       (str_cat.str-cat prefix ")))\n")
       (str_cat.str-cat prefix "))\n" (tlci-spmd-callables-emit callables) ")\n"))))
@@ -2946,53 +2920,34 @@
 
 (define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
   (cond
-    [(not
-        (string.eq
-          (tlci-metadata-validation-error (struct-get image metadata))
-          ""))
-      (ResultTlciBytes.Err
-        (tlci-metadata-validation-error (struct-get image metadata)))]
-    [(string.eq (struct-get image compiler-build-hash) "")
+    [(not (string.eq (tlci-metadata-validation-error image.metadata) ""))
+      (ResultTlciBytes.Err (tlci-metadata-validation-error image.metadata))]
+    [(string.eq image.compiler-build-hash "")
       (ResultTlciBytes.Err "tlci: compiler build hash must not be empty")]
-    [(not
-        (=
-          (%
-            (array-length (struct-get image fixups))
-            tlci-section-fixup-record-size)
-          0))
+    [(not (= (% (array-length image.fixups) tlci-section-fixup-record-size) 0))
       (ResultTlciBytes.Err "tlci: malformed fixup table length")]
-    [(not
-        (=
-          (%
-            (array-length (struct-get image entries))
-            tlci-section-entry-record-size)
-          0))
+    [(not (= (% (array-length image.entries) tlci-section-entry-record-size) 0))
       (ResultTlciBytes.Err "tlci: malformed entry table length")]
     [(not
-        (=
-          (%
-            (array-length (struct-get image symbols))
-            tlci-section-symbol-record-size)
-          0))
+        (= (% (array-length image.symbols) tlci-section-symbol-record-size) 0))
       (ResultTlciBytes.Err "tlci: malformed symbol table length")]
     [(not
         (string.eq
           (tlci-import-section-validation-error
-            (struct-get image imports)
-            (tlci-import-section-count (struct-get image imports)))
+            image.imports
+            (tlci-import-section-count image.imports))
           ""))
       (ResultTlciBytes.Err
         (str_cat.str-cat
           "tlci: malformed import section: "
           (tlci-import-section-validation-error
-            (struct-get image imports)
-            (tlci-import-section-count (struct-get image imports)))))]
+            image.imports
+            (tlci-import-section-count image.imports))))]
     [else
       (let
         [compiler-hash-bytes : (__tl_dyn-array u8)
-          (tlci-string->bytes (struct-get image compiler-build-hash))]
-        [metadata-text : String
-          (tlci-metadata-emit (struct-get image metadata))]
+          (tlci-string->bytes image.compiler-build-hash)]
+        [metadata-text : String (tlci-metadata-emit image.metadata)]
         [metadata-bytes : (__tl_dyn-array u8)
           (tlci-string->bytes metadata-text)]
         [hash-offset : i64 tlci-header-size]
@@ -3001,11 +2956,11 @@
             (+ hash-offset (array-length compiler-hash-bytes))
             8)]
         [after-metadata : i64 (+ metadata-offset (array-length metadata-bytes))]
-        [rodata-len : i64 (array-length (struct-get image rodata))]
-        [code-len : i64 (array-length (struct-get image code))]
-        [fixups-len : i64 (array-length (struct-get image fixups))]
-        [entries-len : i64 (array-length (struct-get image entries))]
-        [symbols-len : i64 (array-length (struct-get image symbols))]
+        [rodata-len : i64 (array-length image.rodata)]
+        [code-len : i64 (array-length image.code)]
+        [fixups-len : i64 (array-length image.fixups)]
+        [entries-len : i64 (array-length image.entries)]
+        [symbols-len : i64 (array-length image.symbols)]
         [rodata-offset : i64
           (tlci-section-offset after-metadata rodata-len tlci-page-align)]
         [after-rodata : i64
@@ -3022,7 +2977,7 @@
         [symbols-offset : i64 (tlci-section-offset after-entries symbols-len 8)]
         [after-symbols : i64
           (tlci-section-end after-entries symbols-offset symbols-len)]
-        [imports-len : i64 (array-length (struct-get image imports))]
+        [imports-len : i64 (array-length image.imports)]
         [imports-offset : i64 (tlci-section-offset after-symbols imports-len 8)]
         [file-size : i64
           (tlci-section-end after-symbols imports-offset imports-len)]
@@ -3031,8 +2986,8 @@
         (begin
           (tlci-push-magic! (&mut out))
           (tlci-push-u64! (&mut out) tlci-format-version)
-          (tlci-push-u64! (&mut out) (struct-get image host-arch))
-          (tlci-push-u64! (&mut out) (struct-get image callback-abi-version))
+          (tlci-push-u64! (&mut out) image.host-arch)
+          (tlci-push-u64! (&mut out) image.callback-abi-version)
           (tlci-push-u64! (&mut out) hash-offset)
           (tlci-push-u64! (&mut out) (array-length compiler-hash-bytes))
           (tlci-push-u64! (&mut out) 0)
@@ -3055,9 +3010,7 @@
             (&mut out)
             (/ symbols-len tlci-section-symbol-record-size))
           (tlci-push-u64! (&mut out) imports-offset)
-          (tlci-push-u64!
-            (&mut out)
-            (tlci-import-section-count (struct-get image imports)))
+          (tlci-push-u64! (&mut out) (tlci-import-section-count image.imports))
           (tlci-push-u64! (&mut out) file-size)
           (tlci-append-bytes! (&mut out) compiler-hash-bytes)
           (tlci-pad-to! (&mut out) metadata-offset)
@@ -3065,32 +3018,32 @@
           (if (> rodata-len 0)
             (begin
               (tlci-pad-to! (&mut out) rodata-offset)
-              (tlci-append-bytes! (&mut out) (struct-get image rodata)))
+              (tlci-append-bytes! (&mut out) image.rodata))
             unit)
           (if (> code-len 0)
             (begin
               (tlci-pad-to! (&mut out) code-offset)
-              (tlci-append-bytes! (&mut out) (struct-get image code)))
+              (tlci-append-bytes! (&mut out) image.code))
             unit)
           (if (> fixups-len 0)
             (begin
               (tlci-pad-to! (&mut out) fixups-offset)
-              (tlci-append-bytes! (&mut out) (struct-get image fixups)))
+              (tlci-append-bytes! (&mut out) image.fixups))
             unit)
           (if (> entries-len 0)
             (begin
               (tlci-pad-to! (&mut out) entries-offset)
-              (tlci-append-bytes! (&mut out) (struct-get image entries)))
+              (tlci-append-bytes! (&mut out) image.entries))
             unit)
           (if (> symbols-len 0)
             (begin
               (tlci-pad-to! (&mut out) symbols-offset)
-              (tlci-append-bytes! (&mut out) (struct-get image symbols)))
+              (tlci-append-bytes! (&mut out) image.symbols))
             unit)
           (if (> imports-len 0)
             (begin
               (tlci-pad-to! (&mut out) imports-offset)
-              (tlci-append-bytes! (&mut out) (struct-get image imports)))
+              (tlci-append-bytes! (&mut out) image.imports))
             unit)
           (let
             [out-bytes : (__tl_dyn-array u8)
@@ -3767,9 +3720,9 @@
       [(ResultTlciMetadata.Err _) false]
       [(ResultTlciMetadata.Ok parsed)
         (and
-          (string.eq (struct-get parsed version) "v1")
-          (string.eq (struct-get parsed package-name) "demo")
-          (string.eq (struct-get parsed package-version) "0.1.0"))])))
+          (string.eq parsed.version "v1")
+          (string.eq parsed.package-name "demo")
+          (string.eq parsed.package-version "0.1.0"))])))
 
 (define (tlci-test-v2-alpha-specializations? [items : TlciSpmdSpecializations]) : bool
   (and
@@ -3778,15 +3731,15 @@
       [first : TlciSpmdSpecialization (tlci-spmd-specializations-ref items 0)]
       [second : TlciSpmdSpecialization (tlci-spmd-specializations-ref items 1)]
       (and
-        (string.eq (struct-get first backend) "avx512")
-        (= (struct-get first lanes) 8)
-        (string.eq (struct-get second backend) "scalar")))))
+        (string.eq first.backend "avx512")
+        (= first.lanes 8)
+        (string.eq second.backend "scalar")))))
 
 (define (tlci-test-v2-beta-specializations? [items : TlciSpmdSpecializations]) : bool
   (and
     (= (tlci-spmd-specializations-len items) 1)
     (string.eq
-      (struct-get (tlci-spmd-specializations-ref items 0) abi)
+      (__tl-project-field (tlci-spmd-specializations-ref items 0) abi)
       "spmd-call-future")))
 
 (define (tlci-test-v2-callables-shape? [items : TlciSpmdCallables]) : bool
@@ -3796,16 +3749,16 @@
       [alpha : TlciSpmdCallable (tlci-spmd-callables-ref items 0)]
       [beta : TlciSpmdCallable (tlci-spmd-callables-ref items 1)]
       (and
-        (string.eq (struct-get alpha name) "demo.alpha")
-        (tlci-test-v2-alpha-specializations? (struct-get alpha specializations))
-        (string.eq (struct-get beta name) "demo.beta")
-        (tlci-test-v2-beta-specializations? (struct-get beta specializations))))))
+        (string.eq alpha.name "demo.alpha")
+        (tlci-test-v2-alpha-specializations? alpha.specializations)
+        (string.eq beta.name "demo.beta")
+        (tlci-test-v2-beta-specializations? beta.specializations)))))
 
 (define (tlci-test-v2-parsed-shape? [metadata : TlciMetadata]) : bool
   (and
-    (string.eq (struct-get metadata version) "v2")
-    (string.eq (struct-get metadata package-name) "demo")
-    (tlci-test-v2-callables-shape? (struct-get metadata spmd-callables))))
+    (string.eq metadata.version "v2")
+    (string.eq metadata.package-name "demo")
+    (tlci-test-v2-callables-shape? metadata.spmd-callables)))
 
 (define (tlci-test-v2-metadata-emit-parse?) : bool
   (let
@@ -3855,12 +3808,12 @@
           (begin
             (unless
               (and
-                (= (struct-get specialization lanes) (+ index 1))
+                (= specialization.lanes (+ index 1))
                 (string.eq
-                  (struct-get specialization symbol)
+                  specialization.symbol
                   (str_cat.str-cat "specialization-" (string.int->string index)))
                 (string.eq
-                  (struct-get callable name)
+                  callable.name
                   (str_cat.str-cat "helper-" (string.int->string index))))
               (set! ok false))
             (set! index (+ index 1)))))
@@ -3949,7 +3902,7 @@
   (let
     [out : (__tl_dyn-array u8) (tlci-copy-bytes bytes)]
     (begin
-      (array-set! out offset (tlci-byte value))
+      (set! (array-ref out offset) (tlci-byte value))
       out)))
 
 (define (tlci-test-rejections-ok?) : bool
@@ -4167,18 +4120,19 @@
     [sections : (__tl_dyn-array TlciAuxSection)
       (array.make-array TlciAuxSection 2)]
     (begin
-      (array-set!
-        sections
-        0
+      (set!
+        (array-ref sections 0)
         (TlciAuxSection tlci-aux-kind-package-identity 1 identity))
-      (array-set! sections 1 (TlciAuxSection tlci-aux-kind-frontend-ast 3 ast))
+      (set!
+        (array-ref sections 1)
+        (TlciAuxSection tlci-aux-kind-frontend-ast 3 ast))
       (match (tlci-aux-pack-rodata base sections)
         [(ResultTlciAuxBytes.Err _) false]
         [(ResultTlciAuxBytes.Ok packed)
           (and
             (match (tlci-aux-directory packed)
               [(ResultTlciAuxDirectory.Ok directory)
-                (= (struct-get directory base-len) (array-length base))]
+                (= directory.base-len (array-length base))]
               [_ false])
             (match (tlci-aux-find packed tlci-aux-kind-package-identity)
               [(ResultTlciAuxLookup.Ok version payload)
@@ -4200,9 +4154,8 @@
     [sections : (__tl_dyn-array TlciAuxSection)
       (array.make-array TlciAuxSection 1)]
     (begin
-      (array-set!
-        sections
-        0
+      (set!
+        (array-ref sections 0)
         (TlciAuxSection
           tlci-aux-kind-package-identity
           1
@@ -4214,10 +4167,10 @@
             [(ResultTlciAuxDirectory.Ok directory)
               (let
                 [corrupt : (__tl_dyn-array u8) (tlci-copy-bytes packed)]
-                [record : i64 (struct-get directory directory-offset)]
+                [record : i64 directory.directory-offset]
                 [payload-offset : i64 (tlci-read-u64 corrupt (+ record 16))]
                 (begin
-                  (array-set! corrupt payload-offset 0)
+                  (set! (array-ref corrupt payload-offset) 0)
                   (match (tlci-aux-find corrupt tlci-aux-kind-package-identity)
                     [(ResultTlciAuxLookup.Err _) true]
                     [_ false])))]
@@ -4267,7 +4220,7 @@
     [negative : (__tl_dyn-array u8) (make-array u8 8)]
     [limit : (__tl_dyn-array u8) (make-array u8 8)]
     (begin
-      (array-set! sections 0 (tlci-package-source-binding-section 12345))
+      (set! (array-ref sections 0) (tlci-package-source-binding-section 12345))
       (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
         [(ResultTlciAuxBytes.Err _) false]
         [(ResultTlciAuxBytes.Ok packed)
@@ -4289,9 +4242,8 @@
             (match (tlci-package-source-binding-admit (tlci-empty-bytes) 12345)
               [(TlciPackageSourceBindingAdmission.MissingOrLegacy) true]
               [_ false]))])
-      (array-set!
-        sections
-        0
+      (set!
+        (array-ref sections 0)
         (TlciAuxSection tlci-aux-kind-package-source-binding 2 unsupported))
       (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
         [(ResultTlciAuxBytes.Err _) false]
@@ -4305,9 +4257,8 @@
               [(TlciPackageSourceBindingAdmission.UnsupportedSchema schema)
                 (= schema 2)]
               [_ false]))])
-      (array-set!
-        sections
-        0
+      (set!
+        (array-ref sections 0)
         (TlciAuxSection
           tlci-aux-kind-package-source-binding
           tlci-package-source-binding-schema-version
@@ -4319,9 +4270,8 @@
             [(TlciPackageSourceBindingRead.Malformed _) true]
             [_ false])])
       (tlci-set-u64! zero 0 0)
-      (array-set!
-        sections
-        0
+      (set!
+        (array-ref sections 0)
         (TlciAuxSection
           tlci-aux-kind-package-source-binding
           tlci-package-source-binding-schema-version
@@ -4343,9 +4293,8 @@
               [(TlciPackageSourceBindingAdmission.Malformed _) true]
               [_ false]))])
       (tlci-set-u64! negative 0 -1)
-      (array-set!
-        sections
-        0
+      (set!
+        (array-ref sections 0)
         (TlciAuxSection
           tlci-aux-kind-package-source-binding
           tlci-package-source-binding-schema-version
@@ -4357,9 +4306,8 @@
             [(TlciPackageSourceBindingRead.Malformed _) true]
             [_ false])])
       (tlci-set-u64! limit 0 2147483647)
-      (array-set!
-        sections
-        0
+      (set!
+        (array-ref sections 0)
         (TlciAuxSection
           tlci-aux-kind-package-source-binding
           tlci-package-source-binding-schema-version

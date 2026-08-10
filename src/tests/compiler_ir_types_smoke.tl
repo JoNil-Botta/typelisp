@@ -148,7 +148,7 @@
           [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
             (string.eq (ci.intern-str name) want)])
         (compiler-ir-smoke-function-list-name-at?
-          (box-get rest)
+          (__tl-box-place rest)
           (- index 1)
           want))]
     [(compiler_ir_types.CompilerIrFunctionList.Nil) false]
@@ -163,7 +163,10 @@
       (if (= index 0)
         (match block
           [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)])
-        (compiler-ir-smoke-block-list-label-at? (box-get rest) (- index 1) want))]
+        (compiler-ir-smoke-block-list-label-at?
+          (__tl-box-place rest)
+          (- index 1)
+          want))]
     [(compiler_ir_types.CompilerIrBlockList.Nil) false]
     [(compiler_ir_types.CompilerIrBlockList.Array _) false]))
 
@@ -278,7 +281,10 @@
         (match global
           [(compiler_ir_types.CompilerIrGlobal.Global name _ _)
             (string.eq (ci.intern-str name) want)])
-        (compiler-ir-smoke-global-list-name-at? (box-get rest) (- index 1) want))]
+        (compiler-ir-smoke-global-list-name-at?
+          (__tl-box-place rest)
+          (- index 1)
+          want))]
     [(compiler_ir_types.CompilerIrGlobalList.Nil) false]
     [(compiler_ir_types.CompilerIrGlobalList.Array _) false]))
 
@@ -295,7 +301,10 @@
         (match extern
           [(compiler_ir_types.CompilerIrExtern.Extern _ _ name _ _ _ _ _)
             (string.eq name want)])
-        (compiler-ir-smoke-extern-list-name-at? (box-get rest) (- index 1) want))]
+        (compiler-ir-smoke-extern-list-name-at?
+          (__tl-box-place rest)
+          (- index 1)
+          want))]
     [(compiler_ir_types.CompilerIrExternList.Nil) false]
     [(compiler_ir_types.CompilerIrExternList.Array _) false]))
 
@@ -599,10 +608,10 @@
       (match instr
         [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
           (let
-            [stored-args (struct-get (box-get payload-box) args)]
+            [stored-args (__tl-project-field (__tl-box-place payload-box) args)]
             (match stored-args
               [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
-                (= (struct-get seq len) 2)]
+                (= seq.len 2)]
               [_ false]))]
         [_ false])
       (compiler_ir_types.compiler-ir-effect-is?
@@ -661,8 +670,7 @@
               compiler_ir_types.CompilerIrInstrList.Nil))))]
     [seq : compiler_ir_types.CompilerIrInstrSeq
       (compiler_ir_types.compiler-ir-instr-seq-from-list instrs)]
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get seq slots)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) seq.slots]
     (and
       (=
         (compiler_ir_types.compiler-ir-instr-loop-dst-or call-indirect (- 0 1))

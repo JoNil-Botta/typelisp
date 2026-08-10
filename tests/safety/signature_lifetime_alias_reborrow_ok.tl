@@ -27,9 +27,9 @@
 
 (define (signature-alias-project [stored : (& source SignatureAliasStored)]) : unit
   (let
-    [field : (& source i64) (& (struct-get stored field))]
-    [tuple-item : (& source i64) (& (tuple-ref (struct-get stored pair) 0))]
-    [array-item : (& source i64) (& (array-ref (struct-get stored fixed) 0))]
+    [field : (& source i64) (& stored.field)]
+    [tuple-item : (& source i64) (& (tuple-ref stored.pair 0))]
+    [array-item : (& source i64) (& (array-ref stored.fixed 0))]
     unit))
 
 (define (signature-alias-same-input
@@ -52,11 +52,11 @@
       (SignatureAliasStored 7 (tuple 8 9) (array 10))]
     [value : i64 11]
     (begin
-      (array-set! items 0 (SignatureAliasRec 20))
+      (set! (array-ref items 0) (SignatureAliasRec 20))
       (signature-alias-touch! (&mut items) 0)
       (signature-alias-read-copy (& value))
       (signature-alias-project (& stored))
       (signature-alias-same-input (& value) (& value))
-      (if (= (struct-get (array-ref items 0) value) 21)
+      (if (= (__tl-project-field (array-ref items 0) value) 21)
         (signature-alias-value-lookup (& value) 42)
         0))))

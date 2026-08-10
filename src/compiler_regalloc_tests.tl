@@ -788,10 +788,10 @@
       [args : (__tl_dyn-array ir.CompilerIrValue)
         (array.make-array ir.CompilerIrValue 4)]
       (begin
-        (array-set! args 0 (ir.CompilerIrValue.Var 0))
-        (array-set! args 1 (ir.CompilerIrValue.Var 1))
-        (array-set! args 2 (ir.CompilerIrValue.Var 2))
-        (array-set! args 3 (ir.CompilerIrValue.Var 3))
+        (set! (array-ref args 0) (ir.CompilerIrValue.Var 0))
+        (set! (array-ref args 1) (ir.CompilerIrValue.Var 1))
+        (set! (array-ref args 2) (ir.CompilerIrValue.Var 2))
+        (set! (array-ref args 3) (ir.CompilerIrValue.Var 3))
         (ir.CompilerIrFunction.Function
           (ir.compiler-ir-test-symbol "mixed_float_call_args")
           (ir.compiler-ir-param-cons
@@ -1704,11 +1704,11 @@
       [args : (__tl_dyn-array ir.CompilerIrValue)
         (array.make-array ir.CompilerIrValue 5)]
       (begin
-        (array-set! args 0 (ir.CompilerIrValue.Var 0))
-        (array-set! args 1 (ir.CompilerIrValue.Var 1))
-        (array-set! args 2 (ir.CompilerIrValue.Var 2))
-        (array-set! args 3 (ir.CompilerIrValue.Var 3))
-        (array-set! args 4 (ir.CompilerIrValue.Var 4))
+        (set! (array-ref args 0) (ir.CompilerIrValue.Var 0))
+        (set! (array-ref args 1) (ir.CompilerIrValue.Var 1))
+        (set! (array-ref args 2) (ir.CompilerIrValue.Var 2))
+        (set! (array-ref args 3) (ir.CompilerIrValue.Var 3))
+        (set! (array-ref args 4) (ir.CompilerIrValue.Var 4))
         (ir.CompilerIrFunction.Function
           (ir.compiler-ir-test-symbol "win64_arg_result_pref")
           ir.CompilerIrParamList.Nil
@@ -2020,8 +2020,8 @@
           empty-coalesce)]
       [parents : (__tl_dyn-array i64) (array.make-array i64 2)]
       (begin
-        (array-set! parents 0 0)
-        (array-set! parents 1 0)
+        (set! (array-ref parents 0) 0)
+        (set! (array-ref parents 1) 0)
         (let
           [coalesced : (__tl_dyn-array i64)
             (compiler-reg-function-spill-weights-remat
@@ -2547,12 +2547,19 @@
                 (if (and (= found-dst dst) (= found value))
                   true
                   (compiler-reg-instr-list-has-mov-i64?
-                    (box-get rest)
+                    (__tl-box-place rest)
                     dst
                     value))]
               [_
-                (compiler-reg-instr-list-has-mov-i64? (box-get rest) dst value)])]
-          [_ (compiler-reg-instr-list-has-mov-i64? (box-get rest) dst value)])])))
+                (compiler-reg-instr-list-has-mov-i64?
+                  (__tl-box-place rest)
+                  dst
+                  value)])]
+          [_
+            (compiler-reg-instr-list-has-mov-i64?
+              (__tl-box-place rest)
+              dst
+              value)])])))
 
 (cfg
   test
@@ -2569,9 +2576,17 @@
               [(ir.CompilerIrValue.Var found-src)
                 (if (and (= found-dst dst) (= found-src src))
                   true
-                  (compiler-reg-instr-list-has-mov-var? (box-get rest) dst src))]
-              [_ (compiler-reg-instr-list-has-mov-var? (box-get rest) dst src)])]
-          [_ (compiler-reg-instr-list-has-mov-var? (box-get rest) dst src)])])))
+                  (compiler-reg-instr-list-has-mov-var?
+                    (__tl-box-place rest)
+                    dst
+                    src))]
+              [_
+                (compiler-reg-instr-list-has-mov-var?
+                  (__tl-box-place rest)
+                  dst
+                  src)])]
+          [_
+            (compiler-reg-instr-list-has-mov-var? (__tl-box-place rest) dst src)])])))
 
 (cfg
   test
@@ -2591,15 +2606,19 @@
                   (string.eq (ir.compiler-ir-symbol-text found-name) name))
                   true
                   (compiler-reg-instr-list-has-mov-global?
-                    (box-get rest)
+                    (__tl-box-place rest)
                     dst
                     name))]
               [_
                 (compiler-reg-instr-list-has-mov-global?
-                  (box-get rest)
+                  (__tl-box-place rest)
                   dst
                   name)])]
-          [_ (compiler-reg-instr-list-has-mov-global? (box-get rest) dst name)])])))
+          [_
+            (compiler-reg-instr-list-has-mov-global?
+              (__tl-box-place rest)
+              dst
+              name)])])))
 
 (cfg
   test
@@ -2619,17 +2638,17 @@
                   (string.eq (ir.compiler-ir-symbol-text found-name) name))
                   true
                   (compiler-reg-instr-list-has-load-global-addr?
-                    (box-get rest)
+                    (__tl-box-place rest)
                     dst
                     name))]
               [_
                 (compiler-reg-instr-list-has-load-global-addr?
-                  (box-get rest)
+                  (__tl-box-place rest)
                   dst
                   name)])]
           [_
             (compiler-reg-instr-list-has-load-global-addr?
-              (box-get rest)
+              (__tl-box-place rest)
               dst
               name)])])))
 
@@ -2659,28 +2678,28 @@
                           (ast.ast-type-eq? found-ty ty))))
                       true
                       (compiler-reg-instr-list-has-gep-global-i64?
-                        (box-get rest)
+                        (__tl-box-place rest)
                         dst
                         name
                         offset
                         ty))]
                   [_
                     (compiler-reg-instr-list-has-gep-global-i64?
-                      (box-get rest)
+                      (__tl-box-place rest)
                       dst
                       name
                       offset
                       ty)])]
               [_
                 (compiler-reg-instr-list-has-gep-global-i64?
-                  (box-get rest)
+                  (__tl-box-place rest)
                   dst
                   name
                   offset
                   ty)])]
           [_
             (compiler-reg-instr-list-has-gep-global-i64?
-              (box-get rest)
+              (__tl-box-place rest)
               dst
               name
               offset
@@ -2704,12 +2723,19 @@
                   (= found-src src))
                   true
                   (compiler-reg-instr-list-has-store-var?
-                    (box-get rest)
+                    (__tl-box-place rest)
                     name
                     src))]
               [_
-                (compiler-reg-instr-list-has-store-var? (box-get rest) name src)])]
-          [_ (compiler-reg-instr-list-has-store-var? (box-get rest) name src)])])))
+                (compiler-reg-instr-list-has-store-var?
+                  (__tl-box-place rest)
+                  name
+                  src)])]
+          [_
+            (compiler-reg-instr-list-has-store-var?
+              (__tl-box-place rest)
+              name
+              src)])])))
 
 (cfg
   test
@@ -2724,8 +2750,12 @@
           [(ir.CompilerIrInstr.AddrOf found-dst found-src)
             (if (and (= found-dst dst) (= found-src src))
               true
-              (compiler-reg-instr-list-has-addr-of? (box-get rest) dst src))]
-          [_ (compiler-reg-instr-list-has-addr-of? (box-get rest) dst src)])])))
+              (compiler-reg-instr-list-has-addr-of?
+                (__tl-box-place rest)
+                dst
+                src))]
+          [_
+            (compiler-reg-instr-list-has-addr-of? (__tl-box-place rest) dst src)])])))
 
 (cfg
   test
@@ -2742,15 +2772,15 @@
                 (if (= found callee)
                   true
                   (compiler-reg-instr-list-has-call-indirect-var?
-                    (box-get rest)
+                    (__tl-box-place rest)
                     callee))]
               [_
                 (compiler-reg-instr-list-has-call-indirect-var?
-                  (box-get rest)
+                  (__tl-box-place rest)
                   callee)])]
           [_
             (compiler-reg-instr-list-has-call-indirect-var?
-              (box-get rest)
+              (__tl-box-place rest)
               callee)])])))
 
 (cfg
@@ -2770,12 +2800,18 @@
                     (if (= found src)
                       true
                       (compiler-reg-instr-list-has-return-var?
-                        (box-get rest)
+                        (__tl-box-place rest)
                         src))]
                   [_
-                    (compiler-reg-instr-list-has-return-var? (box-get rest) src)])]
-              [_ (compiler-reg-instr-list-has-return-var? (box-get rest) src)])]
-          [_ (compiler-reg-instr-list-has-return-var? (box-get rest) src)])])))
+                    (compiler-reg-instr-list-has-return-var?
+                      (__tl-box-place rest)
+                      src)])]
+              [_
+                (compiler-reg-instr-list-has-return-var?
+                  (__tl-box-place rest)
+                  src)])]
+          [_
+            (compiler-reg-instr-list-has-return-var? (__tl-box-place rest) src)])])))
 
 (cfg
   test
@@ -2788,7 +2824,7 @@
           [(ir.CompilerIrBlock.Block label instrs)
             (if (= label want-label)
               (ir.compiler-ir-instr-seq-to-list instrs)
-              (compiler-reg-block-instr-list (box-get rest) want-label))])]
+              (compiler-reg-block-instr-list (__tl-box-place rest) want-label))])]
       [(ir.CompilerIrBlockList.Array seq)
         (let
           [i : i64 0]
@@ -3610,9 +3646,8 @@
     [dst : i64]
     [want-pred-end : bool]) : bool
     (let
-      [slots : (__tl_dyn-array reg.CompilerRegEdgeCopy)
-        (struct-get copies slots)]
-      [count : i64 (struct-get copies len)]
+      [slots : (__tl_dyn-array reg.CompilerRegEdgeCopy) copies.slots]
+      [count : i64 copies.len]
       [index : i64 0]
       [found : bool false]
       (begin
@@ -5046,8 +5081,7 @@
         (let
           [handle : reg.CompilerRegLivenessHandle
             (reg.compiler-reg-liveness-handle-make func true)]
-          [liveness : live.CompilerFunctionLiveness
-            (struct-get handle baseline)]
+          [liveness : live.CompilerFunctionLiveness handle.baseline]
           (and
             (match (reg.compiler-reg-edge-copy-plan-for-region-with-liveness
               liveness
@@ -5195,17 +5229,17 @@
         (reg.compiler-reg-fill-i64-array
           shadow-regs
           cabi.compiler-reg-id-invalid)
-        (array-set! members 0 0)
+        (set! (array-ref members 0) 0)
         (reg.compiler-reg-fill-i64-array weights 1)
-        (array-set! weights 0 10)
+        (set! (array-ref weights 0) 10)
         (let
           [v : i64 0]
           (while (< v vars)
             (begin
-              (array-set! parents v v)
-              (array-set! poisoned v false)
+              (set! (array-ref parents v) v)
+              (set! (array-ref poisoned v) false)
               (set! v (+ v 1)))))
-        (array-set! shadow-regs 1 cabi.compiler-reg-id-r8)
+        (set! (array-ref shadow-regs 1) cabi.compiler-reg-id-r8)
         (compiler-reg-group-pair-test-fill-homes! assignments 1 vars)
         (compiler-reg-group-pair-test-fill-homes! csr-assignments 1 vars)
         (compiler-reg-group-pair-test-fill-homes! caller-occupied 1 vars)
@@ -5357,8 +5391,8 @@
                 (live.compiler-live-set1 0)
                 (live.compiler-live-set-empty)
                 (live.compiler-live-set-empty)
-                (struct-get interval-index starts)
-                (struct-get interval-index ends)
+                interval-index.starts
+                interval-index.ends
                 poisoned
                 parents
                 members
@@ -5376,8 +5410,8 @@
                 (live.compiler-live-set1 0)
                 (live.compiler-live-set-empty)
                 (live.compiler-live-set1 0)
-                (struct-get interval-index starts)
-                (struct-get interval-index ends)
+                interval-index.starts
+                interval-index.ends
                 poisoned
                 parents
                 members
@@ -5395,8 +5429,8 @@
                 (live.compiler-live-set1 0)
                 (live.compiler-live-set-empty)
                 (live.compiler-live-set-empty)
-                (struct-get interval-index starts)
-                (struct-get interval-index ends)
+                interval-index.starts
+                interval-index.ends
                 poisoned
                 parents
                 members
@@ -5518,10 +5552,7 @@
     (let
       [got : reg.CompilerRegInterval
         (reg.compiler-reg-interval-seq-ref items index)]
-      (and
-        (= (struct-get got var) var)
-        (= (struct-get got start) start)
-        (= (struct-get got end) end)))))
+      (and (= got.var var) (= got.start start) (= got.end end)))))
 
 (cfg
   test
@@ -5749,8 +5780,8 @@
       [merged : reg.CompilerRegVarTypes
         (reg.compiler-reg-var-types-merge extra base)]
       (and
-        (= (array-ref (struct-get base present) 2) 1)
-        (= (array-ref (struct-get base present) 3) 0)
+        (= (array-ref base.present 2) 1)
+        (= (array-ref base.present 3) 0)
         (match (reg.compiler-reg-var-types-lookup base 2)
           [(reg.CompilerRegMaybeType.Some (ast.AstType.I64)) true]
           [_ false])
@@ -6533,23 +6564,19 @@
   [lo : i64]
   [hi : i64]) : bool
   (let
-    [var : i64 (+ (struct-get model scratch-base) offset)]
-    [index : reg.CompilerRegIntervalIndex (struct-get model interval-index)]
+    [var : i64 (+ model.scratch-base offset)]
+    [index : reg.CompilerRegIntervalIndex model.interval-index]
     (and
-      (= (array-ref (struct-get index starts) var) lo)
-      (= (array-ref (struct-get index ends) var) hi)
+      (= (array-ref index.starts var) lo)
+      (= (array-ref index.ends var) hi)
       (let
-        [segments : reg.CompilerRegIntervalSeq
-          (array-ref (struct-get index segments) var)]
+        [segments : reg.CompilerRegIntervalSeq (array-ref index.segments var)]
         (and
           (= (reg.compiler-reg-interval-seq-count segments) 1)
           (let
             [found : reg.CompilerRegInterval
               (reg.compiler-reg-interval-seq-ref segments 0)]
-            (and
-              (= (struct-get found var) var)
-              (= (struct-get found start) lo)
-              (= (struct-get found end) hi))))))))
+            (and (= found.var var) (= found.start lo) (= found.end hi))))))))
 
 (define (compiler-reg-early-scratch-model-for-test
   [target-abi : cabi.CompilerRegTargetAbi]) : reg.CompilerRegEarlyScratchModel
@@ -6577,15 +6604,13 @@
   (let
     [model : reg.CompilerRegEarlyScratchModel
       (compiler-reg-early-scratch-model-for-test target-abi)]
-    [assignments : reg.CompilerRegAssignmentTable
-      (struct-get model assignments)]
-    [base : i64 (struct-get model scratch-base)]
-    [weights : (__tl_dyn-array i64) (struct-get model scratch-weights)]
-    [excluded : (__tl_dyn-array reg.CompilerRegIdSeq)
-      (struct-get model scratch-excluded)]
+    [assignments : reg.CompilerRegAssignmentTable model.assignments]
+    [base : i64 model.scratch-base]
+    [weights : (__tl_dyn-array i64) model.scratch-weights]
+    [excluded : (__tl_dyn-array reg.CompilerRegIdSeq) model.scratch-excluded]
     (and
       (= base 2)
-      (= (struct-get model scratch-count) 5)
+      (= model.scratch-count 5)
       (= (array-length weights) 5)
       (= (array-ref weights 0) 0)
       (= (array-ref weights 1) 0)
@@ -6663,21 +6688,20 @@
       ;; 0: resident [0,4)   1: touch at 4   2: overlaps   3: point-0 touch
       ;; 4: two segments past the resident  5: no segments (coarse [4,8))
       ;; 6: overlaps segment 4's second range
-      (array-set! segments 0 (compiler-reg-live-union-test-seq 0 0 4))
-      (array-set! segments 1 (compiler-reg-live-union-test-seq 1 4 8))
-      (array-set! segments 2 (compiler-reg-live-union-test-seq 2 3 6))
-      (array-set! segments 3 (compiler-reg-live-union-test-seq 3 0 0))
-      (array-set!
-        segments
-        4
+      (set! (array-ref segments 0) (compiler-reg-live-union-test-seq 0 0 4))
+      (set! (array-ref segments 1) (compiler-reg-live-union-test-seq 1 4 8))
+      (set! (array-ref segments 2) (compiler-reg-live-union-test-seq 2 3 6))
+      (set! (array-ref segments 3) (compiler-reg-live-union-test-seq 3 0 0))
+      (set!
+        (array-ref segments 4)
         (reg.compiler-reg-interval-seq-append
           (compiler-reg-live-union-test-seq 4 8 9)
           (reg.CompilerRegInterval 4 12 14)))
-      (array-set! segments 6 (compiler-reg-live-union-test-seq 6 13 15))
-      (array-set! starts 0 0)
-      (array-set! ends 0 4)
-      (array-set! starts 5 4)
-      (array-set! ends 5 8)
+      (set! (array-ref segments 6) (compiler-reg-live-union-test-seq 6 13 15))
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref ends 0) 4)
+      (set! (array-ref starts 5) 4)
+      (set! (array-ref ends 5) 8)
       (let
         [index : reg.CompilerRegIntervalIndex
           (reg.CompilerRegIntervalIndex starts ends segments)]
@@ -6884,9 +6908,9 @@
     [weights : (__tl_dyn-array i64) (array.make-array i64 2)]
     [hints : (__tl_dyn-array i64) (array.make-array i64 2)]
     (begin
-      (array-set! base-weights 0 3)
-      (array-set! raw-weights 0 1)
-      (array-set! scratch-weights 0 1)
+      (set! (array-ref base-weights 0) 3)
+      (set! (array-ref raw-weights 0) 1)
+      (set! (array-ref scratch-weights 0) 1)
       (set!
         weights
         (reg.compiler-reg-early-scratch-extend-weights
@@ -6948,15 +6972,14 @@
     [excluded : (__tl_dyn-array reg.CompilerRegIdSeq)
       (array.make-array reg.CompilerRegIdSeq 2)]
     (begin
-      (array-set! weights 0 1)
-      (array-set! weights 1 2)
+      (set! (array-ref weights 0) 1)
+      (set! (array-ref weights 1) 2)
       (reg.compiler-reg-fill-i64-array hints -1)
       ;; %r10 is free but is the instruction operand home. The scratch pseudo
       ;; must instead evict the colder, CSR-only real value from %r12; when that
       ;; value is requeued it has no legal register and receives a real spill.
-      (array-set!
-        excluded
-        1
+      (set!
+        (array-ref excluded 1)
         (reg.compiler-reg-id-seq-prepend
           cabi.compiler-reg-id-r10
           (reg.compiler-reg-id-seq-empty)))
@@ -7433,10 +7456,10 @@
     [args : (__tl_dyn-array ir.CompilerIrValue)
       (array.make-array ir.CompilerIrValue 4)]
     (begin
-      (array-set! args 0 (ir.CompilerIrValue.Var 1))
-      (array-set! args 1 (ir.CompilerIrValue.Var 2))
-      (array-set! args 2 (ir.CompilerIrValue.Var 3))
-      (array-set! args 3 (ir.CompilerIrValue.Var 4))
+      (set! (array-ref args 0) (ir.CompilerIrValue.Var 1))
+      (set! (array-ref args 1) (ir.CompilerIrValue.Var 2))
+      (set! (array-ref args 2) (ir.CompilerIrValue.Var 3))
+      (set! (array-ref args 3) (ir.CompilerIrValue.Var 4))
       (ir.CompilerIrFunction.Function
         (ir.compiler-ir-test-symbol "indirect_call_arg4")
         (ir.compiler-ir-param-cons
@@ -7992,7 +8015,7 @@
     [clobber-moves : reg.CompilerRegMoveSeq
       (begin
         (reg.compiler-reg-fill-i64-array clobber-eligible 1)
-        (array-set! clobber-eligible 1 0)
+        (set! (array-ref clobber-eligible 1) 0)
         (reg.compiler-reg-function-moves-with-destructive-and-casts-eligible
           straight
           false
@@ -9221,8 +9244,8 @@
         (reg.CompilerRegLocation.Spill 24))]
     [interval-index : reg.CompilerRegIntervalIndex
       (reg.compiler-reg-interval-index-build intervals 5)]
-    [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-    [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+    [starts : (__tl_dyn-array i64) interval-index.starts]
+    [ends : (__tl_dyn-array i64) interval-index.ends]
     [assignment-hit-ok : bool
       (match (reg.compiler-reg-assignment-table-lookup assignment-index 1)
         [(reg.CompilerRegMaybeLocation.Some location)
@@ -9267,10 +9290,7 @@
     [interval-hit-ok : bool
       (match (reg.compiler-reg-interval-index-lookup interval-index 3)
         [(reg.CompilerRegMaybeInterval.Some interval)
-          (and
-            (= (struct-get interval var) 3)
-            (= (struct-get interval start) 5)
-            (= (struct-get interval end) 9))]
+          (and (= interval.var 3) (= interval.start 5) (= interval.end 9))]
         [(reg.CompilerRegMaybeInterval.No) false])]
     [interval-miss-ok : bool
       (match (reg.compiler-reg-interval-index-lookup interval-index 2)
@@ -9279,10 +9299,7 @@
     [interval-first-ok : bool
       (match (reg.compiler-reg-interval-index-lookup interval-index 4)
         [(reg.CompilerRegMaybeInterval.Some interval)
-          (and
-            (= (struct-get interval var) 4)
-            (= (struct-get interval start) 1)
-            (= (struct-get interval end) 4))]
+          (and (= interval.var 4) (= interval.start 1) (= interval.end 4))]
         [(reg.CompilerRegMaybeInterval.No) false])]
     [interference-ok : bool
       (and
@@ -9424,7 +9441,7 @@
       (= (reg.compiler-reg-assignment-count base) 1)
       (= (reg.compiler-reg-assignment-count successor) 1)
       (= (reg.compiler-reg-assignment-count expanded) 2)
-      (>= (array-length (struct-get expanded present)) 10)
+      (>= (array-length expanded.present) 10)
       (reg.compiler-reg-location-register?
         (reg.compiler-reg-assignment-lookup base 2)
         cabi.compiler-reg-id-r12)
@@ -9452,31 +9469,28 @@
     (begin
       (reg.compiler-reg-fill-i64-array starts -1)
       (reg.compiler-reg-fill-i64-array ends -1)
-      (array-set! starts 0 0)
-      (array-set! ends 0 8)
-      (array-set! starts 1 0)
-      (array-set! ends 1 8)
-      (array-set! starts 3 3)
-      (array-set! ends 3 5)
-      (array-set! starts 4 7)
-      (array-set! ends 4 9)
-      (array-set!
-        segments
-        1
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref ends 0) 8)
+      (set! (array-ref starts 1) 0)
+      (set! (array-ref ends 1) 8)
+      (set! (array-ref starts 3) 3)
+      (set! (array-ref ends 3) 5)
+      (set! (array-ref starts 4) 7)
+      (set! (array-ref ends 4) 9)
+      (set!
+        (array-ref segments 1)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 1 0 2)
           (reg.compiler-reg-interval-seq-prepend
             (reg.CompilerRegInterval 1 6 8)
             (reg.compiler-reg-interval-seq-empty))))
-      (array-set!
-        segments
-        3
+      (set!
+        (array-ref segments 3)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 3 3 5)
           (reg.compiler-reg-interval-seq-empty)))
-      (array-set!
-        segments
-        4
+      (set!
+        (array-ref segments 4)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 4 7 9)
           (reg.compiler-reg-interval-seq-empty)))
@@ -9512,51 +9526,46 @@
     (begin
       (reg.compiler-reg-fill-i64-array starts -1)
       (reg.compiler-reg-fill-i64-array ends -1)
-      (array-set! starts 0 0)
-      (array-set! ends 0 10)
-      (array-set! starts 1 4)
-      (array-set! ends 1 6)
-      (array-set! starts 2 4)
-      (array-set! ends 2 6)
-      (array-set! starts 3 1)
-      (array-set! ends 3 3)
-      (array-set! starts 4 8)
-      (array-set! ends 4 9)
-      (array-set!
-        segments
-        0
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref ends 0) 10)
+      (set! (array-ref starts 1) 4)
+      (set! (array-ref ends 1) 6)
+      (set! (array-ref starts 2) 4)
+      (set! (array-ref ends 2) 6)
+      (set! (array-ref starts 3) 1)
+      (set! (array-ref ends 3) 3)
+      (set! (array-ref starts 4) 8)
+      (set! (array-ref ends 4) 9)
+      (set!
+        (array-ref segments 0)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 0 0 2)
           (reg.compiler-reg-interval-seq-empty)))
-      (array-set!
-        segments
-        1
+      (set!
+        (array-ref segments 1)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 1 4 6)
           (reg.compiler-reg-interval-seq-empty)))
-      (array-set!
-        segments
-        2
+      (set!
+        (array-ref segments 2)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 2 4 6)
           (reg.compiler-reg-interval-seq-empty)))
-      (array-set!
-        segments
-        3
+      (set!
+        (array-ref segments 3)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 3 1 3)
           (reg.compiler-reg-interval-seq-empty)))
-      (array-set!
-        segments
-        4
+      (set!
+        (array-ref segments 4)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 4 8 9)
           (reg.compiler-reg-interval-seq-empty)))
-      (array-set! parents 0 0)
-      (array-set! parents 1 0)
-      (array-set! parents 2 2)
-      (array-set! parents 3 2)
-      (array-set! parents 4 4)
+      (set! (array-ref parents 0) 0)
+      (set! (array-ref parents 1) 0)
+      (set! (array-ref parents 2) 2)
+      (set! (array-ref parents 3) 2)
+      (set! (array-ref parents 4) 4)
       (let
         ;; General hole-filling: the allocator runs on the merged-root
         ;; index, whose per-candidate segments are COMPLETE -- a singleton carries
@@ -9634,8 +9643,8 @@
     (begin
       (while (< index vars)
         (begin
-          (array-set! present index 1)
-          (array-set! types index (compiler-reg-i64-ty))
+          (set! (array-ref present index) 1)
+          (set! (array-ref types index) (compiler-reg-i64-ty))
           (set! index (+ index 1))))
       (reg.CompilerRegVarTypes present types))))
 
@@ -9668,19 +9677,17 @@
     (begin
       (reg.compiler-reg-fill-i64-array starts -1)
       (reg.compiler-reg-fill-i64-array ends -1)
-      (array-set! starts 0 0)
-      (array-set! ends 0 10)
-      (array-set! starts 1 0)
-      (array-set! ends 1 10)
-      (array-set!
-        segments
-        0
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref ends 0) 10)
+      (set! (array-ref starts 1) 0)
+      (set! (array-ref ends 1) 10)
+      (set!
+        (array-ref segments 0)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 0 0 2)
           (reg.compiler-reg-interval-seq-empty)))
-      (array-set!
-        segments
-        1
+      (set!
+        (array-ref segments 1)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 1 4 6)
           (reg.compiler-reg-interval-seq-empty)))
@@ -9829,10 +9836,7 @@
     (let
       [found : reg.CompilerRegInterval
         (reg.compiler-reg-interval-seq-ref segments 0)]
-      (and
-        (= (struct-get found var) var)
-        (= (struct-get found start) start)
-        (= (struct-get found end) end)))))
+      (and (= found.var var) (= found.start start) (= found.end end)))))
 
 (define (compiler-reg-merged-root-overlap-segments-ok?) : bool
   (let
@@ -9844,41 +9848,39 @@
     (begin
       (reg.compiler-reg-fill-i64-array starts -1)
       (reg.compiler-reg-fill-i64-array ends -1)
-      (array-set! segments 0 (reg.compiler-reg-interval-seq-empty))
-      (array-set! segments 1 (reg.compiler-reg-interval-seq-empty))
-      (array-set! segments 2 (reg.compiler-reg-interval-seq-empty))
-      (array-set! starts 0 0)
-      (array-set! ends 0 6)
-      (array-set! starts 1 2)
-      (array-set! ends 1 8)
-      (array-set!
-        segments
-        0
+      (set! (array-ref segments 0) (reg.compiler-reg-interval-seq-empty))
+      (set! (array-ref segments 1) (reg.compiler-reg-interval-seq-empty))
+      (set! (array-ref segments 2) (reg.compiler-reg-interval-seq-empty))
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref ends 0) 6)
+      (set! (array-ref starts 1) 2)
+      (set! (array-ref ends 1) 8)
+      (set!
+        (array-ref segments 0)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 0 0 4)
           (reg.compiler-reg-interval-seq-prepend
             (reg.CompilerRegInterval 0 5 6)
             (reg.compiler-reg-interval-seq-empty))))
-      (array-set!
-        segments
-        1
+      (set!
+        (array-ref segments 1)
         (reg.compiler-reg-interval-seq-prepend
           (reg.CompilerRegInterval 1 2 8)
           (reg.compiler-reg-interval-seq-empty)))
-      (array-set! parents 0 0)
-      (array-set! parents 1 0)
-      (array-set! parents 2 2)
+      (set! (array-ref parents 0) 0)
+      (set! (array-ref parents 1) 0)
+      (set! (array-ref parents 2) 2)
       (let
         [merged : reg.CompilerRegIntervalIndex
           (reg.compiler-reg-merged-root-index
             (reg.CompilerRegCoalesceMap parents)
             (reg.CompilerRegIntervalIndex starts ends segments))]
         (and
-          (= (array-ref (struct-get merged starts) 0) 0)
-          (= (array-ref (struct-get merged ends) 0) 8)
-          (< (array-ref (struct-get merged starts) 1) 0)
+          (= (array-ref merged.starts 0) 0)
+          (= (array-ref merged.ends 0) 8)
+          (< (array-ref merged.starts 1) 0)
           (compiler-reg-single-segment-range?
-            (array-ref (struct-get merged segments) 0)
+            (array-ref merged.segments 0)
             0
             0
             8))))))
@@ -10839,12 +10841,13 @@
                 [(ir.CompilerIrParamList.Cons
                     (ir.CompilerIrParam.Param _ _ active-param)
                     rest1)
-                  (match (ir.compiler-ir-param-list-force-cons (box-get rest1))
+                  (match (ir.compiler-ir-param-list-force-cons
+                    (__tl-box-place rest1))
                     [(ir.CompilerIrParamList.Cons
                         (ir.CompilerIrParam.Param _ _ varying-param)
                         rest2)
                       (match (ir.compiler-ir-param-list-force-cons
-                        (box-get rest2))
+                        (__tl-box-place rest2))
                         [(ir.CompilerIrParamList.Cons
                             (ir.CompilerIrParam.Param _ _ uniform-param)
                             _)

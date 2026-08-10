@@ -131,8 +131,8 @@
 (define (arena-make-atomic) : Arena (Arena (tl_arena_make_atomic)))
 (define (arena-current) : Arena (Arena (tl_arena_current)))
 (define (arena-mark) : ArenaMark (ArenaMark (tl_region_mark)))
-(define (arena-raw-handle [arena : Arena]) : i64 (struct-get arena handle))
-(define (arena-mark-raw-handle [mark : ArenaMark]) : i64 (struct-get mark handle))
+(define (arena-raw-handle [arena : Arena]) : i64 arena.handle)
+(define (arena-mark-raw-handle [mark : ArenaMark]) : i64 mark.handle)
 (unsafe (define (arena-set! [arena : Arena]) : unit (unsafe (tl_arena_set (arena-raw-handle arena)))))
 (unsafe (define (arena-destroy [arena : Arena]) : unit (unsafe (tl_arena_destroy (arena-raw-handle arena)))))
 (unsafe (define (arena-rewind [mark : ArenaMark]) : unit (unsafe (tl_region_reset (arena-mark-raw-handle mark)))))
@@ -155,7 +155,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (string.eq
         (cdiag.compiler-diagnostic-message
-          (cdiag.compiler-diagnostic-list-first (box-get diag)))
+          (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
         want)]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
@@ -168,7 +168,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [value : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first (box-get diag))]
+          (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))]
         (and
           (string.eq (cdiag.compiler-diagnostic-message value) want)
           (= (cdiag.compiler-diagnostic-line value) want-line)
@@ -182,11 +182,11 @@
   (match (tc_api.typecheck-compiler-source src)
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (match (cdiag.compiler-diagnostic-code
-        (cdiag.compiler-diagnostic-list-first (box-get diag)))
+        (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
         [(CompilerDiagnosticSomeString code)
           (if (string.eq code want-code)
             (match (cdiag.compiler-diagnostic-category
-              (cdiag.compiler-diagnostic-list-first (box-get diag)))
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
               [(CompilerDiagnosticSomeString category)
                 (string.eq category want-category)]
               [CompilerDiagnosticNoString false])
@@ -214,23 +214,23 @@
       (and
         (string.eq
           (cdiag.compiler-diagnostic-message
-            (cdiag.compiler-diagnostic-list-first (box-get diag)))
+            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
           want)
         (=
           (cdiag.compiler-diagnostic-line
-            (cdiag.compiler-diagnostic-list-first (box-get diag)))
+            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
           want-line)
         (=
           (cdiag.compiler-diagnostic-col
-            (cdiag.compiler-diagnostic-list-first (box-get diag)))
+            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
           want-col)
         (=
           (compiler-typecheck-secondary-count
             (cdiag.compiler-diagnostic-secondary-spans
-              (cdiag.compiler-diagnostic-list-first (box-get diag))))
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))
           want-secondary-count)
         (compiler-typecheck-help-present?
-          (cdiag.compiler-diagnostic-list-first (box-get diag))))]
+          (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-program-error-ok?
@@ -240,7 +240,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (string.eq
         (cdiag.compiler-diagnostic-message
-          (cdiag.compiler-diagnostic-list-first (box-get diag)))
+          (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
         want)]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
@@ -437,7 +437,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (string.eq
         (cdiag.compiler-diagnostic-render-source
-          (cdiag.compiler-diagnostic-list-first (box-get diag))
+          (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))
           src)
         want)]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
@@ -447,8 +447,8 @@
 (defmacro (for-each [vec : Expr] [body : Expr]) : unit
   `(let
     [idx : i64 0]
-    (while (< idx (struct-get ,vec len))
-      (,body (array-ref (struct-get ,vec slots) idx))
+    (while (< idx (__tl-project-field-name ,vec \"len\"))
+      (,body (array-ref (__tl-project-field-name ,vec \"slots\") idx))
       (set! idx (+ idx 1)))))
 
 (defstruct Ball
@@ -578,9 +578,9 @@
     [t : (Tuple i64 bool) (tuple 7 true)]
     [a : (__tl_dyn-array i64) (make-array i64 n)]
     (begin
-      (array-set! a 0 (cast (__tl_string_ref s 0) : i64))
+      (set! (array-ref a 0) (cast (__tl_string_ref s 0) : i64))
       (foreach ([i : i64 0 n])
-        (array-set! a i (+ (array-ref a i) 1)))
+        (set! (array-ref a i) (+ (array-ref a i) 1)))
       (+ (array-length a)
          (+ (tuple-ref t 0) (+ (array-ref fixed 1) (id-lambda 3)))))))")
 
@@ -609,8 +609,8 @@
   (begin
     (flush-stdout)
     (if (stdin-eof?)
-        (struct-get (read-stdin-line) len)
-        (struct-get (io.read-stdin-bytes 3) len))))"))
+        (__tl-project-field (read-stdin-line) len)
+        (__tl-project-field (io.read-stdin-bytes 3) len))))"))
 
 (define (compiler-typecheck-env-source) : String
   (compiler-typecheck-with-env-source
@@ -733,7 +733,7 @@
   (begin
     (foreach
       ([i : i64 0 n])
-      (array-set! out i (try (if flag (result_i64_i64.ok 1) (result_i64_i64.err i)))))
+      (set! (array-ref out i) (try (if flag (result_i64_i64.ok 1) (result_i64_i64.err i)))))
     (result_i64_i64.ok 0)))")
 
 (define (compiler-typecheck-foreach-spmd-ok-source) : String
@@ -745,7 +745,7 @@
     (foreach ([i : i64 0 n])
       (let
         [sum : i64 (+ (array-ref a i) (array-ref b i))]
-        (array-set! out i sum)))))")
+        (set! (array-ref out i) sum)))))")
 
 (define (compiler-typecheck-foreach-spmd-f32-ok-source) : String
   "(define (main [n : i64]) : unit
@@ -756,15 +756,15 @@
     (foreach ([i : i64 0 n])
       (let
         [sum : f32 (+ (array-ref a i) (array-ref b i))]
-        (array-set! out i sum)))))")
+        (set! (array-ref out i) sum)))))")
 
 (define (compiler-typecheck-foreach-spmd-i16-u16-ok-source) : String
   "(define (fill-i16 [a : (__tl_dyn-array i16)] [b : (__tl_dyn-array i16)] [out : (__tl_dyn-array i16)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 (define (fill-u16 [a : (__tl_dyn-array u16)] [b : (__tl_dyn-array u16)] [out : (__tl_dyn-array u16)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))")
 
 (define (compiler-typecheck-foreach-varying-if-source) : String
   "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : unit
@@ -946,7 +946,7 @@
 (define (main) : i64
   (let
     [p : Point (Point 40 2)]
-    (+ (struct-get p x) (from-maybe (Some (struct-get p y))))))")
+    (+ p.x (from-maybe (Some p.y)))))")
 
 (define (compiler-typecheck-generated-nominal-source) : String
   "(defmacro (generate-nominals) : Decls
@@ -957,8 +957,8 @@
 (define (main) : i64
   (let
     [p : Point (Point 40 2)]
-    (match (Some (struct-get p y))
-      [(Some n) (+ (struct-get p x) n)]
+    (match (Some p.y)
+      [(Some n) (+ p.x n)]
       [None 0])))")
 
 (define (compiler-typecheck-generated-decl-source) : String
@@ -968,7 +968,7 @@
     (define (make-point [x : i64]) : Point (Point x))))
 (generate-point-api)
 (define (main) : i64
-  (struct-get (make-point 7) x))")
+  (__tl-project-field (make-point 7) x))")
 
 (define (compiler-typecheck-generated-notes-ok?
   [notes : cdiag.CompilerDiagnosticNoteList]
@@ -1027,7 +1027,7 @@
 (define (compiler-typecheck-unknown-field-source) : String
   "(defstruct Point (x i64) (y i64))
 (define (main [p : Point]) : i64
-  (struct-get p z))")
+  p.z)")
 
 (define (compiler-typecheck-unknown-nominal-source) : String
   "(define (main [value : Missing]) : i64 0)")
@@ -1040,7 +1040,7 @@
 (define fixed : (Array i64 2) (array 5 6))
 (define maybe : Maybe (Some 8))
 (define (main) : i64
-  (+ (struct-get point x)
+  (+ point.x
      (+ (tuple-ref pair 0)
         (+ (array-ref fixed 1)
            (match maybe [(Some n) n] [None 0])))))")
@@ -1061,7 +1061,7 @@
 (define bad : Point (Point 1))")
 
 (define (compiler-typecheck-struct-get-nonstruct-source) : String
-  "(define (main) : i64 (struct-get 1 x))")
+  "(define (main) : i64 (__tl-project-field 1 x))")
 
 (define (compiler-typecheck-recursive-enum-boxed-source) : String
   "(defenum Tree
@@ -1070,7 +1070,7 @@
 (define (left-value [tree : Tree]) : i64
   (match tree
     [(Leaf value) value]
-    [(Branch left _) (left-value (box-get left))]))
+    [(Branch left _) (left-value (deref left))]))
 (define (main) : i64
   (left-value (Branch (box (Leaf 1)) (box (Leaf 2)))))")
 
@@ -1177,9 +1177,9 @@
       (+
         (right.get)
         (+
-          (struct-get left-point x)
+          left-point.x
           (+
-            (struct-get right-point x)
+            right-point.x
             (match (right.Maybe.Some 1)
               [(right.Maybe.Some v) v]
               [right.Maybe.None 0])))))))")
@@ -1202,7 +1202,7 @@
     (d.get)
     (+
       (let [p : d.Point (d.Point 7)]
-        (struct-get p x))
+        p.x)
       (match (d.Maybe.Some 3)
         [(d.Maybe.Some v) v]
         [d.Maybe.None 0]))))")
@@ -1219,7 +1219,7 @@
     (data.get)
     (+
       (let [p : data.Point (data.Point 7)]
-        (struct-get p x))
+        p.x)
       (match (data.Maybe.Some 3)
         [(data.Maybe.Some v) v]
         [data.Maybe.None 0]))))")
@@ -1233,6 +1233,29 @@
     (begin
       (set! o.p.x 17)
       (+ o.p.x (+ o.p.y (+ o.z (take (& o.p.x))))))))")
+
+(define (compiler-typecheck-dot-field-global-source) : String
+  "(defstruct Pair (left i64) (right i64))
+(define global-pair : Pair (Pair 20 22))
+(define (main) : i64
+  (begin
+    (set! global-pair.left 21)
+    (+ global-pair.left global-pair.right)))")
+
+(define (compiler-typecheck-macro-nested-place-source) : String
+  "(defstruct Bag (items (Array i64 1)))
+(defmacro (emit) : Decls
+  `(begin
+    (define (first [bag : (&mut bag Bag)]) : (&mut bag i64)
+      (&mut (array-ref bag.items 0)))))
+(emit)
+(define (main) : i64
+  (let
+    [bag : Bag (Bag (array 1))]
+    [slot : (&mut bag i64) (first (&mut bag))]
+    (begin
+      (set! (deref slot) 64)
+      (array-ref bag.items 0))))")
 
 (define (compiler-typecheck-dot-field-local-shadows-alias-source) : String
   "(module pkg.data)
@@ -1349,7 +1372,7 @@
 (define (main) : f32
   (let
     [v : Vec2 (Vec2 1.5 2.5 7)]
-    (struct-get v x)))")
+    v.x))")
 
 (define (compiler-typecheck-fixture-nominal-id
   [program : ast.AstProgram]
@@ -1357,11 +1380,11 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [index : i64 0]
         [name-id : i64 -1]
         (begin
-          (while (and (< name-id 0) (< index (struct-get (& decls) len)))
+          (while (and (< name-id 0) (< index decls.len))
             (let
               [decl : ast.AstDecl
                 (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
@@ -1468,7 +1491,7 @@
                                   12)
                                 (=
                                   (array-length
-                                    (struct-get
+                                    (__tl-project-field
                                       (tc_core.tc-repr-c-layout-fields wide)
                                       slots))
                                   12)
@@ -2044,7 +2067,7 @@
                                 (tc_core.tc-inline-field-layout-list-count
                                   fields)
                                 12)
-                              (= (array-length (struct-get fields slots)) 12)
+                              (= (array-length fields.slots) 12)
                               (string.eq
                                 (tc_core.tc-env-key-name-text first-id)
                                 "f0")
@@ -2108,7 +2131,7 @@
                                 (tc_core.tc-inline-variant-layout-list-count
                                   variants)
                                 12)
-                              (= (array-length (struct-get variants slots)) 12)
+                              (= (array-length variants.slots) 12)
                               (string.eq
                                 (tc_core.tc-env-key-name-text first-id)
                                 "V0")
@@ -2119,7 +2142,7 @@
                                 (tc_core.tc-inline-payload-layout-list-count
                                   payloads)
                                 3)
-                              (= (array-length (struct-get payloads slots)) 3)
+                              (= (array-length payloads.slots) 3)
                               (=
                                 (tc_core.tc-inline-payload-layout-list-offset
                                   payloads
@@ -2562,7 +2585,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-struct-get-nonstruct-source)
-        "typecheck: struct-get requires struct")
+        "typecheck: field projection requires struct")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -2606,6 +2629,13 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-dot-field-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-dot-field-global-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-macro-nested-place-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -2706,7 +2736,7 @@
     (let
       [a : (__tl_dyn-array i64) (make-array i64 n)]
       (begin
-        (array-set! a 0 7)
+        (set! (array-ref a 0) 7)
         (array-length a)))))")
 
 (define (compiler-typecheck-region-struct-escape-source) : String
@@ -2716,7 +2746,7 @@
   (with-arena r
     (let
       [b : Box (Box (string.int->string 1))]
-      (struct-get b s))))"))
+      b.s)))"))
 
 (define (compiler-typecheck-region-match-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
@@ -2783,8 +2813,8 @@
       (let
         [items : (__tl_dyn-array String) (make-array String 2)]
         (begin
-          (array-set! items 0 (string.int->string 1))
-          (array-set! items 1 (string.int->string 2))
+          (set! (array-ref items 0) (string.int->string 1))
+          (set! (array-ref items 1) (string.int->string 2))
           (EscapeOk
             (EscapePayload
               (string.int->string 3)
@@ -2926,7 +2956,7 @@
       (deref b))))"))
 
 (define (compiler-typecheck-box-get-non-box-source) : String
-  "(define (main) : i64 (box-get 1))")
+  "(define (main) : i64 (deref 1))")
 
 (define (compiler-typecheck-box-take-source) : String
   "(define (main) : i64
@@ -2942,14 +2972,30 @@
       (set! (deref b) 9)
       (deref b))))")
 
+(define (compiler-typecheck-deref-borrow-preserves-box-source) : String
+  "(define (main) : i64
+  (let
+    [cell : (Box i64) (box 21)]
+    [view : (& view i64) (& (deref cell))]
+    (+ (deref view) (deref cell))))")
+
+(define (compiler-typecheck-deref-mut-reference-write-source) : String
+  "(define (write [value : (&mut value i64)]) : unit
+  (set! (deref value) 42))
+(define (main) : i64
+  (let [value : i64 0]
+    (begin
+      (write (&mut value))
+      value)))")
+
 (define (compiler-typecheck-box-set-field-source) : String
   "(defstruct Pair (x i64) (y i64))
 (define (main) : i64
   (let
     [b : (Box Pair) (box (Pair 1 2))]
     (begin
-      (set! (struct-get (deref b) x) 9)
-      (struct-get (deref b) x))))")
+      (set! (__tl-project-field (deref b) x) 9)
+      (__tl-project-field (deref b) x))))")
 
 (define (compiler-typecheck-box-set-mismatch-source) : String
   "(define (main) : unit
@@ -2981,6 +3027,10 @@
     (compiler-typecheck-ok? (compiler-typecheck-box-direct-source))
     (compiler-typecheck-ok? (compiler-typecheck-box-take-source))
     (compiler-typecheck-ok? (compiler-typecheck-box-set-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-deref-borrow-preserves-box-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-deref-mut-reference-write-source))
     (compiler-typecheck-ok? (compiler-typecheck-box-set-field-source))
     (compiler-typecheck-ok? (compiler-typecheck-box-region-source))
     (compiler-typecheck-error-ok?
@@ -2988,7 +3038,7 @@
       "typecheck: region-tagged value cannot escape with-arena 'r'")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-box-get-non-box-source)
-      "typecheck: box-get requires Box type")
+      "typecheck: deref requires Box or reference type")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-box-set-mismatch-source)
       "typecheck: box assignment type mismatch: expected i64, found bool")
@@ -3010,7 +3060,7 @@
     [point : Point (init : Point)]
     [maybe : Maybe (init : Maybe)]
     [boxed : (Box i64) (init : (Box i64))]
-    (+ n (+ (struct-get point x) (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (deref boxed)))))))")
+    (+ n (+ point.x (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (deref boxed)))))))")
 
 (define (compiler-typecheck-contextual-init-source) : String
   "(defstruct Point (x i64) (flag bool))
@@ -3018,7 +3068,7 @@
 (define zero : i64 (init))
 (define (take [n : i64]) : i64 n)
 (define (return-init) : i64 (init))
-(define (point-x [p : Point]) : i64 (struct-get p x))
+(define (point-x [p : Point]) : i64 p.x)
 (define (main) : i64
   (let
     [n : i64 (init)]
@@ -3027,14 +3077,14 @@
     [point : Point (Point (init) (init))]
     [maybe : Maybe (Some (init))]
     (begin
-      (array-set! fixed 0 (init))
+      (set! (array-ref fixed 0) (init))
       (array-push! items (init))
       (+ zero
         (+ n
           (+ (return-init)
             (+ (take (init))
               (+ (point-x (init))
-                (+ (struct-get point x)
+                (+ point.x
                   (+ (array-ref fixed 0)
                     (match maybe [(Some v) v] [(None) 0])))))))))))")
 
@@ -3335,7 +3385,7 @@
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (main [h : FileHandle]) : i64 (struct-get h fd))")
+(define (main [h : FileHandle]) : i64 h.fd)")
 
 (define (compiler-typecheck-cleanup-struct-nested-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -3346,7 +3396,7 @@
   (:cleanup cleanup-buffered-file)
   (handle FileHandle (:owned))
   (size i64))
-(define (main [b : BufferedFile]) : i64 (struct-get b size))")
+(define (main [b : BufferedFile]) : i64 b.size)")
 
 (define (compiler-typecheck-cleanup-struct-imported-cleanup-source) : String
   "(module cleanup)
@@ -3356,14 +3406,14 @@
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup c/close-fd)))
-(define (main [h : FileHandle]) : i64 (struct-get h fd))")
+(define (main [h : FileHandle]) : i64 h.fd)")
 
 (define (compiler-typecheck-cleanup-struct-metadata-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (main [h : FileHandle]) : i64 (struct-get h fd))")
+(define (main [h : FileHandle]) : i64 h.fd)")
 
 (define (compiler-typecheck-cleanup-struct-ordinary-store-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -3879,13 +3929,13 @@
   "(defstruct Wide (x i64) (y i64) (z i64))
 (define (main) : (MutPtr i64)
   (let [item : Wide (Wide 1 2 3)]
-    (unsafe (ptr-addr-of (struct-get item y)))))")
+    (unsafe (ptr-addr-of item.y))))")
 
 (define (compiler-typecheck-raw-pointer-addr-of-register-field-source) : String
   "(defstruct Pair (x i64) (y i64))
 (define (main) : (MutPtr i64)
   (let [item : Pair (Pair 1 2)]
-    (unsafe (ptr-addr-of (struct-get item y)))))")
+    (unsafe (ptr-addr-of item.y))))")
 
 (define (compiler-typecheck-raw-pointer-addr-of-register-aggregate-source) : String
   "(defstruct Pair (x i64) (y i64))
@@ -3898,7 +3948,7 @@
 (defstruct Wrap (tiny Tiny))
 (define (main) : (MutPtr i32)
   (let [item : Wrap (Wrap (Tiny (cast 1 : i32) (cast 2 : i32)))]
-    (unsafe (ptr-addr-of (struct-get (struct-get item tiny) b)))))")
+    (unsafe (ptr-addr-of item.tiny.b))))")
 
 (define (compiler-typecheck-raw-pointer-addr-of-fixed-array-element-source) : String
   "(define (main [i : i64]) : (MutPtr i64)
@@ -3909,7 +3959,7 @@
   "(defstruct Bag (slots (Array i64 2)))
 (define (main [i : i64]) : (MutPtr i64)
   (let [bag : Bag (Bag (array 1 2))]
-    (unsafe (ptr-addr-of (array-ref (struct-get bag slots) i)))))")
+    (unsafe (ptr-addr-of (array-ref bag.slots i)))))")
 
 (define (compiler-typecheck-raw-pointer-addr-of-dynamic-array-element-source) : String
   "(define (main [items : (__tl_dyn-array i64)] [i : i64]) : (MutPtr i64)
@@ -4070,7 +4120,7 @@
       "typecheck: ptr-addr-of reference roots are not addressable")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-temp-source)
-      "typecheck: ptr-addr-of requires a local/parameter, struct-get, or fixed-array array-ref place")
+      "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-atomic-pointer-safe-source)
       "typecheck: atomic-load requires unsafe context")
@@ -4233,7 +4283,7 @@
 (define (take-array [r : (& items i64)]) : unit unit)
 (define (main [p : Pair] [t : (Tuple i64 bool)] [items : (__tl_dyn-array i64)]) : unit
   (begin
-    (take-pair (& (struct-get p left)))
+    (take-pair (& p.left))
     (take-tuple (& (tuple-ref t 0)))
     (take-array (& (array-ref items 0)))))")
 
@@ -4269,7 +4319,7 @@
 (define (main [n : i64]) : i64
   (let
     [box : RefBox (RefBox (& n))]
-    (let [value : (& n i64) (struct-get box value)] 0)))")
+    (let [value : (& n i64) box.value] 0)))")
 
 (define (compiler-typecheck-reference-enum-payload-source) : String
   "(defenum RefOption (SomeRef (& n i64)) (NoRef))
@@ -4288,7 +4338,7 @@
 (define (main [n : i64]) : i64
   (let
     [box : (RefBox n) (RefBox (& n))]
-    (let [value : (& n i64) (struct-get box value)] 0)))")
+    (let [value : (& n i64) box.value] 0)))")
 
 (define (compiler-typecheck-lifetime-enum-match-source) : String
   "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))
@@ -4333,11 +4383,11 @@
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
 (define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
 (define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
-  (match (& (array-ref (struct-get bag slots) 0))
+  (match (& (array-ref bag.slots 0))
     [(Occupied v) (let [same : (& bag i64) v] (slot-found same))]
     [Empty (slot-missing bag)]))
 (define (score [bag : (& bag Bag)]) : i64
-  (match (& (array-ref (struct-get bag slots) 0))
+  (match (& (array-ref bag.slots 0))
     [(Occupied v) (let [same : (& bag i64) v] (take same))]
     [Empty 0]))
 (define (main [bag : Bag]) : i64
@@ -4379,7 +4429,7 @@
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
 (define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
 (define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
-  (match (& (array-ref (struct-get bag slots) 0))
+  (match (& (array-ref bag.slots 0))
     [(Occupied v) (slot-found v)]
     [Empty (slot-missing bag)]))
 (define (bad [bag : Bag]) : unit
@@ -4394,12 +4444,12 @@
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) (SlotMissing))
 (define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotFound value))
 (define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
-  (match (& (array-ref (struct-get bag slots) 0))
+  (match (& (array-ref bag.slots 0))
     [(Occupied v) (slot-found v)]
     [Empty (slot-missing bag)]))
 (define (bad [bag : Bag]) : unit
   (match (lookup (& bag))
-    [(SlotFound value) (array-set! (struct-get bag slots) 0 Empty)]
+    [(SlotFound value) (set! (array-ref bag.slots 0) Empty)]
     [SlotMissing unit]))")
 
 (define (compiler-typecheck-regular-call-lifetime-subst-source) : String
@@ -4410,7 +4460,7 @@
   (let
     [direct : (& n i64) (ref-id (& n))]
     [box : (RefBox n) (box-id (& n))]
-    (let [value : (& n i64) (struct-get box value)] 0)))")
+    (let [value : (& n i64) box.value] 0)))")
 
 (define (compiler-typecheck-lifetime-iterator-mut-borrow-source) : String
   "(defstruct Iter
@@ -4418,7 +4468,7 @@
   (slots (& source (__tl_dyn-array i64)))
   (index i64))
 (define (advance [iter : (&mut iter (Iter source))]) : unit
-  (set! (struct-get iter index) (+ (struct-get iter index) 1)))
+  (set! iter.index (+ iter.index 1)))
 (define (main [items : (__tl_dyn-array i64)]) : unit
   (let
     [iter : (Iter items) (Iter (& items) 0)]
@@ -4486,7 +4536,7 @@
 
 (define (compiler-typecheck-reference-mut-array-set-source) : String
   "(define (put [items : (&mut items (__tl_dyn-array i64))] [v : i64]) : unit
-  (array-set! items 0 v))
+  (set! (array-ref items 0) v))
 (define (main [items : (__tl_dyn-array i64)]) : unit
   (put (&mut items) 7))")
 
@@ -4498,7 +4548,7 @@
 
 (define (compiler-typecheck-reference-immut-array-set-source) : String
   "(define (bad [items : (& items (__tl_dyn-array i64))]) : unit
-  (array-set! items 0 7))")
+  (set! (array-ref items 0) 7))")
 
 (define (compiler-typecheck-reference-str-source) : String
   "(define (take [s : (& text str)]) : unit unit)
@@ -4916,7 +4966,7 @@
     [immut-array-set-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-reference-immut-array-set-source)
-        "typecheck: array-set! requires mutable array access")]
+        "typecheck: set! array element requires mutable array access")]
     [str-value-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-str-value-source)
@@ -5132,15 +5182,15 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (if (=
         (cdiag.compiler-diagnostic-line
-          (cdiag.compiler-diagnostic-list-first (box-get diag)))
+          (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
         2)
         (if (>
           (cdiag.compiler-diagnostic-col
-            (cdiag.compiler-diagnostic-list-first (box-get diag)))
+            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
           0)
           (string.eq
             (cdiag.compiler-diagnostic-message
-              (cdiag.compiler-diagnostic-list-first (box-get diag)))
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
             "typecheck: unbound name missing")
           false)
         false)]
@@ -5158,15 +5208,15 @@
         (and
           (string.eq
             (cdiag.compiler-diagnostic-message
-              (cdiag.compiler-diagnostic-list-first (box-get diag)))
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
             "typecheck: call arity mismatch: need3 expected 3 arguments, got 2 arguments")
           (=
             (cdiag.compiler-diagnostic-line
-              (cdiag.compiler-diagnostic-list-first (box-get diag)))
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
             9)
           (=
             (cdiag.compiler-diagnostic-col
-              (cdiag.compiler-diagnostic-list-first (box-get diag)))
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
             7))]
       [(tc_core.ResultCompilerTypecheck.Ok _) false])))
 
@@ -5428,8 +5478,8 @@
   (let
     [c : Color (Color 0 0 0 0)]
     (begin
-      (set! (struct-get c r) 135)
-      (struct-get c r))))
+      (set! c.r 135)
+      c.r)))
 (define (return-u32) : u32 4294967295)
 (define (return-u64) : u64 9223372036854775807)
 (define (return-u64-full-dec) : u64 18446744073709551615)
@@ -5764,7 +5814,7 @@
   "(defstruct Pos (line i64) (col i64))
 (defenum Tok (TPos Pos) (TEnd))
 (define (main [t : Tok]) : i64
-  (match t [(TPos p) (struct-get p line)] [(TEnd) -1]))")
+  (match t [(TPos p) p.line] [(TEnd) -1]))")
 
 (define (compiler-typecheck-match-ok-nested-source) : String
   "(defenum SexprAtom (SInt i64) (SSym String) (SNil))
@@ -5777,8 +5827,8 @@
 (define (depth [expr : Expr]) : i64
   (match expr
     [(Branch left right)
-      (match (box-get left)
-        [(Sym op) (+ 1 (depth (box-get right)))]
+      (match (deref left)
+        [(Sym op) (+ 1 (depth (deref right)))]
         [_ 0])]
     [_ 0]))")
 
@@ -5894,7 +5944,7 @@
 (define (compiler-typecheck-match-ok-recursive-expr-source) : String
   "(defenum Expr (ENum i64) (EAdd (Box Expr) (Box Expr)))
 (define (eval [e : Expr]) : i64
-  (match e [(ENum n) n] [(EAdd l r) (+ (eval (box-get l)) (eval (box-get r)))]))
+  (match e [(ENum n) n] [(EAdd l r) (+ (eval (deref l)) (eval (deref r)))]))
 (define (main [e : Expr]) : i64 (eval e))")
 
 (define (compiler-typecheck-match-bad-recursive-tuple-source) : String
@@ -6380,7 +6430,7 @@
 (define (compiler-typecheck-lambda-capture-struct-source) : String
   "(defstruct P (a i64))
 (define (main) : i64
-  (let [p : P (P 9)] (let [g : (-> P) (lambda () : P p)] (struct-get (g) a))))")
+  (let [p : P (P 9)] (let [g : (-> P) (lambda () : P p)] (__tl-project-field (g) a))))")
 
 (define (compiler-typecheck-lambda-capture-dyn-array-source) : String
   "(define (main [n : i64]) : i64
@@ -6434,7 +6484,7 @@
   (begin
     (set! n (+ n 1))
     (set! box (Boxed n))
-    (+ n (struct-get box value))))
+    (+ n box.value)))
 (define (main) : i64 (score 20 (Boxed 0)))")
 
 (define (compiler-typecheck-lambda-param-set-source) : String
@@ -6459,7 +6509,7 @@
 (define (compiler-typecheck-lambda-aggregate-return-source) : String
   "(defstruct P (a i64))
 (define (main) : i64
-  (let [mk : (-> P) (lambda () : P (P 5))] (struct-get (mk) a)))")
+  (let [mk : (-> P) (lambda () : P (P 5))] (__tl-project-field (mk) a)))")
 
 (define (compiler-typecheck-lambda-tests-ok?) : bool
   (and
@@ -6543,8 +6593,8 @@
     (compiler-typecheck-ok?
       "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref xs i) 1)))")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
-      "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (set! (array-ref xs i) 1)))"
+      "array element assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")
     (compiler-typecheck-error-ok?
       "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
       "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md 5.15)")
@@ -6559,21 +6609,21 @@
 (define (compiler-typecheck-spmd-broadcast-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
-      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (__tl_dyn-array u64)] [out : (__tl_dyn-array u64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
+      "(define (main [xs : (__tl_dyn-array u64)] [out : (__tl_dyn-array u64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (__tl_dyn-array u32)] [out : (__tl_dyn-array u32)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
+      "(define (main [xs : (__tl_dyn-array u32)] [out : (__tl_dyn-array u32)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-typecheck-ok?
       "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-broadcast (array-ref xs i) 0)))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (array-set! out i (spmd-broadcast prefix 0))))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (set! (array-ref out i) (spmd-broadcast prefix 0))))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) i))) 0))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) i))) 0))")
     (compiler-typecheck-ok?
       "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-shuffle (array-ref xs i) i)))")
     (compiler-typecheck-ok?
-      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (array-set! out i (spmd-shuffle prefix 0))))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (set! (array-ref out i) (spmd-shuffle prefix 0))))")
     (compiler-typecheck-error-ok?
       "(define (main) : i64 (spmd-broadcast 1 0))"
       "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
@@ -6587,19 +6637,19 @@
       "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (spmd-shuffle (array-ref xs i) 0) unit))"
       "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) i))) 0))"
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) i))) 0))"
       "typecheck: spmd-broadcast lane must be uniform")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) true))) 0))"
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) true))) 0))"
       "typecheck: spmd-broadcast lane must have type i64: expected i64, found bool")
     (compiler-typecheck-error-ok?
-      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) true))) 0))"
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) true))) 0))"
       "typecheck: spmd-shuffle lane must have type i64: expected i64, found bool")
     (compiler-typecheck-error-ok?
-      "(define (main [bs : (__tl_dyn-array bool)] [out : (__tl_dyn-array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref bs i) 0))) true))"
+      "(define (main [bs : (__tl_dyn-array bool)] [out : (__tl_dyn-array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref bs i) 0))) true))"
       "typecheck: spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred")
     (compiler-typecheck-error-ok?
-      "(define (main [bs : (__tl_dyn-array bool)] [out : (__tl_dyn-array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref bs i) 0))) true))"
+      "(define (main [bs : (__tl_dyn-array bool)] [out : (__tl_dyn-array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref bs i) 0))) true))"
       "typecheck: spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred")))
 
 ;; array-builtin signature rules: make-array length, array-ref array/index
@@ -6610,7 +6660,7 @@
     [ok : bool true]
     (begin
       (if (compiler-typecheck-ok?
-        "(define (f [a : (__tl_dyn-array i64)]) : i64 (begin (array-set! a 0 5) (array-ref a 0)))")
+        "(define (f [a : (__tl_dyn-array i64)]) : i64 (begin (set! (array-ref a 0) 5) (array-ref a 0)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -6678,8 +6728,8 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f [a : (__tl_dyn-array i64)]) : unit (array-set! a 0 true))"
-        "typecheck: array-set! value type mismatch: expected i64, found bool")
+        "(define (f [a : (__tl_dyn-array i64)]) : unit (set! (array-ref a 0) true))"
+        "typecheck: array assignment value type mismatch: expected i64, found bool")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -7373,7 +7423,7 @@
   (let
     [owner : arena.Arena (arena.make)]
     (+
-      (struct-get owner value)
+      owner.value
       (+ (arena.phase 10)
         (+
           (arena.rewind-safe! 20)
@@ -7989,7 +8039,7 @@
                   (match program
                     [(ast.AstProgram.Program decls-box)
                       (let
-                        [decls : ast.AstDeclList (box-get decls-box)]
+                        [decls : ast.AstDeclList (__tl-box-place decls-box)]
                         [decl : ast.AstDecl
                           (ast.ast-decl-list-get
                             (& decls)
@@ -8096,7 +8146,7 @@
           unit
           (set! ok false))
         ;; A struct with only DynArray/i64 fields is free of dependent
-        ;; constructs, as is a body that only calls struct-get on it.
+        ;; constructs, as is a body that only projects one of its fields.
         (if (compiler-typecheck-generated-decl-scan?
           "(defstruct Plain (x i64) (ys (DynArray i64)))"
           0)
@@ -8104,7 +8154,7 @@
           unit)
         (if (compiler-typecheck-generated-decl-scan?
           "(defstruct Pair (x i64) (ys (DynArray i64)))
-(define (sum [p : Pair]) : i64 (struct-get p x))"
+(define (sum [p : Pair]) : i64 p.x)"
           1)
           (set! ok false)
           unit)
@@ -8644,7 +8694,7 @@
   (defenum Choice (Choice i64))
   (defmacro (twice [value : i64]) : i64 `(+ ,value ,value))
   (define value : i64 (twice 21))
-  (define (pair-value [p : Pair]) : i64 (struct-get p value)))
+  (define (pair-value [p : Pair]) : i64 p.value))
 (import local.helper as helper)
 (define value : i64 5)
 (define (main) : i64
@@ -8946,7 +8996,7 @@
     [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource source)
       (let
         [start-marker : String
-          "(defmacro (for [bindings : ExprBindingClause ...]"]
+          "(defmacro (for [bindings : ExprBindingClause ...]]]"]
         [end-marker : String "(cfg\n  test\n  (defmacro (core-macros-user-fold"]
         [start : i64
           (compiler-typecheck-string-find-from source start-marker 0)]
@@ -8974,30 +9024,30 @@
   (done bool))
 (defenum IntoNext (Done) (Item i64))
 (define (iterator [items : (& source Bag)]) : (Iter source)
-  (Iter (& (struct-get items value)) false))
+  (Iter (& items.value) false))
 (define (next [state : (&mut state (Iter source))]) : (IterNext source)
-  (if (struct-get state done)
+  (if state.done
     (IterNext.Done)
     (begin
-      (set! (struct-get state done) true)
-      (IterNext.Item (struct-get state value)))))
+      (set! state.done true)
+      (IterNext.Item state.value))))
 (define (iterator-mut [items : (&mut source Bag)]) : (IterMut source)
-  (IterMut (&mut (struct-get items value)) false))
+  (IterMut (&mut items.value) false))
 (define (next-mut [state : (&mut state (IterMut source))]) : (IterMutNext
     source)
-  (if (struct-get state done)
+  (if state.done
     (IterMutNext.Done)
     (begin
-      (set! (struct-get state done) true)
-      (IterMutNext.Item (struct-get state value)))))
+      (set! state.done true)
+      (IterMutNext.Item state.value))))
 (define (into-iterator [items : Bag (:consume)]) : IntoIter
-  (IntoIter (struct-get items value) false))
+  (IntoIter items.value false))
 (define (into-next [state : (&mut state IntoIter)]) : IntoNext
-  (if (struct-get state done)
+  (if state.done
     (IntoNext.Done)
     (begin
-      (set! (struct-get state done) true)
-      (IntoNext.Item (struct-get state value)))))
+      (set! state.done true)
+      (IntoNext.Item state.value))))
 (define (main) : i64
   (let
     [sum : i64 0]
@@ -9680,7 +9730,7 @@
       [(tc_core.ResultCompilerTypecheck.Err diag)
         (io.panic
           (cdiag.compiler-diagnostic-message
-            (cdiag.compiler-diagnostic-list-first (box-get diag))))])
+            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))])
     unit))
 
 ;; --- move checker fixtures ----------------------------------------------------
@@ -9807,14 +9857,14 @@
 (defstruct OrdinaryWrapper
   (packet OrdinaryPacket))
 (defenum MaybeCount (SomeCount i64) (NoCount))
-(define (inspect-packet [p : OrdinaryPacket]) : i64 (struct-get p count))
+(define (inspect-packet [p : OrdinaryPacket]) : i64 p.count)
 (define (ordinary-sharing [p : OrdinaryPacket] [m : MaybeCount]) : i64
   (begin
     (inspect-packet p)
     (let [w : OrdinaryWrapper (OrdinaryWrapper p)]
       (begin
         (match m [(SomeCount v) v] [NoCount 0])
-        (+ (struct-get p count) (struct-get (struct-get w packet) count))))))")
+        (+ p.count w.packet.count)))))")
 
 (define (compiler-typecheck-move-ordinary-enum-match-reuse-source) : String
   "(defenum Flag (On) (Off))
@@ -9923,7 +9973,7 @@
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-owner-call [h : FileHandle]) : i64
-  (begin (take-handle h) (struct-get h fd)))")
+  (begin (take-handle h) h.fd))")
 
 (define (compiler-typecheck-move-owner-constructor-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -9938,7 +9988,7 @@
 (define (bad-owner-constructor [h : FileHandle]) : i64
   (begin
     (take-holder (Holder h 1))
-    (struct-get h fd)))")
+    h.fd))")
 
 (define (compiler-typecheck-move-owner-return-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -9954,11 +10004,11 @@
 (defstruct CounterHolder
   (counter Counter)
   (tag i64))
-(define (inspect-counter [c : Counter]) : i64 (struct-get c value))
+(define (inspect-counter [c : Counter]) : i64 c.value)
 (define (ordinary-projection [p : CounterHolder]) : i64
   (begin
-    (inspect-counter (struct-get p counter))
-    (struct-get p tag)))")
+    (inspect-counter p.counter)
+    p.tag))")
 
 (define (compiler-typecheck-move-owner-projection-other-field-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -9972,8 +10022,8 @@
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-other-field [p : Holder]) : i64
   (begin
-    (take-handle (struct-get p handle))
-    (struct-get p size)))")
+    (take-handle p.handle)
+    p.size))")
 
 (define (compiler-typecheck-move-owner-projection-one-shot-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -9986,7 +10036,7 @@
   (size i64))
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-one-shot [p : Holder]) : unit
-  (take-handle (struct-get p handle)))")
+  (take-handle p.handle))")
 
 (define (compiler-typecheck-move-owner-projection-bind-other-field-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -9998,8 +10048,8 @@
   (handle FileHandle (:owned))
   (size i64))
 (define (owner-projection-bind-other-field [p : Holder]) : i64
-  (with ([h (struct-get p handle) cleanup-file-handle])
-    (struct-get p size)))")
+  (with ([h p.handle cleanup-file-handle])
+    p.size))")
 
 (define (compiler-typecheck-move-owner-projection-nested-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10016,7 +10066,7 @@
   (size i64))
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-nested [p : Holder]) : unit
-  (take-handle (struct-get (struct-get p inner) handle)))")
+  (take-handle p.inner.handle))")
 
 (define (compiler-typecheck-move-owner-projection-nested-siblings-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10035,8 +10085,8 @@
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-nested-siblings [p : Holder]) : unit
   (begin
-    (take-handle (struct-get (struct-get p inner) handle))
-    (take-handle (struct-get (struct-get p inner) backup))))")
+    (take-handle p.inner.handle)
+    (take-handle p.inner.backup)))")
 
 (define (compiler-typecheck-move-owner-projection-deep-mixed-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10054,21 +10104,17 @@
 (define (bad-owner-projection-deep-mixed-repeat [p : Holder]) : unit
   (begin
     (take-handle
-      (struct-get
-        (tuple-ref
+      (__tl-project-field (tuple-ref
           (array-ref
-            (tuple-ref (struct-get p mixed) 0)
+            (tuple-ref p.mixed 0)
             1)
-          0)
-        handle))
+          0) handle))
     (take-handle
-      (struct-get
-        (tuple-ref
+      (__tl-project-field (tuple-ref
           (array-ref
-            (tuple-ref (struct-get p mixed) 0)
+            (tuple-ref p.mixed 0)
             1)
-          0)
-        handle))))")
+          0) handle))))")
 
 (define (compiler-typecheck-move-owner-projection-nested-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10086,8 +10132,8 @@
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-owner-projection-nested-repeat [p : Holder]) : unit
   (begin
-    (take-handle (struct-get (struct-get p inner) handle))
-    (take-handle (struct-get (struct-get p inner) handle))))")
+    (take-handle p.inner.handle)
+    (take-handle p.inner.handle)))")
 
 (define (compiler-typecheck-move-owner-projection-nested-root-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10106,7 +10152,7 @@
 (define (take-holder [h : Holder]) : unit unit)
 (define (bad-owner-projection-nested-root-reuse [p : Holder]) : unit
   (begin
-    (take-handle (struct-get (struct-get p inner) handle))
+    (take-handle p.inner.handle)
     (take-holder p)))")
 
 (define (compiler-typecheck-move-owner-projection-nested-parent-after-child-source) : String
@@ -10126,8 +10172,8 @@
 (define (take-inner [h : Inner]) : unit unit)
 (define (bad-owner-projection-nested-parent-after-child [p : Holder]) : unit
   (begin
-    (take-handle (struct-get (struct-get p inner) handle))
-    (take-inner (struct-get p inner))))")
+    (take-handle p.inner.handle)
+    (take-inner p.inner)))")
 
 (define (compiler-typecheck-move-owner-projection-nested-child-after-parent-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10146,8 +10192,8 @@
 (define (take-inner [h : Inner]) : unit unit)
 (define (bad-owner-projection-nested-child-after-parent [p : Holder]) : unit
   (begin
-    (take-inner (struct-get p inner))
-    (take-handle (struct-get (struct-get p inner) handle))))")
+    (take-inner p.inner)
+    (take-handle p.inner.handle)))")
 
 (define (compiler-typecheck-move-owner-projection-nested-set-reset-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10165,9 +10211,9 @@
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-nested-set-reset [p : Holder]) : unit
   (begin
-    (take-handle (struct-get (struct-get p inner) handle))
+    (take-handle p.inner.handle)
     (set! p (Holder (Inner (FileHandle 10) 11) 12))
-    (take-handle (struct-get (struct-get p inner) handle))))")
+    (take-handle p.inner.handle)))")
 
 (define (compiler-typecheck-move-owner-projection-nested-shadow-reset-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10186,10 +10232,10 @@
 (define (owner-projection-nested-shadow-reset [p : Holder]) : unit
   (with ([q p cleanup-holder])
     (begin
-      (struct-get (struct-get (struct-get q inner) handle) fd)
+      q.inner.handle.fd
       (with ([q (Holder (Inner (FileHandle 20) 21) 22) cleanup-holder])
         (begin
-          (struct-get (struct-get (struct-get q inner) handle) fd)
+          q.inner.handle.fd
           unit)))))")
 
 (define (compiler-typecheck-move-owner-projection-repeat-source) : String
@@ -10204,8 +10250,8 @@
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-owner-projection-repeat [p : Holder]) : unit
   (begin
-    (take-handle (struct-get p handle))
-    (take-handle (struct-get p handle))))")
+    (take-handle p.handle)
+    (take-handle p.handle)))")
 
 (define (compiler-typecheck-move-owner-projection-root-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10220,7 +10266,7 @@
 (define (take-holder [h : Holder]) : unit unit)
 (define (bad-owner-projection-root-reuse [p : Holder]) : unit
   (begin
-    (take-handle (struct-get p handle))
+    (take-handle p.handle)
     (take-holder p)))")
 
 (define (compiler-typecheck-move-owner-projection-key-collision-source) : String
@@ -10238,8 +10284,8 @@
   [p.handle : Holder]
   [p.__tl_partial : Holder]) : i64
   (begin
-    (take-handle (struct-get p handle))
-    (+ (struct-get p.handle size) (struct-get p.__tl_partial size))))")
+    (take-handle p.handle)
+    (+ p.handle.size p.__tl_partial.size)))")
 
 (define (compiler-typecheck-move-owner-tuple-ref-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10303,7 +10349,7 @@
 (define (owner-array-ref-other-element [items : (Array FileHandle 2)]) : i64
   (begin
     (take-handle (array-ref items 0))
-    (struct-get (array-ref items 1) fd)))")
+    (__tl-project-field (array-ref items 1) fd)))")
 
 (define (compiler-typecheck-move-owner-array-ref-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10325,7 +10371,7 @@
 (define (owner-array-ref-reinit [items : (Array FileHandle 1) (:consume)]) : unit
   (begin
     (take-handle (array-ref items 0))
-    (array-set! items 0 (FileHandle 7))
+    (set! (array-ref items 0) (FileHandle 7))
     (take-handle (array-ref items 0))))")
 
 (define (compiler-typecheck-move-owner-array-ref-reinit-root-source) : String
@@ -10337,7 +10383,7 @@
 (define (owner-array-ref-reinit-root [items : (Array FileHandle 1) (:consume)]) : unit
   (begin
     (take-handle (array-ref items 0))
-    (array-set! items 0 (FileHandle 7))
+    (set! (array-ref items 0) (FileHandle 7))
     (let [next : (Array FileHandle 1) items] unit)))")
 
 (define (compiler-typecheck-move-owner-array-ref-reinit-sibling-source) : String
@@ -10349,7 +10395,7 @@
 (define (bad-owner-array-ref-reinit-sibling [items : (Array FileHandle 2) (:consume)]) : unit
   (begin
     (take-handle (array-ref items 0))
-    (array-set! items 1 (FileHandle 7))
+    (set! (array-ref items 1) (FileHandle 7))
     (take-handle (array-ref items 0))))")
 
 (define (compiler-typecheck-move-owner-array-ref-reinit-nonliteral-source) : String
@@ -10363,7 +10409,7 @@
   [index : i64]) : unit
   (begin
     (take-handle (array-ref items 0))
-    (array-set! items index (FileHandle 7))
+    (set! (array-ref items index) (FileHandle 7))
     (take-handle (array-ref items 0))))")
 
 (define (compiler-typecheck-move-owner-array-ref-nested-source) : String
@@ -10424,13 +10470,13 @@
   (fd i64 (:cleanup close-fd)))
 (define (bad-owner-dyn-array-ref-bind [items : (__tl_dyn-array FileHandle)] [i : i64]) : i64
   (let [h : FileHandle (array-ref items i)]
-    (struct-get h fd)))")
+    h.fd))")
 
 (define (compiler-typecheck-move-box-get-copyable-source) : String
   "(define (main) : i64
   (let
     [cell : (Box i64) (box 7)]
-    (box-get cell)))")
+    (deref cell)))")
 
 (define (compiler-typecheck-move-owner-box-get-call-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10439,7 +10485,7 @@
   (fd i64 (:cleanup close-fd)))
 (define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-owner-box-get-call [cell : (Box FileHandle)]) : unit
-  (take-handle (box-get cell)))")
+  (take-handle (deref cell)))")
 
 (define (compiler-typecheck-move-owner-box-get-bind-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10447,8 +10493,8 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (bad-owner-box-get-bind [cell : (Box FileHandle)]) : i64
-  (let [h : FileHandle (box-get cell)]
-    (struct-get h fd)))")
+  (let [h : FileHandle (deref cell)]
+    h.fd))")
 
 (define (compiler-typecheck-move-owner-box-get-return-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10456,13 +10502,45 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (bad-owner-box-get-return [cell : (Box FileHandle)]) : FileHandle
-  (return (box-get cell)))")
+  (return (deref cell)))")
 
 (define (compiler-typecheck-move-box-take-reuse-source) : String
   "(define (bad-box-take-reuse [cell : (Box String)]) : i64
   (let
-    [value : String (box-take cell)]
-    (+ (__tl_string_length value) (__tl_string_length (box-get cell)))))")
+    [value : String (deref cell)]
+    (+ (__tl_string_length value) (__tl_string_length (deref cell)))))")
+
+(define (compiler-typecheck-move-ordinary-overwrite-source) : String
+  "(defstruct Holder (value String))
+(define (main) : i64
+  (let [holder : Holder (Holder \"old\")]
+    (begin
+      (set! holder.value \"replacement\")
+      (__tl_string_length holder.value))))")
+
+(define (compiler-typecheck-move-cleanup-overwrite-source) : String
+  "(define (close-fd [_fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (main) : i64
+  (with ([handle (FileHandle 1) cleanup-file-handle])
+    (begin
+      (set! handle (FileHandle 2))
+      handle.fd)))")
+
+(define (compiler-typecheck-move-cleanup-reinit-source) : String
+  "(define (close-fd [_fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (consume-handle [_handle : FileHandle]) : unit unit)
+(define (main) : i64
+  (with ([handle (FileHandle 1) cleanup-file-handle])
+    (begin
+      (consume-handle handle)
+      (set! handle (FileHandle 2))
+      handle.fd)))")
 
 (define (compiler-typecheck-move-branch-arm-isolated-source) : String
   "(define (branch-arm-isolated [flag : bool] [s : String]) : String
@@ -10474,11 +10552,11 @@
 
 (define (compiler-typecheck-move-owner-lambda-capture-box-ok-source) : String
   "(define (owner-lambda-capture-box-ok [cell : (Box i64)]) : (-> i64)
-  (lambda () : i64 (box-get cell)))")
+  (lambda () : i64 (deref cell)))")
 
 (define (compiler-typecheck-move-owner-lambda-capture-box-reuse-source) : String
   "(define (bad-owner-lambda-capture-box-reuse [cell : (Box i64)]) : i64
-  (begin (lambda () : i64 (box-get cell)) (box-get cell)))")
+  (begin (lambda () : i64 (deref cell)) (deref cell)))")
 
 (define (compiler-typecheck-move-owner-lambda-capture-cleanup-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10486,12 +10564,12 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (bad-owner-lambda-capture-cleanup-reuse [h : FileHandle]) : i64
-  (begin (lambda () : i64 (struct-get h fd)) (struct-get h fd)))")
+  (begin (lambda () : i64 h.fd) h.fd))")
 
 (define (compiler-typecheck-move-owner-lambda-body-reuse-source) : String
   "(define (take-cell [cell : (Box i64)]) : unit unit)
 (define (bad-owner-lambda-body-reuse [cell : (Box i64)]) : (-> i64)
-  (lambda () : i64 (begin (take-cell cell) (box-get cell))))")
+  (lambda () : i64 (begin (take-cell cell) (deref cell))))")
 
 (define (compiler-typecheck-move-while-loop-carried-param-source) : String
   "(define (bad-while-loop-carried-param [flag : bool] [s : String]) : String
@@ -10546,7 +10624,7 @@
   (fd i64 (:cleanup close-fd)))
 (define (with-cleanup-owner-read [fd : i64]) : i64
   (with ([h (FileHandle fd) cleanup-file-handle])
-    (struct-get h fd)))")
+    h.fd))")
 
 (define (compiler-typecheck-move-with-cleanup-owner-whole-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -10573,7 +10651,7 @@
 (define (bad-with-cleanup-owner-field [fd : i64]) : i64
   (with ([h (Holder (FileHandle fd) 7) cleanup-holder])
     (begin
-      (take-handle (struct-get h handle))
+      (take-handle h.handle)
       0)))")
 
 (define (compiler-typecheck-live-borrow-owner-prefix) : String
@@ -10641,7 +10719,7 @@
   (string.append
     (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [p : Holder]) : unit
-  (let [r : (& p FileHandle) (& (struct-get p handle))]
+  (let [r : (& p FileHandle) (& p.handle)]
     (begin
       (take-holder p)
       (read-handle-ref r))))"))
@@ -10652,7 +10730,7 @@
     "(define (bad [p : Holder]) : unit
   (let [r : (& p Holder) (& p)]
     (begin
-      (take-handle (struct-get p handle))
+      (take-handle p.handle)
       (read-holder-ref r))))"))
 
 (define (compiler-typecheck-live-borrow-nested-scope-source) : String
@@ -10713,7 +10791,7 @@
 (define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [borrowed : (& items i64) (& (array-ref items 0))]
     (begin
-      (array-set! items 0 7)
+      (set! (array-ref items 0) 7)
       (read-i64-ref borrowed))))")
 
 (define (compiler-typecheck-live-mut-borrow-post-scope-source) : String
@@ -10766,12 +10844,12 @@
 (define (compiler-typecheck-live-mut-borrow-assign-source) : String
   "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
-    (array-set! items 0 2)))")
+    (set! (array-ref items 0) 2)))")
 
 (define (compiler-typecheck-live-mut-borrow-array-set-source) : String
   "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [borrowed : (&mut items i64) (&mut (array-ref items 0))]
-    (array-set! items 0 7)))")
+    (set! (array-ref items 0) 7)))")
 
 (define (compiler-typecheck-live-borrow-tests-ok?) : bool
   (let
@@ -10896,15 +10974,15 @@
 (define (compiler-typecheck-param-storage-direct-struct-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (bad [value : Big]) : unit
-  (set! (struct-get value a) 7))")
+  (set! value.a 7))")
 
 (define (compiler-typecheck-param-storage-fixed-array-source) : String
   "(define (bad [items : (Array i64 3)]) : unit
-  (array-set! items 0 7))")
+  (set! (array-ref items 0) 7))")
 
 (define (compiler-typecheck-param-storage-tuple-source) : String
   "(define (bad [items : (Tuple (Array i64 1) i64)]) : unit
-  (array-set! (tuple-ref items 0) 0 7))")
+  (set! (array-ref (tuple-ref items 0) 0) 7))")
 
 (define (compiler-typecheck-param-storage-nominal-tuple-array-source) : String
   "(defstruct BigTuple
@@ -10912,20 +10990,20 @@
   (pad0 i64)
   (pad1 i64))
 (define (bad [value : BigTuple]) : unit
-  (array-set! (tuple-ref (struct-get value items) 0) 0 7))")
+  (set! (array-ref (tuple-ref value.items 0) 0) 7))")
 
 (define (compiler-typecheck-param-storage-let-alias-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (bad [value : Big]) : unit
   (let [alias : Big value]
-    (set! (struct-get alias a) 7)))")
+    (set! alias.a 7)))")
 
 (define (compiler-typecheck-param-storage-match-alias-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (defenum Carrier (Some Big) (None))
 (define (bad [value : Carrier]) : unit
   (match value
-    [(Some payload) (set! (struct-get payload a) 7)]
+    [(Some payload) (set! payload.a 7)]
     [None unit]))")
 
 (define (compiler-typecheck-param-storage-mut-borrow-root-source) : String
@@ -10938,31 +11016,31 @@
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (touch [value : (&mut value i64)]) : unit unit)
 (define (bad [value : Big]) : unit
-  (touch (&mut (struct-get value a))))")
+  (touch (&mut value.a)))")
 
 (define (compiler-typecheck-param-storage-register-resident-source) : String
   "(defstruct Pair (a i64) (b i64))
 (define (change [value : Pair]) : i64
   (begin
-    (set! (struct-get value a) 7)
-    (struct-get value a)))")
+    (set! value.a 7)
+    value.a))")
 
 (define (compiler-typecheck-param-storage-whole-rebind-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (reset [value : Big]) : i64
   (begin
     (set! value (Big 7 8 9))
-    (struct-get value a)))")
+    value.a))")
 
 (define (compiler-typecheck-param-storage-explicit-mut-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (change [value : (&mut value Big)]) : unit
-  (set! (struct-get value a) 7))
+  (set! value.a 7))
 (define (main) : i64
   (let [value : Big (Big 1 2 3)]
     (begin
       (change (&mut value))
-      (struct-get value a))))")
+      value.a)))")
 
 (define (compiler-typecheck-param-storage-shallow-handle-source) : String
   "(defstruct Bag
@@ -10970,12 +11048,12 @@
   (pad0 i64)
   (pad1 i64))
 (define (change [value : Bag]) : unit
-  (array-set! (struct-get value items) 0 7))")
+  (set! (array-ref value.items 0) 7))")
 
 (define (compiler-typecheck-param-storage-consuming-source) : String
   "(defstruct Big (a i64) (b i64) (c i64))
 (define (change [value : Big (:consume)]) : unit
-  (set! (struct-get value a) 7))")
+  (set! value.a 7))")
 
 (define (compiler-typecheck-param-storage-tests-ok?) : bool
   (and
@@ -11446,6 +11524,19 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-ordinary-overwrite-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-cleanup-overwrite-source)
+        "typecheck: cannot overwrite initialized cleanup-owning place; move or clean up the old value first")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-cleanup-reinit-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         (compiler-typecheck-move-branch-arm-isolated-source))
         unit
         (set! ok false))
@@ -11662,7 +11753,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
-              (cdiag.compiler-diagnostic-list-first (box-get diag))]
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))]
             [message : String (cdiag.compiler-diagnostic-message value)]
             [duplicate-needle : String "symbols: duplicate value declaration f"]
             [main-path : String "src/main.tl"]
@@ -11683,7 +11774,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
-              (cdiag.compiler-diagnostic-list-first (box-get diag))]
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))]
             (and
               (string.contains
                 (cdiag.compiler-diagnostic-message value)
@@ -11703,7 +11794,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
-              (cdiag.compiler-diagnostic-list-first (box-get diag))]
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))]
             (and
               (string.contains
                 (cdiag.compiler-diagnostic-message value)
@@ -11745,15 +11836,14 @@
       (match program
         [(ast.AstProgram.Program decls-box)
           (let
-            [decls : ast.AstDeclList (box-get decls-box)]
+            [decls : ast.AstDeclList (__tl-box-place decls-box)]
             [decl : ast.AstDecl
               (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))]
             (match decl
               [(ast.AstDecl.DefStruct decl-meta name _ cleanup fields)
                 (begin
-                  (array-set!
-                    (struct-get decls slots)
-                    (struct-get decls offset)
+                  (set!
+                    (array-ref decls.slots decls.offset)
                     (ast.AstDecl.DefStruct
                       (ast.ast-decl-meta-runtime-shared-view)
                       name
@@ -11764,7 +11854,8 @@
                     [(tc_core.ResultCompilerTypecheck.Err diag)
                       (let
                         [value : cdiag.CompilerDiagnostic
-                          (cdiag.compiler-diagnostic-list-first (box-get diag))]
+                          (cdiag.compiler-diagnostic-list-first
+                            (__tl-box-place diag))]
                         (and
                           (string.eq
                             (cdiag.compiler-diagnostic-message value)
@@ -11796,7 +11887,7 @@
           [(tc_core.ResultCompilerTypecheck.Err diag)
             (let
               [value : cdiag.CompilerDiagnostic
-                (cdiag.compiler-diagnostic-list-first (box-get diag))]
+                (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))]
               (and
                 (string.eq
                   (cdiag.compiler-diagnostic-message value)

@@ -40,10 +40,10 @@
       (test.assert-true
         (>= (byte_buf_core.byte-buf-builder-capacity (& buf)) 4)
         "push grows")
-      (array-set! src 0 (make-u8 1))
-      (array-set! src 1 (make-u8 200))
-      (array-set! src 2 (make-u8 255))
-      (array-set! src 3 (make-u8 2))
+      (set! (array-ref src 0) (make-u8 1))
+      (set! (array-ref src 1) (make-u8 200))
+      (set! (array-ref src 2) (make-u8 255))
+      (set! (array-ref src 3) (make-u8 2))
       (byte_buf_core.byte-buf-builder-append-array-range (&mut buf) (& src) 1 2)
       (byte_buf_core.byte-buf-builder-append-string (&mut buf) "ok")
       (test.assert-i64-eq
@@ -67,7 +67,7 @@
           (assert-u8-eq (array-ref snap 4) 255 "snapshot max")
           (assert-u8-eq (array-ref snap 5) 111 "snapshot string o")
           (assert-u8-eq (array-ref snap 6) 107 "snapshot string k")
-          (array-set! snap 0 (make-u8 7))
+          (set! (array-ref snap 0) (make-u8 7))
           (let
             [again : (__tl_dyn-array u8)
               (byte_buf_core.byte-buf-builder-copy-range (& buf) 0 1)]

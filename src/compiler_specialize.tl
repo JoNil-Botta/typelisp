@@ -79,9 +79,8 @@
     [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
       (array.make-array SpecGeneratedSymbolRecords 1)]
     (begin
-      (array-set!
-        records
-        0
+      (set!
+        (array-ref records 0)
         (SpecGeneratedSymbolRecords
           (array.make-array SpecGeneratedSymbolRecord 0)
           0))
@@ -99,53 +98,53 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array.ref src index))
+      (set! (array-ref dst index) (array.ref src index))
       (spec-generated-symbol-records-copy-range dst src (+ index 1) count))))
 
 (define (spec-generated-symbol-records-grow!
   [records : (&mut records SpecGeneratedSymbolRecords)]) : unit
   (let
-    [count : i64 (struct-get records len)]
+    [count : i64 records.len]
     [bigger : (__tl_dyn-array SpecGeneratedSymbolRecord)
       (array.make-array SpecGeneratedSymbolRecord (+ (* count 2) 8))]
     (begin
       (spec-generated-symbol-records-copy-range
         (&mut bigger)
-        (& (struct-get records slots))
+        (& records.slots)
         0
         count)
-      (set! (struct-get records slots) bigger))))
+      (set! records.slots bigger))))
 
 (define (spec-generated-symbol-records-push!
   [records : (&mut records SpecGeneratedSymbolRecords)]
   [item : SpecGeneratedSymbolRecord]) : unit
   (begin
-    (if (< (struct-get records len) (array.length (struct-get records slots)))
+    (if (< records.len (array.length records.slots))
       unit
       (spec-generated-symbol-records-grow! records))
     (let
-      [count : i64 (struct-get records len)]
+      [count : i64 records.len]
       (begin
-        (array-set! (struct-get records slots) count item)
-        (set! (struct-get records len) (+ count 1))))))
+        (set! (array-ref records.slots count) item)
+        (set! records.len (+ count 1))))))
 
 (define (spec-owner-pools [owner : SpecOwnerContext]) : ast.AstNodePoolContext
-  (struct-get owner pools))
+  owner.pools)
 
 (define (spec-owner-intern-state [owner : SpecOwnerContext]) : spec_ci.InternCompatState
-  (struct-get owner intern-state))
+  owner.intern-state)
 
 (define (spec-owner-expr-get [owner : SpecOwnerContext] [id : i64]) : ast.AstExpr
-  (ast.ast-expr-segment-bases-get (struct-get owner expr-segment-bases) id))
+  (ast.ast-expr-segment-bases-get owner.expr-segment-bases id))
 
 (define (spec-owner-type-get [owner : SpecOwnerContext] [id : i64]) : ast.AstType
-  (ast.ast-node-pool-context-type-get (struct-get owner pools) id))
+  (ast.ast-node-pool-context-type-get owner.pools id))
 
 (define (spec-owner-expr-push [owner : SpecOwnerContext] [node : ast.AstExpr]) : i64
-  (ast.ast-node-pool-context-expr-push (struct-get owner pools) node))
+  (ast.ast-node-pool-context-expr-push owner.pools node))
 
 (define (spec-owner-type-push [owner : SpecOwnerContext] [node : ast.AstType]) : i64
-  (ast.ast-node-pool-context-type-push (struct-get owner pools) node))
+  (ast.ast-node-pool-context-type-push owner.pools node))
 
 (define (spec-owner-ctfe-env
   [owner : SpecOwnerContext]
@@ -168,7 +167,7 @@
   (value i64))
 
 (defmacro (spec-structural-key-raw [key : Expr]) : i64
-  `(struct-get ,key value))
+  `(__tl-project-field-name ,key "value"))
 
 (cfg
   compile-profile
@@ -296,52 +295,46 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array.ref src index))
+      (set! (array-ref dst index) (array.ref src index))
       (spec-template-list-copy-range dst src (+ index 1) count))))
 
 (define (spec-template-list-grow
   [templates : (&mut templates SpecTemplateList)]) : unit
   (let
-    [count : i64 (struct-get templates len)]
+    [count : i64 templates.len]
     [bigger : (__tl_dyn-array SpecTemplate)
       (array.make-array SpecTemplate (+ (* count 2) 8))]
     (begin
-      (spec-template-list-copy-range
-        (&mut bigger)
-        (& (struct-get templates slots))
-        0
-        count)
-      (set! (struct-get templates slots) bigger))))
+      (spec-template-list-copy-range (&mut bigger) (& templates.slots) 0 count)
+      (set! templates.slots bigger))))
 
 (define (spec-template-list-push
   [templates : (&mut templates SpecTemplateList)]
   [item : SpecTemplate]) : unit
   (begin
-    (if (<
-      (struct-get templates len)
-      (array.length (struct-get templates slots)))
+    (if (< templates.len (array.length templates.slots))
       unit
       (spec-template-list-grow templates))
     (let
-      [count : i64 (struct-get templates len)]
+      [count : i64 templates.len]
       (begin
-        (array-set! (struct-get templates slots) count item)
-        (set! (struct-get templates len) (+ count 1))))))
+        (set! (array-ref templates.slots count) item)
+        (set! templates.len (+ count 1))))))
 
 (define (spec-value-list-new) : SpecValueList
   (SpecValueList (array.make-array ctfe.CompilerCtfeValue 0) 0))
 
 (define (spec-value-cons [head : ctfe.CompilerCtfeValue] [rest : SpecValueList]) : SpecValueList
   (let
-    [count : i64 (struct-get rest len)]
+    [count : i64 rest.len]
     [slots : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (array.make-array ctfe.CompilerCtfeValue (+ count 1))]
     [at : i64 0]
     (begin
-      (array-set! slots 0 head)
+      (set! (array-ref slots 0) head)
       (while (< at count)
         (begin
-          (array-set! slots (+ at 1) (array.ref (struct-get rest slots) at))
+          (set! (array-ref slots (+ at 1)) (array.ref rest.slots at))
           (set! at (+ at 1))))
       (SpecValueList slots (+ count 1)))))
 
@@ -353,15 +346,15 @@
   [value : ctfe.CompilerCtfeValue]
   [rest : SpecValueSubst]) : SpecValueSubst
   (let
-    [count : i64 (struct-get rest len)]
+    [count : i64 rest.len]
     [slots : (__tl_dyn-array SpecValueBinding)
       (array.make-array SpecValueBinding (+ count 1))]
     [at : i64 0]
     (begin
-      (array-set! slots 0 (SpecValueBinding.Bind key-id value))
+      (set! (array-ref slots 0) (SpecValueBinding.Bind key-id value))
       (while (< at count)
         (begin
-          (array-set! slots (+ at 1) (array.ref (struct-get rest slots) at))
+          (set! (array-ref slots (+ at 1)) (array.ref rest.slots at))
           (set! at (+ at 1))))
       (SpecValueSubst slots (+ count 1)))))
 
@@ -373,15 +366,15 @@
   [ty : ast.AstType]
   [rest : SpecTypeSubst]) : SpecTypeSubst
   (let
-    [count : i64 (struct-get rest len)]
+    [count : i64 rest.len]
     [slots : (__tl_dyn-array SpecTypeBinding)
       (array.make-array SpecTypeBinding (+ count 1))]
     [at : i64 0]
     (begin
-      (array-set! slots 0 (SpecTypeBinding.Bind key-id ty))
+      (set! (array-ref slots 0) (SpecTypeBinding.Bind key-id ty))
       (while (< at count)
         (begin
-          (array-set! slots (+ at 1) (array.ref (struct-get rest slots) at))
+          (set! (array-ref slots (+ at 1)) (array.ref rest.slots at))
           (set! at (+ at 1))))
       (SpecTypeSubst slots (+ count 1)))))
 
@@ -568,7 +561,7 @@
       (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner body))]
     [(ast.AstDecl.Test _ _ span) (SpecMaybeSourceSpan.Some span)]
     [(ast.AstDecl.Unsafe inner-box)
-      (spec-decl-maybe-span-with-owner owner (box-get inner-box))]
+      (spec-decl-maybe-span-with-owner owner (__tl-box-place inner-box))]
     [_ (SpecMaybeSourceSpan.None)]))
 
 (define (spec-generated-origin-diagnostic-with-owner
@@ -661,7 +654,7 @@
     [(SpecTemplateShadowList.Cons shadow-name rest)
       (if (= shadow-name name-id)
         true
-        (spec-template-shadow-contains? (box-get rest) name-id))]))
+        (spec-template-shadow-contains? (__tl-box-place rest) name-id))]))
 
 (define (spec-template-values-fill-empty
   [values : (__tl_dyn-array SpecMaybeTemplate)]
@@ -670,7 +663,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! values index (SpecMaybeTemplate.None))
+      (set! (array-ref values index) (SpecMaybeTemplate.None))
       (spec-template-values-fill-empty values (+ index 1) count))))
 
 (define (spec-template-index-build
@@ -679,16 +672,16 @@
   [values : (__tl_dyn-array SpecMaybeTemplate)]
   [at : i64]
   [slot : i64]) : spec_id_i64_map.Map
-  (if (>= at (struct-get templates len))
+  (if (>= at templates.len)
     index
     (let
-      [template : SpecTemplate (array.ref (struct-get templates slots) at)]
+      [template : SpecTemplate (array.ref templates.slots at)]
       (match template
         [(SpecTemplate.Item name _ _ _)
           (if (spec_id_i64_map.contains? (& index) name)
             (spec-template-index-build templates index values (+ at 1) slot)
             (begin
-              (array-set! values slot (SpecMaybeTemplate.Some template))
+              (set! (array-ref values slot) (SpecMaybeTemplate.Some template))
               (let
                 [next-index : spec_id_i64_map.Map index]
                 (begin
@@ -702,7 +695,7 @@
 
 (define (spec-template-env-from-list [templates : SpecTemplateList]) : SpecTemplateEnv
   (let
-    [count : i64 (struct-get templates len)]
+    [count : i64 templates.len]
     [values : (__tl_dyn-array SpecMaybeTemplate)
       (array.make-array SpecMaybeTemplate count)]
     (begin
@@ -718,20 +711,19 @@
         SpecTemplateShadowList.Nil))))
 
 (define (spec-template-lookup [templates : SpecTemplateEnv] [name-id : i64]) : SpecMaybeTemplate
-  (if (spec-template-shadow-contains? (struct-get templates shadowed) name-id)
+  (if (spec-template-shadow-contains? templates.shadowed name-id)
     (SpecMaybeTemplate.None)
-    (match (spec_id_i64_map.get (& (struct-get templates index)) name-id)
-      [(spec_id_i64_map.LookupFound slot)
-        (array.ref (struct-get templates values) slot)]
+    (match (spec_id_i64_map.get (& templates.index) name-id)
+      [(spec_id_i64_map.LookupFound slot) (array.ref templates.values slot)]
       [(spec_id_i64_map.LookupMissing) (SpecMaybeTemplate.None)])))
 
 (define (spec-template-env-shadow-name
   [templates : SpecTemplateEnv]
   [name-id : i64]) : SpecTemplateEnv
   (SpecTemplateEnv
-    (struct-get templates index)
-    (struct-get templates values)
-    (SpecTemplateShadowList.Cons name-id (box (struct-get templates shadowed)))))
+    templates.index
+    templates.values
+    (SpecTemplateShadowList.Cons name-id (box templates.shadowed))))
 
 (define (spec-template-env-shadow-params
   [templates : SpecTemplateEnv]
@@ -780,18 +772,18 @@
     [(ast.AstPattern.Var name _) (spec-template-env-shadow-name templates name)]
     [(ast.AstPattern.Tuple patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (spec-template-env-shadow-pattern-list templates patterns))]
     [(ast.AstPattern.Array patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (spec-template-env-shadow-pattern-list templates patterns))]
     [(ast.AstPattern.Wildcard) templates]
     [(ast.AstPattern.Binding name)
       (spec-template-env-shadow-name templates name)]
     [(ast.AstPattern.Variant _ patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (spec-template-env-shadow-pattern-list templates patterns))]
     [(ast.AstPattern.Literal _) templates]))
 
@@ -804,7 +796,7 @@
   [templates : SpecTemplateEnv]
   [patterns : (& patterns ast.AstPatternList)]
   [index : i64]) : SpecTemplateEnv
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     templates
     (spec-template-env-shadow-pattern-list-at
       (spec-template-env-shadow-pattern
@@ -828,7 +820,7 @@
             (begin
               (match decl
                 [(ast.AstDecl.Unsafe inner-box)
-                  (match (box-get inner-box)
+                  (match (__tl-box-place inner-box)
                     [(ast.AstDecl.DefFn decl-meta name params ret body-box _)
                       (if (spec-param-list-has-comptime? params)
                         (spec-template-list-push
@@ -986,10 +978,10 @@
       (string.append
         "fn_"
         (string.append
-          (spec-type-list-key (box-get args))
+          (spec-type-list-key (__tl-box-place args))
           (string.append "_to_" (spec-type-key (ast.ty-node-get ret)))))]
     [(ast.AstType.Tuple elems)
-      (string.append "tuple_" (spec-type-list-key (box-get elems)))]
+      (string.append "tuple_" (spec-type-list-key (__tl-box-place elems)))]
     [(ast.AstType.Array elem count)
       (string.append
         "array_"
@@ -1031,7 +1023,9 @@
         "enumargs_"
         (string.append
           (ast.ast-nominal-name-id-display name)
-          (string.append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
+          (string.append
+            "_"
+            (spec-lifetime-list-key (__tl-box-place lifetimes)))))]
     [(ast.AstType.Struct name)
       (string.append "struct_" (ast.ast-nominal-name-id-display name))]
     [(ast.AstType.StructArgs name lifetimes)
@@ -1039,14 +1033,18 @@
         "structargs_"
         (string.append
           (ast.ast-nominal-name-id-display name)
-          (string.append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
+          (string.append
+            "_"
+            (spec-lifetime-list-key (__tl-box-place lifetimes)))))]
     [(ast.AstType.Var name) (string.append "var_" (spec_ci.intern-str name))]
     [(ast.AstType.VarArgs name lifetimes)
       (string.append
         "varargs_"
         (string.append
           (spec_ci.intern-str name)
-          (string.append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
+          (string.append
+            "_"
+            (spec-lifetime-list-key (__tl-box-place lifetimes)))))]
     [(ast.AstType.Consume inner)
       (string.append "consume_" (spec-type-key (ast.ty-node-get inner)))]))
 
@@ -1115,14 +1113,14 @@
       (string.append
         "fn_"
         (string.append
-          (spec-type-list-key-with-owner owner (box-get args))
+          (spec-type-list-key-with-owner owner (__tl-box-place args))
           (string.append
             "_to_"
             (spec-type-key-with-owner owner (spec-owner-type-get owner ret)))))]
     [(ast.AstType.Tuple elems)
       (string.append
         "tuple_"
-        (spec-type-list-key-with-owner owner (box-get elems)))]
+        (spec-type-list-key-with-owner owner (__tl-box-place elems)))]
     [(ast.AstType.Array elem count)
       (string.append
         "array_"
@@ -1194,7 +1192,7 @@
             name)
           (string.append
             "_"
-            (spec-lifetime-list-key-with-owner owner (box-get lifetimes)))))]
+            (spec-lifetime-list-key-with-owner owner (__tl-box-place lifetimes)))))]
     [(ast.AstType.Struct name)
       (string.append
         "struct_"
@@ -1210,7 +1208,7 @@
             name)
           (string.append
             "_"
-            (spec-lifetime-list-key-with-owner owner (box-get lifetimes)))))]
+            (spec-lifetime-list-key-with-owner owner (__tl-box-place lifetimes)))))]
     [(ast.AstType.Var name)
       (string.append
         "var_"
@@ -1222,7 +1220,7 @@
           (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) name)
           (string.append
             "_"
-            (spec-lifetime-list-key-with-owner owner (box-get lifetimes)))))]
+            (spec-lifetime-list-key-with-owner owner (__tl-box-place lifetimes)))))]
     [(ast.AstType.Consume inner)
       (string.append
         "consume_"
@@ -1286,10 +1284,10 @@
   (spec-values-key-at values 0))
 
 (define (spec-values-key-at [values : SpecValueList] [at : i64]) : String
-  (if (>= at (struct-get values len))
+  (if (>= at values.len)
     "none"
     (string.append
-      (spec-value-key (array.ref (struct-get values slots) at))
+      (spec-value-key (array.ref values.slots at))
       (string.append "_" (spec-values-key-at values (+ at 1))))))
 
 (define (spec-specialization-key [name : String] [values : SpecValueList]) : String
@@ -1360,10 +1358,10 @@
   [owner : SpecOwnerContext]
   [values : SpecValueList]
   [at : i64]) : String
-  (if (>= at (struct-get values len))
+  (if (>= at values.len)
     "none"
     (string.append
-      (spec-value-key-with-owner owner (array.ref (struct-get values slots) at))
+      (spec-value-key-with-owner owner (array.ref values.slots at))
       (string.append "_" (spec-values-key-with-owner-at owner values (+ at 1))))))
 
 (define (spec-values-key-with-owner
@@ -1507,7 +1505,7 @@
     [(ast.AstType.Func args ret)
       (let
         [arg-key : SpecStructuralKey
-          (spec-type-list-structural-key-with-owner owner (box-get args))]
+          (spec-type-list-structural-key-with-owner owner (__tl-box-place args))]
         [ret-key : SpecStructuralKey
           (spec-type-structural-key-with-owner
             owner
@@ -1520,7 +1518,9 @@
     [(ast.AstType.Tuple elems)
       (let
         [elem-key : SpecStructuralKey
-          (spec-type-list-structural-key-with-owner owner (box-get elems))]
+          (spec-type-list-structural-key-with-owner
+            owner
+            (__tl-box-place elems))]
         (spec-structural-node-with-owner
           owner
           -120
@@ -1652,7 +1652,7 @@
         [lifetime-key : SpecStructuralKey
           (spec-lifetime-list-structural-key-with-owner
             owner
-            (box-get lifetimes))]
+            (__tl-box-place lifetimes))]
         (spec-structural-node-with-owner
           owner
           -131
@@ -1677,7 +1677,7 @@
         [lifetime-key : SpecStructuralKey
           (spec-lifetime-list-structural-key-with-owner
             owner
-            (box-get lifetimes))]
+            (__tl-box-place lifetimes))]
         (spec-structural-node-with-owner
           owner
           -133
@@ -1700,7 +1700,7 @@
         [lifetime-key : SpecStructuralKey
           (spec-lifetime-list-structural-key-with-owner
             owner
-            (box-get lifetimes))]
+            (__tl-box-place lifetimes))]
         (spec-structural-node-with-owner
           owner
           -135
@@ -1848,13 +1848,13 @@
   [owner : SpecOwnerContext]
   [values : SpecValueList]
   [index : i64]) : SpecStructuralKey
-  (if (>= index (struct-get values len))
+  (if (>= index values.len)
     (SpecStructuralKey 0)
     (let
       [head : SpecStructuralKey
         (spec-value-structural-key-with-owner
           owner
-          (array.ref (struct-get values slots) index))]
+          (array.ref values.slots index))]
       [tail : SpecStructuralKey
         (spec-values-structural-key-at-with-owner owner values (+ index 1))]
       (spec-structural-node-with-owner
@@ -1921,7 +1921,7 @@
       (spec_ci.intern-compat-state-generated-symbol-handle
         (spec-owner-intern-state owner))]
     [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
-      (struct-get owner generated-symbol-records)]
+      owner.generated-symbol-records]
     [record-list : SpecGeneratedSymbolRecords (array-ref records 0)]
     (begin
       (spec-generated-symbol-records-push!
@@ -1931,7 +1931,7 @@
           handle
           template-name
           values))
-      (array-set! records 0 record-list)
+      (set! (array-ref records 0) record-list)
       handle)))
 
 (define (spec-materialize-generated-symbol-records-with-owner!
@@ -1939,30 +1939,29 @@
   [records : SpecGeneratedSymbolRecords]) : unit
   (let
     [index : i64 0]
-    (while (< index (struct-get records len))
+    (while (< index records.len)
       (let
-        [record : SpecGeneratedSymbolRecord
-          (array.ref (struct-get records slots) index)]
+        [record : SpecGeneratedSymbolRecord (array.ref records.slots index)]
         (begin
           (spec_ci.intern-compat-state-generated-symbol-materialize!
             (spec-owner-intern-state owner)
-            (struct-get record handle)
+            record.handle
             (spec-render-specialized-name-with-owner
               owner
-              (SpecStructuralKey (struct-get record structural-key))
-              (struct-get record template-name)
-              (struct-get record values)))
+              (SpecStructuralKey record.structural-key)
+              record.template-name
+              record.values))
           (set! index (+ index 1)))))))
 
 (define (spec-materialize-owner-generated-symbols! [owner : SpecOwnerContext]) : unit
   (let
     [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
-      (struct-get owner generated-symbol-records)]
+      owner.generated-symbol-records]
     [record-list : SpecGeneratedSymbolRecords (array-ref records 0)]
     (begin
       (spec-materialize-generated-symbol-records-with-owner! owner record-list)
-      (set! (struct-get record-list len) 0)
-      (array-set! records 0 record-list))))
+      (set! record-list.len 0)
+      (set! (array-ref records 0) record-list))))
 
 (define (gen-registry-empty) : GenRegistry
   (let
@@ -2012,11 +2011,9 @@
 (define (gen-registry-lookup-with-owner
   [registry : GenRegistry]
   [key : SpecStructuralKey]) : GenMaybeEntry
-  (match (spec_id_i64_map.get
-    (& (struct-get registry index))
-    (spec-structural-key-raw key))
+  (match (spec_id_i64_map.get (& registry.index) (spec-structural-key-raw key))
     [(spec_id_i64_map.LookupFound slot)
-      (GenMaybeEntry.Some (array.ref (struct-get registry decls) slot))]
+      (GenMaybeEntry.Some (array.ref registry.decls slot))]
     [(spec_id_i64_map.LookupMissing) (GenMaybeEntry.None)]))
 
 (define (gen-registry-copy-decls
@@ -2027,14 +2024,14 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array.ref src index))
+      (set! (array-ref dst index) (array.ref src index))
       (gen-registry-copy-decls src dst (+ index 1) count))))
 
 (define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
   (let
-    [old-index : spec_id_i64_map.Map (struct-get registry index)]
-    [old-decls : (__tl_dyn-array ast.AstDecl) (struct-get registry decls)]
-    [old-len : i64 (struct-get registry len)]
+    [old-index : spec_id_i64_map.Map registry.index]
+    [old-decls : (__tl_dyn-array ast.AstDecl) registry.decls]
+    [old-len : i64 registry.len]
     [old-capacity : i64 (array.length old-decls)]
     [new-capacity : i64
       (if (< old-capacity 1)
@@ -2052,16 +2049,14 @@
   [decl : ast.AstDecl]) : GenRegistry
   (let
     [ready : GenRegistry
-      (if (>=
-        (struct-get registry len)
-        (array.length (struct-get registry decls)))
+      (if (>= registry.len (array.length registry.decls))
         (gen-registry-grow registry)
         registry)]
-    [slot : i64 (struct-get ready len)]
-    [decls : (__tl_dyn-array ast.AstDecl) (struct-get ready decls)]
-    [index : spec_id_i64_map.Map (struct-get ready index)]
+    [slot : i64 ready.len]
+    [decls : (__tl_dyn-array ast.AstDecl) ready.decls]
+    [index : spec_id_i64_map.Map ready.index]
     (begin
-      (array-set! decls slot decl)
+      (set! (array-ref decls slot) decl)
       (spec_id_i64_map.insert-ref!
         (&mut index)
         (spec-structural-key-raw key)
@@ -2082,7 +2077,7 @@
       (SpecMaybeId.Some name)]
     [(ast.AstDecl.DefMacro decl-meta name _ _ _) (SpecMaybeId.Some name)]
     [(ast.AstDecl.Unsafe inner-box)
-      (gen-decl-visible-name-id (box-get inner-box))]
+      (gen-decl-visible-name-id (__tl-box-place inner-box))]
     [_ (SpecMaybeId.None)]))
 
 (define (gen-decl-visible-name [decl : ast.AstDecl]) : SpecMaybeString
@@ -2197,7 +2192,7 @@
             (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 
 (define (gen-field-list-eq? [a : ast.AstFieldDefList] [b : ast.AstFieldDefList]) : bool
-  (if (= (struct-get (& a) len) (struct-get (& b) len))
+  (if (= a.len b.len)
     (gen-field-list-eq-at (& a) (& b) 0)
     false))
 
@@ -2205,7 +2200,7 @@
   [a : (& a ast.AstFieldDefList)]
   [b : (& b ast.AstFieldDefList)]
   [index : i64]) : bool
-  (if (>= index (struct-get a len))
+  (if (>= index a.len)
     true
     (and
       (gen-field-def-eq?
@@ -2268,7 +2263,7 @@
 (define (gen-variant-payload-cleanup-list-eq?
   [a : ast.AstVariantPayloadCleanupList]
   [b : ast.AstVariantPayloadCleanupList]) : bool
-  (if (= (struct-get (& a) len) (struct-get (& b) len))
+  (if (= a.len b.len)
     (gen-variant-payload-cleanup-list-eq-at? (& a) (& b) 0)
     false))
 
@@ -2276,7 +2271,7 @@
   [a : (& a ast.AstVariantPayloadCleanupList)]
   [b : (& b ast.AstVariantPayloadCleanupList)]
   [index : i64]) : bool
-  (if (>= index (struct-get a len))
+  (if (>= index a.len)
     true
     (and
       (gen-variant-payload-cleanup-eq?
@@ -2303,7 +2298,7 @@
 (define (gen-variant-list-eq?
   [a : ast.AstVariantDefList]
   [b : ast.AstVariantDefList]) : bool
-  (if (= (struct-get (& a) len) (struct-get (& b) len))
+  (if (= a.len b.len)
     (gen-variant-list-eq-at? (& a) (& b) 0)
     false))
 
@@ -2311,7 +2306,7 @@
   [a : (& a ast.AstVariantDefList)]
   [b : (& b ast.AstVariantDefList)]
   [index : i64]) : bool
-  (if (>= index (struct-get a len))
+  (if (>= index a.len)
     true
     (and
       (gen-variant-def-eq?
@@ -2381,13 +2376,13 @@
   [a : ast.AstSpmdSpecialization]
   [b : ast.AstSpmdSpecialization]) : bool
   (and
-    (= (struct-get a lanes) (struct-get b lanes))
+    (= a.lanes b.lanes)
     (gen-spmd-param-class-list-eq-at?
-      (& (box-get (struct-get a args)))
-      (& (box-get (struct-get b args)))
+      (& (__tl-box-place a.args))
+      (& (__tl-box-place b.args))
       0)
-    (gen-spmd-result-class-eq? (struct-get a result) (struct-get b result))
-    (= (struct-get a index-param) (struct-get b index-param))))
+    (gen-spmd-result-class-eq? a.result b.result)
+    (= a.index-param b.index-param)))
 
 (define (gen-spmd-specialization-list-eq-at?
   [a : (& a ast.AstSpmdSpecializationList)]
@@ -2424,8 +2419,8 @@
       (match b
         [(ast.AstFnMetadata.SpmdCallable b-items)
           (gen-spmd-specialization-list-eq-at?
-            (& (box-get a-items))
-            (& (box-get b-items))
+            (& (__tl-box-place a-items))
+            (& (__tl-box-place b-items))
             0)]
         [_ false])]))
 
@@ -2641,14 +2636,16 @@
         [(ast.AstDecl.ModuleBody b-name b-body-box)
           (and
             (= a-name b-name)
-            (gen-decl-list-eq? (box-get a-body-box) (box-get b-body-box)))]
+            (gen-decl-list-eq?
+              (__tl-box-place a-body-box)
+              (__tl-box-place b-body-box)))]
         [_ false])]
     [(ast.AstDecl.Unsafe a-inner-box)
       (let
-        [a-inner : ast.AstDecl (box-get a-inner-box)]
+        [a-inner : ast.AstDecl (__tl-box-place a-inner-box)]
         (match b
           [(ast.AstDecl.Unsafe b-inner-box)
-            (gen-decl-eq? a-inner (box-get b-inner-box))]
+            (gen-decl-eq? a-inner (__tl-box-place b-inner-box))]
           [_ (gen-decl-eq? a-inner b)]))]
     [_ false]))
 
@@ -2786,7 +2783,7 @@
   [a : (& a ast.AstFieldDefList)]
   [b : (& b ast.AstFieldDefList)]
   [index : i64]) : bool
-  (if (>= index (struct-get a len))
+  (if (>= index a.len)
     true
     (and
       (gen-field-def-eq-with-owner
@@ -2802,7 +2799,7 @@
   [a : ast.AstFieldDefList]
   [b : ast.AstFieldDefList]) : bool
   (and
-    (= (struct-get (& a) len) (struct-get (& b) len))
+    (= a.len b.len)
     (gen-field-list-eq-at-with-owner owner env (& a) (& b) 0)))
 
 (define (gen-variant-def-eq-with-owner
@@ -2825,7 +2822,7 @@
   [a : (& a ast.AstVariantDefList)]
   [b : (& b ast.AstVariantDefList)]
   [index : i64]) : bool
-  (if (>= index (struct-get a len))
+  (if (>= index a.len)
     true
     (and
       (gen-variant-def-eq-with-owner
@@ -2841,7 +2838,7 @@
   [a : ast.AstVariantDefList]
   [b : ast.AstVariantDefList]) : bool
   (and
-    (= (struct-get (& a) len) (struct-get (& b) len))
+    (= a.len b.len)
     (gen-variant-list-eq-at-with-owner owner env (& a) (& b) 0)))
 
 (define (gen-fn-metadata-eq-with-owner
@@ -2862,8 +2859,8 @@
       (match b
         [(ast.AstFnMetadata.SpmdCallable b-items)
           (gen-spmd-specialization-list-eq-at?
-            (& (box-get a-items))
-            (& (box-get b-items))
+            (& (__tl-box-place a-items))
+            (& (__tl-box-place b-items))
             0)]
         [_ false])]))
 
@@ -3032,8 +3029,8 @@
             (gen-decl-list-eq-with-owner
               owner
               env
-              (box-get a-body-box)
-              (box-get b-body-box)))]
+              (__tl-box-place a-body-box)
+              (__tl-box-place b-body-box)))]
         [_ false])]
     [(ast.AstDecl.Unsafe a-inner-box)
       (match b
@@ -3041,9 +3038,9 @@
           (gen-decl-eq-with-owner
             owner
             env
-            (box-get a-inner-box)
-            (box-get b-inner-box))]
-        [_ (gen-decl-eq-with-owner owner env (box-get a-inner-box) b)])]
+            (__tl-box-place a-inner-box)
+            (__tl-box-place b-inner-box))]
+        [_ (gen-decl-eq-with-owner owner env (__tl-box-place a-inner-box) b)])]
     [_ false]))
 
 (define (gen-key-exprs-with-owner
@@ -3059,7 +3056,7 @@
   [index : i64]
   [env : ctfe.CtfeEnv]
   [fuel : i64]) : ResultGenKey
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultGenKey.Ok "none" fuel)
     (let
       [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
@@ -3293,7 +3290,7 @@
                 (box
                   (spec-generated-context-diagnostic-with-owner
                     owner
-                    (box-get diag)
+                    (__tl-box-place diag)
                     generator
                     item
                     meta-key)))])))]))
@@ -3424,7 +3421,7 @@
                       out-start
                       rewritten-count
                       (parser.compiler-parse-decl-list-storage-key (& rest))
-                      (- (struct-get rest offset) 1)
+                      (- rest.offset 1)
                       decl
                       (!= rewritten-count 1))
                     (ast.ast-decl-list-append-from
@@ -3510,7 +3507,7 @@
                         out-start
                         rewritten-count
                         (parser.compiler-parse-decl-list-storage-key (& rest))
-                        (- (struct-get rest offset) 1)
+                        (- rest.offset 1)
                         decl
                         (!= rewritten-count 1))
                       (ast.ast-decl-list-append-from
@@ -3534,7 +3531,7 @@
                       (ResultGenDeclsWithPaths.Err
                         (box
                           (cdiag.compiler-diagnostic-with-path
-                            (box-get diag)
+                            (__tl-box-place diag)
                             decl-path))))
                     (set! done true))]))]))
       result)))
@@ -3545,7 +3542,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [env : ctfe.CtfeEnv
           (spec-owner-ctfe-env
             owner
@@ -3568,7 +3565,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [env : ctfe.CtfeEnv
           (spec-owner-ctfe-env
             owner
@@ -3847,9 +3844,9 @@
 ;; Head-first scan: slot 0 is the newest binding, so the first hit is the one
 ;; that shadows. Returns -1 when the name is unbound.
 (define (spec-type-subst-find [subs : SpecTypeSubst] [name-id : i64] [at : i64]) : i64
-  (if (>= at (struct-get subs len))
+  (if (>= at subs.len)
     (- 0 1)
-    (match (array.ref (struct-get subs slots) at)
+    (match (array.ref subs.slots at)
       [(SpecTypeBinding.Bind key-id _)
         (if (= key-id name-id)
           at
@@ -3865,16 +3862,16 @@
     [at : i64 (spec-type-subst-find subs name-id 0)]
     (if (< at 0)
       (ast.AstType.Var name-id)
-      (match (array.ref (struct-get subs slots) at)
+      (match (array.ref subs.slots at)
         [(SpecTypeBinding.Bind _ ty) ty]))))
 
 (define (spec-value-subst-find
   [subs : SpecValueSubst]
   [name-id : i64]
   [at : i64]) : i64
-  (if (>= at (struct-get subs len))
+  (if (>= at subs.len)
     (- 0 1)
-    (match (array.ref (struct-get subs slots) at)
+    (match (array.ref subs.slots at)
       [(SpecValueBinding.Bind key-id _)
         (if (= key-id name-id)
           at
@@ -3890,7 +3887,7 @@
     [at : i64 (spec-value-subst-find subs name-id 0)]
     (if (< at 0)
       (ctfe.CompilerCtfeValue.Unit)
-      (match (array.ref (struct-get subs slots) at)
+      (match (array.ref subs.slots at)
         [(SpecValueBinding.Bind _ value) value]))))
 
 ;; An unbound name leaves the environment alone, so the hot inner-scope walk
@@ -3900,21 +3897,18 @@
     subs
     (let
       [slots : (__tl_dyn-array SpecValueBinding)
-        (array.make-array SpecValueBinding (struct-get subs len))]
+        (array.make-array SpecValueBinding subs.len)]
       [at : i64 0]
       [kept : i64 0]
       (begin
-        (while (< at (struct-get subs len))
+        (while (< at subs.len)
           (begin
-            (match (array.ref (struct-get subs slots) at)
+            (match (array.ref subs.slots at)
               [(SpecValueBinding.Bind key-id _)
                 (if (= key-id name-id)
                   unit
                   (begin
-                    (array-set!
-                      slots
-                      kept
-                      (array.ref (struct-get subs slots) at))
+                    (set! (array-ref slots kept) (array.ref subs.slots at))
                     (set! kept (+ kept 1))))])
             (set! at (+ at 1))))
         (SpecValueSubst slots kept)))))
@@ -3966,17 +3960,17 @@
     [(ast.AstPattern.Var name _) (spec-value-subst-remove-name subs name)]
     [(ast.AstPattern.Tuple patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (spec-value-subst-remove-pattern-list subs patterns))]
     [(ast.AstPattern.Array patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (spec-value-subst-remove-pattern-list subs patterns))]
     [(ast.AstPattern.Wildcard) subs]
     [(ast.AstPattern.Binding name) (spec-value-subst-remove-name subs name)]
     [(ast.AstPattern.Variant _ patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (spec-value-subst-remove-pattern-list subs patterns))]
     [(ast.AstPattern.Literal _) subs]))
 
@@ -3989,7 +3983,7 @@
   [subs : SpecValueSubst]
   [patterns : (& patterns ast.AstPatternList)]
   [index : i64]) : SpecValueSubst
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     subs
     (spec-value-subst-remove-pattern-list-at
       (spec-value-subst-remove-pattern
@@ -4003,21 +3997,18 @@
     subs
     (let
       [slots : (__tl_dyn-array SpecTypeBinding)
-        (array.make-array SpecTypeBinding (struct-get subs len))]
+        (array.make-array SpecTypeBinding subs.len)]
       [at : i64 0]
       [kept : i64 0]
       (begin
-        (while (< at (struct-get subs len))
+        (while (< at subs.len)
           (begin
-            (match (array.ref (struct-get subs slots) at)
+            (match (array.ref subs.slots at)
               [(SpecTypeBinding.Bind key-id _)
                 (if (= key-id name-id)
                   unit
                   (begin
-                    (array-set!
-                      slots
-                      kept
-                      (array.ref (struct-get subs slots) at))
+                    (set! (array-ref slots kept) (array.ref subs.slots at))
                     (set! kept (+ kept 1))))])
             (set! at (+ at 1))))
         (SpecTypeSubst slots kept)))))
@@ -4069,17 +4060,17 @@
     [(ast.AstPattern.Var name _) (spec-type-subst-remove-name subs name)]
     [(ast.AstPattern.Tuple patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (spec-type-subst-remove-pattern-list subs patterns))]
     [(ast.AstPattern.Array patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (spec-type-subst-remove-pattern-list subs patterns))]
     [(ast.AstPattern.Wildcard) subs]
     [(ast.AstPattern.Binding name) (spec-type-subst-remove-name subs name)]
     [(ast.AstPattern.Variant _ patterns-box)
       (let
-        [patterns : ast.AstPatternList (box-get patterns-box)]
+        [patterns : ast.AstPatternList (__tl-box-place patterns-box)]
         (spec-type-subst-remove-pattern-list subs patterns))]
     [(ast.AstPattern.Literal _) subs]))
 
@@ -4092,7 +4083,7 @@
   [subs : SpecTypeSubst]
   [patterns : (& patterns ast.AstPatternList)]
   [index : i64]) : SpecTypeSubst
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     subs
     (spec-type-subst-remove-pattern-list-at
       (spec-type-subst-remove-pattern
@@ -4109,14 +4100,18 @@
     [(ast.AstType.Func args ret)
       (ast.ast-ty-func-with-pools
         (spec-owner-pools owner)
-        (spec-substitute-type-list-with-owner owner (box-get args) subs)
+        (spec-substitute-type-list-with-owner owner (__tl-box-place args) subs)
         (spec-substitute-type-with-owner
           owner
           (spec-owner-type-get owner ret)
           subs))]
     [(ast.AstType.Tuple elems)
       (ast.AstType.Tuple
-        (box (spec-substitute-type-list-with-owner owner (box-get elems) subs)))]
+        (box
+          (spec-substitute-type-list-with-owner
+            owner
+            (__tl-box-place elems)
+            subs)))]
     [(ast.AstType.Array elem count)
       (ast.ast-ty-array-with-pools
         (spec-owner-pools owner)
@@ -4532,8 +4527,7 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecExprList
   (let
-    [out : ast.AstExprList
-      (ast.ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
     (match (spec-rewrite-expr-list-at (& exprs) 0 templates state (&mut out))
       [(ResultSpecExprListBuild.Ok next-state)
         (ResultSpecExprList.Ok out next-state)]
@@ -4545,7 +4539,7 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]
   [out : (&mut out ast.AstExprList)]) : ResultSpecExprListBuild
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultSpecExprListBuild.Ok state)
     (let
       [head : ast.AstExpr
@@ -4615,8 +4609,7 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecMatchArmList
   (let
-    [out : ast.AstMatchArmList
-      (ast.ast-match-arm-list-with-capacity (struct-get (& arms) len))]
+    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
     (match (spec-rewrite-match-arms-at (& arms) 0 templates state (&mut out))
       [(ResultSpecMatchArmListBuild.Ok next-state)
         (ResultSpecMatchArmList.Ok out next-state)]
@@ -4628,7 +4621,7 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]
   [out : (&mut out ast.AstMatchArmList)]) : ResultSpecMatchArmListBuild
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (ResultSpecMatchArmListBuild.Ok state)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -4705,12 +4698,12 @@
   [fn-name : String]) : ResultSpecArgs
   (cond
     [(>= index (ast.ast-param-list-len params))
-      (if (>= index (struct-get args len))
+      (if (>= index args.len)
         (ResultSpecArgs.Ok (spec-value-list-new) (ast.ast-expr-list-new) state)
         (ResultSpecArgs.Err
           (box
             (cdiag.compiler-diagnostic-at-start "" "specialize: arity mismatch"))))]
-    [(>= index (struct-get args len))
+    [(>= index args.len)
       (ResultSpecArgs.Err
         (box
           (cdiag.compiler-diagnostic-at-start "" "specialize: arity mismatch")))]
@@ -4824,7 +4817,7 @@
   [values : SpecValueList]
   [at : i64]) : ResultSpecBuild
   (if (>= index (ast.ast-param-list-len params))
-    (if (>= at (struct-get values len))
+    (if (>= at values.len)
       (ResultSpecBuild.Ok
         (ast.ast-param-list-new)
         (spec-value-subst-new)
@@ -4835,10 +4828,9 @@
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(ast.AstParam.Param name ty is-comptime consume?)
         (if is-comptime
-          (if (< at (struct-get values len))
+          (if (< at values.len)
             (let
-              [value : ctfe.CompilerCtfeValue
-                (array.ref (struct-get values slots) at)]
+              [value : ctfe.CompilerCtfeValue (array.ref values.slots at)]
               (match (spec-build-specialization-at
                 params
                 (+ index 1)
@@ -5141,7 +5133,7 @@
               [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (spec-state-expr-get state body-box)]
@@ -5163,7 +5155,7 @@
                   [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
               [(ResultSpecLetBindingList.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params ret body-box)
           (let
             [body : ast.AstExpr (spec-state-expr-get state body-box)]
@@ -5463,7 +5455,7 @@
               state2)]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr (spec-state-expr-get state scrutinee-box)]
@@ -5480,7 +5472,7 @@
                   [(ResultSpecMatchArmList.Err diag) (ResultSpecExpr.Err diag)])]
               [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
             [start : ast.AstExpr (spec-state-expr-get state start-box)]
@@ -5508,7 +5500,7 @@
                   [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
               [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
             op
             index
@@ -5549,7 +5541,7 @@
                   [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
               [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             op
             index
@@ -5717,7 +5709,7 @@
               [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (ResultSpecExpr.Ok
             (spec-owner-expr-push
@@ -6277,7 +6269,7 @@
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
@@ -6300,7 +6292,7 @@
               [(ResultSpecSubLetBindingList.Err diag)
                 (ResultSpecSubExpr.Err diag)]))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params ret body-box)
           (let
             [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
@@ -6584,7 +6576,7 @@
                 ty-id))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr (spec-owner-expr-get owner scrutinee-box)]
@@ -6604,7 +6596,7 @@
                     (ResultSpecSubExpr.Err diag)])]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
             [start : ast.AstExpr (spec-owner-expr-get owner start-box)]
@@ -6632,7 +6624,7 @@
                   [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
             op
             index
@@ -6677,7 +6669,7 @@
                   [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             op
             index
@@ -6841,7 +6833,7 @@
               [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (ResultSpecSubExpr.Ok
             (spec-owner-expr-push
@@ -7218,8 +7210,7 @@
   [exprs : ast.AstExprList]
   [subs : SpecValueSubst]) : ResultSpecSubExprList
   (let
-    [out : ast.AstExprList
-      (ast.ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
     (match (spec-substitute-values-expr-list-at-with-owner
       owner
       (& exprs)
@@ -7235,7 +7226,7 @@
   [index : i64]
   [subs : SpecValueSubst]
   [out : (&mut out ast.AstExprList)]) : ResultSpecSubExprListBuild
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultSpecSubExprListBuild.Ok)
     (let
       [head : ast.AstExpr
@@ -7306,8 +7297,7 @@
   [arms : ast.AstMatchArmList]
   [subs : SpecValueSubst]) : ResultSpecSubMatchArmList
   (let
-    [out : ast.AstMatchArmList
-      (ast.ast-match-arm-list-with-capacity (struct-get (& arms) len))]
+    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
     (match (spec-substitute-values-match-arms-at-with-owner
       owner
       (& arms)
@@ -7324,7 +7314,7 @@
   [index : i64]
   [subs : SpecValueSubst]
   [out : (&mut out ast.AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (ResultSpecSubMatchArmListBuild.Ok)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -7464,7 +7454,7 @@
                   subs)))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params ret body-box)
           (let
             [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
@@ -7481,7 +7471,7 @@
                     rewritten-body))]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
+      (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
             [start : ast.AstExpr (spec-owner-expr-get owner start-box)]
@@ -7512,7 +7502,7 @@
                   [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
             op
             index
@@ -7560,7 +7550,7 @@
                   [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan
             op
             index
@@ -7726,7 +7716,7 @@
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
             [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
@@ -7984,7 +7974,7 @@
                     rewritten))]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]))]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr (spec-owner-expr-get owner scrutinee-box)]
@@ -8075,7 +8065,7 @@
               [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
+      (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (ResultSpecSubExpr.Ok
             (spec-owner-expr-push
@@ -8453,8 +8443,7 @@
   [exprs : ast.AstExprList]
   [subs : SpecTypeSubst]) : ResultSpecSubExprList
   (let
-    [out : ast.AstExprList
-      (ast.ast-expr-list-with-capacity (struct-get (& exprs) len))]
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
     (match (spec-substitute-types-expr-list-at-with-owner
       owner
       (& exprs)
@@ -8470,7 +8459,7 @@
   [index : i64]
   [subs : SpecTypeSubst]
   [out : (&mut out ast.AstExprList)]) : ResultSpecSubExprListBuild
-  (if (>= index (struct-get exprs len))
+  (if (>= index exprs.len)
     (ResultSpecSubExprListBuild.Ok)
     (let
       [head : ast.AstExpr
@@ -8544,8 +8533,7 @@
   [arms : ast.AstMatchArmList]
   [subs : SpecTypeSubst]) : ResultSpecSubMatchArmList
   (let
-    [out : ast.AstMatchArmList
-      (ast.ast-match-arm-list-with-capacity (struct-get (& arms) len))]
+    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
     (match (spec-substitute-types-match-arms-at-with-owner
       owner
       (& arms)
@@ -8562,7 +8550,7 @@
   [index : i64]
   [subs : SpecTypeSubst]
   [out : (&mut out ast.AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (ResultSpecSubMatchArmListBuild.Ok)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
@@ -8623,7 +8611,7 @@
             [(ResultSpecExpr.Err diag) (ResultSpecDecl.Err diag)])))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (match (spec-rewrite-decl-with-owner owner inner templates state)
           [(ResultSpecDecl.Ok maybe state2)
             (match maybe
@@ -8692,7 +8680,7 @@
                           (- (ast.ast-decl-list-len (& out)) 1)
                           1
                           (parser.compiler-parse-decl-list-storage-key (& rest))
-                          (- (struct-get rest offset) 1)
+                          (- rest.offset 1)
                           decl
                           false))])
                   (set! cursor rest))]
@@ -8768,7 +8756,7 @@
                             1
                             (parser.compiler-parse-decl-list-storage-key
                               (& rest))
-                            (- (struct-get rest offset) 1)
+                            (- rest.offset 1)
                             decl
                             false)
                           (ast.ast-decl-path-list-push-with-owner-id
@@ -8808,7 +8796,7 @@
         (match normalized
           [(ast.AstProgram.Program decls-box)
             (let
-              [decls : ast.AstDeclList (box-get decls-box)]
+              [decls : ast.AstDeclList (__tl-box-place decls-box)]
               [templates : SpecTemplateList
                 (spec-collect-templates-with-pools
                   (spec-owner-pools owner)
@@ -8817,7 +8805,7 @@
                 (spec-owner-ctfe-env
                   owner
                   (ctfe.ctfe-reflections-from-program normalized))]
-              (if (= (struct-get templates len) 0)
+              (if (= templates.len 0)
                 (ResultSpecProgram.Ok normalized)
                 (match (spec-rewrite-decls-with-owner
                   owner
@@ -8856,7 +8844,7 @@
         (match normalized
           [(ast.AstProgram.Program decls-box)
             (let
-              [decls : ast.AstDeclList (box-get decls-box)]
+              [decls : ast.AstDeclList (__tl-box-place decls-box)]
               [templates : SpecTemplateList
                 (spec-collect-templates-with-pools
                   (spec-owner-pools owner)
@@ -8865,7 +8853,7 @@
                 (spec-owner-ctfe-env
                   owner
                   (ctfe.ctfe-reflections-from-program normalized))]
-              (if (= (struct-get templates len) 0)
+              (if (= templates.len 0)
                 (ResultSpecProgramWithPaths.Ok normalized normalized-paths)
                 (match (spec-rewrite-decls-with-paths-with-owner
                   owner
@@ -8977,13 +8965,13 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (if (gen-decls-needed? decls)
           true
           (let
             [templates : SpecTemplateList
               (spec-collect-templates-with-pools pools decls)]
-            (> (struct-get templates len) 0))))]))
+            (> templates.len 0))))]))
 
 (define (compiler-specialize-needed? [program : ast.AstProgram]) : bool
   (compiler-specialize-needed-with-pools
@@ -9037,7 +9025,7 @@
           (match specialized
             [(ast.AstProgram.Program decls-box)
               (let
-                [decls : ast.AstDeclList (box-get decls-box)]
+                [decls : ast.AstDeclList (__tl-box-place decls-box)]
                 (and
                   (not (compiler-specialize-decl-list-defines? decls "alloc"))
                   (compiler-specialize-decl-list-defines?
@@ -9071,7 +9059,7 @@
           (match specialized
             [(ast.AstProgram.Program decls-box)
               (let
-                [decls : ast.AstDeclList (box-get decls-box)]
+                [decls : ast.AstDeclList (__tl-box-place decls-box)]
                 [original : bool
                   (compiler-specialize-decl-list-defines? decls "scale")]
                 [generated : bool
@@ -9090,7 +9078,7 @@
           (match specialized
             [(ast.AstProgram.Program decls-box)
               (let
-                [decls : ast.AstDeclList (box-get decls-box)]
+                [decls : ast.AstDeclList (__tl-box-place decls-box)]
                 (compiler-specialize-decl-list-defines?
                   decls
                   "__tl_specialized_pick_type_i64_none"))])]
@@ -9359,7 +9347,7 @@
           (match specialized
             [(ast.AstProgram.Program decls-box)
               (let
-                [decls : ast.AstDeclList (box-get decls-box)]
+                [decls : ast.AstDeclList (__tl-box-place decls-box)]
                 (and
                   (not (compiler-specialize-decl-list-defines? decls "alloc"))
                   (=
@@ -9587,7 +9575,7 @@
                 (match specialized
                   [(ast.AstProgram.Program decls-box)
                     (let
-                      [decls : ast.AstDeclList (box-get decls-box)]
+                      [decls : ast.AstDeclList (__tl-box-place decls-box)]
                       (compiler-specialize-decl-list-defines?
                         decls
                         "__tl_specialized_tag-helper_string_12_115_116_114_117_99_116_95_80_111_105_110_116_none"))])))]
@@ -9624,16 +9612,15 @@
     (match program
       [(ast.AstProgram.Program decls-box)
         (let
-          [decls : ast.AstDeclList (box-get decls-box)]
+          [decls : ast.AstDeclList (__tl-box-place decls-box)]
           [args : ast.AstExprList (ast.ast-expr-list-new)]
           (begin
             (ast.ast-expr-list-push
               (&mut args)
               (ast.ast-node-push
                 (ast.AstExpr.Literal (ast.ast-lit-generated-string arg))))
-            (array-set!
-              (struct-get decls slots)
-              (+ (struct-get decls offset) index)
+            (set!
+              (array-ref decls.slots (+ decls.offset index))
               (ast.ast-decl-comptime-decl-with-meta
                 (ast.AstGeneratedDeclMeta.Some generator item args "")
                 (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))))))])))
@@ -9705,7 +9692,7 @@
             (match normalized
               [(ast.AstProgram.Program decls-box)
                 (let
-                  [decls : ast.AstDeclList (box-get decls-box)]
+                  [decls : ast.AstDeclList (__tl-box-place decls-box)]
                   (=
                     (compiler-specialize-decl-list-count-visible
                       decls
@@ -9722,7 +9709,7 @@
           (match normalized
             [(ast.AstProgram.Program decls-box)
               (let
-                [decls : ast.AstDeclList (box-get decls-box)]
+                [decls : ast.AstDeclList (__tl-box-place decls-box)]
                 (=
                   (compiler-specialize-decl-list-count-defs
                     decls
@@ -9746,7 +9733,7 @@
         [(ResultSpecProgram.Ok _) false]
         [(ResultSpecProgram.Err diag)
           (let
-            [value : cdiag.CompilerDiagnostic (box-get diag)]
+            [value : cdiag.CompilerDiagnostic (__tl-box-place diag)]
             [notes : cdiag.CompilerDiagnosticNoteList
               (cdiag.compiler-diagnostic-notes value)]
             (and
@@ -9778,7 +9765,7 @@
         [(ResultSpecProgramWithPaths.Ok _ _) false]
         [(ResultSpecProgramWithPaths.Err diag)
           (let
-            [value : cdiag.CompilerDiagnostic (box-get diag)]
+            [value : cdiag.CompilerDiagnostic (__tl-box-place diag)]
             (string.eq
               (cdiag.compiler-diagnostic-path value)
               "generated/second.tl"))])]
@@ -9791,7 +9778,7 @@
         [(ResultSpecProgram.Ok normalized)
           (match normalized
             [(ast.AstProgram.Program decls-box)
-              (match (ast.ast-decl-list-step (box-get decls-box))
+              (match (ast.ast-decl-list-step (__tl-box-place decls-box))
                 [(ast.AstDeclListStep.Cons decl _)
                   (and
                     (match (ast.ast-decl-generated-meta decl)
@@ -9912,7 +9899,7 @@
           [handle : i64
             (spec-reserve-specialized-symbol-with-owner owner key "wide" values)]
           (begin
-            (array-set! handles index handle)
+            (set! (array-ref handles index) handle)
             (if (string.eq
               (spec_ci.intern-compat-state-str intern-state handle)
               "")
@@ -9939,9 +9926,7 @@
       (and
         ok
         (=
-          (struct-get
-            (array-ref (struct-get owner generated-symbol-records) 0)
-            len)
+          (__tl-project-field (array-ref owner.generated-symbol-records 0) len)
           0)))))
 
 (define (compiler-specialize-self-test) : i64

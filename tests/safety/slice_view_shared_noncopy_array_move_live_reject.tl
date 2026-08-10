@@ -10,5 +10,5 @@
     [view : (& items (Slice Payload)) (slice-view items 0 2)]
     [moved : (Array Payload 2) items]
     (+
-      (struct-get (array-ref view 0) value)
-      (struct-get (array-ref moved 0) value))))
+      (__tl-project-field (array-ref view 0) value)
+      (__tl-project-field (array-ref moved 0) value))))

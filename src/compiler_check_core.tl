@@ -84,30 +84,24 @@
   [left : (& left cdiag.CompilerDiagnostic)]
   [right : (& right cdiag.CompilerDiagnostic)]) : bool
   (let
-    [left-primary : (& left cdiag.CompilerDiagnosticSpan)
-      (& (struct-get left primary))]
-    [right-primary : (& right cdiag.CompilerDiagnosticSpan)
-      (& (struct-get right primary))]
-    (if (string.eq
-      (& (struct-get left-primary path))
-      (& (struct-get right-primary path)))
+    [left-primary : (& left cdiag.CompilerDiagnosticSpan) (& left.primary)]
+    [right-primary : (& right cdiag.CompilerDiagnosticSpan) (& right.primary)]
+    (if (string.eq (& left-primary.path) (& right-primary.path))
       (let
-        [left-line : i64 (struct-get left-primary start-line)]
-        [right-line : i64 (struct-get right-primary start-line)]
+        [left-line : i64 left-primary.start-line]
+        [right-line : i64 right-primary.start-line]
         (or
           (< left-line right-line)
           (and
             (= left-line right-line)
-            (<
-              (struct-get left-primary start-col)
-              (struct-get right-primary start-col)))))
+            (< left-primary.start-col right-primary.start-col))))
       false)))
 
 (define (compiler-check-diagnostic-list-insert-source-order
   [diag : cdiag.CompilerDiagnostic]
   [sorted : (&mut sorted cdiag.CompilerDiagnosticList)]) : unit
   (let
-    [count : i64 (struct-get sorted len)]
+    [count : i64 sorted.len]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -155,7 +149,7 @@
           [(ResultCompilerCheck.Err semantic-diagnostics)
             (begin
               (compiler-check-diagnostic-list-insert-all-source-order
-                (box-get semantic-diagnostics)
+                (__tl-box-place semantic-diagnostics)
                 (&mut owned-parse))
               (ResultCompilerCheck.Err (box owned-parse)))])))))
 
@@ -195,7 +189,7 @@
           (ResultCompilerCheck.Err
             (box
               (compiler-check-diagnostics-with-fallback-path
-                (box-get diag)
+                (__tl-box-place diag)
                 path))))])))
 
 (define (compiler-check-program-with-paths-cache
@@ -293,7 +287,7 @@
             cfgs
             parse-identity)]
         (compiler-check-result-with-parse-diagnostics
-          (box-get diagnostics)
+          (__tl-box-place diagnostics)
           (compiler-check-loaded-with-prelude-cache-and-job-state
             path
             prelude-decls
@@ -383,7 +377,7 @@
             cfgs
             parse-identity)]
         (compiler-check-result-with-parse-diagnostics
-          (box-get diagnostics)
+          (__tl-box-place diagnostics)
           (compiler-check-loaded-with-prelude-cache
             path
             prelude-decls
@@ -527,7 +521,7 @@
     [(ResultCompilerCheck.Err diag)
       (string.eq
         (cdiag.compiler-diagnostic-message
-          (cdiag.compiler-diagnostic-list-first (box-get diag)))
+          (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
         want)]))
 
 (define (compiler-check-virtual-import-source) : String
@@ -554,12 +548,12 @@
       (compiler-check-language-cfgs))
       [(parser.ResultAstProgramRecovery.Parsed program diagnostics)
         (compiler-check-result-with-parse-diagnostics
-          (box-get diagnostics)
+          (__tl-box-place diagnostics)
           (match program
             [(ast.AstProgram.Program decls-box)
               (compiler-check-program-with-paths-cache
                 path
-                (box-get decls-box)
+                (__tl-box-place decls-box)
                 (ast.ast-decl-path-list-new)
                 (svec.new)
                 (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
@@ -599,7 +593,7 @@
     (begin
       (when (and (> 5 3) (< 2 4) (= 1 1)) (set! value (+ value 10)))
       (unless (or false false false) (set! value (+ value 20)))
-      (array-set! items 0 value)
+      (set! (array-ref items 0) value)
       (arr.push! items 2)
       (+
         (arr.length items)
@@ -675,11 +669,11 @@
   (match (compiler_typecheck_api.compiler-typecheck-context-program ctx)
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [index : i64 0]
         [name-id : i64 -1]
         (begin
-          (while (and (< name-id 0) (< index (struct-get (& decls) len)))
+          (while (and (< name-id 0) (< index decls.len))
             (let
               [decl : ast.AstDecl
                 (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
@@ -770,15 +764,15 @@
     [(ResultCompilerCheck.Err diag)
       (if (string.eq
         (cdiag.compiler-diagnostic-path
-          (cdiag.compiler-diagnostic-list-first (box-get diag)))
+          (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
         "docs/examples/bad_type.tl")
         (if (=
           (cdiag.compiler-diagnostic-line
-            (cdiag.compiler-diagnostic-list-first (box-get diag)))
+            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
           1)
           (string.eq
             (cdiag.compiler-diagnostic-message
-              (cdiag.compiler-diagnostic-list-first (box-get diag)))
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
             "typecheck: return type mismatch: expected i64, found bool")
           false)
         false)]))

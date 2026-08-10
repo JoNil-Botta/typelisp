@@ -218,7 +218,7 @@
     (begin
       (while (< i len)
         (begin
-          (array-set! new-slots i (array-ref sp-node-pool-slots i))
+          (set! (array-ref new-slots i) (array-ref sp-node-pool-slots i))
           (set! i (+ i 1))))
       (set! sp-node-pool-base-arena head-arena)
       (set! sp-node-pool-slots new-slots))))
@@ -251,7 +251,7 @@
     (begin
       (while (< i len)
         (begin
-          (array-set! new-slots i (array-ref sexpr-node-pool-slots i))
+          (set! (array-ref new-slots i) (array-ref sexpr-node-pool-slots i))
           (set! i (+ i 1))))
       (set! sexpr-node-pool-base-arena head-arena)
       (set! sexpr-node-pool-slots new-slots))))
@@ -284,7 +284,7 @@
     (begin
       (while (< i sp-builder-count)
         (begin
-          (array-set! new-slots i (array-ref sp-builder-slots i))
+          (set! (array-ref new-slots i) (array-ref sp-builder-slots i))
           (set! i (+ i 1))))
       (set! sp-node-pool-base-arena head-arena)
       (set! sp-builder-slots new-slots))))
@@ -316,7 +316,7 @@
     (begin
       (while (< i sexpr-builder-count)
         (begin
-          (array-set! new-slots i (array-ref sexpr-builder-slots i))
+          (set! (array-ref new-slots i) (array-ref sexpr-builder-slots i))
           (set! i (+ i 1))))
       (set! sexpr-node-pool-base-arena head-arena)
       (set! sexpr-builder-slots new-slots))))
@@ -329,7 +329,7 @@
     (let
       [id : i64 sp-node-pool-count]
       (begin
-        (array-set! sp-node-pool-slots id node)
+        (set! (array-ref sp-node-pool-slots id) node)
         (set! sp-node-pool-count (+ id 1))
         id))))
 
@@ -341,7 +341,7 @@
     (let
       [id : i64 sexpr-node-pool-count]
       (begin
-        (array-set! sexpr-node-pool-slots id node)
+        (set! (array-ref sexpr-node-pool-slots id) node)
         (set! sexpr-node-pool-count (+ id 1))
         id))))
 
@@ -560,7 +560,7 @@
     (if (>= sexpr-builder-count (array-length sexpr-builder-slots))
       (sexpr-builder-grow!)
       unit)
-    (array-set! sexpr-builder-slots sexpr-builder-count item)
+    (set! (array-ref sexpr-builder-slots sexpr-builder-count) item)
     (set! sexpr-builder-count (+ sexpr-builder-count 1))
     builder))
 
@@ -571,7 +571,7 @@
     (if (>= sp-builder-count (array-length sp-builder-slots))
       (sp-builder-grow!)
       unit)
-    (array-set! sp-builder-slots sp-builder-count item)
+    (set! (array-ref sp-builder-slots sp-builder-count) item)
     (set! sp-builder-count (+ sp-builder-count 1))
     builder))
 
@@ -811,7 +811,7 @@
 
 ;; Consume the current token: advance the cursor by one.
 (define (advance [cur : (__tl_dyn-array i64)]) : unit
-  (array-set! cur 0 (+ (cur-pos cur) 1)))
+  (set! (array-ref cur 0) (+ (cur-pos cur) 1)))
 
 (define (prefix-tag? [t : i64]) : bool
   (or
@@ -1192,7 +1192,7 @@
     [cur : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (sexpr-node-pool-reset!)
-      (array-set! cur 0 0)
+      (set! (array-ref cur 0) 0)
       (form-result toks cur))))
 
 (define (spanned-result [toks : (__tl_dyn-array token.SpannedToken)]) : ResultSpannedSexpr
@@ -1200,7 +1200,7 @@
     [cur : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (set! sp-builder-count 0)
-      (array-set! cur 0 0)
+      (set! (array-ref cur 0) 0)
       (form-spanned-result toks cur))))
 
 (define (symbol-id-preservation-ok?) : bool

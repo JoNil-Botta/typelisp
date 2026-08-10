@@ -11,9 +11,8 @@
         ([i : i64 0 n])
         (let
           [x : i16 (array-ref xs i)]
-          (array-set!
-            out
-            i
+          (set!
+            (array-ref out i)
             (if (< x 0)
               (shr x 1)
               (shl x 1)))))

@@ -74,16 +74,16 @@
   (SourceError message span))
 
 (define (span-start-line [span : SourceSpan]) : i64
-  (struct-get span start-line))
+  span.start-line)
 
 (define (span-start-col [span : SourceSpan]) : i64
-  (struct-get span start-col))
+  span.start-col)
 
 (define (span-end-line [span : SourceSpan]) : i64
-  (struct-get span end-line))
+  span.end-line)
 
 (define (span-end-col [span : SourceSpan]) : i64
-  (struct-get span end-col))
+  span.end-col)
 
 (define (span-eq?
   [span : SourceSpan]
@@ -98,10 +98,10 @@
     (= (span-end-col span) end-col)))
 
 (define (source-error-message [err : SourceError]) : String
-  (struct-get err message))
+  err.message)
 
 (define (source-error-span [err : SourceError]) : SourceSpan
-  (struct-get err span))
+  err.span)
 
 (define (merge-spans [start : SourceSpan] [end : SourceSpan]) : SourceSpan
   (SourceSpan
@@ -281,13 +281,13 @@
   (SpannedToken tok (cast line : i32) (cast col : i32)))
 
 (define (spanned-token-tok [s : SpannedToken]) : Token
-  (struct-get s tok))
+  s.tok)
 
 (define (spanned-token-line [s : (& s SpannedToken)]) : i64
-  (cast (struct-get s line) : i64))
+  (cast s.line : i64))
 
 (define (spanned-token-col [s : (& s SpannedToken)]) : i64
-  (cast (struct-get s col) : i64))
+  (cast s.col : i64))
 
 (define (spanned-token-token [s : SpannedToken]) : Token
   (spanned-token-tok s))

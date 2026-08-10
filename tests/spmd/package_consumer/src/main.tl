@@ -4,19 +4,21 @@
 (import fixture.src.lib as fixture)
 
 (define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (fixture.helper i 3))))
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (fixture.helper i 3))))
 
 (define (fill-masked [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 10)
       (if (fixture.positive? i)
-        (array-set! out i (fixture.shifted (+ i 1)))
-        (array-set! out i 0))
-      (array-set! out i 0))))
+        (set! (array-ref out i) (fixture.shifted (+ i 1)))
+        (set! (array-ref out i) 0))
+      (set! (array-ref out i) 0))))
 
 (define (fill-uniform-result [out : (__tl_dyn-array i64)] [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (fixture.constant (+ i 1) 7))))
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (fixture.constant (+ i 1) 7))))
 
 (define (fill-uniform-i16
   [input : (__tl_dyn-array i16)]
@@ -24,9 +26,8 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (fixture.constant-i16 (array-ref input i) (cast -20000 : i16)))))
 
 (define (fill-uniform-u16
@@ -35,9 +36,8 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (fixture.constant-u16 (array-ref input i) (cast 50000 : u16)))))
 
 (define (fill-uniform-i8
@@ -46,9 +46,8 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (fixture.constant-i8 (array-ref input i) (cast -100 : i8)))))
 
 (define (fill-uniform-u8
@@ -57,15 +56,19 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (fixture.constant-u8 (array-ref input i) (cast 200 : u8)))))
+    (set!
+      (array-ref out i)
+      (fixture.constant-u8 (array-ref input i) (cast 200 : u8)))))
 
 (define (fill-literal-uniform-result [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (fixture.literal-constant (+ i 1)))))
+    (set! (array-ref out i) (fixture.literal-constant (+ i 1)))))
 
 (define (fill-cast-uniform-result [out : (__tl_dyn-array i64)] [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (fixture.cast-constant (+ i 1)))))
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (fixture.cast-constant (+ i 1)))))
 
 (define (call-unit-result [n : i64]) : unit
   (foreach ([i : i64 0 n]) (fixture.sink (+ i 1))))
@@ -76,7 +79,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (fixture.add-f64 (array-ref input i) 0.5))))
+    (set! (array-ref out i) (fixture.add-f64 (array-ref input i) 0.5))))
 
 (define (fill-f32
   [input : (__tl_dyn-array f32)]
@@ -84,7 +87,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (fixture.add-f32 (array-ref input i) 0.25))))
+    (set! (array-ref out i) (fixture.add-f32 (array-ref input i) 0.25))))
 
 (define (main) : i64
   (let
@@ -110,12 +113,12 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! f64-input i (cast i : f64))
-          (array-set! f32-input i (cast i : f32))
-          (array-set! input-i16 i (cast i : i16))
-          (array-set! input-u16 i (cast i : u16))
-          (array-set! input-i8 i (cast i : i8))
-          (array-set! input-u8 i (cast i : u8))
+          (set! (array-ref f64-input i) (cast i : f64))
+          (set! (array-ref f32-input i) (cast i : f32))
+          (set! (array-ref input-i16 i) (cast i : i16))
+          (set! (array-ref input-u16 i) (cast i : u16))
+          (set! (array-ref input-i8 i) (cast i : i8))
+          (set! (array-ref input-u8 i) (cast i : u8))
           (set! i (+ i 1))))
       (fill out n)
       (fill-masked masked n)

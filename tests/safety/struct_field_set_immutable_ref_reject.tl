@@ -3,7 +3,7 @@
   (y i64))
 
 (define (bad [p : (& p Pair)]) : unit
-  (set! (struct-get p x) 3))
+  (set! p.x 3))
 
 (define (main) : unit
   unit)

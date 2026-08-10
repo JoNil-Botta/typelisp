@@ -23,9 +23,9 @@
   (match tree
     [(dep.ImportedLeaf _) false]
     [(dep.ImportedBranch left right)
-      (match (box-get left)
+      (match (__tl-box-place left)
         [(dep.ImportedLeaf left-text)
-          (match (box-get right)
+          (match (__tl-box-place right)
             [(dep.ImportedLeaf right-text)
               (and
                 (string.eq left-text (string.append tag ":left"))

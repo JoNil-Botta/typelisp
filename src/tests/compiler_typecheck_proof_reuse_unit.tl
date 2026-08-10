@@ -1052,7 +1052,7 @@
                     (match program
                       [(ast.AstProgram.Program decls-box)
                         (let
-                          [decls : ast.AstDeclList (box-get decls-box)]
+                          [decls : ast.AstDeclList (__tl-box-place decls-box)]
                           [decl-count : i64 (ast.ast-decl-list-len (& decls))]
                           (if (or
                             (< first-module-index 0)
@@ -1072,9 +1072,9 @@
                                   [(ast.AstDecl.ModuleBody _ next-body-box)
                                     (let
                                       [first-body : ast.AstDeclList
-                                        (box-get first-body-box)]
+                                        (__tl-box-place first-body-box)]
                                       [next-body : ast.AstDeclList
-                                        (box-get next-body-box)]
+                                        (__tl-box-place next-body-box)]
                                       [first-count : i64
                                         (ast.ast-decl-list-len (& first-body))]
                                       [next-count : i64
@@ -1180,7 +1180,7 @@
                     (match program
                       [(ast.AstProgram.Program decls-box)
                         (let
-                          [decls : ast.AstDeclList (box-get decls-box)]
+                          [decls : ast.AstDeclList (__tl-box-place decls-box)]
                           [decl-count : i64 (ast.ast-decl-list-len (& decls))]
                           (if (or
                             (< first-module-index 0)
@@ -1200,9 +1200,9 @@
                                   [(ast.AstDecl.ModuleBody _ next-body-box)
                                     (let
                                       [first-body : ast.AstDeclList
-                                        (box-get first-body-box)]
+                                        (__tl-box-place first-body-box)]
                                       [next-body : ast.AstDeclList
-                                        (box-get next-body-box)]
+                                        (__tl-box-place next-body-box)]
                                       [first-count : i64
                                         (ast.ast-decl-list-len (& first-body))]
                                       [next-count : i64
@@ -1314,17 +1314,17 @@
         false)
         unit
         (set! ok false))
-      ;; DefFn: a nominal type nested in the reference parameter is outside
-      ;; the audited type surface, so the declaration fails closed.
+      ;; DefFn is structurally exact, but a nominal type nested in the
+      ;; reference parameter is outside the audited safe-reuse type surface.
       (if (compiler-typecheck-generated-walker-pair?
         "(module tc-walker-first
   (defstruct Vec (slots (& caller (__tl_dyn-array i64))))
   (define (slots [v : (& caller Vec)]) : (& caller (__tl_dyn-array i64))
-    (struct-get (& v) slots)))
+    (__tl_struct-get v slots)))
 (module tc-walker-next
   (defstruct Vec (slots (& caller (__tl_dyn-array u8))))
   (define (slots [v : (& caller Vec)]) : (& caller (__tl_dyn-array u8))
-    (struct-get (& v) slots)))"
+    (__tl_struct-get v slots)))"
         0
         1
         1
@@ -1333,7 +1333,7 @@
         "i64"
         "u8"
         "u8"
-        false
+        true
         false)
         unit
         (set! ok false))
@@ -1452,15 +1452,58 @@
         false)
         unit
         (set! ok false))
+      ;; A public dotted projection and its normalized StructGet form are one
+      ;; semantic AST.  Native TLCI and source/shell expansion may hand the
+      ;; proof lane either representation, in either identity order.
+      (if (compiler-typecheck-generated-context-walker-pair?
+        "(module tc-walker-first
+  (defstruct Vec (len i64))
+  (define (len [v : (& v Vec)]) : i64 (__tl_struct-get v len)))
+(module tc-walker-next
+  (defstruct Vec (len i64))
+  (define (len [v : (& v Vec)]) : i64 v.len))"
+        0
+        1
+        1
+        1
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        true
+        true
+        true)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-context-walker-pair?
+        "(module tc-walker-first
+  (defstruct Vec (len i64))
+  (define (len [v : (& v Vec)]) : i64 v.len))
+(module tc-walker-next
+  (defstruct Vec (len i64))
+  (define (len [v : (& v Vec)]) : i64 (__tl_struct-get v len)))"
+        0
+        1
+        1
+        1
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        true
+        true
+        true)
+        unit
+        (set! ok false))
       ;; StructGet's field result is selected by the receiver's hidden nominal
       ;; type, so a fixed field beside a substituted payload needs checking.
       (if (compiler-typecheck-generated-context-walker-pair?
         "(module tc-walker-first
   (defstruct Box (fixed i64) (payload i64))
-  (define (field [value : Box]) : i64 (struct-get value fixed)))
+  (define (field [value : Box]) : i64 (__tl_struct-get value fixed)))
 (module tc-walker-next
   (defstruct Box (fixed i64) (payload u8))
-  (define (field [value : Box]) : u8 (struct-get value fixed)))"
+  (define (field [value : Box]) : u8 (__tl_struct-get value fixed)))"
         0
         1
         1
@@ -1797,7 +1840,7 @@
                   (match program
                     [(ast.AstProgram.Program decls-box)
                       (let
-                        [decls : ast.AstDeclList (box-get decls-box)]
+                        [decls : ast.AstDeclList (__tl-box-place decls-box)]
                         [first-module : ast.AstDecl
                           (ast.ast-decl-list-get
                             (& decls)
@@ -1814,9 +1857,9 @@
                               [(ast.AstDecl.ModuleBody _ next-box)
                                 (let
                                   [first-body : ast.AstDeclList
-                                    (box-get first-box)]
+                                    (__tl-box-place first-box)]
                                   [next-body : ast.AstDeclList
-                                    (box-get next-box)]
+                                    (__tl-box-place next-box)]
                                   [first-decl : ast.AstDecl
                                     (ast.ast-decl-list-get
                                       (& first-body)

@@ -1190,7 +1190,7 @@
         (ResultBuildManifest.Ok manifest)]
       [(load.ResultCompilerPkgManifestDiagnostic.Err diag)
         (ResultBuildManifest.Err
-          (build-invalid-manifest-message (box-get diag)))])
+          (build-invalid-manifest-message (__tl-box-place diag)))])
     (ResultBuildManifest.Err
       (str_cat.str-cat "cannot read package manifest '" manifest-path "'"))))
 
@@ -1317,11 +1317,11 @@
 
 (define (build-package-runtime-artifact-path
   [artifacts : BuildPackageArtifactPaths]) : String
-  (struct-get artifacts runtime))
+  artifacts.runtime)
 
 (define (build-package-host-tlci-artifact-path
   [artifacts : BuildPackageArtifactPaths]) : String
-  (struct-get artifacts tlci))
+  artifacts.tlci)
 
 (define (build-package-path-layout-smoke-ok?) : bool
   (and
@@ -1438,7 +1438,7 @@
   [manifest-dir : String]
   [dep : load.CompilerPkgDep]) : String
   (load.compiler-load-normalize-path
-    (load.compiler-load-join-root-path manifest-dir (struct-get dep path))))
+    (load.compiler-load-join-root-path manifest-dir dep.path)))
 
 (define (build-package-dep-manifest-path
   [manifest-dir : String]
@@ -1516,7 +1516,7 @@
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : package_cache_core.ResultPackageCachePinKind
   (let
-    [kind : String (string.copy (& (struct-get dep pin-kind)))]
+    [kind : String (string.copy (& dep.pin-kind))]
     (cond
       [(string.eq kind "rev")
         (package_cache_core.ResultPackageCachePinKind.Ok
@@ -1558,7 +1558,7 @@
                   message))]
             [(package_lock_core.ResultPackageLockFile.Ok lock)
               (ResultBuildPackageLockState.Ok
-                (BuildPackageLockState path (struct-get lock entries) true))])])
+                (BuildPackageLockState path lock.entries true))])])
       (ResultBuildPackageLockState.Ok
         (BuildPackageLockState path (package_lock_entry_vec.new) false)))))
 
@@ -1571,7 +1571,7 @@
         (package_lock_core.package-lock-version-shared-view)
         entries)]
     [text : String (package_lock_core.package-lock-emit lock)]
-    [path : String (struct-get state path)]
+    [path : String state.path]
     (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& text)))
       [(io.OkIoUnit) (ResultBuildString.Ok path)]
       [(io.ErrIoUnit error)
@@ -1590,14 +1590,10 @@
     [(package_cache_core.ResultPackageCachePinKind.Err _) false]
     [(package_cache_core.ResultPackageCachePinKind.Ok kind)
       (and
-        (string.eq (& (struct-get entry alias)) alias)
-        (string.eq (& (struct-get entry url)) (& (struct-get dep remote)))
-        (package_cache_core.package-cache-pin-kind-eq?
-          (struct-get entry pin-kind)
-          kind)
-        (string.eq
-          (& (struct-get entry pin-value))
-          (& (struct-get dep pin-value))))]))
+        (string.eq (& entry.alias) alias)
+        (string.eq (& entry.url) (& dep.remote))
+        (package_cache_core.package-cache-pin-kind-eq? entry.pin-kind kind)
+        (string.eq (& entry.pin-value) (& dep.pin-value)))]))
 
 (define (build-package-lock-matching-entry
   [entries : package_lock_entry_vec.Vec]
@@ -1645,22 +1641,22 @@
       (package_lock_core.ResultPackageLockEntry.Ok
         (package_lock_core.PackageLockEntry
           alias
-          (string.copy (& (struct-get dep remote)))
+          (string.copy (& dep.remote))
           kind
-          (string.copy (& (struct-get dep pin-value)))
+          (string.copy (& dep.pin-value))
           commit))]))
 
 (define (build-git-dependency-at-commit
   [dep : (& dep BuildGitDependency)]
   [commit : String]) : BuildGitDependency
-  (BuildGitDependency (string.copy (& (struct-get dep remote))) "rev" commit))
+  (BuildGitDependency (string.copy (& dep.remote)) "rev" commit))
 
 (define (build-git-checkout-ref [dep : (& dep BuildGitDependency)]) : String
   (let
-    [kind : String (string.copy (& (struct-get dep pin-kind)))]
+    [kind : String (string.copy (& dep.pin-kind))]
     (if (string.eq kind "branch")
-      (str_cat.str-cat "origin/" (string.copy (& (struct-get dep pin-value))))
-      (string.copy (& (struct-get dep pin-value))))))
+      (str_cat.str-cat "origin/" (string.copy (& dep.pin-value)))
+      (string.copy (& dep.pin-value)))))
 
 (define (build-process-output-detail [output : process.ProcessOutput]) : String
   (let
@@ -1760,7 +1756,7 @@
     (io.file-exists? (build-github-cache-git-dir manifest-dir alias))))
 
 (define (build-git-dep-rev? [dep : (& dep BuildGitDependency)]) : bool
-  (string.eq (& (struct-get dep pin-kind)) "rev"))
+  (string.eq (& dep.pin-kind) "rev"))
 
 (define (build-package-cache-relative-root) : String
   "target/typelisp/cache/packages/v1")
@@ -1938,9 +1934,7 @@
         [(ResultBuildString.Ok staged-path)
           (match (build-run-captured
             (build-git-dep-error alias "git clone")
-            (build-git-clone-command
-              (string.copy (& (struct-get dep remote)))
-              staged-path))
+            (build-git-clone-command (string.copy (& dep.remote)) staged-path))
             [(ResultBuildString.Err message) (ResultBuildString.Err message)]
             [(ResultBuildString.Ok _)
               (match (build-run-captured
@@ -1998,8 +1992,8 @@
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : ResultBuildString
   (let
-    [remote : String (string.copy (& (struct-get dep remote)))]
-    [pin-value : String (string.copy (& (struct-get dep pin-value)))]
+    [remote : String (string.copy (& dep.remote))]
+    [pin-value : String (string.copy (& dep.pin-value))]
     [key : package_cache_core.PackageCacheKey
       (package_cache_core.PackageCacheKey remote pin-value)]
     [root : String (package_cache_core.package-cache-default-root manifest-dir)]
@@ -2060,7 +2054,7 @@
     (ResultBuildString.Ok root)
     (build-run-captured
       (build-git-dep-error alias "git clone")
-      (build-git-clone-command (string.copy (& (struct-get dep remote))) root))))
+      (build-git-clone-command (string.copy (& dep.remote)) root))))
 
 (define (build-fetch-github-dependency-legacy
   [manifest-dir : String]
@@ -2114,7 +2108,7 @@
   [dep : BuildGitDependency]
   [entry : package_lock_core.PackageLockEntry]) : ResultBuildResolvedGitDependency
   (let
-    [locked-commit : String (struct-get entry commit)]
+    [locked-commit : String entry.commit]
     [locked-dep : BuildGitDependency
       (build-git-dependency-at-commit (& dep) locked-commit)]
     (match (build-fetch-github-dependency-cached
@@ -2138,7 +2132,7 @@
       (let
         [commit-result : ResultBuildString
           (if (build-git-dep-rev? (& dep))
-            (ResultBuildString.Ok (string.copy (& (struct-get dep pin-value))))
+            (ResultBuildString.Ok (string.copy (& dep.pin-value)))
             (build-resolve-git-head
               alias
               (build-absolute-dep-root manifest-dir dep-root)))]
@@ -2191,8 +2185,8 @@
   [lock-policy : BuildPackageLockPolicy]
   [dep : load.CompilerPkgDep]) : ResultBuildResolvedPkgDep
   (let
-    [path : String (struct-get dep path)]
-    [alias : String (struct-get dep alias)]
+    [path : String dep.path]
+    [alias : String dep.alias]
     [path-for-kind : String (string.copy (& path))]
     (if (load.compiler-load-github-dependency-path? path-for-kind)
       (let
@@ -2214,8 +2208,8 @@
               [(ResultBuildResolvedGitDependency.Ok resolved)
                 (ResultBuildResolvedPkgDep.Ok
                   (BuildResolvedPkgDep
-                    (load.CompilerPkgDep alias (struct-get resolved dep-root))
-                    (BuildMaybeLockEntry.Some (struct-get resolved lock-entry))))])]))
+                    (load.CompilerPkgDep alias resolved.dep-root)
+                    (BuildMaybeLockEntry.Some resolved.lock-entry)))])]))
       (ResultBuildResolvedPkgDep.Ok
         (BuildResolvedPkgDep
           (load.CompilerPkgDep alias path)
@@ -2231,7 +2225,7 @@
     dep)
     [(ResultBuildResolvedPkgDep.Err message) (ResultBuildPkgDep.Err message)]
     [(ResultBuildResolvedPkgDep.Ok resolved)
-      (ResultBuildPkgDep.Ok (struct-get resolved dep))]))
+      (ResultBuildPkgDep.Ok resolved.dep)]))
 
 (define (build-package-lock-entry-list-add
   [entries : package_lock_entry_vec.Vec]
@@ -2247,11 +2241,11 @@
   [entry : package_lock_core.PackageLockEntry]) : bool
   (package_lock_core.package-lock-list-has-entry?
     entries
-    (struct-get entry alias)
-    (struct-get entry url)
-    (struct-get entry pin-kind)
-    (struct-get entry pin-value)
-    (struct-get entry commit)))
+    entry.alias
+    entry.url
+    entry.pin-kind
+    entry.pin-value
+    entry.commit))
 
 (define (build-package-lock-list-contains-all?
   [haystack : package_lock_entry_vec.Vec]
@@ -2287,17 +2281,13 @@
   [lock-state : BuildPackageLockState]
   [resolved : BuildResolvedPkgDeps]) : ResultBuildString
   (if (build-package-lock-policy-locked? policy)
-    (if (and
-      (struct-get resolved has-remote)
-      (not (struct-get lock-state has-lock)))
+    (if (and resolved.has-remote (not lock-state.has-lock))
       (ResultBuildString.Err
         "build: --locked requires typelisp.lock for remote dependencies; run with --update-lock to refresh typelisp.lock")
       (if (and
-        (struct-get lock-state has-lock)
+        lock-state.has-lock
         (not
-          (build-package-lock-list-eq?
-            (struct-get lock-state entries)
-            (struct-get resolved lock-entries))))
+          (build-package-lock-list-eq? lock-state.entries resolved.lock-entries)))
         (ResultBuildString.Err
           "build: package lock is stale; run with --update-lock to refresh typelisp.lock")
         (ResultBuildString.Ok "")))
@@ -2309,8 +2299,8 @@
   [resolved : BuildResolvedPkgDeps]) : ResultBuildString
   (if (and
     (not (build-package-lock-policy-locked? policy))
-    (or (struct-get resolved has-remote) (struct-get lock-state has-lock)))
-    (build-write-package-lock lock-state (struct-get resolved lock-entries))
+    (or resolved.has-remote lock-state.has-lock))
+    (build-write-package-lock lock-state resolved.lock-entries)
     (ResultBuildString.Ok "")))
 
 (define (build-package-resolve-deps-with-lock
@@ -2343,8 +2333,8 @@
             (ResultBuildResolvedPkgDeps.Err message)]
           [(ResultBuildResolvedPkgDeps.Ok resolved-rest)
             (match (build-package-lock-entry-list-add
-              (struct-get resolved-rest lock-entries)
-              (struct-get resolved-dep lock-entry))
+              resolved-rest.lock-entries
+              resolved-dep.lock-entry)
               [(package_lock_core.ResultPackageLockEntryList.Err message)
                 (ResultBuildResolvedPkgDeps.Err message)]
               [(package_lock_core.ResultPackageLockEntryList.Ok
@@ -2352,12 +2342,12 @@
                 (ResultBuildResolvedPkgDeps.Ok
                   (BuildResolvedPkgDeps
                     (load.compiler-pkg-dep-list-cons
-                      (struct-get resolved-dep dep)
-                      (struct-get resolved-rest deps))
+                      resolved-dep.dep
+                      resolved-rest.deps)
                     next-lock-entries
                     (or
-                      (struct-get resolved-rest has-remote)
-                      (match (struct-get resolved-dep lock-entry)
+                      resolved-rest.has-remote
+                      (match resolved-dep.lock-entry
                         [(BuildMaybeLockEntry.No) false]
                         [(BuildMaybeLockEntry.Some _) true]))))])])])))
 
@@ -2373,9 +2363,9 @@
       [(ResultBuildPackageLockState.Ok lock-state)
         (match (build-package-resolve-deps-with-lock
           manifest-dir
-          (struct-get lock-state entries)
+          lock-state.entries
           lock-policy
-          (load.compiler-pkg-deps-list (struct-get manifest deps))
+          (load.compiler-pkg-deps-list manifest.deps)
           0)
           [(ResultBuildResolvedPkgDeps.Err message)
             (ResultBuildManifest.Err message)]
@@ -2396,13 +2386,12 @@
                   [(ResultBuildString.Ok _)
                     (ResultBuildManifest.Ok
                       (load.CompilerPkgManifest
-                        (struct-get manifest name)
-                        (struct-get manifest version)
-                        (struct-get manifest kind)
-                        (struct-get manifest entry)
-                        (load.compiler-pkg-deps-from-list
-                          (struct-get resolved deps))
-                        (struct-get manifest link)))])])])])))
+                        manifest.name
+                        manifest.version
+                        manifest.kind
+                        manifest.entry
+                        (load.compiler-pkg-deps-from-list resolved.deps)
+                        manifest.link))])])])])))
 
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (load.compiler-load-normalize-path manifest-path))
@@ -2411,15 +2400,15 @@
   [paths : BuildPackagePathSeq]
   [path : String]) : BuildPackagePathSeq
   (let
-    [count : i64 (struct-get paths len)]
+    [count : i64 paths.len]
     [slots : (__tl_dyn-array String) (make-array String (+ count 1))]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (array-ref (struct-get paths slots) index))
+          (set! (array-ref slots index) (array-ref paths.slots index))
           (set! index (+ index 1))))
-      (array-set! slots count path)
+      (set! (array-ref slots count) path)
       (BuildPackagePathSeq slots (+ count 1)))))
 
 (define (build-package-path-seq-render [paths : BuildPackagePathSeq]) : String
@@ -2427,9 +2416,9 @@
     [out : String ""]
     [index : i64 0]
     (begin
-      (while (< index (struct-get paths len))
+      (while (< index paths.len)
         (let
-          [path : String (array-ref (struct-get paths slots) index)]
+          [path : String (array-ref paths.slots index)]
           (begin
             (set!
               out
@@ -2449,10 +2438,10 @@
     manifest-path))
 
 (define (build-package-graph-node-vec-len [v : BuildPackageGraphNodeVec]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (build-package-graph-node-vec-capacity [v : BuildPackageGraphNodeVec]) : i64
-  (array-length (struct-get v slots)))
+  (array-length v.slots))
 
 (define (build-package-graph-node-vec-with-capacity [capacity : i64]) : BuildPackageGraphNodeVec
   (let
@@ -2468,7 +2457,7 @@
 (define (build-package-graph-node-vec-at
   [v : BuildPackageGraphNodeVec]
   [index : i64]) : BuildPackageGraphNode
-  (array-ref (struct-get v slots) index))
+  (array-ref v.slots index))
 
 (define (build-package-graph-node-vec-copy-range!
   [dst : (__tl_dyn-array BuildPackageGraphNode)]
@@ -2478,7 +2467,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec]) : BuildPackageGraphNodeVec
@@ -2489,10 +2478,7 @@
         BuildPackageGraphNode
         (* (build-package-graph-node-vec-capacity v) 2))]
     (begin
-      (build-package-graph-node-vec-copy-range!
-        bigger
-        (struct-get v slots)
-        count)
+      (build-package-graph-node-vec-copy-range! bigger v.slots count)
       (BuildPackageGraphNodeVec bigger count))))
 
 (define (build-package-graph-node-vec-push
@@ -2502,9 +2488,9 @@
     (build-package-graph-node-vec-len v)
     (build-package-graph-node-vec-capacity v))
     (let
-      [slots : (__tl_dyn-array BuildPackageGraphNode) (struct-get v slots)]
+      [slots : (__tl_dyn-array BuildPackageGraphNode) v.slots]
       (begin
-        (array-set! slots (build-package-graph-node-vec-len v) node)
+        (set! (array-ref slots (build-package-graph-node-vec-len v)) node)
         (BuildPackageGraphNodeVec
           slots
           (+ (build-package-graph-node-vec-len v) 1))))
@@ -2517,15 +2503,15 @@
   [manifest-path : String]
   [mark : i64]) : BuildPackageGraphState
   (BuildPackageGraphState
-    (build-string-index-map-put (struct-get state seen) manifest-path mark)
-    (struct-get state order)))
+    (build-string-index-map-put state.seen manifest-path mark)
+    state.order))
 
 (define (build-package-graph-state-add-order
   [state : BuildPackageGraphState]
   [node : BuildPackageGraphNode]) : BuildPackageGraphState
   (BuildPackageGraphState
-    (struct-get state seen)
-    (build-package-graph-node-vec-push (struct-get state order) node)))
+    state.seen
+    (build-package-graph-node-vec-push state.order node)))
 
 (define (build-package-load-dep-node
   [manifest-dir : String]
@@ -2540,11 +2526,7 @@
         (match (build-load-manifest dep-manifest-path)
           [(ResultBuildManifest.Err message)
             (ResultBuildPackageGraphNode.Err
-              (str_cat.str-cat
-                "dependency `"
-                (struct-get resolved-dep alias)
-                "`: "
-                message))]
+              (str_cat.str-cat "dependency `" resolved-dep.alias "`: " message))]
           [(ResultBuildManifest.Ok dep-manifest)
             (match (build-package-resolve-manifest-deps
               dep-manifest-path
@@ -2553,12 +2535,11 @@
               [(ResultBuildManifest.Err message)
                 (ResultBuildPackageGraphNode.Err message)]
               [(ResultBuildManifest.Ok resolved-manifest)
-                (if (not
-                  (build-package-kind-lib? (struct-get resolved-manifest kind)))
+                (if (not (build-package-kind-lib? resolved-manifest.kind))
                   (ResultBuildPackageGraphNode.Err
                     (str_cat.str-cat
                       "build: dependency `"
-                      (struct-get resolved-dep alias)
+                      resolved-dep.alias
                       "` at "
                       dep-manifest-path
                       " must be a staticlib package"))
@@ -2571,8 +2552,8 @@
   [stack : BuildPackagePathSeq]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
   (let
-    [manifest-path : String (struct-get node manifest-path)]
-    (match (build_string_i64_map.get (& (struct-get state seen)) manifest-path)
+    [manifest-path : String node.manifest-path]
+    (match (build_string_i64_map.get (& state.seen) manifest-path)
       [(build_string_i64_map.LookupFound mark)
         (if (= mark build-package-visit-visiting)
           (ResultBuildPackageGraphState.Err
@@ -2585,13 +2566,13 @@
               state
               manifest-path
               build-package-visit-visiting)]
-          [manifest : load.CompilerPkgManifest (struct-get node manifest)]
+          [manifest : load.CompilerPkgManifest node.manifest]
           [manifest-dir : String (load.compiler-load-dirname manifest-path)]
           [next-stack : BuildPackagePathSeq
             (build-package-path-seq-push stack manifest-path)]
           (match (build-package-graph-add-deps
             manifest-dir
-            (load.compiler-pkg-deps-list (struct-get manifest deps))
+            (load.compiler-pkg-deps-list manifest.deps)
             0
             visiting
             next-stack
@@ -2655,7 +2636,7 @@
         root-path)]
     (match (build-package-graph-add-deps
       root-dir
-      (load.compiler-pkg-deps-list (struct-get manifest deps))
+      (load.compiler-pkg-deps-list manifest.deps)
       0
       initial
       stack
@@ -2663,8 +2644,7 @@
       [(ResultBuildPackageGraphState.Err message)
         (ResultBuildPackageGraph.Err message)]
       [(ResultBuildPackageGraphState.Ok state)
-        (ResultBuildPackageGraph.Ok
-          (BuildPackageGraph (struct-get state order)))])))
+        (ResultBuildPackageGraph.Ok (BuildPackageGraph state.order))])))
 
 (define (build-mkdir-ok? [path : (& path str)]) : bool
   (let
@@ -2682,8 +2662,8 @@
   ;; Keep the compiler-only cfg out of ordinary packages. The source marker
   ;; also prevents an unrelated package named `typelisp` from opting in.
   (and
-    (string.eq (struct-get manifest name) "typelisp")
-    (string.eq (struct-get manifest entry) "src/main.tl")
+    (string.eq manifest.name "typelisp")
+    (string.eq manifest.entry "src/main.tl")
     (io.file-exists?
       (load.compiler-load-join-root-path
         manifest-dir
@@ -2838,11 +2818,11 @@
   [set : load.CompilerPkgLinkSet]) : build_run_core.SourceToolLinkInputs
   (build-package-link-add-args
     (build-package-link-add-search-paths
-      (build-package-link-add-libs inputs (& (struct-get set libraries)) 0)
+      (build-package-link-add-libs inputs (& set.libraries) 0)
       manifest-dir
-      (& (struct-get set search-paths))
+      (& set.search-paths)
       0)
-    (& (struct-get set args))
+    (& set.args)
     0))
 
 ;: Convert a manifest `(link ...)` section into link inputs for `target`:
@@ -2856,11 +2836,11 @@
     (build-package-link-add-set
       (build_run_core.source-tool-link-inputs-empty)
       manifest-dir
-      (struct-get link all))
+      link.all)
     manifest-dir
     (match target
-      [(backend.CompilerBackendTarget.Linux) (struct-get link linux)]
-      [(backend.CompilerBackendTarget.Windows) (struct-get link windows)])))
+      [(backend.CompilerBackendTarget.Linux) link.linux]
+      [(backend.CompilerBackendTarget.Windows) link.windows])))
 
 (define (build-package-artifact-status
   [kind : load.CompilerPkgKind]
@@ -2936,7 +2916,7 @@
         [(ast.AstSpmdCallable.No) false]
         [(ast.AstSpmdCallable.Callable _) true])]
     [(ast.AstDecl.Unsafe inner)
-      (build-package-decl-has-spmd-callable? (box-get inner))]
+      (build-package-decl-has-spmd-callable? (__tl-box-place inner))]
     [_ false]))
 
 (define (build-package-decls-have-spmd-callable? [decls : ast.AstDeclList]) : bool
@@ -3076,7 +3056,7 @@
       [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
         (build_run_core.ResultSourceToolString.Err
           (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (box-get diag)))])
+            (__tl-box-place diag)))])
     (build_run_core.ResultSourceToolString.Err "linux direct object disabled")))
 
 (define (build-package-graph-node-artifact-paths
@@ -3084,13 +3064,13 @@
   [profile : BuildProfile]
   [target : backend.CompilerBackendTarget]) : BuildPackageArtifactPaths
   (let
-    [manifest-path : String (struct-get node manifest-path)]
-    [manifest : load.CompilerPkgManifest (struct-get node manifest)]
+    [manifest-path : String node.manifest-path]
+    [manifest : load.CompilerPkgManifest node.manifest]
     [manifest-dir : String (load.compiler-load-dirname manifest-path)]
     (build-package-artifact-paths
       manifest-dir
-      (struct-get manifest name)
-      (struct-get manifest kind)
+      manifest.name
+      manifest.kind
       profile
       target)))
 
@@ -3105,13 +3085,10 @@
   [node : BuildPackageGraphNode]
   [profile : BuildProfile]) : String
   (let
-    [manifest-path : String (struct-get node manifest-path)]
-    [manifest : load.CompilerPkgManifest (struct-get node manifest)]
+    [manifest-path : String node.manifest-path]
+    [manifest : load.CompilerPkgManifest node.manifest]
     [manifest-dir : String (load.compiler-load-dirname manifest-path)]
-    (build-package-tlci-path-profile
-      manifest-dir
-      (struct-get manifest name)
-      profile)))
+    (build-package-tlci-path-profile manifest-dir manifest.name profile)))
 
 (define (build-package-graph-link-libs
   [nodes : BuildPackageGraphNodeVec]
@@ -3249,7 +3226,9 @@
     (and
       (= (build-package-graph-node-vec-len nodes) 3)
       (string.eq
-        (struct-get (build-package-graph-node-vec-at nodes 0) manifest-path)
+        (__tl-project-field
+          (build-package-graph-node-vec-at nodes 0)
+          manifest-path)
         "root/first/typelisp.pkg")
       (build_run_core.source-tool-string-list-eq? libs expected)
       (build_run_core.source-tool-string-list-eq? windows-libs expected-windows)
@@ -3322,10 +3301,10 @@
       [(ResultBuildPackageSchedulePass.Err _) false]
       [(ResultBuildPackageSchedulePass.Ok pass)
         (and
-          (build-package-graph-worker-vec-empty? (struct-get pass workers))
+          (build-package-graph-worker-vec-empty? pass.workers)
           (not
             (build-package-node-scheduled?
-              (struct-get pass scheduled)
+              pass.scheduled
               "root/app/typelisp.pkg")))])))
 
 (test
@@ -3363,14 +3342,8 @@
   [manifest : load.CompilerPkgManifest]
   [callables : tlci.TlciSpmdCallables]) : tlci.TlciMetadata
   (if (= (tlci.tlci-spmd-callables-len callables) 0)
-    (tlci.tlci-make-metadata
-      "v1"
-      (struct-get manifest name)
-      (struct-get manifest version))
-    (tlci.tlci-make-metadata-v2
-      (struct-get manifest name)
-      (struct-get manifest version)
-      callables)))
+    (tlci.tlci-make-metadata "v1" manifest.name manifest.version)
+    (tlci.tlci-make-metadata-v2 manifest.name manifest.version callables)))
 
 (defstruct BuildPackageTlciCallableCollector
   (items tlci.TlciSpmdCallables)
@@ -3490,17 +3463,15 @@
           -1)]
       [specialization : ast.AstSpmdSpecialization
         (ast.ast-spmd-specialization-list-get items index fallback)]
-      [classes : ast.AstSpmdParamClassList
-        (box-get (struct-get specialization args))]
+      [classes : ast.AstSpmdParamClassList (__tl-box-place specialization.args)]
       [args : String (lower.lower-spmd-ast-param-classes-code classes)]
       [result : String
-        (lower.lower-spmd-ast-result-class-code
-          (struct-get specialization result))]
+        (lower.lower-spmd-ast-result-class-code specialization.result)]
       [lanes : i64
         (match spmd-backend
           [(ir.CompilerIrSpmdBackend.Scalar) 1]
-          [_ (struct-get specialization lanes)])]
-      [index-param : i64 (struct-get specialization index-param)]
+          [_ specialization.lanes])]
+      [index-param : i64 specialization.index-param]
       [logical-symbol : String
         (lower.lower-spmd-package-symbol
           package-name
@@ -3624,16 +3595,14 @@
             (build-package-tlci-metadata
               (build-package-graph-test-manifest "pkg")
               (tlci.tlci-spmd-callables-empty))]
-          [emitted : tlci.TlciSpmdSpecializations
-            (struct-get callable specializations)]
+          [emitted : tlci.TlciSpmdSpecializations callable.specializations]
           (and
-            (string.eq (struct-get ordinary-metadata version) "v1")
+            (string.eq ordinary-metadata.version "v1")
             (=
-              (tlci.tlci-spmd-callables-len
-                (struct-get ordinary-metadata spmd-callables))
+              (tlci.tlci-spmd-callables-len ordinary-metadata.spmd-callables)
               0)
-            (string.eq (struct-get callable name) "pkg/helper")
-            (string.eq (struct-get callable signature) "(-> i64 i64 i64)")
+            (string.eq callable.name "pkg/helper")
+            (string.eq callable.signature "(-> i64 i64 i64)")
             (= (tlci.tlci-spmd-specializations-len emitted) 2)
             (let
               [item : tlci.TlciSpmdSpecialization
@@ -3641,14 +3610,14 @@
               [next : tlci.TlciSpmdSpecialization
                 (tlci.tlci-spmd-specializations-ref emitted 1)]
               (and
-                (string.eq (struct-get item abi) "spmd-call-v1")
-                (string.eq (struct-get item backend) "scalar")
-                (= (struct-get item lanes) 1)
-                (string.eq (struct-get item args) "uv")
-                (string.eq (struct-get item result) "v")
-                (= (struct-get item index-param) 1)
+                (string.eq item.abi "spmd-call-v1")
+                (string.eq item.backend "scalar")
+                (= item.lanes 1)
+                (string.eq item.args "uv")
+                (string.eq item.result "v")
+                (= item.index-param 1)
                 (string.eq
-                  (struct-get item symbol)
+                  item.symbol
                   (backend.compiler-backend-user-symbol-uncached
                     (ci.intern-str
                       (ci.intern-generated-canonical-name
@@ -3662,8 +3631,8 @@
                           "uv"
                           "v"
                           1)))))
-                (string.eq (struct-get next args) "vu")
-                (= (struct-get next index-param) 0)))))))))
+                (string.eq next.args "vu")
+                (= next.index-param 0)))))))))
 
 (cfg
   test
@@ -3700,7 +3669,7 @@
             -1))
         (let
           [emitted : tlci.TlciSpmdSpecializations
-            (struct-get
+            (__tl-project-field
               (build-package-tlci-callable
                 "pkg"
                 "pkg"
@@ -3718,10 +3687,10 @@
               [item : tlci.TlciSpmdSpecialization
                 (tlci.tlci-spmd-specializations-ref emitted 0)]
               (and
-                (= (struct-get item lanes) 1)
-                (string.eq (struct-get item args) "u")
-                (string.eq (struct-get item result) "u")
-                (= (struct-get item index-param) -1)))))))))
+                (= item.lanes 1)
+                (string.eq item.args "u")
+                (string.eq item.result "u")
+                (= item.index-param -1)))))))))
 
 (cfg
   test
@@ -3751,7 +3720,7 @@
               [(backend.CompilerBackendMode.Avx2) true]
               [_ false])
               (BuildPackageTlciCallableCollector
-                (struct-get collector items)
+                collector.items
                 "build: :spmd-callable is not supported with --backend-mode avx2")
               (BuildPackageTlciCallableCollector
                 (build-package-tlci-callable-insert
@@ -3763,11 +3732,11 @@
                     ret
                     specializations
                     mode)
-                  (struct-get collector items))
-                (struct-get collector error)))]))]
+                  collector.items)
+                collector.error))]))]
     [(ast.AstDecl.Unsafe inner-box)
       (build-package-tlci-collect-decl-callable
-        (box-get inner-box)
+        (__tl-box-place inner-box)
         owned-path
         module
         package-name
@@ -3812,9 +3781,11 @@
               (clone (array-ref catalog (- slot 1))))
             false)
             (begin
-              (array-set! catalog slot (clone (array-ref catalog (- slot 1))))
+              (set!
+                (array-ref catalog slot)
+                (clone (array-ref catalog (- slot 1))))
               (set! slot (- slot 1))))
-          (array-set! catalog slot value)
+          (set! (array-ref catalog slot) value)
           (set! index (+ index 1)))))))
 
 (define (build-package-tlci-finish-macro-collector
@@ -3827,7 +3798,7 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! catalog index (cli_svec.get names index ""))
+          (set! (array-ref catalog index) (cli_svec.get names index ""))
           (set! index (+ index 1))))
       (build-package-tlci-sort-macro-catalog! (&mut catalog))
       (BuildPackageTlciMacroCollector catalog captures))))
@@ -3862,7 +3833,7 @@
                 body)))))]
     [(ast.AstDecl.Unsafe inner-box)
       (build-package-tlci-collect-decl-macro!
-        (box-get inner-box)
+        (__tl-box-place inner-box)
         owned-path
         module
         package-name
@@ -3871,7 +3842,7 @@
         captures)]
     [(ast.AstDecl.ModuleBody nested-module body-box)
       (build-package-tlci-collect-macros-into!
-        (box-get body-box)
+        (__tl-box-place body-box)
         (ast.ast-decl-path-list-new)
         owned-path
         (ci.intern-str nested-module)
@@ -3963,14 +3934,14 @@
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
     [owned-sources : build_string_i64_map.Map
-      (build-package-tlci-source-map (struct-get source-set sources))]
+      (build-package-tlci-source-map source-set.sources)]
     (begin
       (build-package-tlci-collect-macros-into!
         decls
         paths
         ""
         ""
-        (struct-get manifest name)
+        manifest.name
         owned-sources
         (&mut out)
         (&mut captures))
@@ -3988,7 +3959,7 @@
           (match program
             [(ast.AstProgram.Program decls-box)
               (let
-                [decls : ast.AstDeclList (box-get decls-box)]
+                [decls : ast.AstDeclList (__tl-box-place decls-box)]
                 [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
                 [owned-sources : build_string_i64_map.Map
                   (build_string_i64_map.with-capacity 4)]
@@ -4038,30 +4009,29 @@
                       (build-package-tlci-finish-macro-collector
                         (&mut names)
                         captures)]
-                    [catalog : (__tl_dyn-array String)
-                      (struct-get collector names)]
+                    [catalog : (__tl_dyn-array String) collector.names]
                     [_source : String
                       (compiler_tlci_native_producer.embedded-native-source
                         catalog
-                        (& (struct-get collector captures)))]
+                        (& collector.captures))]
                     (and
                       (= (array-length catalog) 2)
                       (string.eq (array-ref catalog 0) "a.macros/fold")
                       (string.eq (array-ref catalog 1) "z.macros/wrap")
-                      (= (struct-get (struct-get collector captures) len) 2)
+                      (= collector.captures.len 2)
                       (>=
                         (compiler_tlci_native_producer.tlci-native-macro-capture-slot
-                          (& (struct-get collector captures))
+                          (& collector.captures)
                           "a.macros/fold")
                         0)
                       (>=
                         (compiler_tlci_native_producer.tlci-native-macro-capture-slot
-                          (& (struct-get collector captures))
+                          (& collector.captures)
                           "z.macros/wrap")
                         0)
                       (<
                         (compiler_tlci_native_producer.tlci-native-macro-capture-slot
-                          (& (struct-get collector captures))
+                          (& collector.captures)
                           "dep.macros/foreign")
                         0)
                       (=
@@ -4094,9 +4064,7 @@
     [done : bool false]
     [current : BuildPackageTlciCallableCollector collector]
     (begin
-      (while (and
-        (not done)
-        (= (string.string-length (struct-get current error)) 0))
+      (while (and (not done) (= (string.string-length current.error) 0))
         (match (ast.ast-decl-list-step decl-cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
@@ -4116,7 +4084,7 @@
                     (set!
                       current
                       (build-package-tlci-collect-callables-into!
-                        (box-get body-box)
+                        (__tl-box-place body-box)
                         (ast.ast-decl-path-list-new)
                         owned-path
                         (ci.intern-str nested-module)
@@ -4149,13 +4117,13 @@
   [paths : ast.AstDeclPathList]) : BuildPackageTlciCallableCollector
   (let
     [owned-sources : build_string_i64_map.Map
-      (build-package-tlci-source-map (struct-get source-set sources))]
+      (build-package-tlci-source-map source-set.sources)]
     (build-package-tlci-collect-callables-into!
       decls
       paths
       ""
       ""
-      (struct-get manifest name)
+      manifest.name
       mode
       owned-sources
       (BuildPackageTlciCallableCollector (tlci.tlci-spmd-callables-empty) ""))))
@@ -4185,7 +4153,9 @@
     [sections : (__tl_dyn-array tlci.TlciAuxSection)
       (array.make-array tlci.TlciAuxSection 1)]
     (begin
-      (array-set! sections 0 (tlci.tlci-package-source-binding-section digest))
+      (set!
+        (array-ref sections 0)
+        (tlci.tlci-package-source-binding-section digest))
       (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections))))
 
 (define (build-package-tlci-text
@@ -4233,16 +4203,12 @@
                       manifest
                       decls
                       paths)]
-                  [macro-names : (__tl_dyn-array String)
-                    (struct-get macro-collector names)]
-                  (if (> (string.string-length (struct-get collector error)) 0)
-                    (ResultBuildPackageTlciText.Err
-                      (struct-get collector error))
+                  [macro-names : (__tl_dyn-array String) macro-collector.names]
+                  (if (> (string.string-length collector.error) 0)
+                    (ResultBuildPackageTlciText.Err collector.error)
                     (let
                       [metadata : tlci.TlciMetadata
-                        (build-package-tlci-metadata
-                          manifest
-                          (struct-get collector items))]
+                        (build-package-tlci-metadata manifest collector.items)]
                       (if (= (array-length macro-names) 0)
                         (match (tlci.tlci-emit-image
                           (build-package-tlci-image
@@ -4266,7 +4232,7 @@
                           (cfg windows true false)
                           rodata
                           macro-names
-                          (& (struct-get macro-collector captures)))
+                          (& macro-collector.captures))
                           [(compiler_tlci_native_producer.ResultProducerBytes.Err
                               message)
                             (ResultBuildPackageTlciText.Err
@@ -4304,7 +4270,7 @@
     [(load.ResultCompilerLoadWithPaths.Err diag)
       (ResultBuildPackageTlciText.Err
         (compiler_driver_core.compiler-driver-render-source-diagnostic
-          (box-get diag)))]
+          (__tl-box-place diag)))]
     [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (build-package-tlci-text
         manifest-path
@@ -4425,7 +4391,7 @@
                     (io.platform-lseek
                       (io_core.io-file-i64-ref
                         (io_core.io-file-fds-ptr)
-                        (struct-get handle id))
+                        handle.id)
                       (- size sample-size)
                       0)
                     0)
@@ -5002,13 +4968,13 @@
 
 (define (build-package-clean-stage [paths : BuildPackageStagePaths]) : unit
   (begin
-    (build-package-remove-staged-file (struct-get paths asm))
-    (build-package-remove-staged-file (struct-get paths obj))
-    (build-package-remove-staged-file (struct-get paths artifact))
-    (build-package-remove-staged-file (struct-get paths fingerprint))
-    (build-package-remove-staged-file (struct-get paths tlci))
+    (build-package-remove-staged-file paths.asm)
+    (build-package-remove-staged-file paths.obj)
+    (build-package-remove-staged-file paths.artifact)
+    (build-package-remove-staged-file paths.fingerprint)
+    (build-package-remove-staged-file paths.tlci)
     (let
-      [dir : String (struct-get paths dir)]
+      [dir : String paths.dir]
       (fs.try-remove-dir-if-exists (& dir)))
     unit))
 
@@ -5020,12 +4986,11 @@
   [final-path : String]
   [staged-path : String]) : BuildPackageCommitPlan
   (let
-    [files : (__tl_dyn-array BuildPackageCommitFile) (struct-get plan files)]
-    [index : i64 (struct-get plan len)]
+    [files : (__tl_dyn-array BuildPackageCommitFile) plan.files]
+    [index : i64 plan.len]
     (begin
-      (array-set!
-        files
-        index
+      (set!
+        (array-ref files index)
         (BuildPackageCommitFile
           final-path
           staged-path
@@ -5037,40 +5002,37 @@
   [plan : BuildPackageCommitPlan]
   [index : i64]) : unit
   (let
-    [files : (__tl_dyn-array BuildPackageCommitFile) (struct-get plan files)]
+    [files : (__tl_dyn-array BuildPackageCommitFile) plan.files]
     [item : BuildPackageCommitFile (array-ref files index)]
-    (array-set!
-      files
-      index
+    (set!
+      (array-ref files index)
       (BuildPackageCommitFile
-        (struct-get item final-path)
-        (struct-get item staged-path)
-        (struct-get item backup-path)
+        item.final-path
+        item.staged-path
+        item.backup-path
         true))))
 
 (define (build-package-commit-plan-preflight [plan : BuildPackageCommitPlan]) : ResultBuildString
   (let
     [index : i64 0]
-    [count : i64 (struct-get plan len)]
+    [count : i64 plan.len]
     [ok : bool true]
     [error : String ""]
     (begin
       (while (and ok (< index count))
         (let
-          [item : BuildPackageCommitFile
-            (array-ref (struct-get plan files) index)]
+          [item : BuildPackageCommitFile (array-ref plan.files index)]
           [final-state : BuildPackageArtifactState
-            (build-package-artifact-file-state (struct-get item final-path))]
+            (build-package-artifact-file-state item.final-path)]
           (begin
-            (if (not
-              (build-package-file-regular? (struct-get item staged-path)))
+            (if (not (build-package-file-regular? item.staged-path))
               (begin
                 (set! ok false)
                 (set!
                   error
                   (str_cat.str-cat
                     "build: staged package artifact is missing or non-regular: "
-                    (struct-get item staged-path))))
+                    item.staged-path)))
               (match final-state
                 [(BuildPackageArtifactState.Stale reason)
                   (begin
@@ -5079,7 +5041,7 @@
                       error
                       (str_cat.str-cat
                         "build: cannot replace package artifact "
-                        (struct-get item final-path)
+                        item.final-path
                         ": "
                         reason)))]
                 [_ unit]))
@@ -5097,23 +5059,21 @@
     (begin
       (while (>= index 0)
         (let
-          [item : BuildPackageCommitFile
-            (array-ref (struct-get plan files) index)]
+          [item : BuildPackageCommitFile (array-ref plan.files index)]
           (begin
             (let
-              [path : String (struct-get item final-path)]
+              [path : String item.final-path]
               (fs.try-remove-file-if-exists (& path)))
             (set! index (- index 1)))))
       (set! index (- backed-up 1))
       (while (>= index 0)
         (let
-          [item : BuildPackageCommitFile
-            (array-ref (struct-get plan files) index)]
+          [item : BuildPackageCommitFile (array-ref plan.files index)]
           (begin
-            (if (struct-get item had-old)
+            (if item.had-old
               (let
-                [backup : String (struct-get item backup-path)]
-                [final-path : String (struct-get item final-path)]
+                [backup : String item.backup-path]
+                [final-path : String item.final-path]
                 (fs.try-rename (& backup) (& final-path)))
               io.OkIoUnit)
             (set! index (- index 1)))))
@@ -5125,7 +5085,7 @@
     [(ResultBuildString.Ok _)
       (let
         [index : i64 0]
-        [count : i64 (struct-get plan len)]
+        [count : i64 plan.len]
         [backed-up : i64 0]
         [installed : i64 0]
         [ok : bool true]
@@ -5133,16 +5093,15 @@
         (begin
           (while (and ok (< index count))
             (let
-              [item : BuildPackageCommitFile
-                (array-ref (struct-get plan files) index)]
+              [item : BuildPackageCommitFile (array-ref plan.files index)]
               [state : BuildPackageArtifactState
-                (build-package-artifact-file-state (struct-get item final-path))]
+                (build-package-artifact-file-state item.final-path)]
               (begin
                 (match state
                   [(BuildPackageArtifactState.Clean)
                     (let
-                      [from : String (struct-get item final-path)]
-                      [to : String (struct-get item backup-path)]
+                      [from : String item.final-path]
+                      [to : String item.backup-path]
                       (match (fs.try-rename (& from) (& to))
                         [(io.OkIoUnit)
                           (build-package-commit-plan-set-had-old! plan index)]
@@ -5166,10 +5125,9 @@
           (set! index 0)
           (while (and ok (< index count))
             (let
-              [item : BuildPackageCommitFile
-                (array-ref (struct-get plan files) index)]
-              [from : String (struct-get item staged-path)]
-              [to : String (struct-get item final-path)]
+              [item : BuildPackageCommitFile (array-ref plan.files index)]
+              [from : String item.staged-path]
+              [to : String item.final-path]
               (begin
                 (match (fs.try-rename (& from) (& to))
                   [(io.OkIoUnit) (set! installed (+ installed 1))]
@@ -5187,12 +5145,11 @@
               (set! index 0)
               (while (< index count)
                 (let
-                  [item : BuildPackageCommitFile
-                    (array-ref (struct-get plan files) index)]
+                  [item : BuildPackageCommitFile (array-ref plan.files index)]
                   (begin
-                    (if (struct-get item had-old)
+                    (if item.had-old
                       (let
-                        [backup : String (struct-get item backup-path)]
+                        [backup : String item.backup-path]
                         (fs.try-remove-file-if-exists (& backup)))
                       io.OkIoUnit)
                     (set! index (+ index 1)))))
@@ -5256,7 +5213,7 @@
     [(compiler_driver_core.ResultCompilerDriver.Err diag)
       (build_run_core.SourceToolCommandStatus.Err
         (compiler_driver_core.compiler-driver-render-source-diagnostic
-          (box-get diag)))]
+          (__tl-box-place diag)))]
     [(compiler_driver_core.ResultCompilerDriver.Ok asm)
       (begin
         (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)
@@ -5307,16 +5264,16 @@
       (if runtime-dirty
         (match (build-package-runtime-output-fingerprint
           input-transcript
-          (struct-get stage asm)
-          (struct-get stage obj)
-          (struct-get stage artifact))
+          stage.asm
+          stage.obj
+          stage.artifact)
           [(ResultBuildString.Err message)
             (begin
               (set! ok false)
               (set! error message))]
           [(ResultBuildString.Ok fingerprint)
             (match (build_run_core.source-tool-write-file
-              (struct-get stage fingerprint)
+              stage.fingerprint
               fingerprint
               "build: failed to stage package runtime fingerprint")
               [(build_run_core.SourceToolCommandStatus.Err message)
@@ -5327,31 +5284,25 @@
                 (begin
                   (set!
                     plan
-                    (build-package-commit-plan-add
-                      plan
-                      asm-path
-                      (struct-get stage asm)))
+                    (build-package-commit-plan-add plan asm-path stage.asm))
                   (set!
                     plan
-                    (build-package-commit-plan-add
-                      plan
-                      obj-path
-                      (struct-get stage obj)))
+                    (build-package-commit-plan-add plan obj-path stage.obj))
                   (set!
                     plan
                     (build-package-commit-plan-add
                       plan
                       artifact-path
-                      (struct-get stage artifact)))
+                      stage.artifact))
                   (set!
                     plan
                     (build-package-commit-plan-add
                       plan
                       fingerprint-path
-                      (struct-get stage fingerprint))))])])
+                      stage.fingerprint)))])])
         unit)
       (if (and ok tlci-dirty)
-        (match (build-package-write-tlci (struct-get stage tlci) tlci-text)
+        (match (build-package-write-tlci stage.tlci tlci-text)
           [(build_run_core.SourceToolCommandStatus.Err message)
             (begin
               (set! ok false)
@@ -5359,10 +5310,7 @@
           [(build_run_core.SourceToolCommandStatus.Ok)
             (set!
               plan
-              (build-package-commit-plan-add
-                plan
-                tlci-path
-                (struct-get stage tlci)))])
+              (build-package-commit-plan-add plan tlci-path stage.tlci))])
         unit)
       (if ok
         (match (build-package-commit-plan-run plan)
@@ -5466,8 +5414,8 @@
                       (build-package-write-linux-direct-object-artifact
                         kind
                         target
-                        (struct-get stage obj)
-                        (struct-get stage artifact)
+                        stage.obj
+                        stage.artifact
                         link-inputs
                         object-text)
                       build_run_core.SourceToolDirectObjectStatus.Ok)]
@@ -5495,7 +5443,7 @@
                               crt-entry
                               decls
                               owned-paths
-                              (struct-get stage asm))
+                              stage.asm)
                             build_run_core.SourceToolCommandStatus.Ok)]
                         (match asm-status
                           [(build_run_core.SourceToolCommandStatus.Err message)
@@ -5600,7 +5548,7 @@
                   [runtime-status : build_run_core.SourceToolCommandStatus
                     (if runtime-dirty
                       (match (build-package-write-assembly
-                        (struct-get stage asm)
+                        stage.asm
                         augmented-asm
                         target)
                         [(build_run_core.SourceToolCommandStatus.Err message)
@@ -5609,9 +5557,9 @@
                           (build-package-artifact-status
                             kind
                             target
-                            (struct-get stage asm)
-                            (struct-get stage obj)
-                            (struct-get stage artifact)
+                            stage.asm
+                            stage.obj
+                            stage.artifact
                             link-inputs
                             (build_run_core.SourceToolDirectObjectStatus.Unavailable
                               "freshness fallback"))])
@@ -5704,7 +5652,7 @@
           (begin
             (io.print-error
               (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (box-get diag)))
+                (__tl-box-place diag)))
             1)]
         [(compiler_driver_core.ResultCompilerDriver.Ok asm)
           (build-package-finish-assembly-fresh-artifacts
@@ -5765,7 +5713,7 @@
       (begin
         (io.print-error
           (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (box-get diag)))
+            (__tl-box-place diag)))
         1)]
     [(load.ResultCompilerLoadWithPaths.Ok _ paths _ _)
       (build-doctest-typecheck-package-paths
@@ -5791,7 +5739,7 @@
         1)]
     [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
-        (struct-get source-set sources)
+        source-set.sources
         stdlib-roots
         manifest-dir
         name
@@ -5823,15 +5771,13 @@
     [compile-context : BuildPackageCompileContext
       (build-package-compile-context manifest-dir manifest)]
     [entry-path : String
-      (load.compiler-load-join-root-path
-        manifest-dir
-        (struct-get manifest entry))]
-    [name : String (struct-get manifest name)]
+      (load.compiler-load-join-root-path manifest-dir manifest.entry)]
+    [name : String manifest.name]
     [_spmd-package-name : unit (lower.lower-spmd-set-package-name! name)]
     [_package-artifact-profile : unit
       (load.compiler-load-set-package-artifact-profile!
         (build-profile-name profile))]
-    [kind : load.CompilerPkgKind (struct-get manifest kind)]
+    [kind : load.CompilerPkgKind manifest.kind]
     [asm-path : String
       (build-package-asm-path-profile manifest-dir name profile)]
     [obj-path : String
@@ -5844,12 +5790,12 @@
     [_reset-file-state : unit
       (compiler_driver_core.compiler-driver-reset-file-state!)]
     (if (or
-      (> (string.string-length (struct-get compile-context error)) 0)
+      (> (string.string-length compile-context.error) 0)
       (not (build-ensure-package-output-dirs manifest-dir name profile)))
       (let
         [message : String
-          (if (> (string.string-length (struct-get compile-context error)) 0)
-            (struct-get compile-context error)
+          (if (> (string.string-length compile-context.error) 0)
+            compile-context.error
             (str_cat.str-cat
               "build: failed to create package output directory "
               (build-package-output-dir-profile manifest-dir name profile)))]
@@ -5858,10 +5804,7 @@
           1))
       (let
         [manifest-link-inputs : build_run_core.SourceToolLinkInputs
-          (build-package-manifest-link-inputs
-            (struct-get manifest link)
-            manifest-dir
-            target)]
+          (build-package-manifest-link-inputs manifest.link manifest-dir target)]
         [dep-link-inputs : build_run_core.SourceToolLinkInputs
           (build_run_core.source-tool-link-inputs-from-archives dep-libs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
@@ -5871,10 +5814,8 @@
             stdlib-roots
             manifest-dir
             name
-            (struct-get manifest deps)
-            (build-package-compile-cfgs
-              target
-              (struct-get compile-context root-compiler)))]
+            manifest.deps
+            (build-package-compile-cfgs target compile-context.root-compiler))]
         [_reset-after-inline-tests : unit
           (if (= inline-test-status 0)
             (begin
@@ -5893,8 +5834,8 @@
                 profile
                 mode
                 lock-policy
-                (struct-get manifest deps)
-                (load.compiler-pkg-deps-list (struct-get manifest deps))
+                manifest.deps
+                (load.compiler-pkg-deps-list manifest.deps)
                 stdlib-roots
                 manifest-dir
                 emit-entry)]
@@ -5910,11 +5851,11 @@
                 entry-path
                 stdlib-roots
                 manifest-dir
-                (struct-get manifest deps)
+                manifest.deps
                 emit-entry
                 (build-package-compile-cfgs
                   target
-                  (struct-get compile-context root-compiler))
+                  compile-context.root-compiler)
                 producer-identity)
                 [(ResultBuildPackageTlciText.Err message)
                   (begin
@@ -5930,16 +5871,16 @@
                       entry-path
                       stdlib-roots
                       manifest-dir
-                      (struct-get manifest deps)
+                      manifest.deps
                       emit-entry
                       (build-package-compile-cfgs
                         target
-                        (struct-get compile-context root-compiler)))
+                        compile-context.root-compiler))
                       [(load.ResultCompilerLoadWithPaths.Err diag)
                         (begin
                           (io.print-error
                             (compiler_driver_core.compiler-driver-render-source-diagnostic
-                              (box-get diag)))
+                              (__tl-box-place diag)))
                           1)]
                       [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
                         (let
@@ -6045,8 +5986,8 @@
         (build_run_core.source-tool-args-append
           (build_run_core.source-tool-args-append
             (build_run_core.source-tool-args-append args "--resolved-dep")
-            (struct-get dep alias))
-          (struct-get dep path))
+            dep.alias)
+          dep.path)
         deps
         (+ index 1)))))
 
@@ -6262,7 +6203,7 @@
         1)]
     [(ResultBuildPackageWorkerConfig.Ok config)
       (let
-        [manifest-path : String (struct-get config manifest-path)]
+        [manifest-path : String config.manifest-path]
         [normalized-path : String
           (build-package-normalize-manifest-path manifest-path)]
         (match (build-load-manifest normalized-path)
@@ -6272,39 +6213,37 @@
               1)]
           [(ResultBuildManifest.Ok manifest)
             (let
-              [resolved-deps : load.CompilerPkgDepList
-                (struct-get config resolved-deps)]
+              [resolved-deps : load.CompilerPkgDepList config.resolved-deps]
               [resolved-manifest-result : ResultBuildManifest
                 (if (= (load.compiler-pkg-dep-list-count resolved-deps) 0)
                   (build-package-resolve-manifest-deps
                     normalized-path
                     manifest
-                    (struct-get config lock-policy))
+                    config.lock-policy)
                   (ResultBuildManifest.Ok
                     (load.CompilerPkgManifest
-                      (struct-get manifest name)
-                      (struct-get manifest version)
-                      (struct-get manifest kind)
-                      (struct-get manifest entry)
+                      manifest.name
+                      manifest.version
+                      manifest.kind
+                      manifest.entry
                       (load.compiler-pkg-deps-from-list resolved-deps)
-                      (struct-get manifest link))))]
+                      manifest.link)))]
               (match resolved-manifest-result
                 [(ResultBuildManifest.Err message)
                   (begin
                     (io.print-error message)
                     1)]
                 [(ResultBuildManifest.Ok resolved-manifest)
-                  (if (build-package-kind-lib?
-                    (struct-get resolved-manifest kind))
+                  (if (build-package-kind-lib? resolved-manifest.kind)
                     (build-package-emit-one
                       normalized-path
                       resolved-manifest
-                      (struct-get config target)
-                      (struct-get config opt-level)
-                      (struct-get config profile)
-                      (struct-get config mode)
-                      (struct-get config lock-policy)
-                      (struct-get config stdlib-roots)
+                      config.target
+                      config.opt-level
+                      config.profile
+                      config.mode
+                      config.lock-policy
+                      config.stdlib-roots
                       (process.args-empty)
                       producer-identity
                       true)
@@ -6321,7 +6260,7 @@
         1)]
     [(ResultBuildPackageWorkerConfig.Ok config)
       (let
-        [manifest-path : String (struct-get config manifest-path)]
+        [manifest-path : String config.manifest-path]
         [normalized-path : String
           (build-package-normalize-manifest-path manifest-path)]
         (match (build-load-manifest normalized-path)
@@ -6331,22 +6270,21 @@
               1)]
           [(ResultBuildManifest.Ok manifest)
             (let
-              [resolved-deps : load.CompilerPkgDepList
-                (struct-get config resolved-deps)]
+              [resolved-deps : load.CompilerPkgDepList config.resolved-deps]
               [resolved-manifest-result : ResultBuildManifest
                 (if (= (load.compiler-pkg-dep-list-count resolved-deps) 0)
                   (build-package-resolve-manifest-deps
                     normalized-path
                     manifest
-                    (struct-get config lock-policy))
+                    config.lock-policy)
                   (ResultBuildManifest.Ok
                     (load.CompilerPkgManifest
-                      (struct-get manifest name)
-                      (struct-get manifest version)
-                      (struct-get manifest kind)
-                      (struct-get manifest entry)
+                      manifest.name
+                      manifest.version
+                      manifest.kind
+                      manifest.entry
                       (load.compiler-pkg-deps-from-list resolved-deps)
-                      (struct-get manifest link))))]
+                      manifest.link)))]
               (match resolved-manifest-result
                 [(ResultBuildManifest.Err message)
                   (begin
@@ -6359,16 +6297,15 @@
                     [entry-path : String
                       (load.compiler-load-join-root-path
                         manifest-dir
-                        (struct-get resolved-manifest entry))]
-                    [kind : load.CompilerPkgKind
-                      (struct-get resolved-manifest kind)]
+                        resolved-manifest.entry)]
+                    [kind : load.CompilerPkgKind resolved-manifest.kind]
                     (build-package-closure-doctest-status
-                      (struct-get resolved-manifest name)
+                      resolved-manifest.name
                       entry-path
-                      (struct-get config target)
-                      (struct-get config stdlib-roots)
+                      config.target
+                      config.stdlib-roots
                       manifest-dir
-                      (struct-get resolved-manifest deps)
+                      resolved-manifest.deps
                       (build-package-kind-entry? kind)))]))]))]))
 
 (define (build-package-async-process-supported?) : bool
@@ -6395,12 +6332,12 @@
   [node : BuildPackageGraphNode]
   [built : build_string_i64_map.Map]) : bool
   (let
-    [manifest-path : String (struct-get node manifest-path)]
+    [manifest-path : String node.manifest-path]
     [manifest-dir : String (load.compiler-load-dirname manifest-path)]
-    [manifest : load.CompilerPkgManifest (struct-get node manifest)]
+    [manifest : load.CompilerPkgManifest node.manifest]
     (build-package-deps-built?
       manifest-dir
-      (load.compiler-pkg-deps-list (struct-get manifest deps))
+      (load.compiler-pkg-deps-list manifest.deps)
       0
       built)))
 
@@ -6412,11 +6349,11 @@
     [(build_string_i64_map.LookupMissing) false]))
 
 (define (build-package-graph-worker-vec-len [v : BuildPackageGraphWorkerVec]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (build-package-graph-worker-vec-capacity
   [v : BuildPackageGraphWorkerVec]) : i64
-  (array-length (struct-get v slots)))
+  (array-length v.slots))
 
 (define (build-package-graph-worker-vec-with-capacity [capacity : i64]) : BuildPackageGraphWorkerVec
   (let
@@ -6432,7 +6369,7 @@
 (define (build-package-graph-worker-vec-at
   [v : BuildPackageGraphWorkerVec]
   [index : i64]) : BuildPackageGraphWorker
-  (array-ref (struct-get v slots) index))
+  (array-ref v.slots index))
 
 (define (build-package-graph-worker-vec-copy-range!
   [dst : (__tl_dyn-array BuildPackageGraphWorker)]
@@ -6442,7 +6379,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (build-package-graph-worker-vec-grow [v : BuildPackageGraphWorkerVec]) : BuildPackageGraphWorkerVec
@@ -6453,10 +6390,7 @@
         BuildPackageGraphWorker
         (* (build-package-graph-worker-vec-capacity v) 2))]
     (begin
-      (build-package-graph-worker-vec-copy-range!
-        bigger
-        (struct-get v slots)
-        count)
+      (build-package-graph-worker-vec-copy-range! bigger v.slots count)
       (BuildPackageGraphWorkerVec bigger count))))
 
 (define (build-package-graph-worker-vec-push
@@ -6466,9 +6400,9 @@
     (build-package-graph-worker-vec-len v)
     (build-package-graph-worker-vec-capacity v))
     (let
-      [slots : (__tl_dyn-array BuildPackageGraphWorker) (struct-get v slots)]
+      [slots : (__tl_dyn-array BuildPackageGraphWorker) v.slots]
       (begin
-        (array-set! slots (build-package-graph-worker-vec-len v) worker)
+        (set! (array-ref slots (build-package-graph-worker-vec-len v)) worker)
         (BuildPackageGraphWorkerVec
           slots
           (+ (build-package-graph-worker-vec-len v) 1))))
@@ -6489,9 +6423,9 @@
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]) : ResultBuildPackageGraphWorker
   (let
-    [manifest-path : String (struct-get node manifest-path)]
-    [manifest : load.CompilerPkgManifest (struct-get node manifest)]
-    [name : String (struct-get manifest name)]
+    [manifest-path : String node.manifest-path]
+    [manifest : load.CompilerPkgManifest node.manifest]
+    [name : String manifest.name]
     [artifacts : BuildPackageArtifactPaths
       (build-package-graph-node-artifact-paths node profile target)]
     [command : process.ProcessCommand
@@ -6538,7 +6472,7 @@
         (let
           [node : BuildPackageGraphNode
             (build-package-graph-node-vec-at nodes index)]
-          [manifest-path : String (struct-get node manifest-path)]
+          [manifest-path : String node.manifest-path]
           (begin
             (if (build-package-node-scheduled? next-scheduled manifest-path)
               unit
@@ -6585,7 +6519,7 @@
         (let
           [node : BuildPackageGraphNode
             (build-package-graph-node-vec-at nodes index)]
-          [manifest-path : String (struct-get node manifest-path)]
+          [manifest-path : String node.manifest-path]
           (begin
             (match (build_string_i64_map.get (& built) manifest-path)
               [(build_string_i64_map.LookupFound _) unit]
@@ -6613,13 +6547,12 @@
         (let
           [worker : BuildPackageGraphWorker
             (build-package-graph-worker-vec-at workers index)]
-          [node : BuildPackageGraphNode (struct-get worker node)]
-          [artifacts : BuildPackageArtifactPaths (struct-get worker artifacts)]
-          [manifest-path : String (struct-get node manifest-path)]
-          [manifest : load.CompilerPkgManifest (struct-get node manifest)]
-          [name : String (struct-get manifest name)]
-          [result : process.ResultProcessOutput
-            (process.wait (struct-get worker child))]
+          [node : BuildPackageGraphNode worker.node]
+          [artifacts : BuildPackageArtifactPaths worker.artifacts]
+          [manifest-path : String node.manifest-path]
+          [manifest : load.CompilerPkgManifest node.manifest]
+          [name : String manifest.name]
+          [result : process.ResultProcessOutput (process.wait worker.child)]
           (begin
             (match result
               [(process.OkProcessOutput output)
@@ -6629,7 +6562,7 @@
                     unit)
                   (if (process.success? output)
                     (let
-                      [runtime-path : String (struct-get artifacts runtime)]
+                      [runtime-path : String artifacts.runtime]
                       [runtime-state : BuildPackageArtifactState
                         (build-package-artifact-file-state runtime-path)]
                       (if (build-package-artifact-state-dirty? runtime-state)
@@ -6644,7 +6577,7 @@
                             next-failed-status
                             (build-package-failure-status next-failed-status 1)))
                         (let
-                          [tlci-path : String (struct-get artifacts tlci)]
+                          [tlci-path : String artifacts.tlci]
                           [tlci-state : BuildPackageArtifactState
                             (build-package-artifact-file-state tlci-path)]
                           (if (build-package-artifact-state-dirty? tlci-state)
@@ -6731,7 +6664,7 @@
           1)]
       [(ResultBuildPackageSchedulePass.Ok pass)
         (let
-          [workers : BuildPackageGraphWorkerVec (struct-get pass workers)]
+          [workers : BuildPackageGraphWorkerVec pass.workers]
           (if (build-package-graph-worker-vec-empty? workers)
             (begin
               (io.print-error
@@ -6749,7 +6682,7 @@
                   lock-policy
                   stdlib-roots
                   announce
-                  (struct-get pass scheduled)
+                  pass.scheduled
                   next-built)])))])))
 
 (define (build-package-emit-graph-nodes-parallel
@@ -6792,8 +6725,8 @@
         (let
           [node : BuildPackageGraphNode
             (build-package-graph-node-vec-at nodes index)]
-          [manifest-path : String (struct-get node manifest-path)]
-          [manifest : load.CompilerPkgManifest (struct-get node manifest)]
+          [manifest-path : String node.manifest-path]
+          [manifest : load.CompilerPkgManifest node.manifest]
           [node-status : i64
             (build-package-emit-one
               manifest-path
@@ -6813,7 +6746,7 @@
               (io.print-error
                 (str_cat.str-cat
                   "build: package dependency `"
-                  (struct-get manifest name)
+                  manifest.name
                   "` failed with status "
                   (string.int->string node-status)))
               (set! status node-status)))))
@@ -6959,7 +6892,7 @@
                   1)]
               [(ResultBuildPackageGraph.Ok graph)
                 (let
-                  [nodes : BuildPackageGraphNodeVec (struct-get graph order)]
+                  [nodes : BuildPackageGraphNodeVec graph.order]
                   [dep-status : i64
                     (build-package-emit-graph-nodes
                       nodes

@@ -7,7 +7,7 @@
   [failure : i64]) : i64
   (match (thread.join-box-i64 worker)
     [(ThreadBoxI64JoinOk cell)
-      (if (= (box-get cell) expected)
+      (if (= (__tl-box-place cell) expected)
         42
         failure)]
     [(ThreadBoxI64JoinErr _) failure]))

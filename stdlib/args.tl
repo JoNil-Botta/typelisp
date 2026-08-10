@@ -113,18 +113,15 @@
 ;: Prepend `spec` to `rest`, copying `rest` into a right-sized array.
 (define (option-spec-cons [spec : ArgsOptionSpec] [rest : ArgsOptionSpecList]) : ArgsOptionSpecList
   (let
-    [len : i64 (struct-get rest len)]
+    [len : i64 rest.len]
     [slots : (__tl_dyn-array ArgsOptionSpec)
       (array.make-array ArgsOptionSpec (+ len 1))]
     [index : i64 0]
     (begin
-      (array-set! slots 0 spec)
+      (set! (array-ref slots 0) spec)
       (while (< index len)
         (begin
-          (array-set!
-            slots
-            (+ index 1)
-            (array-ref (struct-get rest slots) index))
+          (set! (array-ref slots (+ index 1)) (array-ref rest.slots index))
           (set! index (+ index 1))))
       (ArgsOptionSpecList slots (+ len 1)))))
 
@@ -138,19 +135,19 @@
 
 ;: Return the canonical name for a spec.
 (define (option-spec-name [spec : ArgsOptionSpec]) : String
-  (struct-get spec name))
+  spec.name)
 
 ;: Return the long spelling for a spec, without leading dashes.
 (define (option-spec-long [spec : ArgsOptionSpec]) : String
-  (struct-get spec long))
+  spec.long)
 
 ;: Return the short spelling for a spec, without the leading dash.
 (define (option-spec-short [spec : ArgsOptionSpec]) : String
-  (struct-get spec short))
+  spec.short)
 
 ;: Return the arity for a spec.
 (define (option-spec-arity [spec : ArgsOptionSpec]) : ArgsOptionArity
-  (struct-get spec arity))
+  spec.arity)
 
 ;: Return true when an arity consumes a following value.
 (define (option-arity-value? [arity : ArgsOptionArity]) : bool
@@ -180,7 +177,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst (+ index offset) (array-ref src index))
+        (set! (array-ref dst (+ index offset)) (array-ref src index))
         (set! index (+ index 1))))))
 
 ;: Return an empty parsed option list.
@@ -191,20 +188,20 @@
 ;: array.
 (define (option-list-cons [option : ArgsOption] [rest : ArgsOptionList]) : ArgsOptionList
   (let
-    [len : i64 (struct-get rest len)]
+    [len : i64 rest.len]
     [slots : (__tl_dyn-array ArgsOption)
       (array.make-array ArgsOption (+ len 1))]
     (begin
-      (array-set! slots 0 option)
-      (option-list-copy! (&mut slots) (& (struct-get rest slots)) 1 len)
+      (set! (array-ref slots 0) option)
+      (option-list-copy! (&mut slots) (& rest.slots) 1 len)
       (ArgsOptionList slots (+ len 1)))))
 
 ;: Append one parsed option occurrence, doubling the backing array when the
 ;: live prefix has filled it.
 (define (option-list-push [items : ArgsOptionList] [option : ArgsOption]) : ArgsOptionList
   (let
-    [len : i64 (struct-get items len)]
-    [slots : (__tl_dyn-array ArgsOption) (struct-get items slots)]
+    [len : i64 items.len]
+    [slots : (__tl_dyn-array ArgsOption) items.slots]
     [capacity : i64 (array-length slots)]
     (begin
       (if (< len capacity)
@@ -219,20 +216,20 @@
           (begin
             (option-list-copy! (&mut bigger) (& slots) 0 len)
             (set! slots bigger))))
-      (array-set! slots len option)
+      (set! (array-ref slots len) option)
       (ArgsOptionList slots (+ len 1)))))
 
 ;: Return a parsed option occurrence's canonical name.
 (define (option-name [option : ArgsOption]) : String
-  (struct-get option name))
+  option.name)
 
 ;: Return a parsed option occurrence's value, or the empty string for flags.
 (define (option-value [option : ArgsOption]) : String
-  (struct-get option value))
+  option.value)
 
 ;: Return true when a parsed option occurrence carries a value.
 (define (option-has-value? [option : ArgsOption]) : bool
-  (struct-get option has-value))
+  option.has-value)
 
 ;: Count parsed option occurrences with the canonical `name`.
 (define (option-list-count [items : ArgsOptionList] [name : String]) : i64
@@ -240,11 +237,9 @@
     [index : i64 0]
     [count : i64 0]
     (begin
-      (while (< index (struct-get items len))
+      (while (< index items.len)
         (begin
-          (if (string.eq
-            (option-name (array-ref (struct-get items slots) index))
-            name)
+          (if (string.eq (option-name (array-ref items.slots index)) name)
             (set! count (+ count 1))
             unit)
           (set! index (+ index 1))))
@@ -264,9 +259,9 @@
     [index : i64 0]
     [result : String fallback]
     (begin
-      (while (< index (struct-get items len))
+      (while (< index items.len)
         (let
-          [head : ArgsOption (array-ref (struct-get items slots) index)]
+          [head : ArgsOption (array-ref items.slots index)]
           (begin
             (if (if (string.eq (option-name head) name)
               (option-has-value? head)
@@ -278,13 +273,13 @@
 
 ;: Return the parsed option occurrence list.
 (define (parsed-options [parsed : ArgsParsed]) : ArgsOptionList
-  (struct-get parsed options))
+  parsed.options)
 
 ;: Borrow the positional arguments in input order.
 (define (parsed-positionals [parsed : (& parsed ArgsParsed)]) : (&
     parsed
     svec.Vec)
-  (& (struct-get parsed positionals)))
+  (& parsed.positionals))
 
 ;: Count option occurrences in a parsed result.
 (define (option-count [parsed : ArgsParsed] [name : String]) : i64
@@ -361,10 +356,10 @@
   [name : String]
   [long? : bool]
   [index : i64]) : ArgsMaybeOptionSpec
-  (if (>= index (struct-get specs len))
+  (if (>= index specs.len)
     (ArgsNoOptionSpec)
     (let
-      [spec : ArgsOptionSpec (array-ref (struct-get specs slots) index)]
+      [spec : ArgsOptionSpec (array-ref specs.slots index)]
       (if (if long?
         (option-spec-matches-long? spec name)
         (option-spec-matches-short? spec name))
@@ -396,13 +391,10 @@
   [state : ArgsParseState (:consume)]
   [value : String]) : ArgsParseState
   (let
-    [positionals : svec.Vec (struct-get state positionals)]
+    [positionals : svec.Vec state.positionals]
     (begin
       (svec.push (&mut positionals) value)
-      (ArgsParseState
-        (struct-get state options)
-        positionals
-        (struct-get state stop-options)))))
+      (ArgsParseState state.options positionals state.stop-options))))
 
 ;: Add a parsed option occurrence to a parse state.
 (define (parse-state-add-option
@@ -411,22 +403,17 @@
   [value : String]
   [has-value : bool]) : ArgsParseState
   (ArgsParseState
-    (option-list-push
-      (struct-get state options)
-      (ArgsOption name value has-value))
-    (struct-get state positionals)
-    (struct-get state stop-options)))
+    (option-list-push state.options (ArgsOption name value has-value))
+    state.positionals
+    state.stop-options))
 
 ;: Mark the parse state as past `--`.
 (define (parse-state-stop-options [state : ArgsParseState]) : ArgsParseState
-  (ArgsParseState
-    (struct-get state options)
-    (struct-get state positionals)
-    true))
+  (ArgsParseState state.options state.positionals true))
 
 ;: Convert the parse state into the public ordered result.
 (define (parse-state-finish [state : ArgsParseState]) : ArgsParsed
-  (ArgsParsed (struct-get state options) (struct-get state positionals)))
+  (ArgsParsed state.options state.positionals))
 
 ;: Finish parser field accumulators into the public ordered result.
 (define (parse-finish-fields
@@ -477,8 +464,7 @@
   [has-next : bool]
   [index : i64]) : ResultArgsParseAdvance
   (cond
-    [(struct-get state stop-options)
-      (stdlib.args.advance-positional state current index)]
+    [state.stop-options (stdlib.args.advance-positional state current index)]
     [(stdlib.args.end-of-options-token? current)
       (stdlib.args.advance-end-of-options state index)]
     [(stdlib.args.option-looking-token? current)
@@ -682,9 +668,9 @@
     specs
     index
     end
-    (struct-get state options)
-    (struct-get state positionals)
-    (struct-get state stop-options)))
+    state.options
+    state.positionals
+    state.stop-options))
 
 ;: Parse the process argv range `[start, end)`. Negative bounds clamp to zero
 ;: and end clamps to `(arg-count)`.

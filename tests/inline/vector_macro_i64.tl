@@ -175,7 +175,7 @@
             "native slice copy value")))
       (let
         [view : (&mut items (Slice i64)) (ivec.view-mut (&mut items))]
-        (array-set! view 1 44))
+        (set! (array-ref view 1) 44))
       (test.assert-i64-eq
         (ivec.get (& items) 1 -1)
         44

@@ -40,7 +40,7 @@
         [(io.IoFloatSomeF64 parsed)
           (if (= (math.f64-to-bits parsed) bits)
             (begin
-              (array-set! seen index bits)
+              (set! (array-ref seen index) bits)
               (io.print-string text)
               (io.print-string "\n")
               true)
@@ -86,10 +86,10 @@
               (math-log-literal-record-four!
                 seen
                 count
-                (struct-get entry invc-bits)
-                (struct-get entry logc-bits)
-                (struct-get entry chi-bits)
-                (struct-get entry clo-bits)))
+                entry.invc-bits
+                entry.logc-bits
+                entry.chi-bits
+                entry.clo-bits))
             (set! count (+ count 4))
             (set! table-index (+ table-index 1)))))
       (set! table-index 0)
@@ -103,8 +103,8 @@
               (math-log-literal-record-two!
                 seen
                 count
-                (struct-get entry invc-bits)
-                (struct-get entry logc-bits)))
+                entry.invc-bits
+                entry.logc-bits))
             (set! count (+ count 2))
             (set! table-index (+ table-index 1)))))
       (if (and ok (= count 544))

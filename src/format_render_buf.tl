@@ -30,7 +30,7 @@
 
 (define (fmt-render-buf-reserve [buf : (&mut buf FmtRenderBuf)] [needed : i64]) : unit
   (let
-    [cur : (__tl_dyn-array u8) (struct-get buf data)]
+    [cur : (__tl_dyn-array u8) buf.data]
     [cap : i64 (array-length cur)]
     (if (<= needed cap)
       unit
@@ -41,7 +41,7 @@
             (set! newcap (* newcap 2)))
           (let
             [bigger : (__tl_dyn-array u8) (make-array u8 newcap)]
-            [n : i64 (struct-get buf len)]
+            [n : i64 buf.len]
             (begin
               (if (> n 0)
                 (string.str-copy-bytes-into
@@ -52,7 +52,7 @@
                   0
                   n)
                 unit)
-              (set! (struct-get buf data) bigger))))))))
+              (set! buf.data bigger))))))))
 
 (define (fmt-render-buf-append [buf : (&mut buf FmtRenderBuf)] [s : String]) : unit
   (let
@@ -60,27 +60,25 @@
     (if (= slen 0)
       unit
       (let
-        [base : i64 (struct-get buf len)]
+        [base : i64 buf.len]
         (begin
           (fmt-render-buf-reserve buf (+ base slen))
           (string.str-copy-bytes-into
             (unsafe
               (string-data (& s)))
             (unsafe
-              (array-data (struct-get buf data)))
+              (array-data buf.data))
             base
             slen)
-          (set! (struct-get buf len) (+ base slen)))))))
+          (set! buf.len (+ base slen)))))))
 
 (define (fmt-render-buf-string [buf : FmtRenderBuf]) : String
   (let
-    [n : i64 (struct-get buf len)]
+    [n : i64 buf.len]
     (if (= n 0)
       ""
       (unsafe
-        (string-from-bytes
-          (ptr-cast (array-data (struct-get buf data)) : (Ptr u8))
-          n)))))
+        (string-from-bytes (ptr-cast (array-data buf.data) : (Ptr u8)) n)))))
 
 ;; Append a newline plus `indent` spaces to the buffer in place.
 (define (render-newline-into! [buf : (&mut buf FmtRenderBuf)] [indent : i64]) : unit

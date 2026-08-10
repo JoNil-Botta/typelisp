@@ -16,7 +16,7 @@
           (set! index (+ index 1))))
       (if found
         unit
-        (array-set! names count name)))))
+        (set! (array-ref names count) name)))))
 
 (define (main [names : (__tl_dyn-array String)] [name : String]) : unit
   (insert-once! names 0 name))

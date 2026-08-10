@@ -8,5 +8,5 @@
     [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-ref items 0)]
     (begin
-      (array-set! borrowed 0 41)
+      (set! (array-ref borrowed 0) 41)
       n)))

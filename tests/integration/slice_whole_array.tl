@@ -21,7 +21,7 @@
 
 (define (slice-mut-sum [p0 : i64] [p1 : i64] [s : (&mut s (Slice i64))]) : i64
   (begin
-    (array-set! s 0 (+ p0 p1))
+    (set! (array-ref s 0) (+ p0 p1))
     (+ (array-ref s 0) (array-length s))))
 
 (define (slice-ref-value [_value : (& value i64)]) : i64
@@ -35,14 +35,14 @@
 (define (triple-sum [s : (& s (Slice SliceTriple))]) : i64
   (let
     [v : SliceTriple (array-ref s 1)]
-    (+ (struct-get v a) (+ (struct-get v b) (struct-get v c)))))
+    (+ v.a (+ v.b v.c))))
 
 (define (triple-mut [s : (&mut s (Slice SliceTriple))]) : i64
   (begin
-    (array-set! s 0 (SliceTriple 7 8 9))
+    (set! (array-ref s 0) (SliceTriple 7 8 9))
     (let
       [v : SliceTriple (array-ref s 0)]
-      (+ (struct-get v a) (+ (struct-get v b) (struct-get v c))))))
+      (+ v.a (+ v.b v.c)))))
 
 (define (nested-sum [s : (& s (Slice (Array i64 2)))]) : i64
   (+ (array-ref (array-ref s 0) 1) (array-ref (array-ref s 1) 0)))

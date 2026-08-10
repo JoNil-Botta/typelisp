@@ -265,32 +265,31 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-backend-phi-copy-push!
   [seq : (&mut seq CompilerBackendPhiCopySeq)]
   [phi-copy : CompilerBackendPhiCopy]) : unit
   (begin
-    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+    (if (< seq.len (array-length seq.slots))
       unit
       (let
         [bigger : (__tl_dyn-array CompilerBackendPhiCopy)
           (array.make-array
             CompilerBackendPhiCopy
-            (compiler-backend-seq-capacity
-              (array-length (struct-get seq slots))))]
+            (compiler-backend-seq-capacity (array-length seq.slots)))]
         (begin
           (compiler-backend-phi-copy-copy-range!
             (&mut bigger)
-            (& (struct-get seq slots))
-            (struct-get seq len))
-          (set! (struct-get seq slots) bigger))))
+            (& seq.slots)
+            seq.len)
+          (set! seq.slots bigger))))
     (let
-      [index : i64 (struct-get seq len)]
+      [index : i64 seq.len]
       (begin
-        (array-set! (struct-get seq slots) index phi-copy)
-        (set! (struct-get seq len) (+ index 1))))))
+        (set! (array-ref seq.slots index) phi-copy)
+        (set! seq.len (+ index 1))))))
 
 ;; The object path stages an edge's copies in REVERSE instruction order (the old
 ;; cons scan prepended); this keeps that visit order byte-identical.
@@ -314,8 +313,8 @@
   [copies : CompilerBackendPhiCopySeq]
   [index : i64]) : CompilerBackendPhiCopy
   `(array-ref
-    (struct-get ,copies slots)
-    (- (- (struct-get ,copies len) 1) ,index)))
+    (__tl-project-field-name ,copies "slots")
+    (- (- (__tl-project-field-name ,copies "len") 1) ,index)))
 
 (defenum CompilerBackendMaybePhiCopy
   (No)
@@ -617,7 +616,7 @@
   [buf : (&mut buf CompilerBackendAsmBuf)]
   [needed : i64]) : unit
   (let
-    [doubled : i64 (* (struct-get buf cap) 2)]
+    [doubled : i64 (* buf.cap 2)]
     [capacity : i64
       (if (< doubled needed)
         needed
@@ -628,17 +627,17 @@
     (begin
       (string.str-copy-bytes-into
         (unsafe
-          (ptr-cast (struct-get buf data) : (Ptr u8)))
+          (ptr-cast buf.data : (Ptr u8)))
         bigger
         0
-        (struct-get buf len))
-      (set! (struct-get buf data) bigger)
-      (set! (struct-get buf cap) capacity))))
+        buf.len)
+      (set! buf.data bigger)
+      (set! buf.cap capacity))))
 
 (define (compiler-backend-asm-buf-reserve!
   [buf : (&mut buf CompilerBackendAsmBuf)]
   [total : i64]) : unit
-  (if (> total (struct-get buf cap))
+  (if (> total buf.cap)
     (compiler-backend-asm-buf-grow! buf total)
     unit))
 
@@ -694,7 +693,7 @@
   [n : i64]) : unit
   (if (= n 0)
     unit
-    (string.str-copy-owned-bytes-into part (struct-get buf data) off n)))
+    (string.str-copy-owned-bytes-into part buf.data off n)))
 
 (define (compiler-backend-asm-append
   [buf : (&mut buf CompilerBackendAsmBuf)]
@@ -704,13 +703,13 @@
     (if (= n 0)
       unit
       (let
-        [off : i64 (struct-get buf len)]
+        [off : i64 buf.len]
         (begin
           (compiler-backend-asm-buf-reserve! buf (+ off n))
           (let
-            [dst : (MutPtr u8) (struct-get buf data)]
+            [dst : (MutPtr u8) buf.data]
             (compiler-backend-asm-copy-part! dst off part n))
-          (set! (struct-get buf len) (+ off n)))))))
+          (set! buf.len (+ off n)))))))
 
 (define (compiler-backend-asm-append2
   [buf : (&mut buf CompilerBackendAsmBuf)]
@@ -720,16 +719,16 @@
     [na : i64 (string.string-length a)]
     [nb : i64 (string.string-length b)]
     [total : i64 (+ na nb)]
-    [off : i64 (struct-get buf len)]
+    [off : i64 buf.len]
     (begin
       (compiler-backend-asm-buf-reserve! buf (+ off total))
       (let
-        [dst : (MutPtr u8) (struct-get buf data)]
+        [dst : (MutPtr u8) buf.data]
         [ob : i64 (+ off na)]
         (begin
           (compiler-backend-asm-copy-part! dst off a na)
           (compiler-backend-asm-copy-part! dst ob b nb)))
-      (set! (struct-get buf len) (+ off total)))))
+      (set! buf.len (+ off total)))))
 
 (define (compiler-backend-asm-append4
   [buf : (&mut buf CompilerBackendAsmBuf)]
@@ -743,11 +742,11 @@
     [nc : i64 (string.string-length c)]
     [nd : i64 (string.string-length d)]
     [total : i64 (+ na (+ nb (+ nc nd)))]
-    [off : i64 (struct-get buf len)]
+    [off : i64 buf.len]
     (begin
       (compiler-backend-asm-buf-reserve! buf (+ off total))
       (let
-        [dst : (MutPtr u8) (struct-get buf data)]
+        [dst : (MutPtr u8) buf.data]
         [ob : i64 (+ off na)]
         [oc : i64 (+ ob nb)]
         [od : i64 (+ oc nc)]
@@ -756,7 +755,7 @@
           (compiler-backend-asm-copy-part! dst ob b nb)
           (compiler-backend-asm-copy-part! dst oc c nc)
           (compiler-backend-asm-copy-part! dst od d nd)))
-      (set! (struct-get buf len) (+ off total)))))
+      (set! buf.len (+ off total)))))
 
 (define (compiler-backend-asm-append5
   [buf : (&mut buf CompilerBackendAsmBuf)]
@@ -772,11 +771,11 @@
     [nd : i64 (string.string-length d)]
     [ne : i64 (string.string-length e)]
     [total : i64 (+ na (+ nb (+ nc (+ nd ne))))]
-    [off : i64 (struct-get buf len)]
+    [off : i64 buf.len]
     (begin
       (compiler-backend-asm-buf-reserve! buf (+ off total))
       (let
-        [dst : (MutPtr u8) (struct-get buf data)]
+        [dst : (MutPtr u8) buf.data]
         [ob : i64 (+ off na)]
         [oc : i64 (+ ob nb)]
         [od : i64 (+ oc nc)]
@@ -787,10 +786,10 @@
           (compiler-backend-asm-copy-part! dst oc c nc)
           (compiler-backend-asm-copy-part! dst od d nd)
           (compiler-backend-asm-copy-part! dst oe e ne)))
-      (set! (struct-get buf len) (+ off total)))))
+      (set! buf.len (+ off total)))))
 
 (define (compiler-backend-asm-buf-len [buf : (& buf CompilerBackendAsmBuf)]) : i64
-  (struct-get buf len))
+  buf.len)
 
 ;; Splice `part` in at offset `at`, shifting the live tail right. Only the rare
 ;; emergency-spill wrap (a save that has to land in FRONT of text already
@@ -805,15 +804,15 @@
     (if (= n 0)
       unit
       (let
-        [len : i64 (struct-get buf len)]
+        [len : i64 buf.len]
         [tail : i64 (- len at)]
         (begin
           (compiler-backend-asm-buf-reserve! buf (+ len n))
           (let
-            [dst : (MutPtr u8) (struct-get buf data)]
+            [dst : (MutPtr u8) buf.data]
             [src : (Ptr u8)
               (unsafe
-                (ptr-cast (struct-get buf data) : (Ptr u8)))]
+                (ptr-cast buf.data : (Ptr u8)))]
             [i : i64 (- tail 1)]
             (begin
               (while (>= i 0)
@@ -825,17 +824,17 @@
                   (set! i (- i 1))))
               unit))
           (compiler-backend-asm-buf-put! buf at part n)
-          (set! (struct-get buf len) (+ len n)))))))
+          (set! buf.len (+ len n)))))))
 
 ;; Hand the live prefix out as a String aliasing this buffer's storage. The
 ;; buffer is dead after this call.
 (define (compiler-backend-asm-buf-finish [buf : (& buf CompilerBackendAsmBuf)]) : String
   (let
-    [n : i64 (struct-get buf len)]
+    [n : i64 buf.len]
     (if (= n 0)
       ""
       (unsafe
-        (string-from-bytes (ptr-cast (struct-get buf data) : (Ptr u8)) n)))))
+        (string-from-bytes (ptr-cast buf.data : (Ptr u8)) n)))))
 
 (defenum ResultCompilerBackendObject
   (Ok cobj.CompilerObjectImage)
@@ -984,9 +983,8 @@
     [cell : (__tl_dyn-array CompilerBackendStateData)
       (array.make-array CompilerBackendStateData 1)]
     (begin
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (CompilerBackendStateData
           intern-state
           owner-arena
@@ -1024,18 +1022,14 @@
 (define (compiler-backend-state-data [state : CompilerBackendState]) : CompilerBackendStateData
   (unsafe
     (ptr-read
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (Ptr CompilerBackendStateData)))))
+      (int->ptr (cast state.address : u64) : (Ptr CompilerBackendStateData)))))
 
 (define (compiler-backend-state-data-set!
   [state : CompilerBackendState]
   [data : CompilerBackendStateData]) : unit
   (unsafe
     (ptr-write!
-      (int->ptr
-        (cast (struct-get state address) : u64)
-        : (MutPtr CompilerBackendStateData))
+      (int->ptr (cast state.address : u64) : (MutPtr CompilerBackendStateData))
       data)))
 
 ;; Read/write the hottest job-owned scalar without copying the wide opaque
@@ -1049,7 +1043,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendStateData) function-state-address)))
           : u64)
@@ -1063,7 +1057,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendStateData) function-state-address)))
           : u64)
@@ -1075,7 +1069,7 @@
   (unsafe
     (ptr-read
       (int->ptr
-        (cast (struct-get state address) : u64)
+        (cast state.address : u64)
         : (Ptr CompilerBackendStreamStateData)))))
 
 (define (compiler-backend-stream-state-data-set!
@@ -1084,7 +1078,7 @@
   (unsafe
     (ptr-write!
       (int->ptr
-        (cast (struct-get state address) : u64)
+        (cast state.address : u64)
         : (MutPtr CompilerBackendStreamStateData))
       data)))
 
@@ -1093,9 +1087,8 @@
     [cell : (__tl_dyn-array CompilerBackendStreamStateData)
       (array.make-array CompilerBackendStreamStateData 1)]
     (begin
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref cell 0)
         (CompilerBackendStreamStateData
           false
           (arena.Arena 0)
@@ -1146,7 +1139,7 @@
   (let
     [data : CompilerBackendStateData
       (compiler-backend-state-data backend-state)]
-    [address : i64 (struct-get data stream-state-address)]
+    [address : i64 data.stream-state-address]
     (if (= address 0)
       (let
         [owner : arena.Arena
@@ -1154,9 +1147,7 @@
         [stream-state : CompilerBackendStreamState
           (in-arena owner (compiler-backend-stream-state-new))]
         (begin
-          (set!
-            (struct-get data stream-state-address)
-            (struct-get stream-state address))
+          (set! data.stream-state-address stream-state.address)
           (compiler-backend-state-data-set! backend-state data)
           stream-state))
       (CompilerBackendStreamState address))))
@@ -1164,49 +1155,65 @@
 (define (compiler-backend-assembly-stream-home-arena-handle-value
   [stream : CompilerBackendStreamState]) : i64
   (arena.raw-handle
-    (struct-get (compiler-backend-stream-state-data stream) assembly-home-arena)))
+    (__tl-project-field
+      (compiler-backend-stream-state-data stream)
+      assembly-home-arena)))
 
 (define (compiler-backend-stream-state-carry-capacity
   [stream : CompilerBackendStreamState]) : i64
   (array-length
-    (struct-get (compiler-backend-stream-state-data stream) carry-safe-offsets)))
+    (__tl-project-field
+      (compiler-backend-stream-state-data stream)
+      carry-safe-offsets)))
 
 (define (compiler-backend-stream-state-carry-bytes-capacity
   [stream : CompilerBackendStreamState]) : i64
   (array-length
-    (struct-get (compiler-backend-stream-state-data stream) carry-safe-bytes)))
+    (__tl-project-field
+      (compiler-backend-stream-state-data stream)
+      carry-safe-bytes)))
 
 (define (compiler-backend-stream-state-owner-capacity
   [stream : CompilerBackendStreamState]) : i64
   (array-length
-    (struct-get
+    (__tl-project-field
       (compiler-backend-stream-state-data stream)
       owner-global-offsets)))
 
 (define (compiler-backend-stream-state-owner-bytes-capacity
   [stream : CompilerBackendStreamState]) : i64
   (array-length
-    (struct-get (compiler-backend-stream-state-data stream) owner-global-bytes)))
+    (__tl-project-field
+      (compiler-backend-stream-state-data stream)
+      owner-global-bytes)))
 
 (define (compiler-backend-stream-state-sweep-capacity
   [stream : CompilerBackendStreamState]) : i64
   (array-length
-    (struct-get (compiler-backend-stream-state-data stream) sweep-sym-off)))
+    (__tl-project-field
+      (compiler-backend-stream-state-data stream)
+      sweep-sym-off)))
 
 (define (compiler-backend-stream-state-sweep-bytes-capacity
   [stream : CompilerBackendStreamState]) : i64
   (array-length
-    (struct-get (compiler-backend-stream-state-data stream) sweep-sym-bytes)))
+    (__tl-project-field
+      (compiler-backend-stream-state-data stream)
+      sweep-sym-bytes)))
 
 (define (compiler-backend-stream-state-coverage-capacity
   [stream : CompilerBackendStreamState]) : i64
   (array-length
-    (struct-get (compiler-backend-stream-state-data stream) sweep-coverage-bits)))
+    (__tl-project-field
+      (compiler-backend-stream-state-data stream)
+      sweep-coverage-bits)))
 
 (define (compiler-backend-stream-state-record-capacity
   [stream : CompilerBackendStreamState]) : i64
   (array-length
-    (struct-get (compiler-backend-stream-state-data stream) records-lines)))
+    (__tl-project-field
+      (compiler-backend-stream-state-data stream)
+      records-lines)))
 
 (define (compiler-backend-stream-state-retained-table-bytes
   [stream : CompilerBackendStreamState]) : i64
@@ -1218,43 +1225,43 @@
         8
         (+
           (+
-            (array-length (struct-get data carry-safe-offsets))
-            (array-length (struct-get data carry-safe-lengths)))
+            (array-length data.carry-safe-offsets)
+            (array-length data.carry-safe-lengths))
           (+
             (+
               (+
                 (+
-                  (array-length (struct-get data sweep-sym-off))
-                  (array-length (struct-get data sweep-sym-len)))
+                  (array-length data.sweep-sym-off)
+                  (array-length data.sweep-sym-len))
                 (+
-                  (array-length (struct-get data sweep-lo-arr))
-                  (array-length (struct-get data sweep-hi-arr))))
+                  (array-length data.sweep-lo-arr)
+                  (array-length data.sweep-hi-arr)))
               (+
-                (array-length (struct-get data sweep-disp-arr))
-                (array-length (struct-get data sweep-win64-arr))))
+                (array-length data.sweep-disp-arr)
+                (array-length data.sweep-win64-arr)))
             (+
               (+
-                (array-length (struct-get data sweep-em-lo-arr))
-                (array-length (struct-get data sweep-em-hi-arr)))
+                (array-length data.sweep-em-lo-arr)
+                (array-length data.sweep-em-hi-arr))
               (+
-                (array-length (struct-get data sweep-coverage-bits))
+                (array-length data.sweep-coverage-bits)
                 (+
-                  (array-length (struct-get data owner-global-offsets))
-                  (array-length (struct-get data owner-global-lengths))))))))
+                  (array-length data.owner-global-offsets)
+                  (array-length data.owner-global-lengths)))))))
       (+
         (+
-          (array-length (struct-get data carry-safe-bytes))
-          (array-length (struct-get data sweep-sym-bytes)))
-        (array-length (struct-get data owner-global-bytes))))))
+          (array-length data.carry-safe-bytes)
+          (array-length data.sweep-sym-bytes))
+        (array-length data.owner-global-bytes)))))
 
 (define (compiler-backend-state-intern [state : CompilerBackendState]) : ci.InternCompatState
-  (struct-get (compiler-backend-state-data state) intern-state))
+  (__tl-project-field (compiler-backend-state-data state) intern-state))
 
 (define (compiler-backend-state-exact-intern [state : CompilerBackendState]) : ci.InternCompatState
   (compiler-backend-state-intern state))
 
 (define (compiler-backend-state-owner-arena [state : CompilerBackendState]) : i64
-  (struct-get (compiler-backend-state-data state) owner-arena))
+  (__tl-project-field (compiler-backend-state-data state) owner-arena))
 
 (define (compiler-backend-arena-owner-current-head [owner : arena.Arena]) : arena.Arena
   (let
@@ -1278,7 +1285,7 @@
             head))))))
 
 (define (compiler-backend-state-emission-arena [state : CompilerBackendState]) : i64
-  (struct-get (compiler-backend-state-data state) emission-arena))
+  (__tl-project-field (compiler-backend-state-data state) emission-arena))
 
 (define (compiler-backend-state-set-emission-arena!
   [state : CompilerBackendState]
@@ -1286,19 +1293,19 @@
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (begin
-      (set! (struct-get data emission-arena) (arena.raw-handle owner))
+      (set! data.emission-arena (arena.raw-handle owner))
       (compiler-backend-state-data-set! state data))))
 
 (define (compiler-backend-state-ensure-emission-arena!
   [state : CompilerBackendState]) : arena.Arena
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    [stored : i64 (struct-get data emission-arena)]
+    [stored : i64 data.emission-arena]
     (if (= stored 0)
       (let
         [current : arena.Arena (arena.current)]
         (begin
-          (set! (struct-get data emission-arena) (arena.raw-handle current))
+          (set! data.emission-arena (arena.raw-handle current))
           (compiler-backend-state-data-set! state data)
           current))
       (arena.Arena stored))))
@@ -1308,7 +1315,7 @@
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (begin
-      (set! (struct-get data emission-arena) 0)
+      (set! data.emission-arena 0)
       (compiler-backend-state-data-set! state data))))
 
 (define (compiler-backend-state-current-emission-arena
@@ -1321,7 +1328,9 @@
 
 (define (compiler-backend-state-scalar-registers-enabled?
   [state : CompilerBackendState]) : bool
-  (struct-get (compiler-backend-state-data state) scalar-registers-enabled))
+  (__tl-project-field
+    (compiler-backend-state-data state)
+    scalar-registers-enabled))
 
 (define (compiler-backend-state-set-scalar-registers-enabled!
   [state : CompilerBackendState]
@@ -1329,32 +1338,36 @@
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (begin
-      (set! (struct-get data scalar-registers-enabled) enabled)
+      (set! data.scalar-registers-enabled enabled)
       (compiler-backend-state-data-set! state data))))
 
 ;; Public observations for the retained operand-render storage.  The backing
 ;; StateData remains opaque; capacities are reported from the actual arrays so
 ;; a fresh state (and a state that was only reset) is observably allocation-free.
 (define (compiler-backend-state-lazy-table-arena [state : CompilerBackendState]) : i64
-  (struct-get (compiler-backend-state-data state) lazy-table-arena))
+  (__tl-project-field (compiler-backend-state-data state) lazy-table-arena))
 
 (define (compiler-backend-state-slot-cache-capacity
   [state : CompilerBackendState]) : i64
   (array-length
-    (struct-get (compiler-backend-state-data state) slot-cache-values)))
+    (__tl-project-field (compiler-backend-state-data state) slot-cache-values)))
 
 (define (compiler-backend-state-frame-offset-cache-capacity
   [state : CompilerBackendState]) : i64
   (array-length
-    (struct-get (compiler-backend-state-data state) frame-offset-cache-values)))
+    (__tl-project-field
+      (compiler-backend-state-data state)
+      frame-offset-cache-values)))
 
 (define (compiler-backend-state-immediate-cache-capacity
   [state : CompilerBackendState]) : i64
   (array-length
-    (struct-get (compiler-backend-state-data state) immediate-cache-values)))
+    (__tl-project-field
+      (compiler-backend-state-data state)
+      immediate-cache-values)))
 
 (define (compiler-backend-state-slot-cache-epoch [state : CompilerBackendState]) : i64
-  (struct-get (compiler-backend-state-data state) slot-cache-epoch))
+  (__tl-project-field (compiler-backend-state-data state) slot-cache-epoch))
 
 (define (compiler-backend-state-operand-cache-retained-bytes
   [state : CompilerBackendState]) : i64
@@ -1376,12 +1389,16 @@
 
 (define (compiler-backend-state-user-symbol-cache-count
   [state : CompilerBackendState]) : i64
-  (struct-get (compiler-backend-state-data state) user-symbol-cache-count))
+  (__tl-project-field
+    (compiler-backend-state-data state)
+    user-symbol-cache-count))
 
 (define (compiler-backend-state-user-symbol-cache-capacity
   [state : CompilerBackendState]) : i64
   (array-length
-    (struct-get (compiler-backend-state-data state) user-symbol-cache-keys)))
+    (__tl-project-field
+      (compiler-backend-state-data state)
+      user-symbol-cache-keys)))
 
 (define (compiler-backend-state-user-symbol-cache-retained-bytes
   [state : CompilerBackendState]) : i64
@@ -1391,7 +1408,7 @@
 
 (define (compiler-backend-state-absolute-switch-ok?
   [state : CompilerBackendState]) : bool
-  (struct-get (compiler-backend-state-data state) absolute-switch-ok))
+  (__tl-project-field (compiler-backend-state-data state) absolute-switch-ok))
 
 (define (compiler-backend-state-set-absolute-switch-ok!
   [state : CompilerBackendState]
@@ -1399,12 +1416,12 @@
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (begin
-      (set! (struct-get data absolute-switch-ok) ok)
+      (set! data.absolute-switch-ok ok)
       (compiler-backend-state-data-set! state data))))
 
 (define (compiler-backend-state-abort-site-counter
   [state : CompilerBackendState]) : i64
-  (struct-get (compiler-backend-state-data state) abort-site-counter))
+  (__tl-project-field (compiler-backend-state-data state) abort-site-counter))
 
 (define (compiler-backend-state-set-abort-site-counter!
   [state : CompilerBackendState]
@@ -1412,7 +1429,7 @@
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (begin
-      (set! (struct-get data abort-site-counter) value)
+      (set! data.abort-site-counter value)
       (compiler-backend-state-data-set! state data))))
 
 (define (compiler-backend-state-next-abort-site-counter!
@@ -1468,7 +1485,7 @@
 (define (compiler-backend-symbol-text-index
   [index : CompilerBackendProgramIndex]
   [id : i64]) : String
-  (compiler-backend-symbol-text-state (struct-get index backend-state) id))
+  (compiler-backend-symbol-text-state index.backend-state id))
 
 (defenum CompilerBackendDebugFileIndex
   (No)
@@ -1505,32 +1522,29 @@
   [path-id : i64]) : CompilerBackendDebugFileBuildState
   (if (or
     (<= path-id 0)
-    (not
-      (compiler-backend-state-intern-id-valid?
-        (struct-get build backend-state)
-        path-id)))
+    (not (compiler-backend-state-intern-id-valid? build.backend-state path-id)))
     build
     (let
-      [numbers : backend_i64_i64_map.Map (struct-get build numbers)]
+      [numbers : backend_i64_i64_map.Map build.numbers]
       (if (backend_i64_i64_map.contains? (& numbers) path-id)
         build
         (begin
           (backend_i64_i64_map.insert-ref!
             (&mut numbers)
             path-id
-            (+ (struct-get build count) 1))
-          (array-set! (struct-get build paths) (struct-get build count) path-id)
-          (set! (struct-get build numbers) numbers)
-          (set! (struct-get build count) (+ (struct-get build count) 1))
+            (+ build.count 1))
+          (set! (array-ref build.paths build.count) path-id)
+          (set! build.numbers numbers)
+          (set! build.count (+ build.count 1))
           build)))))
 
 (define (compiler-backend-debug-files-from-function-entries
   [entries : compiler_ir_types.CompilerSourceSpansEntryList]
   [index : i64]
   [build : CompilerBackendDebugFileBuildState (:consume)]) : CompilerBackendDebugFileBuildState
-  (if (>= index (struct-get entries len))
+  (if (>= index entries.len)
     build
-    (match (array-ref (struct-get entries slots) index)
+    (match (array-ref entries.slots index)
       [(compiler_ir_types.CompilerSourceSpansEntry.Entry _ path-id _)
         (let
           [next : CompilerBackendDebugFileBuildState
@@ -1544,9 +1558,9 @@
   [entries : compiler_ir_types.CompilerSourceSpansInstrEntryList]
   [index : i64]
   [build : CompilerBackendDebugFileBuildState (:consume)]) : CompilerBackendDebugFileBuildState
-  (if (>= index (struct-get entries len))
+  (if (>= index entries.len)
     build
-    (match (array-ref (struct-get entries slots) index)
+    (match (array-ref entries.slots index)
       [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry _ path-id _)
         (let
           [next : CompilerBackendDebugFileBuildState
@@ -1563,8 +1577,7 @@
     (match spans
       [(compiler_ir_types.CompilerSourceSpans.Spans entries instr-entries _)
         (let
-          [capacity : i64
-            (+ (struct-get entries len) (struct-get instr-entries len))]
+          [capacity : i64 (+ entries.len instr-entries.len)]
           [build : CompilerBackendDebugFileBuildState
             (in-arena
               (compiler-backend-state-current-emission-arena backend-state)
@@ -1581,23 +1594,21 @@
               0
               after-functions)]
           (CompilerBackendDebugFileIndex.Files
-            (struct-get after-instrs numbers)
-            (struct-get after-instrs paths)
-            (struct-get after-instrs count)))])
+            after-instrs.numbers
+            after-instrs.paths
+            after-instrs.count))])
     (CompilerBackendDebugFileIndex.No)))
 
 (define (compiler-backend-debug-file-number
   [index : CompilerBackendSourceSpanIndex]
   [path-id : i64]) : i64
-  (match (struct-get index debug-files)
+  (match index.debug-files
     [(CompilerBackendDebugFileIndex.No) 0]
     [(CompilerBackendDebugFileIndex.Files numbers _ _)
       (if (or
         (<= path-id 0)
         (not
-          (compiler-backend-state-intern-id-valid?
-            (struct-get index backend-state)
-            path-id)))
+          (compiler-backend-state-intern-id-valid? index.backend-state path-id)))
         0
         (match (backend_i64_i64_map.get (& numbers) path-id)
           [(backend_i64_i64_map.LookupFound number) number]
@@ -1605,24 +1616,24 @@
 
 (define (compiler-backend-runtime-tail-profile?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
-  (struct-get tail profile))
+  tail.profile)
 
 (define (compiler-backend-runtime-tail-tlci-macro-entry?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
-  (struct-get tail tlci-macro-entry))
+  tail.tlci-macro-entry)
 
 (define (compiler-backend-runtime-tail-arena-debug?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
-  (struct-get tail arena-debug))
+  tail.arena-debug)
 
 (define (compiler-backend-runtime-tail-startup-profile?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
-  (struct-get tail startup-profile))
+  tail.startup-profile)
 
 (define (compiler-backend-runtime-plan-tail [plan : CompilerBackendRuntimePlan]) : CompilerBackendRuntimeTailPlan
   (match plan
     [(CompilerBackendRuntimePlan.WithScratch base _)
-      (compiler-backend-runtime-plan-tail (box-get base))]
+      (compiler-backend-runtime-plan-tail (__tl-box-place base))]
     [(CompilerBackendRuntimePlan.Plan _ _ _ _ _ _ _ tail) tail]))
 
 (define compiler-backend-empty-scratch-plan : compiler_regalloc.CompilerRegScratchPlan
@@ -1720,15 +1731,13 @@
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (begin
+      (set! data.user-symbol-cache-epoch (+ data.user-symbol-cache-epoch 1))
+      (set! data.user-symbol-cache-count 0)
       (set!
-        (struct-get data user-symbol-cache-epoch)
-        (+ (struct-get data user-symbol-cache-epoch) 1))
-      (set! (struct-get data user-symbol-cache-count) 0)
-      (set!
-        (struct-get data user-symbol-cache-generation)
+        data.user-symbol-cache-generation
         (compiler-backend-state-intern-generation state))
       (set!
-        (struct-get data user-symbol-cache-table-id)
+        data.user-symbol-cache-table-id
         (compiler-backend-state-intern-table-id state))
       (compiler-backend-state-data-set! state data))))
 
@@ -1738,10 +1747,10 @@
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (if (and
       (=
-        (struct-get data user-symbol-cache-generation)
+        data.user-symbol-cache-generation
         (compiler-backend-state-intern-generation state))
       (=
-        (struct-get data user-symbol-cache-table-id)
+        data.user-symbol-cache-table-id
         (compiler-backend-state-intern-table-id state)))
       unit
       (compiler-backend-state-user-symbol-cache-reset! state))))
@@ -1760,7 +1769,7 @@
   [capacity : i64]) : unit
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    [owner : arena.Arena (arena.Arena (struct-get data owner-arena))]
+    [owner : arena.Arena (arena.Arena data.owner-arena)]
     [keys : (__tl_dyn-array i64)
       (in-arena owner (array.make-array i64 capacity))]
     [values : (__tl_dyn-array String)
@@ -1771,12 +1780,12 @@
     (begin
       (while (< i capacity)
         (begin
-          (array-set! keys i -1)
-          (array-set! epochs i 0)
+          (set! (array-ref keys i) -1)
+          (set! (array-ref epochs i) 0)
           (set! i (+ i 1))))
-      (set! (struct-get data user-symbol-cache-keys) keys)
-      (set! (struct-get data user-symbol-cache-values) values)
-      (set! (struct-get data user-symbol-cache-epochs) epochs)
+      (set! data.user-symbol-cache-keys keys)
+      (set! data.user-symbol-cache-values values)
+      (set! data.user-symbol-cache-epochs epochs)
       (compiler-backend-state-data-set! state data))))
 
 (define (compiler-backend-state-user-symbol-cache-rehash!
@@ -1784,13 +1793,11 @@
   [new-capacity : i64]) : unit
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    [old-keys : (__tl_dyn-array i64) (struct-get data user-symbol-cache-keys)]
-    [old-values : (__tl_dyn-array String)
-      (struct-get data user-symbol-cache-values)]
-    [old-epochs : (__tl_dyn-array i64)
-      (struct-get data user-symbol-cache-epochs)]
+    [old-keys : (__tl_dyn-array i64) data.user-symbol-cache-keys]
+    [old-values : (__tl_dyn-array String) data.user-symbol-cache-values]
+    [old-epochs : (__tl_dyn-array i64) data.user-symbol-cache-epochs]
     [old-capacity : i64 (array-length old-keys)]
-    [owner : arena.Arena (arena.Arena (struct-get data owner-arena))]
+    [owner : arena.Arena (arena.Arena data.owner-arena)]
     [keys : (__tl_dyn-array i64)
       (in-arena owner (array.make-array i64 new-capacity))]
     [values : (__tl_dyn-array String)
@@ -1801,8 +1808,8 @@
     (begin
       (while (< i new-capacity)
         (begin
-          (array-set! keys i -1)
-          (array-set! epochs i 0)
+          (set! (array-ref keys i) -1)
+          (set! (array-ref epochs i) 0)
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i old-capacity)
@@ -1810,22 +1817,20 @@
           [key : i64 (array-ref old-keys i)]
           (if (and
             (>= key 0)
-            (=
-              (array-ref old-epochs i)
-              (struct-get data user-symbol-cache-epoch)))
+            (= (array-ref old-epochs i) data.user-symbol-cache-epoch))
             (let
               [slot : i64
                 (compiler-backend-state-user-symbol-cache-hash key new-capacity)]
               (while (>= (array-ref keys slot) 0)
                 (set! slot (% (+ slot 1) new-capacity)))
-              (array-set! keys slot key)
-              (array-set! values slot (array-ref old-values i))
-              (array-set! epochs slot (struct-get data user-symbol-cache-epoch)))
+              (set! (array-ref keys slot) key)
+              (set! (array-ref values slot) (array-ref old-values i))
+              (set! (array-ref epochs slot) data.user-symbol-cache-epoch))
             unit)
           (set! i (+ i 1))))
-      (set! (struct-get data user-symbol-cache-keys) keys)
-      (set! (struct-get data user-symbol-cache-values) values)
-      (set! (struct-get data user-symbol-cache-epochs) epochs)
+      (set! data.user-symbol-cache-keys keys)
+      (set! data.user-symbol-cache-values values)
+      (set! data.user-symbol-cache-epochs epochs)
       (compiler-backend-state-data-set! state data))))
 
 (define (compiler-backend-state-user-symbol-id
@@ -1839,18 +1844,16 @@
     ""
     (let
       [data : CompilerBackendStateData (compiler-backend-state-data state)]
-      [capacity : i64 (array-length (struct-get data user-symbol-cache-keys))]
+      [capacity : i64 (array-length data.user-symbol-cache-keys)]
       (if (= capacity 0)
         (begin
           (compiler-backend-state-user-symbol-cache-allocate! state 16)
           (compiler-backend-state-user-symbol-id state name-id))
         (let
-          [keys : (__tl_dyn-array i64) (struct-get data user-symbol-cache-keys)]
-          [values : (__tl_dyn-array String)
-            (struct-get data user-symbol-cache-values)]
-          [epochs : (__tl_dyn-array i64)
-            (struct-get data user-symbol-cache-epochs)]
-          [epoch : i64 (struct-get data user-symbol-cache-epoch)]
+          [keys : (__tl_dyn-array i64) data.user-symbol-cache-keys]
+          [values : (__tl_dyn-array String) data.user-symbol-cache-values]
+          [epochs : (__tl_dyn-array i64) data.user-symbol-cache-epochs]
+          [epoch : i64 data.user-symbol-cache-epoch]
           [slot : i64
             (compiler-backend-state-user-symbol-cache-hash name-id capacity)]
           [steps : i64 0]
@@ -1877,9 +1880,7 @@
               (= (array-ref epochs insert-slot) epoch)
               (= (array-ref keys insert-slot) name-id))
               (array-ref values insert-slot)
-              (if (>
-                (* (+ (struct-get data user-symbol-cache-count) 1) 4)
-                (* capacity 3))
+              (if (> (* (+ data.user-symbol-cache-count 1) 4) (* capacity 3))
                 (begin
                   (compiler-backend-state-user-symbol-cache-rehash!
                     state
@@ -1891,12 +1892,12 @@
                       (compiler-backend-state-current-emission-arena state)
                       (compiler-backend-user-symbol-uncached
                         (compiler-backend-symbol-text-state state name-id)))]
-                  (array-set! keys insert-slot name-id)
-                  (array-set! values insert-slot mangled)
-                  (array-set! epochs insert-slot epoch)
+                  (set! (array-ref keys insert-slot) name-id)
+                  (set! (array-ref values insert-slot) mangled)
+                  (set! (array-ref epochs insert-slot) epoch)
                   (set!
-                    (struct-get data user-symbol-cache-count)
-                    (+ (struct-get data user-symbol-cache-count) 1))
+                    data.user-symbol-cache-count
+                    (+ data.user-symbol-cache-count 1))
                   (compiler-backend-state-data-set! state data)
                   mangled)))))))))
 
@@ -2232,11 +2233,11 @@
   (unsafe
     (ptr-read
       (int->ptr
-        (cast (struct-get state address) : u64)
+        (cast state.address : u64)
         : (Ptr CompilerBackendFunctionStateData)))))
 
 ;; Representation-lane reads intentionally address the field in place.  A
-;; generic `struct-get (ptr-read StateData)` materialises the entire wide state
+;; generic field projection from `(ptr-read StateData)` materialises the entire wide state
 ;; before selecting one array, which turns every hot i64/bool lookup into a
 ;; large memcpy.  The returned array handles still point at owner storage; only
 ;; their compact descriptor is copied.
@@ -2247,7 +2248,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime (offset-of (type CompilerBackendFunctionStateData) i64s)))
           : u64)
         : (Ptr (__tl_dyn-array i64))))))
@@ -2259,7 +2260,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime (offset-of (type CompilerBackendFunctionStateData) bools)))
           : u64)
         : (Ptr (__tl_dyn-array bool))))))
@@ -2271,7 +2272,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime (offset-of (type CompilerBackendFunctionStateData) modes)))
           : u64)
         : (Ptr (__tl_dyn-array CompilerBackendMode))))))
@@ -2283,7 +2284,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) strings)))
           : u64)
@@ -2297,7 +2298,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) i64-arrays)))
           : u64)
@@ -2311,7 +2312,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of
                 (type CompilerBackendFunctionStateData)
@@ -2326,7 +2327,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) scratch)))
           : u64)
@@ -2341,7 +2342,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) scratch))
             (comptime (offset-of (type CompilerBackendScratchState) i64s)))
@@ -2355,7 +2356,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) scratch))
             (comptime (offset-of (type CompilerBackendScratchState) bools)))
@@ -2370,7 +2371,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) scratch))
             (comptime (offset-of (type CompilerBackendScratchState) i64-arrays)))
@@ -2385,7 +2386,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) scratch))
             (comptime
@@ -2401,7 +2402,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) scratch))
             (comptime
@@ -2417,7 +2418,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) scratch))
             (comptime
@@ -2434,7 +2435,7 @@
   [state : CompilerBackendFunctionState]
   [index : i64]
   [value : i64]) : unit
-  (array-set! (compiler-backend-function-scratch-i64s state) index value))
+  (set! (array-ref (compiler-backend-function-scratch-i64s state) index) value))
 
 (define (compiler-backend-function-scratch-bool?
   [state : CompilerBackendFunctionState]
@@ -2445,7 +2446,7 @@
   [state : CompilerBackendFunctionState]
   [index : i64]
   [value : bool]) : unit
-  (array-set! (compiler-backend-function-scratch-bools state) index value))
+  (set! (array-ref (compiler-backend-function-scratch-bools state) index) value))
 
 (define (compiler-backend-function-scratch-i64-array
   [state : CompilerBackendFunctionState]
@@ -2456,7 +2457,9 @@
   [state : CompilerBackendFunctionState]
   [index : i64]
   [value : (__tl_dyn-array i64)]) : unit
-  (array-set! (compiler-backend-function-scratch-i64-arrays state) index value))
+  (set!
+    (array-ref (compiler-backend-function-scratch-i64-arrays state) index)
+    value))
 
 (define (compiler-backend-function-scratch-bool-array
   [state : CompilerBackendFunctionState]
@@ -2467,7 +2470,9 @@
   [state : CompilerBackendFunctionState]
   [index : i64]
   [value : (__tl_dyn-array bool)]) : unit
-  (array-set! (compiler-backend-function-scratch-bool-arrays state) index value))
+  (set!
+    (array-ref (compiler-backend-function-scratch-bool-arrays state) index)
+    value))
 
 (define (compiler-backend-function-scratch-string-array
   [state : CompilerBackendFunctionState]
@@ -2478,9 +2483,8 @@
   [state : CompilerBackendFunctionState]
   [index : i64]
   [value : (__tl_dyn-array String)]) : unit
-  (array-set!
-    (compiler-backend-function-scratch-string-arrays state)
-    index
+  (set!
+    (array-ref (compiler-backend-function-scratch-string-arrays state) index)
     value))
 
 (define (compiler-backend-function-scratch-assignment-index
@@ -2490,9 +2494,8 @@
 (define (compiler-backend-function-scratch-set-assignment-index!
   [state : CompilerBackendFunctionState]
   [value : compiler_regalloc.CompilerRegAssignmentTable]) : unit
-  (array-set!
-    (compiler-backend-function-scratch-assignment-indexes state)
-    0
+  (set!
+    (array-ref (compiler-backend-function-scratch-assignment-indexes state) 0)
     value))
 
 (define (compiler-backend-function-state-live-sets
@@ -2503,7 +2506,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) live-sets)))
           : u64)
@@ -2517,7 +2520,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) emit-modes)))
           : u64)
@@ -2531,7 +2534,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) instr-seqs)))
           : u64)
@@ -2544,7 +2547,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) phi-targets)))
           : u64)
@@ -2558,7 +2561,7 @@
       (int->ptr
         (cast
           (+
-            (struct-get state address)
+            state.address
             (comptime
               (offset-of (type CompilerBackendFunctionStateData) abort-targets)))
           : u64)
@@ -2642,99 +2645,112 @@
     [cell : (__tl_dyn-array CompilerBackendFunctionStateData)
       (array.make-array CompilerBackendFunctionStateData 1)]
     (begin
-      (array-set!
-        i64s
-        compiler-backend-function-i64-current-block-label
+      (set!
+        (array-ref i64s compiler-backend-function-i64-current-block-label)
         (compiler_ir_types.compiler-ir-label-none))
-      (array-set! i64s compiler-backend-function-i64-rax-override-var -1)
-      (array-set! i64s compiler-backend-function-i64-rax-forward-pending-var -1)
-      (array-set! i64s compiler-backend-function-i64-home-override0-var -1)
-      (array-set!
-        i64s
-        compiler-backend-function-i64-home-override0-reg
-        compiler_abi.compiler-reg-id-invalid)
-      (array-set! i64s compiler-backend-function-i64-home-override1-var -1)
-      (array-set!
-        i64s
-        compiler-backend-function-i64-home-override1-reg
-        compiler_abi.compiler-reg-id-invalid)
-      (array-set!
-        i64s
-        compiler-backend-function-i64-current-phi-target-point
+      (set! (array-ref i64s compiler-backend-function-i64-rax-override-var) -1)
+      (set!
+        (array-ref i64s compiler-backend-function-i64-rax-forward-pending-var)
         -1)
-      (array-set!
-        i64s
-        compiler-backend-function-i64-current-phi-dst-home-mask
+      (set!
+        (array-ref i64s compiler-backend-function-i64-home-override0-var)
         -1)
-      (array-set! modes 0 (CompilerBackendMode.Scalar))
-      (array-set!
-        strings
-        compiler-backend-function-string-shrinkwrap-bare-label
+      (set!
+        (array-ref i64s compiler-backend-function-i64-home-override0-reg)
+        compiler_abi.compiler-reg-id-invalid)
+      (set!
+        (array-ref i64s compiler-backend-function-i64-home-override1-var)
+        -1)
+      (set!
+        (array-ref i64s compiler-backend-function-i64-home-override1-reg)
+        compiler_abi.compiler-reg-id-invalid)
+      (set!
+        (array-ref i64s compiler-backend-function-i64-current-phi-target-point)
+        -1)
+      (set!
+        (array-ref i64s compiler-backend-function-i64-current-phi-dst-home-mask)
+        -1)
+      (set! (array-ref modes 0) (CompilerBackendMode.Scalar))
+      (set!
+        (array-ref
+          strings
+          compiler-backend-function-string-shrinkwrap-bare-label)
         "")
-      (array-set! strings compiler-backend-function-string-abort-site-path "")
-      (array-set!
-        i64-arrays
-        compiler-backend-function-i64-array-addr-of-forwarding-src
+      (set!
+        (array-ref strings compiler-backend-function-string-abort-site-path)
+        "")
+      (set!
+        (array-ref
+          i64-arrays
+          compiler-backend-function-i64-array-addr-of-forwarding-src)
         empty-i64-array)
-      (array-set!
-        i64-arrays
-        compiler-backend-function-i64-array-fuse-use-counts
+      (set!
+        (array-ref
+          i64-arrays
+          compiler-backend-function-i64-array-fuse-use-counts)
         empty-i64-array)
-      (array-set!
-        i64-arrays
-        compiler-backend-function-i64-array-fuse-free-counts
+      (set!
+        (array-ref
+          i64-arrays
+          compiler-backend-function-i64-array-fuse-free-counts)
         empty-i64-array)
-      (array-set!
-        i64-arrays
-        compiler-backend-function-i64-array-gep-fold-disp-table
+      (set!
+        (array-ref
+          i64-arrays
+          compiler-backend-function-i64-array-gep-fold-disp-table)
         empty-i64-array)
-      (array-set!
-        i64-arrays
-        compiler-backend-function-i64-array-gep-fold-kind-table
+      (set!
+        (array-ref
+          i64-arrays
+          compiler-backend-function-i64-array-gep-fold-kind-table)
         empty-i64-array)
-      (array-set!
-        i64-arrays
-        compiler-backend-function-i64-array-gep-fold-scale-table
+      (set!
+        (array-ref
+          i64-arrays
+          compiler-backend-function-i64-array-gep-fold-scale-table)
         empty-i64-array)
-      (array-set!
-        live-sets
-        compiler-backend-function-live-set-group-vars
+      (set!
+        (array-ref live-sets compiler-backend-function-live-set-group-vars)
         empty-live-set)
-      (array-set!
-        live-sets
-        compiler-backend-function-live-set-addressable-group-vars
+      (set!
+        (array-ref
+          live-sets
+          compiler-backend-function-live-set-addressable-group-vars)
         empty-live-set)
-      (array-set! emit-modes 0 (CompilerBackendEmitInstrsMode.Normal))
-      (array-set! instr-seqs 0 empty-instr-seq)
-      (array-set! phi-targets 0 empty-symbol-seq)
-      (array-set! abort-targets 0 (CompilerBackendTarget.Linux))
-      (array-set! assignment-indexes 0 empty-assignment-index)
-      (array-set!
-        scratch-i64s
-        compiler-backend-scratch-i64-emergency-reg
+      (set! (array-ref emit-modes 0) (CompilerBackendEmitInstrsMode.Normal))
+      (set! (array-ref instr-seqs 0) empty-instr-seq)
+      (set! (array-ref phi-targets 0) empty-symbol-seq)
+      (set! (array-ref abort-targets 0) (CompilerBackendTarget.Linux))
+      (set! (array-ref assignment-indexes 0) empty-assignment-index)
+      (set!
+        (array-ref scratch-i64s compiler-backend-scratch-i64-emergency-reg)
         compiler_abi.compiler-reg-id-invalid)
-      (array-set!
-        scratch-i64s
-        compiler-backend-scratch-i64-cycle-temp-base-offset
+      (set!
+        (array-ref
+          scratch-i64s
+          compiler-backend-scratch-i64-cycle-temp-base-offset)
         -512)
       (while (< scratch-index (array-length scratch-i64-arrays))
         (begin
-          (array-set! scratch-i64-arrays scratch-index empty-i64-array)
+          (set! (array-ref scratch-i64-arrays scratch-index) empty-i64-array)
           (set! scratch-index (+ scratch-index 1))))
       (set! scratch-index 0)
       (while (< scratch-index (array-length scratch-bool-arrays))
         (begin
-          (array-set! scratch-bool-arrays scratch-index empty-bool-array)
+          (set! (array-ref scratch-bool-arrays scratch-index) empty-bool-array)
           (set! scratch-index (+ scratch-index 1))))
       (set! scratch-index 0)
       (while (< scratch-index (array-length scratch-string-arrays))
         (begin
-          (array-set! scratch-string-arrays scratch-index empty-string-array)
+          (set!
+            (array-ref scratch-string-arrays scratch-index)
+            empty-string-array)
           (set! scratch-index (+ scratch-index 1))))
-      (array-set! scratch-assignment-indexes 0 empty-scratch-assignment-index)
-      (array-set!
-        cell
-        0
+      (set!
+        (array-ref scratch-assignment-indexes 0)
+        empty-scratch-assignment-index)
+      (set!
+        (array-ref cell 0)
         (CompilerBackendFunctionStateData
           i64s
           bools
@@ -2776,7 +2792,7 @@
         (begin
           (compiler-backend-state-set-function-state-address!
             backend-state
-            (struct-get function-state address))
+            function-state.address)
           function-state))
       (CompilerBackendFunctionState address))))
 
@@ -2794,7 +2810,7 @@
   [function-state : CompilerBackendFunctionState]) : unit
   (compiler-backend-state-set-function-state-address!
     backend-state
-    (struct-get function-state address)))
+    function-state.address))
 
 (define (compiler-backend-state-retire-function-state!
   [backend-state : CompilerBackendState]) : unit
@@ -2809,7 +2825,7 @@
   [state : CompilerBackendFunctionState]
   [index : i64]
   [value : i64]) : unit
-  (array-set! (compiler-backend-function-state-i64s state) index value))
+  (set! (array-ref (compiler-backend-function-state-i64s state) index) value))
 
 (define (compiler-backend-function-state-emit-instr-post-base
   [state : CompilerBackendFunctionState]) : i64
@@ -2870,7 +2886,7 @@
   [state : CompilerBackendFunctionState]
   [index : i64]
   [value : bool]) : unit
-  (array-set! (compiler-backend-function-state-bools state) index value))
+  (set! (array-ref (compiler-backend-function-state-bools state) index) value))
 
 (define (compiler-backend-function-state-current-mode
   [state : CompilerBackendFunctionState]) : CompilerBackendMode
@@ -2879,7 +2895,7 @@
 (define (compiler-backend-function-state-set-current-mode!
   [state : CompilerBackendFunctionState]
   [mode : CompilerBackendMode]) : unit
-  (array-set! (compiler-backend-function-state-modes state) 0 mode))
+  (set! (array-ref (compiler-backend-function-state-modes state) 0) mode))
 
 (define (compiler-backend-function-state-string
   [state : CompilerBackendFunctionState]
@@ -2890,7 +2906,7 @@
   [state : CompilerBackendFunctionState]
   [index : i64]
   [value : String]) : unit
-  (array-set! (compiler-backend-function-state-strings state) index value))
+  (set! (array-ref (compiler-backend-function-state-strings state) index) value))
 
 (define (compiler-backend-function-state-i64-array
   [state : CompilerBackendFunctionState]
@@ -2901,7 +2917,9 @@
   [state : CompilerBackendFunctionState]
   [index : i64]
   [value : (__tl_dyn-array i64)]) : unit
-  (array-set! (compiler-backend-function-state-i64-arrays state) index value))
+  (set!
+    (array-ref (compiler-backend-function-state-i64-arrays state) index)
+    value))
 
 (define (compiler-backend-function-state-assignment-index
   [state : CompilerBackendFunctionState]) : compiler_regalloc.CompilerRegAssignmentTable
@@ -2910,9 +2928,8 @@
 (define (compiler-backend-function-state-set-assignment-index!
   [state : CompilerBackendFunctionState]
   [value : compiler_regalloc.CompilerRegAssignmentTable]) : unit
-  (array-set!
-    (compiler-backend-function-state-assignment-indexes state)
-    0
+  (set!
+    (array-ref (compiler-backend-function-state-assignment-indexes state) 0)
     value))
 
 (define (compiler-backend-function-state-live-set
@@ -2924,7 +2941,9 @@
   [state : CompilerBackendFunctionState]
   [index : i64]
   [value : compiler_liveness.CompilerLiveI64Set]) : unit
-  (array-set! (compiler-backend-function-state-live-sets state) index value))
+  (set!
+    (array-ref (compiler-backend-function-state-live-sets state) index)
+    value))
 
 (define (compiler-backend-function-state-next-mode
   [state : CompilerBackendFunctionState]) : CompilerBackendEmitInstrsMode
@@ -2933,7 +2952,7 @@
 (define (compiler-backend-function-state-set-next-mode!
   [state : CompilerBackendFunctionState]
   [mode : CompilerBackendEmitInstrsMode]) : unit
-  (array-set! (compiler-backend-function-state-emit-modes state) 0 mode))
+  (set! (array-ref (compiler-backend-function-state-emit-modes state) 0) mode))
 
 (define (compiler-backend-function-state-next-instrs
   [state : CompilerBackendFunctionState]) : compiler_ir_types.CompilerIrInstrSeq
@@ -2942,7 +2961,7 @@
 (define (compiler-backend-function-state-set-next-instrs!
   [state : CompilerBackendFunctionState]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
-  (array-set! (compiler-backend-function-state-instr-seqs state) 0 instrs))
+  (set! (array-ref (compiler-backend-function-state-instr-seqs state) 0) instrs))
 
 (define (compiler-backend-function-state-phi-targets
   [state : CompilerBackendFunctionState]) : BackendSymbolSeq
@@ -2951,7 +2970,9 @@
 (define (compiler-backend-function-state-set-phi-targets!
   [state : CompilerBackendFunctionState]
   [targets : BackendSymbolSeq]) : unit
-  (array-set! (compiler-backend-function-state-phi-target-seqs state) 0 targets))
+  (set!
+    (array-ref (compiler-backend-function-state-phi-target-seqs state) 0)
+    targets))
 
 (define (compiler-backend-function-state-abort-target
   [state : CompilerBackendFunctionState]) : CompilerBackendTarget
@@ -2960,7 +2981,9 @@
 (define (compiler-backend-function-state-set-abort-target!
   [state : CompilerBackendFunctionState]
   [target : CompilerBackendTarget]) : unit
-  (array-set! (compiler-backend-function-state-abort-targets state) 0 target))
+  (set!
+    (array-ref (compiler-backend-function-state-abort-targets state) 0)
+    target))
 
 (define (compiler-backend-function-scratch-reset!
   [state : CompilerBackendFunctionState]) : unit
@@ -2980,159 +3003,157 @@
     (begin
       (while (< index (array-length i64s))
         (begin
-          (array-set! i64s index 0)
+          (set! (array-ref i64s index) 0)
           (set! index (+ index 1))))
-      (array-set!
-        i64s
-        compiler-backend-scratch-i64-emergency-reg
+      (set!
+        (array-ref i64s compiler-backend-scratch-i64-emergency-reg)
         compiler_abi.compiler-reg-id-invalid)
-      (array-set! i64s compiler-backend-scratch-i64-cycle-temp-base-offset -512)
+      (set!
+        (array-ref i64s compiler-backend-scratch-i64-cycle-temp-base-offset)
+        -512)
       (set! index 0)
       (while (< index (array-length bools))
         (begin
-          (array-set! bools index false)
+          (set! (array-ref bools index) false)
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index (array-length i64-arrays))
         (begin
-          (array-set! i64-arrays index (struct-get scratch empty-i64-array))
+          (set! (array-ref i64-arrays index) scratch.empty-i64-array)
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index (array-length bool-arrays))
         (begin
-          (array-set! bool-arrays index (struct-get scratch empty-bool-array))
+          (set! (array-ref bool-arrays index) scratch.empty-bool-array)
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index (array-length string-arrays))
         (begin
-          (array-set!
-            string-arrays
-            index
-            (struct-get scratch empty-string-array))
+          (set! (array-ref string-arrays index) scratch.empty-string-array)
           (set! index (+ index 1))))
       (compiler-backend-function-scratch-set-assignment-index!
         state
-        (struct-get scratch empty-assignment-index)))))
+        scratch.empty-assignment-index))))
 
 (define (compiler-backend-function-state-reset!
   [state : CompilerBackendFunctionState]) : unit
   (let
     [data : CompilerBackendFunctionStateData
       (compiler-backend-function-state-data state)]
-    [i64s : (__tl_dyn-array i64) (struct-get data i64s)]
-    [bools : (__tl_dyn-array bool) (struct-get data bools)]
+    [i64s : (__tl_dyn-array i64) data.i64s]
+    [bools : (__tl_dyn-array bool) data.bools]
     [index : i64 0]
     (begin
       (while (< index (array-length i64s))
         (begin
-          (array-set! i64s index 0)
+          (set! (array-ref i64s index) 0)
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index (array-length bools))
         (begin
-          (array-set! bools index false)
+          (set! (array-ref bools index) false)
           (set! index (+ index 1))))
-      (array-set!
-        i64s
-        compiler-backend-function-i64-current-block-label
+      (set!
+        (array-ref i64s compiler-backend-function-i64-current-block-label)
         (compiler_ir_types.compiler-ir-label-none))
-      (array-set! i64s compiler-backend-function-i64-rax-override-var -1)
-      (array-set! i64s compiler-backend-function-i64-rax-forward-pending-var -1)
-      (array-set! i64s compiler-backend-function-i64-home-override0-var -1)
-      (array-set!
-        i64s
-        compiler-backend-function-i64-home-override0-reg
-        compiler_abi.compiler-reg-id-invalid)
-      (array-set! i64s compiler-backend-function-i64-home-override1-var -1)
-      (array-set!
-        i64s
-        compiler-backend-function-i64-home-override1-reg
-        compiler_abi.compiler-reg-id-invalid)
-      (array-set!
-        i64s
-        compiler-backend-function-i64-current-phi-target-point
+      (set! (array-ref i64s compiler-backend-function-i64-rax-override-var) -1)
+      (set!
+        (array-ref i64s compiler-backend-function-i64-rax-forward-pending-var)
         -1)
-      (array-set!
-        i64s
-        compiler-backend-function-i64-current-phi-dst-home-mask
+      (set!
+        (array-ref i64s compiler-backend-function-i64-home-override0-var)
         -1)
-      (array-set! (struct-get data modes) 0 (CompilerBackendMode.Scalar))
-      (array-set!
-        (struct-get data strings)
-        compiler-backend-function-string-shrinkwrap-bare-label
+      (set!
+        (array-ref i64s compiler-backend-function-i64-home-override0-reg)
+        compiler_abi.compiler-reg-id-invalid)
+      (set!
+        (array-ref i64s compiler-backend-function-i64-home-override1-var)
+        -1)
+      (set!
+        (array-ref i64s compiler-backend-function-i64-home-override1-reg)
+        compiler_abi.compiler-reg-id-invalid)
+      (set!
+        (array-ref i64s compiler-backend-function-i64-current-phi-target-point)
+        -1)
+      (set!
+        (array-ref i64s compiler-backend-function-i64-current-phi-dst-home-mask)
+        -1)
+      (set! (array-ref data.modes 0) (CompilerBackendMode.Scalar))
+      (set!
+        (array-ref
+          data.strings
+          compiler-backend-function-string-shrinkwrap-bare-label)
         "")
-      (array-set!
-        (struct-get data strings)
-        compiler-backend-function-string-abort-site-path
+      (set!
+        (array-ref
+          data.strings
+          compiler-backend-function-string-abort-site-path)
         "")
-      (array-set!
-        (struct-get data strings)
-        compiler-backend-function-string-current-c-memory-planned-xmm
+      (set!
+        (array-ref
+          data.strings
+          compiler-backend-function-string-current-c-memory-planned-xmm)
         "")
-      (array-set!
-        (struct-get data strings)
-        compiler-backend-function-string-current-phi-planned-cycle
+      (set!
+        (array-ref
+          data.strings
+          compiler-backend-function-string-current-phi-planned-cycle)
         "")
-      (array-set!
-        (struct-get data strings)
-        compiler-backend-function-string-current-phi-planned-xmm-cycle
+      (set!
+        (array-ref
+          data.strings
+          compiler-backend-function-string-current-phi-planned-xmm-cycle)
         "")
-      (array-set!
-        (struct-get data strings)
-        compiler-backend-function-string-current-phi-planned-stage
+      (set!
+        (array-ref
+          data.strings
+          compiler-backend-function-string-current-phi-planned-stage)
         "")
-      (array-set!
-        (struct-get data i64-arrays)
-        compiler-backend-function-i64-array-addr-of-forwarding-src
-        (struct-get data empty-i64-array))
-      (array-set!
-        (struct-get data i64-arrays)
-        compiler-backend-function-i64-array-fuse-use-counts
-        (struct-get data empty-i64-array))
-      (array-set!
-        (struct-get data i64-arrays)
-        compiler-backend-function-i64-array-fuse-free-counts
-        (struct-get data empty-i64-array))
-      (array-set!
-        (struct-get data i64-arrays)
-        compiler-backend-function-i64-array-gep-fold-disp-table
-        (struct-get data empty-i64-array))
-      (array-set!
-        (struct-get data i64-arrays)
-        compiler-backend-function-i64-array-gep-fold-kind-table
-        (struct-get data empty-i64-array))
-      (array-set!
-        (struct-get data i64-arrays)
-        compiler-backend-function-i64-array-gep-fold-scale-table
-        (struct-get data empty-i64-array))
-      (array-set!
-        (struct-get data assignment-indexes)
-        0
-        (struct-get data empty-assignment-index))
-      (array-set!
-        (struct-get data live-sets)
-        compiler-backend-function-live-set-group-vars
-        (struct-get data empty-live-set))
-      (array-set!
-        (struct-get data live-sets)
-        compiler-backend-function-live-set-addressable-group-vars
-        (struct-get data empty-live-set))
-      (array-set!
-        (struct-get data emit-modes)
-        0
+      (set!
+        (array-ref
+          data.i64-arrays
+          compiler-backend-function-i64-array-addr-of-forwarding-src)
+        data.empty-i64-array)
+      (set!
+        (array-ref
+          data.i64-arrays
+          compiler-backend-function-i64-array-fuse-use-counts)
+        data.empty-i64-array)
+      (set!
+        (array-ref
+          data.i64-arrays
+          compiler-backend-function-i64-array-fuse-free-counts)
+        data.empty-i64-array)
+      (set!
+        (array-ref
+          data.i64-arrays
+          compiler-backend-function-i64-array-gep-fold-disp-table)
+        data.empty-i64-array)
+      (set!
+        (array-ref
+          data.i64-arrays
+          compiler-backend-function-i64-array-gep-fold-kind-table)
+        data.empty-i64-array)
+      (set!
+        (array-ref
+          data.i64-arrays
+          compiler-backend-function-i64-array-gep-fold-scale-table)
+        data.empty-i64-array)
+      (set! (array-ref data.assignment-indexes 0) data.empty-assignment-index)
+      (set!
+        (array-ref data.live-sets compiler-backend-function-live-set-group-vars)
+        data.empty-live-set)
+      (set!
+        (array-ref
+          data.live-sets
+          compiler-backend-function-live-set-addressable-group-vars)
+        data.empty-live-set)
+      (set!
+        (array-ref data.emit-modes 0)
         (CompilerBackendEmitInstrsMode.Normal))
-      (array-set!
-        (struct-get data instr-seqs)
-        0
-        (struct-get data empty-instr-seq))
-      (array-set!
-        (struct-get data phi-targets)
-        0
-        (struct-get data empty-symbol-seq))
-      (array-set!
-        (struct-get data abort-targets)
-        0
-        (CompilerBackendTarget.Linux))
+      (set! (array-ref data.instr-seqs 0) data.empty-instr-seq)
+      (set! (array-ref data.phi-targets 0) data.empty-symbol-seq)
+      (set! (array-ref data.abort-targets 0) (CompilerBackendTarget.Linux))
       (compiler-backend-function-scratch-reset! state))))
 
 (defstruct BackendFloatEntry
@@ -3158,32 +3179,31 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-backend-string-push!
   [seq : (&mut seq BackendStringSeq)]
   [head : String]) : unit
   (begin
-    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+    (if (< seq.len (array-length seq.slots))
       unit
       (let
         [bigger : (__tl_dyn-array String)
           (array.make-array
             String
-            (compiler-backend-seq-capacity
-              (array-length (struct-get seq slots))))]
+            (compiler-backend-seq-capacity (array-length seq.slots)))]
         (begin
           (compiler-backend-string-copy-range!
             (&mut bigger)
-            (& (struct-get seq slots))
-            (struct-get seq len))
-          (set! (struct-get seq slots) bigger))))
+            (& seq.slots)
+            seq.len)
+          (set! seq.slots bigger))))
     (let
-      [index : i64 (struct-get seq len)]
+      [index : i64 seq.len]
       (begin
-        (array-set! (struct-get seq slots) index head)
-        (set! (struct-get seq len) (+ index 1))))))
+        (set! (array-ref seq.slots index) head)
+        (set! seq.len (+ index 1))))))
 
 (define (compiler-backend-symbol-copy-range!
   [dst : (&mut dst (__tl_dyn-array i64))]
@@ -3193,32 +3213,31 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-backend-symbol-push!
   [seq : (&mut seq BackendSymbolSeq)]
   [head : i64]) : unit
   (begin
-    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+    (if (< seq.len (array-length seq.slots))
       unit
       (let
         [bigger : (__tl_dyn-array i64)
           (array.make-array
             i64
-            (compiler-backend-seq-capacity
-              (array-length (struct-get seq slots))))]
+            (compiler-backend-seq-capacity (array-length seq.slots)))]
         (begin
           (compiler-backend-symbol-copy-range!
             (&mut bigger)
-            (& (struct-get seq slots))
-            (struct-get seq len))
-          (set! (struct-get seq slots) bigger))))
+            (& seq.slots)
+            seq.len)
+          (set! seq.slots bigger))))
     (let
-      [index : i64 (struct-get seq len)]
+      [index : i64 seq.len]
       (begin
-        (array-set! (struct-get seq slots) index head)
-        (set! (struct-get seq len) (+ index 1))))))
+        (set! (array-ref seq.slots index) head)
+        (set! seq.len (+ index 1))))))
 
 (define (compiler-backend-float-copy-range!
   [dst : (&mut dst (__tl_dyn-array BackendFloatEntry))]
@@ -3228,32 +3247,31 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-backend-float-push!
   [seq : (&mut seq BackendFloatSeq)]
   [entry : BackendFloatEntry]) : unit
   (begin
-    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+    (if (< seq.len (array-length seq.slots))
       unit
       (let
         [bigger : (__tl_dyn-array BackendFloatEntry)
           (array.make-array
             BackendFloatEntry
-            (compiler-backend-seq-capacity
-              (array-length (struct-get seq slots))))]
+            (compiler-backend-seq-capacity (array-length seq.slots)))]
         (begin
           (compiler-backend-float-copy-range!
             (&mut bigger)
-            (& (struct-get seq slots))
-            (struct-get seq len))
-          (set! (struct-get seq slots) bigger))))
+            (& seq.slots)
+            seq.len)
+          (set! seq.slots bigger))))
     (let
-      [index : i64 (struct-get seq len)]
+      [index : i64 seq.len]
       (begin
-        (array-set! (struct-get seq slots) index entry)
-        (set! (struct-get seq len) (+ index 1))))))
+        (set! (array-ref seq.slots index) entry)
+        (set! seq.len (+ index 1))))))
 
 (define (compiler-backend-empty-label-seq) : BackendSymbolSeq
   (BackendSymbolSeq (array.make-array i64 0) 0))
@@ -3321,7 +3339,7 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    (if (> (array-length (struct-get data carry-safe-offsets)) 0)
+    (if (> (array-length data.carry-safe-offsets) 0)
       unit
       (let
         [previous : i64 (arena.tl_arena_current)]
@@ -3346,12 +3364,12 @@
         (begin
           (while (< i (array-length offsets))
             (begin
-              (array-set! offsets i -1)
+              (set! (array-ref offsets i) -1)
               (set! i (+ i 1))))
-          (set! (struct-get data carry-safe-offsets) offsets)
-          (set! (struct-get data carry-safe-lengths) lengths)
-          (set! (struct-get data carry-safe-bytes) bytes)
-          (set! (struct-get data carry-safe-bytes-count) 0)
+          (set! data.carry-safe-offsets offsets)
+          (set! data.carry-safe-lengths lengths)
+          (set! data.carry-safe-bytes bytes)
+          (set! data.carry-safe-bytes-count 0)
           (compiler-backend-stream-state-data-set! stream data)
           (compiler-backend-state-lazy-table-arena-finish!
             backend-state
@@ -3364,8 +3382,8 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [old-offsets : (__tl_dyn-array i64) (struct-get data carry-safe-offsets)]
-    [old-lengths : (__tl_dyn-array i64) (struct-get data carry-safe-lengths)]
+    [old-offsets : (__tl_dyn-array i64) data.carry-safe-offsets]
+    [old-lengths : (__tl_dyn-array i64) data.carry-safe-lengths]
     [old-cap : i64 (array-length old-offsets)]
     [new-cap : i64
       (if (> (* old-cap 4) compiler-backend-peephole-carry-safe-capacity)
@@ -3382,12 +3400,12 @@
             (arena.tl_arena_set owner))]
         [offsets : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
         [lengths : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [bytes : (__tl_dyn-array u8) (struct-get data carry-safe-bytes)]
+        [bytes : (__tl_dyn-array u8) data.carry-safe-bytes]
         [i : i64 0]
         (begin
           (while (< i new-cap)
             (begin
-              (array-set! offsets i -1)
+              (set! (array-ref offsets i) -1)
               (set! i (+ i 1))))
           (set! i 0)
           (while (< i old-cap)
@@ -3412,11 +3430,11 @@
                           (if (= (+ slot 1) new-cap)
                             0
                             (+ slot 1))))
-                      (array-set! offsets slot off)
-                      (array-set! lengths slot len))))
+                      (set! (array-ref offsets slot) off)
+                      (set! (array-ref lengths slot) len))))
                 (set! i (+ i 1)))))
-          (set! (struct-get data carry-safe-offsets) offsets)
-          (set! (struct-get data carry-safe-lengths) lengths)
+          (set! data.carry-safe-offsets offsets)
+          (set! data.carry-safe-lengths lengths)
           (compiler-backend-stream-state-data-set! stream data)
           (compiler-backend-state-lazy-table-arena-finish!
             backend-state
@@ -3431,7 +3449,7 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [old : (__tl_dyn-array u8) (struct-get data carry-safe-bytes)]
+    [old : (__tl_dyn-array u8) data.carry-safe-bytes]
     [old-cap : i64 (array-length old)]
     [new-cap : i64 old-cap]
     (begin
@@ -3460,11 +3478,11 @@
             (while (<
               i
               (compiler-backend-peephole-carry-safe-byte-count
-                (struct-get data carry-safe-bytes-count)))
+                data.carry-safe-bytes-count))
               (begin
-                (array-set! bytes i (array-ref old i))
+                (set! (array-ref bytes i) (array-ref old i))
                 (set! i (+ i 1))))
-            (set! (struct-get data carry-safe-bytes) bytes)
+            (set! data.carry-safe-bytes bytes)
             (compiler-backend-stream-state-data-set! stream data)
             (compiler-backend-state-lazy-table-arena-finish!
               backend-state
@@ -3483,15 +3501,15 @@
         stream)]
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [offsets : (__tl_dyn-array i64) (struct-get data carry-safe-offsets)]
+    [offsets : (__tl_dyn-array i64) data.carry-safe-offsets]
     [cap : i64 (array-length offsets)]
     [i : i64 0]
     (begin
       (while (< i cap)
         (begin
-          (array-set! offsets i -1)
+          (set! (array-ref offsets i) -1)
           (set! i (+ i 1))))
-      (set! (struct-get data carry-safe-bytes-count) 0)
+      (set! data.carry-safe-bytes-count 0)
       (compiler-backend-stream-state-data-set! stream data)
       unit)))
 
@@ -3534,10 +3552,10 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [offsets : (__tl_dyn-array i64) (struct-get data carry-safe-offsets)]
-    [lengths : (__tl_dyn-array i64) (struct-get data carry-safe-lengths)]
-    [bytes : (__tl_dyn-array u8) (struct-get data carry-safe-bytes)]
-    [packed-count : i64 (struct-get data carry-safe-bytes-count)]
+    [offsets : (__tl_dyn-array i64) data.carry-safe-offsets]
+    [lengths : (__tl_dyn-array i64) data.carry-safe-lengths]
+    [bytes : (__tl_dyn-array u8) data.carry-safe-bytes]
+    [packed-count : i64 data.carry-safe-bytes-count]
     [entry-count : i64
       (compiler-backend-peephole-carry-safe-entry-count packed-count)]
     [cap : i64 (array-length offsets)]
@@ -3577,25 +3595,23 @@
                 (let
                   [current : CompilerBackendStreamStateData
                     (compiler-backend-stream-state-data stream)]
-                  [current-bytes : (__tl_dyn-array u8)
-                    (struct-get current carry-safe-bytes)]
+                  [current-bytes : (__tl_dyn-array u8) current.carry-safe-bytes]
                   [j : i64 0]
                   (begin
                     (while (< j klen)
                       (begin
-                        (array-set!
-                          current-bytes
-                          (+ start j)
+                        (set!
+                          (array-ref current-bytes (+ start j))
                           (cast
                             (compiler-backend-peephole-byte-at
                               key-data
                               (+ kstart j))
                             : u8))
                         (set! j (+ j 1))))
-                    (array-set! offsets slot start)
-                    (array-set! lengths slot klen)
+                    (set! (array-ref offsets slot) start)
+                    (set! (array-ref lengths slot) klen)
                     (set!
-                      (struct-get current carry-safe-bytes-count)
+                      current.carry-safe-bytes-count
                       (compiler-backend-peephole-carry-safe-counts-pack
                         (+ start klen)
                         (+ entry-count 1)))
@@ -3651,9 +3667,9 @@
   [klen : i64]
   [hash : i64]) : bool
   (let
-    [offsets : (__tl_dyn-array i64) (struct-get view offsets)]
-    [lengths : (__tl_dyn-array i64) (struct-get view lengths)]
-    [bytes : (__tl_dyn-array u8) (struct-get view bytes)]
+    [offsets : (__tl_dyn-array i64) view.offsets]
+    [lengths : (__tl_dyn-array i64) view.lengths]
+    [bytes : (__tl_dyn-array u8) view.bytes]
     [cap : i64 (array-length offsets)]
     [slot : i64 (bit-and hash (- cap 1))]
     [walked : i64 0]
@@ -3691,9 +3707,9 @@
       (compiler-backend-stream-state-data stream)]
     [view : CompilerBackendPeepholeCarrySafeView
       (CompilerBackendPeepholeCarrySafeView
-        (struct-get data carry-safe-offsets)
-        (struct-get data carry-safe-lengths)
-        (struct-get data carry-safe-bytes))]
+        data.carry-safe-offsets
+        data.carry-safe-lengths
+        data.carry-safe-bytes)]
     (compiler-backend-peephole-carry-safe-contains-view?
       (& view)
       key-data
@@ -3706,13 +3722,11 @@
   [needle : String]) : bool
   (let
     [i : i64 0]
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     (begin
       (while (< i n)
         (begin
-          (when
-            (string.eq (array-ref (struct-get items slots) i) needle)
-            (return true))
+          (when (string.eq (array-ref items.slots i) needle) (return true))
           (set! i (+ i 1))))
       false)))
 
@@ -3721,14 +3735,14 @@
   [needle-id : i64]) : bool
   (let
     [i : i64 0]
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     (begin
       (while (< i n)
         (begin
           (when
             (=
               (compiler_ir_types.compiler-ir-symbol-id
-                (array-ref (struct-get items slots) i))
+                (array-ref items.slots i))
               needle-id)
             (return true))
           (set! i (+ i 1))))
@@ -3799,8 +3813,8 @@
   [set : BackendStringSet (:consume)]
   [text : String]) : BackendStringSet
   (let
-    [seen : backend_string_i64_map.Map (struct-get set seen)]
-    [items : BackendStringSeq (struct-get set items)]
+    [seen : backend_string_i64_map.Map set.seen]
+    [items : BackendStringSeq set.items]
     (if (backend_string_i64_map.contains? (& seen) text)
       set
       (begin
@@ -3812,9 +3826,9 @@
   [set : BackendSymbolSet (:consume)]
   [symbol : i64]) : BackendSymbolSet
   (let
-    [seen : backend_i64_i64_map.Map (struct-get set seen)]
+    [seen : backend_i64_i64_map.Map set.seen]
     [id : i64 (compiler_ir_types.compiler-ir-symbol-id symbol)]
-    [items : BackendSymbolSeq (struct-get set items)]
+    [items : BackendSymbolSeq set.items]
     (if (backend_i64_i64_map.contains? (& seen) id)
       set
       (begin
@@ -3829,8 +3843,8 @@
   (let
     [payload-bits : u64 (compiler-backend-float-payload-bits ty bits)]
     [key : String (compiler-backend-float-key ty payload-bits)]
-    [seen : backend_string_i64_map.Map (struct-get set seen)]
-    [items : BackendFloatSeq (struct-get set items)]
+    [seen : backend_string_i64_map.Map set.seen]
+    [items : BackendFloatSeq set.items]
     (if (backend_string_i64_map.contains? (& seen) key)
       set
       (begin
@@ -3854,82 +3868,82 @@
   [collections : CompilerBackendProgramCollections (:consume)]
   [name : i64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
-    (compiler-backend-symbol-set-add (struct-get collections functions) name)
-    (struct-get collections strings)
-    (struct-get collections floats)
-    (struct-get collections bytes)
-    (struct-get collections uses-avx2-i64-lane-id)
-    (struct-get collections uses-avx512-i64-lane-id)
-    (struct-get collections uses-f64-neg)))
+    (compiler-backend-symbol-set-add collections.functions name)
+    collections.strings
+    collections.floats
+    collections.bytes
+    collections.uses-avx2-i64-lane-id
+    collections.uses-avx512-i64-lane-id
+    collections.uses-f64-neg))
 
 (define (compiler-backend-program-collections-add-string
   [collections : CompilerBackendProgramCollections]
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
-    (struct-get collections functions)
-    (compiler-backend-string-set-add (struct-get collections strings) text)
-    (struct-get collections floats)
-    (struct-get collections bytes)
-    (struct-get collections uses-avx2-i64-lane-id)
-    (struct-get collections uses-avx512-i64-lane-id)
-    (struct-get collections uses-f64-neg)))
+    collections.functions
+    (compiler-backend-string-set-add collections.strings text)
+    collections.floats
+    collections.bytes
+    collections.uses-avx2-i64-lane-id
+    collections.uses-avx512-i64-lane-id
+    collections.uses-f64-neg))
 
 (define (compiler-backend-program-collections-add-float
   [collections : CompilerBackendProgramCollections (:consume)]
   [ty : compiler_ast_types.AstType]
   [bits : u64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
-    (struct-get collections functions)
-    (struct-get collections strings)
-    (compiler-backend-float-set-add (struct-get collections floats) ty bits)
-    (struct-get collections bytes)
-    (struct-get collections uses-avx2-i64-lane-id)
-    (struct-get collections uses-avx512-i64-lane-id)
-    (struct-get collections uses-f64-neg)))
+    collections.functions
+    collections.strings
+    (compiler-backend-float-set-add collections.floats ty bits)
+    collections.bytes
+    collections.uses-avx2-i64-lane-id
+    collections.uses-avx512-i64-lane-id
+    collections.uses-f64-neg))
 
 (define (compiler-backend-program-collections-add-bytes
   [collections : CompilerBackendProgramCollections (:consume)]
   [text : String]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
-    (struct-get collections functions)
-    (struct-get collections strings)
-    (struct-get collections floats)
-    (compiler-backend-string-set-add (struct-get collections bytes) text)
-    (struct-get collections uses-avx2-i64-lane-id)
-    (struct-get collections uses-avx512-i64-lane-id)
-    (struct-get collections uses-f64-neg)))
+    collections.functions
+    collections.strings
+    collections.floats
+    (compiler-backend-string-set-add collections.bytes text)
+    collections.uses-avx2-i64-lane-id
+    collections.uses-avx512-i64-lane-id
+    collections.uses-f64-neg))
 
 (define (compiler-backend-program-collections-mark-avx2-i64-lane-id
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
-    (struct-get collections functions)
-    (struct-get collections strings)
-    (struct-get collections floats)
-    (struct-get collections bytes)
+    collections.functions
+    collections.strings
+    collections.floats
+    collections.bytes
     true
-    (struct-get collections uses-avx512-i64-lane-id)
-    (struct-get collections uses-f64-neg)))
+    collections.uses-avx512-i64-lane-id
+    collections.uses-f64-neg))
 
 (define (compiler-backend-program-collections-mark-avx512-i64-lane-id
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
-    (struct-get collections functions)
-    (struct-get collections strings)
-    (struct-get collections floats)
-    (struct-get collections bytes)
-    (struct-get collections uses-avx2-i64-lane-id)
+    collections.functions
+    collections.strings
+    collections.floats
+    collections.bytes
+    collections.uses-avx2-i64-lane-id
     true
-    (struct-get collections uses-f64-neg)))
+    collections.uses-f64-neg))
 
 (define (compiler-backend-program-collections-mark-f64-neg
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
-    (struct-get collections functions)
-    (struct-get collections strings)
-    (struct-get collections floats)
-    (struct-get collections bytes)
-    (struct-get collections uses-avx2-i64-lane-id)
-    (struct-get collections uses-avx512-i64-lane-id)
+    collections.functions
+    collections.strings
+    collections.floats
+    collections.bytes
+    collections.uses-avx2-i64-lane-id
+    collections.uses-avx512-i64-lane-id
     true))
 
 (define (backend-and4 [a : bool] [b : bool] [c : bool] [d : bool]) : bool
@@ -3977,7 +3991,9 @@
   (if (>= index (array-length values))
     unit
     (begin
-      (array-set! values index (compiler_ir_types.CompilerMaybeSourceSpan.No))
+      (set!
+        (array-ref values index)
+        (compiler_ir_types.CompilerMaybeSourceSpan.No))
       (compiler-backend-source-span-index-fill values (+ index 1)))))
 
 (define (compiler-backend-source-span-index-add
@@ -3985,8 +4001,8 @@
   [map : backend_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan)]) : backend_i64_i64_map.Map
   (compiler-backend-source-span-index-add-array
-    (struct-get entries slots)
-    (- (struct-get entries len) 1)
+    entries.slots
+    (- entries.len 1)
     map
     values))
 
@@ -4012,9 +4028,8 @@
               (&mut map)
               (compiler_ir_types.compiler-ir-symbol-id-value name)
               index)
-            (array-set!
-              values
-              index
+            (set!
+              (array-ref values index)
               (compiler_ir_types.CompilerMaybeSourceSpan.Some span))
             (compiler-backend-source-span-index-add-array
               slots
@@ -4054,11 +4069,11 @@
   [index : CompilerBackendSourceSpanIndex]
   [name : compiler_ir_types.CompilerIrSymbolId]) : compiler_ir_types.CompilerMaybeSourceSpan
   (match (backend_i64_i64_map.get
-    (& (struct-get index entries))
+    (& index.entries)
     (compiler_ir_types.compiler-ir-symbol-id-value name))
     [(backend_i64_i64_map.LookupFound slot)
-      (if (and (>= slot 0) (< slot (array-length (struct-get index values))))
-        (array-ref (struct-get index values) slot)
+      (if (and (>= slot 0) (< slot (array-length index.values)))
+        (array-ref index.values slot)
         (compiler_ir_types.CompilerMaybeSourceSpan.No))]
     [(backend_i64_i64_map.LookupMissing)
       (compiler_ir_types.CompilerMaybeSourceSpan.No)]))
@@ -5090,8 +5105,8 @@
           backend-state)
           [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
-              [addr-asm : String (struct-get addr-plan asm)]
-              [addr : String (struct-get addr-plan addr)]
+              [addr-asm : String addr-plan.asm]
+              [addr : String addr-plan.addr]
               (ResultCompilerBackend.Ok
                 (string.append
                   addr-asm
@@ -5116,7 +5131,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(ResultBackendReg.Err message)
         (ResultCompilerBackend.Err
@@ -5419,7 +5434,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(ResultBackendReg.Err message)
         (ResultCompilerBackend.Err
@@ -5773,8 +5788,8 @@
                       backend-state)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
-                          [addr-asm : String (struct-get addr-plan asm)]
-                          [addr : String (struct-get addr-plan addr)]
+                          [addr-asm : String addr-plan.asm]
+                          [addr : String addr-plan.addr]
                           (ResultCompilerBackend.Ok
                             (string.append
                               reg-asm
@@ -5801,7 +5816,7 @@
                         (ResultCompilerBackend.Err
                           (box
                             (compiler-backend-apply-instr-diagnostic
-                              (box-get message)
+                              (__tl-box-place message)
                               instr-diag)))])]
                   [(ResultBackendReg.Err message)
                     (ResultCompilerBackend.Err
@@ -5856,8 +5871,8 @@
               backend-state)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
-                  [addr-asm : String (struct-get addr-plan asm)]
-                  [addr : String (struct-get addr-plan addr)]
+                  [addr-asm : String addr-plan.asm]
+                  [addr : String addr-plan.addr]
                   (ResultCompilerBackend.Ok
                     (string.append
                       value-asm
@@ -5875,7 +5890,7 @@
                 (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
-                      (box-get message)
+                      (__tl-box-place message)
                       instr-diag)))])])]
       [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
@@ -6681,8 +6696,8 @@
           backend-state)
           [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
-              [addr-asm : String (struct-get addr-plan asm)]
-              [addr : String (struct-get addr-plan addr)]
+              [addr-asm : String addr-plan.asm]
+              [addr : String addr-plan.addr]
               (ResultCompilerBackend.Ok
                 (string.append
                   addr-asm
@@ -6707,7 +6722,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(ResultBackendReg.Err message)
         (ResultCompilerBackend.Err
@@ -6766,7 +6781,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(ResultBackendReg.Err message)
         (ResultCompilerBackend.Err
@@ -6963,8 +6978,8 @@
                       backend-state)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
-                          [addr-asm : String (struct-get addr-plan asm)]
-                          [addr : String (struct-get addr-plan addr)]
+                          [addr-asm : String addr-plan.asm]
+                          [addr : String addr-plan.addr]
                           (ResultCompilerBackend.Ok
                             (str_cat.str-cat
                               reg-asm
@@ -6989,7 +7004,7 @@
                         (ResultCompilerBackend.Err
                           (box
                             (compiler-backend-apply-instr-diagnostic
-                              (box-get message)
+                              (__tl-box-place message)
                               instr-diag)))])]
                   [(ResultBackendReg.Err message)
                     (ResultCompilerBackend.Err
@@ -7550,8 +7565,8 @@
               backend-state)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
-                  [addr-asm : String (struct-get addr-plan asm)]
-                  [addr : String (struct-get addr-plan addr)]
+                  [addr-asm : String addr-plan.asm]
+                  [addr : String addr-plan.addr]
                   (ResultCompilerBackend.Ok
                     (string.append
                       value-asm
@@ -7569,7 +7584,7 @@
                 (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
-                      (box-get message)
+                      (__tl-box-place message)
                       instr-diag)))])])]
       [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
@@ -7796,8 +7811,8 @@
             backend-state)
             [(ResultCompilerBackendSimdIndexedAddress.Ok index-plan)
               (let
-                [index-asm : String (struct-get index-plan asm)]
-                [index-addr : String (struct-get index-plan addr)]
+                [index-asm : String index-plan.asm]
+                [index-addr : String index-plan.addr]
                 [base-reg : String
                   (compiler-backend-scavenge-reg-here
                     (compiler-backend-scavenge-exclude-ops2
@@ -7853,7 +7868,7 @@
                             (if dword
                               "    vmovdqu %ymm14, 64(%rsp)\n"
                               "")
-                            (struct-get adjust first)
+                            adjust.first
                             base-asm
                             "    vpxor "
                             dst-reg
@@ -7903,7 +7918,7 @@
                                 ", "
                                 mask-reg
                                 "\n    vmovdqu 64(%rsp), %ymm15\n"
-                                (struct-get adjust second)
+                                adjust.second
                                 base-asm
                                 "    "
                                 mnemonic
@@ -7938,13 +7953,13 @@
                     (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
-                          (box-get message)
+                          (__tl-box-place message)
                           instr-diag)))]))]
             [(ResultCompilerBackendSimdIndexedAddress.Err message)
               (ResultCompilerBackend.Err
                 (box
                   (compiler-backend-apply-instr-diagnostic
-                    (box-get message)
+                    (__tl-box-place message)
                     instr-diag)))])]
         [(ResultBackendReg.Err message)
           (ResultCompilerBackend.Err
@@ -7999,8 +8014,8 @@
             backend-state)
             [(ResultCompilerBackendSimdIndexedAddress.Ok index-plan)
               (let
-                [index-asm : String (struct-get index-plan asm)]
-                [index-addr : String (struct-get index-plan addr)]
+                [index-asm : String index-plan.asm]
+                [index-addr : String index-plan.addr]
                 [base-reg : String
                   (compiler-backend-scavenge-reg-here
                     (compiler-backend-scavenge-exclude-ops2
@@ -8045,7 +8060,7 @@
                             (if dword
                               "    vmovdqu64 %zmm14, (%rsp)\n"
                               "")
-                            (struct-get adjust first)
+                            adjust.first
                             base-asm
                             "    kxnorw %k7, %k7, %k7\n    vpxord "
                             dst-reg
@@ -8077,7 +8092,7 @@
                                 ", "
                                 dst-reg
                                 "\n    vmovdqu64 (%rsp), %zmm15\n"
-                                (struct-get adjust second)
+                                adjust.second
                                 base-asm
                                 "    "
                                 mnemonic
@@ -8107,13 +8122,13 @@
                     (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
-                          (box-get message)
+                          (__tl-box-place message)
                           instr-diag)))]))]
             [(ResultCompilerBackendSimdIndexedAddress.Err message)
               (ResultCompilerBackend.Err
                 (box
                   (compiler-backend-apply-instr-diagnostic
-                    (box-get message)
+                    (__tl-box-place message)
                     instr-diag)))])]
         [(ResultBackendReg.Err message)
           (ResultCompilerBackend.Err
@@ -8422,7 +8437,7 @@
             width
             (compiler_ast_types.AstType.I64)
             selector-scratch
-            (struct-get program-index backend-state))
+            program-index.backend-state)
             [(ResultBackendVectorUse.Ok _) ""]
             [(ResultBackendVectorUse.Err message) message])]
         [(compiler_ir_types.CompilerIrMaybeValue.No) ""])]
@@ -8471,7 +8486,7 @@
           width
           elem-ty
           source-scratch
-          (struct-get program-index backend-state))
+          program-index.backend-state)
           [(ResultBackendVectorUse.Ok source-use)
             (match source-use
               [(CompilerBackendVectorUse.Use source-asm source-reg)
@@ -8482,7 +8497,7 @@
                   width
                   (compiler_ast_types.AstType.I64)
                   selector-scratch
-                  (struct-get program-index backend-state))
+                  program-index.backend-state)
                   [(ResultBackendVectorUse.Ok low-use)
                     (match low-use
                       [(CompilerBackendVectorUse.Use low-asm low-reg)
@@ -8492,13 +8507,13 @@
                           "shuffle dst"
                           width
                           dst-scratch
-                          (struct-get program-index backend-state))
+                          program-index.backend-state)
                           [(ResultBackendReg.Ok dst-reg)
                             (match (compiler-backend-emit-load-value-with-plan
                               assignments
                               active-lanes
                               active-reg
-                              (struct-get program-index backend-state))
+                              program-index.backend-state)
                               [(ResultCompilerBackend.Ok active-asm)
                                 (let
                                   [high-asm : String
@@ -8512,9 +8527,7 @@
                                           width
                                           (compiler_ast_types.AstType.I64)
                                           selector-scratch
-                                          (struct-get
-                                            program-index
-                                            backend-state))
+                                          program-index.backend-state)
                                           [(ResultBackendVectorUse.Ok high-use)
                                             (match high-use
                                               [(CompilerBackendVectorUse.Use
@@ -8661,7 +8674,7 @@
                                         width
                                         elem-ty
                                         dst-reg
-                                        (struct-get program-index backend-state))
+                                        program-index.backend-state)
                                       "    addq $"
                                       (string.int->string stack-bytes)
                                       ", %rsp\n")))]
@@ -8669,7 +8682,7 @@
                                 (ResultCompilerBackend.Err
                                   (box
                                     (compiler-backend-apply-instr-diagnostic
-                                      (box-get message)
+                                      (__tl-box-place message)
                                       instr-diag)))])]
                           [(ResultBackendReg.Err message)
                             (ResultCompilerBackend.Err
@@ -9432,7 +9445,7 @@
                             (ResultCompilerBackend.Err
                               (box
                                 (compiler-backend-apply-instr-diagnostic
-                                  (box-get message)
+                                  (__tl-box-place message)
                                   instr-diag)))])]
                       [_
                         (match (compiler-backend-avx2-vector-prefix-numeric-carry
@@ -9467,7 +9480,7 @@
                             (ResultCompilerBackend.Err
                               (box
                                 (compiler-backend-apply-instr-diagnostic
-                                  (box-get message)
+                                  (__tl-box-place message)
                                   instr-diag)))])]))])]
             [(ResultBackendVectorUse.Err message)
               (ResultCompilerBackend.Err
@@ -9850,7 +9863,7 @@
                     (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
-                          (box-get message)
+                          (__tl-box-place message)
                           instr-diag)))])]
               [(ResultBackendReg.Err message)
                 (ResultCompilerBackend.Err
@@ -9962,7 +9975,7 @@
                       (ResultCompilerBackend.Err
                         (box
                           (compiler-backend-apply-instr-diagnostic
-                            (box-get message)
+                            (__tl-box-place message)
                             instr-diag)))]))])]
           [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
@@ -10408,13 +10421,13 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(ResultCompilerBackend.Err message)
         (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
-              (box-get message)
+              (__tl-box-place message)
               instr-diag)))])))
 
 (define (compiler-backend-emit-avx512-tail-mask
@@ -10582,8 +10595,8 @@
                     backend-state)
                     [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                       (let
-                        [addr-asm : String (struct-get addr-plan asm)]
-                        [addr : String (struct-get addr-plan addr)]
+                        [addr-asm : String addr-plan.asm]
+                        [addr : String addr-plan.addr]
                         (ResultCompilerBackend.Ok
                           (str_cat.str-cat
                             mask-asm
@@ -10608,7 +10621,7 @@
                       (ResultCompilerBackend.Err
                         (box
                           (compiler-backend-apply-instr-diagnostic
-                            (box-get message)
+                            (__tl-box-place message)
                             instr-diag)))])]
                 [(ResultBackendReg.Err message)
                   (ResultCompilerBackend.Err
@@ -10689,8 +10702,8 @@
                         backend-state)
                         [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                           (let
-                            [addr-asm : String (struct-get addr-plan asm)]
-                            [addr : String (struct-get addr-plan addr)]
+                            [addr-asm : String addr-plan.asm]
+                            [addr : String addr-plan.addr]
                             (ResultCompilerBackend.Ok
                               (str_cat.str-cat
                                 value-asm
@@ -10709,7 +10722,7 @@
                           (ResultCompilerBackend.Err
                             (box
                               (compiler-backend-apply-instr-diagnostic
-                                (box-get message)
+                                (__tl-box-place message)
                                 instr-diag)))])])]
                 [(ResultBackendMaskUse.Err message)
                   (ResultCompilerBackend.Err
@@ -10775,8 +10788,8 @@
                   backend-state)
                   [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
-                      [addr-asm : String (struct-get addr-plan asm)]
-                      [addr : String (struct-get addr-plan addr)]
+                      [addr-asm : String addr-plan.asm]
+                      [addr : String addr-plan.addr]
                       (match (compiler-backend-vector-temp-zmm
                         backend-state
                         assignments
@@ -10841,7 +10854,7 @@
                     (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
-                          (box-get message)
+                          (__tl-box-place message)
                           instr-diag)))])])]
           [(ResultBackendMaskUse.Err message)
             (ResultCompilerBackend.Err
@@ -10905,8 +10918,8 @@
                       backend-state)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
-                          [addr-asm : String (struct-get addr-plan asm)]
-                          [addr : String (struct-get addr-plan addr)]
+                          [addr-asm : String addr-plan.asm]
+                          [addr : String addr-plan.addr]
                           (match (compiler-backend-vector-temp-zmm
                             backend-state
                             assignments
@@ -10971,7 +10984,7 @@
                         (ResultCompilerBackend.Err
                           (box
                             (compiler-backend-apply-instr-diagnostic
-                              (box-get message)
+                              (__tl-box-place message)
                               instr-diag)))])])]
               [(ResultBackendMaskUse.Err message)
                 (ResultCompilerBackend.Err
@@ -12542,8 +12555,8 @@
                   backend-state)
                   [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
-                      [addr-asm : String (struct-get addr-plan asm)]
-                      [addr : String (struct-get addr-plan addr)]
+                      [addr-asm : String addr-plan.asm]
+                      [addr : String addr-plan.addr]
                       [masked-move : String
                         (compiler-backend-avx2-masked-move-mnemonic elem-ty)]
                       (if (string.eq masked-move "")
@@ -12600,7 +12613,7 @@
                     (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
-                          (box-get message)
+                          (__tl-box-place message)
                           instr-diag)))])]
               [(ResultBackendReg.Err message)
                 (ResultCompilerBackend.Err
@@ -12662,8 +12675,8 @@
               backend-state)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
-                  [addr-asm : String (struct-get addr-plan asm)]
-                  [addr : String (struct-get addr-plan addr)]
+                  [addr-asm : String addr-plan.asm]
+                  [addr : String addr-plan.addr]
                   [bool-store? : bool
                     (match elem-ty
                       [(compiler_ast_types.AstType.Bool) true]
@@ -12772,7 +12785,7 @@
                 (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
-                      (box-get message)
+                      (__tl-box-place message)
                       instr-diag)))])])]
       [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
@@ -12997,13 +13010,13 @@
                 (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
-                      (box-get message)
+                      (__tl-box-place message)
                       instr-diag)))])]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(ResultBackendReg.Err message)
         (ResultCompilerBackend.Err
@@ -13125,9 +13138,9 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [mask : i64]) : i64
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [present : (__tl_dyn-array i64) assignments.present]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      (struct-get assignments items)]
+      assignments.items]
     [index : i64 0]
     [out : i64 mask]
     (begin
@@ -13895,7 +13908,7 @@
                 (compiler-backend-shrinkwrap-incoming-fill!
                   type-segment-bases
                   target
-                  (box-get rest)
+                  (__tl-box-place rest)
                   next-int
                   next-float
                   (+ position 1)
@@ -13921,7 +13934,7 @@
                       (compiler-backend-shrinkwrap-incoming-fill!
                         type-segment-bases
                         target
-                        (box-get rest)
+                        (__tl-box-place rest)
                         next-int
                         next-float
                         (+ position 1)
@@ -14039,8 +14052,7 @@
             (= (compiler_ir_types.compiler-ir-param-list-count params) 0)
             true)))]
     [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state
-        (struct-get program-index backend-state))]
+      (compiler-backend-state-function-state program-index.backend-state)]
     [old-bare : String
       (compiler-backend-function-state-string
         function-state
@@ -14110,11 +14122,11 @@
                                 (compiler-backend-shrinkwrap-compare-value-ready?
                                   selected
                                   lhs
-                                  (struct-get program-index backend-state))
+                                  program-index.backend-state)
                                 (compiler-backend-shrinkwrap-compare-value-ready?
                                   selected
                                   rhs
-                                  (struct-get program-index backend-state)))
+                                  program-index.backend-state))
                                 (compiler-backend-emit-compare-branch
                                   type-segment-bases
                                   selected
@@ -14126,7 +14138,7 @@
                                   on-true
                                   on-false
                                   fallthrough
-                                  (struct-get program-index backend-state))
+                                  program-index.backend-state)
                                 (ResultCompilerBackend.Err
                                   (box
                                     (compiler_diagnostic.compiler-diagnostic-at-start
@@ -14773,7 +14785,7 @@
   [reg : i64]) : (__tl_dyn-array i64)
   (if (< count (array-length regs))
     (begin
-      (array-set! regs count reg)
+      (set! (array-ref regs count) reg)
       regs)
     (let
       [old-cap : i64 (array-length regs)]
@@ -14786,9 +14798,9 @@
       (begin
         (while (< index count)
           (begin
-            (array-set! grown index (array-ref regs index))
+            (set! (array-ref grown index) (array-ref regs index))
             (set! index (+ index 1))))
-        (array-set! grown count reg)
+        (set! (array-ref grown count) reg)
         grown))))
 
 (define (compiler-backend-emergency-add-id!
@@ -15544,14 +15556,14 @@
   [state : CompilerBackendState]) : i64
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (if (= (struct-get data lazy-table-arena) 0)
+    (if (= data.lazy-table-arena 0)
       (let
         [owner : i64 (arena.tl_arena_make_small)]
         (begin
-          (set! (struct-get data lazy-table-arena) owner)
+          (set! data.lazy-table-arena owner)
           (compiler-backend-state-data-set! state data)
           owner))
-      (struct-get data lazy-table-arena))))
+      data.lazy-table-arena)))
 
 (define (compiler-backend-state-lazy-table-arena-finish!
   [state : CompilerBackendState]
@@ -15561,7 +15573,7 @@
     [head : i64 (arena.tl_arena_current)]
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (begin
-      (set! (struct-get data lazy-table-arena) head)
+      (set! data.lazy-table-arena head)
       (compiler-backend-state-data-set! state data)
       (unsafe
         (arena.tl_arena_set
@@ -15575,16 +15587,16 @@
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (if (and
       (=
-        (array-length (struct-get data slot-cache-values))
+        (array-length data.slot-cache-values)
         compiler-backend-slot-cache-capacity)
       (=
-        (array-length (struct-get data slot-cache-epochs))
+        (array-length data.slot-cache-epochs)
         compiler-backend-slot-cache-capacity)
       (=
-        (array-length (struct-get data frame-offset-cache-values))
+        (array-length data.frame-offset-cache-values)
         compiler-backend-slot-cache-capacity)
       (=
-        (array-length (struct-get data frame-offset-cache-epochs))
+        (array-length data.frame-offset-cache-epochs)
         compiler-backend-slot-cache-capacity))
       unit
       (let
@@ -15602,10 +15614,10 @@
         [frame-epochs : (__tl_dyn-array i64)
           (array.make-array i64 compiler-backend-slot-cache-capacity)]
         (begin
-          (set! (struct-get data slot-cache-values) slot-values)
-          (set! (struct-get data slot-cache-epochs) slot-epochs)
-          (set! (struct-get data frame-offset-cache-values) frame-values)
-          (set! (struct-get data frame-offset-cache-epochs) frame-epochs)
+          (set! data.slot-cache-values slot-values)
+          (set! data.slot-cache-epochs slot-epochs)
+          (set! data.frame-offset-cache-values frame-values)
+          (set! data.frame-offset-cache-epochs frame-epochs)
           ;; The arrays are allocated in the state owner arena, but `data` is
           ;; a copied struct, so publish all four handles explicitly.
           (compiler-backend-state-data-set! state data)
@@ -15616,8 +15628,8 @@
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (if (and
-      (= (array-length (struct-get data immediate-cache-values)) 8192)
-      (= (array-length (struct-get data immediate-cache-epochs)) 8192))
+      (= (array-length data.immediate-cache-values) 8192)
+      (= (array-length data.immediate-cache-epochs) 8192))
       unit
       (let
         [previous : i64 (arena.tl_arena_current)]
@@ -15628,8 +15640,8 @@
         [values : (__tl_dyn-array String) (array.make-array String 8192)]
         [epochs : (__tl_dyn-array i64) (array.make-array i64 8192)]
         (begin
-          (set! (struct-get data immediate-cache-values) values)
-          (set! (struct-get data immediate-cache-epochs) epochs)
+          (set! data.immediate-cache-values values)
+          (set! data.immediate-cache-epochs epochs)
           (compiler-backend-state-data-set! state data)
           (compiler-backend-state-lazy-table-arena-finish! state previous owner))))))
 
@@ -15638,9 +15650,7 @@
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     (begin
-      (set!
-        (struct-get data slot-cache-epoch)
-        (+ (struct-get data slot-cache-epoch) 1))
+      (set! data.slot-cache-epoch (+ data.slot-cache-epoch 1))
       (compiler-backend-state-data-set! state data))))
 
 (define (compiler-backend-state-slot-cache-reset!
@@ -15662,9 +15672,9 @@
         (compiler-backend-state-slot-frame-cache-storage-ensure! state)
         (let
           [data : CompilerBackendStateData (compiler-backend-state-data state)]
-          [epoch : i64 (struct-get data slot-cache-epoch)]
-          [epochs : (__tl_dyn-array i64) (struct-get data slot-cache-epochs)]
-          [values : (__tl_dyn-array String) (struct-get data slot-cache-values)]
+          [epoch : i64 data.slot-cache-epoch]
+          [epochs : (__tl_dyn-array i64) data.slot-cache-epochs]
+          [values : (__tl_dyn-array String) data.slot-cache-values]
           (if (= (array-ref epochs var-id) epoch)
             (array-ref values var-id)
             (let
@@ -15683,8 +15693,8 @@
                   state
                   previous
                   owner)
-                (array-set! values var-id text)
-                (array-set! epochs var-id epoch)
+                (set! (array-ref values var-id) text)
+                (set! (array-ref epochs var-id) epoch)
                 text)))))
       (string.append (string.int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)"))))
 
@@ -15709,11 +15719,9 @@
             (let
               [data : CompilerBackendStateData
                 (compiler-backend-state-data state)]
-              [epoch : i64 (struct-get data slot-cache-epoch)]
-              [epochs : (__tl_dyn-array i64)
-                (struct-get data frame-offset-cache-epochs)]
-              [values : (__tl_dyn-array String)
-                (struct-get data frame-offset-cache-values)]
+              [epoch : i64 data.slot-cache-epoch]
+              [epochs : (__tl_dyn-array i64) data.frame-offset-cache-epochs]
+              [values : (__tl_dyn-array String) data.frame-offset-cache-values]
               (if (= (array-ref epochs idx) epoch)
                 (array-ref values idx)
                 (let
@@ -15730,8 +15738,8 @@
                       state
                       previous
                       owner)
-                    (array-set! values idx text)
-                    (array-set! epochs idx epoch)
+                    (set! (array-ref values idx) text)
+                    (set! (array-ref epochs idx) epoch)
                     text))))))
         (string.append (string.int->string offset) "(%rbp)")))))
 
@@ -15744,10 +15752,9 @@
       (let
         [idx : i64 (+ n 4096)]
         [data : CompilerBackendStateData (compiler-backend-state-data state)]
-        [epoch : i64 (struct-get data slot-cache-epoch)]
-        [epochs : (__tl_dyn-array i64) (struct-get data immediate-cache-epochs)]
-        [values : (__tl_dyn-array String)
-          (struct-get data immediate-cache-values)]
+        [epoch : i64 data.slot-cache-epoch]
+        [epochs : (__tl_dyn-array i64) data.immediate-cache-epochs]
+        [values : (__tl_dyn-array String) data.immediate-cache-values]
         (if (= (array-ref epochs idx) epoch)
           (array-ref values idx)
           (let
@@ -15763,8 +15770,8 @@
                 state
                 previous
                 owner)
-              (array-set! values idx text)
-              (array-set! epochs idx epoch)
+              (set! (array-ref values idx) text)
+              (set! (array-ref epochs idx) epoch)
               text)))))
     (string.append "$" (string.int->string n))))
 
@@ -16135,17 +16142,12 @@
         (match (compiler-backend-index-function-slot index name)
           [(backend_i64_i64_map.LookupFound slot)
             (let
-              [indexed-name : String
-                (array-ref (struct-get index function-names) slot)]
+              [indexed-name : String (array-ref index.function-names slot)]
               (if (compiler-backend-compact-function-symbol? indexed-name)
                 (str_cat.str-cat "_tl_f" (string.int->string slot) "")
-                (compiler-backend-state-user-symbol-id
-                  (struct-get index backend-state)
-                  name)))]
+                (compiler-backend-state-user-symbol-id index.backend-state name)))]
           [(backend_i64_i64_map.LookupMissing)
-            (compiler-backend-state-user-symbol-id
-              (struct-get index backend-state)
-              name)])))))
+            (compiler-backend-state-user-symbol-id index.backend-state name)])))))
 
 (define (compiler-backend-function-symbol-map-comment
   [index : CompilerBackendProgramIndex]
@@ -16221,21 +16223,15 @@
             (compiler-backend-index-extern-link-symbol-id index name)]
           (if (and
             (= link-symbol-id name)
-            (compiler-backend-call-raw-symbol-id?
-              plan
-              (struct-get index backend-state)
-              name)
+            (compiler-backend-call-raw-symbol-id? plan index.backend-state name)
             (not (compiler-backend-index-function-defines? index name)))
             name-text
             (compiler-backend-link-symbol-id
               link-symbol-id
               plan
-              (struct-get index backend-state))))]
+              index.backend-state)))]
       [(and
-          (compiler-backend-call-raw-symbol-id?
-            plan
-            (struct-get index backend-state)
-            name)
+          (compiler-backend-call-raw-symbol-id? plan index.backend-state name)
           (not (compiler-backend-index-function-defines? index name)))
         name-text]
       [else (compiler-backend-function-symbol-index index name)])))
@@ -16247,9 +16243,7 @@
     [(backend_i64_i64_map.LookupFound slot)
       (str_cat.str-cat "f" (string.int->string slot) "")]
     [(backend_i64_i64_map.LookupMissing)
-      (compiler-backend-state-user-symbol-id
-        (struct-get index backend-state)
-        name)]))
+      (compiler-backend-state-user-symbol-id index.backend-state name)]))
 
 ;; Borrowed Slice references are structural two-word values.  The backend only
 ;; has the type-segment-bases pool (rather than a typecheck context), so peel
@@ -16459,7 +16453,7 @@
   [index : CompilerBackendSourceSpanIndex]) : String
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
     ""
-    (match (struct-get index debug-files)
+    (match index.debug-files
       [(CompilerBackendDebugFileIndex.No) ""]
       [(CompilerBackendDebugFileIndex.Files _ paths count)
         (let
@@ -16474,14 +16468,12 @@
                     (if (compiler-backend-target-linux? target)
                       (string.replace
                         (ci.intern-compat-state-str
-                          (compiler-backend-state-intern
-                            (struct-get index backend-state))
+                          (compiler-backend-state-intern index.backend-state)
                           path-id)
                         "\\"
                         "/")
                       (ci.intern-compat-state-str
-                        (compiler-backend-state-intern
-                          (struct-get index backend-state))
+                        (compiler-backend-state-intern index.backend-state)
                         path-id)))]
                 [file-number : String (string.int->string (+ path-index 1))]
                 (begin
@@ -16530,12 +16522,12 @@
                     (string.int->string function-id)))
                 "\n"
                 (compiler-backend-debug-cv-functions
-                  (box-get rest)
+                  (__tl-box-place rest)
                   program-index
                   line-tables))]
             [(backend_i64_i64_map.LookupMissing)
               (compiler-backend-debug-cv-functions
-                (box-get rest)
+                (__tl-box-place rest)
                 program-index
                 line-tables)])])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
@@ -16774,17 +16766,14 @@
   [ctx : CompilerBackendEmissionContext]
   [instr : compiler_ir_types.CompilerIrInstr]) : unit
   (let
-    [function-state : CompilerBackendFunctionState
-      (struct-get ctx function-state)]
+    [function-state : CompilerBackendFunctionState ctx.function-state]
     (begin
       (compiler-backend-function-state-set-bool!
         function-state
         compiler-backend-function-bool-abort-site-active
         false)
       (when
-        (compiler-backend-runtime-abort-site-instr?
-          (struct-get ctx backend-state)
-          instr)
+        (compiler-backend-runtime-abort-site-instr? ctx.backend-state instr)
         (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
           ctx.spans
           ctx.source-function
@@ -16792,9 +16781,8 @@
           [(compiler_ir_types.CompilerMaybeSourceLocation.No) unit]
           [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)
             (let
-              [path-id : i64 (struct-get location path-id)]
-              [span : compiler_ast_types.AstSourceSpan
-                (struct-get location span)]
+              [path-id : i64 location.path-id]
+              [span : compiler_ast_types.AstSourceSpan location.span]
               (when
                 (> path-id 0)
                 (begin
@@ -16806,8 +16794,7 @@
                     function-state
                     compiler-backend-function-string-abort-site-path
                     (ci.intern-compat-state-str
-                      (compiler-backend-state-intern
-                        (struct-get ctx backend-state))
+                      (compiler-backend-state-intern ctx.backend-state)
                       path-id))
                   (compiler-backend-function-state-set-i64!
                     function-state
@@ -19223,7 +19210,7 @@
         instr-diag
         backend-state)]
     [(compiler_ir_types.CompilerIrValueList.Cons w0 rest0)
-      (match (box-get rest0)
+      (match (__tl-box-place rest0)
         [(compiler_ir_types.CompilerIrValueList.Array seq)
           (compiler-backend-emit-pack
             type-segment-bases
@@ -19385,7 +19372,7 @@
                   ;; vreg-model: a register-homed 8-byte dst takes the spilled word
                   ;; straight into its home (movq operand, dst-home), skipping the
                   ;; temp stage + store -- this is the struct-word/param move flood
-                  ;; (e.g. (struct-get pair left) of a spilled register-group arg).
+                  ;; (e.g. pair.left of a spilled register-group arg).
                   ;; An 8-byte scalar word fills the whole register; float words can
                   ;; also load directly to an XMM home. Spilled / narrow scalar dsts
                   ;; use a scavenged temp before the normal typed store.
@@ -19434,7 +19421,7 @@
                 (compiler_diagnostic.compiler-diagnostic-with-message
                   instr-diag
                   (compiler_diagnostic.compiler-diagnostic-message
-                    (box-get message)))))]))]
+                    (__tl-box-place message)))))]))]
     [_
       (ResultCompilerBackend.Err
         (box
@@ -19679,7 +19666,7 @@
         (compiler-backend-one-exclude reg0)
         1
         abi-reg1
-        (struct-get program-index backend-state))
+        program-index.backend-state)
       abi-reg1)))
 
 (define (compiler-backend-group-copy-xmm-scratch
@@ -20275,7 +20262,7 @@
           value
           ty
           reg
-          (struct-get program-index backend-state))])
+          program-index.backend-state)])
     (match value
       [(compiler_ir_types.CompilerIrValue.Var id)
         (ResultCompilerBackend.Ok
@@ -20285,7 +20272,7 @@
             id
             ty
             reg
-            (struct-get program-index backend-state)))]
+            program-index.backend-state))]
       [(compiler_ir_types.CompilerIrValue.Global name)
         (ResultCompilerBackend.Ok
           (compiler-backend-emit-load-memory-to-reg
@@ -20309,25 +20296,21 @@
           assignments
           value
           reg
-          (struct-get program-index backend-state))])))
+          program-index.backend-state)])))
 
 (define (compiler-backend-function-or-global-addr-symbol
   [program-index : CompilerBackendProgramIndex]
   [name : i64]) : String
   (if (compiler-backend-index-function-defines? program-index name)
     (compiler-backend-function-symbol-index program-index name)
-    (compiler-backend-state-user-symbol-id
-      (struct-get program-index backend-state)
-      name)))
+    (compiler-backend-state-user-symbol-id program-index.backend-state name)))
 
 (define (compiler-backend-global-symbol-index
   [program-index : CompilerBackendProgramIndex]
   [name : i64]) : String
   (if (compiler-backend-index-extern-references? program-index name)
     (compiler-backend-index-extern-link-symbol program-index name)
-    (compiler-backend-state-user-symbol-id
-      (struct-get program-index backend-state)
-      name)))
+    (compiler-backend-state-user-symbol-id program-index.backend-state name)))
 
 (define (compiler-backend-unsigned-rel-ty? [ty : compiler_ast_types.AstType]) : bool
   (match ty
@@ -20360,19 +20343,19 @@
     [values : (__tl_dyn-array compiler_ast_types.AstType)
       (array.make-array compiler_ast_types.AstType 3)]
     (begin
-      (array-set! values 0 (compiler_ast_types.AstType.I64))
+      (set! (array-ref values 0) (compiler_ast_types.AstType.I64))
       (backend_i64_i64_map.insert-ref!
         (&mut ids)
         (compiler_ir_types.compiler-ir-symbol-id left)
         0)
-      (array-set! values 1 (compiler_ast_types.AstType.Bool))
+      (set! (array-ref values 1) (compiler_ast_types.AstType.Bool))
       (backend_i64_i64_map.insert-ref!
         (&mut ids)
         (compiler_ir_types.compiler-ir-symbol-id right)
         1)
       ;; Dense production fill preserves the cache's historical last-insert
       ;; shadow behavior for duplicate global identities.
-      (array-set! values 2 (compiler_ast_types.AstType.U8))
+      (set! (array-ref values 2) (compiler_ast_types.AstType.U8))
       (backend_i64_i64_map.insert-ref!
         (&mut ids)
         (compiler_ir_types.compiler-ir-symbol-id left)
@@ -20402,7 +20385,7 @@
   (match globals
     [(compiler_ir_types.CompilerIrGlobalList.Nil) 0]
     [(compiler_ir_types.CompilerIrGlobalList.Cons _ rest)
-      (+ 1 (compiler-backend-global-type-count (box-get rest)))]
+      (+ 1 (compiler-backend-global-type-count (__tl-box-place rest)))]
     [(compiler_ir_types.CompilerIrGlobalList.Array seq)
       (compiler_ir_types.compiler-ir-global-seq-count seq)]))
 
@@ -20417,13 +20400,13 @@
       (match global
         [(compiler_ir_types.CompilerIrGlobal.Global name ty _)
           (begin
-            (array-set! values index ty)
+            (set! (array-ref values index) ty)
             (backend_i64_i64_map.insert-ref!
               (&mut ids)
               (compiler_ir_types.compiler-ir-symbol-id name)
               index)
             (compiler-backend-global-types-fill
-              (box-get rest)
+              (__tl-box-place rest)
               ids
               values
               (+ index 1)))])]
@@ -21060,9 +21043,9 @@
         (let
           [pow : CompilerBackendU64DivPow2
             (compiler-backend-u64-div-pow2 (+ 64 shift) divisor)]
-          [quot : u64 (struct-get pow quot)]
-          [rem : u64 (struct-get pow rem)]
-          [overflow : bool (struct-get pow overflow)]
+          [quot : u64 pow.quot]
+          [rem : u64 pow.rem]
+          [overflow : bool pow.overflow]
           [limit : u64 (shl (cast 1 : u64) shift)]
           [error : u64
             (if (= rem (cast 0 : u64))
@@ -21096,9 +21079,9 @@
         (let
           [pow : CompilerBackendU64DivPow2
             (compiler-backend-u64-div-pow2 (+ 64 shift) divisor)]
-          [quot : u64 (struct-get pow quot)]
-          [rem : u64 (struct-get pow rem)]
-          [overflow : bool (struct-get pow overflow)]
+          [quot : u64 pow.quot]
+          [rem : u64 pow.rem]
+          [overflow : bool pow.overflow]
           [limit : u64 (shl (cast 1 : u64) shift)]
           (begin
             (if (and (not overflow) (<= rem limit))
@@ -21222,10 +21205,9 @@
   (let
     [scratch : CompilerBackendScratchState
       (compiler-backend-function-scratch-state function-state)]
-    [empty-i64 : (__tl_dyn-array i64) (struct-get scratch empty-i64-array)]
-    [empty-bool : (__tl_dyn-array bool) (struct-get scratch empty-bool-array)]
-    [empty-string : (__tl_dyn-array String)
-      (struct-get scratch empty-string-array)]
+    [empty-i64 : (__tl_dyn-array i64) scratch.empty-i64-array]
+    [empty-bool : (__tl_dyn-array bool) scratch.empty-bool-array]
+    [empty-string : (__tl_dyn-array String) scratch.empty-string-array]
     (begin
       (compiler-backend-function-scratch-set-i64!
         function-state
@@ -21566,7 +21548,9 @@
       (if (compiler-backend-u64-power-of-two? (cast abs-d : u64))
         0
         (cast
-          (struct-get (compiler-backend-signed-divisor-magic abs-d) magic)
+          (__tl-project-field
+            (compiler-backend-signed-divisor-magic abs-d)
+            magic)
           : i64)))))
 
 (define (compiler-backend-const-hoist-unsigned-magic [d : u64]) : i64
@@ -21763,7 +21747,7 @@
               lo
               le)
               (begin
-                (array-set! out found p)
+                (set! (array-ref out found) p)
                 (set! found (+ found 1))
                 (if (< p best)
                   (set! best p)
@@ -21771,7 +21755,7 @@
               unit)
             unit)
           (set! p (+ p 1))))
-      (array-set! out found best)
+      (set! (array-ref out found) best)
       found)))
 
 ;; True when every collected pred block is call-free.
@@ -21984,10 +21968,9 @@
         (begin
           (if (compiler-backend-const-hoist-key-first? values wide i)
             (begin
-              (array-set! order distinct i)
-              (array-set!
-                tally
-                distinct
+              (set! (array-ref order distinct) i)
+              (set!
+                (array-ref tally distinct)
                 (compiler-backend-const-hoist-key-sites values wide count i))
               (set! distinct (+ distinct 1)))
             unit)
@@ -22002,11 +21985,11 @@
             (begin
               (while (and (> b 0) (< (array-ref tally (- b 1)) key-tally))
                 (begin
-                  (array-set! order b (array-ref order (- b 1)))
-                  (array-set! tally b (array-ref tally (- b 1)))
+                  (set! (array-ref order b) (array-ref order (- b 1)))
+                  (set! (array-ref tally b) (array-ref tally (- b 1)))
                   (set! b (- b 1))))
-              (array-set! order b key-index)
-              (array-set! tally b key-tally)
+              (set! (array-ref order b) key-index)
+              (set! (array-ref tally b) key-tally)
               (set! a (+ a 1))))))
       distinct)))
 
@@ -22065,8 +22048,8 @@
             [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
               (let
                 [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-                  (struct-get instrs slots)]
-                [count : i64 (struct-get instrs len)]
+                  instrs.slots]
+                [count : i64 instrs.len]
                 [k : i64 0]
                 (while (and (< k count) (not found))
                   (begin
@@ -22106,8 +22089,7 @@
       (let
         [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
           (match dense-blocks
-            [(compiler_ir_types.CompilerIrBlockList.Array seq)
-              (struct-get seq slots)]
+            [(compiler_ir_types.CompilerIrBlockList.Array seq) seq.slots]
             [_ (array.make-array compiler_ir_types.CompilerIrBlock 0)])]
         (if (not
           (compiler-backend-const-hoist-any-constant? type-segment-bases orig))
@@ -22264,8 +22246,8 @@
                                         (let
                                           [slots : (__tl_dyn-array
                                             compiler_ir_types.CompilerIrInstr)
-                                            (struct-get instrs slots)]
-                                          [icount : i64 (struct-get instrs len)]
+                                            instrs.slots]
+                                          [icount : i64 instrs.len]
                                           [k : i64 0]
                                           (while (< k icount)
                                             (let
@@ -22291,17 +22273,20 @@
                                                       site-count
                                                       point)))
                                                   (begin
-                                                    (array-set!
-                                                      loop-points
-                                                      loop-count
+                                                    (set!
+                                                      (array-ref
+                                                        loop-points
+                                                        loop-count)
                                                       point)
-                                                    (array-set!
-                                                      loop-values
-                                                      loop-count
+                                                    (set!
+                                                      (array-ref
+                                                        loop-values
+                                                        loop-count)
                                                       magic)
-                                                    (array-set!
-                                                      loop-wide
-                                                      loop-count
+                                                    (set!
+                                                      (array-ref
+                                                        loop-wide
+                                                        loop-count)
                                                       wide?)
                                                     (set!
                                                       loop-count
@@ -22375,31 +22360,36 @@
                                                     reg-name)]
                                                 (begin
                                                   ;; synthetic occupancy entry
-                                                  (array-set!
-                                                    synth-regs
-                                                    synth-count
+                                                  (set!
+                                                    (array-ref
+                                                      synth-regs
+                                                      synth-count)
                                                     (if frame?
                                                       compiler_abi.compiler-reg-id-invalid
                                                       reg))
-                                                  (array-set!
-                                                    synth-lo
-                                                    synth-count
+                                                  (set!
+                                                    (array-ref
+                                                      synth-lo
+                                                      synth-count)
                                                     lo)
-                                                  (array-set!
-                                                    synth-hi
-                                                    synth-count
+                                                  (set!
+                                                    (array-ref
+                                                      synth-hi
+                                                      synth-count)
                                                     hi)
                                                   (set!
                                                     synth-count
                                                     (+ synth-count 1))
                                                   ;; preheader injection
-                                                  (array-set!
-                                                    inject-labels
-                                                    inject-count
+                                                  (set!
+                                                    (array-ref
+                                                      inject-labels
+                                                      inject-count)
                                                     inject-label)
-                                                  (array-set!
-                                                    inject-texts
-                                                    inject-count
+                                                  (set!
+                                                    (array-ref
+                                                      inject-texts
+                                                      inject-count)
                                                     (if frame?
                                                       (string.append
                                                         (compiler-backend-emit-load-i64-absolute
@@ -22412,9 +22402,10 @@
                                                       (compiler-backend-emit-load-i64-absolute
                                                         magic
                                                         reg-name)))
-                                                  (array-set!
-                                                    inject-pres
-                                                    inject-count
+                                                  (set!
+                                                    (array-ref
+                                                      inject-pres
+                                                      inject-count)
                                                     inject-pre)
                                                   (set!
                                                     inject-count
@@ -22439,35 +22430,41 @@
                                                             site-count
                                                             site-cap))
                                                           (begin
-                                                            (array-set!
-                                                              site-points
-                                                              site-count
+                                                            (set!
+                                                              (array-ref
+                                                                site-points
+                                                                site-count)
                                                               (array-ref
                                                                 loop-points
                                                                 j))
-                                                            (array-set!
-                                                              site-regs
-                                                              site-count
+                                                            (set!
+                                                              (array-ref
+                                                                site-regs
+                                                                site-count)
                                                               (if frame?
                                                                 compiler_abi.compiler-reg-id-invalid
                                                                 reg))
-                                                            (array-set!
-                                                              site-frame-operands
-                                                              site-count
+                                                            (set!
+                                                              (array-ref
+                                                                site-frame-operands
+                                                                site-count)
                                                               (if frame?
                                                                 home
                                                                 ""))
-                                                            (array-set!
-                                                              site-values
-                                                              site-count
+                                                            (set!
+                                                              (array-ref
+                                                                site-values
+                                                                site-count)
                                                               magic)
-                                                            (array-set!
-                                                              site-wide
-                                                              site-count
+                                                            (set!
+                                                              (array-ref
+                                                                site-wide
+                                                                site-count)
                                                               wide?)
-                                                            (array-set!
-                                                              site-frame
-                                                              site-count
+                                                            (set!
+                                                              (array-ref
+                                                                site-frame
+                                                                site-count)
                                                               frame?)
                                                             (set!
                                                               site-count
@@ -22641,14 +22638,14 @@
       items
       (+ index 1)
       (if (=
-        (struct-get (array-ref items index) register)
+        (__tl-project-field (array-ref items index) register)
         compiler_abi.compiler-reg-id-invalid)
         count
         (+ count 1)))))
 
 (define (compiler-backend-scratch-plan-success-count
   [plan : compiler_regalloc.CompilerRegScratchPlan]) : i64
-  (compiler-backend-scratch-plan-success-count-from (struct-get plan items) 0 0))
+  (compiler-backend-scratch-plan-success-count-from plan.items 0 0))
 
 (define (compiler-backend-scratch-plan-occupancy-fill-range!
   [masks : (__tl_dyn-array i64)]
@@ -22665,7 +22662,7 @@
         (/ (+ lo 1) 2))]
     (while (and (< i (array-length masks)) (< (* 2 i) hi))
       (begin
-        (array-set! masks i (bit-or (array-ref masks i) bit))
+        (set! (array-ref masks i) (bit-or (array-ref masks i) bit))
         (set! i (+ i 1))))))
 
 (define (compiler-backend-scratch-plan-occupancy-fill!
@@ -22677,17 +22674,17 @@
     (let
       [item : compiler_regalloc.CompilerRegScratchAssignment
         (array-ref items index)]
-      [reg : i64 (struct-get item register)]
+      [reg : i64 item.register]
       (begin
         (if (= reg compiler_abi.compiler-reg-id-invalid)
           unit
           (let
             [requirement : compiler_regalloc.CompilerRegScratchRequirement
-              (struct-get item requirement)]
+              item.requirement]
             (compiler-backend-scratch-plan-occupancy-fill-range!
               masks
-              (struct-get requirement lo)
-              (struct-get requirement hi)
+              requirement.lo
+              requirement.hi
               reg)))
         (compiler-backend-scratch-plan-occupancy-fill! items (+ index 1) masks)))))
 
@@ -22697,10 +22694,7 @@
   (let
     [masks : (__tl_dyn-array i64) (array.make-array i64 instruction-count)]
     (begin
-      (compiler-backend-scratch-plan-occupancy-fill!
-        (struct-get plan items)
-        0
-        masks)
+      (compiler-backend-scratch-plan-occupancy-fill! plan.items 0 masks)
       masks)))
 
 (define (compiler-backend-scratch-plan-extend-vars
@@ -22719,7 +22713,7 @@
     (let
       [item : compiler_regalloc.CompilerRegScratchAssignment
         (array-ref items index)]
-      [reg : i64 (struct-get item register)]
+      [reg : i64 item.register]
       (if (= reg compiler_abi.compiler-reg-id-invalid)
         (compiler-backend-scratch-plan-extend-assignments-from
           items
@@ -22743,7 +22737,7 @@
   [vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler-backend-scratch-plan-extend-assignments-from
-    (struct-get plan items)
+    plan.items
     0
     0
     vars
@@ -22765,9 +22759,9 @@
         (let
           [item : compiler_regalloc.CompilerRegScratchAssignment
             (array-ref items item-index)]
-          [reg : i64 (struct-get item register)]
+          [reg : i64 item.register]
           [requirement : compiler_regalloc.CompilerRegScratchRequirement
-            (struct-get item requirement)]
+            item.requirement]
           (begin
             (if (= reg compiler_abi.compiler-reg-id-invalid)
               unit
@@ -22778,8 +22772,8 @@
                     out
                     (compiler_regalloc.CompilerRegInterval
                       (+ vars success-index)
-                      (struct-get requirement lo)
-                      (struct-get requirement hi))))
+                      requirement.lo
+                      requirement.hi)))
                 (set! success-index (+ success-index 1))))
             (set! item-index (+ item-index 1)))))
       (compiler_regalloc.compiler-reg-interval-seq-append-all out intervals))))
@@ -22789,7 +22783,7 @@
   [vars : i64]
   [intervals : compiler_regalloc.CompilerRegIntervalSeq]) : compiler_regalloc.CompilerRegIntervalSeq
   (compiler-backend-scratch-plan-extend-intervals-from
-    (struct-get plan items)
+    plan.items
     0
     0
     vars
@@ -23226,8 +23220,8 @@
   (let
     [plan : CompilerBackendSignedDivMagic
       (compiler-backend-signed-divisor-magic divisor)]
-    [magic : u64 (struct-get plan magic)]
-    [shift : i64 (struct-get plan shift)]
+    [magic : u64 plan.magic]
+    [shift : i64 plan.shift]
     ;; M-F: a loop-hoisted magic is already resident in `home` -- skip the
     ;; materialisation and read it in place (imulq only READS it).
     [home : String (compiler-backend-magic-home-operand hoist magic)]
@@ -23394,8 +23388,8 @@
   (let
     [plan : CompilerBackendSignedDivMagic
       (compiler-backend-signed-divisor-magic divisor)]
-    [magic : u64 (struct-get plan magic)]
-    [shift : i64 (struct-get plan shift)]
+    [magic : u64 plan.magic]
+    [shift : i64 plan.shift]
     ;; A wide remainder divisor needs the materialisation register again after
     ;; the quotient multiply.  Do not pin that rare site to a loop-hoisted home;
     ;; inline the magic and reuse its one register for q*d instead.
@@ -23794,9 +23788,7 @@
                 [plan : CompilerBackendSignedDivMagic
                   (compiler-backend-signed-divisor-magic abs-divisor)]
                 (string.eq
-                  (compiler-backend-magic-home-operand
-                    hoist
-                    (struct-get plan magic))
+                  (compiler-backend-magic-home-operand hoist plan.magic)
                   ""))))))]
     [(option_i64.None) true]))
 
@@ -23831,7 +23823,7 @@
                   (compiler-backend-u64-power-of-two? abs-u64)
                   (not
                     (compiler-backend-u64-high-bit?
-                      (struct-get
+                      (__tl-project-field
                         (compiler-backend-signed-divisor-magic abs-divisor)
                         magic))))))))]
       [(option_i64.None) false])))
@@ -29214,8 +29206,7 @@
   [length-operand : String]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : String
-  (if (compiler-backend-abort-site-active?
-    (struct-get program-index backend-state))
+  (if (compiler-backend-abort-site-active? program-index.backend-state)
     (string.append
       (compiler-backend-abort-call-three-asm
         "tl_oob_abort_at"
@@ -29223,7 +29214,7 @@
         (str_cat.str-cat "    pushq " length-operand "\n")
         (str_cat.str-cat "    pushq " index-operand "\n")
         call-space
-        (struct-get program-index backend-state))
+        program-index.backend-state)
       (str_cat.str-cat ok-symbol ":\n"))
     (string.append
       (compiler-backend-emit-call-space-sub call-space)
@@ -29339,14 +29330,14 @@
     [ok-symbol : String (compiler-backend-asm-label function ok-label)]
     [index-reg : String
       (compiler-backend-value-scalar-register-home
-        (struct-get program-index backend-state)
+        program-index.backend-state
         assignments
         index)]
     [direct-length-operand : String
       (compiler-backend-bounds-length-operand
         assignments
         length
-        (struct-get program-index backend-state))]
+        program-index.backend-state)]
     ;; Length-load scratch: exclude the index home because the cmp reads index
     ;; vs length. The cfg-gated path supplies a short-lived allocator-owned
     ;; pseudo-var when length staging is required; otherwise retain the proven
@@ -29358,7 +29349,7 @@
             (compiler-backend-scavenge-exclude-with index-reg)
             6
             "%r9"
-            (struct-get program-index backend-state))
+            program-index.backend-state)
           "")
         planned-len)]
     ;; A constant index materializes into a reserved-set-aware scavenged register
@@ -29373,7 +29364,7 @@
             (compiler-backend-scavenge-exclude-with scav-len)
             6
             "%r10"
-            (struct-get program-index backend-state))
+            program-index.backend-state)
           planned-index)
         index-reg)]
     (if (string.eq index-reg "")
@@ -29383,7 +29374,7 @@
           (compiler-backend-bounds-length-operand
             assignments
             length
-            (struct-get program-index backend-state))]
+            program-index.backend-state)]
         (if (and
           (not (string.eq const-imm ""))
           ;; length must be a register/memory operand (never immediate:
@@ -29404,7 +29395,7 @@
               assignments
               length
               scav-len
-              (struct-get program-index backend-state))
+              program-index.backend-state)
               [(ResultCompilerBackend.Ok length-asm)
                 (ResultCompilerBackend.Ok
                   (compiler-backend-bounds-check-const-index-asm
@@ -29421,14 +29412,14 @@
             assignments
             index
             index-operand
-            (struct-get program-index backend-state))
+            program-index.backend-state)
             [(ResultCompilerBackend.Ok index-asm)
               (let
                 [length-operand : String
                   (compiler-backend-bounds-length-operand
                     assignments
                     length
-                    (struct-get program-index backend-state))]
+                    program-index.backend-state)]
                 (if (not (string.eq length-operand ""))
                   (ResultCompilerBackend.Ok
                     (compiler-backend-bounds-check-asm
@@ -29444,7 +29435,7 @@
                     assignments
                     length
                     scav-len
-                    (struct-get program-index backend-state))
+                    program-index.backend-state)
                     [(ResultCompilerBackend.Ok length-asm)
                       (ResultCompilerBackend.Ok
                         (compiler-backend-bounds-check-asm
@@ -29465,7 +29456,7 @@
           (compiler-backend-bounds-length-operand
             assignments
             length
-            (struct-get program-index backend-state))]
+            program-index.backend-state)]
         (if (not (string.eq length-operand ""))
           (ResultCompilerBackend.Ok
             (compiler-backend-bounds-check-asm
@@ -29481,7 +29472,7 @@
             assignments
             length
             scav-len
-            (struct-get program-index backend-state))
+            program-index.backend-state)
             [(ResultCompilerBackend.Ok length-asm)
               (ResultCompilerBackend.Ok
                 (compiler-backend-bounds-check-asm
@@ -30150,10 +30141,9 @@
       backend-state)
       [(ResultCompilerBackendAddressBase.Ok base-plan)
         (let
-          [ptr-asm : String (struct-get base-plan asm)]
+          [ptr-asm : String base-plan.asm]
           [base : String
-            (compiler_abi.compiler-abi-register-spelling
-              (struct-get base-plan reg))]
+            (compiler_abi.compiler-abi-register-spelling base-plan.reg)]
           [base-mem : String (compiler-backend-base-deref base)]
           (ResultCompilerBackend.Ok
             (if (compiler-backend-float-type? ty)
@@ -30341,8 +30331,8 @@
   (let
     [a : (__tl_dyn-array String) (make-array String 2)]
     (begin
-      (array-set! a 0 r1)
-      (array-set! a 1 r2)
+      (set! (array-ref a 0) r1)
+      (set! (array-ref a 1) r2)
       a)))
 
 ;; Exclude three already-chosen or live-through registers without excluding
@@ -30385,7 +30375,7 @@
               [(compiler_regalloc.CompilerRegMaybeLocation.No) 0])
             (compiler-backend-param-register-exclude-count
               backend-state
-              (box-get rest)
+              (__tl-box-place rest)
               assignments))])]))
 
 (define (compiler-backend-param-register-exclude-fill-location
@@ -30395,17 +30385,17 @@
   (match location
     [(compiler_regalloc.CompilerRegLocation.Register reg)
       (begin
-        (array-set! out index (compiler_abi.compiler-abi-register-spelling reg))
+        (set!
+          (array-ref out index)
+          (compiler_abi.compiler-abi-register-spelling reg))
         (+ index 1))]
     [(compiler_regalloc.CompilerRegLocation.RegisterPair first second)
       (begin
-        (array-set!
-          out
-          index
+        (set!
+          (array-ref out index)
           (compiler_abi.compiler-abi-register-spelling first))
-        (array-set!
-          out
-          (+ index 1)
+        (set!
+          (array-ref out (+ index 1))
           (compiler_abi.compiler-abi-register-spelling second))
         (+ index 2))]
     [_ index]))
@@ -30430,7 +30420,7 @@
         [(compiler_ir_types.CompilerIrParam.Param _ _ var-id)
           (compiler-backend-param-register-exclude-fill
             backend-state
-            (box-get rest)
+            (__tl-box-place rest)
             assignments
             out
             (match (compiler-backend-emit-assignment-lookup
@@ -30483,14 +30473,14 @@
     [a : (__tl_dyn-array String)
       (make-array String compiler-backend-c-abi-stage-exclude-count)]
     (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rcx")
-      (array-set! a 2 "%rdx")
-      (array-set! a 3 "%r8")
-      (array-set! a 4 "%r9")
-      (array-set! a 5 "%rdi")
-      (array-set! a 6 "%rsi")
-      (array-set! a 7 extra)
+      (set! (array-ref a 0) "%rax")
+      (set! (array-ref a 1) "%rcx")
+      (set! (array-ref a 2) "%rdx")
+      (set! (array-ref a 3) "%r8")
+      (set! (array-ref a 4) "%r9")
+      (set! (array-ref a 5) "%rdi")
+      (set! (array-ref a 6) "%rsi")
+      (set! (array-ref a 7) extra)
       a)))
 
 (define (compiler-backend-copy-address [disp : i64] [reg : String]) : String
@@ -30903,7 +30893,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : i64
-  (if (>= index (struct-get instrs len))
+  (if (>= index instrs.len)
     0
     (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
       [(compiler_ir_types.CompilerIrInstr.CopyBytes dst src _)
@@ -30968,7 +30958,7 @@
     (if (string.eq home "")
       index
       (begin
-        (array-set! out index (str_cat.str-cat home ""))
+        (set! (array-ref out index) (str_cat.str-cat home ""))
         (+ index 1)))))
 
 (define (compiler-backend-copy-run-protect-fill
@@ -30978,7 +30968,7 @@
   [cursor : i64]
   [out : (__tl_dyn-array String)]
   [index : i64]) : i64
-  (if (< cursor (struct-get instrs len))
+  (if (< cursor instrs.len)
     (let
       [instr : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
@@ -32541,15 +32531,14 @@
       assignments
       dst
       scav-base
-      (struct-get program-index backend-state))
+      program-index.backend-state)
       [(ResultCompilerBackendAddressBase.Ok base)
         (let
-          [ptr-asm : String (struct-get base asm)]
+          [ptr-asm : String base.asm]
           [addr : String
             (compiler-backend-copy-address
               0
-              (compiler_abi.compiler-abi-register-spelling
-                (struct-get base reg)))]
+              (compiler_abi.compiler-abi-register-spelling base.reg))]
           (match (compiler-backend-emit-store-value-to-address
             type-segment-bases
             assignments
@@ -32558,8 +32547,7 @@
             addr
             program-index
             (compiler-backend-one-exclude
-              (compiler_abi.compiler-abi-register-spelling
-                (struct-get base reg)))
+              (compiler_abi.compiler-abi-register-spelling base.reg))
             1
             planned-value
             backend-state)
@@ -32609,15 +32597,14 @@
           assignments
           base
           scav-base
-          (struct-get program-index backend-state))
+          program-index.backend-state)
           [(ResultCompilerBackendAddressBase.Ok base-plan)
             (let
-              [base-asm : String (struct-get base-plan asm)]
+              [base-asm : String base-plan.asm]
               [addr : String
                 (compiler-backend-copy-address
                   disp
-                  (compiler_abi.compiler-abi-register-spelling
-                    (struct-get base-plan reg)))]
+                  (compiler_abi.compiler-abi-register-spelling base-plan.reg))]
               (match (compiler-backend-emit-store-value-to-address
                 type-segment-bases
                 assignments
@@ -32626,8 +32613,7 @@
                 addr
                 program-index
                 (compiler-backend-one-exclude
-                  (compiler_abi.compiler-abi-register-spelling
-                    (struct-get base-plan reg)))
+                  (compiler_abi.compiler-abi-register-spelling base-plan.reg))
                 1
                 planned-value
                 backend-state)
@@ -32774,8 +32760,7 @@
           [(ResultCompilerBackend.Ok offset-asm)
             (let
               [base-reg : String
-                (compiler_abi.compiler-abi-register-spelling
-                  (struct-get base-plan reg))]
+                (compiler_abi.compiler-abi-register-spelling base-plan.reg)]
               [addr : String
                 (compiler-backend-gep-index-address-disp
                   gep-disp
@@ -32806,7 +32791,7 @@
                 (if (string.eq addr "")
                   1
                   2)]
-              [base-asm : String (struct-get base-plan asm)]
+              [base-asm : String base-plan.asm]
               [addr-prefix-asm : String
                 (if (and
                   (not (string.eq offset-home ""))
@@ -32869,13 +32854,12 @@
       assignments
       ptr
       scav-base
-      (struct-get program-index backend-state))
+      program-index.backend-state)
       [(ResultCompilerBackendAddressBase.Ok base-plan)
         (let
-          [base-asm : String (struct-get base-plan asm)]
+          [base-asm : String base-plan.asm]
           [base-reg : String
-            (compiler_abi.compiler-abi-register-spelling
-              (struct-get base-plan reg))]
+            (compiler_abi.compiler-abi-register-spelling base-plan.reg)]
           [addr0 : String (compiler-backend-copy-address 0 base-reg)]
           [addr1 : String (compiler-backend-copy-address disp base-reg)]
           (match (compiler-backend-emit-store-value-to-address
@@ -34082,7 +34066,7 @@
         [(compiler_ir_types.CompilerIrParam.Param _ ty _)
           (compiler_ast_types.ast-type-cons
             ty
-            (compiler-backend-param-type-list (box-get rest)))])]))
+            (compiler-backend-param-type-list (__tl-box-place rest)))])]))
 
 (define (compiler-backend-type-list-count
   [types : compiler_ast_types.AstTypeList]) : i64
@@ -34127,7 +34111,7 @@
   (match functions
     [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
     [(compiler_ir_types.CompilerIrFunctionList.Cons _ rest)
-      (+ 1 (compiler-backend-function-list-count (box-get rest)))]
+      (+ 1 (compiler-backend-function-list-count (__tl-box-place rest)))]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (compiler_ir_types.compiler-ir-function-seq-count seq)]))
 
@@ -34136,7 +34120,7 @@
   (match externs
     [(compiler_ir_types.CompilerIrExternList.Nil) 0]
     [(compiler_ir_types.CompilerIrExternList.Cons _ rest)
-      (+ 1 (compiler-backend-extern-list-count (box-get rest)))]
+      (+ 1 (compiler-backend-extern-list-count (__tl-box-place rest)))]
     [(compiler_ir_types.CompilerIrExternList.Array seq)
       (compiler_ir_types.compiler-ir-extern-seq-count seq)]))
 
@@ -34189,19 +34173,17 @@
       (match func
         [(compiler_ir_types.CompilerIrFunction.Function name params ret-ty _ _)
           (begin
-            (array-set!
-              names
-              index
+            (set!
+              (array-ref names index)
               (compiler-backend-symbol-text-state backend-state name))
-            (array-set!
-              signatures
-              index
+            (set!
+              (array-ref signatures index)
               (CompilerBackendMaybeSignature.Some
                 (compiler-backend-param-type-list params)
                 ret-ty))
             (compiler-backend-program-index-functions-into
               backend-state
-              (box-get rest)
+              (__tl-box-place rest)
               (compiler-backend-program-index-bind-name
                 backend-state
                 ids
@@ -34235,13 +34217,11 @@
     (match (compiler_ir_types.compiler-ir-function-seq-ref functions seq-index)
       [(compiler_ir_types.CompilerIrFunction.Function name params ret-ty _ _)
         (begin
-          (array-set!
-            names
-            out-index
+          (set!
+            (array-ref names out-index)
             (compiler-backend-symbol-text-state backend-state name))
-          (array-set!
-            signatures
-            out-index
+          (set!
+            (array-ref signatures out-index)
             (CompilerBackendMaybeSignature.Some
               (compiler-backend-param-type-list params)
               ret-ty))
@@ -34264,7 +34244,7 @@
   (match ty
     [(compiler_ast_types.AstType.Func args ret-ty)
       (CompilerBackendMaybeSignature.Some
-        (box-get args)
+        (__tl-box-place args)
         (compiler_ast_types.ast-type-segment-bases-get
           type-segment-bases
           ret-ty))]
@@ -34282,14 +34262,14 @@
           [(compiler_ast_types.AstType.Func args _)
             (compiler-backend-type-list-has-aggregate?
               type-segment-bases
-              (box-get args))]
+              (__tl-box-place args))]
           [_ false])
         false)]
     [fixed-count : i64
       (if (compiler_ast_types.ast-extern-abi-c-varargs? abi)
         (match ty
           [(compiler_ast_types.AstType.Func args _)
-            (compiler-backend-type-list-count (box-get args))]
+            (compiler-backend-type-list-count (__tl-box-place args))]
           [_ -1])
         -1)]
     (+
@@ -34330,14 +34310,13 @@
                 ty
                 abi)]
             (begin
-              (array-set! names index extern-name)
-              (array-set!
-                signatures
-                index
+              (set! (array-ref names index) extern-name)
+              (set!
+                (array-ref signatures index)
                 (compiler-backend-program-index-extern-signature
                   type-segment-bases
                   ty))
-              (array-set! call-infos index call-info)
+              (set! (array-ref call-infos index) call-info)
               (if (compiler-backend-extern-call-info-aggregate-params?
                 call-info)
                 (begin
@@ -34348,7 +34327,7 @@
                 unit)
               (compiler-backend-program-index-extern-signatures-into
                 type-segment-bases
-                (box-get rest)
+                (__tl-box-place rest)
                 (compiler-backend-program-index-bind-extern-ids
                   signature-ids
                   extern-name-id
@@ -34389,14 +34368,14 @@
             _
             provided)
           (begin
-            (array-set! link-symbols index link-symbol)
-            (array-set! provideds index provided)
+            (set! (array-ref link-symbols index) link-symbol)
+            (set! (array-ref provideds index) provided)
             (backend_i64_i64_map.insert-ref!
               (&mut link-references)
               link-symbol
               index)
             (compiler-backend-program-index-extern-links-into
-              (box-get rest)
+              (__tl-box-place rest)
               link-references
               link-symbols
               provideds
@@ -34428,7 +34407,7 @@
             _
             _)
           (compiler-backend-program-index-extern-reference-names-into
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-backend-program-index-bind-extern-ids
               reference-ids
               extern-name-id
@@ -34658,7 +34637,7 @@
               type-segment-bases
               map
               ty)
-            (box-get rest))])]))
+            (__tl-box-place rest))])]))
 
 (define (compiler-backend-collect-group-counts-functions
   [type-segment-bases : i64]
@@ -34704,7 +34683,7 @@
     [(compiler_ir_types.CompilerIrValueList.Cons word rest)
       (compiler-backend-pack-word-class-mask
         type-info
-        (box-get rest)
+        (__tl-box-place rest)
         (+ index 1)
         (if (compiler-backend-pack-word-value-sse? type-info word)
           (bit-or mask (compiler-backend-group-word-sse-bit index))
@@ -34805,7 +34784,7 @@
       (compiler-backend-collect-blocks-shared
         type-segment-bases
         (compiler-backend-collect-block-shared type-segment-bases state block)
-        (box-get rest))]
+        (__tl-box-place rest))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-collect-block-seq-shared type-segment-bases state seq 0)]))
 
@@ -34875,7 +34854,7 @@
               type-segment-bases
               map
               ty)
-            (box-get rest))])]))
+            (__tl-box-place rest))])]))
 
 (define (compiler-backend-collect-function-shared
   [type-segment-bases : i64]
@@ -34917,7 +34896,7 @@
       (compiler-backend-collect-functions-shared
         type-segment-bases
         (compiler-backend-collect-function-shared type-segment-bases state func)
-        (box-get rest))]
+        (__tl-box-place rest))]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (compiler-backend-collect-function-seq-shared
         type-segment-bases
@@ -34986,7 +34965,7 @@
             (> (compiler-backend-abi-memory-size type-segment-bases ty) 0)
             (compiler-backend-param-list-has-private-memory?
               type-segment-bases
-              (box-get rest)))])]))
+              (__tl-box-place rest)))])]))
 
 (define (compiler-backend-seed-private-memory-call-names
   [type-segment-bases : i64]
@@ -35004,7 +34983,7 @@
               unit)])
         (compiler-backend-seed-private-memory-call-names
           type-segment-bases
-          (box-get rest)))]
+          (__tl-box-place rest)))]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (compiler-backend-seed-private-memory-call-names-seq
         type-segment-bases
@@ -35164,9 +35143,7 @@
           (compiler-backend-aggregate-type-name type-segment-bases ty)]
         (if (string.eq name "")
           1
-          (match (backend_string_i64_map.get
-            (& (struct-get index group-word-counts))
-            name)
+          (match (backend_string_i64_map.get (& index.group-word-counts) name)
             [(backend_string_i64_map.LookupFound count) count]
             [(backend_string_i64_map.LookupMissing) 1])))]))
 
@@ -35256,8 +35233,8 @@
   [src : compiler_ir_types.CompilerIrValue]) : bool
   (or
     (compiler-backend-group-type? type-segment-bases index ty)
-    (compiler-backend-group-var? (struct-get index backend-state) dst)
-    (compiler-backend-value-group-var? (struct-get index backend-state) src)))
+    (compiler-backend-group-var? index.backend-state dst)
+    (compiler-backend-value-group-var? index.backend-state src)))
 
 (define (compiler-backend-addressable-group-var?
   [backend-state : CompilerBackendState]
@@ -35291,9 +35268,8 @@
   [out : compiler_liveness.CompilerLiveI64Set]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_liveness.CompilerLiveI64Set
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [next : compiler_liveness.CompilerLiveI64Set out]
     (begin
@@ -35319,7 +35295,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (compiler-backend-addressable-group-vars-blocks
             groups
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-backend-addressable-group-vars-seq groups out instrs))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-addressable-group-vars-block-seq groups seq out 0)]))
@@ -35381,7 +35357,7 @@
         (if (string.eq name "")
           0
           (match (backend_string_i64_map.get
-            (& (struct-get index group-word-class-masks))
+            (& index.group-word-class-masks)
             name)
             [(backend_string_i64_map.LookupFound mask) mask]
             [(backend_string_i64_map.LookupMissing) 0])))]))
@@ -35449,10 +35425,7 @@
     [slot : i64
       (if (< name-id 0)
         -1
-        (backend_i64_i64_map.get-value-or
-          (& (struct-get index functions))
-          name-id
-          -1))]
+        (backend_i64_i64_map.get-value-or (& index.functions) name-id -1))]
     (if (< slot 0)
       (backend_i64_i64_map.LookupMissing)
       (backend_i64_i64_map.LookupFound slot))))
@@ -35466,7 +35439,7 @@
       (if (< name-id 0)
         -1
         (backend_i64_i64_map.get-value-or
-          (& (struct-get index extern-signatures))
+          (& index.extern-signatures)
           name-id
           -1))]
     (if (< slot 0)
@@ -35482,14 +35455,12 @@
       (if (< name-id 0)
         -1
         (backend_i64_i64_map.get-value-or
-          (& (struct-get index extern-references))
+          (& index.extern-references)
           name-id
           -1))]
     (if (>= logical-slot 0)
       (backend_i64_i64_map.LookupFound logical-slot)
-      (match (backend_i64_i64_map.get
-        (& (struct-get index extern-link-references))
-        name-id)
+      (match (backend_i64_i64_map.get (& index.extern-link-references) name-id)
         [(backend_i64_i64_map.LookupFound slot)
           (backend_i64_i64_map.LookupFound slot)]
         [(backend_i64_i64_map.LookupMissing)
@@ -35500,7 +35471,7 @@
   [name : i64]) : i64
   (match (compiler-backend-index-extern-reference-slot index name)
     [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index extern-call-infos) slot)]
+      (array-ref index.extern-call-infos slot)]
     [(backend_i64_i64_map.LookupMissing) 0]))
 
 (define (compiler-backend-extern-call-info-c-abi? [info : i64]) : bool
@@ -35517,12 +35488,9 @@
   [name-id : i64]) : CompilerBackendMaybeSignature
   (let
     [slot : i64
-      (backend_i64_i64_map.get-value-or
-        (& (struct-get index functions))
-        name-id
-        -1)]
+      (backend_i64_i64_map.get-value-or (& index.functions) name-id -1)]
     (if (>= slot 0)
-      (array-ref (struct-get index function-signatures) slot)
+      (array-ref index.function-signatures slot)
       (CompilerBackendMaybeSignature.No))))
 
 (define (compiler-backend-index-function-signature
@@ -35530,7 +35498,7 @@
   [name : i64]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-function-slot index name)
     [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index function-signatures) slot)]
+      (array-ref index.function-signatures slot)]
     [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-index-extern-signature-id
@@ -35538,12 +35506,9 @@
   [name-id : i64]) : CompilerBackendMaybeSignature
   (let
     [slot : i64
-      (backend_i64_i64_map.get-value-or
-        (& (struct-get index extern-signatures))
-        name-id
-        -1)]
+      (backend_i64_i64_map.get-value-or (& index.extern-signatures) name-id -1)]
     (if (>= slot 0)
-      (array-ref (struct-get index extern-signature-values) slot)
+      (array-ref index.extern-signature-values slot)
       (CompilerBackendMaybeSignature.No))))
 
 (define (compiler-backend-index-extern-signature
@@ -35551,7 +35516,7 @@
   [name : i64]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-extern-signature-slot index name)
     [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index extern-signature-values) slot)]
+      (array-ref index.extern-signature-values slot)]
     [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-index-signature
@@ -35566,7 +35531,7 @@
 (define (compiler-backend-index-function-defines-id?
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : bool
-  (backend_i64_i64_map.contains? (& (struct-get index functions)) name-id))
+  (backend_i64_i64_map.contains? (& index.functions) name-id))
 
 (define (compiler-backend-index-function-defines?
   [index : CompilerBackendProgramIndex]
@@ -35578,9 +35543,7 @@
 (define (compiler-backend-index-extern-references-id?
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : bool
-  (backend_i64_i64_map.contains?
-    (& (struct-get index extern-references))
-    name-id))
+  (backend_i64_i64_map.contains? (& index.extern-references) name-id))
 
 (define (compiler-backend-index-extern-references?
   [index : CompilerBackendProgramIndex]
@@ -35592,11 +35555,9 @@
 (define (compiler-backend-index-extern-link-symbol-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : i64
-  (match (backend_i64_i64_map.get
-    (& (struct-get index extern-references))
-    name-id)
+  (match (backend_i64_i64_map.get (& index.extern-references) name-id)
     [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index extern-link-symbols) slot)]
+      (array-ref index.extern-link-symbols slot)]
     [(backend_i64_i64_map.LookupMissing) name-id]))
 
 (define (compiler-backend-index-extern-link-symbol
@@ -35609,11 +35570,9 @@
 (define (compiler-backend-index-extern-provided-id?
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : bool
-  (match (backend_i64_i64_map.get
-    (& (struct-get index extern-signatures))
-    name-id)
+  (match (backend_i64_i64_map.get (& index.extern-signatures) name-id)
     [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index extern-provided) slot)]
+      (array-ref index.extern-provided slot)]
     [(backend_i64_i64_map.LookupMissing) false]))
 
 (define (compiler-backend-index-extern-provided?
@@ -35621,7 +35580,7 @@
   [name : i64]) : bool
   (match (compiler-backend-index-extern-signature-slot index name)
     [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index extern-provided) slot)]
+      (array-ref index.extern-provided slot)]
     [(backend_i64_i64_map.LookupMissing) false]))
 
 (define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
@@ -35665,7 +35624,7 @@
                 (backend_string_i64_map.insert-ref! (&mut seen) symbol 1)
                 (compiler-backend-validate-global-symbols-into
                   backend-state
-                  (box-get rest)
+                  (__tl-box-place rest)
                   seen))))])]
     [(compiler_ir_types.CompilerIrGlobalList.Array seq)
       (compiler-backend-validate-global-symbols-into
@@ -35732,7 +35691,7 @@
                     (compiler-backend-index-extern-link-symbol-id index name))
                   (not
                     (compiler-backend-runtime-prelude-string-helper-export?
-                      (struct-get index backend-state)
+                      index.backend-state
                       name
                       (compiler-backend-index-extern-link-symbol-id index name))))
                 (compiler-backend-symbol-validation-error
@@ -35743,7 +35702,7 @@
                 (begin
                   (backend_string_i64_map.insert-ref! (&mut seen) symbol 1)
                   (compiler-backend-validate-function-symbols-into
-                    (box-get rest)
+                    (__tl-box-place rest)
                     _plan
                     index
                     seen))]))])]
@@ -35795,7 +35754,7 @@
                   (compiler-backend-index-extern-link-symbol-id index name))
                 (not
                   (compiler-backend-runtime-prelude-string-helper-export?
-                    (struct-get index backend-state)
+                    index.backend-state
                     name
                     (compiler-backend-index-extern-link-symbol-id index name))))
               (compiler-backend-symbol-validation-error
@@ -35850,12 +35809,12 @@
                     symbol))
                 (compiler-backend-validate-extern-symbols-into
                   backend-state
-                  (box-get rest)
+                  (__tl-box-place rest)
                   plan
                   seen)))
             (compiler-backend-validate-extern-symbols-into
               backend-state
-              (box-get rest)
+              (__tl-box-place rest)
               plan
               seen))])]
     [(compiler_ir_types.CompilerIrExternList.Array seq)
@@ -35872,7 +35831,7 @@
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
   (match (compiler-backend-validate-global-symbols-into
-    (struct-get index backend-state)
+    index.backend-state
     globals
     (backend_string_i64_map.with-capacity
       (+
@@ -35890,7 +35849,7 @@
         seen)
         [(ResultCompilerBackendSymbolValidation.Ok function-seen)
           (compiler-backend-validate-extern-symbols-into
-            (struct-get index backend-state)
+            index.backend-state
             externs
             plan
             function-seen)]
@@ -37001,7 +36960,7 @@
                       (compiler-backend-identity-tail-forwarder-args?
                         type-segment-bases
                         target
-                        (box-get rest)
+                        (__tl-box-place rest)
                         args
                         target-types
                         (+ arg-index 1)
@@ -37069,7 +37028,7 @@
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil) false]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match (box-get rest)
+      (match (__tl-box-place rest)
         [(compiler_ir_types.CompilerIrBlockList.Nil)
           (compiler-backend-identity-tail-forwarder-block?
             type-segment-bases
@@ -37287,12 +37246,12 @@
   [target : CompilerBackendTarget]
   [payload : compiler_ir_types.CompilerIrInstrSpmdCallPayload]
   [program-index : CompilerBackendProgramIndex]) : i64
-  (match (struct-get payload backend)
+  (match payload.backend
     [(compiler_ir_types.CompilerIrSpmdBackend.Scalar)
       (compiler-backend-spmd-scalar-stack-arg-space
         type-segment-bases
         target
-        (struct-get payload callee)
+        payload.callee
         program-index)]
     [_ 0]))
 
@@ -37396,8 +37355,8 @@
           (compiler-backend-windows-closure-stack-arg-space args)]
         [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
           (let
-            [name (struct-get (box-get payload-box) name)]
-            [args (struct-get (box-get payload-box) args)]
+            [name (__tl-project-field (__tl-box-place payload-box) name)]
+            [args (__tl-project-field (__tl-box-place payload-box) args)]
             (+
               (compiler-backend-windows-stack-arg-space
                 type-segment-bases
@@ -37408,7 +37367,7 @@
         [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult
             payload-box)
           (let
-            [args (struct-get (box-get payload-box) args)]
+            [args (__tl-project-field (__tl-box-place payload-box) args)]
             (+ (compiler-backend-windows-closure-stack-arg-space args) 16))]
         [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
@@ -37416,7 +37375,7 @@
           (compiler-backend-spmd-outgoing-stack-space
             type-segment-bases
             target
-            (box-get payload-box)
+            (__tl-box-place payload-box)
             program-index)]
         [_ 0])]
     [(CompilerBackendTarget.Linux)
@@ -37452,8 +37411,8 @@
         ;; base-save offset, so no per-call %rsp dip is needed.
         [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
           (let
-            [name (struct-get (box-get payload-box) name)]
-            [args (struct-get (box-get payload-box) args)]
+            [name (__tl-project-field (__tl-box-place payload-box) name)]
+            [args (__tl-project-field (__tl-box-place payload-box) args)]
             (+
               (compiler-backend-call-stack-arg-space
                 type-segment-bases
@@ -37466,7 +37425,7 @@
         [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult
             payload-box)
           (let
-            [args (struct-get (box-get payload-box) args)]
+            [args (__tl-project-field (__tl-box-place payload-box) args)]
             (+
               (compiler-backend-round-up-16
                 (* (compiler-backend-call-args-count args) 16))
@@ -37481,7 +37440,7 @@
           (compiler-backend-spmd-outgoing-stack-space
             type-segment-bases
             target
-            (box-get payload-box)
+            (__tl-box-place payload-box)
             program-index)]
         [_ 0])]))
 
@@ -37497,12 +37456,11 @@
   [types : compiler_regalloc.CompilerRegVarTypes]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendOutgoingFrameScan
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
-    [needed : bool (struct-get scan needed)]
-    [max-space : i64 (struct-get scan max-space)]
+    [needed : bool scan.needed]
+    [max-space : i64 scan.max-space]
     (begin
       (while (< index count)
         (let
@@ -37540,7 +37498,7 @@
           (compiler-backend-outgoing-frame-scan-blocks
             type-segment-bases
             target
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-backend-outgoing-frame-scan-instrs
               type-segment-bases
               target
@@ -37602,13 +37560,11 @@
         (CompilerBackendOutgoingFrameScan false 0)
         types
         program-index)]
-    (if (struct-get scan needed)
+    (if scan.needed
       ;; Reserve the max outgoing stack-arg space in the frame so calls need no
       ;; per-call %rsp dip. Windows additionally contributes its shadow space.
       (compiler-backend-round-up-16
-        (+
-          (compiler-backend-outgoing-shadow-space target)
-          (struct-get scan max-space)))
+        (+ (compiler-backend-outgoing-shadow-space target) scan.max-space))
       0)))
 
 (define (compiler-backend-emit-scalar-stack-call-arg-into
@@ -37730,32 +37686,31 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-backend-arg-move-push!
   [seq : (&mut seq CompilerBackendArgMoveSeq)]
   [move : CompilerBackendArgMove]) : unit
   (begin
-    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+    (if (< seq.len (array-length seq.slots))
       unit
       (let
         [bigger : (__tl_dyn-array CompilerBackendArgMove)
           (array.make-array
             CompilerBackendArgMove
-            (compiler-backend-seq-capacity
-              (array-length (struct-get seq slots))))]
+            (compiler-backend-seq-capacity (array-length seq.slots)))]
         (begin
           (compiler-backend-arg-move-copy-range!
             (&mut bigger)
-            (& (struct-get seq slots))
-            (struct-get seq len))
-          (set! (struct-get seq slots) bigger))))
+            (& seq.slots)
+            seq.len)
+          (set! seq.slots bigger))))
     (let
-      [index : i64 (struct-get seq len)]
+      [index : i64 seq.len]
       (begin
-        (array-set! (struct-get seq slots) index move)
-        (set! (struct-get seq len) (+ index 1))))))
+        (set! (array-ref seq.slots index) move)
+        (set! seq.len (+ index 1))))))
 
 (defenum CompilerBackendMaybeArgMove
   (BackendNoArgMove)
@@ -37829,7 +37784,7 @@
   [moves : CompilerBackendArgMoveSeq]
   [index : i64]) : pmove.CompilerParallelMoveEdgeSeq
   (let
-    [count : i64 (struct-get moves len)]
+    [count : i64 moves.len]
     [cursor : i64 index]
     [edges : pmove.CompilerParallelMoveEdgeSeq
       (pmove.compiler-parallel-move-edge-seq-with-capacity (- count index))]
@@ -37841,7 +37796,7 @@
             (compiler-backend-arg-move-parallel-edge
               backend-state
               assignments
-              (array-ref (struct-get moves slots) cursor)))
+              (array-ref moves.slots cursor)))
           (set! cursor (+ cursor 1))))
       edges)))
 
@@ -37873,14 +37828,13 @@
   (let
     [i : i64 0]
     (begin
-      (while (< i (struct-get moves len))
+      (while (< i moves.len)
         (begin
-          (match (array-ref (struct-get moves slots) i)
+          (match (array-ref moves.slots i)
             [(BackendArgMove dest _)
               (when
                 (= (compiler-backend-parallel-reg-id-resource dest) want)
-                (return
-                  (BackendSomeArgMove (array-ref (struct-get moves slots) i))))])
+                (return (BackendSomeArgMove (array-ref moves.slots i))))])
           (set! i (+ i 1))))
       BackendNoArgMove)))
 
@@ -37891,19 +37845,19 @@
   [dest : i64]) : CompilerBackendArgMoveSeq
   (let
     [out : CompilerBackendArgMoveSeq
-      (compiler-backend-arg-move-seq-with-capacity (struct-get moves len))]
+      (compiler-backend-arg-move-seq-with-capacity moves.len)]
     [i : i64 0]
     [removed : bool false]
     (begin
-      (while (< i (struct-get moves len))
+      (while (< i moves.len)
         (begin
-          (match (array-ref (struct-get moves slots) i)
+          (match (array-ref moves.slots i)
             [(BackendArgMove d _)
               (if (and (not removed) (= d dest))
                 (set! removed true)
                 (compiler-backend-arg-move-push!
                   (&mut out)
-                  (array-ref (struct-get moves slots) i)))])
+                  (array-ref moves.slots i)))])
           (set! i (+ i 1))))
       out)))
 
@@ -37915,12 +37869,12 @@
   [newreg : i64]) : CompilerBackendArgMoveSeq
   (let
     [out : CompilerBackendArgMoveSeq
-      (compiler-backend-arg-move-seq-with-capacity (struct-get moves len))]
+      (compiler-backend-arg-move-seq-with-capacity moves.len)]
     [i : i64 0]
     (begin
-      (while (< i (struct-get moves len))
+      (while (< i moves.len)
         (let
-          [move : CompilerBackendArgMove (array-ref (struct-get moves slots) i)]
+          [move : CompilerBackendArgMove (array-ref moves.slots i)]
           (begin
             (match move
               [(BackendArgMove dest source)
@@ -37948,12 +37902,12 @@
   [oldreg : i64]) : CompilerBackendArgMoveSeq
   (let
     [out : CompilerBackendArgMoveSeq
-      (compiler-backend-arg-move-seq-with-capacity (struct-get moves len))]
+      (compiler-backend-arg-move-seq-with-capacity moves.len)]
     [i : i64 0]
     (begin
-      (while (< i (struct-get moves len))
+      (while (< i moves.len)
         (let
-          [move : CompilerBackendArgMove (array-ref (struct-get moves slots) i)]
+          [move : CompilerBackendArgMove (array-ref moves.slots i)]
           (begin
             (match move
               [(BackendArgMove dest source)
@@ -38029,9 +37983,9 @@
     [mask : i64 0]
     [i : i64 0]
     (begin
-      (while (< i (struct-get moves len))
+      (while (< i moves.len)
         (begin
-          (match (array-ref (struct-get moves slots) i)
+          (match (array-ref moves.slots i)
             [(BackendArgMove dest source)
               (set!
                 mask
@@ -39272,7 +39226,7 @@
     [(compiler_ir_types.CompilerIrPhiInputList.Cons value label rest)
       (if (= label from-label)
         (ResultBackendValue.Ok value)
-        (compiler-backend-phi-input-value (box-get rest) from-label))]))
+        (compiler-backend-phi-input-value (__tl-box-place rest) from-label))]))
 
 (define (compiler-backend-vars-same-home?
   [backend-state : CompilerBackendState]
@@ -39423,7 +39377,7 @@
   [copies : CompilerBackendPhiCopySeq]
   [index : i64]) : pmove.CompilerParallelMoveEdgeSeq
   (let
-    [count : i64 (struct-get copies len)]
+    [count : i64 copies.len]
     [cursor : i64 index]
     [edges : pmove.CompilerParallelMoveEdgeSeq
       (pmove.compiler-parallel-move-edge-seq-with-capacity (- count index))]
@@ -39435,7 +39389,7 @@
             (compiler-backend-phi-copy-parallel-edge
               backend-state
               assignments
-              (array-ref (struct-get copies slots) cursor)))
+              (array-ref copies.slots cursor)))
           (set! cursor (+ cursor 1))))
       edges)))
 
@@ -39458,15 +39412,14 @@
   (let
     [i : i64 0]
     (begin
-      (while (< i (struct-get copies len))
+      (while (< i copies.len)
         (begin
-          (match (array-ref (struct-get copies slots) i)
+          (match (array-ref copies.slots i)
             [(CompilerBackendPhiCopy.Copy dst _ _)
               (when
                 (= dst want)
                 (return
-                  (CompilerBackendMaybePhiCopy.Some
-                    (array-ref (struct-get copies slots) i))))])
+                  (CompilerBackendMaybePhiCopy.Some (array-ref copies.slots i))))])
           (set! i (+ i 1))))
       CompilerBackendMaybePhiCopy.No)))
 
@@ -39475,18 +39428,18 @@
   [dst : i64]) : CompilerBackendPhiCopySeq
   (let
     [out : CompilerBackendPhiCopySeq
-      (compiler-backend-phi-copy-seq-with-capacity (struct-get copies len))]
+      (compiler-backend-phi-copy-seq-with-capacity copies.len)]
     [i : i64 0]
     (begin
-      (while (< i (struct-get copies len))
+      (while (< i copies.len)
         (begin
-          (match (array-ref (struct-get copies slots) i)
+          (match (array-ref copies.slots i)
             [(CompilerBackendPhiCopy.Copy found-dst _ _)
               (if (= found-dst dst)
                 unit
                 (compiler-backend-phi-copy-push!
                   (&mut out)
-                  (array-ref (struct-get copies slots) i)))])
+                  (array-ref copies.slots i)))])
           (set! i (+ i 1))))
       out)))
 
@@ -39520,12 +39473,12 @@
   [loc : i64]) : CompilerBackendPhiCopySeq
   (let
     [out : CompilerBackendPhiCopySeq
-      (compiler-backend-phi-copy-seq-with-capacity (struct-get copies len))]
+      (compiler-backend-phi-copy-seq-with-capacity copies.len)]
     [i : i64 0]
     (begin
-      (while (< i (struct-get copies len))
+      (while (< i copies.len)
         (begin
-          (match (array-ref (struct-get copies slots) i)
+          (match (array-ref copies.slots i)
             [(CompilerBackendPhiCopy.Copy dst source ty)
               (compiler-backend-phi-copy-push!
                 (&mut out)
@@ -39565,9 +39518,9 @@
   (let
     [i : i64 0]
     (begin
-      (while (< i (struct-get copies len))
+      (while (< i copies.len)
         (begin
-          (match (array-ref (struct-get copies slots) i)
+          (match (array-ref copies.slots i)
             [(CompilerBackendPhiCopy.Copy _ source _)
               (when
                 (compiler-backend-phi-source-is-var? source var)
@@ -39592,13 +39545,12 @@
   [copies : CompilerBackendPhiCopySeq]) : CompilerBackendPhiCopySeq
   (let
     [out : CompilerBackendPhiCopySeq
-      (compiler-backend-phi-copy-seq-with-capacity (struct-get copies len))]
+      (compiler-backend-phi-copy-seq-with-capacity copies.len)]
     [i : i64 0]
     (begin
-      (while (< i (struct-get copies len))
+      (while (< i copies.len)
         (let
-          [phi-copy : CompilerBackendPhiCopy
-            (array-ref (struct-get copies slots) i)]
+          [phi-copy : CompilerBackendPhiCopy (array-ref copies.slots i)]
           (begin
             (match phi-copy
               [(CompilerBackendPhiCopy.Copy dst _ _)
@@ -39618,12 +39570,12 @@
   [replacement : compiler_ir_types.CompilerIrValue]) : CompilerBackendPhiCopySeq
   (let
     [out : CompilerBackendPhiCopySeq
-      (compiler-backend-phi-copy-seq-with-capacity (struct-get copies len))]
+      (compiler-backend-phi-copy-seq-with-capacity copies.len)]
     [i : i64 0]
     (begin
-      (while (< i (struct-get copies len))
+      (while (< i copies.len)
         (begin
-          (match (array-ref (struct-get copies slots) i)
+          (match (array-ref copies.slots i)
             [(CompilerBackendPhiCopy.Copy dst source ty)
               (compiler-backend-phi-copy-push!
                 (&mut out)
@@ -40271,9 +40223,9 @@
     [mask : i64 0]
     [i : i64 0]
     (begin
-      (while (< i (struct-get copies len))
+      (while (< i copies.len)
         (begin
-          (match (array-ref (struct-get copies slots) i)
+          (match (array-ref copies.slots i)
             [(CompilerBackendPhiCopy.Copy dst _ _)
               (set!
                 mask
@@ -40430,9 +40382,7 @@
         (not
           (or
             (compiler-backend-group-type? type-segment-bases program-index ty)
-            (compiler-backend-group-var?
-              (struct-get program-index backend-state)
-              dst)))
+            (compiler-backend-group-var? program-index.backend-state dst)))
         (not
           (string.eq
             (compiler-backend-var-register-home backend-state assignments dst)
@@ -40460,14 +40410,14 @@
   (let
     [i : i64 0]
     (begin
-      (while (< i (struct-get copies len))
+      (while (< i copies.len)
         (begin
           (unless
             (compiler-backend-phi-copy-reg-swappable?
               backend-state
               type-segment-bases
               assignments
-              (array-ref (struct-get copies slots) i)
+              (array-ref copies.slots i)
               program-index)
             (return false))
           (set! i (+ i 1))))
@@ -40491,9 +40441,7 @@
         (not
           (or
             (compiler-backend-group-type? type-segment-bases program-index ty)
-            (compiler-backend-group-var?
-              (struct-get program-index backend-state)
-              dst)))
+            (compiler-backend-group-var? program-index.backend-state dst)))
         (not
           (string.eq
             (compiler-backend-var-register-home backend-state assignments dst)
@@ -40521,14 +40469,14 @@
   (let
     [i : i64 0]
     (begin
-      (while (< i (struct-get copies len))
+      (while (< i copies.len)
         (begin
           (unless
             (compiler-backend-phi-copy-xmm-swappable?
               backend-state
               type-segment-bases
               assignments
-              (array-ref (struct-get copies slots) i)
+              (array-ref copies.slots i)
               program-index)
             (return false))
           (set! i (+ i 1))))
@@ -40893,12 +40841,12 @@
               dst
               reg
               ty
-              (struct-get program-index backend-state))
+              program-index.backend-state)
             (compiler-backend-emit-phi-temp-restore-reg
               assignments
               dst
               reg
-              (struct-get program-index backend-state)))))]
+              program-index.backend-state))))]
     [(CompilerBackendPhiSource.Value value)
       (if (compiler-backend-phi-same-home? backend-state assignments dst value)
         (ResultCompilerBackend.Ok "")
@@ -41233,7 +41181,7 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match (compiler-backend-leading-phi-copies-seq
-    (struct-get program-index backend-state)
+    program-index.backend-state
     assignments
     instrs
     from-label)
@@ -41245,7 +41193,7 @@
         program-index
         vars
         false
-        (struct-get program-index backend-state))]
+        program-index.backend-state)]
     [(ResultBackendPhiCopies.Err message)
       (ResultCompilerBackend.Err
         (box (compiler_diagnostic.compiler-diagnostic-at-start "" message)))]))
@@ -41263,24 +41211,21 @@
   [planned-xmm-cycle : String]) : ResultCompilerBackend
   (begin
     (compiler-backend-function-state-set-string!
-      (compiler-backend-state-function-state
-        (struct-get program-index backend-state))
+      (compiler-backend-state-function-state program-index.backend-state)
       compiler-backend-function-string-current-phi-planned-cycle
       planned-cycle)
     (compiler-backend-function-state-set-string!
-      (compiler-backend-state-function-state
-        (struct-get program-index backend-state))
+      (compiler-backend-state-function-state program-index.backend-state)
       compiler-backend-function-string-current-phi-planned-stage
       planned-stage)
     (compiler-backend-function-state-set-string!
-      (compiler-backend-state-function-state
-        (struct-get program-index backend-state))
+      (compiler-backend-state-function-state program-index.backend-state)
       compiler-backend-function-string-current-phi-planned-xmm-cycle
       planned-xmm-cycle)
     ;; #phi-staged-copy: cleared on entry so a scan that never reaches the target
     ;; leaves no previous edge's point behind; the scan below sets it.
     (compiler-backend-function-state-set-current-phi-target-point!
-      (struct-get program-index backend-state)
+      program-index.backend-state
       -1)
     (compiler-backend-emit-phi-edge-copies-scan
       type-segment-bases
@@ -41319,7 +41264,7 @@
           (if (= block-label target-label)
             (begin
               (compiler-backend-function-state-set-current-phi-target-point!
-                (struct-get program-index backend-state)
+                program-index.backend-state
                 point)
               (compiler-backend-emit-leading-phi-copies
                 type-segment-bases
@@ -41331,12 +41276,12 @@
             (compiler-backend-emit-phi-edge-copies-scan
               type-segment-bases
               assignments
-              (box-get rest)
+              (__tl-box-place rest)
               target-label
               from-label
               program-index
               vars
-              (+ point (* 2 (struct-get instrs len)))))])]
+              (+ point (* 2 instrs.len))))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-phi-edge-copies-scan-seq
         type-segment-bases
@@ -41372,7 +41317,7 @@
         (if (= block-label target-label)
           (begin
             (compiler-backend-function-state-set-current-phi-target-point!
-              (struct-get program-index backend-state)
+              program-index.backend-state
               point)
             (compiler-backend-emit-leading-phi-copies
               type-segment-bases
@@ -41390,7 +41335,7 @@
             from-label
             program-index
             vars
-            (+ point (* 2 (struct-get instrs len)))))])))
+            (+ point (* 2 instrs.len))))])))
 
 (define (compiler-backend-emit-mov-phi-copy-edge
   [type-segment-bases : i64]
@@ -41410,32 +41355,30 @@
     ;; Jump point and therefore absent from the planner interference set. Reject
     ;; that home here so a cycle save cannot overwrite the substituted source.
     (compiler-backend-function-state-set-string!
-      (compiler-backend-state-function-state
-        (struct-get program-index backend-state))
+      (compiler-backend-state-function-state program-index.backend-state)
       compiler-backend-function-string-current-phi-planned-cycle
       (cfg
         scratch-vreg
         (compiler-backend-phi-planned-avoiding-value-home
-          (struct-get program-index backend-state)
+          program-index.backend-state
           assignments
           moved-src
           planned-cycle)
         planned-cycle))
     (compiler-backend-function-state-set-string!
-      (compiler-backend-state-function-state
-        (struct-get program-index backend-state))
+      (compiler-backend-state-function-state program-index.backend-state)
       compiler-backend-function-string-current-phi-planned-stage
       (cfg
         scratch-vreg
         (compiler-backend-phi-planned-avoiding-value-home
-          (struct-get program-index backend-state)
+          program-index.backend-state
           assignments
           moved-src
           planned-stage)
         planned-stage))
     ;; #phi-staged-copy: see emit-phi-edge-copies.
     (compiler-backend-function-state-set-current-phi-target-point!
-      (struct-get program-index backend-state)
+      program-index.backend-state
       -1)
     (compiler-backend-emit-mov-phi-copy-edge-scan
       type-segment-bases
@@ -41474,7 +41417,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
           (if (= block-label target-label)
             (match (compiler-backend-leading-phi-copies-seq
-              (struct-get program-index backend-state)
+              program-index.backend-state
               assignments
               instrs
               from-label)
@@ -41487,13 +41430,13 @@
                   ;; cycle break emits an orphaned push (see drop-same-home).
                   (begin
                     (compiler-backend-function-state-set-current-phi-target-point!
-                      (struct-get program-index backend-state)
+                      program-index.backend-state
                       point)
                     (compiler-backend-emit-phi-copy-list
                       type-segment-bases
                       assignments
                       (compiler-backend-phi-copy-list-drop-same-home
-                        (struct-get program-index backend-state)
+                        program-index.backend-state
                         assignments
                         (compiler-backend-phi-copy-list-replace-source-var
                           copies
@@ -41502,7 +41445,7 @@
                       program-index
                       vars
                       false
-                      (struct-get program-index backend-state)))
+                      program-index.backend-state))
                   (ResultCompilerBackend.Ok ""))]
               [(ResultBackendPhiCopies.Err message)
                 (ResultCompilerBackend.Err
@@ -41513,14 +41456,14 @@
             (compiler-backend-emit-mov-phi-copy-edge-scan
               type-segment-bases
               assignments
-              (box-get rest)
+              (__tl-box-place rest)
               target-label
               from-label
               moved-dst
               moved-src
               program-index
               vars
-              (+ point (* 2 (struct-get instrs len)))))])]
+              (+ point (* 2 instrs.len))))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-mov-phi-copy-edge-scan-seq
         type-segment-bases
@@ -41559,7 +41502,7 @@
       [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
         (if (= block-label target-label)
           (match (compiler-backend-leading-phi-copies-seq
-            (struct-get program-index backend-state)
+            program-index.backend-state
             assignments
             instrs
             from-label)
@@ -41569,13 +41512,13 @@
                 moved-dst)
                 (begin
                   (compiler-backend-function-state-set-current-phi-target-point!
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     point)
                   (compiler-backend-emit-phi-copy-list
                     type-segment-bases
                     assignments
                     (compiler-backend-phi-copy-list-drop-same-home
-                      (struct-get program-index backend-state)
+                      program-index.backend-state
                       assignments
                       (compiler-backend-phi-copy-list-replace-source-var
                         copies
@@ -41584,7 +41527,7 @@
                     program-index
                     vars
                     false
-                    (struct-get program-index backend-state)))
+                    program-index.backend-state))
                 (ResultCompilerBackend.Ok ""))]
             [(ResultBackendPhiCopies.Err message)
               (ResultCompilerBackend.Err
@@ -41601,7 +41544,7 @@
             moved-src
             program-index
             vars
-            (+ point (* 2 (struct-get instrs len)))))])))
+            (+ point (* 2 instrs.len))))])))
 
 (define (compiler-backend-instr-seq-starts-with-phi?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
@@ -41629,7 +41572,7 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block label instrs)
           (compiler-backend-phi-target-labels
-            (box-get rest)
+            (__tl-box-place rest)
             (if (compiler-backend-instr-seq-starts-with-phi? instrs)
               (compiler-backend-phi-target-labels-add out label)
               out))])]
@@ -41662,7 +41605,7 @@
     (compiler-backend-function-state-set-i64!
       function-state
       compiler-backend-function-i64-current-phi-target-count
-      (struct-get targets len))
+      targets.len)
     (compiler-backend-function-state-set-phi-targets! function-state targets)))
 
 (define (compiler-backend-branch-needs-phi-copies?
@@ -41770,8 +41713,7 @@
   [planned-stage : String]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
-      (compiler-backend-state-function-state
-        (struct-get program-index backend-state))
+      (compiler-backend-state-function-state program-index.backend-state)
       true-label
       false-label))
     (compiler-backend-emit-branch-with-plan
@@ -41782,7 +41724,7 @@
       false-label
       fallthrough
       planned-test
-      (struct-get program-index backend-state))
+      program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
       assignments
@@ -41794,7 +41736,7 @@
       planned-cycle
       planned-stage
       (compiler-backend-current-phi-planned-xmm-cycle
-        (struct-get program-index backend-state)))
+        program-index.backend-state))
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           type-segment-bases
@@ -41807,7 +41749,7 @@
           planned-cycle
           planned-stage
           (compiler-backend-current-phi-planned-xmm-cycle
-            (struct-get program-index backend-state)))
+            program-index.backend-state))
           [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : i64
@@ -41838,7 +41780,7 @@
                 false-target
                 edge-fallthrough
                 planned-test
-                (struct-get program-index backend-state))
+                program-index.backend-state)
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
@@ -41876,8 +41818,7 @@
   [planned-stage : String]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
-      (compiler-backend-state-function-state
-        (struct-get program-index backend-state))
+      (compiler-backend-state-function-state program-index.backend-state)
       true-label
       false-label))
     (compiler-backend-emit-compare-branch-with-plan
@@ -41893,7 +41834,7 @@
       fallthrough
       planned-lhs
       planned-rhs
-      (struct-get program-index backend-state))
+      program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
       assignments
@@ -41905,7 +41846,7 @@
       planned-cycle
       planned-stage
       (compiler-backend-current-phi-planned-xmm-cycle
-        (struct-get program-index backend-state)))
+        program-index.backend-state))
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           type-segment-bases
@@ -41918,7 +41859,7 @@
           planned-cycle
           planned-stage
           (compiler-backend-current-phi-planned-xmm-cycle
-            (struct-get program-index backend-state)))
+            program-index.backend-state))
           [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : i64
@@ -41954,7 +41895,7 @@
                 edge-fallthrough
                 planned-lhs
                 planned-rhs
-                (struct-get program-index backend-state))
+                program-index.backend-state)
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
@@ -42029,8 +41970,7 @@
   [planned-stage : String]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
-      (compiler-backend-state-function-state
-        (struct-get program-index backend-state))
+      (compiler-backend-state-function-state program-index.backend-state)
       true-label
       false-label))
     (compiler-backend-emit-load-compare-branch-with-plan
@@ -42045,7 +41985,7 @@
       fallthrough
       planned-base
       planned-rhs
-      (struct-get program-index backend-state))
+      program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
       assignments
@@ -42057,7 +41997,7 @@
       planned-cycle
       planned-stage
       (compiler-backend-current-phi-planned-xmm-cycle
-        (struct-get program-index backend-state)))
+        program-index.backend-state))
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           type-segment-bases
@@ -42070,7 +42010,7 @@
           planned-cycle
           planned-stage
           (compiler-backend-current-phi-planned-xmm-cycle
-            (struct-get program-index backend-state)))
+            program-index.backend-state))
           [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : i64
@@ -42105,7 +42045,7 @@
                 edge-fallthrough
                 planned-base
                 planned-rhs
-                (struct-get program-index backend-state))
+                program-index.backend-state)
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
@@ -42145,8 +42085,7 @@
   [planned-stage : String]) : ResultCompilerBackend
   (if (not
     (compiler-backend-branch-needs-phi-copies?
-      (compiler-backend-state-function-state
-        (struct-get program-index backend-state))
+      (compiler-backend-state-function-state program-index.backend-state)
       true-label
       false-label))
     (compiler-backend-emit-gep-load-compare-branch-with-plan
@@ -42164,7 +42103,7 @@
       fallthrough
       planned-base
       planned-rhs
-      (struct-get program-index backend-state))
+      program-index.backend-state)
     (match (compiler-backend-emit-phi-edge-copies
       type-segment-bases
       assignments
@@ -42176,7 +42115,7 @@
       planned-cycle
       planned-stage
       (compiler-backend-current-phi-planned-xmm-cycle
-        (struct-get program-index backend-state)))
+        program-index.backend-state))
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           type-segment-bases
@@ -42189,7 +42128,7 @@
           planned-cycle
           planned-stage
           (compiler-backend-current-phi-planned-xmm-cycle
-            (struct-get program-index backend-state)))
+            program-index.backend-state))
           [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : i64
@@ -42227,7 +42166,7 @@
                 edge-fallthrough
                 planned-base
                 planned-rhs
-                (struct-get program-index backend-state))
+                program-index.backend-state)
                 [(ResultCompilerBackend.Ok branch-asm)
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
@@ -42260,9 +42199,8 @@
 (define (compiler-backend-instr-seq-return-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [out : i64 0]
     (begin
@@ -42315,7 +42253,7 @@
               instrs)
             (compiler-backend-block-list-return-count
               backend-state
-              (box-get rest)))])]
+              (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-block-seq-return-count backend-state seq 0)]))
 
@@ -42558,7 +42496,7 @@
             "    xorl %eax, %eax\n"
             "")
           (compiler-backend-return-tail-for-return-count
-            (struct-get program-index backend-state)
+            program-index.backend-state
             source-function
             assignments
             vars
@@ -42567,13 +42505,13 @@
       ;; A register-group return goes in %rax:%rdx (word0:word1).
       (if (or
         (compiler-backend-spmd-varying-return-function?
-          (struct-get program-index backend-state)
+          program-index.backend-state
           source-function)
         (compiler-backend-spmd-mask-return-function?
-          (struct-get program-index backend-state)
+          program-index.backend-state
           source-function))
         (match (compiler-backend-emit-spmd-private-return-value
-          (struct-get program-index backend-state)
+          program-index.backend-state
           source-function
           v
           assignments
@@ -42583,7 +42521,7 @@
               (string.append
                 load
                 (compiler-backend-return-tail-for-return-count
-                  (struct-get program-index backend-state)
+                  program-index.backend-state
                   source-function
                   assignments
                   vars
@@ -42611,13 +42549,13 @@
             vars
             ret-ty
             program-index
-            (struct-get program-index backend-state))
+            program-index.backend-state)
             [(ResultCompilerBackend.Ok load)
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   load
                   (compiler-backend-return-tail-for-return-count
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     source-function
                     assignments
                     vars
@@ -42630,13 +42568,13 @@
             v
             ret-ty
             program-index
-            (struct-get program-index backend-state))
+            program-index.backend-state)
             [(ResultCompilerBackend.Ok load)
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   load
                   (compiler-backend-return-tail-for-return-count
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     source-function
                     assignments
                     vars
@@ -42657,7 +42595,7 @@
     type-segment-bases
     source-function
     (compiler-backend-shared-return-count
-      (struct-get program-index backend-state)
+      program-index.backend-state
       assignments
       blocks)
     value
@@ -42827,7 +42765,7 @@
                         (string.append
                           return-normalize
                           (compiler-backend-return-tail
-                            (struct-get program-index backend-state)
+                            program-index.backend-state
                             source-function
                             assignments
                             vars
@@ -42942,7 +42880,7 @@
               type-segment-bases
               source-function
               (compiler-backend-shared-return-count
-                (struct-get program-index backend-state)
+                program-index.backend-state
                 assignments
                 blocks)
               instrs
@@ -42954,7 +42892,7 @@
             (compiler-backend-emit-trivial-phi-return-edge
               type-segment-bases
               source-function
-              (box-get rest)
+              (__tl-box-place rest)
               target-label
               from-label
               assignments
@@ -42994,7 +42932,7 @@
             type-segment-bases
             source-function
             (compiler-backend-block-seq-return-count
-              (struct-get program-index backend-state)
+              program-index.backend-state
               blocks
               index)
             instrs
@@ -43102,7 +43040,7 @@
               type-segment-bases
               source-function
               (compiler-backend-shared-return-count
-                (struct-get program-index backend-state)
+                program-index.backend-state
                 assignments
                 blocks)
               instrs
@@ -43116,7 +43054,7 @@
             (compiler-backend-emit-mov-trivial-phi-return-edge
               type-segment-bases
               source-function
-              (box-get rest)
+              (__tl-box-place rest)
               target-label
               from-label
               assignments
@@ -43162,7 +43100,7 @@
             type-segment-bases
             source-function
             (compiler-backend-block-seq-return-count
-              (struct-get program-index backend-state)
+              program-index.backend-state
               blocks
               index)
             instrs
@@ -43507,7 +43445,7 @@
   [program-index : CompilerBackendProgramIndex]
   [normalize? : bool]) : ResultCompilerBackend
   (if (compiler-backend-call-result-store-dead?
-    (struct-get program-index backend-state)
+    program-index.backend-state
     assignments
     dst)
     (ResultCompilerBackend.Ok "")
@@ -43538,7 +43476,7 @@
       vars
       ty
       program-index
-      (struct-get program-index backend-state))
+      program-index.backend-state)
     (ResultCompilerBackend.Ok
       (let
         [reg : String
@@ -43552,7 +43490,7 @@
             dst
             reg
             ty
-            (struct-get program-index backend-state)))))))
+            program-index.backend-state))))))
 
 ;; Append-form of the result store for callers that already own a sequence
 ;; buffer (the direct/indirect call emitters). The group store keeps the String
@@ -43726,19 +43664,19 @@
                 (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
-                      (box-get message)
+                      (__tl-box-place message)
                       instr-diag)))])]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(ResultCompilerBackend.Err message)
         (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
-              (box-get message)
+              (__tl-box-place message)
               instr-diag)))])))
 
 (define (compiler-backend-atomic-call-name? [name : String]) : bool
@@ -44010,13 +43948,13 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(ResultCompilerBackend.Err message)
         (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
-              (box-get message)
+              (__tl-box-place message)
               instr-diag)))])))
 
 (define (compiler-backend-emit-direct-call-with-arg-assignments
@@ -44240,13 +44178,13 @@
                       (ResultCompilerBackend.Err
                         (box
                           (compiler-backend-apply-instr-diagnostic
-                            (box-get message)
+                            (__tl-box-place message)
                             instr-diag)))]))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
-                      (box-get message)
+                      (__tl-box-place message)
                       instr-diag)))])))])))
 
 (define (compiler-backend-spmd-call-arg-at
@@ -44259,8 +44197,8 @@
         compiler_ir_types.CompilerIrValue.Unit
         (compiler_ast_types.AstType.Unit))]
     [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
-      (if (and (>= index 0) (< index (struct-get seq len)))
-        (array-ref (struct-get seq slots) index)
+      (if (and (>= index 0) (< index seq.len))
+        (array-ref seq.slots index)
         (compiler_ir_types.CompilerIrSpmdCallArg.Arg
           (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
           compiler_ir_types.CompilerIrValue.Unit
@@ -44268,7 +44206,7 @@
     [(compiler_ir_types.CompilerIrSpmdCallArgList.Cons arg rest)
       (if (= index 0)
         arg
-        (compiler-backend-spmd-call-arg-at (box-get rest) (- index 1)))]))
+        (compiler-backend-spmd-call-arg-at (__tl-box-place rest) (- index 1)))]))
 
 (define (compiler-backend-spmd-class-uniform?
   [class : compiler_ir_types.CompilerIrSpmdValueClass]) : bool
@@ -44900,7 +44838,7 @@
       instr-diag
       program-index
       vars
-      (struct-get program-index backend-state))
+      program-index.backend-state)
       [(ResultCompilerBackend.Ok uniform-asm)
         (match (compiler-backend-spmd-private-vector-args-asm
           type-segment-bases
@@ -45021,7 +44959,7 @@
       instr-diag
       program-index
       vars
-      (struct-get program-index backend-state))
+      program-index.backend-state)
       [(ResultCompilerBackend.Ok uniform-asm)
         (match (compiler-backend-spmd-avx2-save-value
           type-segment-bases
@@ -45201,7 +45139,7 @@
               (compiler-backend-emit-c-abi-return-slot-stores
                 type-segment-bases
                 base-reg
-                (box-get rest)
+                (__tl-box-place rest)
                 (if sse?
                   int-idx
                   (+ int-idx 1))
@@ -45212,9 +45150,9 @@
       (compiler-backend-emit-c-abi-return-slot-stores-array
         type-segment-bases
         base-reg
-        (struct-get seq slots)
+        seq.slots
         0
-        (struct-get seq len)
+        seq.len
         int-idx
         sse-idx)]))
 
@@ -45428,9 +45366,9 @@
           (let
             [ex : (__tl_dyn-array String) (array.make-array String 3)]
             (begin
-              (array-set! ex 0 "%rcx")
-              (array-set! ex 1 "%rdx")
-              (array-set! ex 2 "%rbx")
+              (set! (array-ref ex 0) "%rcx")
+              (set! (array-ref ex 1) "%rdx")
+              (set! (array-ref ex 2) "%rbx")
               (let
                 ;; cpuid clobbers rax/rbx/rcx/rdx; preserve the caller's %rbx in a
                 ;; scavenged free reg instead of pushq/popq (the no-stack-staging
@@ -45609,7 +45547,7 @@
           (and
             (= tag expected)
             (compiler-backend-switch-cases-contiguous-from?
-              (box-get rest)
+              (__tl-box-place rest)
               (+ expected 1)))])]
     [(compiler_ir_types.CompilerIrSwitchCaseList.Array seq)
       (compiler-backend-switch-cases-contiguous-from?
@@ -45663,7 +45601,7 @@
                     [_ false])))
               (compiler-backend-total-switch-trap-block-from?
                 all-blocks
-                (box-get rest)
+                (__tl-box-place rest)
                 label
                 trap-label
                 fuel))])]
@@ -45722,7 +45660,9 @@
         [(compiler_ir_types.CompilerIrSwitchCase.Case _ label)
           (or
             (compiler-backend-symbol-list-contains-id? targets label)
-            (compiler-backend-switch-cases-target-phi? targets (box-get rest)))])]
+            (compiler-backend-switch-cases-target-phi?
+              targets
+              (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrSwitchCaseList.Array seq)
       (compiler-backend-switch-cases-target-phi?
         targets
@@ -45732,7 +45672,7 @@
   [targets : BackendSymbolSeq]
   [cases : compiler_ir_types.CompilerIrSwitchCaseList]
   [default-label : i64]) : bool
-  (if (= (struct-get targets len) 0)
+  (if (= targets.len 0)
     false
     (or
       (compiler-backend-symbol-list-contains-id? targets default-label)
@@ -45781,8 +45721,7 @@
   (let
     [targets : BackendSymbolSeq
       (compiler-backend-function-state-phi-targets
-        (compiler-backend-state-function-state
-          (struct-get program-index backend-state)))]
+        (compiler-backend-state-function-state program-index.backend-state))]
     (match cases
       [(compiler_ir_types.CompilerIrSwitchCaseList.Nil)
         (ResultCompilerBackend.Ok "")]
@@ -45806,7 +45745,7 @@
                     type-segment-bases
                     function
                     current-label
-                    (box-get rest)
+                    (__tl-box-place rest)
                     assignments
                     blocks
                     program-index
@@ -45832,7 +45771,7 @@
                 type-segment-bases
                 function
                 current-label
-                (box-get rest)
+                (__tl-box-place rest)
                 assignments
                 blocks
                 program-index
@@ -45880,7 +45819,7 @@
             current-label
             retarget-phi-edges
             targets
-            (box-get rest)
+            (__tl-box-place rest)
             (text_buf.append
               (text_buf.append
                 (text_buf.append buf "    .quad ")
@@ -45999,7 +45938,7 @@
           (compiler-backend-emit-switch-tables-blocks-into
             function
             targets
-            (box-get rest)
+            (__tl-box-place rest)
             (compiler-backend-emit-switch-tables-instr-seq-into
               function
               label
@@ -46023,10 +45962,10 @@
             [_phi-targets : unit
               (compiler-backend-function-state-install-phi-targets!
                 (compiler-backend-state-function-state
-                  (struct-get program-index backend-state))
+                  program-index.backend-state)
                 (compiler-backend-phi-target-labels-for-blocks blocks))]
             (compiler-backend-emit-switch-tables-functions-into
-              (box-get rest)
+              (__tl-box-place rest)
               program-index
               (match blocks
                 [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -46034,7 +45973,7 @@
                     (compiler-backend-function-label-scope program-index name)
                     (compiler-backend-function-state-phi-targets
                       (compiler-backend-state-function-state
-                        (struct-get program-index backend-state)))
+                        program-index.backend-state))
                     seq
                     0
                     buf)]
@@ -46043,7 +45982,7 @@
                     (compiler-backend-function-label-scope program-index name)
                     (compiler-backend-function-state-phi-targets
                       (compiler-backend-state-function-state
-                        (struct-get program-index backend-state)))
+                        program-index.backend-state))
                     blocks
                     buf)])))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
@@ -46066,7 +46005,7 @@
           [_phi-targets : unit
             (compiler-backend-function-state-install-phi-targets!
               (compiler-backend-state-function-state
-                (struct-get program-index backend-state))
+                program-index.backend-state)
               (compiler-backend-phi-target-labels-for-blocks blocks))]
           (compiler-backend-emit-switch-tables-function-seq-into
             functions
@@ -46078,7 +46017,7 @@
                   (compiler-backend-function-label-scope program-index name)
                   (compiler-backend-function-state-phi-targets
                     (compiler-backend-state-function-state
-                      (struct-get program-index backend-state)))
+                      program-index.backend-state))
                   seq
                   0
                   buf)]
@@ -46087,7 +46026,7 @@
                   (compiler-backend-function-label-scope program-index name)
                   (compiler-backend-function-state-phi-targets
                     (compiler-backend-state-function-state
-                      (struct-get program-index backend-state)))
+                      program-index.backend-state))
                   blocks
                   buf)])))])))
 
@@ -46452,8 +46391,7 @@
               (compiler-backend-switch-shape-message))))]
       [(compiler-backend-switch-target-phi?
           (compiler-backend-function-state-phi-targets
-            (compiler-backend-state-function-state
-              (struct-get program-index backend-state)))
+            (compiler-backend-state-function-state program-index.backend-state))
           cases
           default-label)
         (match (compiler-backend-emit-switch-case-edge-blocks
@@ -46473,7 +46411,7 @@
                 (compiler-backend-symbol-list-contains-id?
                   (compiler-backend-function-state-phi-targets
                     (compiler-backend-state-function-state
-                      (struct-get program-index backend-state)))
+                      program-index.backend-state))
                   default-label)]
               (match (if default-needs-edge
                 (match (compiler-backend-emit-phi-edge-copies
@@ -46500,7 +46438,7 @@
                 (ResultCompilerBackend.Ok ""))
                 [(ResultCompilerBackend.Ok default-block)
                   (match (compiler-backend-emit-switch-dispatch
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     function
                     current-label
                     index
@@ -46526,7 +46464,7 @@
             (ResultCompilerBackend.Err message)])]
       [else
         (match (compiler-backend-emit-switch-dispatch
-          (struct-get program-index backend-state)
+          program-index.backend-state
           function
           current-label
           index
@@ -46601,7 +46539,9 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (match (compiler-backend-switch-validate-instr-seq targets instrs 0)
             [(CompilerBackendSwitchValidation.Ok)
-              (compiler-backend-switch-validate-blocks targets (box-get rest))]
+              (compiler-backend-switch-validate-blocks
+                targets
+                (__tl-box-place rest))]
             [(CompilerBackendSwitchValidation.Err message)
               (CompilerBackendSwitchValidation.Err message)])])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -46637,7 +46577,8 @@
               (compiler-backend-phi-target-labels-for-blocks blocks)]
             (match (compiler-backend-switch-validate-blocks targets blocks)
               [(CompilerBackendSwitchValidation.Ok)
-                (compiler-backend-switch-validate-functions (box-get rest))]
+                (compiler-backend-switch-validate-functions
+                  (__tl-box-place rest))]
               [(CompilerBackendSwitchValidation.Err message)
                 (CompilerBackendSwitchValidation.Err message)]))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
@@ -46769,7 +46710,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Alloc _ _)
         (ResultCompilerBackend.Ok "")]
@@ -46785,7 +46726,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Gep dst base offset elem-ty)
         (match (compiler-backend-emit-gep
@@ -46808,7 +46749,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Load dst src ty)
         (match (compiler-backend-emit-load-instr
@@ -46825,7 +46766,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.StorePtr dst src ty)
         (match (compiler-backend-emit-store-ptr
@@ -46843,7 +46784,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.CopyBytes dst src size)
         (match (compiler-backend-emit-copy-bytes
@@ -46866,7 +46807,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.BoundsCheck index length ok-label)
         (match (compiler-backend-emit-bounds-check
@@ -46887,7 +46828,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Cast dst src from-ty to-ty)
         (match (compiler-backend-emit-cast
@@ -46909,7 +46850,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Bitcast dst src from-ty to-ty)
         (match (compiler-backend-emit-bitcast
@@ -46928,7 +46869,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
         (match (compiler-backend-emit-binop-with-plan
@@ -46952,7 +46893,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.UnOp dst op src ty)
         (match (compiler-backend-emit-unop-with-plan
@@ -46968,7 +46909,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.LaneId dst lanes elem-ty)
         (compiler-backend-emit-vector-lane-id
@@ -46995,12 +46936,12 @@
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
         (let
-          [dst (struct-get (box-get payload-box) dst)]
-          [op (struct-get (box-get payload-box) op)]
-          [lhs (struct-get (box-get payload-box) lhs)]
-          [rhs (struct-get (box-get payload-box) rhs)]
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [elem-ty (struct-get (box-get payload-box) ty)]
+          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+          [op (__tl-project-field (__tl-box-place payload-box) op)]
+          [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+          [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
           (compiler-backend-emit-vector-binop
             ctx.type-segment-bases
             ctx.assignments
@@ -47014,12 +46955,12 @@
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
         (let
-          [dst (struct-get (box-get payload-box) dst)]
-          [op (struct-get (box-get payload-box) op)]
-          [src (struct-get (box-get payload-box) src)]
-          [carry (struct-get (box-get payload-box) carry)]
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [elem-ty (struct-get (box-get payload-box) ty)]
+          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+          [op (__tl-project-field (__tl-box-place payload-box) op)]
+          [src (__tl-project-field (__tl-box-place payload-box) src)]
+          [carry (__tl-project-field (__tl-box-place payload-box) carry)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
           (compiler-backend-emit-vector-prefix
             ctx.assignments
             dst
@@ -47049,12 +46990,12 @@
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
         (let
-          [dst (struct-get (box-get payload-box) dst)]
-          [op (struct-get (box-get payload-box) op)]
-          [lhs (struct-get (box-get payload-box) lhs)]
-          [rhs (struct-get (box-get payload-box) rhs)]
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [elem-ty (struct-get (box-get payload-box) ty)]
+          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+          [op (__tl-project-field (__tl-box-place payload-box) op)]
+          [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+          [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
           (compiler-backend-emit-vector-compare
             ctx.type-segment-bases
             ctx.assignments
@@ -47098,12 +47039,12 @@
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.Select payload-box)
         (let
-          [dst (struct-get (box-get payload-box) dst)]
-          [mask (struct-get (box-get payload-box) mask)]
-          [on-true (struct-get (box-get payload-box) on-true)]
-          [on-false (struct-get (box-get payload-box) on-false)]
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [elem-ty (struct-get (box-get payload-box) ty)]
+          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+          [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+          [on-true (__tl-project-field (__tl-box-place payload-box) on-true)]
+          [on-false (__tl-project-field (__tl-box-place payload-box) on-false)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
           (compiler-backend-emit-select
             ctx.type-segment-bases
             ctx.assignments
@@ -47138,11 +47079,11 @@
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
         (let
-          [base (struct-get (box-get payload-box) base)]
-          [index (struct-get (box-get payload-box) index)]
-          [value (struct-get (box-get payload-box) value)]
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [elem-ty (struct-get (box-get payload-box) ty)]
+          [base (__tl-project-field (__tl-box-place payload-box) base)]
+          [index (__tl-project-field (__tl-box-place payload-box) index)]
+          [value (__tl-project-field (__tl-box-place payload-box) value)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
           (compiler-backend-emit-vector-store
             ctx.type-segment-bases
             ctx.assignments
@@ -47157,12 +47098,12 @@
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
         (let
-          [base (struct-get (box-get payload-box) base)]
-          [index (struct-get (box-get payload-box) index)]
-          [value (struct-get (box-get payload-box) value)]
-          [mask (struct-get (box-get payload-box) mask)]
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [elem-ty (struct-get (box-get payload-box) ty)]
+          [base (__tl-project-field (__tl-box-place payload-box) base)]
+          [index (__tl-project-field (__tl-box-place payload-box) index)]
+          [value (__tl-project-field (__tl-box-place payload-box) value)]
+          [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
           (compiler-backend-emit-predicated-store
             ctx.type-segment-bases
             ctx.function
@@ -47180,12 +47121,12 @@
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
         (let
-          [dst (struct-get (box-get payload-box) dst)]
-          [base (struct-get (box-get payload-box) base)]
-          [index (struct-get (box-get payload-box) index)]
-          [mask (struct-get (box-get payload-box) mask)]
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [elem-ty (struct-get (box-get payload-box) ty)]
+          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+          [base (__tl-project-field (__tl-box-place payload-box) base)]
+          [index (__tl-project-field (__tl-box-place payload-box) index)]
+          [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
           (compiler-backend-emit-predicated-load
             ctx.type-segment-bases
             ctx.function
@@ -47203,13 +47144,15 @@
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
         (let
-          [dst (struct-get (box-get payload-box) dst)]
-          [base (struct-get (box-get payload-box) base)]
-          [index-base (struct-get (box-get payload-box) index-base)]
-          [index (struct-get (box-get payload-box) index)]
-          [lane-offset (struct-get (box-get payload-box) lane-offset)]
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [elem-ty (struct-get (box-get payload-box) ty)]
+          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+          [base (__tl-project-field (__tl-box-place payload-box) base)]
+          [index-base
+            (__tl-project-field (__tl-box-place payload-box) index-base)]
+          [index (__tl-project-field (__tl-box-place payload-box) index)]
+          [lane-offset
+            (__tl-project-field (__tl-box-place payload-box) lane-offset)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
           (compiler-backend-emit-gather-load
             ctx.type-segment-bases
             ctx.assignments
@@ -47226,13 +47169,16 @@
             ctx.backend-state))]
       [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
         (let
-          [dst (struct-get (box-get payload-box) dst)]
-          [source (struct-get (box-get payload-box) source)]
-          [selector-low (struct-get (box-get payload-box) selector-low)]
-          [selector-high (struct-get (box-get payload-box) selector-high)]
-          [active-lanes (struct-get (box-get payload-box) active-lanes)]
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [elem-ty (struct-get (box-get payload-box) ty)]
+          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+          [source (__tl-project-field (__tl-box-place payload-box) source)]
+          [selector-low
+            (__tl-project-field (__tl-box-place payload-box) selector-low)]
+          [selector-high
+            (__tl-project-field (__tl-box-place payload-box) selector-high)]
+          [active-lanes
+            (__tl-project-field (__tl-box-place payload-box) active-lanes)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
           (compiler-backend-emit-vector-shuffle
             ctx.type-segment-bases
             ctx.target
@@ -47313,12 +47259,13 @@
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
         (let
-          [name (struct-get (box-get payload-box) callee)]
-          [backend (struct-get (box-get payload-box) backend)]
-          [lanes (struct-get (box-get payload-box) lanes)]
-          [active-mask (struct-get (box-get payload-box) active-mask)]
-          [args (struct-get (box-get payload-box) args)]
-          [result (struct-get (box-get payload-box) result)]
+          [name (__tl-project-field (__tl-box-place payload-box) callee)]
+          [backend (__tl-project-field (__tl-box-place payload-box) backend)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [active-mask
+            (__tl-project-field (__tl-box-place payload-box) active-mask)]
+          [args (__tl-project-field (__tl-box-place payload-box) args)]
+          [result (__tl-project-field (__tl-box-place payload-box) result)]
           (compiler-backend-emit-spmd-call
             ctx.type-segment-bases
             ctx.target
@@ -47359,11 +47306,8 @@
           [(ResultCompilerBackend.Ok asm)
             (ResultCompilerBackend.Ok
               (if (and
-                (compiler-backend-abort-site-active?
-                  (struct-get ctx backend-state))
-                (compiler-backend-stdlib-io-panic-name?
-                  (struct-get ctx backend-state)
-                  name))
+                (compiler-backend-abort-site-active? ctx.backend-state)
+                (compiler-backend-stdlib-io-panic-name? ctx.backend-state name))
                 (compiler-backend-rewrite-panic-call
                   asm
                   (compiler-backend-call-symbol-index
@@ -47412,10 +47356,10 @@
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
         (let
-          [base (struct-get (box-get payload-box) base)]
-          [name (struct-get (box-get payload-box) name)]
-          [args (struct-get (box-get payload-box) args)]
-          [slots (struct-get (box-get payload-box) slots)]
+          [base (__tl-project-field (__tl-box-place payload-box) base)]
+          [name (__tl-project-field (__tl-box-place payload-box) name)]
+          [args (__tl-project-field (__tl-box-place payload-box) args)]
+          [slots (__tl-project-field (__tl-box-place payload-box) slots)]
           (compiler-backend-emit-c-abi-store-result-call
             ctx.type-segment-bases
             ctx.target
@@ -47437,10 +47381,10 @@
       [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult
           payload-box)
         (let
-          [base (struct-get (box-get payload-box) base)]
-          [func (struct-get (box-get payload-box) callee)]
-          [args (struct-get (box-get payload-box) args)]
-          [slots (struct-get (box-get payload-box) slots)]
+          [base (__tl-project-field (__tl-box-place payload-box) base)]
+          [func (__tl-project-field (__tl-box-place payload-box) callee)]
+          [args (__tl-project-field (__tl-box-place payload-box) args)]
+          [slots (__tl-project-field (__tl-box-place payload-box) slots)]
           (compiler-backend-emit-indirect-c-abi-store-result-call
             ctx.type-segment-bases
             ctx.target
@@ -47483,15 +47427,13 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Store name value ty)
         (let
           [addr : String
             (str_cat.str-cat
-              (compiler-backend-state-user-symbol-id
-                (struct-get ctx backend-state)
-                name)
+              (compiler-backend-state-user-symbol-id ctx.backend-state name)
               "(%rip)"
               "")]
           (if (compiler-backend-group-type?
@@ -47515,16 +47457,12 @@
                   1)]
               [sym0 : String
                 (str_cat.str-cat
-                  (compiler-backend-state-user-symbol-id
-                    (struct-get ctx backend-state)
-                    name)
+                  (compiler-backend-state-user-symbol-id ctx.backend-state name)
                   "(%rip)"
                   "")]
               [sym1 : String
                 (str_cat.str-cat
-                  (compiler-backend-state-user-symbol-id
-                    (struct-get ctx backend-state)
-                    name)
+                  (compiler-backend-state-user-symbol-id ctx.backend-state name)
                   "+8(%rip)"
                   "")]
               (match (compiler-backend-emit-group-load
@@ -47562,7 +47500,7 @@
                   (ResultCompilerBackend.Err
                     (box
                       (compiler-backend-apply-instr-diagnostic
-                        (box-get message)
+                        (__tl-box-place message)
                         instr-diag)))]))
             (let
               [no-exclude : (__tl_dyn-array String) (array.make-array String 0)]
@@ -47583,7 +47521,7 @@
                   (ResultCompilerBackend.Err
                     (box
                       (compiler-backend-apply-instr-diagnostic
-                        (box-get message)
+                        (__tl-box-place message)
                         instr-diag)))]))))]
       [(compiler_ir_types.CompilerIrInstr.Jump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
@@ -47626,14 +47564,14 @@
                   (ResultCompilerBackend.Err
                     (box
                       (compiler-backend-apply-instr-diagnostic
-                        (box-get message)
+                        (__tl-box-place message)
                         instr-diag)))])
               (ResultCompilerBackend.Ok direct-return))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Branch cond true-label false-label)
         (match (compiler-backend-emit-branch-with-phi-copies-with-plan
@@ -47656,7 +47594,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
           cond
@@ -47681,7 +47619,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Phi _ _ _)
         (ResultCompilerBackend.Ok "")]
@@ -47734,7 +47672,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Switch index base cases default-label)
         (match (compiler-backend-emit-switch
@@ -47757,7 +47695,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
           index
@@ -47785,7 +47723,7 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])])))
 
 ;; The backend already has one complete, allocation-free instruction operand
@@ -47826,7 +47764,7 @@
         (if (>= var (array-length counts))
           unit
           (begin
-            (array-set! counts var (+ (array-ref counts var) 1))
+            (set! (array-ref counts var) (+ (array-ref counts var) 1))
             unit))))))
 
 (define (compiler-backend-count-value-use
@@ -47849,7 +47787,7 @@
     [(compiler_ir_types.CompilerIrValueList.Cons value rest)
       (begin
         (compiler-backend-count-value-use counts value)
-        (compiler-backend-count-value-list-uses counts (box-get rest)))]))
+        (compiler-backend-count-value-list-uses counts (__tl-box-place rest)))]))
 
 (define (compiler-backend-count-call-args-array-uses
   [counts : (__tl_dyn-array i64)]
@@ -47885,13 +47823,15 @@
         [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
           (begin
             (compiler-backend-count-value-use counts value)
-            (compiler-backend-count-spmd-call-args-uses counts (box-get rest)))])]
+            (compiler-backend-count-spmd-call-args-uses
+              counts
+              (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
       (let
         [i : i64 0]
-        [count : i64 (struct-get seq len)]
+        [count : i64 seq.len]
         [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
-          (struct-get seq slots)]
+          seq.slots]
         (while (< i count)
           (begin
             (match (array-ref slots i)
@@ -47911,7 +47851,7 @@
     [(compiler_ir_types.CompilerIrPhiInputList.Cons value _ rest)
       (begin
         (compiler-backend-count-value-use counts value)
-        (compiler-backend-count-phi-input-uses counts (box-get rest)))]))
+        (compiler-backend-count-phi-input-uses counts (__tl-box-place rest)))]))
 
 (define (compiler-backend-count-instr-uses
   [counts : (__tl_dyn-array i64)]
@@ -47953,15 +47893,15 @@
       (compiler-backend-count-value-use counts value)]
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
         (begin
           (compiler-backend-count-value-use counts lhs)
           (compiler-backend-count-value-use counts rhs)))]
     [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [src (struct-get (box-get payload-box) src)]
-        [carry (struct-get (box-get payload-box) carry)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
         (begin
           (compiler-backend-count-value-use counts src)
           (compiler-backend-count-value-use counts carry)))]
@@ -47969,8 +47909,8 @@
       (compiler-backend-count-value-use counts src)]
     [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
         (begin
           (compiler-backend-count-value-use counts lhs)
           (compiler-backend-count-value-use counts rhs)))]
@@ -47984,9 +47924,9 @@
       (compiler-backend-count-value-use counts src)]
     [(compiler_ir_types.CompilerIrInstr.Select payload-box)
       (let
-        [mask (struct-get (box-get payload-box) mask)]
-        [on-true (struct-get (box-get payload-box) on-true)]
-        [on-false (struct-get (box-get payload-box) on-false)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [on-true (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [on-false (__tl-project-field (__tl-box-place payload-box) on-false)]
         (begin
           (compiler-backend-count-value-use counts mask)
           (compiler-backend-count-value-use counts on-true)
@@ -47997,19 +47937,19 @@
         (compiler-backend-count-value-use counts index))]
     [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
         (begin
           (compiler-backend-count-value-use counts base)
           (compiler-backend-count-value-use counts index)
           (compiler-backend-count-value-use counts value)))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (begin
           (compiler-backend-count-value-use counts base)
           (compiler-backend-count-value-use counts index)
@@ -48017,28 +47957,32 @@
           (compiler-backend-count-value-use counts mask)))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (begin
           (compiler-backend-count-value-use counts base)
           (compiler-backend-count-value-use counts index)
           (compiler-backend-count-value-use counts mask)))]
     [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index-base (struct-get (box-get payload-box) index-base)]
-        [index (struct-get (box-get payload-box) index)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index-base
+          (__tl-project-field (__tl-box-place payload-box) index-base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
         (begin
           (compiler-backend-count-value-use counts base)
           (compiler-backend-count-value-use counts index-base)
           (compiler-backend-count-value-use counts index)))]
     [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [source (struct-get (box-get payload-box) source)]
-        [selector-low (struct-get (box-get payload-box) selector-low)]
-        [selector-high (struct-get (box-get payload-box) selector-high)]
-        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        [source (__tl-project-field (__tl-box-place payload-box) source)]
+        [selector-low
+          (__tl-project-field (__tl-box-place payload-box) selector-low)]
+        [selector-high
+          (__tl-project-field (__tl-box-place payload-box) selector-high)]
+        [active-lanes
+          (__tl-project-field (__tl-box-place payload-box) active-lanes)]
         (begin
           (compiler-backend-count-value-use counts source)
           (compiler-backend-count-value-use counts selector-low)
@@ -48074,24 +48018,25 @@
         (compiler-backend-count-call-args-uses counts args))]
     [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [args (struct-get (box-get payload-box) args)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (begin
           (compiler-backend-count-value-use counts base)
           (compiler-backend-count-call-args-uses counts args)))]
     [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [callee (struct-get (box-get payload-box) callee)]
-        [args (struct-get (box-get payload-box) args)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [callee (__tl-project-field (__tl-box-place payload-box) callee)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (begin
           (compiler-backend-count-value-use counts base)
           (compiler-backend-count-value-use counts callee)
           (compiler-backend-count-call-args-uses counts args)))]
     [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [active-mask (struct-get (box-get payload-box) active-mask)]
-        [args (struct-get (box-get payload-box) args)]
+        [active-mask
+          (__tl-project-field (__tl-box-place payload-box) active-mask)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (begin
           (compiler-backend-count-value-use counts active-mask)
           (compiler-backend-count-spmd-call-args-uses counts args)))]
@@ -48138,9 +48083,8 @@
   [counts : (__tl_dyn-array i64)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -48159,7 +48103,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-backend-count-instr-seq-uses counts instrs)
-            (compiler-backend-count-block-uses counts (box-get rest)))])]
+            (compiler-backend-count-block-uses counts (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-count-block-seq-uses counts seq)]))
 
@@ -48223,9 +48167,8 @@
   [adjacent : (__tl_dyn-array bool)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [pending : i64 (- 0 1)]
     (while (< index count)
@@ -48238,7 +48181,7 @@
         (begin
           (compiler-backend-count-instr-uses counts instr)
           (if (and (>= pending 0) (> (array-ref counts pending) before))
-            (array-set! adjacent pending true)
+            (set! (array-ref adjacent pending) true)
             unit)
           (set!
             pending
@@ -48278,7 +48221,7 @@
             (compiler-backend-gep-fusion-pin-blocks!
               counts
               adjacent
-              (box-get rest)))])]
+              (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-gep-fusion-pin-block-seq! counts adjacent seq)]))
 
@@ -48446,9 +48389,8 @@
   [free : (__tl_dyn-array i64)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [n : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [n : i64 instrs.len]
     [j : i64 0]
     (while (< j n)
       (begin
@@ -48456,7 +48398,7 @@
         (let
           [v : i64 (compiler-backend-fuse-free-branch-var slots j)]
           (if (and (>= v 0) (< v (array-length free)))
-            (array-set! free v (+ (array-ref free v) 1))
+            (set! (array-ref free v) (+ (array-ref free v) 1))
             unit))
         (set! j (+ j 1))))))
 
@@ -48471,7 +48413,10 @@
         (match block
           [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
             (compiler-backend-count-instr-seq-use-facts counts free instrs)])
-        (compiler-backend-count-block-use-facts counts free (box-get rest)))]
+        (compiler-backend-count-block-use-facts
+          counts
+          free
+          (__tl-box-place rest)))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-count-block-seq-use-facts counts free seq)]))
 
@@ -48525,7 +48470,7 @@
   (if (>= index (array-length items))
     unit
     (begin
-      (array-set! items index (- 0 1))
+      (set! (array-ref items index) (- 0 1))
       (compiler-backend-addr-of-forwarding-fill! items (+ index 1)))))
 
 (define (compiler-backend-addr-of-forwarding-record!
@@ -48538,7 +48483,7 @@
         (>= dst 0)
         (< dst (array-length items))
         (compiler-backend-var-single-use? use-counts dst))
-        (array-set! items dst src)
+        (set! (array-ref items dst) src)
         unit)]
     [(compiler_ir_types.CompilerIrInstr.Mov dst src _)
       (match src
@@ -48553,7 +48498,7 @@
               (>= dst 0)
               (< dst (array-length items))
               (compiler-backend-var-single-use? use-counts dst))
-              (array-set! items dst forward-src)
+              (set! (array-ref items dst) forward-src)
               unit))]
         [_ unit])]
     [_ unit]))
@@ -48563,9 +48508,8 @@
   [use-counts : (__tl_dyn-array i64)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -48594,7 +48538,7 @@
             (compiler-backend-addr-of-forwarding-record-blocks!
               items
               use-counts
-              (box-get rest)))])]
+              (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-addr-of-forwarding-record-block-seq!
         items
@@ -48663,7 +48607,7 @@
   [types : compiler_regalloc.CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (__tl_dyn-array i64)]) : bool
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (let
       [maybe-cmp : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -48676,7 +48620,7 @@
             (compiler-backend-var-single-use? use-counts cmp-dst)
             (not
               (compiler-backend-binop-f64? types global-types lhs rhs cmp-ty)))
-            (if (< after-cmp (struct-get instrs len))
+            (if (< after-cmp instrs.len)
               (let
                 [branch : compiler_ir_types.CompilerIrInstr
                   (compiler_ir_types.compiler-ir-instr-seq-ref instrs after-cmp)]
@@ -48693,7 +48637,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [fallthrough : CompilerBackendMaybeLabel]) : CompilerBackendMaybeLabel
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (CompilerBackendMaybeLabel.No)
     fallthrough))
 
@@ -48924,7 +48868,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-instr
     ctx
-    (if (< index (struct-get instrs len))
+    (if (< index instrs.len)
       (CompilerBackendMaybeLabel.No)
       fallthrough)
     instr)
@@ -48993,7 +48937,7 @@
   [rax-var : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : bool
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (let
       [instr : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -49031,7 +48975,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (let
       [instr : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -49148,7 +49092,7 @@
             [(compiler_ir_types.CompilerIrMaybeValue.Some value)
               (if (and
                 (compiler-backend-branch-uses-var? value rax-var)
-                (if (< rest (struct-get instrs len))
+                (if (< rest instrs.len)
                   false
                   true))
                 (begin
@@ -49205,7 +49149,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (let
       [instr : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -49218,7 +49162,7 @@
         rax-ty)
         (match (compiler-backend-emit-instr-with-call-rax
           ctx
-          (if (< rest (struct-get instrs len))
+          (if (< rest instrs.len)
             (CompilerBackendMaybeLabel.No)
             fallthrough)
           instr
@@ -49296,7 +49240,7 @@
       (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
-            (box-get message)
+            (__tl-box-place message)
             (compiler-backend-instr-diagnostic
               ctx.spans
               ctx.source-function
@@ -49364,7 +49308,7 @@
       (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
-            (box-get message)
+            (__tl-box-place message)
             (compiler-backend-instr-diagnostic
               ctx.spans
               ctx.source-function
@@ -49423,7 +49367,7 @@
       (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
-            (box-get message)
+            (__tl-box-place message)
             (compiler-backend-instr-diagnostic
               ctx.spans
               ctx.source-function
@@ -49503,7 +49447,7 @@
       (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
-            (box-get message)
+            (__tl-box-place message)
             (compiler-backend-instr-diagnostic
               ctx.spans
               ctx.source-function
@@ -49567,7 +49511,7 @@
   [load-ty1 : compiler_ast_types.AstType]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : CompilerBackendGepLoadPairAluFold
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (let
       [maybe-binop : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -49698,7 +49642,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : CompilerBackendMaybeGepLoadPairAluDivmodStore
   (if (compiler-backend-var-single-use? ctx.use-counts div-dst)
-    (if (< index (struct-get instrs len))
+    (if (< index instrs.len)
       (let
         [maybe-gep : compiler_ir_types.CompilerIrInstr
           (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -49706,7 +49650,7 @@
         (match maybe-gep
           [(compiler_ir_types.CompilerIrInstr.Gep gep-dst base offset elem-ty)
             (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
-              (if (< after-gep (struct-get instrs len))
+              (if (< after-gep instrs.len)
                 (let
                   [maybe-store : compiler_ir_types.CompilerIrInstr
                     (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -49720,7 +49664,7 @@
                         store-ty)
                       (if (and
                         (compiler-backend-divmod-direct-gep-store?
-                          (struct-get ctx backend-state)
+                          ctx.backend-state
                           ctx.type-segment-bases
                           ctx.assignments
                           div-dst
@@ -49731,7 +49675,7 @@
                           store-ptr
                           store-value)
                         (compiler-backend-divmod-direct-gep-store-clobber-safe?
-                          (struct-get ctx backend-state)
+                          ctx.backend-state
                           ctx.assignments
                           src
                           magic
@@ -49770,7 +49714,7 @@
   ;; preserved-dividend register. A load-pair fold consumes that producer
   ;; first, so retain the same steering here instead of reintroducing a hot
   ;; producer-home -> dividend-home copy before the magic-mod sequence.
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (let
       [div-instr : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -49833,17 +49777,17 @@
                 after-div)]
             [base-home : String
               (compiler-backend-value-scalar-register
-                (struct-get ctx backend-state)
+                ctx.backend-state
                 ctx.assignments
                 base)]
             [index0-home : String
               (compiler-backend-value-scalar-register
-                (struct-get ctx backend-state)
+                ctx.backend-state
                 ctx.assignments
                 offset0)]
             [index1-home : String
               (compiler-backend-value-scalar-register
-                (struct-get ctx backend-state)
+                ctx.backend-state
                 ctx.assignments
                 offset1)]
             (if (and
@@ -50031,7 +49975,7 @@
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some _) (CompilerBackendMaybeGepLoadPairAluEmission.No)]
     [(option_i64.None)
-      (if (< index (struct-get instrs len))
+      (if (< index instrs.len)
         (let
           [maybe-gep : compiler_ir_types.CompilerIrInstr
             (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -50049,7 +49993,7 @@
                   [(option_i64.Some _)
                     (CompilerBackendMaybeGepLoadPairAluEmission.No)]
                   [(option_i64.None)
-                    (if (< after-gep (struct-get instrs len))
+                    (if (< after-gep instrs.len)
                       (let
                         [maybe-load : compiler_ir_types.CompilerIrInstr
                           (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -50068,7 +50012,7 @@
                               ;; A displacement changes only the spelling of an
                               ;; already-valid SIB operand, never admission.
                               (match (compiler-backend-gep-load-pair-alu-probe
-                                (struct-get ctx backend-state)
+                                ctx.backend-state
                                 ctx.type-segment-bases
                                 ctx.assignments
                                 ctx.types
@@ -50101,7 +50045,7 @@
                                         offset2
                                         elem-ty2)]
                                     (match (compiler-backend-gep-load-pair-alu-probe
-                                      (struct-get ctx backend-state)
+                                      ctx.backend-state
                                       ctx.type-segment-bases
                                       ctx.assignments
                                       ctx.types
@@ -50201,7 +50145,7 @@
     (not (= (compiler-backend-type-size type-segment-bases load-ty) 8))
     (not (compiler-backend-var-single-use? use-counts load-dst)))
     (CompilerBackendGepLoadAluFold.No)
-    (if (< index (struct-get instrs len))
+    (if (< index instrs.len)
       (let
         [maybe-binop : compiler_ir_types.CompilerIrInstr
           (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -50457,7 +50401,7 @@
   ;; GAP8 ALU fold first: the probe is side-effect-free, so a rejection costs
   ;; nothing and falls through to the existing single/pair load fusion.
   (match (compiler-backend-gep-load-alu-probe
-    (struct-get ctx backend-state)
+    ctx.backend-state
     ctx.type-segment-bases
     ctx.assignments
     ctx.types
@@ -50540,7 +50484,7 @@
   ;; abort on every mid-band self-host build).
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some _)
-      (if (< index (struct-get instrs len))
+      (if (< index instrs.len)
         (let
           [maybe-gep : compiler_ir_types.CompilerIrInstr
             (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -50556,7 +50500,7 @@
                 (compiler_optimize.opt-value-eq base2 base))
                 (match (compiler-backend-value-as-i64 offset2)
                   [(option_i64.Some _)
-                    (if (< after-gep (struct-get instrs len))
+                    (if (< after-gep instrs.len)
                       (let
                         [maybe-load : compiler_ir_types.CompilerIrInstr
                           (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -50595,7 +50539,7 @@
                                     offset2
                                     elem-ty2)]
                                 (match (compiler-backend-gep-load-pair-alu-probe
-                                  (struct-get ctx backend-state)
+                                  ctx.backend-state
                                   ctx.type-segment-bases
                                   ctx.assignments
                                   ctx.types
@@ -51005,7 +50949,7 @@
       (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
-            (box-get message)
+            (__tl-box-place message)
             (compiler-backend-instr-diagnostic
               ctx.spans
               ctx.source-function
@@ -51106,7 +51050,7 @@
                     (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
-                          (box-get message)
+                          (__tl-box-place message)
                           (compiler-backend-instr-diagnostic
                             ctx.spans
                             ctx.source-function
@@ -51117,7 +51061,7 @@
               (ResultCompilerBackend.Err
                 (box
                   (compiler-backend-apply-instr-diagnostic
-                    (box-get message)
+                    (__tl-box-place message)
                     (compiler-backend-instr-diagnostic
                       ctx.spans
                       ctx.source-function
@@ -51141,7 +51085,7 @@
       (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
-            (box-get message)
+            (__tl-box-place message)
             (compiler-backend-instr-diagnostic
               ctx.spans
               ctx.source-function
@@ -51209,7 +51153,7 @@
       instr-diag
       program-index
       vars
-      (struct-get program-index backend-state))
+      program-index.backend-state)
       [(ResultCompilerBackend.Ok args-asm)
         (if (and
           (compiler-backend-tls-current-arena-call-id? name)
@@ -51229,7 +51173,7 @@
                       (string.append
                         (compiler-backend-emit-call-space-add call-space)
                         (compiler-backend-return-tail
-                          (struct-get program-index backend-state)
+                          program-index.backend-state
                           source-function
                           assignments
                           vars
@@ -51238,7 +51182,7 @@
               (ResultCompilerBackend.Err
                 (box
                   (compiler-backend-apply-instr-diagnostic
-                    (box-get message)
+                    (__tl-box-place message)
                     instr-diag)))])
           (if (compiler-backend-inline-memory-call-name? inline-memory-name)
             (ResultCompilerBackend.Ok
@@ -51253,7 +51197,7 @@
                     (string.append
                       (compiler-backend-emit-call-space-add call-space)
                       (compiler-backend-return-tail
-                        (struct-get program-index backend-state)
+                        program-index.backend-state
                         source-function
                         assignments
                         vars
@@ -51276,7 +51220,7 @@
                       (string.append
                         (compiler-backend-emit-call-space-add call-space)
                         (compiler-backend-return-tail
-                          (struct-get program-index backend-state)
+                          program-index.backend-state
                           source-function
                           assignments
                           vars
@@ -51286,7 +51230,7 @@
         (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
-              (box-get message)
+              (__tl-box-place message)
               instr-diag)))])))
 
 (define (compiler-backend-indirect-call-param-types
@@ -51309,7 +51253,7 @@
         [(compiler_regalloc.CompilerRegMaybeType.Some ty)
           (match ty
             [(compiler_ast_types.AstType.Func param-types _)
-              (box-get param-types)]
+              (__tl-box-place param-types)]
             [_ (compiler_ast_types.ast-type-list-new)])]
         [(compiler_regalloc.CompilerRegMaybeType.No)
           (compiler_ast_types.ast-type-list-new)])]))
@@ -51561,13 +51505,13 @@
                           (ResultCompilerBackend.Err
                             (box
                               (compiler-backend-apply-instr-diagnostic
-                                (box-get message)
+                                (__tl-box-place message)
                                 instr-diag)))]))])]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
-                      (box-get message)
+                      (__tl-box-place message)
                       instr-diag)))])]
           [(ResultBackendReg.Err message)
             (ResultCompilerBackend.Err
@@ -51579,7 +51523,7 @@
         (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
-              (box-get message)
+              (__tl-box-place message)
               instr-diag)))])))
 
 (define (compiler-backend-emit-indirect-call
@@ -51731,7 +51675,7 @@
                                     type-segment-bases
                                     ty)
                                   (compiler-backend-return-tail
-                                    (struct-get program-index backend-state)
+                                    program-index.backend-state
                                     source-function
                                     assignments
                                     vars
@@ -51748,13 +51692,13 @@
               (ResultCompilerBackend.Err
                 (box
                   (compiler-backend-apply-instr-diagnostic
-                    (box-get message)
+                    (__tl-box-place message)
                     instr-diag)))]))]
       [(ResultCompilerBackend.Err message)
         (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
-              (box-get message)
+              (__tl-box-place message)
               instr-diag)))])))
 
 (define (compiler-backend-indirect-c-call-direct-home?
@@ -51912,7 +51856,7 @@
                 (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
-                      (box-get message)
+                      (__tl-box-place message)
                       instr-diag)))]))
           (ResultCompilerBackend.Ok
             (string.append
@@ -51938,7 +51882,7 @@
         (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
-              (box-get message)
+              (__tl-box-place message)
               instr-diag)))])))
 
 (define (compiler-backend-emit-c-abi-store-result-call
@@ -52041,13 +51985,13 @@
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(ResultCompilerBackend.Err message)
         (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
-              (box-get message)
+              (__tl-box-place message)
               instr-diag)))])))
 
 (define (compiler-backend-emit-indirect-c-abi-store-result-call
@@ -52170,19 +52114,19 @@
                   (ResultCompilerBackend.Err
                     (box
                       (compiler-backend-apply-instr-diagnostic
-                        (box-get message)
+                        (__tl-box-place message)
                         instr-diag)))]))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
-                  (box-get message)
+                  (__tl-box-place message)
                   instr-diag)))])]
       [(ResultCompilerBackend.Err message)
         (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
-              (box-get message)
+              (__tl-box-place message)
               instr-diag)))])))
 
 ;; ---------------------------------------------------------------------------
@@ -52567,7 +52511,7 @@
   (let
     [lhs-home : String
       (compiler-backend-value-scalar-register
-        (struct-get ctx backend-state)
+        ctx.backend-state
         ctx.assignments
         lhs)]
     [dst-home : String
@@ -52578,12 +52522,9 @@
         (compiler-backend-divmod-src-register? lhs-home)
         (not (string.eq lhs-home magic))
         (not (string.eq lhs-home hoist-reg))
-        (not
-          (compiler-backend-value-live-after-here?
-            (struct-get ctx backend-state)
-            lhs))
+        (not (compiler-backend-value-live-after-here? ctx.backend-state lhs))
         (compiler-backend-divmod-src-home-safe?
-          (struct-get ctx backend-state)
+          ctx.backend-state
           want-remainder?
           lhs-home
           dst-home))]
@@ -53162,7 +53103,7 @@
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (compiler-backend-var-single-use? ctx.use-counts div-dst)
-    (if (< index (struct-get instrs len))
+    (if (< index instrs.len)
       (let
         [maybe-gep : compiler_ir_types.CompilerIrInstr
           (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -53170,7 +53111,7 @@
         (match maybe-gep
           [(compiler_ir_types.CompilerIrInstr.Gep gep-dst base offset elem-ty)
             (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
-              (if (< after-gep (struct-get instrs len))
+              (if (< after-gep instrs.len)
                 (let
                   [maybe-store : compiler_ir_types.CompilerIrInstr
                     (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -53184,7 +53125,7 @@
                         store-ty)
                       (if (and
                         (compiler-backend-divmod-direct-gep-store?
-                          (struct-get ctx backend-state)
+                          ctx.backend-state
                           ctx.type-segment-bases
                           ctx.assignments
                           div-dst
@@ -53195,7 +53136,7 @@
                           store-ptr
                           store-value)
                         (compiler-backend-divmod-direct-gep-store-clobber-safe?
-                          (struct-get ctx backend-state)
+                          ctx.backend-state
                           ctx.assignments
                           src
                           magic
@@ -53310,7 +53251,7 @@
       div-op
       div-rhs
       div-ty))
-    (if (< index (struct-get instrs len))
+    (if (< index instrs.len)
       (let
         [maybe-gep : compiler_ir_types.CompilerIrInstr
           (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -53318,7 +53259,7 @@
         (match maybe-gep
           [(compiler_ir_types.CompilerIrInstr.Gep gep-dst base offset elem-ty)
             (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
-              (if (< after-gep (struct-get instrs len))
+              (if (< after-gep instrs.len)
                 (let
                   [maybe-store : compiler_ir_types.CompilerIrInstr
                     (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -53331,7 +53272,7 @@
                         store-value
                         store-ty)
                       (if (compiler-backend-divmod-direct-gep-store?
-                        (struct-get ctx backend-state)
+                        ctx.backend-state
                         ctx.type-segment-bases
                         ctx.assignments
                         div-dst
@@ -53385,7 +53326,7 @@
                               (compiler-backend-binop-wants-remainder? div-op)
                               div-dst)]
                           (if (compiler-backend-divmod-direct-gep-store-clobber-safe?
-                            (struct-get ctx backend-state)
+                            ctx.backend-state
                             ctx.assignments
                             src
                             magic
@@ -53430,7 +53371,7 @@
         producer-lhs
         producer-rhs
         producer-ty)
-      (if (< index (struct-get instrs len))
+      (if (< index instrs.len)
         (let
           [next : compiler_ir_types.CompilerIrInstr
             (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -53558,7 +53499,7 @@
   (if (and
     (compiler-backend-load-compare-type? ctx.type-segment-bases load-ty)
     (compiler-backend-var-single-use? ctx.use-counts load-dst))
-    (if (< index (struct-get instrs len))
+    (if (< index instrs.len)
       (let
         [next : compiler_ir_types.CompilerIrInstr
           (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -53623,7 +53564,7 @@
                   lhs
                   rhs
                   cmp-ty)))
-              (if (< after-cmp (struct-get instrs len))
+              (if (< after-cmp instrs.len)
                 (let
                   [branch : compiler_ir_types.CompilerIrInstr
                     (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -53708,7 +53649,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (let
       [maybe-gep : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -53728,7 +53669,7 @@
                         ctx.type-segment-bases
                         elem-ty))]
                   (if (compiler-backend-imm32? disp)
-                    (if (< after-gep (struct-get instrs len))
+                    (if (< after-gep instrs.len)
                       (let
                         [maybe-store : compiler_ir_types.CompilerIrInstr
                           (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -53842,7 +53783,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [cursor : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (if (< cursor (struct-get instrs len))
+  (if (< cursor instrs.len)
     (let
       [next : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
@@ -53850,12 +53791,12 @@
       (match next
         [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
           (let
-            [bin-dst (struct-get (box-get payload-box) dst)]
-            [op (struct-get (box-get payload-box) op)]
-            [lhs (struct-get (box-get payload-box) lhs)]
-            [rhs (struct-get (box-get payload-box) rhs)]
-            [bin-lanes (struct-get (box-get payload-box) lanes)]
-            [bin-elem-ty (struct-get (box-get payload-box) ty)]
+            [bin-dst (__tl-project-field (__tl-box-place payload-box) dst)]
+            [op (__tl-project-field (__tl-box-place payload-box) op)]
+            [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+            [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+            [bin-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+            [bin-elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
             (if (compiler-backend-vector-load-binop-foldable?
               ctx.type-segment-bases
               ctx.use-counts
@@ -53947,13 +53888,13 @@
   (let
     [protect-n : i64
       (compiler-backend-copy-run-protect-count
-        (struct-get ctx backend-state)
+        ctx.backend-state
         ctx.assignments
         instrs
         index)]
     [protect : (__tl_dyn-array String)
       (compiler-backend-copy-run-protect-exclude
-        (struct-get ctx backend-state)
+        ctx.backend-state
         ctx.assignments
         instrs
         index)]
@@ -54007,14 +53948,14 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (let
       [next : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [after-jump : i64 (+ index 1)]
       (match next
         [(compiler_ir_types.CompilerIrInstr.Cast cast-dst cast-src _ _)
-          (if (< after-jump (struct-get instrs len))
+          (if (< after-jump instrs.len)
             (let
               [after-cast : compiler_ir_types.CompilerIrInstr
                 (compiler_ir_types.compiler-ir-instr-seq-ref instrs after-jump)]
@@ -54144,7 +54085,7 @@
             after-jump
             out)]
         [(compiler_ir_types.CompilerIrInstr.Return maybe)
-          (if (< after-jump (struct-get instrs len))
+          (if (< after-jump instrs.len)
             (compiler-backend-emit-instrs-normal
               ctx
               fallthrough
@@ -54175,7 +54116,7 @@
                       (ResultCompilerBackend.Err
                         (box
                           (compiler-backend-apply-instr-diagnostic
-                            (box-get message)
+                            (__tl-box-place message)
                             (compiler-backend-instr-diagnostic
                               ctx.spans
                               ctx.source-function
@@ -54218,14 +54159,14 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (let
       [next : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [after-return : i64 (+ index 1)]
       (match next
         [(compiler_ir_types.CompilerIrInstr.Return maybe)
-          (if (< after-return (struct-get instrs len))
+          (if (< after-return instrs.len)
             (compiler-backend-emit-instrs-normal
               ctx
               fallthrough
@@ -54239,7 +54180,7 @@
                   (compiler-backend-branch-uses-var? value dst)
                   (not
                     (compiler-backend-stdlib-io-panic-name?
-                      (struct-get ctx backend-state)
+                      ctx.backend-state
                       name))
                   (compiler_optimize.opt-type-eq
                     ctx.type-segment-bases
@@ -54325,7 +54266,7 @@
     [spelling : String
       (if (compiler-backend-branch-uses-var? copy-src gep-dst)
         (compiler-backend-copy-gep-element-spelling
-          (struct-get ctx backend-state)
+          ctx.backend-state
           ctx.type-segment-bases
           ctx.assignments
           base
@@ -54344,13 +54285,13 @@
       (let
         [protect-n : i64
           (compiler-backend-copy-run-protect-count
-            (struct-get ctx backend-state)
+            ctx.backend-state
             ctx.assignments
             instrs
             after-gep)]
         [protect : (__tl_dyn-array String)
           (compiler-backend-copy-run-protect-exclude
-            (struct-get ctx backend-state)
+            ctx.backend-state
             ctx.assignments
             instrs
             after-gep)]
@@ -54426,7 +54367,7 @@
   (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
     (match (compiler-backend-value-as-i64 offset)
       [(option_i64.Some n)
-        (if (< index (struct-get instrs len))
+        (if (< index instrs.len)
           (let
             [next : compiler_ir_types.CompilerIrInstr
               (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -54443,7 +54384,7 @@
                     ;; The end test is a conjunct rather than another nested
                     ;; `if` because running off the end of the block takes the
                     ;; same fallback the non-compare shapes take.
-                    (< after-load (struct-get instrs len)))
+                    (< after-load instrs.len))
                     (let
                       [maybe-cmp : compiler_ir_types.CompilerIrInstr
                         (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -54470,7 +54411,7 @@
                                 lhs
                                 rhs
                                 cmp-ty)))
-                            (if (< after-cmp (struct-get instrs len))
+                            (if (< after-cmp instrs.len)
                               (let
                                 [branch : compiler_ir_types.CompilerIrInstr
                                   (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -54661,13 +54602,13 @@
                   (let
                     [protect-n : i64
                       (compiler-backend-copy-run-protect-count
-                        (struct-get ctx backend-state)
+                        ctx.backend-state
                         ctx.assignments
                         instrs
                         after-load)]
                     [protect : (__tl_dyn-array String)
                       (compiler-backend-copy-run-protect-exclude
-                        (struct-get ctx backend-state)
+                        ctx.backend-state
                         ctx.assignments
                         instrs
                         after-load)]
@@ -54759,7 +54700,7 @@
             index
             out))]
       [(option_i64.None)
-        (if (< index (struct-get instrs len))
+        (if (< index instrs.len)
           (let
             [next : compiler_ir_types.CompilerIrInstr
               (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -54806,11 +54747,11 @@
                         offset
                         elem-ty)
                       (compiler-backend-value-scalar-register
-                        (struct-get ctx backend-state)
+                        ctx.backend-state
                         ctx.assignments
                         load-base)
                       (compiler-backend-value-scalar-register
-                        (struct-get ctx backend-state)
+                        ctx.backend-state
                         ctx.assignments
                         load-offset)
                       (compiler-backend-scratch-plan-register-ahead
@@ -54831,7 +54772,7 @@
                 (if (and
                   (compiler-backend-branch-uses-var? src gep-dst)
                   (compiler-backend-var-single-use? ctx.use-counts ptr-var))
-                  (if (< after-gep (struct-get instrs len))
+                  (if (< after-gep instrs.len)
                     (let
                       [maybe-store : compiler_ir_types.CompilerIrInstr
                         (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -54950,13 +54891,13 @@
                   (let
                     [protect-n : i64
                       (compiler-backend-copy-run-protect-count
-                        (struct-get ctx backend-state)
+                        ctx.backend-state
                         ctx.assignments
                         instrs
                         after-gep)]
                     [protect : (__tl_dyn-array String)
                       (compiler-backend-copy-run-protect-exclude
-                        (struct-get ctx backend-state)
+                        ctx.backend-state
                         ctx.assignments
                         instrs
                         after-gep)]
@@ -55131,16 +55072,16 @@
       (compiler-backend-compare-op? op)
       (or
         (compiler-backend-var-single-use? ctx.use-counts dst)
-        (compiler-backend-var-fuse-safe? (struct-get ctx backend-state) dst))
+        (compiler-backend-var-fuse-safe? ctx.backend-state dst))
       (not (compiler-backend-binop-f64? ctx.types ctx.global-types lhs rhs ty)))
-      (if (< index (struct-get instrs len))
+      (if (< index instrs.len)
         (let
           [next : compiler_ir_types.CompilerIrInstr
             (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
           [after-branch : i64 (+ index 1)]
           (match next
             [(compiler_ir_types.CompilerIrInstr.Return maybe)
-              (if (< after-branch (struct-get instrs len))
+              (if (< after-branch instrs.len)
                 (compiler-backend-emit-instrs-normal
                   ctx
                   fallthrough
@@ -55270,7 +55211,7 @@
                 (compiler-backend-var-single-use? ctx.use-counts dst)
                 (compiler-backend-var-single-use? ctx.use-counts not-dst)
                 (compiler-backend-branch-uses-var? not-src dst))
-                (if (< after-branch (struct-get instrs len))
+                (if (< after-branch instrs.len)
                   (let
                     [branch : compiler_ir_types.CompilerIrInstr
                       (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -55355,7 +55296,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [cursor : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (if (< cursor (struct-get instrs len))
+  (if (< cursor instrs.len)
     (let
       [instr : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
@@ -55466,8 +55407,8 @@
             (compiler_ast_types.AstType.Bool))
           (if (or
             (compiler-backend-var-single-use? ctx.use-counts dst)
-            (compiler-backend-var-fuse-safe? (struct-get ctx backend-state) dst))
-            (if (< rest (struct-get instrs len))
+            (compiler-backend-var-fuse-safe? ctx.backend-state dst))
+            (if (< rest instrs.len)
               (let
                 [branch : compiler_ir_types.CompilerIrInstr
                   (compiler_ir_types.compiler-ir-instr-seq-ref instrs rest)]
@@ -55534,7 +55475,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (if (< index (struct-get instrs len))
+  (if (< index instrs.len)
     (let
       [instr : compiler_ir_types.CompilerIrInstr
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -55591,7 +55532,7 @@
     ;; `current-count` is read BEFORE `current-instrs` takes ownership of the
     ;; sequence: the binding is an owner move, so `instrs` is not readable
     ;; afterwards. It is refreshed alongside the cursor on every continue.
-    [current-count : i64 (struct-get instrs len)]
+    [current-count : i64 instrs.len]
     [current-instrs : compiler_ir_types.CompilerIrInstrSeq instrs]
     [current-index : i64 index]
     [done : bool false]
@@ -55601,7 +55542,7 @@
       (box (compiler_diagnostic.compiler-diagnostic-at-start "" ""))]
     (begin
       (compiler-backend-function-state-set-bool!
-        (struct-get ctx function-state)
+        ctx.function-state
         compiler-backend-function-bool-emit-instrs-loop-active
         true)
       (while (not done)
@@ -55623,22 +55564,22 @@
               ;; AVX2 also uses this point to make predicated-store lane labels
               ;; unique and retains the count.
               (compiler-backend-function-state-set-emit-current-site!
-                (struct-get ctx function-state)
+                ctx.function-state
                 (-
                   (compiler-backend-function-state-emit-instr-post-base
-                    (struct-get ctx function-state))
+                    ctx.function-state)
                   (- current-count current-index)))
               (compiler-backend-function-state-set-emit-current-count!
-                (struct-get ctx function-state)
+                ctx.function-state
                 (if (compiler-backend-emit-needs-current-count?
                   (compiler-backend-function-scratch-i64
-                    (struct-get ctx function-state)
+                    ctx.function-state
                     compiler-backend-scratch-i64-scavenge-plan-reg-mask)
                   (compiler-backend-function-scratch-i64
-                    (struct-get ctx function-state)
+                    ctx.function-state
                     compiler-backend-scratch-i64-const-hoist-site-count)
                   (compiler-backend-function-state-current-mode
-                    (struct-get ctx function-state)))
+                    ctx.function-state))
                   (- current-count current-index)
                   0))
               (cfg
@@ -55650,22 +55591,22 @@
                   ;; to supply live-after sets); pass empty here.
                   (compiler-backend-scavenge-check-instr
                     (compiler-backend-function-scratch-i64-array
-                      (struct-get ctx function-state)
+                      ctx.function-state
                       compiler-backend-scratch-i64-array-scavenge-starts)
                     (compiler-backend-function-scratch-i64-array
-                      (struct-get ctx function-state)
+                      ctx.function-state
                       compiler-backend-scratch-i64-array-scavenge-ends)
                     (compiler-backend-function-scratch-assignment-index
-                      (struct-get ctx function-state))
+                      ctx.function-state)
                     (compiler-backend-function-scratch-i64
-                      (struct-get ctx function-state)
+                      ctx.function-state
                       compiler-backend-scratch-i64-scavenge-vars)
                     ctx.function
                     (*
                       2
                       (-
                         (compiler-backend-function-state-emit-instr-post-base
-                          (struct-get ctx function-state))
+                          ctx.function-state)
                         (- current-count current-index)))
                     (compiler_ir_types.compiler-ir-instr-seq-ref
                       current-instrs
@@ -55674,7 +55615,7 @@
                   unit)
                 unit)
               (compiler-backend-function-state-set-bool!
-                (struct-get ctx function-state)
+                ctx.function-state
                 compiler-backend-function-bool-emit-instrs-continue-pending
                 false)
               ;; Fast and fused emitters can bypass compiler-backend-emit-instr.
@@ -55719,23 +55660,23 @@
           (match step-result
             [(ResultCompilerBackend.Ok asm)
               (if (compiler-backend-function-state-bool?
-                (struct-get ctx function-state)
+                ctx.function-state
                 compiler-backend-function-bool-emit-instrs-continue-pending)
                 (begin
                   (set!
                     current-mode
                     (compiler-backend-function-state-next-mode
-                      (struct-get ctx function-state)))
+                      ctx.function-state))
                   (set!
                     current-instrs
                     (compiler-backend-function-state-next-instrs
-                      (struct-get ctx function-state)))
+                      ctx.function-state))
                   (set!
                     current-index
                     (compiler-backend-function-state-i64
-                      (struct-get ctx function-state)
+                      ctx.function-state
                       compiler-backend-function-i64-emit-instrs-next-index))
-                  (set! current-count (struct-get current-instrs len))
+                  (set! current-count current-instrs.len)
                   unit)
                 (begin
                   (set! asm-out asm)
@@ -55746,7 +55687,7 @@
                 (set! ok false)
                 (set! done true))])))
       (compiler-backend-function-state-set-bool!
-        (struct-get ctx function-state)
+        ctx.function-state
         compiler-backend-function-bool-emit-instrs-loop-active
         false)
       (if ok
@@ -55760,10 +55701,10 @@
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (compiler-backend-function-state-bool?
-    (struct-get ctx function-state)
+    ctx.function-state
     compiler-backend-function-bool-emit-instrs-loop-active)
     (compiler-backend-emit-instrs-set-continue!
-      (struct-get ctx function-state)
+      ctx.function-state
       (CompilerBackendEmitInstrsMode.Normal)
       instrs
       index)
@@ -55784,10 +55725,10 @@
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (compiler-backend-function-state-bool?
-    (struct-get ctx function-state)
+    ctx.function-state
     compiler-backend-function-bool-emit-instrs-loop-active)
     (compiler-backend-emit-instrs-set-continue!
-      (struct-get ctx function-state)
+      ctx.function-state
       (CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
       instrs
       index)
@@ -55808,10 +55749,10 @@
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (compiler-backend-function-state-bool?
-    (struct-get ctx function-state)
+    ctx.function-state
     compiler-backend-function-bool-emit-instrs-loop-active)
     (compiler-backend-emit-instrs-set-continue!
-      (struct-get ctx function-state)
+      ctx.function-state
       (CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
       instrs
       index)
@@ -55849,8 +55790,7 @@
     [(compiler_ir_types.CompilerIrBlock.Block label instrs)
       (begin
         (compiler-backend-function-state-set-i64!
-          (compiler-backend-state-function-state
-            (struct-get program-index backend-state))
+          (compiler-backend-state-function-state program-index.backend-state)
           compiler-backend-function-i64-current-block-label
           label)
         ;; The block header goes in FIRST now that instructions append straight
@@ -55869,8 +55809,7 @@
         (compiler-backend-asm-append
           out
           (compiler-backend-const-hoist-injection-for
-            (compiler-backend-state-function-state
-              (struct-get program-index backend-state))
+            (compiler-backend-state-function-state program-index.backend-state)
             label
             true))
         (compiler-backend-asm-append5
@@ -55883,8 +55822,7 @@
         (compiler-backend-asm-append
           out
           (compiler-backend-const-hoist-injection-for
-            (compiler-backend-state-function-state
-              (struct-get program-index backend-state))
+            (compiler-backend-state-function-state program-index.backend-state)
             label
             false))
         (compiler-backend-emit-instrs
@@ -55908,9 +55846,8 @@
             span-index
             func-diag
             use-counts
-            (struct-get program-index backend-state)
-            (compiler-backend-state-function-state
-              (struct-get program-index backend-state)))
+            program-index.backend-state
+            (compiler-backend-state-function-state program-index.backend-state))
           fallthrough
           instrs
           0
@@ -55931,8 +55868,7 @@
       (+
         acc
         (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
-          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-            (struct-get instrs len)])))))
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs) instrs.len])))))
 
 (define (compiler-backend-blocks-instr-count
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
@@ -55941,9 +55877,8 @@
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (+
         (match block
-          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-            (struct-get instrs len)])
-        (compiler-backend-blocks-instr-count (box-get rest)))]
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs) instrs.len])
+        (compiler-backend-blocks-instr-count (__tl-box-place rest)))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-blocks-instr-count-seq seq 0 0)]))
 
@@ -56001,13 +55936,13 @@
             (let
               [function-state : CompilerBackendFunctionState
                 (compiler-backend-state-function-state
-                  (struct-get program-index backend-state))]
+                  program-index.backend-state)]
               (compiler-backend-function-state-set-emit-instr-post-base!
                 function-state
                 (+
                   (compiler-backend-function-state-emit-instr-post-base
                     function-state)
-                  (struct-get instrs len))))])
+                  instrs.len)))])
         (match (compiler-backend-emit-block
           type-segment-bases
           target
@@ -56035,7 +55970,7 @@
               (compiler-backend-emergency-wrap-appended
                 out
                 mark
-                (struct-get program-index backend-state))
+                program-index.backend-state)
               (compiler-backend-emit-block-seq-into
                 type-segment-bases
                 target
@@ -56093,13 +56028,13 @@
               (let
                 [function-state : CompilerBackendFunctionState
                   (compiler-backend-state-function-state
-                    (struct-get program-index backend-state))]
+                    program-index.backend-state)]
                 (compiler-backend-function-state-set-emit-instr-post-base!
                   function-state
                   (+
                     (compiler-backend-function-state-emit-instr-post-base
                       function-state)
-                    (struct-get instrs len))))])
+                    instrs.len)))])
           (match (compiler-backend-emit-block
             type-segment-bases
             target
@@ -56107,7 +56042,7 @@
             source-function
             all-blocks
             block
-            (compiler-backend-next-block-label (box-get rest))
+            (compiler-backend-next-block-label (__tl-box-place rest))
             assignments
             vars
             types
@@ -56127,14 +56062,14 @@
                 (compiler-backend-emergency-wrap-appended
                   out
                   mark
-                  (struct-get program-index backend-state))
+                  program-index.backend-state)
                 (compiler-backend-emit-blocks-into
                   type-segment-bases
                   target
                   function
                   source-function
                   all-blocks
-                  (box-get rest)
+                  (__tl-box-place rest)
                   assignments
                   vars
                   types
@@ -56504,7 +56439,7 @@
                   type-segment-bases
                   target
                   assignments
-                  (box-get rest)
+                  (__tl-box-place rest)
                   (if (or special? is-float)
                     int-idx
                     (+ int-idx 1))
@@ -56655,7 +56590,7 @@
                   target
                   assignments
                   all-params
-                  (box-get rest)
+                  (__tl-box-place rest)
                   int-idx
                   float-idx
                   (+ position 1)
@@ -56779,7 +56714,7 @@
                               target
                               assignments
                               all-params
-                              (box-get rest)
+                              (__tl-box-place rest)
                               int-idx
                               float-idx
                               (+ position 2)
@@ -56837,7 +56772,7 @@
                               target
                               assignments
                               all-params
-                              (box-get rest)
+                              (__tl-box-place rest)
                               (if w1-sse
                                 int1
                                 (+ int1 1))
@@ -56874,7 +56809,7 @@
                     target
                     assignments
                     all-params
-                    (box-get rest)
+                    (__tl-box-place rest)
                     next-int
                     next-float
                     (+ position 1)
@@ -56938,7 +56873,7 @@
                         target
                         assignments
                         all-params
-                        (box-get rest)
+                        (__tl-box-place rest)
                         next-int
                         next-float
                         (+ position 1)
@@ -57277,10 +57212,10 @@
     (>= used (array-length event-bits)))
     used
     (begin
-      (array-set! event-bits used bit-index)
-      (array-set! event-deltas used delta)
-      (array-set! event-next used (array-ref heads event))
-      (array-set! heads event used)
+      (set! (array-ref event-bits used) bit-index)
+      (set! (array-ref event-deltas used) delta)
+      (set! (array-ref event-next used) (array-ref heads event))
+      (set! (array-ref heads event) used)
       (+ used 1))))
 
 (define (compiler-backend-scavenge-occupancy-add-mask-events!
@@ -57361,7 +57296,7 @@
               (array-ref active-counts bit-index)
               (array-ref event-deltas node))]
           (begin
-            (array-set! active-counts bit-index next)
+            (set! (array-ref active-counts bit-index) next)
             (set! node (array-ref event-next node)))))]
     [bit-index : i64 0]
     [mask : i64 0]
@@ -57388,9 +57323,9 @@
       (compiler-backend-scavenge-occupancy-instr-count ends vars)]
     [event-count : i64 (+ instr-count 1)]
     [heads : (__tl_dyn-array i64) (make-array i64 event-count)]
-    [present : (__tl_dyn-array i64) (struct-get assignment-index present)]
+    [present : (__tl_dyn-array i64) assignment-index.present]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      (struct-get assignment-index items)]
+      assignment-index.items]
     [limit : i64 (array-length present)]
     [max-events : i64
       (compiler-backend-scavenge-occupancy-event-capacity
@@ -57448,9 +57383,8 @@
         (begin
           (while (< i instr-count)
             (begin
-              (array-set!
-                out
-                i
+              (set!
+                (array-ref out i)
                 (compiler-backend-scavenge-occupancy-mask-at-event
                   heads
                   event-bits
@@ -57482,9 +57416,9 @@
 (define (compiler-backend-scavenge-assignment-mask
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : i64
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [present : (__tl_dyn-array i64) assignments.present]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      (struct-get assignments items)]
+      assignments.items]
     [var : i64 0]
     [mask : i64 0]
     (begin
@@ -57515,9 +57449,9 @@
 (define (compiler-backend-assignments-have-register-home?
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : bool
   (let
-    [present : (__tl_dyn-array i64) (struct-get assignments present)]
+    [present : (__tl_dyn-array i64) assignments.present]
     [items : (__tl_dyn-array compiler_regalloc.CompilerRegLocation)
-      (struct-get assignments items)]
+      assignments.items]
     [var : i64 0]
     [found : bool false]
     (begin
@@ -57761,8 +57695,8 @@
                   label)]
               [after-items : (__tl_dyn-array
                 compiler_liveness.CompilerLiveI64Set)
-                (struct-get live-afters items)]
-              [count : i64 (struct-get instrs len)]
+                live-afters.items]
+              [count : i64 instrs.len]
               (begin
                 (if (> count 0)
                   (compiler_regalloc.compiler-reg-extend-set-words
@@ -57775,7 +57709,7 @@
                     point)
                   unit)
                 (compiler-backend-scavenge-seed-block-liveins
-                  (box-get rest)
+                  (__tl-box-place rest)
                   liveness
                   (+ point (* 2 count))
                   starts
@@ -57824,8 +57758,8 @@
                 (compiler_regalloc.compiler-reg-interval-index-build
                   intervals
                   slot-vars)]
-              [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
-              [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
+              [starts : (__tl_dyn-array i64) interval-index.starts]
+              [ends : (__tl_dyn-array i64) interval-index.ends]
               (compiler-backend-set-scavenge-ctx-ready!
                 function-state
                 starts
@@ -57918,9 +57852,9 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! a i (array-ref exclude i))
+          (set! (array-ref a i) (array-ref exclude i))
           (set! i (+ i 1))))
-      (array-set! a n extra)
+      (set! (array-ref a n) extra)
       a)))
 
 ;; Concatenate two exclude arrays into a fresh array.
@@ -57936,11 +57870,11 @@
     (begin
       (while (< i left-n)
         (begin
-          (array-set! a i (array-ref left i))
+          (set! (array-ref a i) (array-ref left i))
           (set! i (+ i 1))))
       (while (< j right-n)
         (begin
-          (array-set! a (+ left-n j) (array-ref right j))
+          (set! (array-ref a (+ left-n j)) (array-ref right j))
           (set! j (+ j 1))))
       a)))
 
@@ -58080,8 +58014,7 @@
   [function-state : CompilerBackendFunctionState]
   [instr : compiler_ir_types.CompilerIrInstr]) : i64
   (let
-    [mask-counts : (__tl_dyn-array i64)
-      (make-array -1 (struct-get function-state address))]
+    [mask-counts : (__tl_dyn-array i64) (make-array -1 function-state.address)]
     (begin
       (compiler-backend-function-state-set-i64!
         function-state
@@ -58895,11 +58828,10 @@
     [live-afters : compiler_liveness.CompilerLiveInstrSetVec]
     [point : i64]) : i64
     (let
-      [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-        (struct-get instrs slots)]
-      [count : i64 (struct-get instrs len)]
+      [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+      [count : i64 instrs.len]
       [after-items : (__tl_dyn-array compiler_liveness.CompilerLiveI64Set)
-        (struct-get live-afters items)]
+        live-afters.items]
       [index : i64 0]
       [out : i64 point]
       (begin
@@ -58943,7 +58875,7 @@
               vars
               name
               liveness
-              (box-get rest)
+              (__tl-box-place rest)
               (compiler-backend-scavenge-check-seq
                 starts
                 ends
@@ -59060,12 +58992,12 @@
       (compiler-backend-peephole-predcount-build-seq seq 0 counts)]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (compiler-backend-peephole-predcount-build
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-backend-peephole-predcount-bump
           counts
           (compiler_optimize.opt-cfg-block-successors-with-next
             block
-            (compiler_optimize.opt-cfg-entry-label (box-get rest)))))]))
+            (compiler_optimize.opt-cfg-entry-label (__tl-box-place rest)))))]))
 
 (define (compiler-backend-block-seq-label-or-empty
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
@@ -59109,10 +59041,10 @@
   (match block
     [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
       (let
-        [n : i64 (struct-get instrs len)]
+        [n : i64 instrs.len]
         (if (= n 0)
           false
-          (match (array-ref (struct-get instrs slots) (- n 1))
+          (match (array-ref instrs.slots (- n 1))
             [(compiler_ir_types.CompilerIrInstr.Branch _ true-label false-label)
               (compiler-backend-branch-needs-phi-copies?
                 function-state
@@ -59213,7 +59145,7 @@
               entry-label
               predcount
               block
-              (box-get rest)))])]))
+              (__tl-box-place rest)))])]))
 
 (define (compiler-backend-peephole-carry-safe-scan-seq
   [backend-state : CompilerBackendState]
@@ -59307,10 +59239,12 @@
             label-scope
             entry-label
             (compiler-backend-peephole-predcount-build
-              (compiler_ir_types.compiler-ir-block-cons entry (box-get rest))
+              (compiler_ir_types.compiler-ir-block-cons
+                entry
+                (__tl-box-place rest))
               (backend_label_i64_map.with-capacity 64))
             entry
-            (box-get rest))])]))
+            (__tl-box-place rest))])]))
 
 ;; ============================================================================
 ;; M-G3 stage 1: rsp-relative frame addressing (behavior-neutral rebase).
@@ -59583,7 +59517,7 @@
     (begin
       (while (< idx (array-length regs))
         (begin
-          (array-set! regs idx "")
+          (set! (array-ref regs idx) "")
           (set! idx (+ idx 1))))
       regs)))
 
@@ -59604,20 +59538,20 @@
     [idx : i64 0]
     [count : i64 0]
     (begin
-      (array-set! names 0 compiler_abi.compiler-reg-id-r12)
-      (array-set! names 1 compiler_abi.compiler-reg-id-r13)
-      (array-set! names 2 compiler_abi.compiler-reg-id-r14)
-      (array-set! names 3 compiler_abi.compiler-reg-id-r15)
-      (array-set! names 4 compiler_abi.compiler-reg-id-rbx)
+      (set! (array-ref names 0) compiler_abi.compiler-reg-id-r12)
+      (set! (array-ref names 1) compiler_abi.compiler-reg-id-r13)
+      (set! (array-ref names 2) compiler_abi.compiler-reg-id-r14)
+      (set! (array-ref names 3) compiler_abi.compiler-reg-id-r15)
+      (set! (array-ref names 4) compiler_abi.compiler-reg-id-rbx)
       (if (compiler-backend-current-fn-win64? backend-state)
         (begin
-          (array-set! names 5 compiler_abi.compiler-reg-id-rsi)
-          (array-set! names 6 compiler_abi.compiler-reg-id-rdi)
-          (array-set! names 7 compiler_abi.compiler-reg-id-rbp))
+          (set! (array-ref names 5) compiler_abi.compiler-reg-id-rsi)
+          (set! (array-ref names 6) compiler_abi.compiler-reg-id-rdi)
+          (set! (array-ref names 7) compiler_abi.compiler-reg-id-rbp))
         (begin
-          (array-set! names 5 compiler_abi.compiler-reg-id-rbp)
-          (array-set! names 6 compiler_abi.compiler-reg-id-invalid)
-          (array-set! names 7 compiler_abi.compiler-reg-id-invalid)))
+          (set! (array-ref names 5) compiler_abi.compiler-reg-id-rbp)
+          (set! (array-ref names 6) compiler_abi.compiler-reg-id-invalid)
+          (set! (array-ref names 7) compiler_abi.compiler-reg-id-invalid)))
       (while (< idx (array-length names))
         (let
           [reg-id : i64 (array-ref names idx)]
@@ -59629,12 +59563,11 @@
                 assignments
                 reg-id))
               (begin
-                (array-set!
-                  regs
-                  idx
+                (set!
+                  (array-ref regs idx)
                   (compiler_abi.compiler-abi-register-spelling reg-id))
                 (set! count (+ count 1)))
-              (array-set! regs idx ""))
+              (set! (array-ref regs idx) ""))
             (set! idx (+ idx 1)))))
       count)))
 
@@ -59854,7 +59787,7 @@
           (if (compiler_regalloc.compiler-reg-loop-split-seq-has-call-or-syscall?
             instrs)
             true
-            (compiler-backend-blocks-have-call? (box-get rest)))])]
+            (compiler-backend-blocks-have-call? (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-blocks-have-call?
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -60557,7 +60490,7 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    (if (> (array-length (struct-get data sweep-sym-off)) 0)
+    (if (> (array-length data.sweep-sym-off) 0)
       unit
       (let
         [previous : i64 (arena.tl_arena_current)]
@@ -60568,16 +60501,16 @@
             (arena.tl_arena_set owner))]
         [cap : i64 compiler-backend-sweep-initial-capacity]
         (begin
-          (set! (struct-get data sweep-sym-off) (array.make-array i64 cap))
-          (set! (struct-get data sweep-sym-len) (array.make-array i64 cap))
-          (set! (struct-get data sweep-lo-arr) (array.make-array i64 cap))
-          (set! (struct-get data sweep-hi-arr) (array.make-array i64 cap))
-          (set! (struct-get data sweep-disp-arr) (array.make-array i64 cap))
-          (set! (struct-get data sweep-win64-arr) (array.make-array i64 cap))
-          (set! (struct-get data sweep-em-lo-arr) (array.make-array i64 cap))
-          (set! (struct-get data sweep-em-hi-arr) (array.make-array i64 cap))
+          (set! data.sweep-sym-off (array.make-array i64 cap))
+          (set! data.sweep-sym-len (array.make-array i64 cap))
+          (set! data.sweep-lo-arr (array.make-array i64 cap))
+          (set! data.sweep-hi-arr (array.make-array i64 cap))
+          (set! data.sweep-disp-arr (array.make-array i64 cap))
+          (set! data.sweep-win64-arr (array.make-array i64 cap))
+          (set! data.sweep-em-lo-arr (array.make-array i64 cap))
+          (set! data.sweep-em-hi-arr (array.make-array i64 cap))
           (set!
-            (struct-get data sweep-sym-bytes)
+            data.sweep-sym-bytes
             (array.make-array u8 compiler-backend-sweep-initial-bytes-capacity))
           (compiler-backend-stream-state-data-set! stream data)
           (compiler-backend-state-lazy-table-arena-finish!
@@ -60591,7 +60524,7 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [old-cap : i64 (array-length (struct-get data sweep-sym-off))]
+    [old-cap : i64 (array-length data.sweep-sym-off)]
     [new-cap : i64
       (if (> (* old-cap 4) compiler-backend-sweep-capacity)
         compiler-backend-sweep-capacity
@@ -60615,43 +60548,25 @@
         [em-hi-arr : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
         [i : i64 0]
         (begin
-          (while (< i (struct-get data sweep-count))
+          (while (< i data.sweep-count)
             (begin
-              (array-set!
-                sym-off
-                i
-                (array-ref (struct-get data sweep-sym-off) i))
-              (array-set!
-                sym-len
-                i
-                (array-ref (struct-get data sweep-sym-len) i))
-              (array-set! lo-arr i (array-ref (struct-get data sweep-lo-arr) i))
-              (array-set! hi-arr i (array-ref (struct-get data sweep-hi-arr) i))
-              (array-set!
-                disp-arr
-                i
-                (array-ref (struct-get data sweep-disp-arr) i))
-              (array-set!
-                win64-arr
-                i
-                (array-ref (struct-get data sweep-win64-arr) i))
-              (array-set!
-                em-lo-arr
-                i
-                (array-ref (struct-get data sweep-em-lo-arr) i))
-              (array-set!
-                em-hi-arr
-                i
-                (array-ref (struct-get data sweep-em-hi-arr) i))
+              (set! (array-ref sym-off i) (array-ref data.sweep-sym-off i))
+              (set! (array-ref sym-len i) (array-ref data.sweep-sym-len i))
+              (set! (array-ref lo-arr i) (array-ref data.sweep-lo-arr i))
+              (set! (array-ref hi-arr i) (array-ref data.sweep-hi-arr i))
+              (set! (array-ref disp-arr i) (array-ref data.sweep-disp-arr i))
+              (set! (array-ref win64-arr i) (array-ref data.sweep-win64-arr i))
+              (set! (array-ref em-lo-arr i) (array-ref data.sweep-em-lo-arr i))
+              (set! (array-ref em-hi-arr i) (array-ref data.sweep-em-hi-arr i))
               (set! i (+ i 1))))
-          (set! (struct-get data sweep-sym-off) sym-off)
-          (set! (struct-get data sweep-sym-len) sym-len)
-          (set! (struct-get data sweep-lo-arr) lo-arr)
-          (set! (struct-get data sweep-hi-arr) hi-arr)
-          (set! (struct-get data sweep-disp-arr) disp-arr)
-          (set! (struct-get data sweep-win64-arr) win64-arr)
-          (set! (struct-get data sweep-em-lo-arr) em-lo-arr)
-          (set! (struct-get data sweep-em-hi-arr) em-hi-arr)
+          (set! data.sweep-sym-off sym-off)
+          (set! data.sweep-sym-len sym-len)
+          (set! data.sweep-lo-arr lo-arr)
+          (set! data.sweep-hi-arr hi-arr)
+          (set! data.sweep-disp-arr disp-arr)
+          (set! data.sweep-win64-arr win64-arr)
+          (set! data.sweep-em-lo-arr em-lo-arr)
+          (set! data.sweep-em-hi-arr em-hi-arr)
           (compiler-backend-stream-state-data-set! stream data)
           (compiler-backend-state-lazy-table-arena-finish!
             backend-state
@@ -60666,7 +60581,7 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [old : (__tl_dyn-array u8) (struct-get data sweep-sym-bytes)]
+    [old : (__tl_dyn-array u8) data.sweep-sym-bytes]
     [new-cap : i64 (array-length old)]
     (begin
       (while (and
@@ -60689,11 +60604,11 @@
           [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
           [i : i64 0]
           (begin
-            (while (< i (struct-get data sweep-sym-bytes-count))
+            (while (< i data.sweep-sym-bytes-count)
               (begin
-                (array-set! bytes i (array-ref old i))
+                (set! (array-ref bytes i) (array-ref old i))
                 (set! i (+ i 1))))
-            (set! (struct-get data sweep-sym-bytes) bytes)
+            (set! data.sweep-sym-bytes bytes)
             (compiler-backend-stream-state-data-set! stream data)
             (compiler-backend-state-lazy-table-arena-finish!
               backend-state
@@ -60706,8 +60621,8 @@
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set! (struct-get data sweep-count) 0)
-      (set! (struct-get data sweep-sym-bytes-count) 0)
+      (set! data.sweep-count 0)
+      (set! data.sweep-sym-bytes-count 0)
       (compiler-backend-stream-state-data-set! stream data)
       (set! compiler-backend-sweep-swept-stores 0)
       (set! compiler-backend-sweep-swept-funcs 0)
@@ -60736,16 +60651,14 @@
     [sdata : (Ptr u8)
       (unsafe
         (string-data symbol))]
-    [start : i64 (struct-get data sweep-sym-bytes-count)]
+    [start : i64 data.sweep-sym-bytes-count]
     [table-ok : bool
       (or
-        (<
-          (struct-get data sweep-count)
-          (array-length (struct-get data sweep-sym-off)))
+        (< data.sweep-count (array-length data.sweep-sym-off))
         (compiler-backend-sweep-table-grow! backend-state stream))]
     [bytes-ok : bool
       (or
-        (<= (+ start len) (array-length (struct-get data sweep-sym-bytes)))
+        (<= (+ start len) (array-length data.sweep-sym-bytes))
         (compiler-backend-sweep-bytes-grow! backend-state stream (+ start len)))]
     (if (or (not table-ok) (not bytes-ok))
       (begin
@@ -60766,30 +60679,28 @@
         [current : CompilerBackendStreamStateData
           (compiler-backend-stream-state-data stream)]
         [j : i64 0]
-        [idx : i64 (struct-get current sweep-count)]
+        [idx : i64 current.sweep-count]
         (begin
           (while (< j len)
             (begin
-              (array-set!
-                (struct-get current sweep-sym-bytes)
-                (+ start j)
+              (set!
+                (array-ref current.sweep-sym-bytes (+ start j))
                 (cast (compiler-backend-peephole-byte-at sdata j) : u8))
               (set! j (+ j 1))))
-          (array-set! (struct-get current sweep-sym-off) idx start)
-          (array-set! (struct-get current sweep-sym-len) idx len)
-          (array-set! (struct-get current sweep-lo-arr) idx lo)
-          (array-set! (struct-get current sweep-hi-arr) idx hi)
-          (array-set! (struct-get current sweep-disp-arr) idx disp)
-          (array-set!
-            (struct-get current sweep-win64-arr)
-            idx
+          (set! (array-ref current.sweep-sym-off idx) start)
+          (set! (array-ref current.sweep-sym-len idx) len)
+          (set! (array-ref current.sweep-lo-arr idx) lo)
+          (set! (array-ref current.sweep-hi-arr idx) hi)
+          (set! (array-ref current.sweep-disp-arr idx) disp)
+          (set!
+            (array-ref current.sweep-win64-arr idx)
             (if win64
               1
               0))
-          (array-set! (struct-get current sweep-em-lo-arr) idx em-lo)
-          (array-set! (struct-get current sweep-em-hi-arr) idx em-hi)
-          (set! (struct-get current sweep-sym-bytes-count) (+ start len))
-          (set! (struct-get current sweep-count) (+ idx 1))
+          (set! (array-ref current.sweep-em-lo-arr idx) em-lo)
+          (set! (array-ref current.sweep-em-hi-arr idx) em-hi)
+          (set! current.sweep-sym-bytes-count (+ start len))
+          (set! current.sweep-count (+ idx 1))
           (compiler-backend-stream-state-data-set! stream current))))))
 
 ;; Compute [lo, hi] (the VAR-REGION slot-start span in canonical delta-0
@@ -60964,7 +60875,7 @@
   [v : i64]) : (__tl_dyn-array i64)
   (if (< count (array-length arr))
     (begin
-      (array-set! arr count v)
+      (set! (array-ref arr count) v)
       arr)
     (let
       [old : i64 (array-length arr)]
@@ -60977,9 +60888,9 @@
       (begin
         (while (< k count)
           (begin
-            (array-set! na k (array-ref arr k))
+            (set! (array-ref na k) (array-ref arr k))
             (set! k (+ k 1))))
-        (array-set! na count v)
+        (set! (array-ref na count) v)
         na))))
 
 ;; True iff the line [ls,le) is exactly "<sym>:" for metadata entry `idx`.
@@ -60992,8 +60903,8 @@
   (let
     [state-data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [off : i64 (array-ref (struct-get state-data sweep-sym-off) idx)]
-    [len : i64 (array-ref (struct-get state-data sweep-sym-len) idx)]
+    [off : i64 (array-ref state-data.sweep-sym-off idx)]
+    [len : i64 (array-ref state-data.sweep-sym-len idx)]
     (if (not (= (- le ls) (+ len 1)))
       false
       (if (not (= (compiler-backend-peephole-byte-at data (- le 1)) 58))
@@ -61006,11 +60917,7 @@
               (begin
                 (if (=
                   (compiler-backend-peephole-byte-at data (+ ls j))
-                  (cast
-                    (array-ref
-                      (struct-get state-data sweep-sym-bytes)
-                      (+ off j))
-                    : i64))
+                  (cast (array-ref state-data.sweep-sym-bytes (+ off j)) : i64))
                   unit
                   (set! ok false))
                 (set! j (+ j 1))))
@@ -61281,7 +61188,7 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [old : (__tl_dyn-array i64) (struct-get data sweep-coverage-bits)]
+    [old : (__tl_dyn-array i64) data.sweep-coverage-bits]
     [new-cap : i64
       (if (= (array-length old) 0)
         64
@@ -61308,7 +61215,7 @@
                 (arena.tl_arena_set owner))]
             [bits : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
             (begin
-              (set! (struct-get data sweep-coverage-bits) bits)
+              (set! data.sweep-coverage-bits bits)
               (compiler-backend-stream-state-data-set! stream data)
               (compiler-backend-state-lazy-table-arena-finish!
                 backend-state
@@ -61358,7 +61265,7 @@
                   (set! delta 0))]
               [else
                 (let
-                  [meta : i64 (struct-get line meta)]
+                  [meta : i64 line.meta]
                   (if (not
                     (=
                       (bit-and
@@ -61371,7 +61278,7 @@
                     ;; Win64-tail poisoning remains.
                     (when win64-tail (set! sweepable false))
                     (let
-                      [cand-raw : i64 (struct-get line cand)]
+                      [cand-raw : i64 line.cand]
                       (if (not (= cand-raw none))
                         ;; Verified candidate store: flags, mem-count and
                         ;; epilogue are empty by construction, so only
@@ -61383,7 +61290,7 @@
                             cand-pos
                             (if (< cand-count (array-length cand-pos))
                               (begin
-                                (array-set! cand-pos cand-count i)
+                                (set! (array-ref cand-pos cand-count) i)
                                 cand-pos)
                               (compiler-backend-sweep-i64-push
                                 cand-pos
@@ -61393,9 +61300,8 @@
                             cand-off
                             (if (< cand-count (array-length cand-off))
                               (begin
-                                (array-set!
-                                  cand-off
-                                  cand-count
+                                (set!
+                                  (array-ref cand-off cand-count)
                                   (- cand-raw delta))
                                 cand-off)
                               (compiler-backend-sweep-i64-push
@@ -61440,7 +61346,7 @@
                               (compiler-backend-sweep-line-flag?
                                 flags
                                 compiler-backend-sweep-line-flag-win64-rbp-set))]
-                          [epilogue-raw : i64 (struct-get line epilogue)]
+                          [epilogue-raw : i64 line.epilogue]
                           [win64-epilogue-c : i64
                             (if (or (not win64) (= epilogue-raw none))
                               none
@@ -61512,7 +61418,7 @@
                                     [c : i64
                                       (-
                                         (if (= k 0)
-                                          (struct-get line value)
+                                          line.value
                                           (compiler-backend-sweep-line-mem-off-nth
                                             (compiler-backend-peephole-record-data
                                               line)
@@ -61539,9 +61445,10 @@
                                               read-count
                                               (array-length reads-lo))
                                               (begin
-                                                (array-set!
-                                                  reads-lo
-                                                  read-count
+                                                (set!
+                                                  (array-ref
+                                                    reads-lo
+                                                    read-count)
                                                   c)
                                                 reads-lo)
                                               (compiler-backend-sweep-i64-push
@@ -61554,9 +61461,10 @@
                                               read-count
                                               (array-length reads-hi))
                                               (begin
-                                                (array-set!
-                                                  reads-hi
-                                                  read-count
+                                                (set!
+                                                  (array-ref
+                                                    reads-hi
+                                                    read-count)
                                                   (+ c w))
                                                 reads-hi)
                                               (compiler-backend-sweep-i64-push
@@ -61573,12 +61481,8 @@
                                   (set! win64-tail true))
                                 (if tracked-rsp-write?
                                   (if subq?
-                                    (set!
-                                      delta
-                                      (+ delta (struct-get line value)))
-                                    (set!
-                                      delta
-                                      (- delta (struct-get line value))))
+                                    (set! delta (+ delta line.value))
+                                    (set! delta (- delta line.value)))
                                   (set! sweepable false)))
                               unit)
                             (if push?
@@ -61620,7 +61524,7 @@
                 stream
                 words))]
           [coverage-bits : (__tl_dyn-array i64)
-            (struct-get
+            (__tl-project-field
               (compiler-backend-stream-state-data stream)
               sweep-coverage-bits)]
           (begin
@@ -61630,7 +61534,7 @@
                   [w : i64 0]
                   (while (< w words)
                     (begin
-                      (array-set! coverage-bits w 0)
+                      (set! (array-ref coverage-bits w) 0)
                       (set! w (+ w 1)))))
                 (let
                   [r : i64 0]
@@ -61670,9 +61574,8 @@
                                     -1
                                     (shl (- (shl 1 width) 1) lo-bit))]
                                 (begin
-                                  (array-set!
-                                    coverage-bits
-                                    w
+                                  (set!
+                                    (array-ref coverage-bits w)
                                     (bit-or (array-ref coverage-bits w) mask))
                                   (set! w (+ w 1))))))
                           unit)
@@ -61747,7 +61650,7 @@
                           (if read
                             unit
                             (begin
-                              (array-set! live pos 0)
+                              (set! (array-ref live pos) 0)
                               (set! swept (+ swept 1)))))
                         unit)
                       (set! k (+ k 1)))))
@@ -61779,17 +61682,16 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    (if (>= start-cursor (struct-get data sweep-count))
+    (if (>= start-cursor data.sweep-count)
       start-cursor
       (let
-        [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
-          (struct-get v lines)]
-        [live : (__tl_dyn-array i64) (struct-get v live)]
-        [count : i64 (struct-get v len)]
+        [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
+        [live : (__tl_dyn-array i64) v.live]
+        [count : i64 v.len]
         [cursor : i64 start-cursor]
         [i : i64 0]
         (begin
-          (while (and (< i count) (< cursor (struct-get data sweep-count)))
+          (while (and (< i count) (< cursor data.sweep-count))
             (let
               [line : CompilerBackendPeepholeLineRecord (array-ref recs i)]
               (if (compiler-backend-sweep-label-matches?
@@ -61813,12 +61715,12 @@
                       live
                       rstart
                       rend
-                      (array-ref (struct-get data sweep-lo-arr) cursor)
-                      (array-ref (struct-get data sweep-hi-arr) cursor)
-                      (array-ref (struct-get data sweep-disp-arr) cursor)
-                      (array-ref (struct-get data sweep-em-lo-arr) cursor)
-                      (array-ref (struct-get data sweep-em-hi-arr) cursor)
-                      (= (array-ref (struct-get data sweep-win64-arr) cursor) 1))
+                      (array-ref data.sweep-lo-arr cursor)
+                      (array-ref data.sweep-hi-arr cursor)
+                      (array-ref data.sweep-disp-arr cursor)
+                      (array-ref data.sweep-em-lo-arr cursor)
+                      (array-ref data.sweep-em-hi-arr cursor)
+                      (= (array-ref data.sweep-win64-arr cursor) 1))
                     (set! cursor (+ cursor 1))
                     (set! i rend)))
                 (set! i (+ i 1)))))
@@ -62063,9 +61965,8 @@
         (begin
           (while (< j count)
             (begin
-              (array-set!
-                out
-                j
+              (set!
+                (array-ref out j)
                 (compiler_ir_types.compiler-ir-block-seq-ref seq j))
               (set! j (+ j 1))))
           out))]
@@ -62082,8 +61983,8 @@
             (match cursor
               [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
                 (begin
-                  (array-set! out j block)
-                  (set! cursor (box-get rest))
+                  (set! (array-ref out j) block)
+                  (set! cursor (__tl-box-place rest))
                   (set! j (+ j 1)))]
               [_ (set! j count)]))
           out))]))
@@ -62099,9 +62000,9 @@
           (let
             [instrs : compiler_ir_types.CompilerIrInstrSeq
               (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
-            [n : i64 (struct-get instrs len)]
+            [n : i64 instrs.len]
             [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-              (struct-get instrs slots)]
+              instrs.slots]
             [j : i64 0]
             (while (< j n)
               (begin
@@ -62123,9 +62024,9 @@
         (let
           [instrs : compiler_ir_types.CompilerIrInstrSeq
             (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
-          [n : i64 (struct-get instrs len)]
+          [n : i64 instrs.len]
           [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-            (struct-get instrs slots)]
+            instrs.slots]
           [j : i64 0]
           (while (< j n)
             (begin
@@ -62134,7 +62035,7 @@
                   (compiler_regalloc.compiler-reg-instr-def-var
                     (array-ref slots j))]
                 (if (and (>= dst 0) (< dst (array-length defs)))
-                  (array-set! defs dst (+ (array-ref defs dst) 1))
+                  (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
                   unit))
               (set! j (+ j 1)))))
         (set! b (+ b 1))))))
@@ -62154,9 +62055,9 @@
         (let
           [instrs : compiler_ir_types.CompilerIrInstrSeq
             (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
-          [n : i64 (struct-get instrs len)]
+          [n : i64 instrs.len]
           [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-            (struct-get instrs slots)]
+            instrs.slots]
           [j : i64 0]
           (while (< j n)
             (begin
@@ -62177,10 +62078,10 @@
                               (< k (compiler-backend-gep-fold-k-bound))
                               (> k (- 0 (compiler-backend-gep-fold-k-bound))))
                               (begin
-                                (array-set! cand-base dst base)
-                                (array-set! cand-k dst k)
-                                (array-set! cand-block dst b)
-                                (array-set! cand-pos dst j))
+                                (set! (array-ref cand-base dst) base)
+                                (set! (array-ref cand-k dst) k)
+                                (set! (array-ref cand-block dst) b)
+                                (set! (array-ref cand-pos dst) j))
                               unit)]
                           [(CompilerBackendMaybeVarImm.No) unit])
                         unit)]
@@ -62208,9 +62109,9 @@
         (let
           [instrs : compiler_ir_types.CompilerIrInstrSeq
             (compiler-backend-gep-fold-block-instrs (array-ref barr b))]
-          [n : i64 (struct-get instrs len)]
+          [n : i64 instrs.len]
           [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-            (struct-get instrs slots)]
+            instrs.slots]
           [j : i64 0]
           (while (< j n)
             (begin
@@ -62238,15 +62139,14 @@
                             (< bdisp (compiler-backend-gep-fold-k-bound))
                             (> bdisp (- 0 (compiler-backend-gep-fold-k-bound))))
                             (begin
-                              (array-set!
-                                gep-uses
-                                ov
+                              (set!
+                                (array-ref gep-uses ov)
                                 (+ (array-ref gep-uses ov) 1))
                               (if (> j (array-ref gep-last ov))
-                                (array-set! gep-last ov j)
+                                (set! (array-ref gep-last ov) j)
                                 unit))
                             ;; disqualifying gep-index use: kill the candidate.
-                            (array-set! cand-base ov (- 0 1)))
+                            (set! (array-ref cand-base ov) (- 0 1)))
                           unit)
                         unit)]
                     [_ unit])]
@@ -62261,8 +62161,7 @@
   [to : i64]
   [var : i64]) : bool
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [j : i64 (+ from 1)]
     [found : bool false]
     (begin
@@ -62303,7 +62202,7 @@
                 (array-ref cand-pos v)
                 (array-ref gep-last v)
                 (array-ref cand-base v)))
-              (array-set! cand-base v (- 0 1))
+              (set! (array-ref cand-base v) (- 0 1))
               unit)
             unit)
           (set! v (+ v 1)))))
@@ -62321,7 +62220,7 @@
                     (if (and
                       (< bv (array-length cand-base))
                       (>= (array-ref cand-base bv) 0))
-                      (array-set! cand-base v (- 0 1))
+                      (set! (array-ref cand-base v) (- 0 1))
                       unit))
                   unit)
                 (set! v (+ v 1)))))
@@ -62355,10 +62254,10 @@
     [cursor : i64 (array-ref cursor-cell 0)]
     (if (< cursor (array-length disp-table))
       (begin
-        (array-set! disp-table cursor disp)
-        (array-set! kind-table cursor kind)
-        (array-set! scale-table cursor scale)
-        (array-set! cursor-cell 0 (+ cursor 1)))
+        (set! (array-ref disp-table cursor) disp)
+        (set! (array-ref kind-table cursor) kind)
+        (set! (array-ref scale-table cursor) scale)
+        (set! (array-ref cursor-cell 0) (+ cursor 1)))
       unit)))
 
 (define (compiler-backend-gep-fold-rewrite-seq
@@ -62373,9 +62272,8 @@
   [kind-table : (__tl_dyn-array i64)]
   [scale-table : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerIrInstrSeq
   (let
-    [n : i64 (struct-get instrs len)]
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
+    [n : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [out : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
       (array.make-array compiler_ir_types.CompilerIrInstr n)]
     [w : i64 0]
@@ -62392,7 +62290,7 @@
                 ;; elided offset add: drop it.
                 unit
                 (begin
-                  (array-set! out w (array-ref slots j))
+                  (set! (array-ref out w) (array-ref slots j))
                   (set! w (+ w 1))))]
             [(compiler_ir_types.CompilerIrInstr.Gep gdst base offset elem-ty)
               (let
@@ -62416,9 +62314,8 @@
                           disp-table
                           kind-table
                           scale-table)
-                        (array-set!
-                          out
-                          w
+                        (set!
+                          (array-ref out w)
                           (compiler_ir_types.CompilerIrInstr.Gep
                             gdst
                             base
@@ -62435,7 +62332,7 @@
                           disp-table
                           kind-table
                           scale-table)
-                        (array-set! out w (array-ref slots j))
+                        (set! (array-ref out w) (array-ref slots j))
                         (set! w (+ w 1))))]
                   [_
                     (begin
@@ -62447,11 +62344,11 @@
                         disp-table
                         kind-table
                         scale-table)
-                      (array-set! out w (array-ref slots j))
+                      (set! (array-ref out w) (array-ref slots j))
                       (set! w (+ w 1)))]))]
             [_
               (begin
-                (array-set! out w (array-ref slots j))
+                (set! (array-ref out w) (array-ref slots j))
                 (set! w (+ w 1)))])
           (set! j (+ j 1))))
       (compiler_ir_types.CompilerIrInstrSeq out w))))
@@ -62479,9 +62376,8 @@
         (begin
           (match (array-ref barr b)
             [(compiler_ir_types.CompilerIrBlock.Block label instrs)
-              (array-set!
-                rebuilt
-                b
+              (set!
+                (array-ref rebuilt b)
                 (compiler_ir_types.CompilerIrBlock.Block
                   label
                   (compiler-backend-gep-fold-rewrite-seq
@@ -62515,9 +62411,9 @@
       (let
         [instrs : compiler_ir_types.CompilerIrInstrSeq
           (compiler-backend-gep-fold-block-instrs block)]
-        [n : i64 (struct-get instrs len)]
+        [n : i64 instrs.len]
         [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-          (struct-get instrs slots)]
+          instrs.slots]
         [j : i64 0]
         [found : bool false]
         (begin
@@ -62533,7 +62429,8 @@
               (set! j (+ j 1))))
           (if found
             true
-            (compiler-backend-gep-fold-blocks-have-candidate? (box-get rest)))))]
+            (compiler-backend-gep-fold-blocks-have-candidate?
+              (__tl-box-place rest)))))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-gep-fold-block-seq-has-candidate? seq)]))
 
@@ -62550,9 +62447,9 @@
             [instrs : compiler_ir_types.CompilerIrInstrSeq
               (compiler-backend-gep-fold-block-instrs
                 (compiler_ir_types.compiler-ir-block-seq-ref blocks b))]
-            [n : i64 (struct-get instrs len)]
+            [n : i64 instrs.len]
             [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-              (struct-get instrs slots)]
+              instrs.slots]
             [j : i64 0]
             (while (and (< j n) (not found))
               (begin
@@ -62599,7 +62496,7 @@
             [v : i64 0]
             (while (< v vars)
               (begin
-                (array-set! cand-base v (- 0 1))
+                (set! (array-ref cand-base v) (- 0 1))
                 (set! v (+ v 1)))))
           (compiler-backend-gep-fold-scan-adds
             barr
@@ -62719,18 +62616,17 @@
         ;; true for any pass added to this function in future -- it depends only
         ;; on `program-index`, which is constant across the program, so nothing
         ;; forces it later.
-        [backend-state : CompilerBackendState
-          (struct-get program-index backend-state)]
+        [backend-state : CompilerBackendState program-index.backend-state]
         [function-state : CompilerBackendFunctionState
           (compiler-backend-state-function-state backend-state)]
         [scalar-registers-enabled : bool
           (compiler-backend-state-scalar-registers-enabled? backend-state)]
         [_ra-grp : unit
           (compiler_regalloc.compiler-reg-set-group-counts!
-            (struct-get program-index group-word-counts))]
+            program-index.group-word-counts)]
         [_ra-grp-mask : unit
           (compiler_regalloc.compiler-reg-set-group-class-masks!
-            (struct-get program-index group-word-class-masks))]
+            program-index.group-word-class-masks)]
         ;; Prefix dry-emission is part of shrink-wrap admission and precedes
         ;; this function's const-hoist build. Fail closed unless its scratch
         ;; state was reset successfully for this function.
@@ -62807,8 +62703,7 @@
             "")]
         [_current-mode : unit
           (compiler-backend-set-current-mode!
-            (compiler-backend-state-function-state
-              (struct-get program-index backend-state))
+            (compiler-backend-state-function-state program-index.backend-state)
             mode)]
         ;; M-G3 stage 2: enable %rbp as the final CSR for this function's plan
         ;; on both text backends. The `allow-rbp` parameter is false only on the
@@ -62826,7 +62721,7 @@
           (compiler-backend-regalloc-abi target)]
         [_fn-abi : unit
           (compiler-backend-set-current-fn-abi!
-            (struct-get program-index backend-state)
+            program-index.backend-state
             fn-abi)]
         ;; The scalar-opt2 plan and the caller-save rewrite below both need the
         ;; var-type view of `walk-func`, and each used to walk the function for
@@ -63338,10 +63233,10 @@
         [_group-var-flags : unit
           (begin
             (compiler-backend-current-slot-vars-set!
-              (struct-get program-index backend-state)
+              program-index.backend-state
               slot-vars)
             (compiler-backend-group-vars-enable!
-              (struct-get program-index backend-state)
+              program-index.backend-state
               emit-group-vars
               addressable-group-vars))]
         [symbol : String
@@ -63477,9 +63372,9 @@
               (compiler-backend-frame-slots-emergency-max
                 slot-vars
                 has-group-vars
-                (struct-get program-index backend-state))
+                program-index.backend-state)
               function-state
-              (struct-get program-index backend-state))
+              program-index.backend-state)
             (compiler-backend-const-hoist-disable! function-state))]
         ;; A stack frame alone is sufficient reason to wrap; limiting this to
         ;; plans with callee-saved homes left frame-only functions rewritten but
@@ -63523,7 +63418,7 @@
                 scratch-plan
                 scavenge-base-vars
                 scavenge-base-intervals)
-              (struct-get program-index backend-state))
+              program-index.backend-state)
             (compiler-backend-function-scratch-set-i64-array!
               function-state
               compiler-backend-scratch-i64-array-scavenge-scratch-masks
@@ -63552,7 +63447,7 @@
             [_phi-targets : unit
               (compiler-backend-function-state-install-phi-targets!
                 (compiler-backend-state-function-state
-                  (struct-get program-index backend-state))
+                  program-index.backend-state)
                 (compiler-backend-phi-target-labels-for-blocks emit-blocks-list))]
             ;; Must precede the parameter spills: those store incoming registers
             ;; into frame slots, and their references have to count.
@@ -63561,7 +63456,7 @@
             (match (if identity-tail-forwarder?
               (ResultCompilerBackend.Ok "")
               (if (compiler-backend-spmd-private-function?
-                (struct-get program-index backend-state)
+                program-index.backend-state
                 name)
                 (compiler-backend-emit-spmd-private-param-spills
                   type-segment-bases
@@ -63569,7 +63464,7 @@
                   assignments
                   emit-params
                   slot-vars
-                  (struct-get program-index backend-state))
+                  program-index.backend-state)
                 (compiler-backend-emit-param-spills
                   type-segment-bases
                   target
@@ -63581,39 +63476,39 @@
                   0
                   program-index
                   slot-vars
-                  (struct-get program-index backend-state))))
+                  program-index.backend-state)))
               [(ResultCompilerBackend.Ok spills)
                 (let
                   [_carry-safe : unit
                     (compiler-backend-peephole-collect-carry-safe!
-                      (struct-get program-index backend-state)
+                      program-index.backend-state
                       (compiler-backend-state-stream-state
-                        (struct-get program-index backend-state))
+                        program-index.backend-state)
                       (compiler-backend-state-function-state
-                        (struct-get program-index backend-state))
+                        program-index.backend-state)
                       label-scope
                       emit-blocks-list)]
                   [_addr-forward : unit
                     (compiler-backend-addr-of-forwarding-enable!
-                      (struct-get program-index backend-state)
+                      program-index.backend-state
                       scratch-vars
                       emit-blocks-list
                       use-counts)]
                   [_fuse-need : unit
                     (compiler-backend-fuse-need-enable!
-                      (struct-get program-index backend-state)
+                      program-index.backend-state
                       use-counts
                       fuse-free-counts)]
                   [_identity-tail-forwarder : unit
                     (compiler-backend-function-state-set-bool!
                       (compiler-backend-state-function-state
-                        (struct-get program-index backend-state))
+                        program-index.backend-state)
                       compiler-backend-function-bool-identity-tail-forwarder-active
                       identity-tail-forwarder?)]
                   [_shrinkwrap-return : unit
                     (compiler-backend-function-state-set-string!
                       (compiler-backend-state-function-state
-                        (struct-get program-index backend-state))
+                        program-index.backend-state)
                       compiler-backend-function-string-shrinkwrap-bare-label
                       (if shrinkwrap-active?
                         shrinkwrap-bare-label
@@ -63632,7 +63527,7 @@
                           (compiler-backend-frame-slots-emergency-max
                             slot-vars
                             has-group-vars
-                            (struct-get program-index backend-state))
+                            program-index.backend-state)
                           (compiler-backend-function-scratch-i64
                             function-state
                             compiler-backend-scratch-i64-const-hoist-frame-count)))
@@ -63763,7 +63658,7 @@
                                       (compiler-backend-frame-slots-emergency-max
                                         slot-vars
                                         has-group-vars
-                                        (struct-get program-index backend-state))
+                                        program-index.backend-state)
                                       ;; Nothing named a frame slot: the slot
                                       ;; region is dead. Leaf helpers stop paying
                                       ;; sub/add for a frame they never touch.
@@ -63780,9 +63675,7 @@
                                           slot-vars
                                           assignments
                                           has-group-vars
-                                          (struct-get
-                                            program-index
-                                            backend-state))
+                                          program-index.backend-state)
                                         0))
                                     (compiler-backend-function-scratch-i64
                                       function-state
@@ -63793,15 +63686,15 @@
                             (begin
                               (compiler-backend-function-state-set-bool!
                                 (compiler-backend-state-function-state
-                                  (struct-get program-index backend-state))
+                                  program-index.backend-state)
                                 compiler-backend-function-bool-identity-tail-forwarder-active
                                 false)
                               (compiler-backend-addr-of-forwarding-disable!
-                                (struct-get program-index backend-state))
+                                program-index.backend-state)
                               (compiler-backend-group-vars-disable!
-                                (struct-get program-index backend-state))
+                                program-index.backend-state)
                               (compiler-backend-fuse-need-disable!
-                                (struct-get program-index backend-state))
+                                program-index.backend-state)
                               (compiler-backend-gep-fold-disable!
                                 function-state))]
                           [saving-prologue-body : String
@@ -63809,7 +63702,7 @@
                               (compiler-backend-emit-save-callee-regs
                                 assignments
                                 slot-vars
-                                (struct-get program-index backend-state))
+                                program-index.backend-state)
                               (compiler-backend-emit-windows-main-argv-capture
                                 target
                                 (compiler-backend-symbol-text-index
@@ -63874,7 +63767,7 @@
                               (compiler-backend-mode-prologue mode)
                               framed-body
                               (compiler-backend-return-epilogue
-                                (struct-get program-index backend-state)
+                                program-index.backend-state
                                 name
                                 assignments
                                 slot-vars
@@ -63903,7 +63796,7 @@
                               (compiler-backend-fill-push-csr-regs!
                                 assignments
                                 push-regs
-                                (struct-get program-index backend-state))
+                                program-index.backend-state)
                               0)]
                           ;; Win64 UWOP_SAVE_XMM128 encodes its stack offset in
                           ;; 16-byte units. An even GP-push count leaves the
@@ -63923,7 +63816,7 @@
                                     (compiler-backend-target-windows? target)
                                     (compiler-backend-plan-uses-win64-xmm-callee-regs?
                                       assignments
-                                      (struct-get program-index backend-state))))
+                                      program-index.backend-state)))
                                 (= (bit-and push-count 1) 1)))]
                           [_fpo-bare : unit
                             (compiler-backend-function-state-set-bool!
@@ -63948,7 +63841,7 @@
                               push-regs
                               push-count
                               slot-vars
-                              (struct-get program-index backend-state))]
+                              program-index.backend-state)]
                           [rebase-ok : bool compiler-backend-rsp-rebase-last-ok]
                           [fpo-ok : bool (and fpo-attempt rebase-ok)]
                           (if (and
@@ -63997,7 +63890,7 @@
                                       post-prologue
                                       frame
                                       false
-                                      (struct-get program-index backend-state))
+                                      program-index.backend-state)
                                     rebased))]
                               [entry-symbol : String
                                 (if shrinkwrap-active?
@@ -64031,7 +63924,7 @@
                                     frame
                                     assignments
                                     slot-vars
-                                    (struct-get program-index backend-state)))]
+                                    program-index.backend-state))]
                               [emitted-body : String
                                 (if shrinkwrap-active?
                                   (string.replace
@@ -64082,7 +63975,7 @@
                                   false)
                                 (begin
                                   (compiler-backend-commit-frame-layout!
-                                    (struct-get program-index backend-state)
+                                    program-index.backend-state
                                     target
                                     assignments
                                     symbol
@@ -64148,15 +64041,15 @@
                           (begin
                             (compiler-backend-function-state-set-bool!
                               (compiler-backend-state-function-state
-                                (struct-get program-index backend-state))
+                                program-index.backend-state)
                               compiler-backend-function-bool-identity-tail-forwarder-active
                               false)
                             (compiler-backend-addr-of-forwarding-disable!
-                              (struct-get program-index backend-state))
+                              program-index.backend-state)
                             (compiler-backend-group-vars-disable!
-                              (struct-get program-index backend-state))
+                              program-index.backend-state)
                             (compiler-backend-fuse-need-disable!
-                              (struct-get program-index backend-state))
+                              program-index.backend-state)
                             (compiler-backend-gep-fold-disable! function-state))]
                         (ResultCompilerBackend.Err message))]))]
               [(ResultCompilerBackend.Err message)
@@ -64174,7 +64067,7 @@
   [backend-state : CompilerBackendState]) : unit
   (let
     [function-state-address : i64
-      (struct-get
+      (__tl-project-field
         (compiler-backend-state-data backend-state)
         function-state-address)]
     (when
@@ -64227,8 +64120,7 @@
   [crt-entry : bool]
   [scratch : i64]) : ResultCompilerBackend
   (let
-    [backend-state : CompilerBackendState
-      (struct-get program-index backend-state)]
+    [backend-state : CompilerBackendState program-index.backend-state]
     [result : ResultCompilerBackend
       (with-escape
         (arena.Arena scratch)
@@ -64294,8 +64186,7 @@
   [crt-entry : bool]
   [scratch : i64]) : ResultCompilerBackend
   (let
-    [backend-state : CompilerBackendState
-      (struct-get program-index backend-state)]
+    [backend-state : CompilerBackendState program-index.backend-state]
     [result : ResultCompilerBackend
       (if (compiler-backend-emit-function-direct? func)
         (let
@@ -64412,14 +64303,13 @@
       (begin
         (cfg
           compile-profile
-          (compiler-backend-profile-detail-start
-            (struct-get program-index profile-state)))
+          (compiler-backend-profile-detail-start program-index.profile-state))
         (match (compiler-backend-emit-function-escaping
           type-segment-bases
           target
           (compiler-backend-effective-function-mode
             mode
-            (struct-get program-index backend-state)
+            program-index.backend-state
             func)
           func
           all-functions
@@ -64438,16 +64328,16 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  (struct-get program-index profile-state)
+                  program-index.profile-state
                   "function"
                   (compiler-backend-profile-function-name
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     func)))
               (compiler-backend-emit-functions-buffer-raw-into
                 type-segment-bases
                 target
                 mode
-                (box-get rest)
+                (__tl-box-place rest)
                 all-functions
                 globals
                 global-types
@@ -64465,10 +64355,10 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  (struct-get program-index profile-state)
+                  program-index.profile-state
                   "function"
                   (compiler-backend-profile-function-name
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     func)))
               (ResultCompilerBackendBuffer.Err message))]))]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
@@ -64517,14 +64407,13 @@
       (begin
         (cfg
           compile-profile
-          (compiler-backend-profile-detail-start
-            (struct-get program-index profile-state)))
+          (compiler-backend-profile-detail-start program-index.profile-state))
         (match (compiler-backend-emit-function-escaping
           type-segment-bases
           target
           (compiler-backend-effective-function-mode
             mode
-            (struct-get program-index backend-state)
+            program-index.backend-state
             func)
           func
           all-functions
@@ -64543,10 +64432,10 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  (struct-get program-index profile-state)
+                  program-index.profile-state
                   "function"
                   (compiler-backend-profile-function-name
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     func)))
               (compiler-backend-emit-function-seq-buffer-into
                 type-segment-bases
@@ -64571,10 +64460,10 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  (struct-get program-index profile-state)
+                  program-index.profile-state
                   "function"
                   (compiler-backend-profile-function-name
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     func)))
               (ResultCompilerBackendBuffer.Err message))])))))
 
@@ -64605,19 +64494,17 @@
         [caller-arena : arena.Arena (arena.current)]
         (begin
           (compiler-backend-assembly-stream-begin-raw!
-            (struct-get program-index backend-state)
-            (compiler-backend-state-stream-state
-              (struct-get program-index backend-state)))
+            program-index.backend-state
+            (compiler-backend-state-stream-state program-index.backend-state))
           (cfg
             compile-profile
-            (compiler-backend-profile-detail-start
-              (struct-get program-index profile-state)))
+            (compiler-backend-profile-detail-start program-index.profile-state))
           (match (compiler-backend-emit-function-escaping
             type-segment-bases
             target
             (compiler-backend-effective-function-mode
               mode
-              (struct-get program-index backend-state)
+              program-index.backend-state
               func)
             func
             all-functions
@@ -64636,26 +64523,26 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-detail-finish
-                    (struct-get program-index profile-state)
+                    program-index.profile-state
                     "function"
                     (compiler-backend-profile-function-name
-                      (struct-get program-index backend-state)
+                      program-index.backend-state
                       func)))
                 (compiler-backend-assembly-stream-process-string!
                   head
-                  (struct-get program-index backend-state)
+                  program-index.backend-state
                   (compiler-backend-state-stream-state
-                    (struct-get program-index backend-state)))
+                    program-index.backend-state))
                 (compiler-backend-assembly-stream-rewind-raw!
                   (compiler-backend-state-stream-state
-                    (struct-get program-index backend-state)))
+                    program-index.backend-state))
                 (unsafe
                   (arena.set! caller-arena))
                 (compiler-backend-emit-functions-stream-into
                   type-segment-bases
                   target
                   mode
-                  (box-get rest)
+                  (__tl-box-place rest)
                   all-functions
                   globals
                   global-types
@@ -64673,10 +64560,10 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-detail-finish
-                    (struct-get program-index profile-state)
+                    program-index.profile-state
                     "function"
                     (compiler-backend-profile-function-name
-                      (struct-get program-index backend-state)
+                      program-index.backend-state
                       func)))
                 (unsafe
                   (arena.set! caller-arena))
@@ -64727,19 +64614,17 @@
       [caller-arena : arena.Arena (arena.current)]
       (begin
         (compiler-backend-assembly-stream-begin-raw!
-          (struct-get program-index backend-state)
-          (compiler-backend-state-stream-state
-            (struct-get program-index backend-state)))
+          program-index.backend-state
+          (compiler-backend-state-stream-state program-index.backend-state))
         (cfg
           compile-profile
-          (compiler-backend-profile-detail-start
-            (struct-get program-index profile-state)))
+          (compiler-backend-profile-detail-start program-index.profile-state))
         (match (compiler-backend-emit-function-escaping
           type-segment-bases
           target
           (compiler-backend-effective-function-mode
             mode
-            (struct-get program-index backend-state)
+            program-index.backend-state
             func)
           func
           all-functions
@@ -64758,19 +64643,19 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  (struct-get program-index profile-state)
+                  program-index.profile-state
                   "function"
                   (compiler-backend-profile-function-name
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     func)))
               (compiler-backend-assembly-stream-process-string!
                 head
-                (struct-get program-index backend-state)
+                program-index.backend-state
                 (compiler-backend-state-stream-state
-                  (struct-get program-index backend-state)))
+                  program-index.backend-state))
               (compiler-backend-assembly-stream-rewind-raw!
                 (compiler-backend-state-stream-state
-                  (struct-get program-index backend-state)))
+                  program-index.backend-state))
               (unsafe
                 (arena.set! caller-arena))
               (compiler-backend-emit-function-seq-stream-into
@@ -64796,10 +64681,10 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
-                  (struct-get program-index profile-state)
+                  program-index.profile-state
                   "function"
                   (compiler-backend-profile-function-name
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     func)))
               (unsafe
                 (arena.set! caller-arena))
@@ -64825,8 +64710,7 @@
     [scratch : i64 (arena.tl_arena_make)]
     [result : ResultCompilerBackendBuffer
       (if (compiler-backend-assembly-stream-active?
-        (compiler-backend-state-stream-state
-          (struct-get program-index backend-state)))
+        (compiler-backend-state-stream-state program-index.backend-state))
         (compiler-backend-emit-functions-stream-into
           type-segment-bases
           target
@@ -64895,7 +64779,7 @@
   [externs : compiler_ir_types.CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (>= index (struct-get names len))
+  (if (>= index names.len)
     buf
     (compiler-backend-emit-closure-descriptor-entries-into
       names
@@ -64904,7 +64788,7 @@
       externs
       program-index
       (compiler-backend-emit-closure-descriptor-entry-into
-        (array-ref (struct-get names slots) index)
+        (array-ref names.slots index)
         functions
         externs
         program-index
@@ -64916,7 +64800,7 @@
   [externs : compiler_ir_types.CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (= (struct-get names len) 0)
+  (if (= names.len 0)
     buf
     (compiler-backend-emit-closure-descriptor-entries-into
       names
@@ -64988,7 +64872,7 @@
               type-segment-bases
               param-types
               program-index)
-            (struct-get program-index backend-state)))
+            program-index.backend-state))
         (compiler-backend-closure-adapter-outgoing-frame-space
           type-segment-bases
           target
@@ -65015,7 +64899,7 @@
       0
       program-index
       vars
-      (struct-get program-index backend-state))
+      program-index.backend-state)
       [(ResultCompilerBackend.Ok spills)
         (match (compiler-backend-emit-call-args
           type-segment-bases
@@ -65033,7 +64917,7 @@
           diag
           program-index
           vars
-          (struct-get program-index backend-state))
+          program-index.backend-state)
           [(ResultCompilerBackend.Ok args-asm)
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
@@ -65044,7 +64928,7 @@
                   frame
                   (compiler_regalloc.compiler-reg-assignment-table-empty)
                   vars
-                  (struct-get program-index backend-state))
+                  program-index.backend-state)
                 ""
                 ""
                 ;; M-G3 stage 1: adapters go through the same rsp rebase as
@@ -65090,7 +64974,7 @@
                             "")))))
                   frame
                   false
-                  (struct-get program-index backend-state))
+                  program-index.backend-state)
                 ""))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
@@ -65111,8 +64995,7 @@
   [externs : compiler_ir_types.CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
-    [backend-state : CompilerBackendState
-      (struct-get program-index backend-state)]
+    [backend-state : CompilerBackendState program-index.backend-state]
     [previous-address : i64
       (compiler-backend-state-function-state-address backend-state)]
     [function-state : CompilerBackendFunctionState
@@ -65160,10 +65043,10 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
-  (if (>= index (struct-get names len))
+  (if (>= index names.len)
     (ResultCompilerBackendBuffer.Ok buf)
     (let
-      [name : i64 (array-ref (struct-get names slots) index)]
+      [name : i64 (array-ref names.slots index)]
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types ret-ty)
           (match (compiler-backend-emit-closure-entry-adapter-owned
@@ -65211,19 +65094,19 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
-  (if (>= index (struct-get names len))
+  (if (>= index names.len)
     (ResultCompilerBackendBuffer.Ok buf)
     (let
-      [name : i64 (array-ref (struct-get names slots) index)]
+      [name : i64 (array-ref names.slots index)]
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types ret-ty)
           (let
             [caller-arena : arena.Arena (arena.current)]
             (begin
               (compiler-backend-assembly-stream-begin-raw!
-                (struct-get program-index backend-state)
+                program-index.backend-state
                 (compiler-backend-state-stream-state
-                  (struct-get program-index backend-state)))
+                  program-index.backend-state))
               (match (compiler-backend-emit-closure-entry-adapter-owned
                 type-segment-bases
                 target
@@ -65238,12 +65121,12 @@
                   (begin
                     (compiler-backend-assembly-stream-process-string!
                       head
-                      (struct-get program-index backend-state)
+                      program-index.backend-state
                       (compiler-backend-state-stream-state
-                        (struct-get program-index backend-state)))
+                        program-index.backend-state))
                     (compiler-backend-assembly-stream-rewind-raw!
                       (compiler-backend-state-stream-state
-                        (struct-get program-index backend-state)))
+                        program-index.backend-state))
                     (unsafe
                       (arena.set! caller-arena))
                     (compiler-backend-emit-closure-entry-adapters-stream-into
@@ -65283,8 +65166,7 @@
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (if (compiler-backend-assembly-stream-active?
-    (compiler-backend-state-stream-state
-      (struct-get program-index backend-state)))
+    (compiler-backend-state-stream-state program-index.backend-state))
     (compiler-backend-emit-closure-entry-adapters-stream-into
       type-segment-bases
       target
@@ -65307,41 +65189,41 @@
       buf)))
 
 (define (compiler-backend-string-set-list [set : BackendStringSet]) : BackendStringSeq
-  (struct-get set items))
+  set.items)
 
 (define (compiler-backend-symbol-set-list [set : BackendSymbolSet]) : BackendSymbolSeq
-  (struct-get set items))
+  set.items)
 
 (define (compiler-backend-float-set-list [set : BackendFloatSet]) : BackendFloatSeq
-  (struct-get set items))
+  set.items)
 
 (define (compiler-backend-program-collections-functions
   [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
-  (compiler-backend-symbol-set-list (struct-get collections functions)))
+  (compiler-backend-symbol-set-list collections.functions))
 
 (define (compiler-backend-program-collections-strings
   [collections : CompilerBackendProgramCollections]) : BackendStringSeq
-  (compiler-backend-string-set-list (struct-get collections strings)))
+  (compiler-backend-string-set-list collections.strings))
 
 (define (compiler-backend-program-collections-floats
   [collections : CompilerBackendProgramCollections]) : BackendFloatSeq
-  (compiler-backend-float-set-list (struct-get collections floats)))
+  (compiler-backend-float-set-list collections.floats))
 
 (define (compiler-backend-program-collections-bytes
   [collections : CompilerBackendProgramCollections]) : BackendStringSeq
-  (compiler-backend-string-set-list (struct-get collections bytes)))
+  (compiler-backend-string-set-list collections.bytes))
 
 (define (compiler-backend-program-collections-uses-avx2-i64-lane-id?
   [collections : CompilerBackendProgramCollections]) : bool
-  (struct-get collections uses-avx2-i64-lane-id))
+  collections.uses-avx2-i64-lane-id)
 
 (define (compiler-backend-program-collections-uses-avx512-i64-lane-id?
   [collections : CompilerBackendProgramCollections]) : bool
-  (struct-get collections uses-avx512-i64-lane-id))
+  collections.uses-avx512-i64-lane-id)
 
 (define (compiler-backend-program-collections-uses-f64-neg?
   [collections : CompilerBackendProgramCollections]) : bool
-  (struct-get collections uses-f64-neg))
+  collections.uses-f64-neg)
 
 (define (compiler-backend-collect-float-both-collections
   [collections : CompilerBackendProgramCollections (:consume)]
@@ -65413,7 +65295,7 @@
     [(compiler_ir_types.CompilerIrValueList.Cons value rest)
       (compiler-backend-collect-value-list-collections
         (compiler-backend-collect-value-collections collections value)
-        (box-get rest))]))
+        (__tl-box-place rest))]))
 
 (define (compiler-backend-collect-call-args-array-collections
   [collections : CompilerBackendProgramCollections (:consume)]
@@ -65455,14 +65337,14 @@
         [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
           (compiler-backend-collect-spmd-call-args-collections
             (compiler-backend-collect-value-collections collections value)
-            (box-get rest))])]
+            (__tl-box-place rest))])]
     [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
       (let
         [out : CompilerBackendProgramCollections collections]
         [i : i64 0]
-        [count : i64 (struct-get seq len)]
+        [count : i64 seq.len]
         [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
-          (struct-get seq slots)]
+          seq.slots]
         (begin
           (while (< i count)
             (begin
@@ -65486,7 +65368,7 @@
     [(compiler_ir_types.CompilerIrPhiInputList.Cons value _ rest)
       (compiler-backend-collect-phi-collections
         (compiler-backend-collect-value-collections collections value)
-        (box-get rest))]))
+        (__tl-box-place rest))]))
 
 (define (compiler-backend-collect-instr-collections
   [collections : CompilerBackendProgramCollections]
@@ -65520,16 +65402,16 @@
         args)]
     [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [args (struct-get (box-get payload-box) args)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-backend-collect-call-args-collections
           (compiler-backend-collect-value-collections collections base)
           args))]
     [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [func (struct-get (box-get payload-box) callee)]
-        [args (struct-get (box-get payload-box) args)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [func (__tl-project-field (__tl-box-place payload-box) callee)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-backend-collect-call-args-collections
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections collections base)
@@ -65537,8 +65419,9 @@
           args))]
     [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [active-mask (struct-get (box-get payload-box) active-mask)]
-        [args (struct-get (box-get payload-box) args)]
+        [active-mask
+          (__tl-project-field (__tl-box-place payload-box) active-mask)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-backend-collect-spmd-call-args-collections
           (compiler-backend-collect-value-collections collections active-mask)
           args))]
@@ -65580,15 +65463,15 @@
       (compiler-backend-collect-value-collections collections value)]
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
         (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections collections lhs)
           rhs))]
     [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [src (struct-get (box-get payload-box) src)]
-        [carry (struct-get (box-get payload-box) carry)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
         (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections collections src)
           carry))]
@@ -65596,8 +65479,8 @@
       (compiler-backend-collect-value-collections collections src)]
     [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
         (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections collections lhs)
           rhs))]
@@ -65611,9 +65494,9 @@
       (compiler-backend-collect-value-collections collections src)]
     [(compiler_ir_types.CompilerIrInstr.Select payload-box)
       (let
-        [mask (struct-get (box-get payload-box) mask)]
-        [on-true (struct-get (box-get payload-box) on-true)]
-        [on-false (struct-get (box-get payload-box) on-false)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [on-true (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [on-false (__tl-project-field (__tl-box-place payload-box) on-false)]
         (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections collections mask)
@@ -65625,9 +65508,9 @@
         index)]
     [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
         (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections collections base)
@@ -65635,10 +65518,10 @@
           value))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections
@@ -65648,9 +65531,9 @@
           mask))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections collections base)
@@ -65658,12 +65541,14 @@
           mask))]
     [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index-base (struct-get (box-get payload-box) index-base)]
-        [index (struct-get (box-get payload-box) index)]
-        [lane-offset (struct-get (box-get payload-box) lane-offset)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index-base
+          (__tl-project-field (__tl-box-place payload-box) index-base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [lane-offset
+          (__tl-project-field (__tl-box-place payload-box) lane-offset)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         [values : CompilerBackendProgramCollections
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections
@@ -65678,10 +65563,13 @@
           values))]
     [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [source (struct-get (box-get payload-box) source)]
-        [selector-low (struct-get (box-get payload-box) selector-low)]
-        [selector-high (struct-get (box-get payload-box) selector-high)]
-        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        [source (__tl-project-field (__tl-box-place payload-box) source)]
+        [selector-low
+          (__tl-project-field (__tl-box-place payload-box) selector-low)]
+        [selector-high
+          (__tl-project-field (__tl-box-place payload-box) selector-high)]
+        [active-lanes
+          (__tl-project-field (__tl-box-place payload-box) active-lanes)]
         (compiler-backend-collect-value-collections
           (compiler-backend-collect-maybe-value-collections
             (compiler-backend-collect-value-collections
@@ -65731,9 +65619,8 @@
   [collections : CompilerBackendProgramCollections]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : CompilerBackendProgramCollections
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [index : i64 0]
     [out : CompilerBackendProgramCollections collections]
     (begin
@@ -65768,7 +65655,7 @@
         [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
           (compiler-backend-collect-global-collections
             (compiler-backend-collect-value-collections collections value)
-            (box-get rest))])]
+            (__tl-box-place rest))])]
     [(compiler_ir_types.CompilerIrGlobalList.Array seq)
       (compiler-backend-collect-global-collections
         collections
@@ -65795,8 +65682,8 @@
       (let
         [slots : (__tl_dyn-array
           compiler_ir_types.CompilerSourceSpansInstrEntry)
-          (struct-get instr-entries slots)]
-        [count : i64 (struct-get instr-entries len)]
+          instr-entries.slots]
+        [count : i64 instr-entries.len]
         [index : i64 0]
         [out : CompilerBackendProgramCollections collections]
         (begin
@@ -65854,19 +65741,19 @@
   [strings : BackendStringSeq]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (>= index (struct-get strings len))
+  (if (>= index strings.len)
     buf
     (compiler-backend-emit-string-entries-into
       strings
       (+ index 1)
       (compiler-backend-emit-string-entry-into
-        (array-ref (struct-get strings slots) index)
+        (array-ref strings.slots index)
         buf))))
 
 (define (compiler-backend-emit-string-rodata-into
   [strings : BackendStringSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (= (struct-get strings len) 0)
+  (if (= strings.len 0)
     buf
     (text_buf.append
       (compiler-backend-emit-string-entries-into
@@ -65935,19 +65822,17 @@
   [items : BackendStringSeq]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     buf
     (compiler-backend-emit-bytes-entries-into
       items
       (+ index 1)
-      (compiler-backend-emit-bytes-entry-into
-        (array-ref (struct-get items slots) index)
-        buf))))
+      (compiler-backend-emit-bytes-entry-into (array-ref items.slots index) buf))))
 
 (define (compiler-backend-emit-bytes-data-into
   [items : BackendStringSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (= (struct-get items len) 0)
+  (if (= items.len 0)
     buf
     (text_buf.append
       (compiler-backend-emit-bytes-entries-into
@@ -65990,8 +65875,8 @@
   [floats : BackendFloatSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [slots : (__tl_dyn-array BackendFloatEntry) (struct-get floats slots)]
-    [count : i64 (struct-get floats len)]
+    [slots : (__tl_dyn-array BackendFloatEntry) floats.slots]
+    [count : i64 floats.len]
     [index : i64 0]
     [out : text_buf.TextBuf buf]
     (begin
@@ -66003,16 +65888,14 @@
               out
               (text_buf.append
                 out
-                (compiler-backend-emit-float-entry
-                  (struct-get entry ty)
-                  (struct-get entry bits))))
+                (compiler-backend-emit-float-entry entry.ty entry.bits)))
             (set! index (+ index 1)))))
       out)))
 
 (define (compiler-backend-emit-float-rodata-into
   [floats : BackendFloatSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (= (struct-get floats len) 0)
+  (if (= floats.len 0)
     buf
     (compiler-backend-emit-float-entries-into
       floats
@@ -66061,7 +65944,7 @@
         (str_cat.str-cat
           "    .quad "
           (compiler-backend-state-user-symbol-id
-            (struct-get program-index backend-state)
+            program-index.backend-state
             name)
           "\n"))]
     [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
@@ -66069,7 +65952,7 @@
         (str_cat.str-cat
           "    .quad "
           (compiler-backend-state-user-symbol-id
-            (struct-get program-index backend-state)
+            program-index.backend-state
             name)
           "\n"))]
     [(compiler_ir_types.CompilerIrValue.Function name)
@@ -66139,7 +66022,7 @@
       (let
         [symbol : String
           (compiler-backend-state-user-symbol-id
-            (struct-get program-index backend-state)
+            program-index.backend-state
             name)]
         (if (compiler-backend-runtime-global? ty value)
           (ResultCompilerBackend.Ok
@@ -66194,7 +66077,7 @@
           (compiler-backend-emit-globals-buffer-into
             type-segment-bases
             target
-            (box-get rest)
+            (__tl-box-place rest)
             (text_buf.append buf head)
             program-index)]
         [(ResultCompilerBackend.Err message)
@@ -66215,13 +66098,9 @@
   [program-index : CompilerBackendProgramIndex]) : String
   (let
     [symbol : String
-      (compiler-backend-state-user-symbol-id
-        (struct-get program-index backend-state)
-        name)]
+      (compiler-backend-state-user-symbol-id program-index.backend-state name)]
     [init-symbol : String
-      (compiler-backend-state-user-symbol-id
-        (struct-get program-index backend-state)
-        init)]
+      (compiler-backend-state-user-symbol-id program-index.backend-state init)]
     (str_cat.str-cat
       "    call "
       init-symbol
@@ -66267,7 +66146,7 @@
               [_ ""])
             (compiler-backend-global-initializers
               type-segment-bases
-              (box-get rest)
+              (__tl-box-place rest)
               program-index))])]
     [(compiler_ir_types.CompilerIrGlobalList.Array seq)
       (compiler-backend-global-initializers
@@ -66285,7 +66164,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function func-name _ _ _ _)
           (if (compiler_ir_types.compiler-ir-symbol-eq? func-name name)
             true
-            (compiler-backend-function-list-defines? (box-get rest) name))])]
+            (compiler-backend-function-list-defines? (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (compiler-backend-function-seq-defines? seq name 0)]))
 
@@ -66323,7 +66202,7 @@
             true
             (compiler-backend-function-list-defines-runtime-prelude-helper?
               backend-state
-              (box-get rest)
+              (__tl-box-place rest)
               helper))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (compiler-backend-function-seq-defines-runtime-prelude-helper?
@@ -66362,72 +66241,72 @@
 (define (compiler-backend-runtime-index-defines?
   [index : CompilerBackendRuntimeIndex]
   [name-id : i64]) : bool
-  (backend_i64_i64_map.contains? (& (struct-get index defines)) name-id))
+  (backend_i64_i64_map.contains? (& index.defines) name-id))
 
 (define (compiler-backend-runtime-index-extern?
   [index : CompilerBackendRuntimeIndex]
   [name-id : i64]) : bool
-  (backend_i64_i64_map.contains? (& (struct-get index externs)) name-id))
+  (backend_i64_i64_map.contains? (& index.externs) name-id))
 
 (define (compiler-backend-runtime-index-calls?
   [index : CompilerBackendRuntimeIndex]
   [name-id : i64]) : bool
-  (backend_i64_i64_map.contains? (& (struct-get index calls)) name-id))
+  (backend_i64_i64_map.contains? (& index.calls) name-id))
 
 (define (compiler-backend-runtime-index-add-define
   [index : CompilerBackendRuntimeIndex (:consume)]
   [name-id : i64]) : CompilerBackendRuntimeIndex
   (let
-    [defines : backend_i64_i64_map.Map (struct-get index defines)]
+    [defines : backend_i64_i64_map.Map index.defines]
     (begin
       (backend_i64_i64_map.insert-ref! (&mut defines) name-id 1)
       (CompilerBackendRuntimeIndex
         defines
-        (struct-get index externs)
-        (struct-get index calls)
-        (struct-get index tlci-macro-entry-call-id)
-        (struct-get index startup-profile)))))
+        index.externs
+        index.calls
+        index.tlci-macro-entry-call-id
+        index.startup-profile))))
 
 (define (compiler-backend-runtime-index-add-extern-name
   [index : CompilerBackendRuntimeIndex (:consume)]
   [name-id : i64]) : CompilerBackendRuntimeIndex
   (let
-    [externs : backend_i64_i64_map.Map (struct-get index externs)]
+    [externs : backend_i64_i64_map.Map index.externs]
     (begin
       (backend_i64_i64_map.insert-ref! (&mut externs) name-id 1)
       (CompilerBackendRuntimeIndex
-        (struct-get index defines)
+        index.defines
         externs
-        (struct-get index calls)
-        (struct-get index tlci-macro-entry-call-id)
-        (struct-get index startup-profile)))))
+        index.calls
+        index.tlci-macro-entry-call-id
+        index.startup-profile))))
 
 (define (compiler-backend-runtime-index-add-call
   [index : CompilerBackendRuntimeIndex (:consume)]
   [name-id : i64]) : CompilerBackendRuntimeIndex
   (let
-    [calls : backend_i64_i64_map.Map (struct-get index calls)]
+    [calls : backend_i64_i64_map.Map index.calls]
     (begin
       (backend_i64_i64_map.insert-ref! (&mut calls) name-id 1)
       (CompilerBackendRuntimeIndex
-        (struct-get index defines)
-        (struct-get index externs)
+        index.defines
+        index.externs
         calls
-        (struct-get index tlci-macro-entry-call-id)
-        (struct-get index startup-profile)))))
+        index.tlci-macro-entry-call-id
+        index.startup-profile))))
 
 (define (compiler-backend-runtime-index-with-extern-role
   [index : CompilerBackendRuntimeIndex]
   [call-id : i64]
   [link-id : i64]) : CompilerBackendRuntimeIndex
   (CompilerBackendRuntimeIndex
-    (struct-get index defines)
-    (struct-get index externs)
-    (struct-get index calls)
+    index.defines
+    index.externs
+    index.calls
     (if (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
       call-id
-      (struct-get index tlci-macro-entry-call-id))
-    (struct-get index startup-profile)))
+      index.tlci-macro-entry-call-id)
+    index.startup-profile))
 
 (define (compiler-backend-runtime-index-with-startup-profile-role
   [index : CompilerBackendRuntimeIndex]
@@ -66437,10 +66316,10 @@
     (compiler-backend-symbol-text-state backend-state link-id)
     "tl_startup_profile_process_entry_tick")
     (CompilerBackendRuntimeIndex
-      (struct-get index defines)
-      (struct-get index externs)
-      (struct-get index calls)
-      (struct-get index tlci-macro-entry-call-id)
+      index.defines
+      index.externs
+      index.calls
+      index.tlci-macro-entry-call-id
       true)
     index))
 
@@ -66452,7 +66331,7 @@
       (compiler-backend-runtime-index-add-call index call-name)]
     [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [call-name (struct-get (box-get payload-box) name)]
+        [call-name (__tl-project-field (__tl-box-place payload-box) name)]
         (compiler-backend-runtime-index-add-call index call-name))]
     [(compiler_ir_types.CompilerIrInstr.TailCall call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
@@ -66462,9 +66341,8 @@
   [index : CompilerBackendRuntimeIndex (:consume)]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : CompilerBackendRuntimeIndex
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
     [i : i64 0]
     [out : CompilerBackendRuntimeIndex index]
     (begin
@@ -66486,7 +66364,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (compiler-backend-runtime-index-blocks
             (compiler-backend-runtime-index-instr-seq index instrs)
-            (box-get rest))])]
+            (__tl-box-place rest))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-runtime-index-block-seq index seq 0)]))
 
@@ -66515,7 +66393,7 @@
             (compiler-backend-runtime-index-blocks
               (compiler-backend-runtime-index-add-define index name)
               blocks)
-            (box-get rest))])]
+            (__tl-box-place rest))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (compiler-backend-runtime-index-function-seq index seq 0)]))
 
@@ -66563,7 +66441,7 @@
               (compiler-backend-runtime-index-externs
                 backend-state
                 with-startup-role
-                (box-get rest))
+                (__tl-box-place rest))
               (let
                 [with-names : CompilerBackendRuntimeIndex
                   (compiler-backend-runtime-index-add-extern-name
@@ -66581,7 +66459,7 @@
                 (compiler-backend-runtime-index-externs
                   backend-state
                   with-runtime-role
-                  (box-get rest)))))])]
+                  (__tl-box-place rest)))))])]
     [(compiler_ir_types.CompilerIrExternList.Array seq)
       (compiler-backend-runtime-index-externs
         backend-state
@@ -66612,7 +66490,7 @@
                 (compiler-backend-runtime-index-calls? index source-name-id)))
               (compiler-backend-runtime-index-add-call index link-symbol)
               index)
-            (box-get rest))])]
+            (__tl-box-place rest))])]
     [(compiler_ir_types.CompilerIrExternList.Array seq)
       (compiler-backend-runtime-index-arena-debug-call-links
         index
@@ -66688,7 +66566,7 @@
   [name-id : i64]) : bool
   (match plan
     [(CompilerBackendRuntimePlan.WithScratch base _)
-      (compiler-backend-plan-provides-rest-id? (box-get base) name-id)]
+      (compiler-backend-plan-provides-rest-id? (__tl-box-place base) name-id)]
     [(CompilerBackendRuntimePlan.Plan
         alloc
         substring
@@ -66941,11 +66819,11 @@
       (or calls-arena-debug-protect calls-arena-debug-pool-install)]
     [needs-tlci-macro-entry : bool
       (let
-        [call-id : i64 (struct-get index tlci-macro-entry-call-id)]
+        [call-id : i64 index.tlci-macro-entry-call-id]
         (and
           (>= call-id 0)
           (compiler-backend-runtime-index-calls? index call-id)))]
-    [needs-startup-profile : bool (struct-get index startup-profile)]
+    [needs-startup-profile : bool index.startup-profile]
     (ResultBackendRuntimePlanWithIndex.Ok
       (CompilerBackendRuntimePlanWithIndex
         (CompilerBackendRuntimePlan.Plan
@@ -66972,7 +66850,7 @@
     functions
     externs)
     [(ResultBackendRuntimePlanWithIndex.Ok planned)
-      (ResultBackendRuntimePlan.Ok (struct-get planned plan))]
+      (ResultBackendRuntimePlan.Ok planned.plan)]
     [(ResultBackendRuntimePlanWithIndex.Err message)
       (ResultBackendRuntimePlan.Err message)]))
 
@@ -67074,7 +66952,7 @@
               link-symbol-id))
             (compiler-backend-emit-externs-into
               backend-state
-              (box-get rest)
+              (__tl-box-place rest)
               plan
               runtime-index
               referenced-functions
@@ -67089,7 +66967,7 @@
                   "")))
             (compiler-backend-emit-externs-into
               backend-state
-              (box-get rest)
+              (__tl-box-place rest)
               plan
               runtime-index
               referenced-functions
@@ -67119,7 +66997,7 @@
     (cbi.compiler-builtin-refresh!)
     (match plan
       [(CompilerBackendRuntimePlan.WithScratch base _)
-        (compiler-backend-runtime-features (box-get base))]
+        (compiler-backend-runtime-features (__tl-box-place base))]
       [(CompilerBackendRuntimePlan.Plan
           alloc
           _
@@ -67534,12 +67412,11 @@
       (cfg
         compile-profile
         (compiler-backend-profile-finish
-          (struct-get program-index profile-state)
+          program-index.profile-state
           "compose.string_rodata"))
       (cfg
         compile-profile
-        (compiler-backend-profile-start
-          (struct-get program-index profile-state)))
+        (compiler-backend-profile-start program-index.profile-state))
       (let
         [bytes-buf : text_buf.TextBuf
           (compiler-backend-emit-bytes-data-into bytes string-buf)]
@@ -67547,12 +67424,11 @@
           (cfg
             compile-profile
             (compiler-backend-profile-finish
-              (struct-get program-index profile-state)
+              program-index.profile-state
               "compose.bytes_data"))
           (cfg
             compile-profile
-            (compiler-backend-profile-start
-              (struct-get program-index profile-state)))
+            (compiler-backend-profile-start program-index.profile-state))
           (let
             [float-literals-buf : text_buf.TextBuf
               (compiler-backend-emit-float-rodata-into floats bytes-buf)]
@@ -67569,12 +67445,11 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-finish
-                  (struct-get program-index profile-state)
+                  program-index.profile-state
                   "compose.float_rodata"))
               (cfg
                 compile-profile
-                (compiler-backend-profile-start
-                  (struct-get program-index profile-state)))
+                (compiler-backend-profile-start program-index.profile-state))
               (let
                 [descriptor-buf : text_buf.TextBuf
                   (compiler-backend-emit-closure-descriptors-into
@@ -67587,12 +67462,11 @@
                   (cfg
                     compile-profile
                     (compiler-backend-profile-finish
-                      (struct-get program-index profile-state)
+                      program-index.profile-state
                       "compose.closure_descriptors"))
                   (cfg
                     compile-profile
-                    (compiler-backend-profile-start
-                      (struct-get program-index profile-state)))
+                    (compiler-backend-profile-start program-index.profile-state))
                   (let
                     [switch-buf : text_buf.TextBuf
                       (compiler-backend-emit-switch-tables-functions-into
@@ -67611,16 +67485,16 @@
                       (cfg
                         compile-profile
                         (compiler-backend-profile-finish
-                          (struct-get program-index profile-state)
+                          program-index.profile-state
                           "compose.runtime_data"))
                       (cfg
                         compile-profile
                         (compiler-backend-profile-start
-                          (struct-get program-index profile-state)))
+                          program-index.profile-state))
                       (let
                         [externs-buf : text_buf.TextBuf
                           (compiler-backend-emit-externs-into
-                            (struct-get program-index backend-state)
+                            program-index.backend-state
                             externs
                             plan
                             runtime-index
@@ -67630,12 +67504,12 @@
                           (cfg
                             compile-profile
                             (compiler-backend-profile-finish
-                              (struct-get program-index profile-state)
+                              program-index.profile-state
                               "compose.externs"))
                           (cfg
                             compile-profile
                             (compiler-backend-profile-start
-                              (struct-get program-index profile-state)))
+                              program-index.profile-state))
                           (let
                             [runtime-externs-buf : text_buf.TextBuf
                               (text_buf.append
@@ -67649,12 +67523,12 @@
                               (cfg
                                 compile-profile
                                 (compiler-backend-profile-finish
-                                  (struct-get program-index profile-state)
+                                  program-index.profile-state
                                   "compose.runtime_externs"))
                               (cfg
                                 compile-profile
                                 (compiler-backend-profile-start
-                                  (struct-get program-index profile-state)))
+                                  program-index.profile-state))
                               (let
                                 [prefix-buf : text_buf.TextBuf
                                   (text_buf.append
@@ -67667,7 +67541,7 @@
                                   (cfg
                                     compile-profile
                                     (compiler-backend-profile-finish
-                                      (struct-get program-index profile-state)
+                                      program-index.profile-state
                                       "compose.entry_text"))
                                   prefix-buf)))))))))))))))))
 
@@ -67689,7 +67563,7 @@
   (let
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-source-path-strings
-        (struct-get program-index backend-state)
+        program-index.backend-state
         (compiler-backend-collect-program-collections
           type-segment-bases
           program)
@@ -67711,7 +67585,7 @@
       (compiler-backend-program-collections-uses-f64-neg? collections)]
     [span-index : CompilerBackendSourceSpanIndex
       (compiler-backend-source-span-index-build-with-backend-state
-        (struct-get program-index backend-state)
+        program-index.backend-state
         spans)]
     [global-types : CompilerBackendGlobalTypeTable
       (compiler-backend-global-types globals)]
@@ -67720,13 +67594,10 @@
     (begin
       (cfg
         compile-profile
-        (compiler-backend-profile-finish
-          (struct-get program-index profile-state)
-          "collect"))
+        (compiler-backend-profile-finish program-index.profile-state "collect"))
       (cfg
         compile-profile
-        (compiler-backend-profile-start
-          (struct-get program-index profile-state)))
+        (compiler-backend-profile-start program-index.profile-state))
       (let
         ;; Prefix composition (string/bytes/float rodata, closure descriptors,
         ;; switch tables, runtime data, externs, debug prefix and the rendered
@@ -67765,21 +67636,20 @@
               span-index))]
         [function-input : text_buf.TextBuf
           (if (compiler-backend-assembly-stream-active?
-            (compiler-backend-state-stream-state
-              (struct-get program-index backend-state)))
+            (compiler-backend-state-stream-state program-index.backend-state))
             (begin
               (compiler-backend-assembly-stream-process-buffer!
                 prefix-buf
-                (struct-get program-index backend-state)
+                program-index.backend-state
                 (compiler-backend-state-stream-state
-                  (struct-get program-index backend-state)))
+                  program-index.backend-state))
               ;; The prefix bytes now live in the flushed output stream, and the
               ;; per-function caches that could still name region-owned strings
               ;; are cleared before the region goes away.
               (compiler-backend-state-user-symbol-cache-reset!
-                (struct-get program-index backend-state))
+                program-index.backend-state)
               (compiler-backend-state-slot-cache-epoch-bump!
-                (struct-get program-index backend-state))
+                program-index.backend-state)
               (unsafe
                 (arena.rewind prefix-mark))
               (text_buf.empty))
@@ -67791,12 +67661,11 @@
           (cfg
             compile-profile
             (compiler-backend-profile-finish
-              (struct-get program-index profile-state)
+              program-index.profile-state
               "prefix"))
           (cfg
             compile-profile
-            (compiler-backend-profile-start
-              (struct-get program-index profile-state)))
+            (compiler-backend-profile-start program-index.profile-state))
           (match (compiler-backend-emit-functions-buffer-into
             type-segment-bases
             target
@@ -67818,16 +67687,15 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-finish
-                    (struct-get program-index profile-state)
+                    program-index.profile-state
                     "functions"))
                 (cfg
                   compile-profile-summary
                   (compiler-backend-profile-summary-emit
-                    (struct-get program-index profile-state)))
+                    program-index.profile-state))
                 (cfg
                   compile-profile
-                  (compiler-backend-profile-start
-                    (struct-get program-index profile-state)))
+                  (compiler-backend-profile-start program-index.profile-state))
                 (match (compiler-backend-emit-closure-entry-adapters-buffer-into
                   type-segment-bases
                   target
@@ -67847,12 +67715,12 @@
                       (cfg
                         compile-profile
                         (compiler-backend-profile-finish
-                          (struct-get program-index profile-state)
+                          program-index.profile-state
                           "adapters"))
                       (cfg
                         compile-profile
                         (compiler-backend-profile-start
-                          (struct-get program-index profile-state)))
+                          program-index.profile-state))
                       (let
                         [buf : text_buf.TextBuf
                           (text_buf.append
@@ -67876,7 +67744,7 @@
                           (cfg
                             compile-profile
                             (compiler-backend-profile-finish
-                              (struct-get program-index profile-state)
+                              program-index.profile-state
                               "compose_tail"))
                           (cfg
                             regalloc-census
@@ -67933,23 +67801,23 @@
                           (ResultCompilerBackendBuffer.Ok
                             (if (compiler-backend-assembly-stream-active?
                               (compiler-backend-state-stream-state
-                                (struct-get program-index backend-state)))
+                                program-index.backend-state))
                               (begin
                                 (compiler-backend-assembly-stream-process-buffer!
                                   buf
-                                  (struct-get program-index backend-state)
+                                  program-index.backend-state
                                   (compiler-backend-state-stream-state
-                                    (struct-get program-index backend-state)))
+                                    program-index.backend-state))
                                 (compiler-backend-assembly-stream-output
                                   (compiler-backend-state-stream-state
-                                    (struct-get program-index backend-state))))
+                                    program-index.backend-state)))
                               buf)))))]
                   [(ResultCompilerBackendBuffer.Err message)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-backend-profile-finish
-                          (struct-get program-index profile-state)
+                          program-index.profile-state
                           "adapters"))
                       (ResultCompilerBackendBuffer.Err message))]))]
             [(ResultCompilerBackendBuffer.Err message)
@@ -67957,12 +67825,12 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-finish
-                    (struct-get program-index profile-state)
+                    program-index.profile-state
                     "functions"))
                 (cfg
                   compile-profile-summary
                   (compiler-backend-profile-summary-emit
-                    (struct-get program-index profile-state)))
+                    program-index.profile-state))
                 (ResultCompilerBackendBuffer.Err message))]))))))
 
 (define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-prepared-backend-state
@@ -68016,9 +67884,8 @@
       program)
       [(ResultBackendRuntimePlanWithIndex.Ok planned)
         (let
-          [plan : CompilerBackendRuntimePlan (struct-get planned plan)]
-          [runtime-index : CompilerBackendRuntimeIndex
-            (struct-get planned index)]
+          [plan : CompilerBackendRuntimePlan planned.plan]
+          [runtime-index : CompilerBackendRuntimeIndex planned.index]
           (begin
             (cfg
               compile-profile
@@ -68154,7 +68021,7 @@
       (let
         [symbol : String
           (compiler-backend-state-user-symbol-id
-            (struct-get program-index backend-state)
+            program-index.backend-state
             name)]
         (object_target.compiler-backend-object-add-text
           (object_target.compiler-backend-object-add-text-relocation
@@ -68167,7 +68034,7 @@
       (let
         [symbol : String
           (compiler-backend-state-user-symbol-id
-            (struct-get program-index backend-state)
+            program-index.backend-state
             name)]
         (object_target.compiler-backend-object-add-text
           (object_target.compiler-backend-object-add-text-relocation
@@ -68271,15 +68138,15 @@
           (compiler-backend-object-spmd-call-args
             (compiler-backend-object-value-ref parts site value program-index)
             site
-            (box-get rest)
+            (__tl-box-place rest)
             program-index)])]
     [(compiler_ir_types.CompilerIrSpmdCallArgList.Array seq)
       (let
         [out : object_target.CompilerBackendObjectTargetParts parts]
         [i : i64 0]
-        [count : i64 (struct-get seq len)]
+        [count : i64 seq.len]
         [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
-          (struct-get seq slots)]
+          seq.slots]
         (begin
           (while (< i count)
             (begin
@@ -68312,7 +68179,7 @@
       (compiler-backend-object-value-list-ref
         (compiler-backend-object-value-ref parts site value program-index)
         site
-        (box-get rest)
+        (__tl-box-place rest)
         program-index)]))
 
 (define (compiler-backend-object-byte [value : i64]) : u8
@@ -68840,13 +68707,13 @@
   (match src
     [(compiler_ir_types.CompilerIrValue.Var src-var)
       (compiler-backend-object-store-reg-to-group-word
-        (struct-get program-index backend-state)
+        program-index.backend-state
         (compiler-backend-object-store-reg-to-group-word
-          (struct-get program-index backend-state)
+          program-index.backend-state
           (compiler-backend-object-load-group-word-to-reg
-            (struct-get program-index backend-state)
+            program-index.backend-state
             (compiler-backend-object-load-group-word-to-reg
-              (struct-get program-index backend-state)
+              program-index.backend-state
               parts
               src-var
               0
@@ -68871,12 +68738,12 @@
   (match (compiler_ir_types.compiler-ir-value-list-force-cons words)
     [(compiler_ir_types.CompilerIrValueList.Cons word0 rest0)
       (match (compiler_ir_types.compiler-ir-value-list-force-cons
-        (box-get rest0))
+        (__tl-box-place rest0))
         [(compiler_ir_types.CompilerIrValueList.Cons word1 _)
           (compiler-backend-object-store-reg-to-group-word
-            (struct-get program-index backend-state)
+            program-index.backend-state
             (compiler-backend-object-store-reg-to-group-word
-              (struct-get program-index backend-state)
+              program-index.backend-state
               (compiler-backend-object-load-value-to-reg
                 (compiler-backend-object-load-value-to-reg
                   parts
@@ -68913,7 +68780,7 @@
     [(compiler_ir_types.CompilerIrValue.Var src-var)
       (compiler-backend-object-store-reg-to-var
         (compiler-backend-object-load-group-word-to-reg
-          (struct-get program-index backend-state)
+          program-index.backend-state
           parts
           src-var
           word-index
@@ -69067,7 +68934,7 @@
                 (cobj.CompilerObjectDataRecord.SymbolAddress target))
               label-scope
               table-label
-              (box-get rest)
+              (__tl-box-place rest)
               (+ index 1)))])]
     [(compiler_ir_types.CompilerIrSwitchCaseList.Array seq)
       (compiler-backend-object-switch-table-cases
@@ -69496,7 +69363,7 @@
             (compiler-backend-object-param-spills
               parts
               target
-              (box-get rest)
+              (__tl-box-place rest)
               int-index)
             (if (>= int-index (compiler-backend-object-call-reg-count target))
               (compiler-backend-object-param-spills
@@ -69516,7 +69383,7 @@
                       var-id
                       "%rax")])
                 target
-                (box-get rest)
+                (__tl-box-place rest)
                 (+ int-index 1))
               (compiler-backend-object-param-spills
                 (compiler-backend-object-store-reg-to-var
@@ -69524,7 +69391,7 @@
                   var-id
                   (compiler-backend-object-call-arg-reg target int-index))
                 target
-                (box-get rest)
+                (__tl-box-place rest)
                 (+ int-index 1))))])]))
 
 ;; --- object-image phi edge copies --------------------------------------------
@@ -69542,11 +69409,11 @@
 ;; image path never lowers those.
 (define (compiler-backend-object-phi-copy-list-count
   [copies : CompilerBackendPhiCopySeq]) : i64
-  (struct-get copies len))
+  copies.len)
 
 (define (compiler-backend-object-phi-copy-list-nil?
   [copies : CompilerBackendPhiCopySeq]) : bool
-  (= (struct-get copies len) 0))
+  (= copies.len 0))
 
 ;; Collected in instruction order; the stage/store walkers read it back to front
 ;; (compiler-backend-phi-copy-seq-rev-ref) to keep the old prepend order.
@@ -69633,7 +69500,7 @@
               0)
             (compiler-backend-object-edge-phi-copies
               type-segment-bases
-              (box-get rest)
+              (__tl-box-place rest)
               program-index
               target-label
               from-label))])]
@@ -69652,7 +69519,7 @@
   [copies : CompilerBackendPhiCopySeq]
   [index : i64]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (if (>= index (struct-get copies len))
+  (if (>= index copies.len)
     parts
     (match (compiler-backend-phi-copy-seq-rev-ref copies index)
       [(CompilerBackendPhiCopy.Copy _ source ty)
@@ -69684,7 +69551,7 @@
   [parts : object_target.CompilerBackendObjectTargetParts]
   [copies : CompilerBackendPhiCopySeq]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
-  (if (>= index (struct-get copies len))
+  (if (>= index copies.len)
     parts
     (match (compiler-backend-phi-copy-seq-rev-ref copies index)
       [(CompilerBackendPhiCopy.Copy dst _ _)
@@ -69845,9 +69712,9 @@
           "%rax"))]
     [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [name (struct-get (box-get payload-box) name)]
-        [args (struct-get (box-get payload-box) args)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [name (__tl-project-field (__tl-box-place payload-box) name)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         [call-target : String
           (compiler-backend-call-symbol-index name plan program-index)]
         (compiler-backend-object-direct-call
@@ -69859,9 +69726,9 @@
           program-index))]
     [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [callee (struct-get (box-get payload-box) callee)]
-        [args (struct-get (box-get payload-box) args)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [callee (__tl-project-field (__tl-box-place payload-box) callee)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-backend-object-call-args
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref
@@ -69899,7 +69766,7 @@
       (let
         [symbol : String
           (compiler-backend-state-user-symbol-id
-            (struct-get program-index backend-state)
+            program-index.backend-state
             name)]
         (object_target.compiler-backend-object-add-text
           (object_target.compiler-backend-object-add-text-relocation
@@ -70135,9 +70002,9 @@
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (compiler-backend-object-value-ref-with-type
           (compiler-backend-object-value-ref-with-type
             parts
@@ -70151,9 +70018,9 @@
           program-index))]
     [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [src (struct-get (box-get payload-box) src)]
-        [carry (struct-get (box-get payload-box) carry)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (compiler-backend-object-value-ref-with-type
           (compiler-backend-object-value-ref-with-type
             parts
@@ -70174,9 +70041,9 @@
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (compiler-backend-object-value-ref-with-type
           (compiler-backend-object-value-ref-with-type
             parts
@@ -70200,12 +70067,12 @@
       (compiler-backend-object-value-ref parts function src program-index)]
     [(compiler_ir_types.CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [on-true (struct-get (box-get payload-box) on-true)]
-        [on-false (struct-get (box-get payload-box) on-false)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [on-true (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [on-false (__tl-project-field (__tl-box-place payload-box) on-false)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (if (= lanes 0)
           (compiler-backend-object-scalar-select
             parts
@@ -70238,10 +70105,10 @@
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (compiler-backend-object-value-ref-with-type
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref
@@ -70258,11 +70125,11 @@
           program-index))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (compiler-backend-object-value-ref
           (compiler-backend-object-value-ref-with-type
             (compiler-backend-object-value-ref
@@ -70283,9 +70150,9 @@
           program-index))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (compiler-backend-object-value-ref
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref
@@ -70301,9 +70168,10 @@
           program-index))]
     [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index-base (struct-get (box-get payload-box) index-base)]
-        [index (struct-get (box-get payload-box) index)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index-base
+          (__tl-project-field (__tl-box-place payload-box) index-base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
         (compiler-backend-object-value-ref
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref
@@ -70319,11 +70187,14 @@
           program-index))]
     [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [source (struct-get (box-get payload-box) source)]
-        [selector-low (struct-get (box-get payload-box) selector-low)]
-        [selector-high (struct-get (box-get payload-box) selector-high)]
-        [active-lanes (struct-get (box-get payload-box) active-lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [source (__tl-project-field (__tl-box-place payload-box) source)]
+        [selector-low
+          (__tl-project-field (__tl-box-place payload-box) selector-low)]
+        [selector-high
+          (__tl-project-field (__tl-box-place payload-box) selector-high)]
+        [active-lanes
+          (__tl-project-field (__tl-box-place payload-box) active-lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         [with-low : object_target.CompilerBackendObjectTargetParts
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref-with-type
@@ -70367,8 +70238,9 @@
       (compiler-backend-object-call-args parts function args 0 program-index)]
     [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [active-mask (struct-get (box-get payload-box) active-mask)]
-        [args (struct-get (box-get payload-box) args)]
+        [active-mask
+          (__tl-project-field (__tl-box-place payload-box) active-mask)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-backend-object-spmd-call-args
           (compiler-backend-object-value-ref
             parts
@@ -70515,7 +70387,7 @@
               target
               function-symbol
               label-scope
-              (box-get rest)
+              (__tl-box-place rest)
               plan
               program-index))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -70617,10 +70489,10 @@
             [_group-enable : unit
               (begin
                 (compiler-backend-current-slot-vars-set!
-                  (struct-get program-index backend-state)
+                  program-index.backend-state
                   vars)
                 (compiler-backend-group-vars-enable!
-                  (struct-get program-index backend-state)
+                  program-index.backend-state
                   groups
                   (compiler_liveness.compiler-live-set-empty)))]
             [emitted : object_target.CompilerBackendObjectTargetParts
@@ -70653,13 +70525,12 @@
                 plan
                 program-index)]
             [_group-disable : unit
-              (compiler-backend-group-vars-disable!
-                (struct-get program-index backend-state))]
+              (compiler-backend-group-vars-disable! program-index.backend-state)]
             (compiler-backend-object-functions
               type-segment-bases
               emitted
               target
-              (box-get rest)
+              (__tl-box-place rest)
               plan
               program-index))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
@@ -70715,10 +70586,10 @@
           [_group-enable : unit
             (begin
               (compiler-backend-current-slot-vars-set!
-                (struct-get program-index backend-state)
+                program-index.backend-state
                 vars)
               (compiler-backend-group-vars-enable!
-                (struct-get program-index backend-state)
+                program-index.backend-state
                 groups
                 (compiler_liveness.compiler-live-set-empty)))]
           [emitted : object_target.CompilerBackendObjectTargetParts
@@ -70751,8 +70622,7 @@
               plan
               program-index)]
           [_group-disable : unit
-            (compiler-backend-group-vars-disable!
-              (struct-get program-index backend-state))]
+            (compiler-backend-group-vars-disable! program-index.backend-state)]
           (compiler-backend-object-function-seq
             type-segment-bases
             emitted
@@ -70816,7 +70686,7 @@
       (let
         [symbol : String
           (compiler-backend-state-user-symbol-id
-            (struct-get program-index backend-state)
+            program-index.backend-state
             name)]
         (object_target.compiler-backend-object-add-data
           (object_target.compiler-backend-object-add-data-relocation
@@ -70829,7 +70699,7 @@
       (let
         [symbol : String
           (compiler-backend-state-user-symbol-id
-            (struct-get program-index backend-state)
+            program-index.backend-state
             name)]
         (object_target.compiler-backend-object-add-data
           (object_target.compiler-backend-object-add-data-relocation
@@ -70865,7 +70735,7 @@
           (let
             [symbol : String
               (compiler-backend-state-user-symbol-id
-                (struct-get program-index backend-state)
+                program-index.backend-state
                 name)]
             (compiler-backend-object-globals
               (if (compiler-backend-runtime-global? ty value)
@@ -70891,7 +70761,7 @@
                   value
                   program-index))
               target
-              (box-get rest)
+              (__tl-box-place rest)
               program-index))])]
     [(compiler_ir_types.CompilerIrGlobalList.Array seq)
       (compiler-backend-object-globals
@@ -70904,10 +70774,10 @@
   [parts : object_target.CompilerBackendObjectTargetParts]
   [strings : BackendStringSeq]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
-  (if (>= index (struct-get strings len))
+  (if (>= index strings.len)
     parts
     (let
-      [text : String (array-ref (struct-get strings slots) index)]
+      [text : String (array-ref strings.slots index)]
       [data-symbol : String (compiler-backend-string-data-label text)]
       [fat-symbol : String (compiler-backend-string-fat-label text)]
       (compiler-backend-object-strings
@@ -70943,10 +70813,10 @@
   [parts : object_target.CompilerBackendObjectTargetParts]
   [items : BackendStringSeq]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
-  (if (>= index (struct-get items len))
+  (if (>= index items.len)
     parts
     (let
-      [bytes : String (array-ref (struct-get items slots) index)]
+      [bytes : String (array-ref items.slots index)]
       [data-symbol : String (compiler-backend-bytes-data-label bytes)]
       [fat-symbol : String (compiler-backend-bytes-fat-label bytes)]
       (compiler-backend-object-bytes
@@ -70986,8 +70856,8 @@
   [parts : object_target.CompilerBackendObjectTargetParts]
   [entry : BackendFloatEntry]) : object_target.CompilerBackendObjectTargetParts
   (let
-    [ty : compiler_ast_types.AstType (struct-get entry ty)]
-    [bits : u64 (struct-get entry bits)]
+    [ty : compiler_ast_types.AstType entry.ty]
+    [bits : u64 entry.bits]
     [symbol : String (compiler-backend-float-label ty bits)]
     (object_target.compiler-backend-object-add-rodata
       (object_target.compiler-backend-object-add-rodata
@@ -71008,8 +70878,8 @@
   [parts : object_target.CompilerBackendObjectTargetParts]
   [floats : BackendFloatSeq]) : object_target.CompilerBackendObjectTargetParts
   (let
-    [slots : (__tl_dyn-array BackendFloatEntry) (struct-get floats slots)]
-    [count : i64 (struct-get floats len)]
+    [slots : (__tl_dyn-array BackendFloatEntry) floats.slots]
+    [count : i64 floats.len]
     [index : i64 0]
     [out : object_target.CompilerBackendObjectTargetParts parts]
     (begin
@@ -71045,10 +70915,10 @@
   [names : BackendSymbolSeq]
   [index : i64]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (if (>= index (struct-get names len))
+  (if (>= index names.len)
     parts
     (let
-      [name : i64 (array-ref (struct-get names slots) index)]
+      [name : i64 (array-ref names.slots index)]
       [name-text : String
         (compiler-backend-symbol-text-index program-index name)]
       [descriptor : String
@@ -71108,9 +70978,9 @@
               (compiler-backend-link-symbol-id
                 link-symbol-id
                 plan
-                (struct-get program-index backend-state))]
+                program-index.backend-state)]
             [relocations : cobj.CompilerObjectRelocationBuilder
-              (struct-get parts relocations)]
+              parts.relocations]
             ;; Direct calls relocate through the exact link symbol. Bare extern
             ;; values can relocate through a resolved or parser source identity,
             ;; notably in generated TLCI entry modules.
@@ -71122,12 +70992,12 @@
                 (cobj.compiler-object-relocation-builder-targets?
                   relocations
                   (compiler-backend-state-user-symbol-id
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     name-id))
                 (cobj.compiler-object-relocation-builder-targets?
                   relocations
                   (compiler-backend-state-user-symbol-id
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     source-name-id))
                 false)]
             (compiler-backend-object-externs
@@ -71135,10 +71005,10 @@
                 (not
                   (compiler-backend-object-runtime-symbol-provided-id?
                     plan
-                    (struct-get program-index backend-state)
+                    program-index.backend-state
                     link-symbol-id))
                 (compiler-backend-emits-extern-symbol?
-                  (struct-get program-index backend-state)
+                  program-index.backend-state
                   name-id
                   link-symbol-id
                   provided
@@ -71154,7 +71024,7 @@
                   link-symbol
                   (cobj.CompilerObjectSymbolKind.Function))
                 parts)
-              (box-get rest)
+              (__tl-box-place rest)
               plan
               runtime-index
               referenced-functions
@@ -71266,10 +71136,10 @@
   [plan : CompilerBackendRuntimePlan]
   [names : BackendStringSeq]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
-  (if (>= index (struct-get names len))
+  (if (>= index names.len)
     parts
     (let
-      [name : String (array-ref (struct-get names slots) index)]
+      [name : String (array-ref names.slots index)]
       (compiler-backend-object-runtime-symbols
         (if (compiler-backend-object-runtime-symbol-provided? plan name)
           (object_target.compiler-backend-object-symbol-local-section
@@ -71329,7 +71199,7 @@
       (compiler-backend-program-collections-uses-f64-neg? collections)]
     [runtime-index : CompilerBackendRuntimeIndex
       (compiler-backend-runtime-index
-        (struct-get program-index backend-state)
+        program-index.backend-state
         entry-functions
         externs)]
     [seed : object_target.CompilerBackendObjectTargetParts
@@ -71418,10 +71288,10 @@
               ;; first consumers that dereference them.
               [_ra-groups : unit
                 (compiler_regalloc.compiler-reg-set-group-counts!
-                  (struct-get program-index group-word-counts))]
+                  program-index.group-word-counts)]
               [_ra-group-masks : unit
                 (compiler_regalloc.compiler-reg-set-group-class-masks!
-                  (struct-get program-index group-word-class-masks))]
+                  program-index.group-word-class-masks)]
               (match (compiler-backend-validate-function-symbols
                 globals
                 entry-functions
@@ -71876,7 +71746,7 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    (if (> (array-length (struct-get data owner-global-offsets)) 0)
+    (if (> (array-length data.owner-global-offsets) 0)
       unit
       (let
         [previous : i64 (arena.tl_arena_current)]
@@ -71898,11 +71768,11 @@
             u8
             compiler-backend-peephole-owner-global-initial-bytes-capacity)]
         (begin
-          (set! (struct-get data owner-global-offsets) offsets)
-          (set! (struct-get data owner-global-lengths) lengths)
-          (set! (struct-get data owner-global-bytes) bytes)
-          (set! (struct-get data owner-global-bytes-count) 0)
-          (set! (struct-get data owner-global-generation) 1)
+          (set! data.owner-global-offsets offsets)
+          (set! data.owner-global-lengths lengths)
+          (set! data.owner-global-bytes bytes)
+          (set! data.owner-global-bytes-count 0)
+          (set! data.owner-global-generation 1)
           (compiler-backend-stream-state-data-set! stream data)
           (compiler-backend-state-lazy-table-arena-finish!
             backend-state
@@ -71915,8 +71785,8 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [old-offsets : (__tl_dyn-array i64) (struct-get data owner-global-offsets)]
-    [old-lengths : (__tl_dyn-array i64) (struct-get data owner-global-lengths)]
+    [old-offsets : (__tl_dyn-array i64) data.owner-global-offsets]
+    [old-lengths : (__tl_dyn-array i64) data.owner-global-lengths]
     [old-cap : i64 (array-length old-offsets)]
     [new-cap : i64
       (if (> (* old-cap 2) compiler-backend-peephole-owner-global-capacity)
@@ -71933,8 +71803,8 @@
             (arena.tl_arena_set owner))]
         [offsets : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
         [lengths : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
-        [bytes : (__tl_dyn-array u8) (struct-get data owner-global-bytes)]
-        [generation : i64 (struct-get data owner-global-generation)]
+        [bytes : (__tl_dyn-array u8) data.owner-global-bytes]
+        [generation : i64 data.owner-global-generation]
         [i : i64 0]
         (begin
           (while (< i old-cap)
@@ -71966,16 +71836,15 @@
                           (if (= (+ slot 1) new-cap)
                             0
                             (+ slot 1))))
-                      (array-set!
-                        offsets
-                        slot
+                      (set!
+                        (array-ref offsets slot)
                         (compiler-backend-peephole-owner-global-entry-pack
                           generation
                           off))
-                      (array-set! lengths slot len))))
+                      (set! (array-ref lengths slot) len))))
                 (set! i (+ i 1)))))
-          (set! (struct-get data owner-global-offsets) offsets)
-          (set! (struct-get data owner-global-lengths) lengths)
+          (set! data.owner-global-offsets offsets)
+          (set! data.owner-global-lengths lengths)
           (compiler-backend-stream-state-data-set! stream data)
           (compiler-backend-state-lazy-table-arena-finish!
             backend-state
@@ -71990,7 +71859,7 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [old : (__tl_dyn-array u8) (struct-get data owner-global-bytes)]
+    [old : (__tl_dyn-array u8) data.owner-global-bytes]
     [old-cap : i64 (array-length old)]
     [new-cap : i64 old-cap]
     (begin
@@ -72016,11 +71885,11 @@
           [bytes : (__tl_dyn-array u8) (array.make-array u8 new-cap)]
           [i : i64 0]
           (begin
-            (while (< i (struct-get data owner-global-bytes-count))
+            (while (< i data.owner-global-bytes-count)
               (begin
-                (array-set! bytes i (array-ref old i))
+                (set! (array-ref bytes i) (array-ref old i))
                 (set! i (+ i 1))))
-            (set! (struct-get data owner-global-bytes) bytes)
+            (set! data.owner-global-bytes bytes)
             (compiler-backend-stream-state-data-set! stream data)
             (compiler-backend-state-lazy-table-arena-finish!
               backend-state
@@ -72039,10 +71908,8 @@
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set!
-        (struct-get data owner-global-generation)
-        (+ (struct-get data owner-global-generation) 1))
-      (set! (struct-get data owner-global-bytes-count) 0)
+      (set! data.owner-global-generation (+ data.owner-global-generation 1))
+      (set! data.owner-global-bytes-count 0)
       (compiler-backend-stream-state-data-set! stream data)
       unit)))
 
@@ -72075,19 +71942,17 @@
   [symbol-len : i64]) : i64
   (let
     [backend-state : CompilerBackendState
-      (CompilerBackendState (struct-get context backend-state-address))]
+      (CompilerBackendState context.backend-state-address)]
     [stream : CompilerBackendStreamState
-      (CompilerBackendStreamState (struct-get context stream-address))]
-    [key-data : (Ptr u8) (struct-get context data)]
+      (CompilerBackendStreamState context.stream-address)]
+    [key-data : (Ptr u8) context.data]
     [hash : i64 (ci.intern-hash-words key-data operand-start symbol-len)]
     [state-data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    [offsets : (__tl_dyn-array i64)
-      (struct-get state-data owner-global-offsets)]
-    [lengths : (__tl_dyn-array i64)
-      (struct-get state-data owner-global-lengths)]
-    [bytes : (__tl_dyn-array u8) (struct-get state-data owner-global-bytes)]
-    [generation : i64 (struct-get state-data owner-global-generation)]
+    [offsets : (__tl_dyn-array i64) state-data.owner-global-offsets]
+    [lengths : (__tl_dyn-array i64) state-data.owner-global-lengths]
+    [bytes : (__tl_dyn-array u8) state-data.owner-global-bytes]
+    [generation : i64 state-data.owner-global-generation]
     [cap : i64 (array-length offsets)]
     [slot : i64 (bit-and hash (- cap 1))]
     [walked : i64 0]
@@ -72100,11 +71965,11 @@
               generation
               entry))
             (let
-              [start : i64 (struct-get state-data owner-global-bytes-count)]
+              [start : i64 state-data.owner-global-bytes-count]
               (if (or
                 (<=
                   (+ start symbol-len)
-                  (array-length (struct-get state-data owner-global-bytes)))
+                  (array-length state-data.owner-global-bytes))
                 (compiler-backend-peephole-owner-global-bytes-grow!
                   backend-state
                   stream
@@ -72112,31 +71977,26 @@
                 (let
                   [current : CompilerBackendStreamStateData
                     (compiler-backend-stream-state-data stream)]
-                  [bytes : (__tl_dyn-array u8)
-                    (struct-get current owner-global-bytes)]
+                  [bytes : (__tl_dyn-array u8) current.owner-global-bytes]
                   [j : i64 0]
                   (begin
                     (while (< j symbol-len)
                       (begin
-                        (array-set!
-                          bytes
-                          (+ start j)
+                        (set!
+                          (array-ref bytes (+ start j))
                           (cast
                             (compiler-backend-peephole-byte-at
                               key-data
                               (+ operand-start j))
                             : u8))
                         (set! j (+ j 1))))
-                    (array-set!
-                      offsets
-                      slot
+                    (set!
+                      (array-ref offsets slot)
                       (compiler-backend-peephole-owner-global-entry-pack
                         generation
                         start))
-                    (array-set! lengths slot symbol-len)
-                    (set!
-                      (struct-get current owner-global-bytes-count)
-                      (+ start symbol-len))
+                    (set! (array-ref lengths slot) symbol-len)
+                    (set! current.owner-global-bytes-count (+ start symbol-len))
                     (compiler-backend-stream-state-data-set! stream current)
                     (return (- 0 (+ start 1)))))
                 (return (compiler-backend-peephole-owner-key-unknown))))
@@ -72235,7 +72095,7 @@
   [end : i64]
   [memory-base : i64]) : i64
   (let
-    [data : (Ptr u8) (struct-get context data)]
+    [data : (Ptr u8) context.data]
     [prefix-end : i64 (- end 6)]
     (cond
       [(or
@@ -72456,20 +72316,20 @@
 (define (compiler-backend-peephole-owners-copy
   [owners : CompilerBackendPeepholeOwners]) : CompilerBackendPeepholeOwners
   (CompilerBackendPeepholeOwners
-    (struct-get owners rax)
-    (struct-get owners rcx)
-    (struct-get owners rdx)
-    (struct-get owners rbx)
-    (struct-get owners rsi)
-    (struct-get owners rdi)
-    (struct-get owners r8)
-    (struct-get owners r9)
-    (struct-get owners r10)
-    (struct-get owners r11)
-    (struct-get owners r12)
-    (struct-get owners r13)
-    (struct-get owners r14)
-    (struct-get owners r15)))
+    owners.rax
+    owners.rcx
+    owners.rdx
+    owners.rbx
+    owners.rsi
+    owners.rdi
+    owners.r8
+    owners.r9
+    owners.r10
+    owners.r11
+    owners.r12
+    owners.r13
+    owners.r14
+    owners.r15))
 
 ;; Dense index 0..13 for the 14 general-purpose registers owned by the register
 ;; allocator, or -1 for anything else (immediates, stack slots, %rbp/%rsp/%rip,
@@ -72534,20 +72394,20 @@
   [owners : CompilerBackendPeepholeOwners]
   [idx : i64]) : i64
   (cond
-    [(= idx 0) (struct-get owners rax)]
-    [(= idx 1) (struct-get owners rcx)]
-    [(= idx 2) (struct-get owners rdx)]
-    [(= idx 3) (struct-get owners rbx)]
-    [(= idx 4) (struct-get owners rsi)]
-    [(= idx 5) (struct-get owners rdi)]
-    [(= idx 6) (struct-get owners r8)]
-    [(= idx 7) (struct-get owners r9)]
-    [(= idx 8) (struct-get owners r10)]
-    [(= idx 9) (struct-get owners r11)]
-    [(= idx 10) (struct-get owners r12)]
-    [(= idx 11) (struct-get owners r13)]
-    [(= idx 12) (struct-get owners r14)]
-    [(= idx 13) (struct-get owners r15)]
+    [(= idx 0) owners.rax]
+    [(= idx 1) owners.rcx]
+    [(= idx 2) owners.rdx]
+    [(= idx 3) owners.rbx]
+    [(= idx 4) owners.rsi]
+    [(= idx 5) owners.rdi]
+    [(= idx 6) owners.r8]
+    [(= idx 7) owners.r9]
+    [(= idx 8) owners.r10]
+    [(= idx 9) owners.r11]
+    [(= idx 10) owners.r12]
+    [(= idx 11) owners.r13]
+    [(= idx 12) owners.r14]
+    [(= idx 13) owners.r15]
     [else (compiler-backend-peephole-owner-key-unknown)]))
 
 ;; The first tracked GP register whose mirrored location equals `slot`, other than
@@ -72568,87 +72428,59 @@
       (cond
         [(and
             (not (= ex 0))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners rax)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.rax slot))
           "%rax"]
         [(and
             (not (= ex 1))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners rcx)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.rcx slot))
           "%rcx"]
         [(and
             (not (= ex 2))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners rdx)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.rdx slot))
           "%rdx"]
         [(and
             (not (= ex 3))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners rbx)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.rbx slot))
           "%rbx"]
         [(and
             (not (= ex 4))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners rsi)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.rsi slot))
           "%rsi"]
         [(and
             (not (= ex 5))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners rdi)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.rdi slot))
           "%rdi"]
         [(and
             (not (= ex 6))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners r8)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.r8 slot))
           "%r8"]
         [(and
             (not (= ex 7))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners r9)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.r9 slot))
           "%r9"]
         [(and
             (not (= ex 8))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners r10)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.r10 slot))
           "%r10"]
         [(and
             (not (= ex 9))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners r11)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.r11 slot))
           "%r11"]
         [(and
             (not (= ex 10))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners r12)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.r12 slot))
           "%r12"]
         [(and
             (not (= ex 11))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners r13)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.r13 slot))
           "%r13"]
         [(and
             (not (= ex 12))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners r14)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.r14 slot))
           "%r14"]
         [(and
             (not (= ex 13))
-            (compiler-backend-peephole-owner-key-eq?
-              (struct-get owners r15)
-              slot))
+            (compiler-backend-peephole-owner-key-eq? owners.r15 slot))
           "%r15"]
         [else ""]))))
 
@@ -72661,46 +72493,46 @@
   (CompilerBackendPeepholeOwners
     (if (= idx 0)
       slot
-      (struct-get owners rax))
+      owners.rax)
     (if (= idx 1)
       slot
-      (struct-get owners rcx))
+      owners.rcx)
     (if (= idx 2)
       slot
-      (struct-get owners rdx))
+      owners.rdx)
     (if (= idx 3)
       slot
-      (struct-get owners rbx))
+      owners.rbx)
     (if (= idx 4)
       slot
-      (struct-get owners rsi))
+      owners.rsi)
     (if (= idx 5)
       slot
-      (struct-get owners rdi))
+      owners.rdi)
     (if (= idx 6)
       slot
-      (struct-get owners r8))
+      owners.r8)
     (if (= idx 7)
       slot
-      (struct-get owners r9))
+      owners.r9)
     (if (= idx 8)
       slot
-      (struct-get owners r10))
+      owners.r10)
     (if (= idx 9)
       slot
-      (struct-get owners r11))
+      owners.r11)
     (if (= idx 10)
       slot
-      (struct-get owners r12))
+      owners.r12)
     (if (= idx 11)
       slot
-      (struct-get owners r13))
+      owners.r13)
     (if (= idx 12)
       slot
-      (struct-get owners r14))
+      owners.r14)
     (if (= idx 13)
       slot
-      (struct-get owners r15))))
+      owners.r15)))
 
 ;; Owner map with every register that mirrored `slot` reset to unknown. Used
 ;; when `slot` is written (its memory value changed) so stale mirrors are dropped.
@@ -72708,48 +72540,48 @@
   [owners : CompilerBackendPeepholeOwners]
   [slot : i64]) : CompilerBackendPeepholeOwners
   (CompilerBackendPeepholeOwners
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners rax) slot)
+    (if (compiler-backend-peephole-owner-key-eq? owners.rax slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners rax))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners rcx) slot)
+      owners.rax)
+    (if (compiler-backend-peephole-owner-key-eq? owners.rcx slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners rcx))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners rdx) slot)
+      owners.rcx)
+    (if (compiler-backend-peephole-owner-key-eq? owners.rdx slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners rdx))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners rbx) slot)
+      owners.rdx)
+    (if (compiler-backend-peephole-owner-key-eq? owners.rbx slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners rbx))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners rsi) slot)
+      owners.rbx)
+    (if (compiler-backend-peephole-owner-key-eq? owners.rsi slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners rsi))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners rdi) slot)
+      owners.rsi)
+    (if (compiler-backend-peephole-owner-key-eq? owners.rdi slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners rdi))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners r8) slot)
+      owners.rdi)
+    (if (compiler-backend-peephole-owner-key-eq? owners.r8 slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners r8))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners r9) slot)
+      owners.r8)
+    (if (compiler-backend-peephole-owner-key-eq? owners.r9 slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners r9))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners r10) slot)
+      owners.r9)
+    (if (compiler-backend-peephole-owner-key-eq? owners.r10 slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners r10))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners r11) slot)
+      owners.r10)
+    (if (compiler-backend-peephole-owner-key-eq? owners.r11 slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners r11))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners r12) slot)
+      owners.r11)
+    (if (compiler-backend-peephole-owner-key-eq? owners.r12 slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners r12))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners r13) slot)
+      owners.r12)
+    (if (compiler-backend-peephole-owner-key-eq? owners.r13 slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners r13))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners r14) slot)
+      owners.r13)
+    (if (compiler-backend-peephole-owner-key-eq? owners.r14 slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners r14))
-    (if (compiler-backend-peephole-owner-key-eq? (struct-get owners r15) slot)
+      owners.r14)
+    (if (compiler-backend-peephole-owner-key-eq? owners.r15 slot)
       (compiler-backend-peephole-owner-key-unknown)
-      (struct-get owners r15))))
+      owners.r15)))
 
 ;; Owner key that can survive a normal call. Calls may mutate globals, so a
 ;; callee-saved register keeps only stack-slot ownership across the boundary.
@@ -72768,17 +72600,17 @@
     (compiler-backend-peephole-owner-key-unknown)
     (compiler-backend-peephole-owner-key-unknown)
     (compiler-backend-peephole-owner-key-unknown)
-    (compiler-backend-peephole-call-preserved-owner (struct-get owners rbx))
+    (compiler-backend-peephole-call-preserved-owner owners.rbx)
     (compiler-backend-peephole-owner-key-unknown)
     (compiler-backend-peephole-owner-key-unknown)
     (compiler-backend-peephole-owner-key-unknown)
     (compiler-backend-peephole-owner-key-unknown)
     (compiler-backend-peephole-owner-key-unknown)
     (compiler-backend-peephole-owner-key-unknown)
-    (compiler-backend-peephole-call-preserved-owner (struct-get owners r12))
-    (compiler-backend-peephole-call-preserved-owner (struct-get owners r13))
-    (compiler-backend-peephole-call-preserved-owner (struct-get owners r14))
-    (compiler-backend-peephole-call-preserved-owner (struct-get owners r15))))
+    (compiler-backend-peephole-call-preserved-owner owners.r12)
+    (compiler-backend-peephole-call-preserved-owner owners.r13)
+    (compiler-backend-peephole-call-preserved-owner owners.r14)
+    (compiler-backend-peephole-call-preserved-owner owners.r15)))
 
 ;; Owner-map transfer for a recognized `movq SRC, DST` line.
 ;;  * DST is a clean stack slot (a store): SRC's value is written to
@@ -73553,91 +73385,60 @@
 
 (define (compiler-backend-peephole-desc-start
   [line : CompilerBackendPeepholeLine]) : i64
-  (bit-and (struct-get line span) compiler-backend-peephole-desc-pack-mask))
+  (bit-and line.span compiler-backend-peephole-desc-pack-mask))
 
 (define (compiler-backend-peephole-desc-end
   [line : CompilerBackendPeepholeLine]) : i64
   (bit-and
-    (shr (struct-get line span) compiler-backend-peephole-desc-pack-shift)
+    (shr line.span compiler-backend-peephole-desc-pack-shift)
     compiler-backend-peephole-desc-pack-mask))
 
 (define (compiler-backend-peephole-desc-mnemonic-start
   [line : CompilerBackendPeepholeLine]) : i64
-  (bit-and (struct-get line mnemonic) compiler-backend-peephole-desc-pack-mask))
+  (bit-and line.mnemonic compiler-backend-peephole-desc-pack-mask))
 
 (define (compiler-backend-peephole-desc-mnemonic-len
   [line : CompilerBackendPeepholeLine]) : i64
   (bit-and
-    (shr (struct-get line mnemonic) compiler-backend-peephole-desc-pack-shift)
+    (shr line.mnemonic compiler-backend-peephole-desc-pack-shift)
     compiler-backend-peephole-desc-pack-mask))
 
 (define (compiler-backend-peephole-desc-newline?
   [line : CompilerBackendPeepholeLine]) : bool
-  (not
-    (=
-      (bit-and
-        (struct-get line flags)
-        compiler-backend-peephole-desc-flag-newline)
-      0)))
+  (not (= (bit-and line.flags compiler-backend-peephole-desc-flag-newline) 0)))
 
 (define (compiler-backend-peephole-desc-owned?
   [line : CompilerBackendPeepholeLine]) : bool
-  (not
-    (=
-      (bit-and
-        (struct-get line flags)
-        compiler-backend-peephole-desc-flag-owned)
-      0)))
+  (not (= (bit-and line.flags compiler-backend-peephole-desc-flag-owned) 0)))
 
 (define (compiler-backend-peephole-desc-movq?
   [line : CompilerBackendPeepholeLine]) : bool
-  (not
-    (=
-      (bit-and (struct-get line flags) compiler-backend-peephole-desc-flag-movq)
-      0)))
+  (not (= (bit-and line.flags compiler-backend-peephole-desc-flag-movq) 0)))
 
 (define (compiler-backend-peephole-desc-label?
   [line : CompilerBackendPeepholeLine]) : bool
-  (not
-    (=
-      (bit-and
-        (struct-get line flags)
-        compiler-backend-peephole-desc-flag-label)
-      0)))
+  (not (= (bit-and line.flags compiler-backend-peephole-desc-flag-label) 0)))
 
 (define (compiler-backend-peephole-desc-noreturn-abort?
   [line : CompilerBackendPeepholeLine]) : bool
   (not
     (=
-      (bit-and
-        (struct-get line flags)
-        compiler-backend-peephole-desc-flag-noreturn-abort)
+      (bit-and line.flags compiler-backend-peephole-desc-flag-noreturn-abort)
       0)))
 
 (define (compiler-backend-peephole-desc-clears-owners?
   [line : CompilerBackendPeepholeLine]) : bool
   (not
-    (=
-      (bit-and
-        (struct-get line flags)
-        compiler-backend-peephole-desc-flag-clears-owners)
-      0)))
+    (= (bit-and line.flags compiler-backend-peephole-desc-flag-clears-owners) 0)))
 
 (define (compiler-backend-peephole-desc-call?
   [line : CompilerBackendPeepholeLine]) : bool
-  (not
-    (=
-      (bit-and (struct-get line flags) compiler-backend-peephole-desc-flag-call)
-      0)))
+  (not (= (bit-and line.flags compiler-backend-peephole-desc-flag-call) 0)))
 
 (define (compiler-backend-peephole-desc-single-dest?
   [line : CompilerBackendPeepholeLine]) : bool
   (not
-    (=
-      (bit-and
-        (struct-get line flags)
-        compiler-backend-peephole-desc-flag-single-dest)
-      0)))
+    (= (bit-and line.flags compiler-backend-peephole-desc-flag-single-dest) 0)))
 
 ;; A generated guard branches over its cold abort preparation to an `_ok`
 ;; continuation. Remember the owner map at that branch so extra value/site
@@ -73646,7 +73447,7 @@
 (define (compiler-backend-peephole-desc-guard-ok-branch?
   [line : CompilerBackendPeepholeLine]) : bool
   (let
-    [data : (Ptr u8) (struct-get line data)]
+    [data : (Ptr u8) line.data]
     [start : i64 (compiler-backend-peephole-desc-start line)]
     [end : i64 (compiler-backend-peephole-desc-end line)]
     [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
@@ -73668,14 +73469,14 @@
   (and
     (compiler-backend-peephole-desc-label? line)
     (compiler-backend-peephole-label-guard-ok?
-      (struct-get line data)
+      line.data
       (compiler-backend-peephole-desc-start line)
       (compiler-backend-peephole-desc-end line))))
 
 (define (compiler-backend-peephole-desc-pushq?
   [line : CompilerBackendPeepholeLine]) : bool
   (let
-    [data : (Ptr u8) (struct-get line data)]
+    [data : (Ptr u8) line.data]
     [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
     [mlen : i64 (compiler-backend-peephole-desc-mnemonic-len line)]
     (and
@@ -73689,54 +73490,46 @@
 (define (compiler-backend-peephole-desc-has-operands?
   [line : CompilerBackendPeepholeLine]) : bool
   (not
-    (=
-      (bit-and
-        (struct-get line flags)
-        compiler-backend-peephole-desc-flag-has-operands)
-      0)))
+    (= (bit-and line.flags compiler-backend-peephole-desc-flag-has-operands) 0)))
 
 (define (compiler-backend-peephole-desc-op-src-start
   [line : CompilerBackendPeepholeLine]) : i64
-  (struct-get line op-src-start))
+  line.op-src-start)
 
 (define (compiler-backend-peephole-desc-op-src-end
   [line : CompilerBackendPeepholeLine]) : i64
-  (struct-get line op-src-end))
+  line.op-src-end)
 
 (define (compiler-backend-peephole-desc-op-dst-start
   [line : CompilerBackendPeepholeLine]) : i64
-  (struct-get line op-dst-start))
+  line.op-dst-start)
 
 ;; The destination operand always runs to the end of the line.
 (define (compiler-backend-peephole-desc-op-dst-end
   [line : CompilerBackendPeepholeLine]) : i64
   (bit-and
-    (shr (struct-get line span) compiler-backend-peephole-desc-pack-shift)
+    (shr line.span compiler-backend-peephole-desc-pack-shift)
     compiler-backend-peephole-desc-pack-mask))
 
 (define (compiler-backend-peephole-desc-op-src-flags
   [line : CompilerBackendPeepholeLine]) : i64
-  (bit-and
-    (struct-get line op-flags)
-    compiler-backend-peephole-desc-op-flags-mask))
+  (bit-and line.op-flags compiler-backend-peephole-desc-op-flags-mask))
 
 (define (compiler-backend-peephole-desc-op-dst-flags
   [line : CompilerBackendPeepholeLine]) : i64
   (bit-and
-    (shr
-      (struct-get line op-flags)
-      compiler-backend-peephole-desc-op-flags-dst-shift)
+    (shr line.op-flags compiler-backend-peephole-desc-op-flags-dst-shift)
     compiler-backend-peephole-desc-op-flags-mask))
 
 (define (compiler-backend-peephole-desc-op-src-reg
   [line : CompilerBackendPeepholeLine]) : i64
-  (- (bit-and (struct-get line regs) compiler-backend-peephole-desc-reg-mask) 1))
+  (- (bit-and line.regs compiler-backend-peephole-desc-reg-mask) 1))
 
 (define (compiler-backend-peephole-desc-op-dst-reg
   [line : CompilerBackendPeepholeLine]) : i64
   (-
     (bit-and
-      (shr (struct-get line regs) compiler-backend-peephole-desc-reg-dst-shift)
+      (shr line.regs compiler-backend-peephole-desc-reg-dst-shift)
       compiler-backend-peephole-desc-reg-mask)
     1))
 
@@ -73744,7 +73537,7 @@
   [line : CompilerBackendPeepholeLine]) : i64
   (-
     (bit-and
-      (shr (struct-get line regs) compiler-backend-peephole-desc-reg-last-shift)
+      (shr line.regs compiler-backend-peephole-desc-reg-last-shift)
       compiler-backend-peephole-desc-reg-mask)
     1))
 
@@ -73752,15 +73545,11 @@
 ;; last-operand register of a `movzb{q,l}` line and "none" everywhere else.
 (define (compiler-backend-peephole-desc-zext-dst
   [line : CompilerBackendPeepholeLine]) : i64
-  (if (=
-    (bit-and (struct-get line flags) compiler-backend-peephole-desc-flag-zext)
-    0)
+  (if (= (bit-and line.flags compiler-backend-peephole-desc-flag-zext) 0)
     -1
     (-
       (bit-and
-        (shr
-          (struct-get line regs)
-          compiler-backend-peephole-desc-reg-last-shift)
+        (shr line.regs compiler-backend-peephole-desc-reg-last-shift)
         compiler-backend-peephole-desc-reg-mask)
       1)))
 
@@ -73770,7 +73559,7 @@
   (let
     [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
     (compiler-backend-peephole-range-eq?
-      (struct-get line data)
+      line.data
       ms
       (+ ms (compiler-backend-peephole-desc-mnemonic-len line))
       name)))
@@ -73780,7 +73569,7 @@
   (let
     [start : i64 (compiler-backend-peephole-desc-start line)]
     (string.substring
-      (struct-get line src)
+      line.src
       start
       (- (compiler-backend-peephole-desc-end line) start))))
 
@@ -73789,7 +73578,7 @@
   (let
     [start : i64 (compiler-backend-peephole-desc-op-src-start line)]
     (string.substring
-      (struct-get line src)
+      line.src
       start
       (- (compiler-backend-peephole-desc-op-src-end line) start))))
 
@@ -73798,7 +73587,7 @@
   (let
     [start : i64 (compiler-backend-peephole-desc-op-dst-start line)]
     (string.substring
-      (struct-get line src)
+      line.src
       start
       (- (compiler-backend-peephole-desc-op-dst-end line) start))))
 
@@ -73825,7 +73614,7 @@
   [newline : bool]
   [owned : bool]) : CompilerBackendPeepholeLine
   (let
-    [data : (Ptr u8) (struct-get context data)]
+    [data : (Ptr u8) context.data]
     [ms : i64 start]
     (begin
       (if (and
@@ -74123,8 +73912,8 @@
   (let
     [context : CompilerBackendPeepholeParseContext
       (CompilerBackendPeepholeParseContext
-        (struct-get backend-state address)
-        (struct-get stream address)
+        backend-state.address
+        stream.address
         (unsafe
           (string-data line)))]
     (compiler-backend-peephole-parse-line
@@ -74154,18 +73943,18 @@
 (define (compiler-backend-peephole-line-copy
   [line : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLine
   (CompilerBackendPeepholeLine
-    (struct-get line src)
-    (struct-get line data)
-    (struct-get line span)
-    (struct-get line mnemonic)
-    (struct-get line flags)
-    (struct-get line op-src-start)
-    (struct-get line op-src-end)
-    (struct-get line op-dst-start)
-    (struct-get line op-src-key)
-    (struct-get line op-dst-key)
-    (struct-get line op-flags)
-    (struct-get line regs)))
+    line.src
+    line.data
+    line.span
+    line.mnemonic
+    line.flags
+    line.op-src-start
+    line.op-src-end
+    line.op-dst-start
+    line.op-src-key
+    line.op-dst-key
+    line.op-flags
+    line.regs))
 
 ;; ---- compact line-record packing -------------------------------------------
 ;; `span` holds start in the low 32 bits and end in the high 32. Assembly group
@@ -74210,61 +73999,50 @@
 
 (define (compiler-backend-peephole-record-start
   [rec : CompilerBackendPeepholeLineRecord]) : i64
-  (bit-and (struct-get rec span) compiler-backend-peephole-record-span-mask))
+  (bit-and rec.span compiler-backend-peephole-record-span-mask))
 
 (define (compiler-backend-peephole-record-end
   [rec : CompilerBackendPeepholeLineRecord]) : i64
   (bit-and
-    (shr (struct-get rec span) compiler-backend-peephole-record-span-shift)
+    (shr rec.span compiler-backend-peephole-record-span-shift)
     compiler-backend-peephole-record-span-mask))
 
 (define (compiler-backend-peephole-record-data
   [rec : CompilerBackendPeepholeLineRecord]) : (Ptr u8)
   (unsafe
-    (string-data (struct-get rec src))))
+    (string-data rec.src)))
 
 (define (compiler-backend-peephole-record-kind
   [rec : CompilerBackendPeepholeLineRecord]) : i64
-  (bit-and (struct-get rec meta) compiler-backend-peephole-record-kind-mask))
+  (bit-and rec.meta compiler-backend-peephole-record-kind-mask))
 
 (define (compiler-backend-peephole-record-flags
   [rec : CompilerBackendPeepholeLineRecord]) : i64
   (bit-and
-    (shr (struct-get rec meta) compiler-backend-peephole-record-flags-shift)
+    (shr rec.meta compiler-backend-peephole-record-flags-shift)
     compiler-backend-peephole-record-flags-mask))
 
 (define (compiler-backend-peephole-record-newline?
   [rec : CompilerBackendPeepholeLineRecord]) : bool
-  (not
-    (=
-      (bit-and
-        (struct-get rec meta)
-        compiler-backend-peephole-record-newline-bit)
-      0)))
+  (not (= (bit-and rec.meta compiler-backend-peephole-record-newline-bit) 0)))
 
 (define (compiler-backend-peephole-record-owned?
   [rec : CompilerBackendPeepholeLineRecord]) : bool
-  (not
-    (=
-      (bit-and (struct-get rec meta) compiler-backend-peephole-record-owned-bit)
-      0)))
+  (not (= (bit-and rec.meta compiler-backend-peephole-record-owned-bit) 0)))
 
 (define (compiler-backend-peephole-record-globl?
   [rec : CompilerBackendPeepholeLineRecord]) : bool
-  (not
-    (=
-      (bit-and (struct-get rec meta) compiler-backend-peephole-record-globl-bit)
-      0)))
+  (not (= (bit-and rec.meta compiler-backend-peephole-record-globl-bit) 0)))
 
 (define (compiler-backend-peephole-record-width
   [rec : CompilerBackendPeepholeLineRecord]) : i64
   (bit-and
-    (shr (struct-get rec meta) compiler-backend-peephole-record-width-shift)
+    (shr rec.meta compiler-backend-peephole-record-width-shift)
     compiler-backend-peephole-record-width-mask))
 
 (define (compiler-backend-peephole-record-mem-count
   [rec : CompilerBackendPeepholeLineRecord]) : i64
-  (shr (struct-get rec meta) compiler-backend-peephole-record-mem-count-shift))
+  (shr rec.meta compiler-backend-peephole-record-mem-count-shift))
 
 ;; First non-space index of the record's line. Only the never-in-practice
 ;; multi-reference fallback needs it, so it is recomputed instead of stored.
@@ -74301,7 +74079,7 @@
 (define (compiler-backend-peephole-line-record
   [line : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLineRecord
   (let
-    [data : (Ptr u8) (struct-get line data)]
+    [data : (Ptr u8) line.data]
     [end : i64 (compiler-backend-peephole-desc-end line)]
     [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
     [mlen : i64 (compiler-backend-peephole-desc-mnemonic-len line)]
@@ -74338,7 +74116,7 @@
         (>= ms end)
         (return
           (CompilerBackendPeepholeLineRecord
-            (struct-get line src)
+            line.src
             span
             (bit-or compiler-backend-sweep-line-kind-skip plain-meta)
             none
@@ -74348,7 +74126,7 @@
         (compiler-backend-peephole-desc-label? line)
         (return
           (CompilerBackendPeepholeLineRecord
-            (struct-get line src)
+            line.src
             span
             (bit-or compiler-backend-sweep-line-kind-label plain-meta)
             none
@@ -74391,7 +74169,7 @@
                 (or (not dst-register?) (>= dst-reg 0)))
               (return
                 (CompilerBackendPeepholeLineRecord
-                  (struct-get line src)
+                  line.src
                   span
                   (bit-or
                     compiler-backend-sweep-line-kind-instruction
@@ -74409,8 +74187,8 @@
             ;; again. Indexed/odd stack spellings and untracked registers retain
             ;; the general byte audit below.
             (let
-              [src-key : i64 (struct-get line op-src-key)]
-              [dst-key : i64 (struct-get line op-dst-key)]
+              [src-key : i64 line.op-src-key]
+              [dst-key : i64 line.op-dst-key]
               (when
                 (and
                   (=
@@ -74482,7 +74260,7 @@
                         0))]
                   (return
                     (CompilerBackendPeepholeLineRecord
-                      (struct-get line src)
+                      line.src
                       span
                       (bit-or
                         compiler-backend-sweep-line-kind-instruction
@@ -74511,7 +74289,7 @@
             (or (= b0 46) (= b0 35))
             (return
               (CompilerBackendPeepholeLineRecord
-                (struct-get line src)
+                line.src
                 span
                 (bit-or compiler-backend-sweep-line-kind-skip plain-meta)
                 none
@@ -74837,7 +74615,7 @@
                         8))
                     8)]
                 (CompilerBackendPeepholeLineRecord
-                  (struct-get line src)
+                  line.src
                   span
                   (bit-or
                     (bit-or
@@ -74900,13 +74678,13 @@
   [walk : CompilerBackendPeepholeWalkState]) : unit
   (let
     [stream : CompilerBackendStreamState
-      (CompilerBackendStreamState (struct-get walk stream-address))]
+      (CompilerBackendStreamState walk.stream-address)]
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set! (struct-get data records-lines) (struct-get walk lines))
-      (set! (struct-get data records-live) (struct-get walk live))
-      (set! (struct-get data records-len) (struct-get walk len))
+      (set! data.records-lines walk.lines)
+      (set! data.records-live walk.live)
+      (set! data.records-len walk.len)
       (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-peephole-records-publish-len!
@@ -74916,17 +74694,14 @@
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set! (struct-get data records-len) len)
+      (set! data.records-len len)
       (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-peephole-records-close
   [walk : CompilerBackendPeepholeWalkState]) : CompilerBackendPeepholeLineVec
   (begin
     (compiler-backend-peephole-records-publish! walk)
-    (CompilerBackendPeepholeLineVec
-      (struct-get walk lines)
-      (struct-get walk live)
-      (struct-get walk len))))
+    (CompilerBackendPeepholeLineVec walk.lines walk.live walk.len)))
 
 (define (compiler-backend-peephole-records-retire!
   [stream : CompilerBackendStreamState]) : unit
@@ -74935,10 +74710,10 @@
       (compiler-backend-stream-state-data stream)]
     (begin
       (set!
-        (struct-get data records-lines)
+        data.records-lines
         (array.make-array CompilerBackendPeepholeLineRecord 0))
-      (set! (struct-get data records-live) (array.make-array i64 0))
-      (set! (struct-get data records-len) 0)
+      (set! data.records-live (array.make-array i64 0))
+      (set! data.records-len 0)
       (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-peephole-records-state-grow!
@@ -74947,9 +74722,9 @@
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     [old-lines : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
-      (struct-get data records-lines)]
-    [old-live : (__tl_dyn-array i64) (struct-get data records-live)]
-    [len : i64 (struct-get data records-len)]
+      data.records-lines]
+    [old-live : (__tl_dyn-array i64) data.records-live]
+    [len : i64 data.records-len]
     [new-cap : i64
       (if (< (array-length old-lines) 1)
         1
@@ -74961,28 +74736,26 @@
     (begin
       (while (< k len)
         (begin
-          (array-set! lines k (array-ref old-lines k))
-          (array-set! live k (array-ref old-live k))
+          (set! (array-ref lines k) (array-ref old-lines k))
+          (set! (array-ref live k) (array-ref old-live k))
           (set! k (+ k 1))))
-      (set! (struct-get data records-lines) lines)
-      (set! (struct-get data records-live) live)
+      (set! data.records-lines lines)
+      (set! data.records-live live)
       (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-peephole-records-grow!
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]) : unit
   (let
     [stream : CompilerBackendStreamState
-      (CompilerBackendStreamState (struct-get walk stream-address))]
+      (CompilerBackendStreamState walk.stream-address)]
     [_publish : unit
-      (compiler-backend-peephole-records-publish-len!
-        stream
-        (struct-get walk len))]
+      (compiler-backend-peephole-records-publish-len! stream walk.len)]
     [_grow : unit (compiler-backend-peephole-records-state-grow! stream)]
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set! (struct-get walk lines) (struct-get data records-lines))
-      (set! (struct-get walk live) (struct-get data records-live)))))
+      (set! walk.lines data.records-lines)
+      (set! walk.live data.records-live))))
 
 ;; Append one surviving line, compacted. Records are live until the sweep marks
 ;; them dead, and the arrays are never rebuilt.
@@ -74990,17 +74763,16 @@
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : CompilerBackendPeepholeLine]) : unit
   (let
-    [index : i64 (struct-get walk len)]
+    [index : i64 walk.len]
     (begin
       (unless
-        (< index (array-length (struct-get walk lines)))
+        (< index (array-length walk.lines))
         (compiler-backend-peephole-records-grow! walk))
-      (array-set!
-        (struct-get walk lines)
-        index
+      (set!
+        (array-ref walk.lines index)
         (compiler-backend-peephole-line-record line))
-      (array-set! (struct-get walk live) index 1)
-      (set! (struct-get walk len) (+ index 1)))))
+      (set! (array-ref walk.live index) 1)
+      (set! walk.len (+ index 1)))))
 
 ;; True iff the line [start,end) is a label (non-blank after leading spaces and
 ;; ends in ':'). Mirrors the label arm of line-clears-owners?.
@@ -75058,13 +74830,13 @@
       (if (or
         (compiler-backend-peephole-label-carry-safe?
           carry-safe
-          (struct-get line data)
+          line.data
           (compiler-backend-peephole-desc-start line)
           (compiler-backend-peephole-desc-end line))
         (and
           prev-abort?
           (compiler-backend-peephole-label-guard-ok?
-            (struct-get line data)
+            line.data
             (compiler-backend-peephole-desc-start line)
             (compiler-backend-peephole-desc-end line))))
         owners
@@ -75089,10 +74861,10 @@
     (compiler-backend-peephole-desc-movq? line)
     (not (= (bit-and (compiler-backend-peephole-desc-op-src-flags line) 3) 0))
     (compiler-backend-peephole-ranges-eq?
-      (struct-get line data)
+      line.data
       (compiler-backend-peephole-desc-op-src-start line)
       (compiler-backend-peephole-desc-op-src-end line)
-      (struct-get line data)
+      line.data
       (compiler-backend-peephole-desc-op-dst-start line)
       (compiler-backend-peephole-desc-op-dst-end line))))
 
@@ -75104,7 +74876,7 @@
     (not (compiler-backend-peephole-line-mnemonic-eq? next "movzbq")))
     false
     (let
-      [data : (Ptr u8) (struct-get next data)]
+      [data : (Ptr u8) next.data]
       [src-start : i64 (compiler-backend-peephole-desc-op-src-start next)]
       [src-end : i64 (compiler-backend-peephole-desc-op-src-end next)]
       [src-len : i64 (- src-end src-start)]
@@ -75164,7 +74936,7 @@
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : bool
   (let
-    [pd : (Ptr u8) (struct-get pending data)]
+    [pd : (Ptr u8) pending.data]
     [pms : i64 (compiler-backend-peephole-desc-mnemonic-start pending)]
     [pmlen : i64 (compiler-backend-peephole-desc-mnemonic-len pending)]
     (if (or
@@ -75173,7 +74945,7 @@
       (not (compiler-backend-peephole-range-eq? pd pms (+ pms pmlen) "andq")))
       false
       (let
-        [nd : (Ptr u8) (struct-get next data)]
+        [nd : (Ptr u8) next.data]
         [nms : i64 (compiler-backend-peephole-desc-mnemonic-start next)]
         [nmlen : i64 (compiler-backend-peephole-desc-mnemonic-len next)]
         (if (or
@@ -75227,8 +74999,8 @@
   [chunk : i64]
   [start : i64]) : bool
   (let
-    [items : (__tl_dyn-array String) (struct-get chunks items)]
-    [count : i64 (struct-get chunks count)]
+    [items : (__tl_dyn-array String) chunks.items]
+    [count : i64 chunks.count]
     [c : i64 chunk]
     [i : i64 start]
     [found : bool false]
@@ -75250,8 +75022,8 @@
   [chunk : i64]
   [start : i64]) : bool
   (let
-    [items : (__tl_dyn-array String) (struct-get chunks items)]
-    [count : i64 (struct-get chunks count)]
+    [items : (__tl_dyn-array String) chunks.items]
+    [count : i64 chunks.count]
     [c : i64 chunk]
     [i : i64 start]
     [k : i64 0]
@@ -75274,8 +75046,8 @@
                   (string-data asm))]
               [context : CompilerBackendPeepholeParseContext
                 (CompilerBackendPeepholeParseContext
-                  (struct-get backend-state address)
-                  (struct-get stream address)
+                  backend-state.address
+                  stream.address
                   asm-data)]
               ;; The line ends at its newline, or at the chunk end.
               [end : i64
@@ -75303,7 +75075,7 @@
                   (= (compiler-backend-peephole-desc-op-dst-reg line) 8)
                   (not
                     (compiler-backend-peephole-range-mentions-r10-data?
-                      (struct-get line data)
+                      line.data
                       (compiler-backend-peephole-desc-op-src-start line)
                       (compiler-backend-peephole-desc-op-src-end line))))]
               (begin
@@ -75341,8 +75113,8 @@
         1
         (if (compiler-backend-peephole-desc-movq? next)
           (let
-            [pd : (Ptr u8) (struct-get pending data)]
-            [nd : (Ptr u8) (struct-get next data)]
+            [pd : (Ptr u8) pending.data]
+            [nd : (Ptr u8) next.data]
             [pss : i64 (compiler-backend-peephole-desc-op-src-start pending)]
             [pse : i64 (compiler-backend-peephole-desc-op-src-end pending)]
             [pds : i64 (compiler-backend-peephole-desc-op-dst-start pending)]
@@ -75441,13 +75213,10 @@
                     (let
                       [nend : i64 (compiler-backend-peephole-desc-end next)]
                       [nlen : i64
-                        (string.string-length
-                          (array-ref (struct-get chunks items) chunk))]
+                        (string.string-length (array-ref chunks.items chunk))]
                       (compiler-backend-peephole-r10-dead-after-desc?
-                        (CompilerBackendState
-                          (struct-get walk backend-state-address))
-                        (CompilerBackendStreamState
-                          (struct-get walk stream-address))
+                        (CompilerBackendState walk.backend-state-address)
+                        (CompilerBackendStreamState walk.stream-address)
                         chunks
                         chunk
                         (if (< nend nlen)
@@ -75522,8 +75291,8 @@
   (let
     [src-reg : i64 (compiler-backend-peephole-desc-op-src-reg line)]
     [dst-reg : i64 (compiler-backend-peephole-desc-op-dst-reg line)]
-    [src-key : i64 (struct-get line op-src-key)]
-    [dst-key : i64 (struct-get line op-dst-key)]
+    [src-key : i64 line.op-src-key]
+    [dst-key : i64 line.op-dst-key]
     [is-slot : bool (compiler-backend-peephole-owner-key-known? src-key)]
     [dst-owns : bool
       (and
@@ -75566,8 +75335,8 @@
           (compiler-backend-peephole-records-push!
             walk
             (compiler-backend-peephole-owned-line
-              (CompilerBackendState (struct-get walk backend-state-address))
-              (CompilerBackendStreamState (struct-get walk stream-address))
+              (CompilerBackendState walk.backend-state-address)
+              (CompilerBackendStreamState walk.stream-address)
               (str_cat.str-cat
                 "    movq "
                 ry
@@ -75598,7 +75367,7 @@
     (begin
       (compiler-backend-peephole-records-push! (&mut ,walk) ,line)
       (compiler-backend-peephole-line-clobber-owners-desc
-        (& (struct-get ,walk carry-safe))
+        (& (__tl-project-field-name ,walk "carry-safe"))
         ,owners
         ,line
         ,prev-abort))))
@@ -75685,7 +75454,7 @@
                   (begin
                     (set! k (+ k 1))
                     (set! buf (text_buf.append buf (array-ref items k)))))
-                (array-set! joined w (text_buf.render buf))
+                (set! (array-ref joined w) (text_buf.render buf))
                 (set! w (+ w 1))
                 (set! k (+ k 1)))))
           (CompilerBackendPeepholeChunkArray joined w total))))))
@@ -75694,15 +75463,12 @@
 ;; themselves are borrowed, not copied: the peephole parses them in place.
 (define (compiler-backend-peephole-chunk-array [group : text_buf.TextBuf]) : CompilerBackendPeepholeChunkArray
   (let
-    [chunks : text_buf.TextBufChunkList (struct-get group chunks)]
+    [chunks : text_buf.TextBufChunkList group.chunks]
     [count : i64 (text_buf.chunk-count chunks 0)]
     [items : (__tl_dyn-array String) (array.make-array String count)]
     (begin
       (text_buf.chunks-fill-array-rev chunks items (- count 1))
-      (compiler-backend-peephole-chunks-normalize
-        items
-        count
-        (struct-get group len)))))
+      (compiler-backend-peephole-chunks-normalize items count group.len))))
 
 ;; One String holding one chunk's worth of assembly, wrapped as a chunk array
 ;; so the whole-string peephole entry points share the chunk walk.
@@ -75710,7 +75476,7 @@
   (let
     [items : (__tl_dyn-array String) (array.make-array String 1)]
     (begin
-      (array-set! items 0 asm)
+      (set! (array-ref items 0) asm)
       (CompilerBackendPeepholeChunkArray items 1 (string.string-length asm)))))
 
 ;; Rendered byte count of the surviving records: each keeps its own source
@@ -75718,10 +75484,9 @@
 (define (compiler-backend-peephole-records-length
   [v : CompilerBackendPeepholeLineVec]) : i64
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
-      (struct-get v lines)]
-    [live : (__tl_dyn-array i64) (struct-get v live)]
-    [count : i64 (struct-get v len)]
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
+    [live : (__tl_dyn-array i64) v.live]
+    [count : i64 v.len]
     [total : i64 0]
     [i : i64 0]
     (begin
@@ -75753,10 +75518,9 @@
   [v : CompilerBackendPeepholeLineVec]
   [dst : (MutPtr u8)]) : unit
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
-      (struct-get v lines)]
-    [live : (__tl_dyn-array i64) (struct-get v live)]
-    [count : i64 (struct-get v len)]
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
+    [live : (__tl_dyn-array i64) v.live]
+    [count : i64 v.len]
     [out-pos : i64 0]
     [run-active : bool false]
     [run-data : (Ptr u8)
@@ -75859,7 +75623,7 @@
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]
   [state : CompilerBackendPeepholeChunkState]) : CompilerBackendPeepholeChunkState
-  (if (text_buf.empty? (struct-get state group))
+  (if (text_buf.empty? state.group)
     state
     (let
       [output-arena : arena.Arena (arena.current)]
@@ -75869,7 +75633,7 @@
           (arena.set! render-arena))
         (let
           [chunks : CompilerBackendPeepholeChunkArray
-            (compiler-backend-peephole-chunk-array (struct-get state group))]
+            (compiler-backend-peephole-chunk-array state.group)]
           [records : CompilerBackendPeepholeLineVec
             (compiler-backend-peephole-asm-once-records-chunks
               backend-state
@@ -75887,7 +75651,7 @@
                 (unsafe
                   (arena.destroy render-arena))
                 (CompilerBackendPeepholeChunkState
-                  (text_buf.append (struct-get state out) peepholed-asm)
+                  (text_buf.append state.out peepholed-asm)
                   (text_buf.empty))))))))))
 
 (define (compiler-backend-peephole-text-buf-once-in-arena
@@ -75896,7 +75660,7 @@
   [buf : text_buf.TextBuf]
   [group-arena : arena.Arena]) : text_buf.TextBuf
   (let
-    [chunks : text_buf.TextBufChunkList (struct-get buf chunks)]
+    [chunks : text_buf.TextBufChunkList buf.chunks]
     [chunk-count : i64 (text_buf.chunk-count chunks 0)]
     [items : (__tl_dyn-array String) (array.make-array String chunk-count)]
     [initial : CompilerBackendPeepholeChunkState
@@ -75913,22 +75677,18 @@
               [at-boundary : CompilerBackendPeepholeChunkState
                 (if (and
                   (compiler-backend-peephole-chunk-starts-global? chunk)
-                  (not (text_buf.empty? (struct-get state group))))
+                  (not (text_buf.empty? state.group)))
                   (compiler-backend-peephole-chunk-state-flush
                     backend-state
                     stream
                     state)
                   state)]
               [group : text_buf.TextBuf
-                (in-arena
-                  group-arena
-                  (text_buf.append (struct-get at-boundary group) chunk))]
+                (in-arena group-arena (text_buf.append at-boundary.group chunk))]
               (begin
                 (set!
                   state
-                  (CompilerBackendPeepholeChunkState
-                    (struct-get at-boundary out)
-                    group))
+                  (CompilerBackendPeepholeChunkState at-boundary.out group))
                 (set! i (+ i 1)))))
           (let
             [flushed : CompilerBackendPeepholeChunkState
@@ -75936,7 +75696,7 @@
                 backend-state
                 stream
                 state)]
-            (struct-get flushed out)))))))
+            flushed.out))))))
 
 (define (compiler-backend-peephole-text-buf-once [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
@@ -75961,7 +75721,7 @@
       (compiler-backend-stream-state-data stream)]
     (begin
       (set!
-        (struct-get data assembly-home-arena)
+        data.assembly-home-arena
         (compiler-backend-arena-owner-current-head home-arena))
       (compiler-backend-stream-state-data-set! stream data))))
 
@@ -75977,11 +75737,11 @@
   [state : CompilerBackendPeepholeSweepChunkState]
   [scratch-mark : arena.ArenaMark]
   [home-arena : arena.Arena]) : CompilerBackendPeepholeSweepChunkState
-  (if (text_buf.empty? (struct-get state group))
+  (if (text_buf.empty? state.group)
     state
     (let
       [chunks : CompilerBackendPeepholeChunkArray
-        (compiler-backend-peephole-chunk-array (struct-get state group))]
+        (compiler-backend-peephole-chunk-array state.group)]
       [records : CompilerBackendPeepholeLineVec
         (compiler-backend-peephole-asm-once-records-chunks
           backend-state
@@ -75993,14 +75753,14 @@
           backend-state
           stream
           records
-          (struct-get state sweep-cursor))]
+          state.sweep-cursor)]
       [finished : CompilerBackendPeepholeSweepChunkState
         (in-arena
           home-arena
           (let
             [kept : String (compiler-backend-peephole-records-render records)]
             (CompilerBackendPeepholeSweepChunkState
-              (text_buf.append (struct-get state out) kept)
+              (text_buf.append state.out kept)
               (text_buf.empty)
               cursor)))]
       [_carry-home : unit
@@ -76013,7 +75773,9 @@
 
 (define (compiler-backend-assembly-stream-active?
   [stream : CompilerBackendStreamState]) : bool
-  (struct-get (compiler-backend-stream-state-data stream) assembly-active))
+  (__tl-project-field
+    (compiler-backend-stream-state-data stream)
+    assembly-active))
 
 (define (compiler-backend-assembly-stream-start!
   [stream : CompilerBackendStreamState]
@@ -76027,19 +75789,17 @@
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set! (struct-get data assembly-raw-arena) raw-arena)
-      (set! (struct-get data assembly-raw-mark) raw-mark)
-      (set! (struct-get data assembly-peephole-arena) peephole-arena)
-      (set! (struct-get data assembly-peephole-mark) peephole-mark)
-      (set!
-        (struct-get data assembly-out)
-        (in-arena home-arena (text_buf.empty)))
-      (set! (struct-get data assembly-home-arena) home-arena)
-      (set! (struct-get data assembly-sweep-cursor) 0)
-      (set! (struct-get data assembly-batch) batch)
-      (set! (struct-get data assembly-batch-count) 0)
-      (set! (struct-get data assembly-raw-ready) false)
-      (set! (struct-get data assembly-active) true)
+      (set! data.assembly-raw-arena raw-arena)
+      (set! data.assembly-raw-mark raw-mark)
+      (set! data.assembly-peephole-arena peephole-arena)
+      (set! data.assembly-peephole-mark peephole-mark)
+      (set! data.assembly-out (in-arena home-arena (text_buf.empty)))
+      (set! data.assembly-home-arena home-arena)
+      (set! data.assembly-sweep-cursor 0)
+      (set! data.assembly-batch batch)
+      (set! data.assembly-batch-count 0)
+      (set! data.assembly-raw-ready false)
+      (set! data.assembly-active true)
       (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-assembly-stream-begin-raw!
@@ -76049,17 +75809,17 @@
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (when
-      (struct-get data assembly-active)
+      data.assembly-active
       (begin
         (unsafe
-          (arena.set! (struct-get data assembly-raw-arena)))
+          (arena.set! data.assembly-raw-arena))
         (unless
-          (struct-get data assembly-raw-ready)
+          data.assembly-raw-ready
           (begin
             (unsafe
-              (arena.rewind (struct-get data assembly-raw-mark)))
+              (arena.rewind data.assembly-raw-mark))
             (compiler-backend-clear-function-emit-state! backend-state)
-            (set! (struct-get data assembly-raw-ready) true)
+            (set! data.assembly-raw-ready true)
             (compiler-backend-stream-state-data-set! stream data)))))))
 
 (define (compiler-backend-assembly-stream-rewind-raw!
@@ -76077,27 +75837,25 @@
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (unless
-      (or
-        (not (struct-get data assembly-active))
-        (text_buf.empty? (struct-get data assembly-batch)))
+      (or (not data.assembly-active) (text_buf.empty? data.assembly-batch))
       (let
         [source-arena : arena.Arena (arena.current)]
         [state : CompilerBackendPeepholeSweepChunkState
           (CompilerBackendPeepholeSweepChunkState
-            (struct-get data assembly-out)
-            (struct-get data assembly-batch)
-            (struct-get data assembly-sweep-cursor))]
+            data.assembly-out
+            data.assembly-batch
+            data.assembly-sweep-cursor)]
         (begin
           (unsafe
-            (arena.set! (struct-get data assembly-peephole-arena)))
+            (arena.set! data.assembly-peephole-arena))
           (let
             [flushed : CompilerBackendPeepholeSweepChunkState
               (compiler-backend-peephole-sweep-chunk-state-flush
                 backend-state
                 stream
                 state
-                (struct-get data assembly-peephole-mark)
-                (struct-get data assembly-home-arena))]
+                data.assembly-peephole-mark
+                data.assembly-home-arena)]
             ;; The nested pass grows owner/sweep tables, retires its record
             ;; sink, and may carry a grown home-arena head. Reload every field
             ;; it published before updating the assembly half of the same
@@ -76107,18 +75865,16 @@
             [current : CompilerBackendStreamStateData
               (compiler-backend-stream-state-data stream)]
             (begin
-              (set! (struct-get current assembly-out) (struct-get flushed out))
-              (set!
-                (struct-get current assembly-sweep-cursor)
-                (struct-get flushed sweep-cursor))
-              (set! (struct-get current assembly-batch-count) 0)
+              (set! current.assembly-out flushed.out)
+              (set! current.assembly-sweep-cursor flushed.sweep-cursor)
+              (set! current.assembly-batch-count 0)
               (unsafe
-                (arena.set! (struct-get current assembly-raw-arena)))
+                (arena.set! current.assembly-raw-arena))
               (unsafe
-                (arena.rewind (struct-get current assembly-raw-mark)))
-              (set! (struct-get current assembly-batch) (text_buf.empty))
+                (arena.rewind current.assembly-raw-mark))
+              (set! current.assembly-batch (text_buf.empty))
               (compiler-backend-clear-function-emit-state! backend-state)
-              (set! (struct-get current assembly-raw-ready) true)
+              (set! current.assembly-raw-ready true)
               (compiler-backend-stream-state-data-set! stream current)
               (unsafe
                 (arena.set! source-arena)))))))))
@@ -76133,18 +75889,14 @@
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (when
-      (struct-get data assembly-active)
+      data.assembly-active
       (begin
-        (set!
-          (struct-get data assembly-batch)
-          (text_buf.append (struct-get data assembly-batch) raw-asm))
-        (set!
-          (struct-get data assembly-batch-count)
-          (+ (struct-get data assembly-batch-count) 1))
+        (set! data.assembly-batch (text_buf.append data.assembly-batch raw-asm))
+        (set! data.assembly-batch-count (+ data.assembly-batch-count 1))
         (compiler-backend-stream-state-data-set! stream data)
         (when
           (>=
-            (struct-get data assembly-batch-count)
+            data.assembly-batch-count
             compiler-backend-assembly-stream-batch-function-limit)
           (compiler-backend-assembly-stream-flush-batch! backend-state stream))))))
 
@@ -76169,8 +75921,8 @@
   (let
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
-    (if (struct-get data assembly-active)
-      (struct-get data assembly-out)
+    (if data.assembly-active
+      data.assembly-out
       (text_buf.empty))))
 
 (define (compiler-backend-assembly-stream-finish!
@@ -76183,14 +75935,14 @@
       [data : CompilerBackendStreamStateData
         (compiler-backend-stream-state-data stream)]
       (begin
-        (set! (struct-get data assembly-active) false)
-        (set! (struct-get data assembly-raw-arena) (arena.Arena 0))
-        (set! (struct-get data assembly-raw-mark) (arena.ArenaMark 0))
-        (set! (struct-get data assembly-peephole-arena) (arena.Arena 0))
-        (set! (struct-get data assembly-peephole-mark) (arena.ArenaMark 0))
-        (set! (struct-get data assembly-batch) (text_buf.empty))
-        (set! (struct-get data assembly-batch-count) 0)
-        (set! (struct-get data assembly-raw-ready) false)
+        (set! data.assembly-active false)
+        (set! data.assembly-raw-arena (arena.Arena 0))
+        (set! data.assembly-raw-mark (arena.ArenaMark 0))
+        (set! data.assembly-peephole-arena (arena.Arena 0))
+        (set! data.assembly-peephole-mark (arena.ArenaMark 0))
+        (set! data.assembly-batch (text_buf.empty))
+        (set! data.assembly-batch-count 0)
+        (set! data.assembly-raw-ready false)
         (compiler-backend-stream-state-data-set! stream data)
         out))))
 
@@ -76200,17 +75952,17 @@
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set! (struct-get data assembly-active) false)
-      (set! (struct-get data assembly-raw-arena) (arena.Arena 0))
-      (set! (struct-get data assembly-raw-mark) (arena.ArenaMark 0))
-      (set! (struct-get data assembly-peephole-arena) (arena.Arena 0))
-      (set! (struct-get data assembly-peephole-mark) (arena.ArenaMark 0))
-      (set! (struct-get data assembly-home-arena) (arena.Arena 0))
-      (set! (struct-get data assembly-out) (text_buf.empty))
-      (set! (struct-get data assembly-sweep-cursor) 0)
-      (set! (struct-get data assembly-batch) (text_buf.empty))
-      (set! (struct-get data assembly-batch-count) 0)
-      (set! (struct-get data assembly-raw-ready) false)
+      (set! data.assembly-active false)
+      (set! data.assembly-raw-arena (arena.Arena 0))
+      (set! data.assembly-raw-mark (arena.ArenaMark 0))
+      (set! data.assembly-peephole-arena (arena.Arena 0))
+      (set! data.assembly-peephole-mark (arena.ArenaMark 0))
+      (set! data.assembly-home-arena (arena.Arena 0))
+      (set! data.assembly-out (text_buf.empty))
+      (set! data.assembly-sweep-cursor 0)
+      (set! data.assembly-batch (text_buf.empty))
+      (set! data.assembly-batch-count 0)
+      (set! data.assembly-raw-ready false)
       (compiler-backend-stream-state-data-set! stream data))))
 
 ;; Byte length of the emitted direct-jump prefix `"    jmp "`, shared by the
@@ -76324,7 +76076,7 @@
     CompilerBackendPeepholeLine)
   (if (< count (array-length labels))
     (begin
-      (array-set! labels count line)
+      (set! (array-ref labels count) line)
       labels)
     (let
       [bigger : (__tl_dyn-array CompilerBackendPeepholeLine)
@@ -76335,9 +76087,9 @@
       (begin
         (while (< j count)
           (begin
-            (array-set! bigger j (array-ref labels j))
+            (set! (array-ref bigger j) (array-ref labels j))
             (set! j (+ j 1))))
-        (array-set! bigger count line)
+        (set! (array-ref bigger count) line)
         bigger))))
 
 (define (compiler-backend-peephole-asm-once-records-chunks
@@ -76346,22 +76098,21 @@
   [chunks : CompilerBackendPeepholeChunkArray]
   [drop-fallthrough? : bool]) : CompilerBackendPeepholeLineVec
   (let
-    [items : (__tl_dyn-array String) (struct-get chunks items)]
-    [chunk-count : i64 (struct-get chunks count)]
+    [items : (__tl_dyn-array String) chunks.items]
+    [chunk-count : i64 chunks.count]
     [sink-capacity : i64
-      (compiler-backend-peephole-line-vec-capacity-for
-        (struct-get chunks total))]
+      (compiler-backend-peephole-line-vec-capacity-for chunks.total)]
     [stream-data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     [carry-safe : CompilerBackendPeepholeCarrySafeView
       (CompilerBackendPeepholeCarrySafeView
-        (struct-get stream-data carry-safe-offsets)
-        (struct-get stream-data carry-safe-lengths)
-        (struct-get stream-data carry-safe-bytes))]
+        stream-data.carry-safe-offsets
+        stream-data.carry-safe-lengths
+        stream-data.carry-safe-bytes)]
     [walk : CompilerBackendPeepholeWalkState
       (CompilerBackendPeepholeWalkState
-        (struct-get backend-state address)
-        (struct-get stream address)
+        backend-state.address
+        stream.address
         carry-safe
         (array.make-array CompilerBackendPeepholeLineRecord sink-capacity)
         (array.make-array i64 sink-capacity)
@@ -76406,8 +76157,8 @@
               (string-data asm))]
           [context : CompilerBackendPeepholeParseContext
             (CompilerBackendPeepholeParseContext
-              (struct-get backend-state address)
-              (struct-get stream address)
+              backend-state.address
+              stream.address
               asm-data)]
           [i : i64 0]
           (begin
@@ -76442,7 +76193,7 @@
                   (if held-jmp?
                     (if (compiler-backend-asm-label-def-line? asm-data i end)
                       (if (compiler-backend-peephole-ranges-eq?
-                        (struct-get held-line data)
+                        held-line.data
                         held-target-start
                         held-target-stop
                         asm-data
@@ -76633,7 +76384,7 @@
                           (compiler-backend-peephole-desc-mnemonic-len pending)
                           3)
                         (compiler-backend-asm-direct-jmp-line?
-                          (struct-get pending data)
+                          pending.data
                           (compiler-backend-peephole-desc-start pending)
                           (compiler-backend-peephole-desc-end pending)))
                         (begin
@@ -76741,10 +76492,9 @@
   [v : CompilerBackendPeepholeLineVec]
   [asm : String]) : (text_buf_borrowed.TextBufBorrowed asm)
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
-      (struct-get v lines)]
-    [live : (__tl_dyn-array i64) (struct-get v live)]
-    [count : i64 (struct-get v len)]
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
+    [live : (__tl_dyn-array i64) v.live]
+    [count : i64 v.len]
     [buf : (text_buf_borrowed.TextBufBorrowed asm) out]
     [i : i64 0]
     (begin
@@ -76759,7 +76509,7 @@
                 (if (compiler-backend-peephole-record-owned? rec)
                   (compiler-backend-peephole-append-line
                     buf
-                    (struct-get rec src)
+                    rec.src
                     (compiler-backend-peephole-record-newline? rec))
                   (compiler-backend-peephole-append-line-range
                     buf
@@ -76919,7 +76669,7 @@
                   [(ResultCompilerBackendBuffer.Ok _)
                     (let
                       [final-home-arena : arena.Arena
-                        (struct-get
+                        (__tl-project-field
                           (compiler-backend-stream-state-data stream)
                           assembly-home-arena)]
                       [final : text_buf.TextBuf
@@ -76948,7 +76698,7 @@
                           home-arena
                           (box
                             (compiler_diagnostic.compiler-diagnostic-copy
-                              (box-get message))))]
+                              (__tl-box-place message))))]
                       (begin
                         (compiler-backend-assembly-stream-abort! stream)
                         (unsafe
@@ -77423,9 +77173,7 @@
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]
   [label : String]) : i64
-  (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data _)
       (match kind
         [(cobj.CompilerObjectSectionKind.Text) -1]
@@ -77496,7 +77244,7 @@
   (text_buf.render
     (compiler-backend-pic-fixup-table-relocs
       image
-      (struct-get image relocations)
+      image.relocations
       (text_buf.append (text_buf.empty) "typelisp-pic-fixups v1\n"))))
 
 (define (compiler-backend-pic-symbols-have-extern?
@@ -77548,9 +77296,7 @@
       (match kind
         [(cobj.CompilerObjectRelocationKind.Abs64)
           (and
-            (compiler-backend-pic-target-symbol-internal?
-              (struct-get image symbols)
-              target)
+            (compiler-backend-pic-target-symbol-internal? image.symbols target)
             (match section
               [(cobj.CompilerObjectSectionKind.Data)
                 (let
@@ -77596,7 +77342,7 @@
       (compiler-backend-global-shared-view
         compiler-backend-pic-image-base-label)
       ":\n")
-    (compiler-backend-pic-rewrite-relocs asm (struct-get image relocations))))
+    (compiler-backend-pic-rewrite-relocs asm image.relocations)))
 
 (define (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
@@ -77633,16 +77379,13 @@
           crt-entry
           profile-state)
           [(ResultCompilerBackendObject.Ok image)
-            (if (compiler-backend-pic-symbols-have-extern?
-              (struct-get image symbols))
+            (if (compiler-backend-pic-symbols-have-extern? image.symbols)
               (ResultCompilerBackendPic.Err
                 (box
                   (compiler_diagnostic.compiler-diagnostic-at-start
                     ""
                     "backend: --pic supports only internal references; extern symbols are not supported")))
-              (if (compiler-backend-pic-relocs-valid?
-                image
-                (struct-get image relocations))
+              (if (compiler-backend-pic-relocs-valid? image image.relocations)
                 (ResultCompilerBackendPic.Ok
                   (CompilerBackendPicOutput
                     (compiler-backend-pic-asm
@@ -78616,15 +78359,15 @@
         (compiler-backend-function-state-set-current-phi-dst-home-mask!
           state-b
           102)
-        (array-set! disp-a 0 16)
-        (array-set! kind-a 0 1)
-        (array-set! scale-a 0 8)
-        (array-set! disp-b 0 24)
-        (array-set! disp-b 1 0)
-        (array-set! kind-b 0 1)
-        (array-set! kind-b 1 1)
-        (array-set! scale-b 0 8)
-        (array-set! scale-b 1 8)
+        (set! (array-ref disp-a 0) 16)
+        (set! (array-ref kind-a 0) 1)
+        (set! (array-ref scale-a 0) 8)
+        (set! (array-ref disp-b 0) 24)
+        (set! (array-ref disp-b 1) 0)
+        (set! (array-ref kind-b 0) 1)
+        (set! (array-ref kind-b 1) 1)
+        (set! (array-ref scale-b 0) 8)
+        (set! (array-ref scale-b 1) 8)
         (compiler-backend-function-state-set-i64-array!
           function-a
           compiler-backend-function-i64-array-gep-fold-disp-table
@@ -78803,8 +78546,8 @@
     [a-stage : String (compiler-backend-current-phi-planned-stage state-a)]
     [b-stage : String (compiler-backend-current-phi-planned-stage state-b)]
     (and
-      (= (array-length (struct-get index-a present)) 1)
-      (= (array-length (struct-get index-b present)) 4)
+      (= (array-length index-a.present) 1)
+      (= (array-length index-b.present) 4)
       (not
         (compiler-backend-function-state-bool?
           function-a
@@ -78947,7 +78690,7 @@
     [data : CompilerBackendStreamStateData
       (compiler-backend-stream-state-data stream)]
     (begin
-      (set! (struct-get data assembly-home-arena) value)
+      (set! data.assembly-home-arena value)
       (compiler-backend-stream-state-data-set! stream data))))
 
 (define (compiler-backend-function-scratch-fixture-set-const-hoist-frame-count!
@@ -79256,7 +78999,9 @@
 
 (define (compiler-backend-test-get-compiler-backend-assembly-stream-home-arena
   [stream : CompilerBackendStreamState]) : arena.Arena
-  (struct-get (compiler-backend-stream-state-data stream) assembly-home-arena))
+  (__tl-project-field
+    (compiler-backend-stream-state-data stream)
+    assembly-home-arena))
 
 (define (compiler-backend-test-get-compiler-backend-addr-of-forwarding-enabled
   [backend-state : CompilerBackendState]) : bool
@@ -79475,19 +79220,19 @@
         (= (compiler-backend-state-lazy-table-arena backend-state) 0)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               (compiler-backend-stream-state-data stream)
               carry-safe-offsets))
           0)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               (compiler-backend-stream-state-data stream)
               owner-global-offsets))
           0)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               (compiler-backend-stream-state-data stream)
               sweep-sym-off))
           0)
@@ -79523,37 +79268,37 @@
       (and
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               (compiler-backend-stream-state-data stream)
               carry-safe-offsets))
           compiler-backend-peephole-carry-safe-initial-capacity)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               (compiler-backend-stream-state-data stream)
               carry-safe-lengths))
           compiler-backend-peephole-carry-safe-initial-capacity)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               (compiler-backend-stream-state-data stream)
               carry-safe-bytes))
           compiler-backend-peephole-carry-safe-initial-bytes-capacity)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               (compiler-backend-stream-state-data stream)
               owner-global-offsets))
           compiler-backend-peephole-owner-global-initial-capacity)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               (compiler-backend-stream-state-data stream)
               owner-global-lengths))
           compiler-backend-peephole-owner-global-initial-capacity)
         (=
           (array-length
-            (struct-get
+            (__tl-project-field
               (compiler-backend-stream-state-data stream)
               owner-global-bytes))
           compiler-backend-peephole-owner-global-initial-bytes-capacity)
@@ -79572,49 +79317,54 @@
         (arena.set! caller))
       (unsafe
         (arena.destroy scratch))
-      (array-set!
-        (struct-get
-          (compiler-backend-stream-state-data stream)
-          carry-safe-offsets)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field
+            (compiler-backend-stream-state-data stream)
+            carry-safe-offsets)
+          0)
         17)
-      (array-set!
-        (struct-get
-          (compiler-backend-stream-state-data stream)
-          owner-global-bytes)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field
+            (compiler-backend-stream-state-data stream)
+            owner-global-bytes)
+          0)
         3)
-      (array-set!
-        (struct-get
-          (compiler-backend-state-data backend-state)
-          slot-cache-epochs)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field
+            (compiler-backend-state-data backend-state)
+            slot-cache-epochs)
+          0)
         47)
-      (array-set!
-        (struct-get
-          (compiler-backend-state-data backend-state)
-          frame-offset-cache-epochs)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field
+            (compiler-backend-state-data backend-state)
+            frame-offset-cache-epochs)
+          0)
         53)
-      (array-set!
-        (struct-get
-          (compiler-backend-state-data backend-state)
-          immediate-cache-epochs)
-        0
+      (set!
+        (array-ref
+          (__tl-project-field
+            (compiler-backend-state-data backend-state)
+            immediate-cache-epochs)
+          0)
         59)
       (let
         [survived? : bool
           (and
             (=
               (array-ref
-                (struct-get
+                (__tl-project-field
                   (compiler-backend-stream-state-data stream)
                   carry-safe-offsets)
                 0)
               17)
             (=
               (array-ref
-                (struct-get
+                (__tl-project-field
                   (compiler-backend-stream-state-data stream)
                   owner-global-bytes)
                 0)
@@ -79624,21 +79374,21 @@
             (string.eq immediate-render "$17")
             (=
               (array-ref
-                (struct-get
+                (__tl-project-field
                   (compiler-backend-state-data backend-state)
                   slot-cache-epochs)
                 0)
               47)
             (=
               (array-ref
-                (struct-get
+                (__tl-project-field
                   (compiler-backend-state-data backend-state)
                   frame-offset-cache-epochs)
                 0)
               53)
             (=
               (array-ref
-                (struct-get
+                (__tl-project-field
                   (compiler-backend-state-data backend-state)
                   immediate-cache-epochs)
                 0)
@@ -79670,7 +79420,7 @@
     [_forward : unit
       (begin
         (compiler-backend-addr-of-forwarding-fill! forwarded 0)
-        (array-set! forwarded 2 1)
+        (set! (array-ref forwarded 2) 1)
         (compiler-backend-function-state-set-i64-array!
           function-state
           compiler-backend-function-i64-array-addr-of-forwarding-src

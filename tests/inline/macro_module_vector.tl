@@ -28,35 +28,35 @@
     (define (int-vec-new) : IntVec
       (int-vec-with-capacity 4))
     (define (int-vec-len [v : IntVec]) : i64
-      (struct-get v len))
+      v.len)
     (define (int-vec-capacity [v : IntVec]) : i64
-      (struct-get v cap))
+      v.cap)
     (define (int-vec-get [v : IntVec] [index : i64]) : i64
-      (array-ref (struct-get v slots) index))
+      (array-ref v.slots index))
     (define (int-vec-set [v : IntVec] [index : i64] [value : i64]) : IntVec
       (begin
-        (array-set! (struct-get v slots) index value)
+        (set! (array-ref v.slots index) value)
         v))
     (define (int-vec-grow [v : IntVec]) : IntVec
       (let
-        [old-cap : i64 (struct-get v cap)]
+        [old-cap : i64 v.cap]
         [new-cap : i64 (* old-cap 2)]
         [bigger : (__tl_dyn-array i64) (make-array i64 new-cap)]
-        [n : i64 (struct-get v len)]
+        [n : i64 v.len]
         [i : i64 0]
         (begin
           (while (< i n)
             (begin
-              (array-set! bigger i (array-ref (struct-get v slots) i))
+              (set! (array-ref bigger i) (array-ref v.slots i))
               (set! i (+ i 1))))
           (IntVec bigger n new-cap))))
     (define (int-vec-push [v : IntVec] [value : i64]) : IntVec
-      (if (< (struct-get v len) (struct-get v cap))
+      (if (< v.len v.cap)
         (let
-          [slots : (__tl_dyn-array i64) (struct-get v slots)]
+          [slots : (__tl_dyn-array i64) v.slots]
           (begin
-            (array-set! slots (struct-get v len) value)
-            (IntVec slots (+ (struct-get v len) 1) (struct-get v cap))))
+            (set! (array-ref slots v.len) value)
+            (IntVec slots (+ v.len 1) v.cap)))
         (int-vec-push (int-vec-grow v) value)))
     (define (int-vec-fixed-array-probe) : i64
       (let

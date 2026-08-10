@@ -193,14 +193,14 @@
     [(ast.AstType.Func args-box ret)
       (doc-cat5
         "(-> "
-        (doc-ast-type-list-source type-segment-bases (box-get args-box))
+        (doc-ast-type-list-source type-segment-bases (__tl-box-place args-box))
         " "
         (doc-ast-type-id-source type-segment-bases ret)
         ")")]
     [(ast.AstType.Tuple elems-box)
       (doc-cat3
         "(Tuple "
-        (doc-ast-type-list-source type-segment-bases (box-get elems-box))
+        (doc-ast-type-list-source type-segment-bases (__tl-box-place elems-box))
         ")")]
     [(ast.AstType.Array elem size)
       (doc-cat5
@@ -352,8 +352,8 @@
           examples
           index
           (doc-macro-import-example-fallback))]
-      (if (string.eq (struct-get example alias) alias)
-        (struct-get example form)
+      (if (string.eq example.alias alias)
+        example.form
         (doc-macro-import-example-find-from examples alias (- index 1))))))
 
 (define (doc-macro-import-example-find
@@ -395,12 +395,12 @@
     [(ast.AstDecl.Unsafe inner-box)
       (doc-macro-import-examples-from-decl
         type-segment-bases
-        (box-get inner-box)
+        (__tl-box-place inner-box)
         examples)]
     [(ast.AstDecl.ModuleBody _ body-box)
       (doc-macro-import-examples-from-decls-into
         type-segment-bases
-        (box-get body-box)
+        (__tl-box-place body-box)
         examples)]
     [_ unit]))
 
@@ -447,8 +447,8 @@
           examples
           index
           (doc-generated-target-example-fallback))]
-      (if (string.eq (struct-get example target) target)
-        (struct-get example form)
+      (if (string.eq example.target target)
+        example.form
         (doc-generated-target-example-find-from
           examples
           target
@@ -468,13 +468,12 @@
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
   [target : String]
   [index : i64]) : String
-  (if (>= index (struct-get examples len))
+  (if (>= index examples.len)
     ""
     (let
-      [example : DocGeneratedTargetExample
-        (array-ref (struct-get examples slots) index)]
-      (if (string.eq (struct-get example target) target)
-        (struct-get example form)
+      [example : DocGeneratedTargetExample (array-ref examples.slots index)]
+      (if (string.eq example.target target)
+        example.form
         (doc-generated-target-example-mut-find-from examples target (+ index 1))))))
 
 (define (doc-generated-target-example-mut-find
@@ -523,12 +522,12 @@
         [_ unit])]
     [(ast.AstDecl.Unsafe inner-box)
       (doc-generated-target-examples-from-decl
-        (box-get inner-box)
+        (__tl-box-place inner-box)
         macro-examples
         targets)]
     [(ast.AstDecl.ModuleBody _ body-box)
       (doc-generated-target-examples-from-decls-into
-        (box-get body-box)
+        (__tl-box-place body-box)
         macro-examples
         targets)]
     [_ unit]))
@@ -919,7 +918,7 @@
             (doc-ast-lifetime-list-source lifetimes)
             fields)))]
     [(ast.AstDecl.Unsafe inner-box)
-      (doc-ast-decl-item type-segment-bases (box-get inner-box))]
+      (doc-ast-decl-item type-segment-bases (__tl-box-place inner-box))]
     [_ (DocMaybeItem.No)]))
 
 (define (doc-ast-generated-decl-item
@@ -1044,7 +1043,7 @@
         (match expanded
           [(ast.AstProgram.Program expanded-box)
             (let
-              [expanded-decls : ast.AstDeclList (box-get expanded-box)]
+              [expanded-decls : ast.AstDeclList (__tl-box-place expanded-box)]
               [targets : doc_generated_target_example_vec.Vec
                 (doc-generated-target-examples-from-decls
                   expanded-decls
@@ -1056,7 +1055,7 @@
                   targets)))])]
       [(compiler_typecheck_api.ResultCompilerDocExpand.Err diag)
         (ResultDocExpandedModules.Err
-          (cdiag.compiler-diagnostic-render (box-get diag)))])))
+          (cdiag.compiler-diagnostic-render (__tl-box-place diag)))])))
 
 (define (doc-expand-find-prefix [text : String] [prefix : String] [from : i64]) : i64
   (let
@@ -1168,11 +1167,11 @@
     [(doc_extract.DocExtraction.Extraction module-doc _)
       (let
         [scan : DocImportFormScan (doc-import-forms-from-doc-text module-doc)]
-        (if (not (struct-get scan has-macro))
+        (if (not scan.has-macro)
           (ResultDocExpandedModules.Ok (doc_module_vec.new))
           (match (compiler_load.compiler-load-source-with-paths-and-roots
             (doc-cat2 source-path ".doc-examples.tl")
-            (doc-expanded-example-source (struct-get scan forms))
+            (doc-expanded-example-source scan.forms)
             (sym_i64_env.sym-i64-empty)
             stdlib-roots)
             [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -1182,7 +1181,7 @@
                 stdlib-roots)]
             [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
               (ResultDocExpandedModules.Err
-                (cdiag.compiler-diagnostic-render (box-get diag)))])))]))
+                (cdiag.compiler-diagnostic-render (__tl-box-place diag)))])))]))
 
 (define (doc-expand-smoke-source) : String
   "(module doc.generated.fixture)
@@ -1202,7 +1201,7 @@
       (define (new [value : ,T]) : Box
         (Box value))
       (define (value [b : (& b Box)]) : ,T
-        (struct-get b value)))))
+        b.value))))
 
 (import (boxmod i64) as ibox)")
 
@@ -1211,7 +1210,7 @@
   (match (parser.parse-ast-source
     "(defmacro (catalog [T : type (:kind i64 struct)]) : Module unit)")
     [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
-      (match (ast.ast-decl-list-step (box-get decls-box))
+      (match (ast.ast-decl-list-step (__tl-box-place decls-box))
         [(ast.AstDeclListStep.Cons
             (ast.AstDecl.DefMacro decl-meta _ params _ _)
             rest)
@@ -1288,7 +1287,7 @@
           (string.eq (doc_import_form_vec.get (& forms) 0 "") "0")
           (string.eq (doc_import_form_vec.get (& forms) 5 "") "5")
           (string.eq
-            (struct-get
+            (__tl-project-field
               (doc_macro_import_example_vec.get
                 (& macro-examples)
                 5
@@ -1296,7 +1295,7 @@
               alias)
             "5")
           (string.eq
-            (struct-get
+            (__tl-project-field
               (doc_generated_target_example_vec.get
                 (& targets)
                 5
@@ -1348,7 +1347,7 @@
         (io.panic
           (doc-cat2
             "doc-expand: load failed: "
-            (cdiag.compiler-diagnostic-render (box-get diag))))])))
+            (cdiag.compiler-diagnostic-render (__tl-box-place diag))))])))
 
 (define (doc-expand-ignore-fence-smoke) : i64
   (let
@@ -1366,8 +1365,6 @@ After"]
 ```"]
     [ignored-scan : DocImportFormScan (doc-import-forms-from-doc-text ignored)]
     [active-scan : DocImportFormScan (doc-import-forms-from-doc-text active)]
-    (if (and
-      (not (struct-get ignored-scan has-macro))
-      (struct-get active-scan has-macro))
+    (if (and (not ignored-scan.has-macro) active-scan.has-macro)
       42
       (io.panic "doc-expand: ignored fence import scan mismatch"))))

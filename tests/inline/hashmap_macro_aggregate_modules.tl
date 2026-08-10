@@ -269,7 +269,7 @@
         (bit-and (map_generic_array.hash-key collision) 7)
         "fixed-array fixture keys collide in the initial table")
       (map_generic_array.insert! m owned-first 10)
-      (array-set! owned-first 0 99)
+      (set! (array-ref owned-first 0) 99)
       (test.assert-i64-eq
         (map_generic_array.lookup-value-or
           (map_generic_array.get (& m) first-query)
@@ -327,6 +327,6 @@
         42
         "generated clone helper resolves the exact duplicate-name owner")
       (test.assert-i64-eq
-        (__tl_string_length (struct-get other-owner text))
+        (__tl_string_length other-owner.text)
         6
         "second duplicate-name clone helper remains independently reachable"))))

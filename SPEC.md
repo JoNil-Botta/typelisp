@@ -498,9 +498,9 @@ typecheck against `T` and satisfy the same region/reference store checks as
 other place mutations. Borrowing `(deref value)` borrows the projected storage
 under the ordinary lexical exclusivity rules.
 
-`box-get` and `box-take` remain transitional parser aliases while checked-in
-stage0 compilers and the source corpus migrate to `deref`; new source uses
-`deref`.
+The former `box-get` and `box-take` source forms are removed. The parser emits
+focused migration diagnostics directing old source to `deref`; internal AST
+nodes may retain implementation-oriented names.
 
 Examples:
 
@@ -522,13 +522,14 @@ Examples:
   (Node (box (Leaf 1)) (box (Leaf 2))))
 ```
 
-```lisp test=ignore name=box-get-copyable-field reason=illustrative
+```lisp test=ignore name=box-deref-copyable-field reason=illustrative
 (defstruct Counter
   (label String)
   (count i64))
 
 (define (boxed-count [c : (Box Counter)]) : i64
-  (struct-get (deref c) count))
+  (let [counter : Counter (deref c)]
+    counter.count))
 ```
 
 ### 3.5 User-defined types
@@ -570,12 +571,15 @@ Examples:
 - Layout: fields stored sequentially with natural alignment per field. No tag
   word.
 - Constructor syntax: `(Point 10 20)` — a call-like expression.
-- Field access: `(struct-get p x)` generates a GEP+load at the field's byte
-  offset. When the leading dotted segment is a local binding, `p.x` is sugar
-  for `(struct-get p x)`, and chains such as `p.inner.x` nest the same access.
-- Field mutation: `(set! (struct-get place x) value)` writes one field in
-  place and returns `unit`. `(set! place.x value)` is the corresponding local
-  dotted sugar.
+- Field access uses dotted projection: `p.x` generates a GEP+load at the
+  field's byte offset, and chains such as `p.inner.x` nest the same access.
+  A leading local or global value segment selects projection; an existing
+  module-qualified value keeps module-name precedence.
+- Field mutation uses `(set! place.x value)`, writes one field in place, and
+  returns `unit`.
+- The former public `struct-get`, `struct-set`/`struct-set!`, and `array-set!`
+  forms are removed. The parser reports the corresponding dotted projection or
+  `set!` replacement syntax.
 - Tuple and array elements use the same assignment form:
   `(set! (tuple-ref place 0) value)` and
   `(set! (array-ref place index) value)`.
@@ -583,7 +587,8 @@ Examples:
   or `array-ref`.
 - Structs are heap-allocated when returned from functions (same rule as
   enums).
-- Not valid as global variables.
+- Struct globals use ordinary global storage and support the same dotted
+  projections as local and parameter roots.
 
 #### 3.5.3 Default inline aggregate layout and `(:repr c)` compatibility
 
@@ -1633,8 +1638,8 @@ owner/provenance is statically known:
 - Global variables, including supported aggregate field and element
   projections rooted in global storage.
 - Aggregate field and element projections rooted in a borrowable place. In a
-  borrow expression, forms such as `(struct-get p field)`, dotted field sugar
-  `p.field`, `(tuple-ref t 0)`, and array element access `(array-ref items i)`
+  borrow expression, forms such as dotted field projection `p.field`,
+  `(tuple-ref t 0)`, and array element access `(array-ref items i)`
   are treated as projections, not by-value reads.
 - Arena-owned aggregate handles: `String`, `ByteBuf`, struct, enum, tuple, and
   dynamic-buffer handles allocated in the active arena. Handles with type
@@ -1890,7 +1895,7 @@ Type-use sites supply lifetime arguments with a lifetime-only nominal type form:
 
 ```lisp test=ignore name=lifetime-parameterized-aggregate-type-use reason="illustrative type use; not a standalone program"
 (define (first-ref [pair : (RefPair a b)]) : (& a i64)
-  (struct-get pair left))
+  pair.left)
 
 (define (select-ref [value : (MaybeRef a)]) : i64
   (match value
@@ -1945,8 +1950,8 @@ field type under section 3.10.3:
   (RefBox value))
 ```
 
-`struct-get` preserves the same substitution. If `box` has type `(RefBox a)`,
-then `(struct-get box value)` has type `(& a i64)`.
+Dotted projection preserves the same substitution. If `box` has type
+`(RefBox a)`, then `box.value` has type `(& a i64)`.
 
 Enum variant constructors and `match` arms use the same substitution. A variant
 constructor for a lifetime-parameterized enum produces the enum type with the
@@ -2140,7 +2145,7 @@ owner or arena:
   0)
 
 (define (borrow-places [p : Pair] [items : (Array i64 4)]) : i64
-  (let [left (& (struct-get p left))]
+  (let [left (& p.left)]
     (let [first (& (array-ref items 0))]
       (takes-two left first))))
 ```
@@ -2811,7 +2816,7 @@ private/exported check. An `(export ...)` form is not a recognized declaration.
   (x i64)
   (y i64))
 ;; No export form: `Point`, its constructor, and its fields are all reachable as
-;; `geometry.Point`, `(geometry.Point x y)`, and `(struct-get p x)` from any
+;; `geometry.Point`, `(geometry.Point x y)`, and `p.x` from any
 ;; module that imports `geometry`.
 ```
 
@@ -2826,10 +2831,11 @@ Slash-qualified source names such as `alias/name` are rejected; `/` is the
 ordinary division operator.
 
 In expression and place contexts, a dotted name whose leading segment is a
-local binding is local struct-field sugar before qualified module lookup. For
-example, `data.value` resolves as `(struct-get data value)` when `data` is a
-local binding, even if `data` is also an imported module alias. If the leading
-segment is not local, the qualified lookup rules below apply.
+local binding takes projection precedence over qualified module lookup. For
+example, `data.value` projects `value` when `data` is a local binding, even if
+`data` is also an imported module alias. Otherwise an existing fully qualified
+value wins; if none exists, a visible ordinary global leading segment also
+selects projection. Remaining names follow the qualified lookup rules below.
 
 Qualified lookup applies to:
 
@@ -2837,8 +2843,8 @@ Qualified lookup applies to:
 - Types: `[p : geometry.Point]`.
 - Enum variants and patterns: `(json.Some value)` and `[(json.Err e) ...]`.
 - Struct constructors: `(geometry.Point 3 4)`.
-- Struct fields: `(struct-get p x)` resolves `x` through the receiver's struct
-  type; fields of an imported struct are reachable from any importing module.
+- Struct fields: `p.x` resolves `x` through the receiver's struct type; fields
+  of an imported struct are reachable from any importing module.
 - Macros: `(bool.and2 a b)` resolves `and2` in the imported module's macro
   namespace during expansion.
 - Generated declarations: generated family keys include the generator module
@@ -3332,7 +3338,7 @@ type move-only:
 
 (define (use-buffered-file [fd : i64] [ptr : i64]) : i64
   (with ([bf (open-buffered-file fd ptr) close-buffered-file])
-    (struct-get (struct-get bf fd) fd)))
+    bf.fd.fd))
 ```
 
 `cleanup-fn` names the type-level cleanup function for the aggregate. The
@@ -3427,7 +3433,7 @@ declaring its own cleanup ownership and without marking the field `(:owned)`.
 (define (bad-copy [fd : i64]) : i64
   (with ([h (open-handle fd) close-file-handle])
     (let [copy h]
-      (struct-get h fd))))
+      h.fd)))
 ```
 
 The `let` binding moves `h` into `copy`; the later read from `h` is rejected
@@ -3667,14 +3673,13 @@ without moving it. In v1 these are limited to:
   reference. This rule is identical for stdlib, compiler-owned, user-defined,
   qualified, indirect, lambda, and generated callees: only the resolved
   signature determines whether the argument is borrowed.
-- `(set! (array-ref place index) value)` (transitionally also `array-set!`)
-  and `array-push!` on an owned array receiver or mutable
+- `(set! (array-ref place index) value)` and `array-push!` on an owned array
+  receiver or mutable
   reference receiver. These operations mutate the array storage and do not
   move the array handle; immutable-reference receivers are rejected.
-- Struct field-place assignment `(set! (struct-get place field) value)` on an
-  owned struct receiver or mutable-reference receiver. Local dotted sugar such
-  as `(set! place.field value)` is the same place operation. This mutates only
-  the selected field; immutable-reference receivers are rejected.
+- Struct field-place assignment `(set! place.field value)` on an owned struct
+  receiver or mutable-reference receiver. This mutates only the selected
+  field; immutable-reference receivers are rejected.
 - Box/reference-place assignment `(set! (deref place) value)` and mutable
   borrows of `(deref place)` through live storage. These operations mutate
   or borrow the boxed storage and do not move the box handle.
@@ -3714,22 +3719,23 @@ owner-consuming direct and nested paths through struct fields, tuple elements,
 and fixed-array literal indexes, so moving one tracked path does not move its
 siblings. Moving a tracked path marks the root partially moved; later
 whole-root owner moves are rejected until every moved path for that root is
-reinitialized. `set!` of an `array-ref` (transitionally `array-set!`) to a
+reinitialized. `set!` of an `array-ref` to a
 supported fixed-array path with an integer literal index reinitializes only
 that exact path after the receiver, index, and value have been checked.
 Reinitializing one element does not clear sibling moved paths; if it clears the
 final moved path for the root, the partial-root marker is removed. Dynamic-array
-elements, non-literal indexes, implicit moves through compatibility `box-get`,
-and unsupported path forms do not clear moved state. Struct field-place
+elements, non-literal indexes, and unsupported path forms do not clear moved
+state. Struct field-place
 assignment reinitializes the selected tracked path when the
 receiver path is supported; local dotted field sugar follows the same rule.
 Tuple-element assignment likewise reinitializes the selected literal-index
 path.
 Box-place assignment updates boxed storage but does not reinitialize a moved
 box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
-`struct-get` and `tuple-ref` may copy out only copyable fields or slots, and
-may move out move-only fields/slots only where this tracked-path policy accepts
-the path. Fixed-array reads follow the compatibility matrix above: a consuming
+Dotted field projection and `tuple-ref` may copy out only copyable fields or
+slots, and may move out move-only fields/slots only where this tracked-path
+policy accepts the path. Fixed-array reads follow the compatibility matrix
+above: a consuming
 literal-index read moves a tracked path, while a non-consuming move-only read
 still representation-copies the handle. A consuming enum `match` is an
 exception: it moves the whole scrutinee first, then binds payload values owned
@@ -3745,7 +3751,9 @@ move-out continues to use `(array-ref place literal-index)`.
 
 - Use after move, naming the moved local or path and the move site when known.
 - Moving from an uninitialized or already-moved slot.
-- Assigning over an initialized move-only slot.
+- Assigning over an initialized cleanup-owning slot. Ordinary non-Copy
+  arena-owned values may be overwritten; their old storage becomes unreachable
+  until arena reclamation.
 - Moving out of an unsupported path such as a compatibility dynamic-array
   element, non-literal fixed-array index, box projection, or unsupported
   aggregate path.
@@ -3796,8 +3804,8 @@ consumption; the later read is rejected.
   (label String)
   (count i64))
 
-(define (counter-count [c : Counter]) : i64
-  (struct-get c count))
+  (define (counter-count [c : Counter]) : i64
+  c.count)
 ```
 
 Reading the `i64` field is non-consuming because the projected field is
@@ -3809,7 +3817,7 @@ copyable. Moving the `String` field out directly is not allowed:
   (count i64))
 
 (define (bad-counter-label [c : Counter]) : String
-  (struct-get c label))
+  c.label)
 ```
 
 ```lisp test=check name=move-match-payload-consumes-scrutinee
@@ -4184,7 +4192,7 @@ leaving a moved or uninitialized slot.
     [p : Point (init)]                 ; (Point 0 0)
     [m : MaybeI64 (init : MaybeI64)]   ; first variant, None
     [xs : (Array i64 4) (init)]        ; four zero elements
-    (+ zero (+ (struct-get p x) (array-ref xs 0)))))
+    (+ zero (+ p.x (array-ref xs 0)))))
 ```
 
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
@@ -4308,7 +4316,7 @@ Syntax:
                     [out : (Array i64)]
                     [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 ```
 
 Semantics:
@@ -4425,8 +4433,8 @@ Lane identity forms:
                         [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (begin
-      (array-set! idxs i (program-index))
-      (array-set! counts i (program-count)))))
+      (set! (array-ref idxs i) (program-index))
+      (set! (array-ref counts i) (program-count)))))
 ```
 
 In scalar backend modes, `write-lane-ids` stores `0` in every `idxs` element
@@ -4439,7 +4447,7 @@ non-divisible tail stores only the active prefix of those lane indexes.
 
 (define (empty-lane-ids [out : (Array i64)]) : unit
   (foreach ([i : i64 0 0])
-    (array-set! out i (+ (program-index) (program-count)))))
+    (set! (array-ref out i) (+ (program-index) (program-count)))))
 ```
 
 ```lisp test=check name=spmd-program-index-tail
@@ -4447,7 +4455,7 @@ non-divisible tail stores only the active prefix of those lane indexes.
 
 (define (write-tail-lane-ids [out : (Array i64)]) : unit
   (foreach ([i : i64 0 13])
-    (array-set! out i (+ (* (program-count) 100) (program-index)))))
+    (set! (array-ref out i) (+ (* (program-count) 100) (program-index)))))
 ```
 
 ```lisp test=check name=spmd-program-index-reduce
@@ -4607,8 +4615,8 @@ Explicit SPMD atomic scatter:
 (define (clamp-positive [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (< (array-ref xs i) 0)
-        (array-set! out i 0)
-        (array-set! out i (array-ref xs i)))))
+        (set! (array-ref out i) 0)
+        (set! (array-ref out i) (array-ref xs i)))))
 ```
 
 ```lisp test=check name=spmd-masked-if-tail
@@ -4617,8 +4625,8 @@ Explicit SPMD atomic scatter:
 (define (copy-even-tail [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (= (% i 2) 0)
-        (array-set! out i (array-ref xs i))
-        (array-set! out i 0))))
+        (set! (array-ref out i) (array-ref xs i))
+        (set! (array-ref out i) 0))))
 ```
 
 ```lisp test=check name=spmd-masked-if-nested
@@ -4629,10 +4637,10 @@ Explicit SPMD atomic scatter:
     (let
       [x : i64 (array-ref xs i)]
       (if (< x 0)
-          (array-set! out i -1)
+          (set! (array-ref out i) -1)
           (if (= x 0)
-              (array-set! out i 0)
-              (array-set! out i 1))))))
+              (set! (array-ref out i) 0)
+              (set! (array-ref out i) 1))))))
 ```
 
 SPMD reductions and scans:
@@ -4668,7 +4676,7 @@ Reductions and scans are explicit expression forms.
     sum
     ([i : i64 0 n] [prefix : i64 0])
     (array-ref xs i)
-    (array-set! out i prefix)))
+    (set! (array-ref out i) prefix)))
 ```
 
 Syntax:
@@ -4804,21 +4812,21 @@ compiled for one backend mode.
                            [out : (Array i64)]
                            [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 
 (define (add-arrays-avx2 [a : (Array i64)]
                          [b : (Array i64)]
                          [out : (Array i64)]
                          [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 
 (define (add-arrays-avx512 [a : (Array i64)]
                            [b : (Array i64)]
                            [out : (Array i64)]
                            [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 
 (defdispatch add-arrays
   (scalar add-arrays-scalar)
@@ -4899,7 +4907,7 @@ Negative examples:
   (foreach ([i : i64 0 n])
     (if (< (array-ref xs i) 0)
       (while (> n 0)
-        (array-set! out i 0))
+        (set! (array-ref out i) 0))
       unit)))
 ```
 
@@ -4913,7 +4921,7 @@ Negative examples:
   (foreach ([i : i64 0 n])
     (let
       [j : i64 (array-ref index i)]
-      (array-set! out j (array-ref xs j)))))
+      (set! (array-ref out j) (array-ref xs j)))))
 ```
 
 ```lisp test=ignore name=spmd-reject-mutation-reduction reason="covered by tests/safety/spmd_outer_mutation_reject.tl"
@@ -4951,7 +4959,7 @@ Negative examples:
   (let
     [f : (-> i64 i64) inc]
     (foreach ([i : i64 0 n])
-      (array-set! out i (f (array-ref xs i))))))
+      (set! (array-ref out i) (f (array-ref xs i))))))
 ```
 
 ---
@@ -5672,7 +5680,7 @@ Each binding has the form `[name init-expr cleanup-fn]`.
 
 (define (use-handle) : i64
   (with ([h (open-handle) close-handle])
-    (struct-get h id)))
+    h.id))
 ```
 
 Multiple bindings are initialized left-to-right and cleaned up in reverse
@@ -5692,8 +5700,7 @@ purposes:
 (define (use-two-handles) : i64
   (with ([outer (open-handle 1) close-handle]
          [inner (open-handle 2) close-handle])
-    (+ (struct-get outer id)
-       (struct-get inner id))))
+    (+ outer.id inner.id)))
 ```
 
 In the example above `inner` is closed before `outer`. Nested `with` forms
@@ -5796,8 +5803,8 @@ input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
   read: dereferencing the resulting raw pointer to copy a non-Copy handle is an
   explicit unsafe ownership/aliasing operation whose validity is entirely the
   caller's responsibility.
-- A struct field path rooted in an addressable local or parameter, written as
-  `(struct-get place field)` or equivalent local dotted-field sugar.
+- A struct field path rooted in addressable local, parameter, or ordinary
+  global storage, written with dotted projection such as `place.field`.
 - A fixed-array element path rooted in addressable storage, written as
   `(array-ref place index)`. The root must have fixed-array type
   `(Array T N)` at that projection; compatibility dynamic `(Array T)` element
@@ -7371,7 +7378,8 @@ lint keeps all library top-level declarations as API roots and reports
 unreachable binary-package declarations from entry/test/generated roots.
 Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
 `--redundant-function-name` (redundant module-prefix names), and
-`--prefer-dotted-field` (simple `struct-get` dotted-field syntax).
+`--prefer-dotted-field` is a deprecated no-op retained for CLI compatibility
+now that dotted field projection is the only public spelling.
 `--name-case` enables four independently suppressible rules:
 `global-name-case` for kebab-case top-level values,
 `function-name-case` for kebab-case functions, dispatch functions, and macros,
@@ -7606,7 +7614,7 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 (define (main) : i64
   (let
     [p : Point (Point 3 4)]
-    (+ (struct-get p x) (struct-get p y))))  ; returns 7
+    (+ p.x p.y)))  ; returns 7
 ```
 
 ### Fixed-size array
@@ -7618,14 +7626,14 @@ storage. Target C ABI call/return lowering is a separate backend contract.
   (let
     [arr : (Array i64 2) (init)]
     (begin
-      (array-set! arr 0 10)
-      (array-set! arr 1 20)
+      (set! (array-ref arr 0) 10)
+      (set! (array-ref arr 1) 20)
       (+ (array-ref arr 0) (array-ref arr 1)))))  ; returns 30
 ```
 
 `(Array i64 2)` is a fixed array of two elements; `(init)` produces it with
-every element zero-initialized per section 5.12.1, and `array-ref` /
-`array-set!` are bounds-checked against the compile-time length.
+every element zero-initialized per section 5.12.1, and `array-ref` reads and
+`set!` element writes are bounds-checked against the compile-time length.
 
 ### String operations
 
@@ -7841,16 +7849,15 @@ borrow-expr   ::= "(" "&" borrow-place ")"
                 | "(" "&mut" borrow-place ")"
                 | "(" "&mut" ident borrow-place ")"
 borrow-place  ::= ident
-                | "(" "struct-get" borrow-place ident ")"
                 | "(" "tuple-ref" borrow-place integer ")"
                 | "(" "array-ref" borrow-place expr ")"
                 | "(" "deref" borrow-place ")"
 
-;; Dotted field sugar such as `p.x` is an `ident` in this grammar and becomes a
-;; borrow-place only when its leading segment resolves to a local binding.
+;; A dotted field such as `p.x` is an `ident` in this grammar and becomes a
+;; borrow-place when its leading segment resolves to local, parameter, or
+;; ordinary global storage rather than an existing qualified value.
 
 addr-of-place ::= ident
-                | "(" "struct-get" addr-of-place ident ")"
                 | "(" "array-ref" addr-of-place expr ")"
 
 ;; `ptr-addr-of` is unsafe and narrower than `borrow-place`: the root `ident`

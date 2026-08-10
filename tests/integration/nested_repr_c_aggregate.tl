@@ -24,7 +24,7 @@
 (define (main) : i64
   (let
     [w : CWrap (CWrap (Point 30 5) (TagVal 7))]
-    [px : i64 (struct-get (struct-get w p) x)]
-    [py : i64 (struct-get (struct-get w p) y)]
-    [tv : i64 (tag-value (struct-get w t))]
+    [px : i64 w.p.x]
+    [py : i64 w.p.y]
+    [tv : i64 (tag-value w.t)]
     (+ px (+ py tv))))

@@ -9,7 +9,5 @@
     [frame : arena.Arena (arena.make)]
     [cache : FrameCache (FrameCache "empty")]
     (begin
-      (set!
-        (struct-get cache label)
-        (in-arena frame (string.append "stored" "-frame")))
-      (string.string-length (struct-get cache label)))))
+      (set! cache.label (in-arena frame (string.append "stored" "-frame")))
+      (string.string-length cache.label))))

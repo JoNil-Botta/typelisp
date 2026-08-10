@@ -19,7 +19,7 @@
           (set! (deref item) (+ (deref item) 1))
           (set! total (+ total (deref item))))
         (for [item slice-items] (set! total (+ total (deref item))))
-        (array-set! out lane (+ total lane))))))
+        (set! (array-ref out lane) (+ total lane))))))
 
 (define (main) : i64
   (let

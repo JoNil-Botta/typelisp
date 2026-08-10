@@ -263,7 +263,7 @@
 (define (format-rules-let-item-doc [node : cst.FormatCst]) : fmt_doc.Doc
   (match node
     [(cst.FormatCst.BracketList items)
-      (format-rules-let-item-list-doc (box-get items))]
+      (format-rules-let-item-list-doc (__tl-box-place items))]
     [_ (format-rules-cst-doc node)]))
 
 (define (format-rules-let-tail-doc [items : cst.FormatCstList]) : fmt_doc.Doc
@@ -505,11 +505,12 @@
     [(cst.FormatCst.Prefix tok child)
       (fmt_doc.doc-append
         (fmt_doc.doc-text (tokens.format-token-text tok))
-        (format-rules-cst-doc (box-get child)))]
-    [(cst.FormatCst.List items) (format-rules-list-doc (box-get items))]
+        (format-rules-cst-doc (__tl-box-place child)))]
+    [(cst.FormatCst.List items) (format-rules-list-doc (__tl-box-place items))]
     [(cst.FormatCst.BracketList items)
-      (format-rules-delimited-doc "[" (box-get items) "]")]
-    [(cst.FormatCst.Forms items) (format-rules-forms-doc (box-get items))]))
+      (format-rules-delimited-doc "[" (__tl-box-place items) "]")]
+    [(cst.FormatCst.Forms items)
+      (format-rules-forms-doc (__tl-box-place items))]))
 
 (define (format-rules-streaming-matches-doc? [src : String] [width : i64]) : bool
   (let

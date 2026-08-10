@@ -91,9 +91,9 @@
                         (thread.Thread 0 0 0))))]
                 [(thread.ThreadSpawnErr message) (I64SpawnErr message)])))
           (define (wait-for [worker : (& worker Handle)] [timeout-ms : i64]) : thread.ThreadWaitResult
-            (thread.wait-for (& (struct-get worker raw)) timeout-ms))
+            (thread.wait-for (& worker.raw) timeout-ms))
           (define (join [worker : Handle]) : JoinResult
-            (match (thread.join (struct-get worker raw))
+            (match (thread.join worker.raw)
               [(thread.ThreadJoinOk value) (I64JoinOk value)]
               [(thread.ThreadJoinErr message) (I64JoinErr message)]))
           (define (join-value-or [result : JoinResult] [fallback : i64]) : i64
@@ -125,9 +125,9 @@
                         (thread.Thread 0 0 0))))]
                 [(thread.ThreadSpawnErr message) (BoolSpawnErr message)])))
           (define (wait-for [worker : (& worker Handle)] [timeout-ms : i64]) : thread.ThreadWaitResult
-            (thread.wait-for (& (struct-get worker raw)) timeout-ms))
+            (thread.wait-for (& worker.raw) timeout-ms))
           (define (join [worker : Handle]) : JoinResult
-            (match (thread.join (struct-get worker raw))
+            (match (thread.join worker.raw)
               [(thread.ThreadJoinOk value) (BoolJoinOk (not (= value 0)))]
               [(thread.ThreadJoinErr message) (BoolJoinErr message)])))]
       ["unit"
@@ -155,9 +155,9 @@
                         (thread.Thread 0 0 0))))]
                 [(thread.ThreadSpawnErr message) (UnitSpawnErr message)])))
           (define (wait-for [worker : (& worker Handle)] [timeout-ms : i64]) : thread.ThreadWaitResult
-            (thread.wait-for (& (struct-get worker raw)) timeout-ms))
+            (thread.wait-for (& worker.raw) timeout-ms))
           (define (join [worker : Handle]) : JoinResult
-            (match (thread.join (struct-get worker raw))
+            (match (thread.join worker.raw)
               [(thread.ThreadJoinOk _) (UnitJoinOk)]
               [(thread.ThreadJoinErr message) (UnitJoinErr message)])))]
       [_
@@ -228,7 +228,7 @@
 ;: Return the raw spawned thread handle, or `fallback` when spawn failed.
 (define (spawn-result-handle-or [result : ThreadSpawnResult] [fallback : i64]) : i64
   (match result
-    [(ThreadSpawnOk thread) (struct-get thread handle)]
+    [(ThreadSpawnOk thread) thread.handle]
     [(ThreadSpawnErr _) fallback]))
 
 ;: Return the raw spawned thread clear-tid address, or `fallback`.
@@ -236,7 +236,7 @@
   [result : ThreadSpawnResult]
   [fallback : i64]) : i64
   (match result
-    [(ThreadSpawnOk thread) (struct-get thread clear-tid-addr)]
+    [(ThreadSpawnOk thread) thread.clear-tid-addr]
     [(ThreadSpawnErr _) fallback]))
 
 ;: Return the raw spawned thread result address, or `fallback`.
@@ -244,7 +244,7 @@
   [result : ThreadSpawnResult]
   [fallback : i64]) : i64
   (match result
-    [(ThreadSpawnOk thread) (struct-get thread result-addr)]
+    [(ThreadSpawnOk thread) thread.result-addr]
     [(ThreadSpawnErr _) fallback]))
 
 ;: Return the raw spawned thread, or `fallback` when spawn failed.
@@ -520,7 +520,7 @@
     [result-addr : i64 (array-i64-addr result-cell)]
     [stack-top : i64 (bit-and (+ (array-u8-addr stack) default-stack-size) -16)]
     (begin
-      (array-set! clear-cell 0 (cast 1 : i32))
+      (set! (array-ref clear-cell 0) (cast 1 : i32))
       (let
         [tid : i64
           (unsafe
@@ -554,14 +554,13 @@
       [started-addr : i64 (array-i32-addr started-cell)]
       [result-addr : i64 (array-i64-addr result-cell)]
       (begin
-        (array-set!
-          context
-          0
+        (set!
+          (array-ref context 0)
           (unsafe
             (cast entry : u64)))
-        (array-set! context 1 (cast arg : u64))
-        (array-set! context 2 (cast result-addr : u64))
-        (array-set! context 3 (cast started-addr : u64))
+        (set! (array-ref context 1) (cast arg : u64))
+        (set! (array-ref context 2) (cast result-addr : u64))
+        (set! (array-ref context 3) (cast started-addr : u64))
         (let
           [handle : i64
             (thread-windows-create-thread
@@ -668,7 +667,7 @@
         (let
           [value : (Box i64) (in-arena owner (task))]
           (begin
-            (write-i64! result-addr (box-get value))
+            (write-i64! result-addr (__tl-box-place value))
             0)))
       0)
       [(ThreadSpawnOk raw)
@@ -682,7 +681,7 @@
 ;: Linux non-consuming bounded wait over the kernel-owned clear-TID cell.
 (define (linux-wait-for [thread : (& thread Thread)] [timeout-ms : i64]) : ThreadWaitResult
   (let
-    [clear-addr : i64 (struct-get thread clear-tid-addr)]
+    [clear-addr : i64 thread.clear-tid-addr]
     (if (= (read-i32 clear-addr) (cast 0 : i32))
       (ThreadWaitReady)
       (if (= timeout-ms 0)
@@ -756,9 +755,7 @@
                 windows-wait-max-finite-ms
                 remaining-ms)]
             [waited : u32
-              (thread-windows-wait-single
-                (struct-get thread handle)
-                (cast chunk-ms : u32))]
+              (thread-windows-wait-single thread.handle (cast chunk-ms : u32))]
             (cond
               [(= waited windows-wait-object-0)
                 (begin
@@ -791,13 +788,13 @@
 ;: Wait for a Linux raw-clone thread to clear its join cell.
 (define (linux-join [thread : Thread]) : ThreadJoinResult
   (let
-    [clear-addr : i64 (struct-get thread clear-tid-addr)]
+    [clear-addr : i64 thread.clear-tid-addr]
     (begin
       (while (not (= (read-i32 clear-addr) (cast 0 : i32)))
         (begin
           (linux-futex-wait clear-addr (cast 1 : i64))
           unit))
-      (ThreadJoinOk (read-i64 (struct-get thread result-addr))))))
+      (ThreadJoinOk (read-i64 thread.result-addr)))))
 
 ;: Windows implementation of `join`.
 (cfg
@@ -805,14 +802,12 @@
   (define (thread-windows-join [thread : Thread]) : ThreadJoinResult
     (let
       [waited : u32
-        (thread-windows-wait-single
-          (struct-get thread handle)
-          windows-wait-infinite)]
+        (thread-windows-wait-single thread.handle windows-wait-infinite)]
       (if (not (= waited windows-wait-object-0))
         (ThreadJoinErr "thread: join failed")
         (begin
-          (thread-windows-close-handle (struct-get thread handle))
-          (ThreadJoinOk (read-i64 (struct-get thread result-addr))))))))
+          (thread-windows-close-handle thread.handle)
+          (ThreadJoinOk (read-i64 thread.result-addr)))))))
 
 ;: Join a thread and return the entry function's i64 result.
 (define (join [thread : Thread]) : ThreadJoinResult
@@ -820,26 +815,22 @@
 
 ;: Join a typed `String` thread and return its closure result.
 (define (join-string [thread : ThreadString]) : ThreadStringJoinResult
-  (match (join (struct-get thread raw))
-    [(ThreadJoinOk _)
-      (ThreadStringJoinOk (read-string (struct-get thread result-addr)))]
+  (match (join thread.raw)
+    [(ThreadJoinOk _) (ThreadStringJoinOk (read-string thread.result-addr))]
     [(ThreadJoinErr message) (ThreadStringJoinErr message)]))
 
 ;: Join a typed i64 Vec thread and return its owned closure result.
 (define (join-i64-vec [thread : ThreadI64Vec]) : ThreadI64VecJoinResult
-  (match (join (struct-get thread raw))
-    [(ThreadJoinOk _)
-      (ThreadI64VecJoinOk (read-i64-vec (struct-get thread result-addr)))]
+  (match (join thread.raw)
+    [(ThreadJoinOk _) (ThreadI64VecJoinOk (read-i64-vec thread.result-addr))]
     [(ThreadJoinErr message) (ThreadI64VecJoinErr message)]))
 
 ;: Join a typed `(Box i64)` thread and return its closure result.
 (define (join-box-i64 [thread : ThreadBoxI64]) : ThreadBoxI64JoinResult
-  (match (join (struct-get thread raw))
+  (match (join thread.raw)
     [(ThreadJoinOk _)
       (ThreadBoxI64JoinOk
-        (in-arena
-          (struct-get thread owner)
-          (box (read-i64 (struct-get thread result-addr)))))]
+        (in-arena thread.owner (box (read-i64 thread.result-addr))))]
     [(ThreadJoinErr message) (ThreadBoxI64JoinErr message)]))
 
 ;: Count set bits in a positive byte value.
@@ -946,7 +937,7 @@
   (cfg
     windows
     (=
-      (thread-windows-wait-single (struct-get sem handle) windows-wait-infinite)
+      (thread-windows-wait-single sem.handle windows-wait-infinite)
       windows-wait-object-0)
     (let
       [buf : (Array u64) (array.make-array u64 1)]
@@ -957,7 +948,7 @@
           (let
             [n : i64
               (unsafe
-                (syscall 0 (struct-get sem handle) (array-u64-addr buf) 8))]
+                (syscall 0 sem.handle (array-u64-addr buf) 8))]
             (if (= n 8)
               (begin
                 (set! ok true)
@@ -973,29 +964,25 @@
     windows
     (not
       (=
-        (thread-windows-release-semaphore
-          (struct-get sem handle)
-          (cast 1 : i32)
-          0)
+        (thread-windows-release-semaphore sem.handle (cast 1 : i32) 0)
         (cast 0 : i32)))
     (let
       [buf : (Array u64) (array.make-array u64 1)]
       (begin
-        (array-set! buf 0 (cast 1 : u64))
+        (set! (array-ref buf 0) (cast 1 : u64))
         (=
           (unsafe
-            (syscall 1 (struct-get sem handle) (array-u64-addr buf) 8))
+            (syscall 1 sem.handle (array-u64-addr buf) 8))
           8)))))
 
 ;: Close a semaphore handle.
 (define (semaphore-close [sem : ThreadSemaphore]) : bool
   (cfg
     windows
-    (not
-      (= (thread-windows-close-handle (struct-get sem handle)) (cast 0 : i32)))
+    (not (= (thread-windows-close-handle sem.handle) (cast 0 : i32)))
     (=
       (unsafe
-        (syscall 3 (struct-get sem handle)))
+        (syscall 3 sem.handle))
       0)))
 
 ;: Inline test failure helper.
@@ -1023,10 +1010,10 @@
   (let
     [mask : (Array u8) (array.make-array u8 4)]
     (begin
-      (array-set! mask 0 (cast 0 : u8))
-      (array-set! mask 1 (cast 1 : u8))
-      (array-set! mask 2 (cast 3 : u8))
-      (array-set! mask 3 (cast 255 : u8))
+      (set! (array-ref mask 0) (cast 0 : u8))
+      (set! (array-ref mask 1) (cast 1 : u8))
+      (set! (array-ref mask 2) (cast 3 : u8))
+      (set! (array-ref mask 3) (cast 255 : u8))
       (test-assert (>= (default-worker-count) 1))
       (test-assert-i64-eq (count-byte-bits 0) 0)
       (test-assert-i64-eq (count-byte-bits 1) 1)

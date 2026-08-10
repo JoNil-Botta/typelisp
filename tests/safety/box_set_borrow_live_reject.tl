@@ -4,7 +4,7 @@
 (define (main) : i64
   (let
     [cell : (Box i64) (box 1)]
-    [borrowed : (& cell i64) (& (box-get cell))]
+    [borrowed : (& cell i64) (& (__tl-box-place cell))]
     (begin
-      (set! (box-get cell) 2)
+      (set! (deref cell) 2)
       (take borrowed))))

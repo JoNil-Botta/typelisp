@@ -475,7 +475,7 @@
         (io.print-error (string.append message "\n"))
         1)]
     [(package_source_core.ResultPackageSourceSet.Ok source-set)
-      (fmt-package-files check (struct-get source-set sources) 0)]))
+      (fmt-package-files check source-set.sources 0)]))
 
 ;; Run the `fmt` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name); `count` is `(arg-count)`.

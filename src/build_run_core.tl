@@ -79,46 +79,42 @@
     [i : i64 index]
     (while (< i count)
       (begin
-        (array-set! dst i (array-ref src i))
+        (set! (array-ref dst i) (array-ref src i))
         (set! i (+ i 1))))))
 
 (define (source-tool-cfg-names-grow! [names : (&mut names SourceToolCfgNames)]) : unit
   (let
-    [count : i64 (struct-get names len)]
-    [old-cap : i64 (array-length (struct-get names slots))]
+    [count : i64 names.len]
+    [old-cap : i64 (array-length names.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array String) (make-array String new-cap)]
     (begin
-      (source-tool-cfg-names-copy-range!
-        (&mut bigger)
-        (& (struct-get names slots))
-        0
-        count)
-      (set! (struct-get names slots) bigger))))
+      (source-tool-cfg-names-copy-range! (&mut bigger) (& names.slots) 0 count)
+      (set! names.slots bigger))))
 
 (define (source-tool-cfg-names-push!
   [names : (&mut names SourceToolCfgNames)]
   [name : String]) : unit
   (begin
-    (if (< (struct-get names len) (array-length (struct-get names slots)))
+    (if (< names.len (array-length names.slots))
       unit
       (source-tool-cfg-names-grow! names))
     (let
-      [index : i64 (struct-get names len)]
+      [index : i64 names.len]
       (begin
-        (array-set! (struct-get names slots) index name)
-        (set! (struct-get names len) (+ index 1))))))
+        (set! (array-ref names.slots index) name)
+        (set! names.len (+ index 1))))))
 
 (define (source-tool-cfg-names-get
   [names : (& names SourceToolCfgNames)]
   [index : i64]) : String
   (if (if (>= index 0)
-    (< index (struct-get names len))
+    (< index names.len)
     false)
-    (array-ref (struct-get names slots) index)
+    (array-ref names.slots index)
     ""))
 
 (define (source-tool-cfg-names-add
@@ -134,7 +130,7 @@
   [names : (& names SourceToolCfgNames)]
   [index : i64]
   [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index (struct-get names len))
+  (if (>= index names.len)
     env
     (source-tool-cfg-names-to-env-from
       names
@@ -315,13 +311,13 @@
   (SourceToolLinkInputs (process.args-empty) (process.args-empty) archives))
 
 (define (source-tool-link-inputs-libs [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  (struct-get inputs libs))
+  inputs.libs)
 
 (define (source-tool-link-inputs-search-dirs [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  (struct-get inputs search-dirs))
+  inputs.search-dirs)
 
 (define (source-tool-link-inputs-raw-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  (struct-get inputs raw-args))
+  inputs.raw-args)
 
 (define (source-tool-link-inputs-empty? [inputs : SourceToolLinkInputs]) : bool
   (and
@@ -549,7 +545,7 @@
           [(ast.AstDecl.Extern decl-meta _ _ metadata _)
             (let
               [metadata-items : ast.AstExternLinkInputList
-                (ast.ast-extern-metadata-link-inputs (box-get metadata))]
+                (ast.ast-extern-metadata-link-inputs (__tl-box-place metadata))]
               (source-tool-link-inputs-from-decls
                 rest
                 (source-tool-link-inputs-add-ast-list
@@ -578,7 +574,7 @@
     [(load.ResultCompilerLoadWithPaths.Err diag)
       (ResultSourceToolLinkInputs.Err
         (compiler_driver_core.compiler-driver-render-source-diagnostic
-          (box-get diag)))]))
+          (__tl-box-place diag)))]))
 
 (define (source-tool-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
@@ -827,7 +823,7 @@
         [(compiler_driver_core.ResultCompilerDriver.Err diag)
           (ResultSourceToolString.Err
             (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (box-get diag)))])]))
+              (__tl-box-place diag)))])]))
 
 (define (source-tool-linux-direct-object-env-name) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
@@ -841,12 +837,12 @@
     (compiler_object_elf.compiler-object-elf-image-supported? image)
     (or
       (cobj.compiler-object-symbol-list-contains?
-        (struct-get image symbols)
+        image.symbols
         "_tl_start"
         (cobj.CompilerObjectSymbolBinding.Export)
         (cobj.CompilerObjectSymbolKind.Function))
       (cobj.compiler-object-symbol-list-contains?
-        (struct-get image symbols)
+        image.symbols
         "main"
         (cobj.CompilerObjectSymbolBinding.Export)
         (cobj.CompilerObjectSymbolKind.Function)))
@@ -917,7 +913,7 @@
             [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
                 (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (box-get diag)))])])]
+                  (__tl-box-place diag)))])])]
     [(backend.CompilerBackendTarget.Windows)
       (ResultSourceToolString.Err
         "direct ELF object emission is only available for linux-x86_64")]))
@@ -947,7 +943,7 @@
         [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
             (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (box-get diag)))])]
+              (__tl-box-place diag)))])]
     [(backend.CompilerBackendTarget.Windows)
       (ResultSourceToolString.Err
         "direct ELF object emission is only available for linux-x86_64")]))
@@ -1015,7 +1011,7 @@
             [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
                 (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (box-get diag)))])])]))
+                  (__tl-box-place diag)))])])]))
 
 (define (source-tool-emit-lowered-windows-coff-object
   [source : String]
@@ -1044,7 +1040,7 @@
         [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
             (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (box-get diag)))])]))
+              (__tl-box-place diag)))])]))
 
 (define (source-tool-noexecstack-note) : String
   "
@@ -1959,7 +1955,7 @@
             [(compiler_driver_core.ResultCompilerDriver.Err diag)
               (SourceToolCommandStatus.Err
                 (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (box-get diag)))])])]))
+                  (__tl-box-place diag)))])])]))
 
 (define (source-tool-build-source-in-temp
   [source : String]

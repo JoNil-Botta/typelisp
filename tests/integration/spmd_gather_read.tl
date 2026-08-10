@@ -15,7 +15,7 @@
     [i : i64 0]
     (while (< i source-len)
       (begin
-        (array-set! xs-slots i (+ 100 (* i 3)))
+        (set! (array-ref xs-slots i) (+ 100 (* i 3)))
         (set! i (+ i 1))))))
 
 (define (init-index [ix : (&mut ix i64v.Vec)] [n : i64] [source-len : i64]) : unit
@@ -24,7 +24,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! ix-slots i (% (+ (* i 5) 3) source-len))
+        (set! (array-ref ix-slots i) (% (+ (* i 5) 3) source-len))
         (set! i (+ i 1))))))
 
 (define (fill-gather-foreach
@@ -38,7 +38,7 @@
     [out-slots (i64v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set! out-slots i (array-ref xs-slots (array-ref ix-slots i))))))
+      (set! (array-ref out-slots i) (array-ref xs-slots (array-ref ix-slots i))))))
 
 (define (fill-gather-scalar
   [xs : (& xs i64v.Vec)]
@@ -52,7 +52,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out-slots i (array-ref xs-slots (array-ref ix-slots i)))
+        (set!
+          (array-ref out-slots i)
+          (array-ref xs-slots (array-ref ix-slots i)))
         (set! i (+ i 1))))))
 
 (define (eq-i64 [a : (& a i64v.Vec)] [b : (& b i64v.Vec)] [n : i64]) : bool
@@ -93,7 +95,7 @@
       (begin
         ;; Repeated, negative, zero, and positive offsets exercise the checked
         ;; logical-lane order without making an index array in memory.
-        (array-set! offset-slots i (- (% (* i 3) 6) 3))
+        (set! (array-ref offset-slots i) (- (% (* i 3) 6) 3))
         (set! i (+ i 1))))))
 
 (define (fill-lane-offset-gather
@@ -108,9 +110,8 @@
     [out-slots (i64v.slots-mut out)]
     (foreach
       ([i : i64 start end])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (array-ref xs-slots (+ i (array-ref offset-slots (program-index))))))))
 
 (define (fill-reversed-lane-offset-gather
@@ -125,9 +126,8 @@
     [out-slots (i64v.slots-mut out)]
     (foreach
       ([i : i64 start end])
-      (array-set!
-        out-slots
-        i
+      (set!
+        (array-ref out-slots i)
         (array-ref xs-slots (+ (array-ref offset-slots (program-index)) i))))))
 
 (define (fill-lane-offset-gather-scalar
@@ -145,9 +145,8 @@
     [i : i64 start]
     (while (< i end)
       (begin
-        (array-set!
-          out-slots
-          i
+        (set!
+          (array-ref out-slots i)
           (array-ref
             xs-slots
             (+ i (array-ref offset-slots (array-ref lane-slots i)))))
@@ -174,7 +173,7 @@
         [lane-slots (i64v.slots-mut (&mut lane-ids))]
         (foreach
           ([i : i64 start end])
-          (array-set! lane-slots i (program-index))))
+          (set! (array-ref lane-slots i) (program-index))))
       (if reversed
         (fill-reversed-lane-offset-gather
           (& xs)
@@ -213,7 +212,7 @@
         [dst (i32v.slots-mut (&mut got))]
         (foreach
           ([j : i64 0 n])
-          (array-set! dst j (array-ref src (array-ref ix-slots j)))))
+          (set! (array-ref dst j) (array-ref src (array-ref ix-slots j)))))
       (set! i 0)
       (while (< i n)
         (let
@@ -256,7 +255,7 @@
         [dst (f32v.slots-mut (&mut got))]
         (foreach
           ([j : i64 0 n])
-          (array-set! dst j (array-ref src (array-ref ix-slots j)))))
+          (set! (array-ref dst j) (array-ref src (array-ref ix-slots j)))))
       (set! i 0)
       (while (< i n)
         (let
@@ -299,7 +298,7 @@
         [dst (f64v.slots-mut (&mut got))]
         (foreach
           ([j : i64 0 n])
-          (array-set! dst j (array-ref src (array-ref ix-slots j)))))
+          (set! (array-ref dst j) (array-ref src (array-ref ix-slots j)))))
       (set! i 0)
       (while (< i n)
         (let
@@ -345,16 +344,15 @@
           (set! i (+ i 1))))
       (let
         [dst (i64v.slots-mut (&mut lane-ids))]
-        (foreach ([j : i64 0 n]) (array-set! dst j (program-index))))
+        (foreach ([j : i64 0 n]) (set! (array-ref dst j) (program-index))))
       (let
         [offset-slots (i64v.slots (& offsets))]
         [src (i32v.slots (& xs))]
         [dst (i32v.slots-mut (&mut got))]
         (foreach
           ([j : i64 0 n])
-          (array-set!
-            dst
-            j
+          (set!
+            (array-ref dst j)
             (array-ref src (+ j (array-ref offset-slots (program-index)))))))
       (set! i 0)
       (while (< i n)
@@ -391,16 +389,15 @@
           (set! i (+ i 1))))
       (let
         [dst (i64v.slots-mut (&mut lane-ids))]
-        (foreach ([j : i64 0 n]) (array-set! dst j (program-index))))
+        (foreach ([j : i64 0 n]) (set! (array-ref dst j) (program-index))))
       (let
         [offset-slots (i64v.slots (& offsets))]
         [src (f32v.slots (& xs))]
         [dst (f32v.slots-mut (&mut got))]
         (foreach
           ([j : i64 0 n])
-          (array-set!
-            dst
-            j
+          (set!
+            (array-ref dst j)
             (array-ref src (+ j (array-ref offset-slots (program-index)))))))
       (set! i 0)
       (while (< i n)
@@ -437,16 +434,15 @@
           (set! i (+ i 1))))
       (let
         [dst (i64v.slots-mut (&mut lane-ids))]
-        (foreach ([j : i64 0 n]) (array-set! dst j (program-index))))
+        (foreach ([j : i64 0 n]) (set! (array-ref dst j) (program-index))))
       (let
         [offset-slots (i64v.slots (& offsets))]
         [src (f64v.slots (& xs))]
         [dst (f64v.slots-mut (&mut got))]
         (foreach
           ([j : i64 0 n])
-          (array-set!
-            dst
-            j
+          (set!
+            (array-ref dst j)
             (array-ref src (+ j (array-ref offset-slots (program-index)))))))
       (set! i 0)
       (while (< i n)

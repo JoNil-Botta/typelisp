@@ -9,7 +9,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! xs i (cast (+ i 1) : u32))
+        (set! (array-ref xs i) (cast (+ i 1) : u32))
         (set! i (+ i 1))))))
 
 (define (fill
@@ -18,7 +18,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (spmd-broadcast (array-ref xs i) 0))))
+    (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0))))
 
 (define (checksum [out : (__tl_dyn-array u32)] [n : i64]) : i64
   (let

@@ -260,9 +260,9 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! buf i (cast (string-ref text i) : u8))
+          (set! (array-ref buf i) (cast (string-ref text i) : u8))
           (set! i (+ i 1))))
-      (array-set! buf n (cast '\0' : u8))
+      (set! (array-ref buf n) (cast '\0' : u8))
       buf)))
 
 ;: Return a mutable pointer to private byte storage.
@@ -289,9 +289,8 @@
     (begin
       (while (< i n)
         (begin
-          (array-set!
-            buf
-            i
+          (set!
+            (array-ref buf i)
             (unsafe
               (ptr-read (ptr-offset ptr i))))
           (set! i (+ i 1))))
@@ -735,7 +734,7 @@
   (let
     [buf : (__tl_dyn-array u8) (array.make-array u8 1)]
     (begin
-      (array-set! buf 0 (cast ch : u8))
+      (set! (array-ref buf 0) (cast ch : u8))
       (if (= (write-all-fd-status 1 (array-const-ptr buf) 1) 0)
         unit
         (platform-exit 134)))))
@@ -764,19 +763,19 @@
     [lo : u64 (bit-and x stdlib.io.ftoa-mask32)]
     [hi : u64 (shr x 32)]
     (begin
-      (array-set! (struct-get r limbs) 0 lo)
-      (array-set! (struct-get r limbs) 1 hi)
+      (set! (array-ref r.limbs 0) lo)
+      (set! (array-ref r.limbs 1) hi)
       (if (> hi (cast 0 : u64))
-        (BigNum (struct-get r limbs) 2)
+        (BigNum r.limbs 2)
         (if (> lo (cast 0 : u64))
-          (BigNum (struct-get r limbs) 1)
-          (BigNum (struct-get r limbs) 0))))))
+          (BigNum r.limbs 1)
+          (BigNum r.limbs 0))))))
 
 ;: Compare BigNums a and b; -1 if a<b, 0 if equal, 1 if a>b.
 (define (bn-cmp [a : BigNum] [b : BigNum]) : i64
   (let
-    [la : i64 (struct-get a len)]
-    [lb : i64 (struct-get b len)]
+    [la : i64 a.len]
+    [lb : i64 b.len]
     (if (> la lb)
       1
       (if (< la lb)
@@ -788,8 +787,8 @@
           (begin
             (while (and (not done) (>= i 0))
               (let
-                [av : u64 (array-ref (struct-get a limbs) i)]
-                [bv : u64 (array-ref (struct-get b limbs) i)]
+                [av : u64 (array-ref a.limbs i)]
+                [bv : u64 (array-ref b.limbs i)]
                 (begin
                   (if (> av bv)
                     (begin
@@ -816,8 +815,8 @@
 (define (bn-add [a : BigNum] [b : BigNum]) : BigNum
   (let
     [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
-    [la : i64 (struct-get a len)]
-    [lb : i64 (struct-get b len)]
+    [la : i64 a.len]
+    [lb : i64 b.len]
     [n : i64
       (if (> la lb)
         la
@@ -829,21 +828,21 @@
         (let
           [av : u64
             (if (< i la)
-              (array-ref (struct-get a limbs) i)
+              (array-ref a.limbs i)
               (cast 0 : u64))]
           [bv : u64
             (if (< i lb)
-              (array-ref (struct-get b limbs) i)
+              (array-ref b.limbs i)
               (cast 0 : u64))]
           [s : u64 (+ (+ av bv) carry)]
           (begin
-            (array-set! r i (bit-and s stdlib.io.ftoa-mask32))
+            (set! (array-ref r i) (bit-and s stdlib.io.ftoa-mask32))
             (set! carry (shr s 32))
             (set! i (+ i 1)))))
       (when
         (> carry (cast 0 : u64))
         (begin
-          (array-set! r i carry)
+          (set! (array-ref r i) carry)
           (set! n (+ n 1))))
       (BigNum r (bn-norm-len r n)))))
 
@@ -851,53 +850,53 @@
 (define (bn-mul-u32 [a : BigNum] [m : u64]) : BigNum
   (let
     [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
-    [la : i64 (struct-get a len)]
+    [la : i64 a.len]
     [carry : u64 (cast 0 : u64)]
     [i : i64 0]
     (begin
       (while (< i la)
         (let
-          [p : u64 (+ (* (array-ref (struct-get a limbs) i) m) carry)]
+          [p : u64 (+ (* (array-ref a.limbs i) m) carry)]
           (begin
-            (array-set! r i (bit-and p stdlib.io.ftoa-mask32))
+            (set! (array-ref r i) (bit-and p stdlib.io.ftoa-mask32))
             (set! carry (shr p 32))
             (set! i (+ i 1)))))
       (while (> carry (cast 0 : u64))
         (begin
-          (array-set! r i (bit-and carry stdlib.io.ftoa-mask32))
+          (set! (array-ref r i) (bit-and carry stdlib.io.ftoa-mask32))
           (set! carry (shr carry 32))
           (set! i (+ i 1))))
       (BigNum r (bn-norm-len r i)))))
 
 ;: BigNum a shifted left by n bits.
 (define (bn-shl-bits [a : BigNum] [n : i64]) : BigNum
-  (if (= (struct-get a len) 0)
+  (if (= a.len 0)
     a
     (let
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]
       [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
-      [la : i64 (struct-get a len)]
+      [la : i64 a.len]
       [carry : u64 (cast 0 : u64)]
       [i : i64 0]
       (begin
         (if (= bit-shift 0)
           (while (< i la)
             (begin
-              (array-set! r (+ i limb-shift) (array-ref (struct-get a limbs) i))
+              (set! (array-ref r (+ i limb-shift)) (array-ref a.limbs i))
               (set! i (+ i 1))))
           (while (< i la)
             (let
-              [v : u64 (array-ref (struct-get a limbs) i)]
+              [v : u64 (array-ref a.limbs i)]
               [shifted : u64
                 (bit-or (bit-and (shl v bit-shift) stdlib.io.ftoa-mask32) carry)]
               (begin
-                (array-set! r (+ i limb-shift) shifted)
+                (set! (array-ref r (+ i limb-shift)) shifted)
                 (set! carry (shr v (- 32 bit-shift)))
                 (set! i (+ i 1))))))
         (when
           (and (not (= bit-shift 0)) (> carry (cast 0 : u64)))
-          (array-set! r (+ la limb-shift) carry))
+          (set! (array-ref r (+ la limb-shift)) carry))
         (BigNum r (bn-norm-len r (+ la (+ limb-shift 1))))))))
 
 ;: Product of BigNum a and the 64-bit value m.
@@ -1122,15 +1121,12 @@
 ;: Bit length of a non-negative BigNum.
 (define (float-bn-bit-length [value : BigNum]) : i64
   (let
-    [len : i64 (struct-get value len)]
+    [len : i64 value.len]
     (if (= len 0)
       0
       (+
         (* (- len 1) 32)
-        (+
-          (stdlib.io.ftoa-msb-index
-            (array-ref (struct-get value limbs) (- len 1)))
-          1)))))
+        (+ (stdlib.io.ftoa-msb-index (array-ref value.limbs (- len 1))) 1)))))
 
 ;: Floor log2 of the positive rational `num / den`.
 (define (float-ratio-floor-log2 [num : BigNum] [den : BigNum]) : i64
@@ -1212,7 +1208,7 @@
         (cast 0 : u64))]
     [num : BigNum significand]
     [den : BigNum (stdlib.io.bn-from-u64 (cast 1 : u64))]
-    (if (= (struct-get num len) 0)
+    (if (= num.len 0)
       (IoFloatSomeF64 (stdlib.io.float-f64-from-bits sign-bit))
       (begin
         (if (>= decimal-exp 0)
@@ -1302,7 +1298,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! out i (cast '0' : u8))
+          (set! (array-ref out i) (cast '0' : u8))
           (set! i (+ i 1))))
       (unsafe
         (string-from-bytes (stdlib.io.array-const-ptr out) n)))))
@@ -1349,7 +1345,7 @@
   (let
     [buf : (__tl_dyn-array f64) (array.make-array f64 1)]
     (begin
-      (array-set! buf 0 value)
+      (set! (array-ref buf 0) value)
       (let
         [bits : u64
           (unsafe
@@ -2126,7 +2122,7 @@
 ;: closed handle returns `ErrIoUnit (IoUnsupported ...)` and never panics.
 (define (file-close [handle : FileHandle]) : ResultIoUnit
   (let
-    [status : i64 (file-close-status (struct-get handle id))]
+    [status : i64 (file-close-status handle.id)]
     (if (= status io-status-ok)
       OkIoUnit
       (if (= status io-status-unsupported)
@@ -2135,11 +2131,11 @@
 
 ;: Return the owned buffer captured by a streaming file read.
 (define (file-read-bytes [read : FileRead]) : byte_buf.ByteBuf
-  (struct-get read bytes))
+  read.bytes)
 
 ;: Return true when a streaming file read observed EOF after the read.
 (define (file-read-eof? [read : FileRead]) : bool
-  (struct-get read eof))
+  read.eof)
 
 ;: Read up to `count` bytes from a stdlib-managed read-mode file handle.
 ;:
@@ -2149,7 +2145,7 @@
   (if (< count 0)
     (ErrIoRead (IoInvalidPath (file-read-invalid-count-message)))
     (let
-      [raw : i64 (struct-get handle id)]
+      [raw : i64 handle.id]
       [status : i64 (file-read-chunk-status raw count)]
       (if (= status io-status-ok)
         (OkIoRead
@@ -2165,7 +2161,7 @@
 ;: return `IoUnsupported`.
 (define (file-write [handle : FileHandle] [contents : (& contents bytes)]) : ResultIoUnit
   (let
-    [status : i64 (file-write-status (struct-get handle id) contents)]
+    [status : i64 (file-write-status handle.id contents)]
     (if (= status io-status-ok)
       OkIoUnit
       (if (= status io-status-unsupported)
@@ -2178,7 +2174,7 @@
 ;: `IoUnsupported`; host flush failures are mapped through `error-from-status`.
 (define (file-flush [handle : FileHandle]) : ResultIoUnit
   (let
-    [status : i64 (file-flush-status (struct-get handle id))]
+    [status : i64 (file-flush-status handle.id)]
     (if (= status io-status-ok)
       OkIoUnit
       (if (= status io-status-unsupported)
@@ -2269,11 +2265,11 @@
 
 ;: Return the owned buffer captured by a stdin read result.
 (define (stdin-read-buffer [read : StdinRead]) : byte_buf.ByteBuf
-  (struct-get read bytes))
+  read.bytes)
 
 ;: Return true when a stdin read observed EOF after the read completed.
 (define (stdin-read-eof? [read : StdinRead]) : bool
-  (struct-get read eof))
+  read.eof)
 
 ;: Return the current sticky stdin EOF state without performing a read.
 (define (stdin-at-eof?) : bool

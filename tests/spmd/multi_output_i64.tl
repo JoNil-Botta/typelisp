@@ -12,16 +12,16 @@
     (begin
       (while (< i 20)
         (begin
-          (array-set! a i (+ i 3))
-          (array-set! b i (- 30 i))
-          (array-set! out-x i 777)
-          (array-set! out-y i 888)
+          (set! (array-ref a i) (+ i 3))
+          (set! (array-ref b i) (- 30 i))
+          (set! (array-ref out-x i) 777)
+          (set! (array-ref out-y i) 888)
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (begin
-          (array-set! out-x j (+ (* (array-ref a j) 2) (array-ref b j)))
-          (array-set! out-y j (+ (* (array-ref a j) 2) 5))))
+          (set! (array-ref out-x j) (+ (* (array-ref a j) 2) (array-ref b j)))
+          (set! (array-ref out-y j) (+ (* (array-ref a j) 2) 5))))
       (set! i 0)
       (while (and ok (< i n))
         (begin

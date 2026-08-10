@@ -7,7 +7,7 @@
 (define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (* (program-count) 10) (program-index)))))
+    (set! (array-ref out i) (+ (* (program-count) 10) (program-index)))))
 
 (define (checksum [out : (__tl_dyn-array i64)] [n : i64]) : i64
   (let

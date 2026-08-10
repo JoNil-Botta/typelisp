@@ -45,7 +45,7 @@
 
 (define (compiler-typecheck-reference-container-escape-source) : String
   "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
-  (let [x : i64 1] (array-set! items 0 (& x))))")
+  (let [x : i64 1] (set! (array-ref items 0) (& x))))")
 
 (define (compiler-typecheck-reference-array-push-ok-source) : String
   "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
@@ -60,7 +60,7 @@
     "(define (main [items : (__tl_dyn-array (& r str))]) : unit
   (with-arena r
     (let [s : String (string.int->string 1)]
-      (array-set! items 0 (& s)))))"))
+      (set! (array-ref items 0) (& s)))))"))
 
 (define (compiler-typecheck-reference-lambda-capture-source) : String
   "(define (main [x : i64]) : (-> unit)
@@ -308,11 +308,11 @@
 (define (signature-alias-project
   [stored : (& source SignatureAliasStored)]) : unit
   (let
-    [field : (& source i64) (& (struct-get stored field))]
+    [field : (& source i64) (& stored.field)]
     [tuple-item : (& source i64)
-      (& (tuple-ref (struct-get stored pair) 0))]
+      (& (tuple-ref stored.pair 0))]
     [array-item : (& source i64)
-      (& (array-ref (struct-get stored fixed) 0))]
+      (& (array-ref stored.fixed 0))]
     unit))
 (define (signature-alias-same-input
   [left : (& same i64)]
@@ -377,7 +377,7 @@
   (let
     [direct : i64 (take n)]
     [box : (RefBox n) (RefBox n)]
-    [from-box : i64 (take (struct-get box value))]
+    [from-box : i64 (take box.value)]
     [f : (-> (& n i64) i64) (lambda ([r : (& n i64)]) : i64 (take r))]
     [via-f : i64 (f n)]
     [text-len : i64 (len text)]
@@ -441,8 +441,8 @@
 (define (len [text : (& text str)]) : i64 1)
 (define (same [left : (& left str)] [right : (& right str)]) : bool true)
 (define (main [named : Named] [items : (Array String 1)]) : i64
-  (if (same (struct-get named name) (array-ref items 0))
-    (+ (len (struct-get named name)) (len (array-ref items 0)))
+  (if (same named.name (array-ref items 0))
+    (+ (len named.name) (len (array-ref items 0)))
     0))")
 
 (define (compiler-typecheck-auto-borrow-assignment-after-last-use-source) : String
@@ -569,9 +569,9 @@
 (define (read-i64-ref [r : (& pair i64)]) : i64 1)
 (define (main [pair : Pair]) : i64
   (let
-    [borrowed : (& pair i64) (& (struct-get pair left))]
+    [borrowed : (& pair i64) (& pair.left)]
     (begin
-      (set! (struct-get pair left) 3)
+      (set! pair.left 3)
       (read-i64-ref borrowed))))")
 
 (define (compiler-typecheck-borrow-mut-after-immut-source) : String
@@ -650,8 +650,8 @@
     [right-items : (__tl_dyn-array i64) (make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
-      [left : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
-      [right : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags right))]
+      [left : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
+      [right : (&mut bags (__tl_dyn-array i64)) (&mut bags.right)]
       unit)))")
 
 (define (compiler-typecheck-mut-borrow-same-field-source) : String
@@ -665,8 +665,8 @@
     [right-items : (__tl_dyn-array i64) (make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
-      [first : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
-      [second : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
+      [first : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
+      [second : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
       (write-array-ref first))))")
 
 (define (compiler-typecheck-mut-borrow-ancestor-descendant-source) : String
@@ -679,9 +679,9 @@
     [right-items : (__tl_dyn-array i64) (make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
-      [whole-left : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
-      [first-item : (&mut bags i64) (&mut (array-ref (struct-get bags left) 0))]
-      (array-set! whole-left 0 1))))")
+      [whole-left : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
+      [first-item : (&mut bags i64) (&mut (array-ref bags.left 0))]
+      (set! (array-ref whole-left 0) 1))))")
 
 (define (compiler-typecheck-mut-reborrow-bound-subscope-source) : String
   "(define (touch [slot : (&mut items i64)]) : unit unit)
@@ -690,7 +690,7 @@
     (let
       [slot : (&mut items i64) (&mut (array-ref items 0))]
       (touch slot))
-    (array-set! items 0 7)))
+    (set! (array-ref items 0) 7)))
 (define (main [items : (__tl_dyn-array i64)]) : unit
   (use (&mut items)))")
 
@@ -700,7 +700,7 @@
   (let
     [slot : (&mut items i64) (&mut (array-ref items 0))]
     (begin
-      (array-set! items 0 7)
+      (set! (array-ref items 0) 7)
       (touch slot))))
 (define (main [items : (__tl_dyn-array i64)]) : unit
   (bad (&mut items)))")
@@ -712,7 +712,7 @@
     [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-length items)]
     (begin
-      (array-set! borrowed 0 41)
+      (set! (array-ref borrowed 0) 41)
       (+ n 1))))")
 
 (define (compiler-typecheck-mut-borrow-read-array-ref-source) : String
@@ -722,7 +722,7 @@
     [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-ref items 0)]
     (begin
-      (array-set! borrowed 0 41)
+      (set! (array-ref borrowed 0) 41)
       n)))")
 
 (define (compiler-typecheck-mut-borrow-read-struct-get-source) : String
@@ -733,10 +733,10 @@
   (let
     [items : (__tl_dyn-array i64) (make-array i64 1)]
     [bag : Bag (Bag items 42)]
-    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut (struct-get bag left))]
-    [copy : (__tl_dyn-array i64) (struct-get bag left)]
+    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut bag.left)]
+    [copy : (__tl_dyn-array i64) bag.left]
     (begin
-      (array-set! borrowed 0 41)
+      (set! (array-ref borrowed 0) 41)
       (array-length copy))))")
 
 (define (compiler-typecheck-mut-borrow-read-disjoint-source) : String
@@ -747,10 +747,10 @@
   (let
     [items : (__tl_dyn-array i64) (make-array i64 1)]
     [bag : Bag (Bag items 42)]
-    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut (struct-get bag left))]
-    [right : i64 (struct-get bag right)]
+    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut bag.left)]
+    [right : i64 bag.right]
     (begin
-      (array-set! borrowed 0 41)
+      (set! (array-ref borrowed 0) 41)
       right)))")
 
 (define (compiler-typecheck-mut-borrow-read-through-ref-source) : String
@@ -760,7 +760,7 @@
     [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-length borrowed)]
     (begin
-      (array-set! borrowed 0 41)
+      (set! (array-ref borrowed 0) 41)
       n)))")
 
 (define (compiler-typecheck-mut-borrow-owner-read-after-last-use-source) : String
@@ -769,7 +769,7 @@
     [items : (__tl_dyn-array i64) (make-array i64 1)]
     [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     (begin
-      (array-set! borrowed 0 41)
+      (set! (array-ref borrowed 0) 41)
       (array-length items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-shared-read-source) : String
@@ -964,7 +964,7 @@
     (let [borrowed : (& n i64) (& n)]
       (begin
         (take borrowed)
-        (array-set! out i n)))))")
+        (set! (array-ref out i) n)))))")
 
 (define (compiler-typecheck-secondary-label-contains?
   [labels : diagnostic.CompilerDiagnosticLabelList]
@@ -979,7 +979,7 @@
           [entry : diagnostic.CompilerDiagnosticLabel
             (diagnostic.compiler-diagnostic-label-list-get labels index)]
           (begin
-            (match (struct-get entry label)
+            (match entry.label
               [(CompilerDiagnosticSomeString text)
                 (if (string.contains (& text) (& needle))
                   (set! found true)
@@ -1003,20 +1003,21 @@
       (let
         [message : String
           (diagnostic.compiler-diagnostic-message
-            (diagnostic.compiler-diagnostic-list-first (box-get diag)))]
+            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))]
         (and
           (string.contains (& message) (& want-message-fragment))
           (compiler-typecheck-help-contains?
-            (diagnostic.compiler-diagnostic-list-first (box-get diag))
+            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))
             "narrower lexical scope")
           (=
             (compiler_typecheck.compiler-typecheck-secondary-count
               (diagnostic.compiler-diagnostic-secondary-spans
-                (diagnostic.compiler-diagnostic-list-first (box-get diag))))
+                (diagnostic.compiler-diagnostic-list-first
+                  (__tl-box-place diag))))
             1)
           (compiler-typecheck-secondary-label-contains?
             (diagnostic.compiler-diagnostic-secondary-spans
-              (diagnostic.compiler-diagnostic-list-first (box-get diag)))
+              (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
             "remains live")))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
@@ -1126,19 +1127,19 @@
       (and
         (string.eq
           (diagnostic.compiler-diagnostic-message
-            (diagnostic.compiler-diagnostic-list-first (box-get diag)))
+            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
           want-message)
         (compiler-typecheck-help-contains?
-          (diagnostic.compiler-diagnostic-list-first (box-get diag))
+          (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))
           "clone the owner")
         (=
           (compiler_typecheck.compiler-typecheck-secondary-count
             (diagnostic.compiler-diagnostic-secondary-spans
-              (diagnostic.compiler-diagnostic-list-first (box-get diag))))
+              (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))))
           1)
         (compiler-typecheck-secondary-label-contains?
           (diagnostic.compiler-diagnostic-secondary-spans
-            (diagnostic.compiler-diagnostic-list-first (box-get diag)))
+            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
           want-label-fragment))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
@@ -1152,23 +1153,23 @@
       (and
         (string.eq
           (diagnostic.compiler-diagnostic-message
-            (diagnostic.compiler-diagnostic-list-first (box-get diag)))
+            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
           want-message)
         (compiler-typecheck-help-contains?
-          (diagnostic.compiler-diagnostic-list-first (box-get diag))
+          (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))
           "clone the owner")
         (=
           (compiler_typecheck.compiler-typecheck-secondary-count
             (diagnostic.compiler-diagnostic-secondary-spans
-              (diagnostic.compiler-diagnostic-list-first (box-get diag))))
+              (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))))
           2)
         (compiler-typecheck-secondary-label-contains?
           (diagnostic.compiler-diagnostic-secondary-spans
-            (diagnostic.compiler-diagnostic-list-first (box-get diag)))
+            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
           want-move-label-fragment)
         (compiler-typecheck-secondary-label-contains?
           (diagnostic.compiler-diagnostic-secondary-spans
-            (diagnostic.compiler-diagnostic-list-first (box-get diag)))
+            (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag)))
           want-owner-label-fragment))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
@@ -1448,7 +1449,7 @@
       (module ,mod-name)
       (defstruct Boxed (value ,T))
       (define (make [value : ,T]) : Boxed (Boxed value))
-      (define (read [box : Boxed]) : ,T (struct-get box value)))))
+      (define (read [box : Boxed]) : ,T box.value))))
 (import (boxmod i64) as bi)
 (import (boxmod i64) as bi2)
 (import (boxmod String) as bs)
@@ -1460,9 +1461,9 @@
   (+ (bi.read (bi.make 20))
     (+ (bi2.read (bi2.make 1))
       (+ (__tl_string_length (bs.read (bs.make \"typed\")))
-          (+ (struct-get (bp.read (bp.make (Pair 7))) value)
-            (+ (struct-get (bp2.read (bp2.make (Pair 8))) value)
-              (struct-get (bo.read (bo.make (Other 9))) value)))))))")
+          (+ (__tl-project-field (bp.read (bp.make (Pair 7))) value)
+            (+ (__tl-project-field (bp2.read (bp2.make (Pair 8))) value)
+              (__tl-project-field (bo.read (bo.make (Other 9))) value)))))))")
 
 (define (compiler-typecheck-smoke-module-macro-nested-vector-import-source) : String
   "(defmacro (vector [T : type]) : Module
@@ -1493,7 +1494,7 @@
         [items : vec.Vec (vec.new)]
         (begin
           (vec.push (&mut items) value)
-          (struct-get (vec.get (& items) 0 (T 0)) value))))))
+          (__tl-project-field-name (vec.get (& items) 0 (T 0)) \"value\"))))))
 (import (vector-user) as user)
 (define (main) : i64
   (user.score (user.make 42)))")
@@ -1517,7 +1518,7 @@
         [items : vec.Vec (vec.new)]
         (begin
           (vec.push (&mut items) value)
-          (struct-get (vec.get (& items) 0 (provider.T 0)) value))))))
+          (__tl-project-field-name (vec.get (& items) 0 (provider.T 0)) \"value\"))))))
 (import (vector-user) as user)
 (define (main) : i64
   (user.score (user.make 42)))")
@@ -1610,7 +1611,7 @@
       (init : ,T))))
 (import (init-user InitPerson) as init_user)
 (define (main) : i64
-  (struct-get (struct-get (init_user.make) home) zip))")
+  (__tl-project-field (__tl-project-field (init_user.make) home) zip))")
 
 (define (compiler-typecheck-smoke-module-macro-generated-replay-normalized-source) : String
   "(defstruct ReplayAddress
@@ -1724,7 +1725,7 @@
           [items : vec.Vec (vec.new)]
           (begin
             (vec.push (&mut items) value)
-            (struct-get (vec.get (& items) 0 (T 0)) value)))))))
+            (__tl-project-field-name (vec.get (& items) 0 (T 0)) \"value\")))))))
 (import (make vector) as gen)
 (define (main) : i64
   (gen.score (gen.make 42)))")
@@ -1917,7 +1918,7 @@
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies. The macro-output serializer round-trips arithmetic,
-;; struct-get, array.make-array, array.ref/array-set!, let, while,
+;; dotted fields, array.make-array, array.ref/set!, let, while,
 ;; and set! back to
 ;; declarations; before that surface existed these fixtures failed with
 ;; "module macro output contains syntax that cannot be parsed as a declaration".
@@ -1933,23 +1934,23 @@
       (Stack (array.make-array i64 4) 0 4))
     (define (stack-grow [s : Stack]) : Stack
       (let
-        [new-cap : i64 (* (struct-get s cap) 2)]
+        [new-cap : i64 (* s.cap 2)]
         [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
         [i : i64 0]
         (begin
-          (while (< i (struct-get s len))
+          (while (< i s.len)
             (begin
-              (array-set! bigger i (array-ref (struct-get s slots) i))
+              (set! (array-ref bigger i) (array-ref s.slots i))
               (set! i (+ i 1))))
-          (Stack bigger (struct-get s len) new-cap))))
+          (Stack bigger s.len new-cap))))
     (define (stack-push [s : Stack] [value : i64]) : Stack
-      (if (< (struct-get s len) (struct-get s cap))
+      (if (< s.len s.cap)
         (begin
-          (array-set! (struct-get s slots) (struct-get s len) value)
-          (Stack (struct-get s slots) (+ (struct-get s len) 1) (struct-get s cap)))
+          (set! (array-ref s.slots s.len) value)
+          (Stack s.slots (+ s.len 1) s.cap))
         (stack-push (stack-grow s) value)))
     (define (stack-top [s : Stack]) : i64
-      (array-ref (struct-get s slots) (- (struct-get s len) 1)))
+      (array-ref s.slots (- s.len 1)))
     (define (stack-fixed-array-probe) : i64
       (let
         [items : (Array i64 3) (array 11 22 33)]
@@ -1967,7 +1968,7 @@
     (define (make [value : i64]) : Box1
       (Box1 value))
     (define (bumped [b : Box1]) : i64
-      (let [doubled : i64 (* (struct-get b value) 2)] (+ doubled 1)))))
+      (let [doubled : i64 (* b.value 2)] (+ doubled 1)))))
 (import (int-box) as ib)
 (define (main) : i64 (ib.bumped (ib.make 20)))")
 
@@ -1987,7 +1988,7 @@
       (define (new) : Vec
         (Vec 1))
       (define (len [v : (& v Vec)]) : i64
-        (struct-get v len)))))
+        v.len))))
 (defmacro (sliceish [T : type]) : Module
   (let
     [module-name : Expr
@@ -2021,7 +2022,7 @@
     (define (typed-array [v : ,T]) : (__tl_dyn-array ,T)
       (let [items : (__tl_dyn-array ,T) (array.make-array ,T 1)]
         (begin
-          (array-set! items 0 v)
+          (set! (array-ref items 0) v)
           items)))))
 (defmacro (emit-cast [T : type]) : Decls
   `(define (typed-cast [v : i64]) : ,T (cast v : ,T)))
@@ -2029,7 +2030,7 @@
 (emit-cast i64)
 (define (main) : i64
   (+ (typed-cast 1)
-    (struct-get (typed-id (Pair 41)) value)))")
+    (__tl-project-field (typed-id (Pair 41)) value)))")
 
 (define (compiler-typecheck-smoke-type-macro-param-tests-ok?) : bool
   (compiler_typecheck.compiler-typecheck-ok?
@@ -2064,7 +2065,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [value : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first (box-get diag))]
+          (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))]
         [notes : diagnostic.CompilerDiagnosticNoteList
           (diagnostic.compiler-diagnostic-notes value)]
         (and
@@ -2101,7 +2102,7 @@
 (box-family i64 IntBox int-box)
 (box-family i64 IntBox int-box)
 (define (main) : i64
-  (struct-get (int-box 42) value))")
+  (__tl-project-field (int-box 42) value))")
 
 (define (compiler-typecheck-smoke-decls-macro-cross-module-distinct-source) : String
   "(module bundle.left)
@@ -2719,7 +2720,7 @@
   [key : String]) : ast.AstDecl
   (match (parser.parse-ast-source-diagnostic "target/tc_state_entry.tl" source)
     [(parser.ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls-box))
-      (match (ast.ast-decl-list-step (box-get decls-box))
+      (match (ast.ast-decl-list-step (__tl-box-place decls-box))
         [(ast.AstDeclListStep.Cons decl _)
           (ast.ast-decl-comptime-decl-with-meta
             (tc_core.macro-generated-meta "state-isolation" "import" key)
@@ -2727,7 +2728,7 @@
         [(ast.AstDeclListStep.Nil)
           (io.panic "typecheck: generated import fixture parsed no declaration")])]
     [(parser.ResultAstProgramDiagnostic.Err diag)
-      (io.panic (diagnostic.compiler-diagnostic-render (box-get diag)))]))
+      (io.panic (diagnostic.compiler-diagnostic-render (__tl-box-place diag)))]))
 
 (define (compiler-typecheck-smoke-generated-import-state-run
   [state : load.CompilerLoadSessionState]
@@ -2793,7 +2794,8 @@
                   pools)
                   [(tc_core.ResultMacroMaterializeImport.Err diag)
                     (CompilerTypecheckGeneratedImportStateSnapshot
-                      (diagnostic.compiler-diagnostic-message (box-get diag))
+                      (diagnostic.compiler-diagnostic-message
+                        (__tl-box-place diag))
                       (load.compiler-load-session-state-program-cache-hit-count-value
                         state)
                       (load.compiler-load-session-state-program-cache-miss-count-value
@@ -2813,11 +2815,12 @@
                       "typecheck: generated missing import unexpectedly loaded")])]
               [(tc_core.ResultMacroMaterializeImport.Err diag)
                 (io.panic
-                  (diagnostic.compiler-diagnostic-render (box-get diag)))])]
+                  (diagnostic.compiler-diagnostic-render (__tl-box-place diag)))])]
           [(tc_core.ResultMacroMaterializeImport.Err diag)
-            (io.panic (diagnostic.compiler-diagnostic-render (box-get diag)))])]
+            (io.panic
+              (diagnostic.compiler-diagnostic-render (__tl-box-place diag)))])]
       [(tc_core.ResultMacroMaterializeImport.Err diag)
-        (io.panic (diagnostic.compiler-diagnostic-render (box-get diag)))])))
+        (io.panic (diagnostic.compiler-diagnostic-render (__tl-box-place diag)))])))
 
 (define (compiler-typecheck-smoke-generated-import-state-isolation-ok?) : bool
   (let
@@ -2832,8 +2835,7 @@
     [_enable-baseline : unit
       (load.compiler-load-session-state-cache-enable! baseline-state)]
     [_enable-a : unit (load.compiler-load-session-state-cache-enable! state-a)]
-    [_seed-b : unit
-      (array-set! (struct-get state-b program-cache-hit-count) 0 17)]
+    [_seed-b : unit (set! (array-ref state-b.program-cache-hit-count 0) 17)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [_fixtures : unit
       (begin
@@ -2872,49 +2874,34 @@
     (begin
       (load.compiler-load-session-state-use! previous-state)
       (cond
-        [(not
-            (string.eq
-              (struct-get baseline diagnostic)
-              (struct-get interleaved diagnostic)))
+        [(not (string.eq baseline.diagnostic interleaved.diagnostic))
           (io.panic "typecheck: generated import state diagnostic mismatch")]
-        [(not
-            (=
-              (struct-get baseline cache-hits)
-              (struct-get interleaved cache-hits)))
+        [(not (= baseline.cache-hits interleaved.cache-hits))
           (io.panic "typecheck: generated import state cache-hit mismatch")]
-        [(not
-            (=
-              (struct-get baseline cache-misses)
-              (struct-get interleaved cache-misses)))
+        [(not (= baseline.cache-misses interleaved.cache-misses))
           (io.panic "typecheck: generated import state cache-miss mismatch")]
-        [(not
-            (=
-              (struct-get baseline cache-stores)
-              (struct-get interleaved cache-stores)))
+        [(not (= baseline.cache-stores interleaved.cache-stores))
           (io.panic "typecheck: generated import state cache-store mismatch")]
-        [(not
-            (=
-              (struct-get baseline seen-nonempty)
-              (struct-get interleaved seen-nonempty)))
+        [(not (= baseline.seen-nonempty interleaved.seen-nonempty))
           (io.panic "typecheck: generated import state seen mismatch")]
         [(not
             (=
-              (struct-get baseline surface-summary-present)
-              (struct-get interleaved surface-summary-present)))
+              baseline.surface-summary-present
+              interleaved.surface-summary-present))
           (io.panic "typecheck: generated import state surface mismatch")]
-        [(not (> (struct-get interleaved cache-hits) 0))
+        [(not (> interleaved.cache-hits 0))
           (io.panic "typecheck: generated import state missed cache reuse")]
-        [(not (> (struct-get interleaved cache-misses) 0))
+        [(not (> interleaved.cache-misses 0))
           (io.panic "typecheck: generated import state recorded no cache miss")]
-        [(not (> (struct-get interleaved cache-stores) 0))
+        [(not (> interleaved.cache-stores 0))
           (io.panic "typecheck: generated import state recorded no cache store")]
-        [(not (struct-get interleaved seen-nonempty))
+        [(not interleaved.seen-nonempty)
           (io.panic "typecheck: generated import state lost seen set")]
-        [(not (struct-get interleaved surface-summary-present))
+        [(not interleaved.surface-summary-present)
           (io.panic "typecheck: generated import state lost surface summary")]
         [(not
             (load.compiler-load-string-contains?
-              (struct-get interleaved diagnostic)
+              interleaved.diagnostic
               "tc_state_missing.tl"))
           (io.panic "typecheck: generated import state diagnostic uncontrolled")]
         [(not
@@ -2960,7 +2947,7 @@
     [_enable-a : unit (load.compiler-load-session-state-cache-enable! state-a)]
     [_seed-b : unit
       (begin
-        (array-set! (struct-get state-b program-cache-hit-count) 0 23)
+        (set! (array-ref state-b.program-cache-hit-count 0) 23)
         (tc_core.tc-prefix-snapshot-cache-note-hit-for-state! prefix-cache-b))]
     [entry : String "target/tc_state_macro_entry.tl"]
     [source : String
@@ -3028,7 +3015,8 @@
           [(tc_core.ResultCompilerTypecheck.Err diag)
             (io.panic
               (diagnostic.compiler-diagnostic-render
-                (diagnostic.compiler-diagnostic-list-first (box-get diag))))])
+                (diagnostic.compiler-diagnostic-list-first
+                  (__tl-box-place diag))))])
         (match controlled-failure
           [(tc_core.ResultCompilerTypecheck.Err _) true]
           [(tc_core.ResultCompilerTypecheck.Ok _) false])
@@ -3128,11 +3116,13 @@
               (and
                 (string.eq
                   (diagnostic.compiler-diagnostic-path
-                    (diagnostic.compiler-diagnostic-list-first (box-get diag)))
+                    (diagnostic.compiler-diagnostic-list-first
+                      (__tl-box-place diag)))
                   dep)
                 (string.eq
                   (diagnostic.compiler-diagnostic-message
-                    (diagnostic.compiler-diagnostic-list-first (box-get diag)))
+                    (diagnostic.compiler-diagnostic-list-first
+                      (__tl-box-place diag)))
                   "typecheck: value definition type mismatch: expected i64, found bool"))]
             [(tc_core.ResultCompilerTypecheck.Ok _) false])]
         [(load.ResultCompilerLoadWithPaths.Err _) false]))))
@@ -3411,7 +3401,7 @@
 (import shared.types as item)
 (import bridge.api as bridge)
 (define (main) : i64
-  (struct-get (bridge.round-trip (item.Item 42)) value))")
+  (__tl-project-field (bridge.round-trip (item.Item 42)) value))")
 
 (define (compiler-typecheck-smoke-nested-dotted-nominal-ok?) : bool
   (compiler_typecheck.compiler-typecheck-ok?
@@ -3425,7 +3415,7 @@
     [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     [fixed : (Array i64 2) (array 3 4)]
     (begin
-      (array-set! items 0 (array-ref fixed 1))
+      (set! (array-ref items 0) (array-ref fixed 1))
       (let
         [borrow-score : i64
           (let
@@ -3461,7 +3451,7 @@
     (helper.get)
     (+
       helper.value
-      (match (helper.Choice.Full (struct-get item n))
+      (match (helper.Choice.Full item.n)
         [(helper.Choice.Full n) n]
         [(helper.Choice.Empty) 0]))))
 (define (main) : i64 (score (helper.Item 1)))")
@@ -3480,7 +3470,7 @@
     [index : i64 0]
     [found : i64 -1]
     (begin
-      (while (and (< found 0) (< index (struct-get exprs len)))
+      (while (and (< found 0) (< index exprs.len))
         (begin
           (set!
             found
@@ -3541,7 +3531,7 @@
     [(ast.AstExpr.Unsafe items)
       (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee _)
           (compiler-typecheck-smoke-expr-parsed-id scrutinee name)])]
     [(ast.AstExpr.StructGet base _)
@@ -3558,11 +3548,11 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [index : i64 0]
         [found : i64 -1]
         (begin
-          (while (and (< found 0) (< index (struct-get (& decls) len)))
+          (while (and (< found 0) (< index decls.len))
             (let
               [decl : ast.AstDecl
                 (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
@@ -4312,7 +4302,7 @@
               (match expanded
                 [(ast.AstProgram.Program decls-box)
                   (match (tc_core.macro-find-module-body-decls
-                    (box-get decls-box)
+                    (__tl-box-place decls-box)
                     module-name)
                     [(tc_core.MacroMaybeDeclList.Some body)
                       (compiler-typecheck-smoke-generated-catalog-body-has-name?
@@ -4336,7 +4326,9 @@
             [(tc_core.ResultMacroExpand.Ok expanded _)
               (match expanded
                 [(ast.AstProgram.Program decls-box)
-                  (tc_core.macro-module-exists? (box-get decls-box) module-name)])]
+                  (tc_core.macro-module-exists?
+                    (__tl-box-place decls-box)
+                    module-name)])]
             [(tc_core.ResultMacroExpand.Err _) false])]
         [(parser.ResultAstProgramDiagnostic.Err _) false])]
     (begin
@@ -4537,10 +4529,10 @@
   (col i64))
 
 (define (span-line [span : (& span Span)]) : i64
-  (struct-get span line))
+  span.line)
 
 (define (span-col [span : (& span Span)]) : i64
-  (struct-get span col))
+  span.col)
 
 (define (render [span : Span]) : String
   (str_cat.str-cat
@@ -4717,7 +4709,7 @@
                     [message : String
                       (diagnostic.compiler-diagnostic-message
                         (diagnostic.compiler-diagnostic-list-first
-                          (box-get diag)))]
+                          (__tl-box-place diag)))]
                     (begin
                       (io.stderr-write (byte_buf.str-as-bytes (& message)))
                       (io.panic
@@ -4757,7 +4749,7 @@
                     [message : String
                       (diagnostic.compiler-diagnostic-message
                         (diagnostic.compiler-diagnostic-list-first
-                          (box-get diag)))]
+                          (__tl-box-place diag)))]
                     (begin
                       (io.stderr-write (byte_buf.str-as-bytes (& message)))
                       false))]))]
@@ -4787,7 +4779,8 @@
                 (let
                   [message : String
                     (diagnostic.compiler-diagnostic-message
-                      (diagnostic.compiler-diagnostic-list-first (box-get diag)))]
+                      (diagnostic.compiler-diagnostic-list-first
+                        (__tl-box-place diag)))]
                   (begin
                     (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
@@ -4817,7 +4810,8 @@
                 (let
                   [message : String
                     (diagnostic.compiler-diagnostic-message
-                      (diagnostic.compiler-diagnostic-list-first (box-get diag)))]
+                      (diagnostic.compiler-diagnostic-list-first
+                        (__tl-box-place diag)))]
                   (begin
                     (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
@@ -4901,7 +4895,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : diagnostic.CompilerDiagnostic
-              (diagnostic.compiler-diagnostic-list-first (box-get diag))]
+              (diagnostic.compiler-diagnostic-list-first (__tl-box-place diag))]
             (and
               (string.eq (diagnostic.compiler-diagnostic-message value) message)
               (string.eq (diagnostic.compiler-diagnostic-path value) path)
@@ -5268,7 +5262,8 @@
         [(tc_core.ResultCompilerTypecheck.Ok _) false]
         [(tc_core.ResultCompilerTypecheck.Err diagnostics)
           (=
-            (diagnostic.compiler-diagnostic-list-count (box-get diagnostics))
+            (diagnostic.compiler-diagnostic-list-count
+              (__tl-box-place diagnostics))
             1)])]
     [reused : tc_core.ResultCompilerTypecheck
       (tc_api.typecheck-compiler-source
@@ -5366,7 +5361,7 @@
                   [message : String
                     (diagnostic.compiler-diagnostic-message
                       (diagnostic.compiler-diagnostic-list-first
-                        (box-get diagnostics)))]
+                        (__tl-box-place diagnostics)))]
                   (begin
                     (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
@@ -5374,7 +5369,7 @@
             (let
               [message : String
                 (diagnostic.compiler-diagnostic-message
-                  (box-get load-diagnostic))]
+                  (__tl-box-place load-diagnostic))]
               (begin
                 (io.stderr-write (byte_buf.str-as-bytes (& message)))
                 false))]))]
@@ -5432,11 +5427,12 @@
                 (load.compiler-load-string-contains?
                   (diagnostic.compiler-diagnostic-message
                     (diagnostic.compiler-diagnostic-list-first
-                      (box-get diagnostics)))
+                      (__tl-box-place diagnostics)))
                   expected-substring)])]
           [(load.ResultCompilerLoadWithPaths.Err load-diagnostic)
             (load.compiler-load-string-contains?
-              (diagnostic.compiler-diagnostic-message (box-get load-diagnostic))
+              (diagnostic.compiler-diagnostic-message
+                (__tl-box-place load-diagnostic))
               expected-substring)]))]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
@@ -5549,11 +5545,11 @@
         [entry : tc_core.CompilerTcMacroProfileEntry
           (tc_core.compiler-tc-macro-profile-current-entry index)]
         (and
-          (= (struct-get entry macro-id) macro-id)
-          (string.eq (struct-get entry macro-name) macro-name)
-          (= (struct-get entry arity) arity)
-          (= (struct-get entry calls) calls)
-          (= (struct-get entry total-ms) total-ms)))
+          (= entry.macro-id macro-id)
+          (string.eq entry.macro-name macro-name)
+          (= entry.arity arity)
+          (= entry.calls calls)
+          (= entry.total-ms total-ms)))
       false)))
 
 (cfg

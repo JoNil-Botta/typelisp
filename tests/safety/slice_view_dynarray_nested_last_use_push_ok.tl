@@ -5,7 +5,7 @@
   (let
     [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     (begin
-      (array-set! items 0 7)
+      (set! (array-ref items 0) 7)
       (let
         [parent : (& items (Slice i64)) (slice-view items 0 1)]
         [child : (& items (Slice i64)) (slice-view parent 0 1)]

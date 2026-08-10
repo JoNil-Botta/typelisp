@@ -26,6 +26,4 @@
             (begin
               (unsafe
                 (arena.destroy scratch))
-              (+
-                (string-length (struct-get copy label))
-                (struct-get copy value)))))))))
+              (+ (string-length copy.label) copy.value))))))))

@@ -22,7 +22,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! items i (+ i 7))
+        (set! (array-ref items i) (+ i 7))
         (set! i (+ i 1))))))
 
 (define (count-nonzero-i64 [items : (__tl_dyn-array i64)] [n : i64]) : i64

@@ -14,7 +14,7 @@
   (let
     [l : Label (Label 38 "abcd")]
     (lambda () : i64
-      (+ (struct-get l id) (string.string-length (struct-get l name))))))
+      (+ l.id (string.string-length l.name)))))
 
 (define (case-struct-string) : bool
   (= ((make-label-reader)) 42))
@@ -26,11 +26,11 @@
   (let
     [a : (__tl_dyn-array i64) (array.make-array i64 1)]
     (begin
-      (array-set! a 0 42)
+      (set! (array-ref a 0) 42)
       (let
         [b : Bag (Bag a)]
         (lambda () : i64
-          (array-ref (struct-get b items) 0))))))
+          (array-ref b.items 0))))))
 
 (define (case-struct-dynarray) : bool
   (= ((make-bag-reader)) 42))
@@ -45,8 +45,7 @@
     [w : Wrapped (WrappedLabel (Label 39 "abc"))]
     (lambda () : i64
       (match w
-        [(WrappedLabel l)
-          (+ (struct-get l id) (string.string-length (struct-get l name)))]
+        [(WrappedLabel l) (+ l.id (string.string-length l.name))]
         [(WrappedText s) (string.string-length s)]
         [(WrappedNumber n) n]))))
 
@@ -55,8 +54,7 @@
     [w : Wrapped (WrappedText "abcdefghijklmnopqrstuvwxyzabcdefghijklmnop")]
     (lambda () : i64
       (match w
-        [(WrappedLabel l)
-          (+ (struct-get l id) (string.string-length (struct-get l name)))]
+        [(WrappedLabel l) (+ l.id (string.string-length l.name))]
         [(WrappedText s) (string.string-length s)]
         [(WrappedNumber n) n]))))
 

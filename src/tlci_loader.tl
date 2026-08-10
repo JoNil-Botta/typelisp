@@ -190,15 +190,13 @@
   [rodata-offset : i64]
   [code-offset : i64]) : ResultTlciLoaderUnit
   (tlci-loader-validate-fixups-at
-    (struct-get image fixups)
+    image.fixups
     0
-    (/
-      (array-length (struct-get image fixups))
-      tlci.tlci-section-fixup-record-size)
+    (/ (array-length image.fixups) tlci.tlci-section-fixup-record-size)
     rodata-offset
-    (array-length (struct-get image rodata))
+    (array-length image.rodata)
     code-offset
-    (array-length (struct-get image code))))
+    (array-length image.code)))
 
 (define (tlci-loader-validate-imports-at
   [imports : (__tl_dyn-array u8)]
@@ -240,13 +238,13 @@
   [rodata-offset : i64]
   [code-offset : i64]) : ResultTlciLoaderUnit
   (tlci-loader-validate-imports-at
-    (struct-get image imports)
+    image.imports
     0
-    (tlci.tlci-import-section-count (struct-get image imports))
+    (tlci.tlci-import-section-count image.imports)
     rodata-offset
-    (array-length (struct-get image rodata))
+    (array-length image.rodata)
     code-offset
-    (array-length (struct-get image code))))
+    (array-length image.code)))
 
 (define (tlci-loader-symbol-range-ok?
   [symbols : (__tl_dyn-array u8)]
@@ -347,8 +345,8 @@
 ;; registration entry: the loader reads the table directly.
 (define (tlci-loader-native-table-offset [image : tlci.TlciImage]) : i64
   (let
-    [entries : (__tl_dyn-array u8) (struct-get image entries)]
-    [symbols : (__tl_dyn-array u8) (struct-get image symbols)]
+    [entries : (__tl_dyn-array u8) image.entries]
+    [symbols : (__tl_dyn-array u8) image.symbols]
     [count : i64 (/ (array-length entries) tlci.tlci-section-entry-record-size)]
     [index : i64 0]
     [found : i64 -1]
@@ -376,16 +374,14 @@
 
 (define (tlci-loader-find-entry-code-offset [image : tlci.TlciImage]) : ResultTlciLoaderI64
   (let
-    [code-len : i64 (array-length (struct-get image code))]
+    [code-len : i64 (array-length image.code)]
     [entry-count : i64
-      (/
-        (array-length (struct-get image entries))
-        tlci.tlci-section-entry-record-size)]
+      (/ (array-length image.entries) tlci.tlci-section-entry-record-size)]
     (if (= entry-count 0)
       (ResultTlciLoaderI64.Err "tlci loader: missing entry table")
       (tlci-loader-find-entry-at
-        (struct-get image entries)
-        (struct-get image symbols)
+        image.entries
+        image.symbols
         0
         entry-count
         code-len
@@ -442,14 +438,14 @@
     [items : (__tl_dyn-array i64)
       (tlci-loader-alloc-i64-array-in-arena owner-arena 8)]
     (begin
-      (array-set! items 0 (struct-get table magic))
-      (array-set! items 1 (struct-get table abi-version))
-      (array-set! items 2 (struct-get table byte-size))
-      (array-set! items 3 (struct-get table host-context))
-      (array-set! items 4 (struct-get table reserved0))
-      (array-set! items 5 (struct-get table reserved1))
-      (array-set! items 6 (struct-get table reserved2))
-      (array-set! items 7 (struct-get table abort-callback))
+      (set! (array-ref items 0) table.magic)
+      (set! (array-ref items 1) table.abi-version)
+      (set! (array-ref items 2) table.byte-size)
+      (set! (array-ref items 3) table.host-context)
+      (set! (array-ref items 4) table.reserved0)
+      (set! (array-ref items 5) table.reserved1)
+      (set! (array-ref items 6) table.reserved2)
+      (set! (array-ref items 7) table.abort-callback)
       items)))
 
 (define (tlci-loader-registration-storage [owner-arena : i64]) : (__tl_dyn-array
@@ -496,11 +492,9 @@
 (define (tlci-loader-apply-fixups! [image-base : i64] [image : tlci.TlciImage]) : unit
   (tlci-loader-apply-fixups-at!
     image-base
-    (struct-get image fixups)
+    image.fixups
     0
-    (/
-      (array-length (struct-get image fixups))
-      tlci.tlci-section-fixup-record-size)))
+    (/ (array-length image.fixups) tlci.tlci-section-fixup-record-size)))
 
 ;; Resolve one image import against the compiler's static host registry. The
 ;; registry is validated before mapping, so a found address is always nonzero.
@@ -509,19 +503,16 @@
   [name : String]) : ResultTlciLoaderI64
   (let
     [index : i64 0]
-    [count : i64 (struct-get host-table import-count)]
+    [count : i64 host-table.import-count]
     [found : i64 -1]
     (begin
       (while (and (< found 0) (< index count))
-        (if (string.eq
-          (array-ref (struct-get host-table import-names) index)
-          name)
+        (if (string.eq (array-ref host-table.import-names index) name)
           (set! found index)
           (set! index (+ index 1))))
       (if (< found 0)
         (ResultTlciLoaderI64.Err name)
-        (ResultTlciLoaderI64.Ok
-          (array-ref (struct-get host-table import-callbacks) found))))))
+        (ResultTlciLoaderI64.Ok (array-ref host-table.import-callbacks found))))))
 
 ;; Bind each image import name to a raw host callback address, writing the GOT
 ;; slot while the image is still writable and before any comptime code runs.
@@ -570,15 +561,13 @@
   [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoaderUnit
   (tlci-loader-bind-imports-at!
     image-base
-    (struct-get image imports)
+    image.imports
     (str_cat.str-cat
-      (struct-get (struct-get image metadata) package-name)
-      (str_cat.str-cat
-        "@"
-        (struct-get (struct-get image metadata) package-version)))
+      image.metadata.package-name
+      (str_cat.str-cat "@" image.metadata.package-version))
     host-table
     0
-    (tlci.tlci-import-section-count (struct-get image imports))))
+    (tlci.tlci-import-section-count image.imports)))
 
 (define (tlci-loader-protect-rodata
   [image-base : i64]
@@ -614,15 +603,15 @@
 
 (define (tlci-loader-loaded-image-region [loaded : TlciLoadedImage]) : pages.TlciPageRegion
   (pages.TlciPageRegion
-    (struct-get loaded image-region-addr)
-    (struct-get loaded image-region-size)
-    (struct-get loaded image-region-code)
-    (struct-get loaded image-region-writable)
-    (struct-get loaded image-region-executable)))
+    loaded.image-region-addr
+    loaded.image-region-size
+    loaded.image-region-code
+    loaded.image-region-writable
+    loaded.image-region-executable))
 
 (define (tlci-loader-release [loaded : TlciLoadedImage]) : ResultTlciLoaderUnit
   (let
-    [index-arena : i64 (struct-get loaded macro-index-arena)]
+    [index-arena : i64 loaded.macro-index-arena]
     [page-result : pages.ResultTlciPageUnit
       (pages.tlci-pages-release (tlci-loader-loaded-image-region loaded))]
     (begin
@@ -647,11 +636,11 @@
   [entry-count : i64]
   [symbol-count : i64]) : TlciLoadedImage
   (TlciLoadedImage
-    (struct-get image-region addr)
-    (struct-get image-region size)
-    (struct-get image-region code)
-    (struct-get image-region writable)
-    (struct-get image-region executable)
+    image-region.addr
+    image-region.size
+    image-region.code
+    image-region.writable
+    image-region.executable
     (+ image-base (+ code-offset entry-code-offset))
     (tlci-loader-global-shared-view tlci-loader-no-retained-storage)
     (tlci-loader-global-shared-view tlci-loader-no-retained-storage)
@@ -683,26 +672,26 @@
   [registration-addr : i64]
   [registration : tlci.TlciImageRegistration]) : TlciLoadedImage
   (TlciLoadedImage
-    (struct-get loaded image-region-addr)
-    (struct-get loaded image-region-size)
-    (struct-get loaded image-region-code)
-    (struct-get loaded image-region-writable)
-    (struct-get loaded image-region-executable)
-    (struct-get loaded entry-addr)
+    loaded.image-region-addr
+    loaded.image-region-size
+    loaded.image-region-code
+    loaded.image-region-writable
+    loaded.image-region-executable
+    loaded.entry-addr
     host-table-storage
     registration-storage
     host-table-addr
     registration-addr
-    (struct-get registration image-context)
-    (struct-get registration macro-entry-table)
-    (struct-get registration macro-entry-count)
-    (struct-get loaded rodata-addr)
-    (struct-get loaded rodata-len)
-    (struct-get loaded code-addr)
-    (struct-get loaded code-len)
-    (struct-get loaded fixup-count)
-    (struct-get loaded entry-count)
-    (struct-get loaded symbol-count)
+    registration.image-context
+    registration.macro-entry-table
+    registration.macro-entry-count
+    loaded.rodata-addr
+    loaded.rodata-len
+    loaded.code-addr
+    loaded.code-len
+    loaded.fixup-count
+    loaded.entry-count
+    loaded.symbol-count
     0
     (make-array i64 0)
     (make-array i64 0)
@@ -732,35 +721,33 @@
   (let
     [code-file-offset : i64 (tlci.tlci-read-u64 bytes 88)]
     [count-addr : i64
-      (+
-        (struct-get loaded image-region-addr)
-        (+ code-file-offset table-offset))]
+      (+ loaded.image-region-addr (+ code-file-offset table-offset))]
     [macro-count : i64 (tlci-loader-read-mapped-i64 count-addr)]
     [host-storage : (__tl_dyn-array i64)
       (tlci-loader-host-table-storage owner-arena host-table)]
     [host-table-addr : i64 (tlci-loader-i64-array-addr host-storage)]
     [installed : TlciLoadedImage
       (TlciLoadedImage
-        (struct-get loaded image-region-addr)
-        (struct-get loaded image-region-size)
-        (struct-get loaded image-region-code)
-        (struct-get loaded image-region-writable)
-        (struct-get loaded image-region-executable)
-        (struct-get loaded entry-addr)
+        loaded.image-region-addr
+        loaded.image-region-size
+        loaded.image-region-code
+        loaded.image-region-writable
+        loaded.image-region-executable
+        loaded.entry-addr
         host-storage
-        (struct-get loaded registration-storage)
+        loaded.registration-storage
         host-table-addr
-        (struct-get loaded registration-addr)
+        loaded.registration-addr
         0
         (+ count-addr 8)
         macro-count
-        (struct-get loaded rodata-addr)
-        (struct-get loaded rodata-len)
-        (struct-get loaded code-addr)
-        (struct-get loaded code-len)
-        (struct-get loaded fixup-count)
-        (struct-get loaded entry-count)
-        (struct-get loaded symbol-count)
+        loaded.rodata-addr
+        loaded.rodata-len
+        loaded.code-addr
+        loaded.code-len
+        loaded.fixup-count
+        loaded.entry-count
+        loaded.symbol-count
         0
         (make-array i64 0)
         (make-array i64 0)
@@ -815,7 +802,7 @@
         [status : i64
           (unsafe
             (tlci-loader-call-image-entry-raw
-              (struct-get loaded entry-addr)
+              loaded.entry-addr
               host-table-addr
               registration-addr))]
         (if (not (= status tlci.tlci-image-entry-success))
@@ -859,21 +846,15 @@
   [code-offset : i64]
   [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
   (let
-    [image-base : i64 (struct-get image-region addr)]
-    [rodata-len : i64 (array-length (struct-get image rodata))]
-    [code-len : i64 (array-length (struct-get image code))]
+    [image-base : i64 image-region.addr]
+    [rodata-len : i64 (array-length image.rodata)]
+    [code-len : i64 (array-length image.code)]
     [fixup-count : i64
-      (/
-        (array-length (struct-get image fixups))
-        tlci.tlci-section-fixup-record-size)]
+      (/ (array-length image.fixups) tlci.tlci-section-fixup-record-size)]
     [entry-count : i64
-      (/
-        (array-length (struct-get image entries))
-        tlci.tlci-section-entry-record-size)]
+      (/ (array-length image.entries) tlci.tlci-section-entry-record-size)]
     [symbol-count : i64
-      (/
-        (array-length (struct-get image symbols))
-        tlci.tlci-section-symbol-record-size)]
+      (/ (array-length image.symbols) tlci.tlci-section-symbol-record-size)]
     (begin
       (match (pages.tlci-pages-copy-from-array! image-region bytes)
         [(pages.ResultTlciPageUnit.Err message)
@@ -920,7 +901,7 @@
   (let
     [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
     [code-offset : i64 (tlci.tlci-read-u64 bytes 88)]
-    [code-len : i64 (array-length (struct-get image code))]
+    [code-len : i64 (array-length image.code)]
     (if (= code-len 0)
       (ResultTlciLoadedImage.Err "tlci loader: image has no code section")
       (match (if (tlci-loader-native-image? image)
@@ -1005,17 +986,13 @@
   (tlci-loader-address-range-contained?
     addr
     len
-    (struct-get loaded image-region-addr)
-    (struct-get loaded image-region-size)))
+    loaded.image-region-addr
+    loaded.image-region-size))
 
 (define (tlci-loader-code-address?
   [loaded : (& loaded TlciLoadedImage)]
   [addr : i64]) : bool
-  (tlci-loader-address-range-contained?
-    addr
-    1
-    (struct-get loaded code-addr)
-    (struct-get loaded code-len)))
+  (tlci-loader-address-range-contained? addr 1 loaded.code-addr loaded.code-len))
 
 (define (tlci-loader-mapped-name-eq-at?
   [addr : i64]
@@ -1047,15 +1024,13 @@
   [loaded : (& loaded TlciLoadedImage)]
   [index : i64]) : ResultTlciMacroEntry
   (let
-    [count : i64 (struct-get loaded macro-entry-count)]
-    [table : i64 (struct-get loaded macro-entry-table)]
+    [count : i64 loaded.macro-entry-count]
+    [table : i64 loaded.macro-entry-table]
     [record-size : i64 tlci.tlci-macro-entry-record-size]
     (cond
       [(or (< index 0) (>= index count))
         (ResultTlciMacroEntry.Err "tlci loader: macro entry index out of range")]
-      [(or
-          (< count 0)
-          (> count (/ (struct-get loaded image-region-size) record-size)))
+      [(or (< count 0) (> count (/ loaded.image-region-size record-size)))
         (ResultTlciMacroEntry.Err "tlci loader: macro entry count is invalid")]
       [(not (= (% table 8) 0))
         (ResultTlciMacroEntry.Err
@@ -1228,26 +1203,26 @@
   [entry-states : (__tl_dyn-array i64)]
   [index-arena : i64]) : TlciLoadedImage
   (TlciLoadedImage
-    (struct-get loaded image-region-addr)
-    (struct-get loaded image-region-size)
-    (struct-get loaded image-region-code)
-    (struct-get loaded image-region-writable)
-    (struct-get loaded image-region-executable)
-    (struct-get loaded entry-addr)
-    (struct-get loaded host-table-storage)
-    (struct-get loaded registration-storage)
-    (struct-get loaded host-table-addr)
-    (struct-get loaded registration-addr)
-    (struct-get loaded image-context)
-    (struct-get loaded macro-entry-table)
-    (struct-get loaded macro-entry-count)
-    (struct-get loaded rodata-addr)
-    (struct-get loaded rodata-len)
-    (struct-get loaded code-addr)
-    (struct-get loaded code-len)
-    (struct-get loaded fixup-count)
-    (struct-get loaded entry-count)
-    (struct-get loaded symbol-count)
+    loaded.image-region-addr
+    loaded.image-region-size
+    loaded.image-region-code
+    loaded.image-region-writable
+    loaded.image-region-executable
+    loaded.entry-addr
+    loaded.host-table-storage
+    loaded.registration-storage
+    loaded.host-table-addr
+    loaded.registration-addr
+    loaded.image-context
+    loaded.macro-entry-table
+    loaded.macro-entry-count
+    loaded.rodata-addr
+    loaded.rodata-len
+    loaded.code-addr
+    loaded.code-len
+    loaded.fixup-count
+    loaded.entry-count
+    loaded.symbol-count
     generation
     slots
     name-addrs
@@ -1267,9 +1242,7 @@
   (let
     [capacity : i64 (array-length slots)]
     [hash-value : i64
-      (tlci-loader-mapped-name-hash
-        (struct-get entry name-addr)
-        (struct-get entry name-len))]
+      (tlci-loader-mapped-name-hash entry.name-addr entry.name-len)]
     [slot : i64 (% hash-value capacity)]
     [probes : i64 0]
     [inserted : bool false]
@@ -1280,24 +1253,21 @@
           [marker : i64 (array-ref slots slot)]
           (if (= marker 0)
             (begin
-              (array-set! name-addrs entry-index (struct-get entry name-addr))
-              (array-set! name-lens entry-index (struct-get entry name-len))
-              (array-set!
-                function-addrs
-                entry-index
-                (struct-get entry function-addr))
-              (array-set! entry-states entry-index 0)
-              (array-set! slots slot (+ entry-index 1))
+              (set! (array-ref name-addrs entry-index) entry.name-addr)
+              (set! (array-ref name-lens entry-index) entry.name-len)
+              (set! (array-ref function-addrs entry-index) entry.function-addr)
+              (set! (array-ref entry-states entry-index) 0)
+              (set! (array-ref slots slot) (+ entry-index 1))
               (set! inserted true))
             (let
               [candidate : i64 (- marker 1)]
               (if (and
-                (= (array-ref name-lens candidate) (struct-get entry name-len))
+                (= (array-ref name-lens candidate) entry.name-len)
                 (tlci-loader-mapped-name-ranges-eq-at?
                   (array-ref name-addrs candidate)
-                  (struct-get entry name-addr)
+                  entry.name-addr
                   0
-                  (struct-get entry name-len)))
+                  entry.name-len))
                 (set! duplicate true)
                 (begin
                   (set! slot (% (+ slot 1) capacity))
@@ -1313,7 +1283,7 @@
   [loaded : TlciLoadedImage]
   [index-arena : i64]) : ResultTlciLoadedImage
   (let
-    [count : i64 (struct-get loaded macro-entry-count)]
+    [count : i64 loaded.macro-entry-count]
     [slots : (__tl_dyn-array i64)
       (make-array i64 (tlci-loader-macro-index-capacity count))]
     [name-addrs : (__tl_dyn-array i64) (make-array i64 count)]
@@ -1359,13 +1329,11 @@
 
 (define (tlci-loader-index-macro-entries [loaded : TlciLoadedImage]) : ResultTlciLoadedImage
   (let
-    [count : i64 (struct-get loaded macro-entry-count)]
-    [table : i64 (struct-get loaded macro-entry-table)]
+    [count : i64 loaded.macro-entry-count]
+    [table : i64 loaded.macro-entry-table]
     [record-size : i64 tlci.tlci-macro-entry-record-size]
     (cond
-      [(or
-          (< count 0)
-          (> count (/ (struct-get loaded image-region-size) record-size)))
+      [(or (< count 0) (> count (/ loaded.image-region-size record-size)))
         (ResultTlciLoadedImage.Err "tlci loader: macro entry count is invalid")]
       [(= count 0)
         (ResultTlciLoadedImage.Ok
@@ -1415,9 +1383,9 @@
     [(ResultTlciLoadedImage.Err message) (ResultTlciLoaderUnit.Err message)]
     [(ResultTlciLoadedImage.Ok indexed)
       (begin
-        (if (> (struct-get indexed macro-index-arena) 0)
+        (if (> indexed.macro-index-arena 0)
           (unsafe
-            (arena.tl_arena_destroy (struct-get indexed macro-index-arena)))
+            (arena.tl_arena_destroy indexed.macro-index-arena))
           unit)
         (ResultTlciLoaderUnit.Ok))]))
 
@@ -1425,14 +1393,12 @@
   [loaded : (& loaded TlciLoadedImage)]
   [name : String]) : TlciMacroEntryLookup
   (let
-    [count : i64 (struct-get loaded macro-entry-count)]
-    [generation : i64 (struct-get loaded macro-index-generation)]
-    [slots : (__tl_dyn-array i64) (struct-get loaded macro-index-slots)]
-    [name-addrs : (__tl_dyn-array i64)
-      (struct-get loaded macro-index-name-addrs)]
-    [name-lens : (__tl_dyn-array i64) (struct-get loaded macro-index-name-lens)]
-    [entry-states : (__tl_dyn-array i64)
-      (struct-get loaded macro-index-entry-states)]
+    [count : i64 loaded.macro-entry-count]
+    [generation : i64 loaded.macro-index-generation]
+    [slots : (__tl_dyn-array i64) loaded.macro-index-slots]
+    [name-addrs : (__tl_dyn-array i64) loaded.macro-index-name-addrs]
+    [name-lens : (__tl_dyn-array i64) loaded.macro-index-name-lens]
+    [entry-states : (__tl_dyn-array i64) loaded.macro-index-entry-states]
     (cond
       [(= count 0) TlciMacroEntryLookup.Missing]
       [(or
@@ -1483,18 +1449,13 @@
   [loaded : (& loaded TlciLoadedImage)]
   [resolved : TlciResolvedMacroEntry]) : ResultTlciMacroEntry
   (let
-    [index : i64 (struct-get resolved entry-index)]
-    [count : i64 (struct-get loaded macro-entry-count)]
-    [name-addrs : (__tl_dyn-array i64)
-      (struct-get loaded macro-index-name-addrs)]
-    [name-lens : (__tl_dyn-array i64) (struct-get loaded macro-index-name-lens)]
-    [function-addrs : (__tl_dyn-array i64)
-      (struct-get loaded macro-index-function-addrs)]
+    [index : i64 resolved.entry-index]
+    [count : i64 loaded.macro-entry-count]
+    [name-addrs : (__tl_dyn-array i64) loaded.macro-index-name-addrs]
+    [name-lens : (__tl_dyn-array i64) loaded.macro-index-name-lens]
+    [function-addrs : (__tl_dyn-array i64) loaded.macro-index-function-addrs]
     (cond
-      [(not
-          (=
-            (struct-get resolved catalog-generation)
-            (struct-get loaded macro-index-generation)))
+      [(not (= resolved.catalog-generation loaded.macro-index-generation))
         (ResultTlciMacroEntry.Err
           "tlci loader: macro entry handle belongs to another catalog")]
       [(or
@@ -1518,15 +1479,13 @@
     [(ResultTlciMacroEntry.Err message) (ResultTlciLoaderUnit.Err message)]
     [(ResultTlciMacroEntry.Ok _)
       (let
-        [states : (__tl_dyn-array i64)
-          (struct-get loaded macro-index-entry-states)]
-        [index : i64 (struct-get resolved entry-index)]
-        (if (not
-          (= (array-length states) (struct-get loaded macro-entry-count)))
+        [states : (__tl_dyn-array i64) loaded.macro-index-entry-states]
+        [index : i64 resolved.entry-index]
+        (if (not (= (array-length states) loaded.macro-entry-count))
           (ResultTlciLoaderUnit.Err
             "tlci loader: macro entry state index is unavailable")
           (begin
-            (array-set! states index 1)
+            (set! (array-ref states index) 1)
             (ResultTlciLoaderUnit.Ok))))]))
 
 (define (tlci-loader-find-macro-entry
@@ -1539,7 +1498,7 @@
       (tlci-loader-resolved-macro-entry loaded resolved)]
     [(TlciMacroEntryLookup.Missing)
       (ResultTlciMacroEntry.Err
-        (if (= (struct-get loaded macro-entry-count) 0)
+        (if (= loaded.macro-entry-count 0)
           "tlci loader: image registered no macros"
           "tlci loader: macro entry not found"))]
     [(TlciMacroEntryLookup.Err message) (ResultTlciMacroEntry.Err message)]))
@@ -1561,13 +1520,13 @@
     [host-context : i64
       (tlci-loader-read-mapped-i64
         (+
-          (struct-get loaded host-table-addr)
+          loaded.host-table-addr
           tlci.tlci-host-callback-table-host-context-offset))]
     [status : i64
       (unsafe
         (tlci-loader-call-macro-entry-raw
-          (struct-get entry function-addr)
-          (struct-get loaded image-context)
+          entry.function-addr
+          loaded.image-context
           host-context
           session-context
           operands-addr
@@ -1636,9 +1595,8 @@
     (begin
       (while (< i n)
         (begin
-          (array-set!
-            bytes
-            (+ offset i)
+          (set!
+            (array-ref bytes (+ offset i))
             (cast (tlci.tlci-string-ref text i) : u8))
           (set! i (+ i 1))))
       unit)))
@@ -1778,8 +1736,7 @@
   [expected : i64]) : bool
   (match (tlci-loader-resolved-macro-entry loaded resolved)
     [(ResultTlciMacroEntry.Err _) false]
-    [(ResultTlciMacroEntry.Ok entry)
-      (= (struct-get entry function-addr) expected)]))
+    [(ResultTlciMacroEntry.Ok entry) (= entry.function-addr expected)]))
 
 (define (tlci-loader-test-foreign-handle-error?
   [loaded : (& loaded TlciLoadedImage)]
@@ -1796,7 +1753,7 @@
   [generation : i64]) : bool
   (match (tlci-loader-resolved-macro-entry
     loaded
-    (TlciResolvedMacroEntry generation (struct-get loaded macro-entry-count)))
+    (TlciResolvedMacroEntry generation loaded.macro-entry-count))
     [(ResultTlciMacroEntry.Ok _) false]
     [(ResultTlciMacroEntry.Err message)
       (string.eq message "tlci loader: macro entry handle is invalid")]))
@@ -1833,7 +1790,7 @@
                 [invalid-handle-ok : bool
                   (tlci-loader-test-invalid-handle-error?
                     (& indexed)
-                    (struct-get first catalog-generation))]
+                    first.catalog-generation)]
                 [_tamper : unit
                   (tlci-loader-write-mapped-i64!
                     (+ base tlci.tlci-macro-entry-function-offset)
@@ -1860,11 +1817,9 @@
                             [(TlciMacroEntryLookup.Shell shell)
                               (and
                                 (=
-                                  (struct-get shell catalog-generation)
-                                  (struct-get first catalog-generation))
-                                (=
-                                  (struct-get shell entry-index)
-                                  (struct-get first entry-index)))]
+                                  shell.catalog-generation
+                                  first.catalog-generation)
+                                (= shell.entry-index first.entry-index))]
                             [_ false])]
                         (and
                           shell-ok
@@ -1879,8 +1834,8 @@
                                   (and
                                     (not
                                       (=
-                                        (struct-get first catalog-generation)
-                                        (struct-get second catalog-generation)))
+                                        first.catalog-generation
+                                        second.catalog-generation))
                                     (tlci-loader-test-resolved-function?
                                       (& remapped)
                                       second
@@ -1927,7 +1882,7 @@
   [bytes : (__tl_dyn-array u8)]
   [offset : i64]
   [value : i64]) : unit
-  (array-set! bytes offset (tlci.tlci-byte value)))
+  (set! (array-ref bytes offset) (tlci.tlci-byte value)))
 
 (define (tlci-loader-test-success-code-for-target
   [reg-direct-modrm : i64]
@@ -2145,10 +2100,7 @@
             [(ResultTlciLoadedImage.Ok loaded)
               (let
                 [ok : bool
-                  (=
-                    (tlci-loader-read-mapped-i64
-                      (struct-get loaded rodata-addr))
-                    4096)]
+                  (= (tlci-loader-read-mapped-i64 loaded.rodata-addr) 4096)]
                 (match (tlci-loader-release loaded)
                   [(ResultTlciLoaderUnit.Ok) ok]
                   [(ResultTlciLoaderUnit.Err _) false]))])]
@@ -2191,32 +2143,26 @@
         [(ResultTlciLoadedImage.Err _) 11]
         [(ResultTlciLoadedImage.Ok loaded)
           (let
-            [image-base : i64 (struct-get loaded image-region-addr)]
-            [slot : i64
-              (tlci-loader-read-mapped-i64 (struct-get loaded rodata-addr))]
-            [entry-ok : bool
-              (= (struct-get loaded entry-addr) (struct-get loaded code-addr))]
+            [image-base : i64 loaded.image-region-addr]
+            [slot : i64 (tlci-loader-read-mapped-i64 loaded.rodata-addr)]
+            [entry-ok : bool (= loaded.entry-addr loaded.code-addr)]
             [counts-ok : bool
               (and
-                (= (struct-get loaded fixup-count) 1)
-                (= (struct-get loaded entry-count) 1)
-                (= (struct-get loaded symbol-count) 1))]
+                (= loaded.fixup-count 1)
+                (= loaded.entry-count 1)
+                (= loaded.symbol-count 1))]
             [registration-ok : bool
               (and
-                (> (struct-get loaded host-table-addr) 0)
-                (> (struct-get loaded registration-addr) 0)
+                (> loaded.host-table-addr 0)
+                (> loaded.registration-addr 0)
+                (= loaded.image-context loaded.host-table-addr)
+                (= loaded.macro-entry-table 0)
+                (= loaded.macro-entry-count 0)
                 (=
-                  (struct-get loaded image-context)
-                  (struct-get loaded host-table-addr))
-                (= (struct-get loaded macro-entry-table) 0)
-                (= (struct-get loaded macro-entry-count) 0)
-                (=
-                  (tlci-loader-read-mapped-i64
-                    (struct-get loaded registration-addr))
+                  (tlci-loader-read-mapped-i64 loaded.registration-addr)
                   tlci.tlci-image-registration-magic)
                 (=
-                  (tlci-loader-read-mapped-i64
-                    (struct-get loaded host-table-addr))
+                  (tlci-loader-read-mapped-i64 loaded.host-table-addr)
                   tlci.tlci-host-callback-table-magic))]
             [release-ok : bool
               (match (tlci-loader-release loaded)
@@ -2341,16 +2287,14 @@
             (let
               ;; The dispatch-path read, after the load arena is gone.
               [host-magic : i64
-                (tlci-loader-read-mapped-i64
-                  (struct-get loaded host-table-addr))]
+                (tlci-loader-read-mapped-i64 loaded.host-table-addr)]
               [host-context : i64
                 (tlci-loader-read-mapped-i64
                   (+
-                    (struct-get loaded host-table-addr)
+                    loaded.host-table-addr
                     tlci.tlci-host-callback-table-host-context-offset))]
               [registration-magic : i64
-                (tlci-loader-read-mapped-i64
-                  (struct-get loaded registration-addr))]
+                (tlci-loader-read-mapped-i64 loaded.registration-addr)]
               [released : bool
                 (match (tlci-loader-release loaded)
                   [(ResultTlciLoaderUnit.Ok) true]

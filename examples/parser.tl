@@ -141,7 +141,7 @@
 (define (advance [cur : (&mut cur (Array i64 1))]) : unit
   (let
     [next : i64 (+ (array-ref cur 0) 1)]
-    (array-set! cur 0 next)))
+    (set! (array-ref cur 0) next)))
 
 ;; `expect`: assert the cursor is on `want`, aborting via `io.panic` (#45) on a
 ;; grammar violation - exactly how a real parser reports a syntax error - then
@@ -244,10 +244,10 @@
 (define (eval [e : Expr]) : i64
   (match e
     [(Expr.Num n) n]
-    [(Expr.Add a b) (+ (eval (box-get a)) (eval (box-get b)))]
-    [(Expr.Sub a b) (- (eval (box-get a)) (eval (box-get b)))]
-    [(Expr.Mul a b) (* (eval (box-get a)) (eval (box-get b)))]
-    [(Expr.Div a b) (/ (eval (box-get a)) (eval (box-get b)))]))
+    [(Expr.Add a b) (+ (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
+    [(Expr.Sub a b) (- (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
+    [(Expr.Mul a b) (* (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
+    [(Expr.Div a b) (/ (eval (__tl-box-place a)) (eval (__tl-box-place b)))]))
 
 ;; ---- Build the token stream for the sample "2 + 3 * 4" by hand. ----
 ;; (A lexer would produce this; here we construct the parallel vectors directly

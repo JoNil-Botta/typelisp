@@ -14,7 +14,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! items i (+ i 1))
+        (set! (array-ref items i) (+ i 1))
         (set! i (+ i 1))))))
 
 (define (sum-range [items : (__tl_dyn-array i64)] [n : i64]) : i64

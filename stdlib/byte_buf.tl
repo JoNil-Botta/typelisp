@@ -68,7 +68,7 @@
 
 ;: Number of live bytes in `buf`.
 (define (len [buf : ByteBuf]) : i64
-  (struct-get buf len))
+  buf.len)
 
 ;: Number of live bytes in `buf`.
 (define (length [buf : ByteBuf]) : i64
@@ -76,7 +76,7 @@
 
 ;: Number of bytes the backing array can hold without growing.
 (define (capacity [buf : ByteBuf]) : i64
-  (array-length (struct-get buf slots)))
+  (array-length buf.slots))
 
 ;: True when `buf` has no live bytes.
 (define (empty? [buf : ByteBuf]) : bool
@@ -238,17 +238,14 @@
 (define (as-bytes [buf : (& source ByteBuf)]) : (& source bytes)
   (unsafe
     (tl_bytes_view_from_buf_parts
-      (ptr-cast (array-data (struct-get buf slots)) : (Ptr u8))
-      (struct-get buf len)
+      (ptr-cast (array-data buf.slots) : (Ptr u8))
+      buf.len
       buf)))
 
 ;: Borrow the live range of a `ByteBuf` as mutable fixed-length bytes.
 (define (as-mut-bytes [buf : (&mut source ByteBuf)]) : (&mut source bytes)
   (unsafe
-    (tl_bytes_mut_view_from_buf_parts
-      (array-data (struct-get buf slots))
-      (struct-get buf len)
-      buf)))
+    (tl_bytes_mut_view_from_buf_parts (array-data buf.slots) buf.len buf)))
 
 ;: Read live byte `index`, returning `fallback` when `index` is outside
 ;: `[0, len)`.
@@ -256,21 +253,21 @@
   (if (if (>= index 0)
     (< index (len buf))
     false)
-    (array-ref (struct-get buf slots) index)
+    (array-ref buf.slots index)
     fallback))
 
 ;: Read live byte `index`, trapping when `index` is outside `[0, len)`.
 (define (ref [buf : ByteBuf] [index : i64]) : u8
   (begin
     (check-range (len buf) index 1)
-    (array-ref (struct-get buf slots) index)))
+    (array-ref buf.slots index)))
 
 ;: Overwrite live byte `index`, trapping when `index` is outside `[0, len)`.
 ;: Returns the same buffer value.
 (define (set! [buf : ByteBuf] [index : i64] [value : u8]) : ByteBuf
   (begin
     (check-range (len buf) index 1)
-    (array-set! (struct-get buf slots) index value)
+    (set! (array-ref buf.slots index) value)
     buf))
 
 ;: Copy `count` bytes from `src[src-start..]` into `dst[dst-start..]`,
@@ -289,9 +286,8 @@
       (begin
         (while (< index count)
           (begin
-            (array-set!
-              dst
-              (+ dst-start index)
+            (set!
+              (array-ref dst (+ dst-start index))
               (array-ref src (+ src-start index)))
             (set! index (+ index 1))))
         unit))))
@@ -312,12 +308,7 @@
           doubled)]
       [bigger : (__tl_dyn-array u8) (array.make-array u8 new-capacity)]
       (begin
-        (byte-buf-copy-slots-range-into
-          bigger
-          0
-          (struct-get buf slots)
-          0
-          (len buf))
+        (byte-buf-copy-slots-range-into bigger 0 buf.slots 0 (len buf))
         (ByteBuf bigger (len buf))))))
 
 ;: Grow `buf` to at least twice its current capacity.
@@ -336,7 +327,7 @@
 
 ;: Clear all live bytes while retaining the backing capacity for reuse.
 (define (clear! [buf : ByteBuf]) : ByteBuf
-  (ByteBuf (struct-get buf slots) 0))
+  (ByteBuf buf.slots 0))
 
 ;: Clear all live bytes while retaining the backing capacity for reuse.
 (define (clear [buf : ByteBuf]) : ByteBuf
@@ -348,8 +339,8 @@
     [ready : ByteBuf (reserve buf 1)]
     [index : i64 (len ready)]
     (begin
-      (array-set! (struct-get ready slots) index value)
-      (set! (struct-get ready len) (+ index 1))
+      (set! (array-ref ready.slots index) value)
+      (set! ready.len (+ index 1))
       ready)))
 
 ;: Append `count` bytes from `src` starting at `start`, trapping on invalid
@@ -371,13 +362,12 @@
       (begin
         (while (< index count)
           (begin
-            (array-set!
-              (struct-get ready slots)
-              (+ old-len index)
+            (set!
+              (array-ref ready.slots (+ old-len index))
               (unsafe
                 (ptr-read (ptr-offset src-ptr (+ start index)))))
             (set! index (+ index 1))))
-        (set! (struct-get ready len) (+ old-len count))
+        (set! ready.len (+ old-len count))
         ready))))
 
 ;: Append every byte from `src`.
@@ -397,7 +387,7 @@
       [old-len : i64 (len ready)]
       [dst : (MutPtr u8)
         (unsafe
-          (array-data (struct-get ready slots)))]
+          (array-data ready.slots))]
       (begin
         (string.str-copy-bytes-into
           (unsafe
@@ -405,7 +395,7 @@
           dst
           old-len
           count)
-        (set! (struct-get ready len) (+ old-len count))
+        (set! ready.len (+ old-len count))
         ready))))
 
 ;: Append every byte from a borrowed byte view.
@@ -434,7 +424,7 @@
     [n : i64 (len buf)]
     [out : (__tl_dyn-array u8) (array.make-array u8 n)]
     (begin
-      (byte-buf-copy-slots-range-into out 0 (struct-get buf slots) 0 n)
+      (byte-buf-copy-slots-range-into out 0 buf.slots 0 n)
       out)))
 
 ;: Copy all live bytes into a fresh `String`.

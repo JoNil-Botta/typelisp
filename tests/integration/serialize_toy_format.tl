@@ -33,16 +33,16 @@
   (if (= index (array-length source))
     unit
     (begin
-      (array-set! target (+ index 1) (array-ref source index))
+      (set! (array-ref target (+ index 1)) (array-ref source index))
       (field-list-copy-from source target (+ index 1)))))
 
 (define (field-list-prepend [name : String] [value : Value] [rest : FieldList]) : FieldList
   (let
-    [source : (__tl_dyn-array Field) (struct-get rest items)]
+    [source : (__tl_dyn-array Field) rest.items]
     [target : (__tl_dyn-array Field)
       (array.make-array Field (+ (array-length source) 1))]
     (begin
-      (array-set! target 0 (Field name value))
+      (set! (array-ref target 0) (Field name value))
       (field-list-copy-from source target 0)
       (FieldList target))))
 
@@ -54,20 +54,20 @@
     (Missing)
     (let
       [field : Field (array-ref items index)]
-      (if (string.eq (struct-get field name) name)
-        (Found (struct-get field value))
+      (if (string.eq field.name name)
+        (Found field.value)
         (field-list-get-from items name (+ index 1))))))
 
 (define (field-list-get [fields : FieldList] [name : String]) : Lookup
-  (field-list-get-from (struct-get fields items) name 0))
+  (field-list-get-from fields.items name 0))
 
 (define (value-list-count [items : ValueList]) : i64
-  (array-length (struct-get items items)))
+  (array-length items.items))
 
 (define (value-list-get [items : ValueList] [index : i64]) : Lookup
   (if (or (< index 0) (>= index (value-list-count items)))
     (Missing)
-    (Found (array-ref (struct-get items items) index))))
+    (Found (array-ref items.items index))))
 
 (define (value-list-empty) : ValueList
   (ValueList (array.make-array Value 0)))
@@ -79,16 +79,16 @@
   (if (= index (array-length source))
     unit
     (begin
-      (array-set! target (+ index 1) (array-ref source index))
+      (set! (array-ref target (+ index 1)) (array-ref source index))
       (value-list-copy-from source target (+ index 1)))))
 
 (define (value-list-prepend [value : Value] [rest : ValueList]) : ValueList
   (let
-    [source : (__tl_dyn-array Value) (struct-get rest items)]
+    [source : (__tl_dyn-array Value) rest.items]
     [target : (__tl_dyn-array Value)
       (array.make-array Value (+ (array-length source) 1))]
     (begin
-      (array-set! target 0 value)
+      (set! (array-ref target 0) value)
       (value-list-copy-from source target 0)
       (ValueList target))))
 
@@ -141,7 +141,7 @@
 (defmacro (field-value [object : Expr] [name : Expr] [err-ctor : Expr]) : Expr
   `(match ,object
     [(serialize_toy_format.Object fields)
-      (match (serialize_toy_format.field-list-get (box-get fields) ,name)
+      (match (serialize_toy_format.field-list-get (__tl-box-place fields) ,name)
         [(serialize_toy_format.Found found) found]
         [(serialize_toy_format.Missing)
           (return (,err-ctor "toy format: missing field"))])]
@@ -159,7 +159,7 @@
 (defmacro (sequence-length [value : Expr] [err-ctor : Expr]) : i64
   `(match ,value
     [(serialize_toy_format.Sequence items)
-      (serialize_toy_format.value-list-count (box-get items))]
+      (serialize_toy_format.value-list-count (__tl-box-place items))]
     [_ (return (,err-ctor "toy format: expected sequence"))]))
 
 (defmacro (sequence-element-value
@@ -168,7 +168,7 @@
   [err-ctor : Expr]) : Expr
   `(match ,value
     [(serialize_toy_format.Sequence items)
-      (match (serialize_toy_format.value-list-get (box-get items) ,index)
+      (match (serialize_toy_format.value-list-get (__tl-box-place items) ,index)
         [(serialize_toy_format.Found found) found]
         [(serialize_toy_format.Missing)
           (return (,err-ctor "toy format: missing sequence element"))])]

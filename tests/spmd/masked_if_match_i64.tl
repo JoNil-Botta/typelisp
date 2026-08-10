@@ -6,7 +6,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! xs i (- i 5))
+        (set! (array-ref xs i) (- i 5))
         (set! i (+ i 1))))))
 
 (define (fill-match
@@ -17,9 +17,9 @@
     ([i : i64 0 n])
     (if (> (array-ref xs i) 0)
       (match (> (array-ref xs i) 1)
-        [true (array-set! out i 1)]
-        [false (array-set! out i 2)])
-      (array-set! out i 0))))
+        [true (set! (array-ref out i) 1)]
+        [false (set! (array-ref out i) 2)])
+      (set! (array-ref out i) 0))))
 
 (define (fill-scalar
   [xs : (__tl_dyn-array i64)]
@@ -31,9 +31,9 @@
       (begin
         (if (> (array-ref xs i) 0)
           (match (> (array-ref xs i) 1)
-            [true (array-set! out i 1)]
-            [false (array-set! out i 2)])
-          (array-set! out i 0))
+            [true (set! (array-ref out i) 1)]
+            [false (set! (array-ref out i) 2)])
+          (set! (array-ref out i) 0))
         (set! i (+ i 1))))))
 
 (define (arrays-eq

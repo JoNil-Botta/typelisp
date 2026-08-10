@@ -7,9 +7,8 @@
   (begin
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        out
-        i
+      (set!
+        (array-ref out i)
         (try
           (if flag
             (result_i64_i64.ok 1)

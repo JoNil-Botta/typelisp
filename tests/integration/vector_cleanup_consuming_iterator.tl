@@ -82,14 +82,14 @@
         (begin
           (test.assert-i64-eq (array-length shared) 2 "cleanup view length")
           (test.assert-i64-eq
-            (struct-get (array-ref shared 1) value)
+            (__tl-project-field (array-ref shared 1) value)
             30
             "cleanup view value")))
       (let
         [exclusive : (&mut items (Slice CleanupToken))
           (tokens.view-mut (&mut items))]
         (test.assert-i64-eq
-          (struct-get (array-ref exclusive 0) value)
+          (__tl-project-field (array-ref exclusive 0) value)
           3
           "cleanup mutable view value")))))
 

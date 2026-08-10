@@ -101,46 +101,42 @@
     [i : i64 index]
     (while (< i count)
       (begin
-        (array-set! dst i (array-ref src i))
+        (set! (array-ref dst i) (array-ref src i))
         (set! i (+ i 1))))))
 
 (define (compile-cli-cfg-names-grow! [names : (&mut names CompileCliCfgNames)]) : unit
   (let
-    [count : i64 (struct-get names len)]
-    [old-cap : i64 (array-length (struct-get names slots))]
+    [count : i64 names.len]
+    [old-cap : i64 (array-length names.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array String) (make-array String new-cap)]
     (begin
-      (compile-cli-cfg-names-copy-range!
-        (&mut bigger)
-        (& (struct-get names slots))
-        0
-        count)
-      (set! (struct-get names slots) bigger))))
+      (compile-cli-cfg-names-copy-range! (&mut bigger) (& names.slots) 0 count)
+      (set! names.slots bigger))))
 
 (define (compile-cli-cfg-names-push!
   [names : (&mut names CompileCliCfgNames)]
   [name : String]) : unit
   (begin
-    (if (< (struct-get names len) (array-length (struct-get names slots)))
+    (if (< names.len (array-length names.slots))
       unit
       (compile-cli-cfg-names-grow! names))
     (let
-      [index : i64 (struct-get names len)]
+      [index : i64 names.len]
       (begin
-        (array-set! (struct-get names slots) index name)
-        (set! (struct-get names len) (+ index 1))))))
+        (set! (array-ref names.slots index) name)
+        (set! names.len (+ index 1))))))
 
 (define (compile-cli-cfg-names-get
   [names : (& names CompileCliCfgNames)]
   [index : i64]) : String
   (if (if (>= index 0)
-    (< index (struct-get names len))
+    (< index names.len)
     false)
-    (array-ref (struct-get names slots) index)
+    (array-ref names.slots index)
     ""))
 
 (define (compile-cli-cfg-names-add
@@ -156,7 +152,7 @@
   [names : (& names CompileCliCfgNames)]
   [index : i64]
   [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index (struct-get names len))
+  (if (>= index names.len)
     env
     (compile-cli-cfg-names-to-env-from
       names
@@ -171,7 +167,7 @@
   [index : i64]
   [env : sym_i64_env.SymI64Env]
   [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
-  (if (>= index (struct-get names len))
+  (if (>= index names.len)
     env
     (compile-cli-cfg-names-to-env-with-intern-state-from
       names
@@ -1414,7 +1410,7 @@
               (compiler_driver_core.compiler-driver-state-profile _state)))
           (io.print-error
             (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (box-get diag)))
+              (__tl-box-place diag)))
           (ResultCompileCliWindowsBatchEntry.Err 1))])))
 
 (define (compile-cli-run-windows-batch-file
@@ -2471,7 +2467,7 @@
           (begin
             (io.print-error
               (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (cdiag.compiler-diagnostic-list-first (box-get diag))))
+                (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))
             1)])]
     [(CompileCliAction.Help)
       (begin

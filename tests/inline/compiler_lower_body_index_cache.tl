@@ -21,7 +21,8 @@
             (compiler_lower.lower-active-global-name-cache-set! prev-name-cache)
             42)]
         [(compiler_lower.ResultCompilerLower.Err diagnostic)
-          (io.panic (diag.compiler-diagnostic-message (box-get diagnostic)))]))))
+          (io.panic
+            (diag.compiler-diagnostic-message (__tl-box-place diagnostic)))]))))
 
 (test
   compiler-lower-body-index-cache

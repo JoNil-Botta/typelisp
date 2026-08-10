@@ -76,19 +76,19 @@
 
 ;: Return the resolved tool executable path.
 (define (tool-executable [tool : MsvcTool]) : String
-  (struct-get tool executable))
+  tool.executable)
 
 ;: Return the PATH override for invoking the tool.
 (define (tool-path [tool : MsvcTool]) : String
-  (struct-get tool path))
+  tool.path)
 
 ;: Return the LIB override for invoking the tool.
 (define (tool-lib [tool : MsvcTool]) : String
-  (struct-get tool lib))
+  tool.lib)
 
 ;: Return the INCLUDE override for invoking the tool.
 (define (tool-include [tool : MsvcTool]) : String
-  (struct-get tool include))
+  tool.include)
 
 ;: Return process environment overrides for invoking the tool.
 (define (tool-process-env [tool : MsvcTool]) : process.ProcessEnvList
@@ -186,8 +186,8 @@
             (stdlib.msvc.version-read-segment left left-index)]
           [right-segment : MsvcVersionCursor
             (stdlib.msvc.version-read-segment right right-index)]
-          [left-value : i64 (struct-get left-segment value)]
-          [right-value : i64 (struct-get right-segment value)]
+          [left-value : i64 left-segment.value]
+          [right-value : i64 right-segment.value]
           (if (> left-value right-value)
             (begin
               (set! greater true)
@@ -195,12 +195,8 @@
             (if (< left-value right-value)
               (set! done true)
               (begin
-                (set!
-                  left-index
-                  (version-next-index left (struct-get left-segment next)))
-                (set!
-                  right-index
-                  (version-next-index right (struct-get right-segment next))))))))
+                (set! left-index (version-next-index left left-segment.next))
+                (set! right-index (version-next-index right right-segment.next)))))))
       greater)))
 
 ;: Return true when `left` is a newer dotted numeric version than `right`.
@@ -573,7 +569,7 @@
   [best-version : String]
   [has-best : bool]) : bool
   (if has-best
-    (version-greater-owned? (struct-get candidate version) best-version)
+    (version-greater-owned? candidate.version best-version)
     true))
 
 ;: Scan standard Visual Studio locations for the newest toolset containing `tool`.
@@ -605,8 +601,8 @@
               parents
               (+ index 1)
               tool
-              (struct-get candidate root)
-              (struct-get candidate version)
+              candidate.root
+              candidate.version
               true)
             (find-toolset-parents
               parents
@@ -643,15 +639,15 @@
 
 ;: Return the SDK um/x64 library directory.
 (define (sdk-um-lib-dir [sdk : MsvcSdk]) : String
-  (path-join4 (struct-get sdk root) "Lib" (struct-get sdk version) "um/x64"))
+  (path-join4 sdk.root "Lib" sdk.version "um/x64"))
 
 ;: Return the SDK ucrt/x64 library directory.
 (define (sdk-ucrt-lib-dir [sdk : MsvcSdk]) : String
-  (path-join4 (struct-get sdk root) "Lib" (struct-get sdk version) "ucrt/x64"))
+  (path-join4 sdk.root "Lib" sdk.version "ucrt/x64"))
 
 ;: Return one SDK include directory.
 (define (sdk-include-dir [sdk : MsvcSdk] [name : String]) : String
-  (path-join4 (struct-get sdk root) "Include" (struct-get sdk version) name))
+  (path-join4 sdk.root "Include" sdk.version name))
 
 ;: Return true when a Windows SDK version has the pieces needed by link.exe.
 (define (sdk-version-usable? [sdk-root : String] [version : String]) : bool
@@ -708,7 +704,7 @@
   [best-version : String]
   [has-best : bool]) : bool
   (if has-best
-    (version-greater-owned? (struct-get candidate version) best-version)
+    (version-greater-owned? candidate.version best-version)
     true))
 
 ;: Scan standard Windows SDK roots.
@@ -732,8 +728,8 @@
             (find-sdk-roots
               roots
               (+ index 1)
-              (struct-get candidate root)
-              (struct-get candidate version)
+              candidate.root
+              candidate.version
               true)
             (find-sdk-roots roots (+ index 1) best-root best-version has-best))]))))
 
@@ -746,7 +742,7 @@
 ;: Build an auto-discovered MSVC tool result from a toolset and SDK.
 (define (auto-result [toolset : MsvcToolset] [sdk : MsvcSdk] [tool : String]) : MsvcTool
   (let
-    [toolset-root : String (struct-get toolset root)]
+    [toolset-root : String toolset.root]
     [bin-dir : String (toolset-bin-dir toolset-root)]
     [toolset-lib : String (path-join3 toolset-root "lib" "x64")]
     [toolset-include : String (path-join toolset-root "include")]
@@ -887,8 +883,8 @@
     (match (find-toolset-in-parent parent "link.exe")
       [(MsvcSomeToolset toolset)
         (begin
-          (test-assert-string-eq (struct-get toolset version) "14.20.0")
-          (test-assert-string-eq (struct-get toolset root) new-root)
+          (test-assert-string-eq toolset.version "14.20.0")
+          (test-assert-string-eq toolset.root new-root)
           (test-assert (not (string.eq old-root new-root))))]
       [(MsvcNoToolset) (test-fail)])))
 
@@ -942,8 +938,8 @@
     (match (find-sdk-in-root sdk-root)
       [(MsvcSomeSdk sdk)
         (begin
-          (test-assert-string-eq (struct-get sdk root) sdk-root)
-          (test-assert-string-eq (struct-get sdk version) "10.0.2"))]
+          (test-assert-string-eq sdk.root sdk-root)
+          (test-assert-string-eq sdk.version "10.0.2"))]
       [(MsvcNoSdk) (test-fail)])))
 
 ;: Inline test: verify the default toolset parent candidate list.
@@ -993,8 +989,8 @@
         (match (find-toolset-in-parent toolset-parent "link.exe")
           [(MsvcSomeToolset toolset)
             (begin
-              (test-assert-string-eq (struct-get toolset version) "14.20.0")
-              (test-assert-string-eq (struct-get toolset root) new-root)
+              (test-assert-string-eq toolset.version "14.20.0")
+              (test-assert-string-eq toolset.root new-root)
               (test-assert (not (string.eq old-root new-root))))]
           [(MsvcNoToolset) (test-fail)])))))
 
@@ -1044,8 +1040,8 @@
               false)
               [(MsvcSomeToolset toolset)
                 (begin
-                  (test-assert-string-eq (struct-get toolset version) "14.20.0")
-                  (test-assert-string-eq (struct-get toolset root) new-root)
+                  (test-assert-string-eq toolset.version "14.20.0")
+                  (test-assert-string-eq toolset.root new-root)
                   (test-assert (not (string.eq old-root new-root))))]
               [(MsvcNoToolset) (test-fail)])]
           [(fs.ErrIoStringVector _) (test-fail)])))))

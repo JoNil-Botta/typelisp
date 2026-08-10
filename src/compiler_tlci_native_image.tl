@@ -45,17 +45,13 @@
 (define (compiler-tlci-native-section-instrs
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectX64InstrList
-  (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ _ instrs) instrs]))
 
 (define (compiler-tlci-native-section-data
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectDataRecordList
-  (match (cobj.compiler-object-section-list-find
-    (struct-get image sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data _) data]))
 
 ;; Section base offsets for one layout run, passed by value.
@@ -71,7 +67,7 @@
   [message : String]) : i64
   (begin
     (if (= (string.string-length (array-ref error 0)) 0)
-      (array-set! error 0 message)
+      (set! (array-ref error 0) message)
       unit)
     -1))
 
@@ -124,8 +120,8 @@
     [offsets : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ instr-count 16))]
     [instr-index : i64 0]
-    [offset : i64 (struct-get bases text)]
-    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
+    [offset : i64 bases.text]
+    [symbols : cobj.CompilerObjectSymbolList image.symbols]
     [symbol-count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [externs : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ symbol-count 1))]
@@ -156,19 +152,19 @@
         (compiler-tlci-native-section-data
           image
           (cobj.CompilerObjectSectionKind.Rodata))
-        (struct-get bases rodata))
+        bases.rodata)
       (compiler-tlci-native-index-data-labels!
         (&mut offsets)
         (compiler-tlci-native-section-data
           image
           (cobj.CompilerObjectSectionKind.Data))
-        (struct-get bases data))
+        bases.data)
       (compiler-tlci-native-index-data-labels!
         (&mut offsets)
         (compiler-tlci-native-section-data
           image
           (cobj.CompilerObjectSectionKind.Bss))
-        (struct-get bases bss))
+        bases.bss)
       (while (< symbol-index symbol-count)
         (begin
           (match (cobj.compiler-object-symbol-list-ref symbols symbol-index)
@@ -206,11 +202,11 @@
             error
             "tlci native image: too many imported symbols")
           (let
-            [offset : i64 (+ (struct-get bases got) (* count 8))]
+            [offset : i64 (+ bases.got (* count 8))]
             (begin
-              (array-set! import-names count name)
-              (array-set! import-offsets count offset)
-              (array-set! import-count 0 (+ count 1))
+              (set! (array-ref import-names count) name)
+              (set! (array-ref import-offsets count) offset)
+              (set! (array-ref import-count 0) (+ count 1))
               offset)))))))
 
 ;; Resolve symbol `name` to its region offset: text labels, rodata/data
@@ -244,18 +240,14 @@
 (define (compiler-tlci-native-index-offset
   [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [name : (& name str)]) : i64
-  (match (tlci_native_string_i64_map.get-borrowed
-    (& (struct-get symbols offsets))
-    name)
+  (match (tlci_native_string_i64_map.get-borrowed (& symbols.offsets) name)
     [(tlci_native_string_i64_map.LookupFound offset) offset]
     [(tlci_native_string_i64_map.LookupMissing) -1]))
 
 (define (compiler-tlci-native-index-extern?
   [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [name : (& name str)]) : bool
-  (tlci_native_string_i64_map.contains-borrowed?
-    (& (struct-get symbols externs))
-    name))
+  (tlci_native_string_i64_map.contains-borrowed? (& symbols.externs) name))
 
 (define (compiler-tlci-native-symbol-offset!
   [import-names : (__tl_dyn-array String)]
@@ -289,10 +281,16 @@
   [offset : i64]
   [value : i64]) : unit
   (begin
-    (array-set! bytes offset (cast (bit-and value 0xff) : u8))
-    (array-set! bytes (+ offset 1) (cast (bit-and (shr value 8) 0xff) : u8))
-    (array-set! bytes (+ offset 2) (cast (bit-and (shr value 16) 0xff) : u8))
-    (array-set! bytes (+ offset 3) (cast (bit-and (shr value 24) 0xff) : u8))))
+    (set! (array-ref bytes offset) (cast (bit-and value 0xff) : u8))
+    (set!
+      (array-ref bytes (+ offset 1))
+      (cast (bit-and (shr value 8) 0xff) : u8))
+    (set!
+      (array-ref bytes (+ offset 2))
+      (cast (bit-and (shr value 16) 0xff) : u8))
+    (set!
+      (array-ref bytes (+ offset 3))
+      (cast (bit-and (shr value 24) 0xff) : u8))))
 
 ;; Patch one rel32 site at region offset `site` to reach symbol `target`:
 ;; value = target-offset - (site + 4). Returns false on resolution failure.
@@ -344,7 +342,7 @@
         (cobj.CompilerObjectSectionKind.Text))]
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
-    [offset : i64 (struct-get bases text)]
+    [offset : i64 bases.text]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
@@ -655,8 +653,8 @@
                         (begin
                           (compiler-tlci-native-patch-i32! bytes offset value)
                           (compiler-tlci-native-patch-i32! bytes (+ offset 4) 0)
-                          (array-set! fixup-offsets slot offset)
-                          (array-set! fixup-count 0 (+ slot 1)))))))]
+                          (set! (array-ref fixup-offsets slot) offset)
+                          (set! (array-ref fixup-count 0) (+ slot 1)))))))]
               [(cobj.CompilerObjectDataRecord.SymbolRva32 _)
                 (begin
                   (compiler-tlci-native-fail!
@@ -876,7 +874,7 @@
 (define (compiler-tlci-native-emit-fixups
   [layout : (& layout CompilerTlciNativeLayout)]) : (__tl_dyn-array u8)
   (let
-    [count : i64 (struct-get layout fixup-count)]
+    [count : i64 layout.fixup-count]
     [out : (__tl_dyn-array u8)
       (array.make-array u8 (* count tlci_core.tlci-section-fixup-record-size))]
     [index : i64 0]
@@ -886,7 +884,7 @@
           (tlci_core.tlci-set-u64!
             out
             (* index tlci_core.tlci-section-fixup-record-size)
-            (array-ref (struct-get layout fixup-offsets) index))
+            (array-ref layout.fixup-offsets index))
           (set! index (+ index 1))))
       out)))
 
@@ -949,7 +947,7 @@
 (define (compiler-tlci-native-emit-imports
   [layout : (& layout CompilerTlciNativeLayout)]) : ResultCompilerTlciNativeImports
   (let
-    [count : i64 (struct-get layout import-count)]
+    [count : i64 layout.import-count]
     [names : (__tl_dyn-array String) (array.make-array String count)]
     [index : i64 0]
     [names-len : i64 0]
@@ -959,15 +957,15 @@
         (let
           [name : String
             (compiler-tlci-native-host-import-name
-              (array-ref (struct-get layout import-names) index))]
+              (array-ref layout.import-names index))]
           (if (= (string.string-length name) 0)
             (set!
               error
               (string.append
                 "tlci native image: unknown host import "
-                (array-ref (struct-get layout import-names) index)))
+                (array-ref layout.import-names index)))
             (begin
-              (array-set! names index name)
+              (set! (array-ref names index) name)
               (set! names-len (+ names-len (string.string-length name)))
               (set! index (+ index 1))))))
       (if (= (string.string-length error) 0)
@@ -996,7 +994,7 @@
                     (tlci_core.tlci-set-u64!
                       out
                       record
-                      (array-ref (struct-get layout import-offsets) index))
+                      (array-ref layout.import-offsets index))
                     (tlci_core.tlci-set-u64! out (+ record 8) name-offset)
                     (tlci_core.tlci-set-u64! out (+ record 16) name-len)
                     (tlci_core.tlci-put-string! out name-offset name)
@@ -1256,16 +1254,16 @@
       (compiler-tlci-native-test-image "host-a" false false))
       [(ResultCompilerTlciNativeLayout.Ok layout)
         (let
-          [bytes : (__tl_dyn-array u8) (struct-get layout bytes)]
+          [bytes : (__tl_dyn-array u8) layout.bytes]
           (and
-            (= (struct-get layout size) 2096)
+            (= layout.size 2096)
             (= (array-length bytes) 2096)
-            (= (struct-get layout bss-size) 16)
-            (= (struct-get layout import-count) 1)
-            (string.eq (array-ref (struct-get layout import-names) 0) "host-a")
-            (= (array-ref (struct-get layout import-offsets) 0) 40)
-            (= (struct-get layout fixup-count) 1)
-            (= (array-ref (struct-get layout fixup-offsets) 0) 32)
+            (= layout.bss-size 16)
+            (= layout.import-count 1)
+            (string.eq (array-ref layout.import-names 0) "host-a")
+            (= (array-ref layout.import-offsets 0) 40)
+            (= layout.fixup-count 1)
+            (= (array-ref layout.fixup-offsets 0) 32)
             (= (compiler-tlci-native-test-u32 bytes 1) 7)
             (= (compiler-tlci-native-test-u32 bytes 8) 28)
             (= (compiler-tlci-native-test-u32 bytes 32) 16)
@@ -1287,10 +1285,8 @@
           (compiler-tlci-native-test-image "host-b" false false))
           [(ResultCompilerTlciNativeLayout.Ok second)
             (and
-              (string.eq (array-ref (struct-get first import-names) 0) "host-a")
-              (string.eq
-                (array-ref (struct-get second import-names) 0)
-                "host-b"))]
+              (string.eq (array-ref first.import-names 0) "host-a")
+              (string.eq (array-ref second.import-names 0) "host-b"))]
           [(ResultCompilerTlciNativeLayout.Err _) false])]
       [(ResultCompilerTlciNativeLayout.Err _) false])))
 

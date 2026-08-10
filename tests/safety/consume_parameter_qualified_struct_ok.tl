@@ -7,4 +7,4 @@
     [payload : helper.HelperPayload (helper.HelperPayload 1)]
     (begin
       (helper.consume-payload payload)
-      (struct-get payload value))))
+      payload.value)))

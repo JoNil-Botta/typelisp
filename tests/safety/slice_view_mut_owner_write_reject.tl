@@ -4,5 +4,5 @@
     [items : (Array i64 3) (array 10 20 30)]
     [view : (&mut items (Slice i64)) (slice-mut-view items 0 3)]
     (begin
-      (array-set! items 0 99)
+      (set! (array-ref items 0) 99)
       (array-ref view 0))))

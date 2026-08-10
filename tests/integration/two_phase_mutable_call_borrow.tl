@@ -12,7 +12,7 @@
   (let
     [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     (begin
-      (array-set! items 0 40)
+      (set! (array-ref items 0) 40)
       (push-with-len (&mut items) (read-len (& items)))
       (push-with-len (&mut items) (array-length items))
       (if (and

@@ -55,7 +55,7 @@
                   0))
                 1
                 0))])
-        (compiler-lower-spmd-package-helper-count (box-get rest)))]))
+        (compiler-lower-spmd-package-helper-count (__tl-box-place rest)))]))
 
 (define (compiler-lower-spmd-package-helper-count-ok?
   [source : String]
@@ -117,7 +117,8 @@
             (compiler_ir_types.compiler-ir-function-render
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
               function)
-            (compiler-lower-spmd-package-uniform-helper-render (box-get rest)))])]))
+            (compiler-lower-spmd-package-uniform-helper-render
+              (__tl-box-place rest)))])]))
 
 (define (compiler-lower-spmd-package-return-context-source-ok?
   [source : String]) : bool
@@ -168,7 +169,8 @@
         [(compiler_lower.ResultCompilerLower.Ok _ _) false]
         [(compiler_lower.ResultCompilerLower.Err diag)
           (string.eq
-            (compiler_diagnostic.compiler-diagnostic-message (box-get diag))
+            (compiler_diagnostic.compiler-diagnostic-message
+              (__tl-box-place diag))
             wanted)]))))
 
 (define (compiler-lower-spmd-package-symbol-collision-ok?) : bool

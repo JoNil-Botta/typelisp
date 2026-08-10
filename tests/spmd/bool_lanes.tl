@@ -8,8 +8,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! flags i (< i 5))
-        (array-set! values i (- i 4))
+        (set! (array-ref flags i) (< i 5))
+        (set! (array-ref values i) (- i 4))
         (set! i (+ i 1))))))
 
 (define (init-i32 [values : (__tl_dyn-array i32)] [n : i64]) : unit
@@ -17,7 +17,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! values i (cast (- i 4) : i32))
+        (set! (array-ref values i) (cast (- i 4) : i32))
         (set! i (+ i 1))))))
 
 (define (init-i16 [values : (__tl_dyn-array i16)] [n : i64]) : unit
@@ -25,7 +25,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! values i (cast (- i 4) : i16))
+        (set! (array-ref values i) (cast (- i 4) : i16))
         (set! i (+ i 1))))))
 
 (define (init-i8 [values : (__tl_dyn-array i8)] [n : i64]) : unit
@@ -33,14 +33,14 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! values i (cast (- i 4) : i8))
+        (set! (array-ref values i) (cast (- i 4) : i8))
         (set! i (+ i 1))))))
 
 (define (fill-bool-copy-foreach
   [src : (__tl_dyn-array bool)]
   [out : (__tl_dyn-array bool)]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (array-ref src i))))
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (array-ref src i))))
 
 (define (fill-bool-copy-scalar
   [src : (__tl_dyn-array bool)]
@@ -50,14 +50,14 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (array-ref src i))
+        (set! (array-ref out i) (array-ref src i))
         (set! i (+ i 1))))))
 
 (define (fill-bool-compare-foreach
   [values : (__tl_dyn-array i64)]
   [out : (__tl_dyn-array bool)]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (< (array-ref values i) 0))))
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (< (array-ref values i) 0))))
 
 (define (fill-bool-compare-scalar
   [values : (__tl_dyn-array i64)]
@@ -67,14 +67,14 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (< (array-ref values i) 0))
+        (set! (array-ref out i) (< (array-ref values i) 0))
         (set! i (+ i 1))))))
 
 (define (fill-bool-compare-i32-foreach
   [values : (__tl_dyn-array i32)]
   [out : (__tl_dyn-array bool)]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (< (array-ref values i) 0))))
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (< (array-ref values i) 0))))
 
 (define (fill-bool-compare-i32-scalar
   [values : (__tl_dyn-array i32)]
@@ -84,14 +84,14 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (< (array-ref values i) 0))
+        (set! (array-ref out i) (< (array-ref values i) 0))
         (set! i (+ i 1))))))
 
 (define (fill-bool-compare-i16-foreach
   [values : (__tl_dyn-array i16)]
   [out : (__tl_dyn-array bool)]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (< (array-ref values i) 0))))
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (< (array-ref values i) 0))))
 
 (define (fill-bool-compare-i16-scalar
   [values : (__tl_dyn-array i16)]
@@ -101,14 +101,14 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (< (array-ref values i) 0))
+        (set! (array-ref out i) (< (array-ref values i) 0))
         (set! i (+ i 1))))))
 
 (define (fill-bool-compare-i8-foreach
   [values : (__tl_dyn-array i8)]
   [out : (__tl_dyn-array bool)]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (< (array-ref values i) 0))))
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (< (array-ref values i) 0))))
 
 (define (fill-bool-compare-i8-scalar
   [values : (__tl_dyn-array i8)]
@@ -118,7 +118,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (< (array-ref values i) 0))
+        (set! (array-ref out i) (< (array-ref values i) 0))
         (set! i (+ i 1))))))
 
 (define (eq-bool

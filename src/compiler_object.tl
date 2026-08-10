@@ -194,7 +194,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-object-instr-builder-copy-range!
@@ -205,7 +205,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-object-symbol-builder-copy-range!
@@ -216,7 +216,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-object-relocation-builder-copy-range!
@@ -227,7 +227,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-object-section-builder-copy-range!
@@ -238,15 +238,14 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-object-data-record-builder-grow
   [builder : CompilerObjectDataRecordBuilder]) : CompilerObjectDataRecordBuilder
   (let
-    [count : i64 (struct-get builder count)]
-    [slots : (__tl_dyn-array CompilerObjectDataRecord)
-      (struct-get builder slots)]
+    [count : i64 builder.count]
+    [slots : (__tl_dyn-array CompilerObjectDataRecord) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectDataRecord)
       (make-array CompilerObjectDataRecord (* (array-length slots) 2))]
     (begin
@@ -256,8 +255,8 @@
 (define (compiler-object-instr-builder-grow
   [builder : CompilerObjectX64InstrBuilder]) : CompilerObjectX64InstrBuilder
   (let
-    [count : i64 (struct-get builder count)]
-    [slots : (__tl_dyn-array CompilerObjectX64Instr) (struct-get builder slots)]
+    [count : i64 builder.count]
+    [slots : (__tl_dyn-array CompilerObjectX64Instr) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectX64Instr)
       (make-array CompilerObjectX64Instr (* (array-length slots) 2))]
     (begin
@@ -267,8 +266,8 @@
 (define (compiler-object-symbol-builder-grow
   [builder : CompilerObjectSymbolBuilder]) : CompilerObjectSymbolBuilder
   (let
-    [count : i64 (struct-get builder count)]
-    [slots : (__tl_dyn-array CompilerObjectSymbol) (struct-get builder slots)]
+    [count : i64 builder.count]
+    [slots : (__tl_dyn-array CompilerObjectSymbol) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectSymbol)
       (make-array CompilerObjectSymbol (* (array-length slots) 2))]
     (begin
@@ -278,9 +277,8 @@
 (define (compiler-object-relocation-builder-grow
   [builder : CompilerObjectRelocationBuilder]) : CompilerObjectRelocationBuilder
   (let
-    [count : i64 (struct-get builder count)]
-    [slots : (__tl_dyn-array CompilerObjectRelocation)
-      (struct-get builder slots)]
+    [count : i64 builder.count]
+    [slots : (__tl_dyn-array CompilerObjectRelocation) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectRelocation)
       (make-array CompilerObjectRelocation (* (array-length slots) 2))]
     (begin
@@ -290,8 +288,8 @@
 (define (compiler-object-section-builder-grow
   [builder : CompilerObjectSectionBuilder]) : CompilerObjectSectionBuilder
   (let
-    [count : i64 (struct-get builder count)]
-    [slots : (__tl_dyn-array CompilerObjectSection) (struct-get builder slots)]
+    [count : i64 builder.count]
+    [slots : (__tl_dyn-array CompilerObjectSection) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectSection)
       (make-array CompilerObjectSection (* (array-length slots) 2))]
     (begin
@@ -301,13 +299,12 @@
 (define (compiler-object-data-record-builder-push
   [builder : CompilerObjectDataRecordBuilder]
   [record : CompilerObjectDataRecord]) : CompilerObjectDataRecordBuilder
-  (if (< (struct-get builder count) (array-length (struct-get builder slots)))
+  (if (< builder.count (array-length builder.slots))
     (let
-      [slots : (__tl_dyn-array CompilerObjectDataRecord)
-        (struct-get builder slots)]
-      [count : i64 (struct-get builder count)]
+      [slots : (__tl_dyn-array CompilerObjectDataRecord) builder.slots]
+      [count : i64 builder.count]
       (begin
-        (array-set! slots count record)
+        (set! (array-ref slots count) record)
         (CompilerObjectDataRecordBuilder slots (+ count 1))))
     (compiler-object-data-record-builder-push
       (compiler-object-data-record-builder-grow builder)
@@ -316,13 +313,12 @@
 (define (compiler-object-instr-builder-push
   [builder : CompilerObjectX64InstrBuilder]
   [instr : CompilerObjectX64Instr]) : CompilerObjectX64InstrBuilder
-  (if (< (struct-get builder count) (array-length (struct-get builder slots)))
+  (if (< builder.count (array-length builder.slots))
     (let
-      [slots : (__tl_dyn-array CompilerObjectX64Instr)
-        (struct-get builder slots)]
-      [count : i64 (struct-get builder count)]
+      [slots : (__tl_dyn-array CompilerObjectX64Instr) builder.slots]
+      [count : i64 builder.count]
       (begin
-        (array-set! slots count instr)
+        (set! (array-ref slots count) instr)
         (CompilerObjectX64InstrBuilder slots (+ count 1))))
     (compiler-object-instr-builder-push
       (compiler-object-instr-builder-grow builder)
@@ -331,12 +327,12 @@
 (define (compiler-object-symbol-builder-push
   [builder : CompilerObjectSymbolBuilder]
   [symbol : CompilerObjectSymbol]) : CompilerObjectSymbolBuilder
-  (if (< (struct-get builder count) (array-length (struct-get builder slots)))
+  (if (< builder.count (array-length builder.slots))
     (let
-      [slots : (__tl_dyn-array CompilerObjectSymbol) (struct-get builder slots)]
-      [count : i64 (struct-get builder count)]
+      [slots : (__tl_dyn-array CompilerObjectSymbol) builder.slots]
+      [count : i64 builder.count]
       (begin
-        (array-set! slots count symbol)
+        (set! (array-ref slots count) symbol)
         (CompilerObjectSymbolBuilder slots (+ count 1))))
     (compiler-object-symbol-builder-push
       (compiler-object-symbol-builder-grow builder)
@@ -345,13 +341,12 @@
 (define (compiler-object-relocation-builder-push
   [builder : CompilerObjectRelocationBuilder]
   [reloc : CompilerObjectRelocation]) : CompilerObjectRelocationBuilder
-  (if (< (struct-get builder count) (array-length (struct-get builder slots)))
+  (if (< builder.count (array-length builder.slots))
     (let
-      [slots : (__tl_dyn-array CompilerObjectRelocation)
-        (struct-get builder slots)]
-      [count : i64 (struct-get builder count)]
+      [slots : (__tl_dyn-array CompilerObjectRelocation) builder.slots]
+      [count : i64 builder.count]
       (begin
-        (array-set! slots count reloc)
+        (set! (array-ref slots count) reloc)
         (CompilerObjectRelocationBuilder slots (+ count 1))))
     (compiler-object-relocation-builder-push
       (compiler-object-relocation-builder-grow builder)
@@ -360,13 +355,12 @@
 (define (compiler-object-section-builder-push
   [builder : CompilerObjectSectionBuilder]
   [section : CompilerObjectSection]) : CompilerObjectSectionBuilder
-  (if (< (struct-get builder count) (array-length (struct-get builder slots)))
+  (if (< builder.count (array-length builder.slots))
     (let
-      [slots : (__tl_dyn-array CompilerObjectSection)
-        (struct-get builder slots)]
-      [count : i64 (struct-get builder count)]
+      [slots : (__tl_dyn-array CompilerObjectSection) builder.slots]
+      [count : i64 builder.count]
       (begin
-        (array-set! slots count section)
+        (set! (array-ref slots count) section)
         (CompilerObjectSectionBuilder slots (+ count 1))))
     (compiler-object-section-builder-push
       (compiler-object-section-builder-grow builder)
@@ -374,33 +368,23 @@
 
 (define (compiler-object-data-record-builder-finish
   [builder : CompilerObjectDataRecordBuilder]) : CompilerObjectDataRecordList
-  (CompilerObjectDataRecordList
-    (struct-get builder slots)
-    (struct-get builder count)))
+  (CompilerObjectDataRecordList builder.slots builder.count))
 
 (define (compiler-object-instr-builder-finish
   [builder : CompilerObjectX64InstrBuilder]) : CompilerObjectX64InstrList
-  (CompilerObjectX64InstrList
-    (struct-get builder slots)
-    (struct-get builder count)))
+  (CompilerObjectX64InstrList builder.slots builder.count))
 
 (define (compiler-object-symbol-builder-finish
   [builder : CompilerObjectSymbolBuilder]) : CompilerObjectSymbolList
-  (CompilerObjectSymbolList
-    (struct-get builder slots)
-    (struct-get builder count)))
+  (CompilerObjectSymbolList builder.slots builder.count))
 
 (define (compiler-object-relocation-builder-finish
   [builder : CompilerObjectRelocationBuilder]) : CompilerObjectRelocationList
-  (CompilerObjectRelocationList
-    (struct-get builder slots)
-    (struct-get builder count)))
+  (CompilerObjectRelocationList builder.slots builder.count))
 
 (define (compiler-object-section-builder-finish
   [builder : CompilerObjectSectionBuilder]) : CompilerObjectSectionList
-  (CompilerObjectSectionList
-    (struct-get builder slots)
-    (struct-get builder count)))
+  (CompilerObjectSectionList builder.slots builder.count))
 
 (define (compiler-object-symbol-builder-contains?
   [builder : CompilerObjectSymbolBuilder]
@@ -408,8 +392,8 @@
   [binding : CompilerObjectSymbolBinding]
   [kind : CompilerObjectSymbolKind]) : bool
   (let
-    [count : i64 (struct-get builder count)]
-    [slots : (__tl_dyn-array CompilerObjectSymbol) (struct-get builder slots)]
+    [count : i64 builder.count]
+    [slots : (__tl_dyn-array CompilerObjectSymbol) builder.slots]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -428,9 +412,8 @@
   [builder : CompilerObjectRelocationBuilder]
   [target : String]) : bool
   (let
-    [count : i64 (struct-get builder count)]
-    [slots : (__tl_dyn-array CompilerObjectRelocation)
-      (struct-get builder slots)]
+    [count : i64 builder.count]
+    [slots : (__tl_dyn-array CompilerObjectRelocation) builder.slots]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -547,47 +530,47 @@
         [_ false])]))
 
 (define (compiler-object-symbol-list-count [symbols : CompilerObjectSymbolList]) : i64
-  (struct-get symbols len))
+  symbols.len)
 
 (define (compiler-object-symbol-list-ref
   [symbols : CompilerObjectSymbolList]
   [index : i64]) : CompilerObjectSymbol
-  (array-ref (struct-get symbols slots) index))
+  (array-ref symbols.slots index))
 
 (define (compiler-object-relocation-list-count
   [relocs : CompilerObjectRelocationList]) : i64
-  (struct-get relocs len))
+  relocs.len)
 
 (define (compiler-object-relocation-list-ref
   [relocs : CompilerObjectRelocationList]
   [index : i64]) : CompilerObjectRelocation
-  (array-ref (struct-get relocs slots) index))
+  (array-ref relocs.slots index))
 
 (define (compiler-object-data-record-list-count
   [records : CompilerObjectDataRecordList]) : i64
-  (struct-get records len))
+  records.len)
 
 (define (compiler-object-data-record-list-ref
   [records : CompilerObjectDataRecordList]
   [index : i64]) : CompilerObjectDataRecord
-  (array-ref (struct-get records slots) index))
+  (array-ref records.slots index))
 
 (define (compiler-object-instr-list-count [instrs : CompilerObjectX64InstrList]) : i64
-  (struct-get instrs len))
+  instrs.len)
 
 (define (compiler-object-instr-list-ref
   [instrs : CompilerObjectX64InstrList]
   [index : i64]) : CompilerObjectX64Instr
-  (array-ref (struct-get instrs slots) index))
+  (array-ref instrs.slots index))
 
 (define (compiler-object-section-list-count
   [sections : CompilerObjectSectionList]) : i64
-  (struct-get sections len))
+  sections.len)
 
 (define (compiler-object-section-list-ref
   [sections : CompilerObjectSectionList]
   [index : i64]) : CompilerObjectSection
-  (array-ref (struct-get sections slots) index))
+  (array-ref sections.slots index))
 
 (define (compiler-object-image-dense? [_image : CompilerObjectImage]) : bool
   true)

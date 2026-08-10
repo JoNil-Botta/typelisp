@@ -3,19 +3,19 @@
 
 (define (init-xs [xs : (__tl_dyn-array i64)]) : unit
   (begin
-    (array-set! xs 0 -3)
-    (array-set! xs 1 4)
-    (array-set! xs 2 -1)
-    (array-set! xs 3 0)
-    (array-set! xs 4 7)
-    (array-set! xs 5 -8)
-    (array-set! xs 6 2)
-    (array-set! xs 7 9)
-    (array-set! xs 8 -5)
-    (array-set! xs 9 1)
-    (array-set! xs 10 6)
-    (array-set! xs 11 -2)
-    (array-set! xs 12 3)))
+    (set! (array-ref xs 0) -3)
+    (set! (array-ref xs 1) 4)
+    (set! (array-ref xs 2) -1)
+    (set! (array-ref xs 3) 0)
+    (set! (array-ref xs 4) 7)
+    (set! (array-ref xs 5) -8)
+    (set! (array-ref xs 6) 2)
+    (set! (array-ref xs 7) 9)
+    (set! (array-ref xs 8) -5)
+    (set! (array-ref xs 9) 1)
+    (set! (array-ref xs 10) 6)
+    (set! (array-ref xs 11) -2)
+    (set! (array-ref xs 12) 3)))
 
 (define (bump [x : i64]) : i64
   (+ x 5))
@@ -30,8 +30,8 @@
   (foreach
     ([i : i64 0 n])
     (if (non-negative? (array-ref xs i))
-      (array-set! out i (bump (array-ref xs i)))
-      (array-set! out i 0))))
+      (set! (array-ref out i) (bump (array-ref xs i)))
+      (set! (array-ref out i) 0))))
 
 (define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let

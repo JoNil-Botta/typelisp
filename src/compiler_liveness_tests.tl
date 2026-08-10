@@ -220,7 +220,7 @@
     [(ir.CompilerIrInstrList.Cons instr rest)
       (and
         (compiler-live-instr-ids-match-set? instr)
-        (compiler-live-instr-ids-list-match-set? (box-get rest)))]))
+        (compiler-live-instr-ids-list-match-set? (__tl-box-place rest)))]))
 
 ;; Instruction shapes that exercise the parts of the decode a straight
 ;; one-operand arm does not: a repeated operand (the set de-duplicates, so the
@@ -306,8 +306,8 @@
     ;; new use `191`.
     [_ids-fill : unit
       (begin
-        (array-set! ids 0 130)
-        (array-set! ids 1 191))]
+        (set! (array-ref ids 0) 130)
+        (set! (array-ref ids 1) 191))]
     [set-count : i64
       (live.compiler-live-scratch-step!
         set-words
@@ -330,8 +330,8 @@
         (live.compiler-live-set-builder-insert! id-def-words 9))]
     [_step2-ids : unit
       (begin
-        (array-set! ids 0 9)
-        (array-set! ids 1 70))]
+        (set! (array-ref ids 0) 9)
+        (set! (array-ref ids 1) 70))]
     [_set-step : unit
       (live.compiler-live-block-use-def-step!
         set-use-words
@@ -547,11 +547,9 @@
                         ir.CompilerIrInstrList.Nil)))))))))]
     (and
       (live.compiler-live-set-eq?
-        (struct-get use-def uses)
+        use-def.uses
         (compiler-live-set7 10 11 12 13 14 15 16))
-      (live.compiler-live-set-eq?
-        (struct-get use-def defs)
-        (compiler-live-set5 0 1 2 3 4)))))
+      (live.compiler-live-set-eq? use-def.defs (compiler-live-set5 0 1 2 3 4)))))
 
 (define (compiler-live-memory-use-def-ok?) : bool
   (let
@@ -585,12 +583,8 @@
                       (ast.AstType.I32))
                     ir.CompilerIrInstrList.Nil)))))))]
     (and
-      (live.compiler-live-set-eq?
-        (struct-get use-def uses)
-        (live.compiler-live-set2 10 11))
-      (live.compiler-live-set-eq?
-        (struct-get use-def defs)
-        (compiler-live-set5 0 1 2 3 4)))))
+      (live.compiler-live-set-eq? use-def.uses (live.compiler-live-set2 10 11))
+      (live.compiler-live-set-eq? use-def.defs (compiler-live-set5 0 1 2 3 4)))))
 
 (define (compiler-live-vector-mask-use-def-ok?) : bool
   (let
@@ -643,11 +637,9 @@
                       ir.CompilerIrInstrList.Nil))))))))]
     (and
       (live.compiler-live-set-eq?
-        (struct-get use-def uses)
+        use-def.uses
         (compiler-live-set5 10 11 12 13 14))
-      (live.compiler-live-set-eq?
-        (struct-get use-def defs)
-        (compiler-live-set6 0 1 2 3 4 5)))))
+      (live.compiler-live-set-eq? use-def.defs (compiler-live-set6 0 1 2 3 4 5)))))
 
 (define (compiler-live-straight-ok?) : bool
   (let
@@ -815,12 +807,8 @@
     [use-def : live.CompilerLiveUseDef
       (live.compiler-live-block-use-def instrs)]
     (and
-      (live.compiler-live-set-eq?
-        (struct-get use-def uses)
-        (live.compiler-live-set1 9))
-      (live.compiler-live-set-eq?
-        (struct-get use-def defs)
-        (live.compiler-live-set-empty))
+      (live.compiler-live-set-eq? use-def.uses (live.compiler-live-set1 9))
+      (live.compiler-live-set-eq? use-def.defs (live.compiler-live-set-empty))
       (= (live.compiler-live-label-set-count successors) 3)
       (live.compiler-live-label-set-contains?
         successors

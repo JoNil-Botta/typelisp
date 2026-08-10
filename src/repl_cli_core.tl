@@ -241,14 +241,16 @@
       (string.append
         "(->"
         (string.append
-          (repl-type-list-render-spaced (box-get args))
+          (repl-type-list-render-spaced (__tl-box-place args))
           (string.append
             " "
             (string.append (repl-type-render (ast.ty-node-get ret)) ")"))))]
     [(ast.AstType.Tuple elems)
       (string.append
         "(Tuple"
-        (string.append (repl-type-list-render-spaced (box-get elems)) ")"))]
+        (string.append
+          (repl-type-list-render-spaced (__tl-box-place elems))
+          ")"))]
     [(ast.AstType.Array elem count)
       (string.append
         "(Array "
@@ -306,7 +308,7 @@
         (string.append
           (ast.ast-nominal-name-id-display name)
           (string.append
-            (repl-lifetime-list-render-spaced (box-get lifetimes))
+            (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
             ")")))]
     [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
@@ -315,7 +317,7 @@
         (string.append
           (ast.ast-nominal-name-id-display name)
           (string.append
-            (repl-lifetime-list-render-spaced (box-get lifetimes))
+            (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
             ")")))]
     [(ast.AstType.Var name)
       (string.append "'" (string.append (ci.intern-str name) "'"))]
@@ -325,7 +327,7 @@
         (string.append
           (ci.intern-str name)
           (string.append
-            (repl-lifetime-list-render-spaced (box-get lifetimes))
+            (repl-lifetime-list-render-spaced (__tl-box-place lifetimes))
             ")")))]
     [(ast.AstType.Consume inner)
       (string.append
@@ -529,7 +531,7 @@
       (ResultReplDeclList.Ok decls)]
     [(compiler_load.ResultCompilerLoad.Err diag)
       (ResultReplDeclList.Err
-        (cdiag.compiler-diagnostic-message (box-get diag)))]))
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
 
 (define (repl-typecheck-session-source [session-source : String]) : tc.ResultCompilerTypecheck
   (match (repl-load-session-decls session-source)
@@ -648,7 +650,7 @@
                 candidate)]
             [(tc.ResultCompilerTypecheck.Err diag)
               (begin
-                (repl-report-diagnostics (box-get diag))
+                (repl-report-diagnostics (__tl-box-place diag))
                 session-source)]))]
       [(io.ErrIoBytes error)
         (begin
@@ -667,7 +669,7 @@
               [(tc.ResultCompilerTypecheck.Ok _) candidate]
               [(tc.ResultCompilerTypecheck.Err diag)
                 (begin
-                  (repl-report-diagnostics (box-get diag))
+                  (repl-report-diagnostics (__tl-box-place diag))
                   session-source)]))]
         [(AstReplExpr expr)
           (begin

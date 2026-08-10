@@ -1809,25 +1809,36 @@
       (compiler-live-set1 dst))))
 
 (define (compiler-live-block-use-def-instrs
-  [instrs : ir.CompilerIrInstrList]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
   [uses : CompilerLiveI64Set]
   [defs : CompilerLiveI64Set]) : CompilerLiveUseDef
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (CompilerLiveUseDef uses defs)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (let
-        [instr-uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
-        [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
-        (compiler-live-block-use-def-instrs
-          (box-get rest)
-          (compiler-live-set-union
-            uses
-            (compiler-live-set-minus instr-uses defs))
-          (compiler-live-set-union defs instr-defs)))]))
+  (let
+    [cursor : i64 index]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [out-uses : CompilerLiveI64Set uses]
+    [out-defs : CompilerLiveI64Set defs]
+    (begin
+      (while (< cursor count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          [instr-uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
+          [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
+          (begin
+            (set!
+              out-uses
+              (compiler-live-set-union
+                out-uses
+                (compiler-live-set-minus instr-uses out-defs)))
+            (set! out-defs (compiler-live-set-union out-defs instr-defs))
+            (set! cursor (+ cursor 1)))))
+      (CompilerLiveUseDef out-uses out-defs))))
 
-(define (compiler-live-block-use-def [instrs : ir.CompilerIrInstrList]) : CompilerLiveUseDef
+(define (compiler-live-block-use-def [instrs : ir.CompilerIrInstrSeq]) : CompilerLiveUseDef
   (compiler-live-block-use-def-instrs
     instrs
+    0
     (compiler-live-set-empty)
     (compiler-live-set-empty)))
 

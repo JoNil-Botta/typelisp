@@ -32502,6 +32502,1033 @@
         next
         func)]))
 
+;; --- classifier compare chain -> one bitmask test (bit_test) -----------------
+;;
+;; A `cond`/`or` chain that classifies one value against integer constants --
+;; `(or (= c 32) (= c 9) ...)`, `(and (>= c 48) (<= c 57))` or-ed with further
+;; ranges -- lowers to one conditional branch per test, walked in source order
+;; for every input the chain sees. When all those true edges reach one block
+;; `T`, every false edge continues the chain to a final `F`, and the matched
+;; constants fit a 64-wide window `[base, base + width]`, the whole chain is
+;; exactly a bit test:
+;;
+;;     d = v - base                       ;; wrapping, read unsigned
+;;     if d >u width -> F
+;;     if ((mask >>u d) & 1) != 0 -> T else F
+;;
+;; two branches instead of one per link, and no per-link compare. This is the
+;; bit-test cluster a C compiler forms from the same source.
+;;
+;; The rewrite only replaces the chain head's terminator: the remaining link
+;; blocks are no longer reachable through it and drop out with the reachability
+;; filter, so a link some other edge still enters keeps working unchanged and no
+;; phi predecessor moves. Link blocks must therefore be pure -- their own
+;; compare plus their branch, nothing else -- and every link must test the same
+;; var, which is what makes dropping the path they describe sound. Windows wider
+;; than 64, chains shorter than the profitability floor, mixed test values and
+;; side-effecting links are refused rather than split.
+;; Two branches plus a subtract, a range compare, a shift and a mask test cost
+;; about as much as three tests taken in sequence, and a refused chain costs
+;; nothing, so the floor sits where the average walk of the chain being replaced
+;; is clearly longer than that. Equality-only chains of three or four links --
+;; `(or (= c 32) (= c 9) (= c 10) (= c 13))` -- are left alone on purpose: their
+;; first test already answers most inputs.
+(define (opt-bit-test-min-links) : i64
+  6)
+
+(define (opt-bit-test-max-links) : i64
+  32)
+
+(define (opt-bit-test-max-plans) : i64
+  8)
+
+;; Vars one conversion introduces: mask, offset, window guard, shift, bit test.
+(define (opt-bit-test-plan-vars) : i64
+  5)
+
+(define (opt-bit-test-window-width) : i64
+  64)
+
+;; Forwarding blocks between a link and its target are lowering artifacts a
+;; later straightening pass removes; resolving through a bounded run of them
+;; here lets the chain be recognized before that runs. The bound also
+;; terminates on a jump-only cycle.
+(define (opt-bit-test-max-hops) : i64
+  8)
+
+;; Constants far from zero are refused up front so every `bound + 1`, `hi - lo`
+;; and `lo - base` below stays exact in i64.
+(define (opt-bit-test-bound-limit) : i64
+  1099511627776)
+
+(define (opt-bit-test-bound-ok? [bound : i64]) : bool
+  (and
+    (>= bound (- 0 (opt-bit-test-bound-limit)))
+    (<= bound (opt-bit-test-bound-limit))))
+
+;; 0 = not a constant compare, 1 = Eq, 2 = Lt, 3 = Le, 4 = Gt, 5 = Ge.
+(define (opt-bit-test-compare-kind [op : ir.CompilerIrBinOp]) : i64
+  (match op
+    [(ir.CompilerIrBinOp.Eq) 1]
+    [(ir.CompilerIrBinOp.Lt) 2]
+    [(ir.CompilerIrBinOp.Le) 3]
+    [(ir.CompilerIrBinOp.Gt) 4]
+    [(ir.CompilerIrBinOp.Ge) 5]
+    [_ 0]))
+
+;; `k OP v` reads as `v OP' k`.
+(define (opt-bit-test-swap-kind [kind : i64]) : i64
+  (cond [(= kind 2) 4] [(= kind 3) 5] [(= kind 4) 2] [(= kind 5) 3] [else kind]))
+
+(define (opt-bit-test-lower-kind? [kind : i64]) : bool
+  (or (= kind 4) (= kind 5)))
+
+(define (opt-bit-test-upper-kind? [kind : i64]) : bool
+  (or (= kind 2) (= kind 3)))
+
+;; Signedness travels with the compare's operand type, and only the signed
+;; 64-bit form is admitted: the emitted window guard reads `v - base` as
+;; unsigned, which is the same membership test only when the chain's compares
+;; and that subtraction see the same 64-bit operand width.
+(define (opt-bit-test-i64-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [_ false]))
+
+;; Normalized `v OP k` facts for every constant compare in the function, indexed
+;; by destination var. A chain link may branch on a compare defined in a
+;; dominating block -- value numbering unifies a test the surrounding code
+;; already made -- so the facts are collected function-wide instead of being
+;; read out of the link block.
+(defstruct OptBitTestCompareFacts
+  (kinds (__tl_dyn-array i64))
+  (values (__tl_dyn-array i64))
+  (bounds (__tl_dyn-array i64)))
+
+(define (opt-bit-test-facts-new [frame : i64]) : OptBitTestCompareFacts
+  (let
+    [size : i64
+      (if (> frame 0)
+        frame
+        0)]
+    (OptBitTestCompareFacts
+      (array.make-array i64 size)
+      (array.make-array i64 size)
+      (array.make-array i64 size))))
+
+(define (opt-bit-test-fact-kind [facts : OptBitTestCompareFacts] [var : i64]) : i64
+  (let
+    [kinds : (__tl_dyn-array i64) (struct-get facts kinds)]
+    (if (and (>= var 0) (< var (array-length kinds)))
+      (array-ref kinds var)
+      0)))
+
+(define (opt-bit-test-fact-value [facts : OptBitTestCompareFacts] [var : i64]) : i64
+  (let
+    [values : (__tl_dyn-array i64) (struct-get facts values)]
+    (if (and (>= var 0) (< var (array-length values)))
+      (array-ref values var)
+      (- 0 1))))
+
+(define (opt-bit-test-fact-bound [facts : OptBitTestCompareFacts] [var : i64]) : i64
+  (let
+    [bounds : (__tl_dyn-array i64) (struct-get facts bounds)]
+    (if (and (>= var 0) (< var (array-length bounds)))
+      (array-ref bounds var)
+      0)))
+
+(define (opt-bit-test-facts-record!
+  [facts : OptBitTestCompareFacts]
+  [dst : i64]
+  [kind : i64]
+  [value-var : i64]
+  [bound : i64]) : unit
+  (let
+    [kinds : (__tl_dyn-array i64) (struct-get facts kinds)]
+    (if (and
+      (>= dst 0)
+      (< dst (array-length kinds))
+      (opt-bit-test-bound-ok? bound))
+      (begin
+        (array-set! kinds dst kind)
+        (array-set! (struct-get facts values) dst value-var)
+        (array-set! (struct-get facts bounds) dst bound))
+      unit)))
+
+(define (opt-bit-test-facts-scan-instr!
+  [facts : OptBitTestCompareFacts]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (let
+        [kind : i64 (opt-bit-test-compare-kind op)]
+        (if (and (> kind 0) (opt-bit-test-i64-type? ty))
+          (match lhs
+            [(ir.CompilerIrValue.Var value-var)
+              (match rhs
+                [(ir.CompilerIrValue.I64 bound)
+                  (opt-bit-test-facts-record! facts dst kind value-var bound)]
+                [_ unit])]
+            [(ir.CompilerIrValue.I64 bound)
+              (match rhs
+                [(ir.CompilerIrValue.Var value-var)
+                  (opt-bit-test-facts-record!
+                    facts
+                    dst
+                    (opt-bit-test-swap-kind kind)
+                    value-var
+                    bound)]
+                [_ unit])]
+            [_ unit])
+          unit))]
+    [_ unit]))
+
+(define (opt-bit-test-facts-scan-seq!
+  [facts : OptBitTestCompareFacts]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (opt-bit-test-facts-scan-instr!
+          facts
+          (ir.compiler-ir-instr-seq-ref instrs index))
+        (set! index (+ index 1))))))
+
+(define (opt-bit-test-facts-scan-blocks!
+  [facts : OptBitTestCompareFacts]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-bit-test-facts-scan-seq! facts instrs)
+            (opt-bit-test-facts-scan-blocks! facts (box-get rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bit-test-facts-scan-blocks!
+        facts
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bit-test-facts-build
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptBitTestCompareFacts
+  (let
+    [facts : OptBitTestCompareFacts (opt-bit-test-facts-new frame)]
+    (begin
+      (opt-bit-test-facts-scan-blocks! facts blocks)
+      facts)))
+
+;; A link block holds nothing but its branch, optionally preceded by the compare
+;; that defines the branch condition. Anything else would be dropped along with
+;; the path the rewrite replaces.
+(define (opt-bit-test-block-pure-link?
+  [instrs : ir.CompilerIrInstrSeq]
+  [count : i64]
+  [cond-var : i64]) : bool
+  (if (= count 1)
+    true
+    (if (= count 2)
+      (match (ir.compiler-ir-instr-seq-ref instrs 0)
+        [(ir.CompilerIrInstr.BinOp dst _ _ _ _) (= dst cond-var)]
+        [_ false])
+      false)))
+
+(defenum OptBitTestBranch
+  (No)
+  ;; condition var, true label, false label, pure link block?
+  (Some i64 i64 i64 bool))
+
+(define (opt-bit-test-block-branch [block : ir.CompilerIrBlock]) : OptBitTestBranch
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (= count 0)
+          (OptBitTestBranch.No)
+          (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+            [(ir.CompilerIrInstr.Branch cond yes no)
+              (match cond
+                [(ir.CompilerIrValue.Var cond-var)
+                  (OptBitTestBranch.Some
+                    cond-var
+                    yes
+                    no
+                    (opt-bit-test-block-pure-link? instrs count cond-var))]
+                [_ (OptBitTestBranch.No)])]
+            [_ (OptBitTestBranch.No)])))]))
+
+;; A converted chain must land on blocks whose phis do not name the link labels
+;; the rewrite stops entering. Requiring the branch targets to be phi-free is
+;; the cheap sufficient form of that: link blocks only ever branch to the shared
+;; true target, the next link, or a forwarding block on the way to either.
+(define (opt-bit-test-block-phi-free? [index : OptCfgIndex] [label : i64]) : bool
+  (match (opt-cfg-index-find-block index label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (= (ir.compiler-ir-instr-seq-count instrs) 0)
+            true
+            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+              [(ir.CompilerIrInstr.Phi _ _ _) false]
+              [_ true]))])]))
+
+;; Forwarding is followed only while the block behind it does not open with a
+;; phi: a phi reads its input by predecessor label, so the last forwarding block
+;; ahead of a merge is where an edge has to keep landing.
+(define (opt-bit-test-resolve-label
+  [index : OptCfgIndex]
+  [label : i64]
+  [hops : i64]) : i64
+  (if (<= hops 0)
+    label
+    (match (opt-cfg-index-find-block index label)
+      [(OptMaybeBlock.No) label]
+      [(OptMaybeBlock.Some block)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
+              (match (ir.compiler-ir-instr-seq-ref instrs 0)
+                [(ir.CompilerIrInstr.Jump next)
+                  (if (opt-bit-test-block-phi-free? index next)
+                    (opt-bit-test-resolve-label index next (- hops 1))
+                    label)]
+                [_ label])
+              label)])])))
+
+(define (opt-bit-test-ones [width : i64]) : i64
+  (if (>= width 64)
+    (- 0 1)
+    (- (shl 1 width) 1)))
+
+(defenum OptBitTestMaybeLink
+  (No)
+  ;; lo, hi, bit mask relative to lo, true target, next target
+  (Some i64 i64 i64 i64 i64))
+
+;; `(and (>= v lo) (<= v hi))` lowers to a lower-bound block whose true edge is
+;; the upper-bound block and whose false edge is the chain's continuation; the
+;; upper-bound block shares that continuation. Either bound may come first.
+(define (opt-bit-test-parse-range-link
+  [index : OptCfgIndex]
+  [facts : OptBitTestCompareFacts]
+  [value-var : i64]
+  [kind : i64]
+  [bound : i64]
+  [inner-label : i64]
+  [next : i64]) : OptBitTestMaybeLink
+  (match (opt-cfg-index-find-block index inner-label)
+    [(OptMaybeBlock.No) (OptBitTestMaybeLink.No)]
+    [(OptMaybeBlock.Some block)
+      (match (opt-bit-test-block-branch block)
+        [(OptBitTestBranch.No) (OptBitTestMaybeLink.No)]
+        [(OptBitTestBranch.Some inner-cond inner-yes inner-no inner-pure?)
+          (let
+            [inner-kind : i64 (opt-bit-test-fact-kind facts inner-cond)]
+            [inner-var : i64 (opt-bit-test-fact-value facts inner-cond)]
+            [inner-bound : i64 (opt-bit-test-fact-bound facts inner-cond)]
+            [inner-next : i64
+              (opt-bit-test-resolve-label
+                index
+                inner-no
+                (opt-bit-test-max-hops))]
+            [paired? : bool
+              (and
+                inner-pure?
+                (> inner-kind 0)
+                (= inner-var value-var)
+                (= inner-next next)
+                (or
+                  (and
+                    (opt-bit-test-lower-kind? kind)
+                    (opt-bit-test-upper-kind? inner-kind))
+                  (and
+                    (opt-bit-test-upper-kind? kind)
+                    (opt-bit-test-lower-kind? inner-kind))))]
+            [lo : i64
+              (if (opt-bit-test-lower-kind? kind)
+                (if (= kind 4)
+                  (+ bound 1)
+                  bound)
+                (if (= inner-kind 4)
+                  (+ inner-bound 1)
+                  inner-bound))]
+            [hi : i64
+              (if (opt-bit-test-upper-kind? kind)
+                (if (= kind 2)
+                  (- bound 1)
+                  bound)
+                (if (= inner-kind 2)
+                  (- inner-bound 1)
+                  inner-bound))]
+            (if (and
+              paired?
+              (<= lo hi)
+              (< (- hi lo) (opt-bit-test-window-width)))
+              (OptBitTestMaybeLink.Some
+                lo
+                hi
+                (opt-bit-test-ones (+ (- hi lo) 1))
+                (opt-bit-test-resolve-label
+                  index
+                  inner-yes
+                  (opt-bit-test-max-hops))
+                next)
+              (OptBitTestMaybeLink.No)))])]))
+
+(define (opt-bit-test-parse-link
+  [index : OptCfgIndex]
+  [facts : OptBitTestCompareFacts]
+  [value-var : i64]
+  [label : i64]
+  [head? : bool]) : OptBitTestMaybeLink
+  (match (opt-cfg-index-find-block index label)
+    [(OptMaybeBlock.No) (OptBitTestMaybeLink.No)]
+    [(OptMaybeBlock.Some block)
+      (match (opt-bit-test-block-branch block)
+        [(OptBitTestBranch.No) (OptBitTestMaybeLink.No)]
+        [(OptBitTestBranch.Some cond-var yes no pure?)
+          (let
+            [kind : i64 (opt-bit-test-fact-kind facts cond-var)]
+            [fact-var : i64 (opt-bit-test-fact-value facts cond-var)]
+            [bound : i64 (opt-bit-test-fact-bound facts cond-var)]
+            [true-label : i64
+              (opt-bit-test-resolve-label index yes (opt-bit-test-max-hops))]
+            [next : i64
+              (opt-bit-test-resolve-label index no (opt-bit-test-max-hops))]
+            (if (or
+              (and (not head?) (not pure?))
+              (= kind 0)
+              (!= fact-var value-var))
+              (OptBitTestMaybeLink.No)
+              (if (= kind 1)
+                (OptBitTestMaybeLink.Some bound bound 1 true-label next)
+                (opt-bit-test-parse-range-link
+                  index
+                  facts
+                  value-var
+                  kind
+                  bound
+                  true-label
+                  next))))])]))
+
+;; Collected links of one chain, oldest first. Allocated once per function and
+;; refilled for each candidate head.
+(defstruct OptBitTestChain
+  (los (__tl_dyn-array i64))
+  (his (__tl_dyn-array i64))
+  (masks (__tl_dyn-array i64))
+  (labels (__tl_dyn-array i64))
+  (nexts (__tl_dyn-array i64)))
+
+(define (opt-bit-test-chain-new) : OptBitTestChain
+  (let
+    [size : i64 (opt-bit-test-max-links)]
+    (OptBitTestChain
+      (array.make-array i64 size)
+      (array.make-array i64 size)
+      (array.make-array i64 size)
+      (array.make-array i64 size)
+      (array.make-array i64 size))))
+
+(define (opt-bit-test-chain-visited?
+  [chain : OptBitTestChain]
+  [count : i64]
+  [label : i64]) : bool
+  (let
+    [labels : (__tl_dyn-array i64) (struct-get chain labels)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (< index count)
+        (if (= (array-ref labels index) label)
+          (begin
+            (set! found true)
+            (set! index count))
+          (set! index (+ index 1))))
+      found)))
+
+(defenum OptBitTestMaybeChain
+  (No)
+  ;; link count, shared true target
+  (Some i64 i64))
+
+(define (opt-bit-test-collect-chain
+  [index : OptCfgIndex]
+  [facts : OptBitTestCompareFacts]
+  [chain : OptBitTestChain]
+  [value-var : i64]
+  [head-label : i64]) : OptBitTestMaybeChain
+  (let
+    [los : (__tl_dyn-array i64) (struct-get chain los)]
+    [his : (__tl_dyn-array i64) (struct-get chain his)]
+    [masks : (__tl_dyn-array i64) (struct-get chain masks)]
+    [labels : (__tl_dyn-array i64) (struct-get chain labels)]
+    [nexts : (__tl_dyn-array i64) (struct-get chain nexts)]
+    [limit : i64 (opt-bit-test-max-links)]
+    [count : i64 0]
+    [label : i64 head-label]
+    [true-label : i64 (- 0 1)]
+    [walking? : bool true]
+    (begin
+      (while (and walking? (< count limit))
+        (match (opt-bit-test-parse-link index facts value-var label (= count 0))
+          [(OptBitTestMaybeLink.No) (set! walking? false)]
+          [(OptBitTestMaybeLink.Some lo hi mask link-true link-next)
+            (if (and (> count 0) (!= link-true true-label))
+              (set! walking? false)
+              (begin
+                (set! true-label link-true)
+                (array-set! los count lo)
+                (array-set! his count hi)
+                (array-set! masks count mask)
+                (array-set! labels count label)
+                (array-set! nexts count link-next)
+                (set! count (+ count 1))
+                (if (opt-bit-test-chain-visited? chain count link-next)
+                  (set! walking? false)
+                  (set! label link-next))))]))
+      (if (= count 0)
+        (OptBitTestMaybeChain.No)
+        (OptBitTestMaybeChain.Some count true-label)))))
+
+;; Longest run of links starting at `start` whose constants share a 64-wide
+;; window. Used both for the run the rewrite would take (`start` 0) and for the
+;; best run anywhere in the chain: converting only when the leading run IS the
+;; best run keeps the choice independent of which block the scan happened to
+;; enter the chain from, because a better run further down is reached later as
+;; its own head.
+(define (opt-bit-test-run-length
+  [chain : OptBitTestChain]
+  [count : i64]
+  [start : i64]) : i64
+  (let
+    [los : (__tl_dyn-array i64) (struct-get chain los)]
+    [his : (__tl_dyn-array i64) (struct-get chain his)]
+    [low : i64 (array-ref los start)]
+    [high : i64 (array-ref his start)]
+    [index : i64 start]
+    [length : i64 0]
+    [running? : bool true]
+    (begin
+      (while (and running? (< index count))
+        (let
+          [next-low : i64
+            (if (< (array-ref los index) low)
+              (array-ref los index)
+              low)]
+          [next-high : i64
+            (if (> (array-ref his index) high)
+              (array-ref his index)
+              high)]
+          (if (>= (- next-high next-low) (opt-bit-test-window-width))
+            (set! running? false)
+            (begin
+              (set! low next-low)
+              (set! high next-high)
+              (set! length (+ length 1))
+              (set! index (+ index 1))))))
+      length)))
+
+(define (opt-bit-test-best-run-length [chain : OptBitTestChain] [count : i64]) : i64
+  (let
+    [start : i64 0]
+    [best : i64 0]
+    (begin
+      (while (< start count)
+        (let
+          [length : i64 (opt-bit-test-run-length chain count start)]
+          (begin
+            (if (> length best)
+              (set! best length)
+              unit)
+            (set! start (+ start 1)))))
+      best)))
+
+(define (opt-bit-test-run-base [chain : OptBitTestChain] [length : i64]) : i64
+  (let
+    [los : (__tl_dyn-array i64) (struct-get chain los)]
+    [index : i64 1]
+    [base : i64 (array-ref los 0)]
+    (begin
+      (while (< index length)
+        (begin
+          (if (< (array-ref los index) base)
+            (set! base (array-ref los index))
+            unit)
+          (set! index (+ index 1))))
+      base)))
+
+(define (opt-bit-test-run-top [chain : OptBitTestChain] [length : i64]) : i64
+  (let
+    [his : (__tl_dyn-array i64) (struct-get chain his)]
+    [index : i64 1]
+    [top : i64 (array-ref his 0)]
+    (begin
+      (while (< index length)
+        (begin
+          (if (> (array-ref his index) top)
+            (set! top (array-ref his index))
+            unit)
+          (set! index (+ index 1))))
+      top)))
+
+(define (opt-bit-test-run-mask
+  [chain : OptBitTestChain]
+  [length : i64]
+  [base : i64]) : i64
+  (let
+    [los : (__tl_dyn-array i64) (struct-get chain los)]
+    [masks : (__tl_dyn-array i64) (struct-get chain masks)]
+    [index : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< index length)
+        (begin
+          (set!
+            mask
+            (bit-or
+              mask
+              (shl (array-ref masks index) (- (array-ref los index) base))))
+          (set! index (+ index 1))))
+      mask)))
+
+;; Accepted conversions, keyed by chain-head label.
+(defstruct OptBitTestPlans
+  (heads (__tl_dyn-array i64))
+  (values (__tl_dyn-array i64))
+  (bases (__tl_dyn-array i64))
+  (widths (__tl_dyn-array i64))
+  (masks (__tl_dyn-array i64))
+  (trues (__tl_dyn-array i64))
+  (falses (__tl_dyn-array i64))
+  (used (__tl_dyn-array i64)))
+
+(define (opt-bit-test-plans-new) : OptBitTestPlans
+  (let
+    [size : i64 (opt-bit-test-max-plans)]
+    (OptBitTestPlans
+      (array.make-array i64 size)
+      (array.make-array i64 size)
+      (array.make-array i64 size)
+      (array.make-array i64 size)
+      (array.make-array i64 size)
+      (array.make-array i64 size)
+      (array.make-array i64 size)
+      (array.make-array i64 1))))
+
+(define (opt-bit-test-plans-count [plans : OptBitTestPlans]) : i64
+  (array-ref (struct-get plans used) 0))
+
+(define (opt-bit-test-plans-add!
+  [plans : OptBitTestPlans]
+  [head : i64]
+  [value-var : i64]
+  [base : i64]
+  [width : i64]
+  [mask : i64]
+  [true-label : i64]
+  [false-label : i64]) : unit
+  (let
+    [slot : i64 (opt-bit-test-plans-count plans)]
+    (if (< slot (opt-bit-test-max-plans))
+      (begin
+        (array-set! (struct-get plans heads) slot head)
+        (array-set! (struct-get plans values) slot value-var)
+        (array-set! (struct-get plans bases) slot base)
+        (array-set! (struct-get plans widths) slot width)
+        (array-set! (struct-get plans masks) slot mask)
+        (array-set! (struct-get plans trues) slot true-label)
+        (array-set! (struct-get plans falses) slot false-label)
+        (array-set! (struct-get plans used) 0 (+ slot 1)))
+      unit)))
+
+(define (opt-bit-test-plans-slot [plans : OptBitTestPlans] [head : i64]) : i64
+  (let
+    [heads : (__tl_dyn-array i64) (struct-get plans heads)]
+    [limit : i64 (opt-bit-test-plans-count plans)]
+    [index : i64 0]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (< index limit)
+        (if (= (array-ref heads index) head)
+          (begin
+            (set! found index)
+            (set! index limit))
+          (set! index (+ index 1))))
+      found)))
+
+;; The head's own tested value: read out of the compare its branch consumes.
+(define (opt-bit-test-head-value-var
+  [facts : OptBitTestCompareFacts]
+  [block : ir.CompilerIrBlock]) : i64
+  (match (opt-bit-test-block-branch block)
+    [(OptBitTestBranch.No) (- 0 1)]
+    [(OptBitTestBranch.Some cond-var _ _ _)
+      (if (= (opt-bit-test-fact-kind facts cond-var) 0)
+        (- 0 1)
+        (opt-bit-test-fact-value facts cond-var))]))
+
+(define (opt-bit-test-skip-links
+  [chain : OptBitTestChain]
+  [length : i64]
+  [skip : OptLabelSet]) : OptLabelSet
+  (let
+    [labels : (__tl_dyn-array i64) (struct-get chain labels)]
+    [index : i64 0]
+    [next : OptLabelSet skip]
+    (begin
+      (while (< index length)
+        (begin
+          (set! next (opt-label-add next (array-ref labels index)))
+          (set! index (+ index 1))))
+      next)))
+
+(define (opt-bit-test-plan-head!
+  [index : OptCfgIndex]
+  [facts : OptBitTestCompareFacts]
+  [chain : OptBitTestChain]
+  [plans : OptBitTestPlans]
+  [skip : OptLabelSet]
+  [block : ir.CompilerIrBlock]) : OptLabelSet
+  (match block
+    [(ir.CompilerIrBlock.Block head-label _)
+      (if (opt-label-contains skip head-label)
+        skip
+        (let
+          [value-var : i64 (opt-bit-test-head-value-var facts block)]
+          (if (< value-var 0)
+            skip
+            (match (opt-bit-test-collect-chain
+              index
+              facts
+              chain
+              value-var
+              head-label)
+              [(OptBitTestMaybeChain.No) skip]
+              [(OptBitTestMaybeChain.Some count true-label)
+                (let
+                  [length : i64 (opt-bit-test-run-length chain count 0)]
+                  [best : i64 (opt-bit-test-best-run-length chain count)]
+                  [false-label : i64
+                    (array-ref (struct-get chain nexts) (- length 1))]
+                  (if (and
+                    (>= length (opt-bit-test-min-links))
+                    (= length best)
+                    (!= true-label false-label)
+                    (opt-bit-test-block-phi-free? index true-label)
+                    (opt-bit-test-block-phi-free? index false-label))
+                    (let
+                      [base : i64 (opt-bit-test-run-base chain length)]
+                      [top : i64 (opt-bit-test-run-top chain length)]
+                      (begin
+                        (opt-bit-test-plans-add!
+                          plans
+                          head-label
+                          value-var
+                          base
+                          (- top base)
+                          (opt-bit-test-run-mask chain length base)
+                          true-label
+                          false-label)
+                        (opt-bit-test-skip-links chain length skip)))
+                    skip))]))))]))
+
+(define (opt-bit-test-plan-blocks!
+  [index : OptCfgIndex]
+  [facts : OptBitTestCompareFacts]
+  [chain : OptBitTestChain]
+  [plans : OptBitTestPlans]
+  [blocks : ir.CompilerIrBlockList]
+  [skip : OptLabelSet]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (opt-bit-test-plan-blocks!
+        index
+        facts
+        chain
+        plans
+        (box-get rest)
+        (opt-bit-test-plan-head! index facts chain plans skip block))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bit-test-plan-blocks!
+        index
+        facts
+        chain
+        plans
+        (ir.compiler-ir-block-seq-to-list seq)
+        skip)]))
+
+(define (opt-bit-test-candidate-label [head : i64] [suffix : i64]) : i64
+  (ir.compiler-ir-label
+    (if (= suffix 0)
+      (str_cat.str-cat (ir.compiler-ir-label-text head) "__bit_test")
+      (str_cat.str-cat
+        (ir.compiler-ir-label-text head)
+        "__bit_test"
+        (string.int->string suffix)))))
+
+(define (opt-bit-test-fresh-label
+  [blocks : ir.CompilerIrBlockList]
+  [head : i64]
+  [suffix : i64]) : i64
+  (let
+    [candidate : i64 (opt-bit-test-candidate-label head suffix)]
+    (if (opt-cfg-block-exists? blocks candidate)
+      (opt-bit-test-fresh-label blocks head (+ suffix 1))
+      candidate)))
+
+;; The head's instructions ahead of its branch, oldest first. Everything the
+;; head already computed stays: it ran unconditionally before the rewrite and
+;; still does. Its own compare becomes dead and DCE retires it.
+(define (opt-bit-test-head-prefix
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+  (if (< index 0)
+    tail
+    (opt-bit-test-head-prefix
+      instrs
+      (- index 1)
+      (ir.compiler-ir-instr-cons
+        (ir.compiler-ir-instr-seq-ref instrs index)
+        tail))))
+
+;; The mask is materialized in the HEAD block rather than folded into the shift
+;; operand: as its own loop-invariant value it is hoisted out of the loop and,
+;; more importantly, the allocator sees it and the offset live at the same point
+;; and gives them two registers, which is what lets the backend lower the test
+;; as a bare `bt` instead of scavenging a scratch around a real shift.
+(define (opt-bit-test-rewrite-head
+  [block : ir.CompilerIrBlock]
+  [value-var : i64]
+  [base : i64]
+  [width : i64]
+  [mask : i64]
+  [false-label : i64]
+  [mask-label : i64]
+  [mask-var : i64]
+  [offset-var : i64]
+  [guard-var : i64]) : ir.CompilerIrBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (ir.compiler-ir-block
+        label
+        (opt-bit-test-head-prefix
+          instrs
+          (- (ir.compiler-ir-instr-seq-count instrs) 2)
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              mask-var
+              (ir.CompilerIrValue.I64 mask)
+              (ast.AstType.U64))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                offset-var
+                (ir.CompilerIrBinOp.Sub)
+                (ir.CompilerIrValue.Var value-var)
+                (ir.CompilerIrValue.I64 base)
+                (ast.AstType.U64))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.BinOp
+                  guard-var
+                  (ir.CompilerIrBinOp.Le)
+                  (ir.CompilerIrValue.Var offset-var)
+                  (ir.CompilerIrValue.I64 width)
+                  (ast.AstType.U64))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Branch
+                    (ir.CompilerIrValue.Var guard-var)
+                    mask-label
+                    false-label)
+                  ir.CompilerIrInstrList.Nil))))))]))
+
+(define (opt-bit-test-mask-block
+  [mask-label : i64]
+  [true-label : i64]
+  [false-label : i64]
+  [mask-var : i64]
+  [offset-var : i64]
+  [shift-var : i64]
+  [test-var : i64]) : ir.CompilerIrBlock
+  (ir.compiler-ir-block
+    mask-label
+    (ir.compiler-ir-instr-cons
+      (ir.CompilerIrInstr.BinOp
+        shift-var
+        (ir.CompilerIrBinOp.Shr (ast.AstType.U64))
+        (ir.CompilerIrValue.Var mask-var)
+        (ir.CompilerIrValue.Var offset-var)
+        (ast.AstType.U64))
+      (ir.compiler-ir-instr-cons
+        (ir.CompilerIrInstr.BinOp
+          test-var
+          (ir.CompilerIrBinOp.BitTestNe)
+          (ir.CompilerIrValue.Var shift-var)
+          (ir.CompilerIrValue.I64 1)
+          (ast.AstType.U64))
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var test-var)
+            true-label
+            false-label)
+          ir.CompilerIrInstrList.Nil)))))
+
+(define (opt-bit-test-rewrite-blocks
+  [remaining : ir.CompilerIrBlockList]
+  [all-blocks : ir.CompilerIrBlockList]
+  [plans : OptBitTestPlans]
+  [frame : i64]) : ir.CompilerIrBlockList
+  (match remaining
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label _)
+          (let
+            [slot : i64 (opt-bit-test-plans-slot plans label)]
+            [tail : ir.CompilerIrBlockList
+              (opt-bit-test-rewrite-blocks
+                (box-get rest)
+                all-blocks
+                plans
+                frame)]
+            (if (< slot 0)
+              (ir.compiler-ir-block-cons block tail)
+              (let
+                [mask-label : i64 (opt-bit-test-fresh-label all-blocks label 0)]
+                [first-var : i64 (+ frame (* slot (opt-bit-test-plan-vars)))]
+                (ir.compiler-ir-block-cons
+                  (opt-bit-test-rewrite-head
+                    block
+                    (array-ref (struct-get plans values) slot)
+                    (array-ref (struct-get plans bases) slot)
+                    (array-ref (struct-get plans widths) slot)
+                    (array-ref (struct-get plans masks) slot)
+                    (array-ref (struct-get plans falses) slot)
+                    mask-label
+                    first-var
+                    (+ first-var 1)
+                    (+ first-var 2))
+                  (ir.compiler-ir-block-cons
+                    (opt-bit-test-mask-block
+                      mask-label
+                      (array-ref (struct-get plans trues) slot)
+                      (array-ref (struct-get plans falses) slot)
+                      first-var
+                      (+ first-var 1)
+                      (+ first-var 3)
+                      (+ first-var 4))
+                    tail)))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bit-test-rewrite-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        all-blocks
+        plans
+        frame)]))
+
+(define (opt-bit-test-values-var-and-literal?
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : bool
+  (match lhs
+    [(ir.CompilerIrValue.Var _)
+      (match rhs
+        [(ir.CompilerIrValue.I64 _) true]
+        [_ false])]
+    [(ir.CompilerIrValue.I64 _)
+      (match rhs
+        [(ir.CompilerIrValue.Var _) true]
+        [_ false])]
+    [_ false]))
+
+;; Cheap pre-scan: a chain link is a two-instruction block whose compare tests a
+;; var against an i64 literal and whose branch reads that compare. A function
+;; without at least the profitability floor's worth of them cannot hold a
+;; convertible chain.
+(define (opt-bit-test-block-is-link-shaped? [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (if (= (ir.compiler-ir-instr-seq-count instrs) 2)
+        (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+            (and
+              (> (opt-bit-test-compare-kind op) 0)
+              (opt-bit-test-i64-type? ty)
+              (opt-bit-test-values-var-and-literal? lhs rhs)
+              (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                [(ir.CompilerIrInstr.Branch cond _ _)
+                  (match cond
+                    [(ir.CompilerIrValue.Var cond-var) (= cond-var dst)]
+                    [_ false])]
+                [_ false]))]
+          [_ false])
+        false)]))
+
+(define (opt-bit-test-blocks-have-candidate?
+  [blocks : ir.CompilerIrBlockList]
+  [seen : i64]) : bool
+  (if (>= seen (opt-bit-test-min-links))
+    true
+    (match blocks
+      [(ir.CompilerIrBlockList.Nil) false]
+      [(ir.CompilerIrBlockList.Cons block rest)
+        (opt-bit-test-blocks-have-candidate?
+          (box-get rest)
+          (if (opt-bit-test-block-is-link-shaped? block)
+            (+ seen 1)
+            seen))]
+      [(ir.CompilerIrBlockList.Array seq)
+        (opt-bit-test-blocks-have-candidate?
+          (ir.compiler-ir-block-seq-to-list seq)
+          seen)])))
+
+(define (opt-bit-test-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (not (opt-bit-test-blocks-have-candidate? blocks 0))
+        (OptFunctionPassResult.Result func false)
+        (let
+          [facts : OptBitTestCompareFacts
+            (opt-bit-test-facts-build frame blocks)]
+          [index : OptCfgIndex (opt-cfg-index-build blocks)]
+          [chain : OptBitTestChain (opt-bit-test-chain-new)]
+          [plans : OptBitTestPlans (opt-bit-test-plans-new)]
+          [_planned : unit
+            (opt-bit-test-plan-blocks!
+              index
+              facts
+              chain
+              plans
+              blocks
+              (OptLabelSet.Nil))]
+          [planned : i64 (opt-bit-test-plans-count plans)]
+          (if (= planned 0)
+            (OptFunctionPassResult.Result func false)
+            (let
+              [next : ir.CompilerIrFunction
+                (ir.CompilerIrFunction.Function
+                  name
+                  params
+                  ret-ty
+                  (+ frame (* planned (opt-bit-test-plan-vars)))
+                  (opt-cfg-reachable-block-order
+                    (opt-bit-test-rewrite-blocks blocks blocks plans frame)))]
+              (match (opt-verify-function next)
+                [(ResultCompilerOptimizeVerify.Ok)
+                  (OptFunctionPassResult.Result next true)]
+                [(ResultCompilerOptimizeVerify.Err _)
+                  (OptFunctionPassResult.Result func false)])))))]))
+
+(define (opt-bit-test-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-bit-test-function-pass func)
+    [(OptFunctionPassResult.Result next changed)
+      (if changed
+        next
+        func)]))
+
 (define (optimize-function-max-iterations) : i64
   2)
 
@@ -62828,14 +63855,60 @@
                             name
                             _t-cfg2)
                           unit)]
-                      [_t-switch : i64 (cfg compile-profile (profile.now-ms) 0)]
-                      [switch-input : ir.CompilerIrFunction
+                      ;; Ahead of switch formation on purpose: a classifier
+                      ;; chain reaches here canonicalized (SCCP folded its
+                      ;; constant conditions, value numbering unified repeated
+                      ;; tests, cfg dropped the dead arms) and still spelled as
+                      ;; compare-and-branch links, which is the shape the bit
+                      ;; test recognizes. Any run the switch former would have
+                      ;; taken over is already covered by the mask, and the
+                      ;; links it leaves behind stay available to it.
+                      [_t-bit-test : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [bit-test-input : ir.CompilerIrFunction
                         (ir.CompilerIrFunction.Function
                           name
                           params
                           ret-ty
                           ssa-frame
                           cfg)]
+                      [bit-test-result : OptFunctionPassResult
+                        (if run-heavy?
+                          (opt-bit-test-function-pass bit-test-input)
+                          (OptFunctionPassResult.Result bit-test-input false))]
+                      [bit-tested : ir.CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "bit_test"
+                          (match bit-test-result
+                            [(OptFunctionPassResult.Result f _) f]))]
+                      [bit-test-changed : bool
+                        (match bit-test-result
+                          [(OptFunctionPassResult.Result _ changed) changed])]
+                      [bit-test-blocks : ir.CompilerIrBlockList
+                        (opt-function-blocks bit-tested)]
+                      [bit-test-frame : i64 (opt-function-frame bit-tested)]
+                      [bit-test-context : OptCfgContext
+                        (if bit-test-changed
+                          (opt-cfg-context-build bit-test-blocks)
+                          cfg-context)]
+                      [_p-bit-test : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "bit_test"
+                            name
+                            _t-bit-test)
+                          unit)]
+                      [_t-switch : i64 (cfg compile-profile (profile.now-ms) 0)]
+                      [switch-input : ir.CompilerIrFunction
+                        (ir.CompilerIrFunction.Function
+                          name
+                          params
+                          ret-ty
+                          bit-test-frame
+                          bit-test-blocks)]
                       [switch-result : OptFunctionPassResult
                         (if run-heavy?
                           (opt-switch-form-function-pass switch-input)
@@ -62854,7 +63927,7 @@
                       [switch-context : OptCfgContext
                         (if switch-changed
                           (opt-cfg-context-build switch-blocks)
-                          cfg-context)]
+                          bit-test-context)]
                       [_p-switch : unit
                         (cfg
                           compile-profile
@@ -62889,7 +63962,7 @@
                               name
                               params
                               ret-ty
-                              ssa-frame
+                              bit-test-frame
                               switch-blocks)
                             switch-context))]
                       [preheaders-result : OptFunctionCtxResult
@@ -62899,7 +63972,7 @@
                               name
                               params
                               ret-ty
-                              ssa-frame
+                              bit-test-frame
                               switch-blocks)]
                           (opt-loop-preheaders-function-with-context-result
                             switch-context

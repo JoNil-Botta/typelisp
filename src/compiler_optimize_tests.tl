@@ -45257,3 +45257,563 @@
       (opt-loop-budget-runtime-run 1)
       4
       "single-element trip counts stay exact")))
+
+;; --- bit_test: classifier compare chain -> one bitmask test ------------------
+;;
+;; Fixtures are spelled the way lowering leaves a `cond`/`or` classifier: one
+;; compare-and-branch block per test, every true edge on the shared arm, every
+;; false edge continuing the chain.
+(define (opt-bit-test-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "c"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "other"
+        (compiler_ast_types.AstType.I64)
+        1)
+      compiler_ir_types.CompilerIrParamList.Nil)))
+
+(define (opt-bit-test-test-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bit_test")
+    (opt-bit-test-test-params)
+    (compiler_ast_types.AstType.I64)
+    16
+    blocks))
+
+(define (opt-bit-test-link-block
+  [label : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [value-var : i64]
+  [bound : i64]
+  [dst : i64]
+  [ty : compiler_ast_types.AstType]
+  [true-label : i64]
+  [next-label : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        dst
+        op
+        (compiler_ir_types.CompilerIrValue.Var value-var)
+        (compiler_ir_types.CompilerIrValue.I64 bound)
+        ty)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var dst)
+          true-label
+          next-label)
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; Same link, with one extra instruction the rewrite would have to drop.
+(define (opt-bit-test-impure-link-block
+  [label : i64]
+  [bound : i64]
+  [dst : i64]
+  [true-label : i64]
+  [next-label : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          dst
+          compiler_ir_types.CompilerIrBinOp.Eq
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 bound)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var dst)
+            true-label
+            next-label)
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-bit-test-return-block [label : i64] [value : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.I64 value)))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-bit-test-arms) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bit-test-return-block (compiler_ir_types.compiler-ir-label "hit") 1)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bit-test-return-block (compiler_ir_types.compiler-ir-label "miss") 0)
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-bit-test-chain-label [index : i64]) : i64
+  (compiler_ir_types.compiler-ir-label
+    (str_cat.str-cat "l" (string.int->string index))))
+
+;; `bounds[i]` tested for equality at link i; the last link's false edge is the
+;; miss arm. `ty` is the compare operand type, `value-var` the tested var.
+(define (opt-bit-test-equality-chain-from
+  [bounds : (__tl_dyn-array i64)]
+  [index : i64]
+  [value-var : i64]
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrBlockList
+  (if (>= index (array-length bounds))
+    (opt-bit-test-arms)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bit-test-link-block
+        (if (= index 0)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-bit-test-chain-label index))
+        compiler_ir_types.CompilerIrBinOp.Eq
+        value-var
+        (array-ref bounds index)
+        (+ index 2)
+        ty
+        (compiler_ir_types.compiler-ir-label "hit")
+        (if (= (+ index 1) (array-length bounds))
+          (compiler_ir_types.compiler-ir-label "miss")
+          (opt-bit-test-chain-label (+ index 1))))
+      (opt-bit-test-equality-chain-from bounds (+ index 1) value-var ty))))
+
+(define (opt-bit-test-equality-chain [bounds : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerIrBlockList
+  (opt-bit-test-equality-chain-from bounds 0 0 (compiler_ast_types.AstType.I64)))
+
+;; Space-shaped, but six wide: tab, newline, vertical tab, form feed, carriage
+;; return and space, whose codes span [9, 32].
+(define (opt-bit-test-space-bounds) : (__tl_dyn-array i64)
+  (make-array 32 9 10 13 11 12))
+
+(define (opt-bit-test-space-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-bit-test-equality-chain (opt-bit-test-space-bounds)))
+
+;; The digit-and-letter shape: two closed ranges lowered as bound pairs, then
+;; four punctuation equalities. Union [33, 95], so the window fits only after
+;; subtracting the base.
+(define (opt-bit-test-symbol-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bit-test-link-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      compiler_ir_types.CompilerIrBinOp.Ge
+      0
+      48
+      2
+      (compiler_ast_types.AstType.I64)
+      (compiler_ir_types.compiler-ir-label "l0b")
+      (opt-bit-test-chain-label 1))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bit-test-link-block
+        (compiler_ir_types.compiler-ir-label "l0b")
+        compiler_ir_types.CompilerIrBinOp.Le
+        0
+        57
+        3
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.compiler-ir-label "hit")
+        (opt-bit-test-chain-label 1))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bit-test-link-block
+          (opt-bit-test-chain-label 1)
+          compiler_ir_types.CompilerIrBinOp.Ge
+          0
+          65
+          4
+          (compiler_ast_types.AstType.I64)
+          (compiler_ir_types.compiler-ir-label "l1b")
+          (opt-bit-test-chain-label 2))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bit-test-link-block
+            (compiler_ir_types.compiler-ir-label "l1b")
+            compiler_ir_types.CompilerIrBinOp.Le
+            0
+            70
+            5
+            (compiler_ast_types.AstType.I64)
+            (compiler_ir_types.compiler-ir-label "hit")
+            (opt-bit-test-chain-label 2))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bit-test-link-block
+              (opt-bit-test-chain-label 2)
+              compiler_ir_types.CompilerIrBinOp.Eq
+              0
+              45
+              6
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (opt-bit-test-chain-label 3))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bit-test-link-block
+                (opt-bit-test-chain-label 3)
+                compiler_ir_types.CompilerIrBinOp.Eq
+                0
+                95
+                7
+                (compiler_ast_types.AstType.I64)
+                (compiler_ir_types.compiler-ir-label "hit")
+                (opt-bit-test-chain-label 4))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-bit-test-link-block
+                  (opt-bit-test-chain-label 4)
+                  compiler_ir_types.CompilerIrBinOp.Eq
+                  0
+                  33
+                  8
+                  (compiler_ast_types.AstType.I64)
+                  (compiler_ir_types.compiler-ir-label "hit")
+                  (opt-bit-test-chain-label 5))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-bit-test-link-block
+                    (opt-bit-test-chain-label 5)
+                    compiler_ir_types.CompilerIrBinOp.Eq
+                    0
+                    43
+                    9
+                    (compiler_ast_types.AstType.I64)
+                    (compiler_ir_types.compiler-ir-label "hit")
+                    (compiler_ir_types.compiler-ir-label "miss"))
+                  (opt-bit-test-arms))))))))))
+
+;; A link testing a second parameter breaks the chain at that point, leaving
+;; too few links ahead of it and none behind.
+(define (opt-bit-test-mixed-value-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bit-test-link-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      compiler_ir_types.CompilerIrBinOp.Eq
+      0
+      32
+      2
+      (compiler_ast_types.AstType.I64)
+      (compiler_ir_types.compiler-ir-label "hit")
+      (opt-bit-test-chain-label 1))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bit-test-link-block
+        (opt-bit-test-chain-label 1)
+        compiler_ir_types.CompilerIrBinOp.Eq
+        0
+        9
+        3
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.compiler-ir-label "hit")
+        (opt-bit-test-chain-label 2))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bit-test-link-block
+          (opt-bit-test-chain-label 2)
+          compiler_ir_types.CompilerIrBinOp.Eq
+          1
+          10
+          4
+          (compiler_ast_types.AstType.I64)
+          (compiler_ir_types.compiler-ir-label "hit")
+          (opt-bit-test-chain-label 3))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bit-test-link-block
+            (opt-bit-test-chain-label 3)
+            compiler_ir_types.CompilerIrBinOp.Eq
+            0
+            13
+            5
+            (compiler_ast_types.AstType.I64)
+            (compiler_ir_types.compiler-ir-label "hit")
+            (opt-bit-test-chain-label 4))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bit-test-link-block
+              (opt-bit-test-chain-label 4)
+              compiler_ir_types.CompilerIrBinOp.Eq
+              0
+              11
+              6
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (opt-bit-test-chain-label 5))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bit-test-link-block
+                (opt-bit-test-chain-label 5)
+                compiler_ir_types.CompilerIrBinOp.Eq
+                0
+                12
+                7
+                (compiler_ast_types.AstType.I64)
+                (compiler_ir_types.compiler-ir-label "hit")
+                (compiler_ir_types.compiler-ir-label "miss"))
+              (opt-bit-test-arms))))))))
+
+;; Same six links, but the third one also stores: the path the rewrite would
+;; replace is no longer side-effect free.
+(define (opt-bit-test-impure-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bit-test-link-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      compiler_ir_types.CompilerIrBinOp.Eq
+      0
+      32
+      2
+      (compiler_ast_types.AstType.I64)
+      (compiler_ir_types.compiler-ir-label "hit")
+      (opt-bit-test-chain-label 1))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bit-test-link-block
+        (opt-bit-test-chain-label 1)
+        compiler_ir_types.CompilerIrBinOp.Eq
+        0
+        9
+        3
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.compiler-ir-label "hit")
+        (opt-bit-test-chain-label 2))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bit-test-impure-link-block
+          (opt-bit-test-chain-label 2)
+          10
+          4
+          (compiler_ir_types.compiler-ir-label "hit")
+          (opt-bit-test-chain-label 3))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bit-test-link-block
+            (opt-bit-test-chain-label 3)
+            compiler_ir_types.CompilerIrBinOp.Eq
+            0
+            13
+            5
+            (compiler_ast_types.AstType.I64)
+            (compiler_ir_types.compiler-ir-label "hit")
+            (opt-bit-test-chain-label 4))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bit-test-link-block
+              (opt-bit-test-chain-label 4)
+              compiler_ir_types.CompilerIrBinOp.Eq
+              0
+              11
+              6
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (opt-bit-test-chain-label 5))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bit-test-link-block
+                (opt-bit-test-chain-label 5)
+                compiler_ir_types.CompilerIrBinOp.Eq
+                0
+                12
+                7
+                (compiler_ast_types.AstType.I64)
+                (compiler_ir_types.compiler-ir-label "hit")
+                (compiler_ir_types.compiler-ir-label "miss"))
+              (opt-bit-test-arms))))))))
+
+;; Six links whose union spans 100: no six of them share a 64-wide window.
+(define (opt-bit-test-wide-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-bit-test-equality-chain (make-array 0 10 20 30 40 100)))
+
+;; Two links: shorter than the profitability floor.
+(define (opt-bit-test-short-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-bit-test-equality-chain (make-array 32 9)))
+
+;; Six links compared as u64: the window guard reads `v - base` unsigned, which
+;; only agrees with the chain when the chain itself compared signed 64-bit.
+(define (opt-bit-test-unsigned-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-bit-test-equality-chain-from
+    (opt-bit-test-space-bounds)
+    0
+    0
+    (compiler_ast_types.AstType.U64)))
+
+(define (opt-bit-test-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_optimize.OptFunctionPassResult
+  (compiler_optimize.opt-bit-test-function-pass
+    (opt-bit-test-test-function blocks)))
+
+(define (opt-bit-test-changed? [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (opt-bit-test-run blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
+
+(define (opt-bit-test-result-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (match (opt-bit-test-run blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result next _)
+      (match next
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ out) out])]))
+
+(define (opt-bit-test-result-verified?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (opt-bit-test-run blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result next _)
+      (compiler_optimize.opt-verify-ok?
+        (compiler_optimize.opt-verify-function next))]))
+
+(define (opt-bit-test-block-at
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : compiler_ir_types.CompilerIrBlock
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.Some block) block]
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.compiler-ir-block
+        label
+        compiler_ir_types.CompilerIrInstrList.Nil)]))
+
+(define (opt-bit-test-binop-matches?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        instr-dst
+        instr-op
+        instr-lhs
+        instr-rhs
+        instr-ty)
+      (and
+        (= instr-dst dst)
+        (compiler_optimize.opt-binop-eq instr-op op)
+        (compiler_optimize.opt-value-eq instr-lhs lhs)
+        (compiler_optimize.opt-value-eq instr-rhs rhs)
+        (match instr-ty
+          [(compiler_ast_types.AstType.U64) true]
+          [_ false]))]
+    [_ false]))
+
+(define (opt-bit-test-mov-matches?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]
+  [value : i64]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov instr-dst instr-value instr-ty)
+      (and
+        (= instr-dst dst)
+        (compiler_optimize.opt-value-eq
+          instr-value
+          (compiler_ir_types.CompilerIrValue.I64 value))
+        (match instr-ty
+          [(compiler_ast_types.AstType.U64) true]
+          [_ false]))]
+    [_ false]))
+
+(define (opt-bit-test-branch-matches?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [cond-var : i64]
+  [true-label : i64]
+  [false-label : i64]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Branch cond yes no)
+      (and
+        (compiler_optimize.opt-value-eq
+          cond
+          (compiler_ir_types.CompilerIrValue.Var cond-var))
+        (= yes true-label)
+        (= no false-label))]
+    [_ false]))
+
+;; Head and mask block shape after a conversion whose head label is `entry`:
+;; the head keeps whatever it computed, then materializes the mask, subtracts
+;; the base, guards the window and branches into the mask block; the mask block
+;; shifts, tests bit zero and branches to the shared arm or the miss arm.
+(define (opt-bit-test-shape-ok?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [base : i64]
+  [width : i64]
+  [mask : i64]) : bool
+  (let
+    [head : compiler_ir_types.CompilerIrBlock
+      (opt-bit-test-block-at
+        blocks
+        (compiler_ir_types.compiler-ir-label "entry"))]
+    [mask-label : i64 (compiler_ir_types.compiler-ir-label "entry__bit_test")]
+    [mask-block : compiler_ir_types.CompilerIrBlock
+      (opt-bit-test-block-at blocks mask-label)]
+    [head-count : i64 (opt-block-instr-count head)]
+    (and
+      (= (opt-block-instr-count mask-block) 3)
+      (>= head-count 4)
+      (opt-bit-test-mov-matches?
+        (opt-block-instr-at head (- head-count 4))
+        16
+        mask)
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at head (- head-count 3))
+        17
+        compiler_ir_types.CompilerIrBinOp.Sub
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 base))
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at head (- head-count 2))
+        18
+        compiler_ir_types.CompilerIrBinOp.Le
+        (compiler_ir_types.CompilerIrValue.Var 17)
+        (compiler_ir_types.CompilerIrValue.I64 width))
+      (opt-bit-test-branch-matches?
+        (opt-block-instr-at head (- head-count 1))
+        18
+        mask-label
+        (compiler_ir_types.compiler-ir-label "miss"))
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at mask-block 0)
+        19
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrValue.Var 16)
+        (compiler_ir_types.CompilerIrValue.Var 17))
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at mask-block 1)
+        20
+        compiler_ir_types.CompilerIrBinOp.BitTestNe
+        (compiler_ir_types.CompilerIrValue.Var 19)
+        (compiler_ir_types.CompilerIrValue.I64 1))
+      (opt-bit-test-branch-matches?
+        (opt-block-instr-at mask-block 2)
+        20
+        (compiler_ir_types.compiler-ir-label "hit")
+        (compiler_ir_types.compiler-ir-label "miss")))))
+
+;; Returns 42 only when a six-way equality chain collapses to one masked test
+;; over the window [9, 32] and the rewritten function still verifies.
+(define (compiler-optimize-bit-test-equality-self-test) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-bit-test-result-blocks (opt-bit-test-space-blocks))]
+    (begin
+      (unless (opt-bit-test-changed? (opt-bit-test-space-blocks)) (return 1))
+      (unless
+        (opt-bit-test-result-verified? (opt-bit-test-space-blocks))
+        (return 2))
+      (unless (opt-bit-test-shape-ok? blocks 9 23 8388639) (return 3))
+      (when
+        (opt-block-list-has-label? blocks (opt-bit-test-chain-label 3))
+        (return 4))
+      42)))
+
+;; Returns 42 only when two closed ranges and four punctuation equalities
+;; collapse to one masked test whose base is the smallest constant in the chain.
+(define (compiler-optimize-bit-test-range-self-test) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-bit-test-result-blocks (opt-bit-test-symbol-blocks))]
+    (begin
+      (unless (opt-bit-test-changed? (opt-bit-test-symbol-blocks)) (return 1))
+      (unless
+        (opt-bit-test-result-verified? (opt-bit-test-symbol-blocks))
+        (return 2))
+      (unless
+        (opt-bit-test-shape-ok? blocks 33 62 4611686289043854337)
+        (return 3))
+      (when
+        (opt-block-list-has-label?
+          blocks
+          (compiler_ir_types.compiler-ir-label "l0b"))
+        (return 4))
+      42)))
+
+;; Returns 42 only when every refused shape is left exactly as it was.
+(define (compiler-optimize-bit-test-refusal-self-test) : i64
+  (begin
+    (when (opt-bit-test-changed? (opt-bit-test-mixed-value-blocks)) (return 1))
+    (when (opt-bit-test-changed? (opt-bit-test-impure-blocks)) (return 2))
+    (when (opt-bit-test-changed? (opt-bit-test-wide-blocks)) (return 3))
+    (when (opt-bit-test-changed? (opt-bit-test-short-blocks)) (return 4))
+    (when (opt-bit-test-changed? (opt-bit-test-unsigned-blocks)) (return 5))
+    42))

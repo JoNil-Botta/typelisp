@@ -33,6 +33,7 @@
   (import compiler_embedded_stdlib_tlci as embedded_tlci))
 (cfg embedded-stdlib-tlci (import tlci_core as tlci))
 (cfg embedded-stdlib-tlci (import tlci_loader as tlci_loader_support))
+(cfg tlci-native-route-stress (import stdlib.env as stress_env))
 (cfg test (import stdlib.test))
 (import sym_i64_env)
 
@@ -92964,6 +92965,213 @@
 (define macro-stdlib-tlci-native-cookie : i64
   0x1cf1)
 
+;; #5926: production-route sustained stress telemetry. The declarations only
+;; exist in the focused profile compiler, and a second runtime environment
+;; key gates the workload, so normal Windows compilers and every non-stress
+;; profile compile retain the production route-off policy. A fixed-width stderr
+;; record is emitted at pass boundaries, lifecycle/result transitions, dispatch one,
+;; every 256 dispatches, and the historical 13,552-dispatch boundary. The
+;; redirected record survives a later allocator or mapping crash and names the
+;; last completed production macro dispatch without retaining an unbounded log.
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define compiler-tc-tlci-native-stress-active : bool
+    false))
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define compiler-tc-tlci-native-stress-route-status : i64
+    0))
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define compiler-tc-tlci-native-stress-pass : i64
+    0))
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define compiler-tc-tlci-native-stress-pass-dispatch : i64
+    0))
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define compiler-tc-tlci-native-stress-total-dispatch : i64
+    0))
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define compiler-tc-tlci-native-stress-canary-a : i64
+    1597463007))
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define compiler-tc-tlci-native-stress-canary-b : i64
+    324508639))
+
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-native-stress-pad [text : String] [width : i64]) : String
+    (if (>= (string.string-length text) width)
+      text
+      (compiler-tc-tlci-native-stress-pad (str_cat.str-cat "0" text) width))))
+
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-native-stress-requested?) : bool
+    (let
+      [name : String "TYPELISP_TLCI_NATIVE_ROUTE_STRESS"]
+      (match (stress_env.get (& name))
+        [(stress_env.EnvSomeString value) (string.eq value "1")]
+        [(stress_env.EnvNoString) false]))))
+
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-native-stress-canaries-ok?) : bool
+    (and
+      (= compiler-tc-tlci-native-stress-canary-a 1597463007)
+      (= compiler-tc-tlci-native-stress-canary-b 324508639)
+      (embedded_tlci.compiler-embedded-stdlib-tlci-stress-canaries-ok?))))
+
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-native-stress-record!
+    [pools : ast.AstNodePoolContext]
+    [catalog-generation : i64]
+    [identity-index : i64]
+    [route-status : i64]
+    [result-kind : i64]
+    [status : i64]) : unit
+    (io.print-error
+      (str_cat.str-cat
+        "tlci-native-stress|pass="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string compiler-tc-tlci-native-stress-pass)
+          6)
+        "|dispatch="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string compiler-tc-tlci-native-stress-pass-dispatch)
+          12)
+        "|total="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string compiler-tc-tlci-native-stress-total-dispatch)
+          12)
+        "|catalog="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string catalog-generation)
+          8)
+        "|identity="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string identity-index)
+          6)
+        "|route="
+        (compiler-tc-tlci-native-stress-pad (string.int->string route-status) 3)
+        "|result="
+        (compiler-tc-tlci-native-stress-pad (string.int->string result-kind) 3)
+        "|status="
+        (compiler-tc-tlci-native-stress-pad (string.int->string status) 3)
+        "|expr="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string (ast.ast-node-pool-context-expr-len pools))
+          12)
+        "|type="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string (ast.ast-node-pool-context-type-len pools))
+          12)
+        "|poolgen="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string (ast.ty-node-pool-generation-value))
+          12)
+        "|image="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string
+            (embedded_tlci.compiler-embedded-stdlib-tlci-stress-image-generation))
+          8)
+        "|release="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string
+            (embedded_tlci.compiler-embedded-stdlib-tlci-stress-release-generation))
+          8)
+        "|session="
+        (compiler-tc-tlci-native-stress-pad
+          (string.int->string
+            (embedded_tlci.compiler-embedded-stdlib-tlci-stress-session-generation))
+          12)
+        "|canary="
+        (if (compiler-tc-tlci-native-stress-canaries-ok?)
+          "11"
+          "00")
+        "\n"))))
+
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-native-stress-pass-start!
+    [pools : ast.AstNodePoolContext]
+    [route-active : bool]) : unit
+    (begin
+      (set!
+        compiler-tc-tlci-native-stress-active
+        (compiler-tc-tlci-native-stress-requested?))
+      (set!
+        compiler-tc-tlci-native-stress-route-status
+        (if route-active
+          1
+          0))
+      (if compiler-tc-tlci-native-stress-active
+        (begin
+          (set!
+            compiler-tc-tlci-native-stress-pass
+            (+ compiler-tc-tlci-native-stress-pass 1))
+          (set! compiler-tc-tlci-native-stress-pass-dispatch 0)
+          (compiler-tc-tlci-native-stress-record!
+            pools
+            0
+            999999
+            compiler-tc-tlci-native-stress-route-status
+            0
+            0))
+        unit))))
+
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-native-stress-dispatch!
+    [pools : ast.AstNodePoolContext]
+    [resolved : tlci_loader_support.TlciResolvedMacroEntry]
+    [result-kind : i64]
+    [status : i64]) : unit
+    (if compiler-tc-tlci-native-stress-active
+      (begin
+        (set!
+          compiler-tc-tlci-native-stress-pass-dispatch
+          (+ compiler-tc-tlci-native-stress-pass-dispatch 1))
+        (set!
+          compiler-tc-tlci-native-stress-total-dispatch
+          (+ compiler-tc-tlci-native-stress-total-dispatch 1))
+        (if (or
+          (= compiler-tc-tlci-native-stress-pass-dispatch 1)
+          (= (% compiler-tc-tlci-native-stress-pass-dispatch 256) 0)
+          (= compiler-tc-tlci-native-stress-pass-dispatch 13552)
+          (not (= result-kind 1)))
+          (compiler-tc-tlci-native-stress-record!
+            pools
+            (struct-get resolved catalog-generation)
+            (struct-get resolved entry-index)
+            1
+            result-kind
+            status)
+          unit))
+      unit)))
+
+(cfg
+  (all embedded-stdlib-tlci tlci-native-route-stress)
+  (define (compiler-tc-tlci-native-stress-pass-finish!
+    [pools : ast.AstNodePoolContext]
+    [status : i64]) : unit
+    (if compiler-tc-tlci-native-stress-active
+      (begin
+        (compiler-tc-tlci-native-stress-record!
+          pools
+          0
+          999999
+          compiler-tc-tlci-native-stress-route-status
+          6
+          status)
+        (set! compiler-tc-tlci-native-stress-active false))
+      unit)))
+
 ;; Execute a resolved native entry with either directly prepared operands or
 ;; the exact values in an interpreted binding. The direct mode starts at
 ;; `index = count`, so it performs no parameter-name lookup. A successful call
@@ -93032,6 +93240,13 @@
                   (match dispatch-result
                     [(tlci_loader_support.ResultTlciMacroDispatch.Err message)
                       (begin
+                        (cfg
+                          (all embedded-stdlib-tlci tlci-native-route-stress)
+                          (compiler-tc-tlci-native-stress-dispatch!
+                            host-pools
+                            resolved
+                            5
+                            9))
                         (embedded_tlci.compiler-comptime-host-session-close!)
                         (MacroNativeStdlibTlciResult.Err
                           (ctfe_support.ctfe-diagnostic-at-expr
@@ -93048,6 +93263,19 @@
                               [value : ctfe_support.CompilerCtfeValue
                                 (embedded_tlci.compiler-comptime-host-result-value)]
                               (begin
+                                (cfg
+                                  (all
+                                    embedded-stdlib-tlci
+                                    tlci-native-route-stress)
+                                  (compiler-tc-tlci-native-stress-dispatch!
+                                    host-pools
+                                    resolved
+                                    (if (tc-macro-result-module? ret)
+                                      2
+                                      (if (tc-macro-result-decls? ret)
+                                        3
+                                        1))
+                                    0))
                                 (embedded_tlci.compiler-comptime-host-session-close!)
                                 (cfg
                                   compile-profile
@@ -93085,6 +93313,15 @@
                               resolved)
                               [(tlci_loader_support.ResultTlciLoaderUnit.Ok)
                                 (begin
+                                  (cfg
+                                    (all
+                                      embedded-stdlib-tlci
+                                      tlci-native-route-stress)
+                                    (compiler-tc-tlci-native-stress-dispatch!
+                                      host-pools
+                                      resolved
+                                      4
+                                      0))
                                   (embedded_tlci.compiler-comptime-host-session-close!)
                                   (cfg
                                     compile-profile
@@ -93097,6 +93334,15 @@
                               [(tlci_loader_support.ResultTlciLoaderUnit.Err
                                   message)
                                 (begin
+                                  (cfg
+                                    (all
+                                      embedded-stdlib-tlci
+                                      tlci-native-route-stress)
+                                    (compiler-tc-tlci-native-stress-dispatch!
+                                      host-pools
+                                      resolved
+                                      5
+                                      9))
                                   (embedded_tlci.compiler-comptime-host-session-close!)
                                   (MacroNativeStdlibTlciResult.Err
                                     (ctfe_support.ctfe-diagnostic-at-expr
@@ -93124,6 +93370,15 @@
                                     identity
                                     status))]
                               (begin
+                                (cfg
+                                  (all
+                                    embedded-stdlib-tlci
+                                    tlci-native-route-stress)
+                                  (compiler-tc-tlci-native-stress-dispatch!
+                                    host-pools
+                                    resolved
+                                    5
+                                    status))
                                 (embedded_tlci.compiler-comptime-host-session-close!)
                                 (MacroNativeStdlibTlciResult.Err
                                   (ctfe_support.ctfe-diagnostic-at-expr
@@ -100721,7 +100976,15 @@
         tlci-native-route
         (cfg
           windows
-          false
+          (cfg
+            (all embedded-stdlib-tlci tlci-native-route-stress)
+            (if (compiler-tc-tlci-native-stress-requested?)
+              (or
+                (cload.compiler-load-session-state-embedded-stdlib-source-used?
+                  load-state)
+                (cload.compiler-load-embedded-provenance-noted?))
+              false)
+            false)
           (or
             (cload.compiler-load-session-state-embedded-stdlib-source-used?
               load-state)
@@ -100731,6 +100994,11 @@
       embedded-stdlib-tlci
       (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
     (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
+    (cfg
+      (all embedded-stdlib-tlci tlci-native-route-stress)
+      (compiler-tc-tlci-native-stress-pass-start!
+        pools
+        macro-expand-stdlib-tlci-route-active))
     (tc-stdlib-comptime-macro-surface-ok-reset!)
     (macro-generated-module-memo-reset!)
     (tc-macro-abstract-proof-reset!)
@@ -100770,6 +101038,9 @@
               (cfg
                 embedded-stdlib-tlci
                 (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+              (cfg
+                (all embedded-stdlib-tlci tlci-native-route-stress)
+                (compiler-tc-tlci-native-stress-pass-finish! pools 0))
               (let
                 [_profile-owners : unit
                   (macro-expand-allocation-profile-snapshot! 0)]
@@ -100805,6 +101076,9 @@
               (cfg
                 embedded-stdlib-tlci
                 (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+              (cfg
+                (all embedded-stdlib-tlci tlci-native-route-stress)
+                (compiler-tc-tlci-native-stress-pass-finish! pools 1))
               (macro-expand-allocation-profile-snapshot! 0)
               (macro-expand-scratch-release!)
               (tc-job-state-reset-derived-caches! job-state)

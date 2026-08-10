@@ -80737,14 +80737,82 @@
               unit)]))
       found)))
 
+(define (macro-segmented-module-local-root-shadow-note-at!
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [decls : ast.AstDeclList]
+  [index : i64]
+  [cur-module-id : i64]) : i64
+  (match (ast.ast-decl-list-ref-borrowed (& decls) index)
+    [(ast.AstDecl.Module _)
+      (ast.ast-decl-list-module-id-at
+        (& decls)
+        index
+        cbi.compiler-builtin-id-fix-empty)]
+    [_
+      (begin
+        (if (= cur-module-id cbi.compiler-builtin-id-fix-empty)
+          (tc-module-local-root-shadow-decl-note!
+            seen
+            (ast.ast-decl-list-ref decls index))
+          unit)
+        cur-module-id)]))
+
+(define (macro-segmented-module-local-root-shadow-names-note!
+  [state : TcJobState]
+  [seen : (&mut seen tc_i64_i64_map.Map)]) : unit
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [node-address : i64 (struct-get data head)]
+    [node-index : i64 (struct-get data cursor)]
+    (begin
+      (while (>= prefix-index 0)
+        (begin
+          (set!
+            cur-module-id
+            (macro-segmented-module-local-root-shadow-note-at!
+              seen
+              prefix
+              prefix-index
+              cur-module-id))
+          (set! prefix-index (- prefix-index 1))))
+      (while (> node-address 0)
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data node-address)]
+          [decls : ast.AstDeclList (struct-get node decls)]
+          [count : i64 (ast.ast-decl-list-len (& decls))]
+          (begin
+            (while (< node-index count)
+              (begin
+                (set!
+                  cur-module-id
+                  (macro-segmented-module-local-root-shadow-note-at!
+                    seen
+                    decls
+                    node-index
+                    cur-module-id))
+                (set! node-index (+ node-index 1))))
+            (set! node-address (struct-get node next))
+            (set! node-index 0)))))))
+
 (define (macro-segmented-module-local-env-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [target-module-id : i64]) : ResultTcEnv
   (let
     [state : TcJobState (tc-context-job-state ctx)]
-    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
-    [done : bool false]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
+    [node-address : i64 (struct-get data head)]
+    [node-index : i64 (struct-get data cursor)]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     ;; This map grows only to root plus target-module names. A whole-program
     ;; reserve retained hundreds of MiB across cached module environments;
@@ -80756,62 +80824,64 @@
     (begin
       ;; Root declarations shadow imported module-local aliases regardless of
       ;; segment boundaries, matching tc-module-local-env-list's index pass.
-      (while (not done)
-        (match (macro-segmented-program-step iter)
-          [(MacroSegmentedProgramStep.Nil) (set! done true)]
-          [(MacroSegmentedProgramStep.Cons item rest)
-            (begin
-              (set! iter rest)
-              (match (ast.ast-decl-list-ref-borrowed
-                (& (struct-get item decls))
-                (struct-get item index))
-                [(ast.AstDecl.Module _)
-                  (set!
-                    cur-module-id
-                    (ast.ast-decl-list-module-id-at
-                      (& (struct-get item decls))
-                      (struct-get item index)
-                      cbi.compiler-builtin-id-fix-empty))]
-                [_
-                  (if (= cur-module-id cbi.compiler-builtin-id-fix-empty)
-                    (tc-module-local-root-shadow-decl-note!
-                      (&mut seen)
-                      (macro-segmented-program-borrow-decl item))
-                    unit)])
-              unit)]))
-      (set! iter (macro-segmented-program-iter state))
-      (set! done false)
-      (set! cur-module-id cbi.compiler-builtin-id-fix-empty)
-      (while (and ok (not done))
-        (match (macro-segmented-program-step iter)
-          [(MacroSegmentedProgramStep.Nil) (set! done true)]
-          [(MacroSegmentedProgramStep.Cons item rest)
-            (begin
-              (set! iter rest)
-              (match (ast.ast-decl-list-ref-borrowed
-                (& (struct-get item decls))
-                (struct-get item index))
-                [(ast.AstDecl.Module _)
-                  (set!
-                    cur-module-id
-                    (ast.ast-decl-list-module-id-at
-                      (& (struct-get item decls))
-                      (struct-get item index)
-                      cbi.compiler-builtin-id-fix-empty))]
-                [_
-                  (if (= cur-module-id target-module-id)
-                    (match (tc-module-local-env-add-decl
-                      ctx
-                      cur-env
-                      (&mut seen)
-                      (macro-segmented-program-borrow-decl item))
-                      [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
-                      [(ResultTcEnv.Err step-message)
-                        (begin
-                          (set! message step-message)
-                          (set! ok false))])
-                    unit)])
-              unit)]))
+      (macro-segmented-module-local-root-shadow-names-note! state (&mut seen))
+      (while (and ok (>= prefix-index 0))
+        (begin
+          (match (ast.ast-decl-list-ref-borrowed (& prefix) prefix-index)
+            [(ast.AstDecl.Module _)
+              (set!
+                cur-module-id
+                (ast.ast-decl-list-module-id-at
+                  (& prefix)
+                  prefix-index
+                  cbi.compiler-builtin-id-fix-empty))]
+            [_
+              (if (= cur-module-id target-module-id)
+                (match (tc-module-local-env-add-decl
+                  ctx
+                  cur-env
+                  (&mut seen)
+                  (ast.ast-decl-list-ref prefix prefix-index))
+                  [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                  [(ResultTcEnv.Err step-message)
+                    (begin
+                      (set! message step-message)
+                      (set! ok false))])
+                unit)])
+          (set! prefix-index (- prefix-index 1))))
+      (while (and ok (> node-address 0))
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data node-address)]
+          [decls : ast.AstDeclList (struct-get node decls)]
+          [count : i64 (ast.ast-decl-list-len (& decls))]
+          (begin
+            (while (and ok (< node-index count))
+              (begin
+                (match (ast.ast-decl-list-ref-borrowed (& decls) node-index)
+                  [(ast.AstDecl.Module _)
+                    (set!
+                      cur-module-id
+                      (ast.ast-decl-list-module-id-at
+                        (& decls)
+                        node-index
+                        cbi.compiler-builtin-id-fix-empty))]
+                  [_
+                    (if (= cur-module-id target-module-id)
+                      (match (tc-module-local-env-add-decl
+                        ctx
+                        cur-env
+                        (&mut seen)
+                        (ast.ast-decl-list-ref decls node-index))
+                        [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                        [(ResultTcEnv.Err step-message)
+                          (begin
+                            (set! message step-message)
+                            (set! ok false))])
+                      unit)])
+                (set! node-index (+ node-index 1))))
+            (set! node-address (struct-get node next))
+            (set! node-index 0))))
       (if ok
         (ResultTcEnv.Ok cur-env)
         (ResultTcEnv.Err message)))))
@@ -89248,6 +89318,47 @@
           (set! i (+ i 1))))
       cur-module-id)))
 
+;; The expansion prefix is a prepend builder and therefore stored in reverse
+;; program order. Index it back-to-front without constructing the large
+;; generic segmented iterator result for every declaration.
+(define (macro-alias-cache-index-reverse-range!
+  [decls : ast.AstDeclList]
+  [start : i64]
+  [start-module-id : i64]) : i64
+  (let
+    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [cur-module-id : i64 start-module-id]
+    [i : i64 start]
+    (begin
+      (while (>= i 0)
+        (begin
+          (if (ast.ast-decl-list-unwrapped-module-or-import-at? (& decls) i)
+            (match (ast.ast-decl-unwrapped
+              (array-ref decl-slots (+ decl-offset i)))
+              [(ast.AstDecl.Module next-module)
+                (set! cur-module-id next-module)]
+              [(ast.AstDecl.Import
+                  _decl-meta
+                  (ast.AstImportSpec.Spec _ _ expected maybe-alias _))
+                (match maybe-alias
+                  [(ast.AstMaybeImportAlias.Some alias)
+                    (let
+                      [target-id : i64
+                        (match expected
+                          [(ast.AstMaybeModuleName.Some target) target]
+                          [(ast.AstMaybeModuleName.No) alias])]
+                      (if (>=
+                        (* macro-alias-cache-count 2)
+                        macro-alias-cache-capacity)
+                        (set! macro-alias-cache-complete false)
+                        (macro-alias-cache-put! cur-module-id alias target-id)))]
+                  [(ast.AstMaybeImportAlias.No) unit])]
+              [_ unit])
+            unit)
+          (set! i (- i 1))))
+      cur-module-id)))
+
 ;; One-pass eager index over the program's aliased imports: record every
 ;; (module, alias) -> target mapping in program order (first import wins,
 ;; matching macro-import-alias-target-ids' first-match scan). Each per-pair
@@ -89280,51 +89391,36 @@
 (define (macro-alias-cache-build-segmented! [state : TcJobState]) : unit
   (let
     [count : i64 (macro-segmented-program-decl-count state)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
-    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
-    [done : bool false]
+    [node-address : i64 (struct-get data head)]
+    [node-index : i64 (struct-get data cursor)]
     (begin
       (set! macro-alias-cache-complete true)
-      (while (not done)
-        (match (macro-segmented-program-step iter)
-          [(MacroSegmentedProgramStep.Nil) (set! done true)]
-          [(MacroSegmentedProgramStep.Cons item rest)
-            (begin
-              (set! iter rest)
-              (match (ast.ast-decl-list-ref-borrowed
-                (& (struct-get item decls))
-                (struct-get item index))
-                [(ast.AstDecl.Module _)
-                  (set!
-                    cur-module-id
-                    (ast.ast-decl-list-module-id-at
-                      (& (struct-get item decls))
-                      (struct-get item index)
-                      cbi.compiler-builtin-id-fix-empty))]
-                [(ast.AstDecl.Import _ _)
-                  (match (macro-segmented-program-borrow-decl item)
-                    [(ast.AstDecl.Import
-                        _
-                        (ast.AstImportSpec.Spec _ _ expected maybe-alias _))
-                      (match maybe-alias
-                        [(ast.AstMaybeImportAlias.Some alias)
-                          (let
-                            [target-id : i64
-                              (match expected
-                                [(ast.AstMaybeModuleName.Some target) target]
-                                [(ast.AstMaybeModuleName.No) alias])]
-                            (if (>=
-                              (* macro-alias-cache-count 2)
-                              macro-alias-cache-capacity)
-                              (set! macro-alias-cache-complete false)
-                              (macro-alias-cache-put!
-                                cur-module-id
-                                alias
-                                target-id)))]
-                        [(ast.AstMaybeImportAlias.No) unit])]
-                    [_ unit])]
-                [_ unit])
-              unit)]))
+      (set!
+        cur-module-id
+        (macro-alias-cache-index-reverse-range!
+          prefix
+          (- (ast.ast-decl-list-len (& prefix)) 1)
+          cur-module-id))
+      (while (> node-address 0)
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data node-address)]
+          [decls : ast.AstDeclList (struct-get node decls)]
+          (begin
+            (set!
+              cur-module-id
+              (macro-alias-cache-index-range!
+                decls
+                node-index
+                (ast.ast-decl-list-len (& decls))
+                cur-module-id))
+            (set! node-address (struct-get node next))
+            (set! node-index 0))))
       (set! macro-alias-cache-built-end-module-id cur-module-id)
       (set! macro-alias-cache-built true)
       (set! macro-alias-cache-built-segmented true)

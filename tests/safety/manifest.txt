@@ -493,3 +493,21 @@ fixed_array_take_active_cleanup_owner_reject|check-fail|tests/safety/fixed_array
 fixed_array_take_borrow_live_reject|check-fail|tests/safety/fixed_array_take_borrow_live_reject.tl|-|cannot assign to borrowed place `items`
 fixed_array_take_legacy_arity_reject|check-fail|tests/safety/fixed_array_take_legacy_arity_reject.tl|-|expects exactly two operands
 fixed_array_take_global_noncopy_reject|check-fail|tests/safety/fixed_array_take_global_noncopy_reject.tl|-|cannot move out of global `global-items`
+
+# Scalar loop joins distinguish repetition, break, and function-exit paths.
+loop_move_return_paths_ok|check-ok|tests/safety/loop_move_return_paths_ok.tl|-|-
+loop_move_break_paths_ok|check-ok|tests/safety/loop_move_break_paths_ok.tl|-|-
+loop_move_break_post_use_reject|check-fail|tests/safety/loop_move_break_post_use_reject.tl|-|use of moved value `text`
+loop_move_fallthrough_reject|check-fail|tests/safety/loop_move_fallthrough_reject.tl|-|cannot move loop-carried owner value `text`
+loop_move_continue_edge_reject|check-fail|tests/safety/loop_move_continue_edge_reject.tl|-|cannot move loop-carried owner value `text`
+loop_move_use_across_backedge_reject|check-fail|tests/safety/loop_move_use_across_backedge_reject.tl|-|cannot move loop-carried owner value `text`
+loop_move_nested_break_reject|check-fail|tests/safety/loop_move_nested_break_reject.tl|-|cannot move loop-carried owner value `text`
+loop_move_nested_return_ok|check-ok|tests/safety/loop_move_nested_return_ok.tl|-|-
+loop_move_generated_for_return_ok|check-ok|tests/safety/loop_move_generated_for_return_ok.tl|-|-
+loop_move_generated_for_backedge_reject|check-fail|tests/safety/loop_move_generated_for_backedge_reject.tl|-|cannot move loop-carried owner value `text`
+loop_move_diverge_ok|check-ok|tests/safety/loop_move_diverge_ok.tl|-|-
+loop_mut_borrow_exit_paths_ok|check-ok|tests/safety/loop_mut_borrow_exit_paths_ok.tl|-|-
+loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_return_ok.tl|-|-
+loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
+loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
+loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot assign to borrowed place `items[0]`

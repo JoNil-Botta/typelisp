@@ -78,7 +78,7 @@ this table.
 | Non-numeric casts | Static reject | Casts touching non-numeric types are rejected before lowering. See section 3.8. |
 | Array, string, slice, and generated collection bounds | Deterministic runtime trap | Out-of-bounds indexing, invalid slice ranges, invalid buffer lengths, and allocation byte-count overflow trap through the bounds-check abort path. SPMD inactive tail lanes perform no bounds checks or memory accesses. See sections 5.15 and 6.1. |
 | Initialized-before-use and no use-after-move | Static reject | Safe code cannot read an uninitialized place or a place whose move-only value has been moved. Move-only aggregate semantics are specified in section 4.7.2. |
-| Borrow/reference validity and arena escape | Static reject | References and region-tagged values cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Non-lexical last-use shortening applies to straight-line sequences and path-sensitive `if`/`match` joins; loop joins are conservative. See sections 3.9, 3.10, 5.16, and 7.3. |
+| Borrow/reference validity and arena escape | Static reject | References and region-tagged values cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Non-lexical last-use shortening applies to straight-line sequences, path-sensitive `if`/`match` joins, and bounded scalar-loop exit/backedge summaries. See sections 3.9, 3.10, 4.7.2, 5.16, and 7.3. |
 | Mutation through shared references | Static reject | Safe code cannot write through an immutable/shared reference; mutable-reference writes require exclusive access. Aggregate-handle mutation is governed by the move and aliasing rules in sections 4.7.2 and 7.6. |
 | SPMD safe-code data-race freedom | Static reject | Safe `foreach`/SPMD code rejects varying calls, unsupported varying control flow, unsafe shared mutation, and reduction shapes that cannot be proven race-free. See section 5.15. |
 | Task-thread data-race freedom | Static reject | Safe task-threading APIs reject captured, sent, returned, or shared values whose arena owner does not prove storage lifetime across the participating threads, or whose structural classification does not prove race-free access. See section 6.5. |
@@ -2073,10 +2073,14 @@ end at their last in-branch reference use; borrows that escape through the
 branch result, an outer assignment, or a lifetime-parameterized aggregate
 result remain live after the join until the escaping value's last use. Loop
 bodies use the same local shortening for borrows created and killed within one
-iteration. Facts that may be carried by an outer lifetime-bearing local or
-aggregate stay live across later iterations and the loop exit until the
-carried value's last proven use; when the checker cannot prove otherwise it
-keeps the fact live conservatively. A plain auto-borrowed call argument whose
+iteration. Scalar loop joins distinguish normal fallthrough and `continue`
+backedges from `break`, `return`, and statically known divergent-call exits.
+Only facts that reach a backedge constrain the next iteration; break facts join
+the post-loop state, function/divergent exits do not, and the zero-trip entry
+state always reaches the post-loop join. Facts that may be carried by an outer
+lifetime-bearing local or aggregate stay live across later iterations and the
+loop exit until the carried value's last proven use; when the checker cannot
+prove otherwise it keeps the fact live conservatively. A plain auto-borrowed call argument whose
 callee does not return or store a reference tied to the argument lifetime ends
 after the call expression. If the reference result is bound, stored in a
 lifetime-parameterized aggregate, returned, or otherwise remains available as a
@@ -3646,11 +3650,25 @@ exclusive direct-local fact; copying, aliasing, shared/concurrent use, or
 widening either capability to a plain function value rejects. These facts do
 not change function type identity or ABI.
 
-Repeated loop bodies are conservative move contexts. Moving a move-only owner
-binding that is visible before a `while` or `foreach` body is rejected because
-a later iteration could reuse the moved owner. Moving an owner created inside
-the loop body is allowed for that iteration. Body move state is not propagated
-after the loop because the loop may execute zero times.
+Scalar `while` and `foreach` bodies use a bounded path-sensitive move summary;
+scalar `for` inherits this rule through its generated loop. A move-only owner
+or tracked projection visible before the body may be moved only when every
+reachable successor after that move leaves the iteration without reaching a
+backedge. Normal body fallthrough and `continue` reach the current loop's
+iteration edge and therefore reject the move. `break` exits only its nearest
+loop, `return` exits the function, and a direct call whose bound result type is
+`never` diverges; those paths do not reach the current backedge. An inner
+`break` does not escape an enclosing loop and cannot justify moving an outer
+loop-carried owner.
+
+The join keeps separate normal/backedge, continue, break, and
+return/divergence outcomes. Move facts on `break` paths join the state after
+the loop, so a moved place cannot be used there. Return/divergence facts have
+no successor in the function. The pre-loop state also reaches the post-loop
+join because the body may execute zero times; ordinary body fallthrough state
+is not propagated as a zero-trip substitute. Owners created inside the body
+remain available for moves confined to that iteration. These scalar rules do
+not relax the SPMD early-exit restrictions in section 5.15.
 
 **Non-consuming use sites.** A non-consuming use may inspect a move-only value
 without moving it. In v1 these are limited to:

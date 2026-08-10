@@ -4036,6 +4036,26 @@
     unit
     (io.panic "typecheck: qualified enum variant precedence smoke failed")))
 
+;; Dotted variants and bare module-local constructors share the same direct
+;; cache storage but are distinct key domains. A dotted name misclassified as
+;; bare can cache a false constructor miss that poisons later variant lookup.
+(define (compiler-typecheck-smoke-dotted-constructor-cache-domain-ok?) : bool
+  (let
+    [bare-id : i64 (ci.intern "Full")]
+    [dotted-id : i64 (ci.intern "Choice.Full")]
+    [qualified-id : i64 (ci.intern "provider/Full")]
+    (and
+      (tc_core.tc-constructor-non-root-bare-name-id? "entry" bare-id)
+      (not (tc_core.tc-constructor-non-root-bare-name-id? "entry" dotted-id))
+      (not (tc_core.tc-constructor-non-root-bare-name-id? "entry" qualified-id))
+      (not (tc_core.tc-constructor-non-root-bare-name-id? "" bare-id)))))
+
+(test
+  compiler-typecheck-dotted-constructor-cache-domain
+  (if (compiler-typecheck-smoke-dotted-constructor-cache-domain-ok?)
+    unit
+    (io.panic "typecheck: dotted constructor cache domain smoke failed")))
+
 (define (compiler-typecheck-smoke-lazy-import-stdlib-summary-source) : String
   "(module main)
 (import stdlib.vector as vec)
@@ -5787,6 +5807,9 @@
     (unless
       (compiler-typecheck-smoke-qualified-enum-variant-precedence-ok?)
       (io.panic "typecheck: qualified enum variant precedence smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-dotted-constructor-cache-domain-ok?)
+      (io.panic "typecheck: dotted constructor cache domain smoke failed"))
     (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-summary-backed-ok?)
       (io.panic "typecheck: lazy import summary smoke failed"))

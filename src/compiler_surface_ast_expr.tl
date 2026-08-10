@@ -1,5 +1,6 @@
 ;; compiler_surface_ast_expr.tl - exhaustive expression surface codec.
 (import compiler_ast_types as ast)
+(import compiler_intern as ci)
 (import compiler_surface_ast_codec_core as codec)
 
 ;; Embedded surface hydration remaps expression/type identities before later
@@ -9,6 +10,23 @@
 (cfg
   (any compiler-surface-producer compiler-surface-selftest embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
+
+(cfg
+  (any compiler-surface-producer compiler-surface-selftest)
+  (define (surface-ast-write-optional-name!
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]
+    [context : codec.SurfaceAstWriteContext]
+    [name : i64]) : unit
+    (if (< name 0)
+      (codec.surface-ast-write-bool! out false)
+      (begin
+        (codec.surface-ast-write-bool! out true)
+        (codec.surface-ast-write-name! out context name)))))
+
+(define (surface-ast-read-optional-name! [reader : codec.SurfaceAstReader]) : i64
+  (if (codec.surface-ast-read-bool! reader)
+    (codec.surface-ast-read-name! reader)
+    -1))
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest)
@@ -730,7 +748,20 @@
             (ast.ast-for-owned-step-done-name (& payload)))
           (codec.surface-ast-write-i64!
             out
-            (ast.ast-for-owned-step-body (& payload))))])))
+            (ast.ast-for-owned-step-body (& payload))))]
+      [(ast.AstExpr.MacroExpansion inner provenance-id macro-name-id)
+        (begin
+          (codec.surface-ast-write-i64! out 82)
+          (codec.surface-ast-write-i64! out inner)
+          (surface-ast-write-optional-name!
+            out
+            context
+            (ci.intern-composite-left-id-unchecked provenance-id))
+          (surface-ast-write-optional-name!
+            out
+            context
+            (ci.intern-composite-right-id-unchecked provenance-id))
+          (surface-ast-write-optional-name! out context macro-name-id))])))
 
 (define (surface-ast-read-expr! [reader : codec.SurfaceAstReader]) : ast.AstExpr
   (let
@@ -1002,6 +1033,13 @@
             (codec.surface-ast-read-i64! reader)
             (codec.surface-ast-read-i64! reader)
             (codec.surface-ast-read-i64! reader)))]
+      [(= tag 82)
+        (ast.AstExpr.MacroExpansion
+          (codec.surface-ast-read-i64! reader)
+          (ci.intern-composite-pair-id
+            (surface-ast-read-optional-name! reader)
+            (surface-ast-read-optional-name! reader))
+          (surface-ast-read-optional-name! reader))]
       [else
         (begin
           (codec.surface-ast-reader-fail!

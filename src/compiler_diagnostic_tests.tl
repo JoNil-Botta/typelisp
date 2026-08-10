@@ -38,6 +38,20 @@
         "parse: malformed define"))
     "demo.tl:3:7: parse: malformed define"))
 
+(define (compiler-diagnostic-flat-secondary-ok?) : bool
+  (string.eq
+    (compiler_diagnostic.compiler-diagnostic-render
+      (compiler_diagnostic.compiler-diagnostic-with-secondary
+        (compiler_diagnostic.compiler-diagnostic-simple
+          "template.tl"
+          2
+          14
+          "type mismatch")
+        (compiler_diagnostic.CompilerDiagnosticSpan "caller.tl" 7 9 7 15)
+        (compiler_diagnostic.CompilerDiagnosticSomeString
+          "in expansion of macro `demo` invoked here")))
+    "template.tl:2:14: type mismatch\nrelated: caller.tl:7:9: in expansion of macro `demo` invoked here"))
+
 (define (compiler-diagnostic-source-error-ok?) : bool
   (let
     [err : token.SourceError
@@ -386,6 +400,7 @@
 (define (compiler-diagnostic-self-test) : i64
   (begin
     (unless (compiler-diagnostic-render-ok?) (return 1))
+    (unless (compiler-diagnostic-flat-secondary-ok?) (return 1))
     (unless (compiler-diagnostic-source-error-ok?) (return 2))
     (unless (compiler-diagnostic-rewrite-ok?) (return 3))
     (unless (compiler-diagnostic-source-render-ok?) (return 4))

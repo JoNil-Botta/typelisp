@@ -674,6 +674,7 @@ if ! "$COMPILER" compile src/main.tl \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
     --cfg tlci-native-route \
+    --cfg tlci-native-route-stress \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI compile failed"
@@ -684,6 +685,14 @@ if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFI
     >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI link failed"
+fi
+
+# ci-verify reuses this one profile compiler for the sustained production-route
+# gate instead of paying for a second full self-compile. The handoff is written
+# only after a successful link and consumed only after this verifier passes.
+if [ -n "${TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE:-}" ]; then
+    mkdir -p "$(dirname -- "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE")"
+    printf '%s\n' "$PROFILE_BIN" > "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE"
 fi
 
 echo "[compile-profile] verify dense macro profile storage"
@@ -1303,6 +1312,11 @@ fi
 # physical payload bytes. The same migration's simpler concat expansions brought
 # ast_type_pool.typecheck back from 9 to 8 segments: 8,030 used nodes, 8,192
 # capacity, and 196,608 physical payload bytes.
+# #6328's delayed binding-clause expansion markers avoid retaining a wrapper for
+# every captured initializer and bring ast_expr_pool.macro_expand from 54 to 42
+# segments. The authoritative Windows probe measured 2,705,143 used nodes,
+# 2,752,512 capacity, and 88,080,384 physical payload bytes; the other three
+# exact pool boundaries remain unchanged.
 # #6293's derived-symbol table (moving ~50k generated spellings out of the
 # pinned intern pool, plus its tests) crossed the expr typecheck boundary
 # from 29 to 30 segments: the authoritative Windows probe measured 1,902,698
@@ -1332,6 +1346,10 @@ fi
 # crosses the next macro-expand Expr boundary from 53 to 54 segments: the
 # authoritative Windows CI probe measured 3,487,386 used nodes, 3,538,944
 # capacity, and 113,246,208 physical payload bytes.
+# #6424's dead-phi retirement pass, rotation rounds, and flag-exit separation
+# clause crossed ast_expr_pool.typecheck from 31 to 32 segments: the
+# authoritative Windows probe measured 2,032,112 used nodes, 2,097,152
+# capacity, and 67,108,864 physical payload bytes.
 # #5493's removal of the splice-tail rebuild plans and filtered-environment
 # walkers brings ast_type_pool.macro_expand back from 24 to 23 segments: the
 # authoritative Windows probe measured 22,788 used nodes, 23,552 capacity, and

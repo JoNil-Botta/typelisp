@@ -1534,6 +1534,8 @@
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (tltest-reach-mark-expr (ast.ast-node-get inner-box) names)]
     [(ast.AstExpr.Literal _) names]
     [(ast.AstExpr.Var name) (tltest-reach-mark-source-name names name)]
     [(ast.AstExpr.Binary _ left-box right-box)

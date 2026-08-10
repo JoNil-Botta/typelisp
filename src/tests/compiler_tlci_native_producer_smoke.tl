@@ -1009,9 +1009,26 @@
 ;; `(comptime.Expr.Int i)` match binds the literal as a compile-time i64, an
 ;; inner `(comptime.Expr.Call _ elems)` match binds the carrier's argument
 ;; list as a session local, and the body compares `i` against that local
-;; list's length before indexing it. Check 0 takes the recursive template,
+;; list's length before indexing it. Checks 0 and 3 take the recursive template,
 ;; check 1 exhausts the list and returns the accumulator, and check 2 passes a
-;; non-Int index so the outer default arm answers. Refs #5602.
+;; non-Int index so the outer default arm answers. Check 3 also proves a
+;; diagnostic-only macro marker on the index is transparent to native matching.
+;; The dispatch installs `foldlike` as a visible macro, so the recursive call's
+;; callee must retain its parser span for nested diagnostic frames. Refs #5602,
+;; #6328.
+(define (producer-test-foldlike-callee-ok?
+  [pools : ast.AstNodePoolContext]
+  [callee : i64]) : bool
+  (match (ast.ast-node-pool-context-expr-get pools callee)
+    [(ast.AstExpr.Spanned inner span)
+      (and
+        (> (ast.ast-source-span-start-line span) 0)
+        (> (ast.ast-source-span-start-col span) 0)
+        (match (ast.ast-node-pool-context-expr-get pools inner)
+          [(ast.AstExpr.Var name) (= name (producer-test-name-id "foldlike"))]
+          [_ false]))]
+    [_ false]))
+
 (define (producer-test-foldlike-result-ok?
   [pools : ast.AstNodePoolContext]
   [check : i64]
@@ -1020,15 +1037,12 @@
   [first : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (if (> check 0)
+      (if (or (= check 1) (= check 2))
         (= node acc)
         (match (ast.ast-node-pool-context-expr-get pools node)
           [(ast.AstExpr.Call callee args)
             (and
-              (match (ast.ast-node-pool-context-expr-get pools callee)
-                [(ast.AstExpr.Var name)
-                  (= name (producer-test-name-id "foldlike"))]
-                [_ false])
+              (producer-test-foldlike-callee-ok? pools callee)
               (= (ast.ast-expr-list-len (& args)) 3)
               (= (ast.ast-expr-list-get (& args) 0 -1) carrier)
               (match (ast.ast-node-pool-context-expr-get
@@ -1082,6 +1096,8 @@
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
     (begin
+      (compiler_ctfe.ctfe-visible-macro-names-reset!)
+      (compiler_ctfe.ctfe-visible-macro-name-add! (ci.intern "foldlike"))
       (ast.ast-expr-list-push (&mut items) first)
       (ast.ast-expr-list-push (&mut items) second)
       (set!
@@ -1093,13 +1109,23 @@
         idx
         (if (= check 2)
           acc
-          (ast.ast-node-pool-context-expr-push
-            pools
-            (ast.AstExpr.Literal
-              (ast.ast-lit-int
-                (if (= check 1)
-                  2
-                  0))))))
+          (let
+            [literal : i64
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (ast.AstExpr.Literal
+                  (ast.ast-lit-int
+                    (if (= check 1)
+                      2
+                      0))))]
+            (if (= check 3)
+              (ast.ast-expr-spanned-with-pools
+                pools
+                (ast.ast-node-pool-context-expr-push
+                  pools
+                  (ast.AstExpr.MacroExpansion literal 17 23))
+                (ast.ast-source-span 1 1 1 2))
+              literal))))
       (set!
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr carrier (ast.AstType.Expr)))
@@ -1137,6 +1163,7 @@
                   first))])]
         (begin
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          (compiler_ctfe.ctfe-visible-macro-names-reset!)
           ok)))))
 
 ;; The serialize nested-alias shape, which is the whole point of the `Expr.Var`
@@ -3504,6 +3531,10 @@
                                 (& loaded)
                                 "package.macros/foldlike"
                                 2)
+                              (producer-test-dispatch-foldlike?
+                                (& loaded)
+                                "package.macros/foldlike"
+                                3)
                               (producer-test-dispatch-aliaslike?
                                 (& loaded)
                                 "package.macros/aliaslike"

@@ -67,6 +67,54 @@
 (define compiler-embedded-stdlib-tlci-session-error : (__tl_dyn-array String)
   (make-array ""))
 
+;; #5926: bounded lifecycle evidence for the production-route stress compiler.
+;; These cells are absent from ordinary/published builds. They count successful
+;; image maps, releases, and callback-host sessions across compile --batch pool
+;; resets; paired canaries make the durable checkpoint fail closed if the old
+;; sustained-dispatch corruption reaches adjacent compiler globals.
+(cfg
+  tlci-native-route-stress
+  (define compiler-embedded-stdlib-tlci-stress-image-generations : i64
+    0))
+(cfg
+  tlci-native-route-stress
+  (define compiler-embedded-stdlib-tlci-stress-release-generations : i64
+    0))
+(cfg
+  tlci-native-route-stress
+  (define compiler-embedded-stdlib-tlci-stress-session-generations : i64
+    0))
+(cfg
+  tlci-native-route-stress
+  (define compiler-embedded-stdlib-tlci-stress-canary-a : i64
+    610839776))
+(cfg
+  tlci-native-route-stress
+  (define compiler-embedded-stdlib-tlci-stress-canary-b : i64
+    270544960))
+
+(cfg
+  tlci-native-route-stress
+  (define (compiler-embedded-stdlib-tlci-stress-image-generation) : i64
+    compiler-embedded-stdlib-tlci-stress-image-generations))
+
+(cfg
+  tlci-native-route-stress
+  (define (compiler-embedded-stdlib-tlci-stress-release-generation) : i64
+    compiler-embedded-stdlib-tlci-stress-release-generations))
+
+(cfg
+  tlci-native-route-stress
+  (define (compiler-embedded-stdlib-tlci-stress-session-generation) : i64
+    compiler-embedded-stdlib-tlci-stress-session-generations))
+
+(cfg
+  tlci-native-route-stress
+  (define (compiler-embedded-stdlib-tlci-stress-canaries-ok?) : bool
+    (and
+      (= compiler-embedded-stdlib-tlci-stress-canary-a 610839776)
+      (= compiler-embedded-stdlib-tlci-stress-canary-b 270544960))))
+
 (define (compiler-embedded-stdlib-tlci-session-image-shared-view) : (__tl_dyn-array
     loader.TlciLoadedImage)
   (cfg
@@ -230,6 +278,11 @@
                 (set!
                   (array-ref compiler-embedded-stdlib-tlci-session-state 0)
                   1)
+                (cfg
+                  tlci-native-route-stress
+                  (set!
+                    compiler-embedded-stdlib-tlci-stress-image-generations
+                    (+ compiler-embedded-stdlib-tlci-stress-image-generations 1)))
                 true)]))])))
 
 (define (compiler-embedded-stdlib-tlci-catalog-lookup [name : String]) : CompilerEmbeddedStdlibTlciLookup
@@ -284,12 +337,18 @@
       (set! (array-ref compiler-embedded-stdlib-tlci-session-state 0) 0)
       (set! (array-ref compiler-embedded-stdlib-tlci-session-error 0) "")
       (if (= state 1)
-        (match (loader.tlci-loader-release
-          (array-ref
-            (compiler-embedded-stdlib-tlci-session-image-shared-view)
-            0))
-          [(loader.ResultTlciLoaderUnit.Ok) unit]
-          [(loader.ResultTlciLoaderUnit.Err _) unit])
+        (begin
+          (match (loader.tlci-loader-release
+            (array-ref
+              (compiler-embedded-stdlib-tlci-session-image-shared-view)
+              0))
+            [(loader.ResultTlciLoaderUnit.Ok) unit]
+            [(loader.ResultTlciLoaderUnit.Err _) unit])
+          (cfg
+            tlci-native-route-stress
+            (set!
+              compiler-embedded-stdlib-tlci-stress-release-generations
+              (+ compiler-embedded-stdlib-tlci-stress-release-generations 1))))
         unit))))
 
 ;; Map the embedded image through the production W^X loader, execute its image
@@ -429,6 +488,11 @@
   [cookie : i64]
   [reflections : ctfe_support.CtfeReflectInfoList]) : unit
   (begin
+    (cfg
+      tlci-native-route-stress
+      (set!
+        compiler-embedded-stdlib-tlci-stress-session-generations
+        (+ compiler-embedded-stdlib-tlci-stress-session-generations 1)))
     (set! (array-ref compiler-comptime-host-pools 0) pools)
     (set! (array-ref compiler-comptime-host-reflections 0) reflections)
     (let
@@ -655,13 +719,17 @@
     [(ctfe_support.CtfeMaybeSyntaxPools.None)
       (ctfe_support.CompilerCtfeValue.Expr node (ast.AstType.Expr))]))
 
-;; The `Spanned`-unwrapped expression an operand denotes, mirroring
+;; The diagnostic-wrapper-free expression an operand denotes, mirroring
 ;; `ctfe-match-expr-variant`'s `ctfe-expr-unspan` before it inspects a variant.
 (define (compiler-comptime-host-unspanned-expr
   [pools : ast.AstNodePoolContext]
   [expr : ast.AstExpr]) : ast.AstExpr
   (match expr
     [(ast.AstExpr.Spanned inner _)
+      (compiler-comptime-host-unspanned-expr
+        pools
+        (ast.ast-node-pool-context-expr-get pools inner))]
+    [(ast.AstExpr.MacroExpansion inner _ _)
       (compiler-comptime-host-unspanned-expr
         pools
         (ast.ast-node-pool-context-expr-get pools inner))]
@@ -1910,9 +1978,9 @@
 
 (define (compiler-comptime-host-callback-expr-call
   [session : i64]
-  [_arg-a : i64]
-  [_arg-b : i64]
-  [_arg-c : i64]) : i64
+  [arg-a : i64]
+  [arg-b : i64]
+  [arg-c : i64]) : i64
   (if (or
     (= compiler-comptime-host-session-cookie 0)
     (not (= session compiler-comptime-host-session-cookie)))
@@ -1943,13 +2011,30 @@
                 (match args-value
                   [(ctfe_support.CompilerCtfeValue.ExprList items)
                     (let
+                      [pools : ast.AstNodePoolContext
+                        (array-ref
+                          (compiler-comptime-host-global-shared-view
+                            compiler-comptime-host-pools)
+                          0)]
+                      [macro-call? : bool
+                        (ctfe_support.ctfe-result-macro-provenance-call-head-with-pools?
+                          pools
+                          callee-node)]
+                      [provenance-callee-node : i64
+                        (if (and macro-call? (> arg-a 0))
+                          (ast.ast-expr-spanned-with-pools
+                            pools
+                            callee-node
+                            (ast.ast-source-span
+                              arg-a
+                              arg-b
+                              (shr arg-c 32)
+                              (bit-and arg-c 4294967295)))
+                          callee-node)]
                       [node : i64
                         (ctfe_support.ctfe-ast-expr-call-with-provenance
-                          (array-ref
-                            (compiler-comptime-host-global-shared-view
-                              compiler-comptime-host-pools)
-                            0)
-                          callee-node
+                          pools
+                          provenance-callee-node
                           items)]
                       (begin
                         (set!
@@ -2988,9 +3073,21 @@
                   (ctfe_support.ctfe-expr-binding-clause-type clause)
                   (ctfe_support.ctfe-untyped-expr-type))]
               [else
-                (ctfe_support.CompilerCtfeValue.Expr
-                  (ctfe_support.ctfe-expr-binding-clause-init clause)
-                  clause.init-produced)])]
+                (let
+                  [produced : ast.AstType clause.init-produced]
+                  [pools : ast.AstNodePoolContext
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)]
+                  (ctfe_support.CompilerCtfeValue.Expr
+                    (ctfe_support.ctfe-caller-origin-expr-node-with-pools
+                      pools
+                      (ctfe_support.ctfe-expr-binding-clause-init clause)
+                      produced)
+                      (ctfe_support.ctfe-caller-origin-expr-type-inner-with-pools
+                        pools
+                        produced)))])]
           (begin
             (set!
               compiler-comptime-host-stack-len

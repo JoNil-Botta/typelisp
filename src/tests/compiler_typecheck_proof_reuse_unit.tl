@@ -645,6 +645,14 @@
                           (ast.ast-node-pool-context-expr-push
                             pools
                             (ast.AstExpr.Var next-helper-id))]
+                        [literal-body-id : i64
+                          (ast.ast-node-pool-context-expr-push
+                            pools
+                            (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+                        [macro-body-id : i64
+                          (ast.ast-node-pool-context-expr-push
+                            pools
+                            (ast.AstExpr.MacroExpansion literal-body-id 17 23))]
                         [first-reference-decl : ast.AstDecl
                           (ast.ast-decl-def-id
                             first-qualified-id
@@ -656,6 +664,30 @@
                             ast.AstMaybeType.No
                             next-body-id)]
                         (begin
+                          ;; Diagnostic macro provenance is transparent on
+                          ;; either side of the exact expression walk.
+                          (tc_core.scratch-reset-functions)
+                          (if (and
+                            (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                              (tc_core.lookup-key-id "tc-exact-first")
+                              (tc_core.lookup-key-id "tc-exact-next"))
+                            (tc_core.tc-proof-reuse-session-ast-expr-exact?
+                              ctx
+                              (tc_core.tc-context-expr-get ctx macro-body-id)
+                              (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))
+                            unit
+                            (set! ok false))
+                          (tc_core.scratch-reset-functions)
+                          (if (and
+                            (tc_core.tc-proof-reuse-session-identity-preflight-ids?
+                              (tc_core.lookup-key-id "tc-exact-first")
+                              (tc_core.lookup-key-id "tc-exact-next"))
+                            (tc_core.tc-proof-reuse-session-ast-expr-exact?
+                              ctx
+                              (ast.AstExpr.Literal (ast.AstLiteral.Bool true))
+                              (tc_core.tc-context-expr-get ctx macro-body-id)))
+                            unit
+                            (set! ok false))
                           ;; The declaration names themselves may carry the
                           ;; generated identity substitution, but a body
                           ;; reference to first/helper -> next/helper is

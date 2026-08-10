@@ -2128,6 +2128,8 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (selfhost-lint-dead-expr-refs (ast.ast-node-get inner-box) refs)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (selfhost-lint-dead-expr-refs (ast.ast-node-get inner-box) refs)]
     [(ast.AstExpr.Literal _) refs]
     [(ast.AstExpr.Var name) (selfhost-lint-dead-ref-add-id refs name)]
     [(ast.AstExpr.Binary _ left right)

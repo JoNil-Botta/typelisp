@@ -477,7 +477,22 @@ run_with_compiler "$STAGE2_BIN" "ISPC point-transform corpus contract" scripts/v
 run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 prelude macro mutation guard" scripts/verify-prelude-mutation.sh
+COMPILE_PROFILE_CLI_PATH_FILE="$ROOT/target/ci-verify-compile-profile-cli.path"
+rm -f "$COMPILE_PROFILE_CLI_PATH_FILE"
+TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE=$COMPILE_PROFILE_CLI_PATH_FILE
+export TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE
 run_with_compiler "$STAGE2_BIN" "stage2 compile-profile verifier" scripts/verify-compile-profile.sh
+unset TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE
+if [ ! -s "$COMPILE_PROFILE_CLI_PATH_FILE" ]; then
+    required_gate_unavailable "TLCI native route sustained stress" \
+        "compile-profile verifier did not publish its stress-enabled compiler path"
+fi
+COMPILE_PROFILE_BIN=$(sed -n '1p' "$COMPILE_PROFILE_CLI_PATH_FILE")
+ensure_executable "compile-profile" "$COMPILE_PROFILE_BIN"
+run_with_compiler \
+    "$COMPILE_PROFILE_BIN" \
+    "TLCI native route sustained stress" \
+    scripts/verify-tlci-native-route-stress.sh
 run_with_compiler "$STAGE2_BIN" "stage2 compile-startup-profile verifier" scripts/verify-compile-startup-profile.sh
 run_with_compiler "$STAGE2_BIN" "stage2 allocation-profile verifier" scripts/verify-allocation-profile.sh
 run_with_compiler "$STAGE2_BIN" "stage2 math exp codegen verifier" scripts/verify-math-exp-codegen.sh

@@ -196,7 +196,24 @@
   (match (compiler_ast_types.ast-node-get node)
     [(compiler_ast_types.AstExpr.Spanned inner _)
       (embedded-stdlib-tlci-unwrap-expr inner)]
+    [(compiler_ast_types.AstExpr.MacroExpansion inner _ _)
+      (embedded-stdlib-tlci-unwrap-expr inner)]
     [_ (compiler_ast_types.ast-node-get node)]))
+
+(defenum EmbeddedNativeMaybeSourceSpan
+  (Some compiler_ast_types.AstSourceSpan)
+  (None))
+
+;; Native quasiquote reconstruction normally drops parser wrappers. Retain a
+;; call head's template span so a generated call to another macro can report
+;; the same expansion frame as the interpreted route.
+(define (embedded-native-call-head-source-span [node : i64]) : EmbeddedNativeMaybeSourceSpan
+  (match (compiler_ast_types.ast-node-get node)
+    [(compiler_ast_types.AstExpr.Spanned _ span)
+      (EmbeddedNativeMaybeSourceSpan.Some span)]
+    [(compiler_ast_types.AstExpr.MacroExpansion inner _ _)
+      (embedded-native-call-head-source-span inner)]
+    [_ EmbeddedNativeMaybeSourceSpan.None]))
 
 (define (embedded-stdlib-tlci-param-index
   [params : (& params compiler_ast_types.AstMacroParamList)]
@@ -1069,6 +1086,8 @@
           1))]
     [(compiler_ast_types.AstExpr.Call func-id args)
       (let
+        [source-span : EmbeddedNativeMaybeSourceSpan
+          (embedded-native-call-head-source-span func-id)]
         [head-opened : i64
           (match (embedded-stdlib-tlci-unwrap-expr func-id)
             [(compiler_ast_types.AstExpr.Var head-id)
@@ -1100,9 +1119,25 @@
                   ops-count
                   (tlci_core.tlci-host-callback-name-shared-view
                     tlci_core.tlci-host-callback-name-expr-call)
-                  "0"
-                  "0"
-                  "0")
+                  (match source-span
+                    [(EmbeddedNativeMaybeSourceSpan.Some span)
+                      (string.int->string
+                        (compiler_ast_types.ast-source-span-start-line span))]
+                    [(EmbeddedNativeMaybeSourceSpan.None) "0"])
+                  (match source-span
+                    [(EmbeddedNativeMaybeSourceSpan.Some span)
+                      (string.int->string
+                        (compiler_ast_types.ast-source-span-start-col span))]
+                    [(EmbeddedNativeMaybeSourceSpan.None) "0"])
+                  (match source-span
+                    [(EmbeddedNativeMaybeSourceSpan.Some span)
+                      (string.int->string
+                        (bit-or
+                          (shl
+                            (compiler_ast_types.ast-source-span-end-line span)
+                            32)
+                          (compiler_ast_types.ast-source-span-end-col span)))]
+                    [(EmbeddedNativeMaybeSourceSpan.None) "0"]))
                 (+ arg-opened 2))))))]
     [(compiler_ast_types.AstExpr.If cond-node then-node else-node)
       (let

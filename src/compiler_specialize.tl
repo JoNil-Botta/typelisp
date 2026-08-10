@@ -4986,6 +4986,18 @@
                 span)
               rewritten-state)]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
+    [(ast.AstExpr.MacroExpansion inner-box provenance-id macro-name-id)
+      (match (spec-rewrite-expr
+        (spec-state-expr-get state inner-box)
+        templates
+        state)
+        [(ResultSpecExpr.Ok rewritten rewritten-state)
+          (ResultSpecExpr.Ok
+            (spec-owner-expr-push
+              (spec-state-owner rewritten-state)
+              (ast.AstExpr.MacroExpansion rewritten provenance-id macro-name-id))
+            rewritten-state)]
+        [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
     [(ast.AstExpr.Literal _)
       (ResultSpecExpr.Ok
         (spec-owner-expr-push (spec-state-owner state) expr)
@@ -6110,6 +6122,17 @@
                 rewritten
                 span))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(ast.AstExpr.MacroExpansion inner-box provenance-id macro-name-id)
+      (match (spec-substitute-values-expr-with-owner
+        owner
+        (spec-owner-expr-get owner inner-box)
+        subs)
+        [(ResultSpecSubExpr.Ok rewritten)
+          (ResultSpecSubExpr.Ok
+            (spec-owner-expr-push
+              owner
+              (ast.AstExpr.MacroExpansion rewritten provenance-id macro-name-id)))]
+        [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(ast.AstExpr.ArrayTake array-box live-box index-box)
       (let
         [array : ast.AstExpr (spec-owner-expr-get owner array-box)]
@@ -7332,6 +7355,17 @@
                 rewritten
                 span))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(ast.AstExpr.MacroExpansion inner-box provenance-id macro-name-id)
+      (match (spec-substitute-types-expr-with-owner
+        owner
+        (spec-owner-expr-get owner inner-box)
+        subs)
+        [(ResultSpecSubExpr.Ok rewritten)
+          (ResultSpecSubExpr.Ok
+            (spec-owner-expr-push
+              owner
+              (ast.AstExpr.MacroExpansion rewritten provenance-id macro-name-id)))]
+        [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(ast.AstExpr.Var name)
       (match (spec-type-subst-lookup subs name)
         [(SpecMaybeId.Some _)

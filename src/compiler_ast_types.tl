@@ -8907,6 +8907,20 @@
         (ast-node-pool-context-expr-get pools inner-id))]
     [_ expr]))
 
+(define (ast-expr-unspan-with-segment-bases
+  [segment-bases : i64]
+  [expr : AstExpr]) : AstExpr
+  (match expr
+    [(AstExpr.Spanned inner-id _)
+      (ast-expr-unspan-with-segment-bases
+        segment-bases
+        (ast-expr-segment-bases-get segment-bases inner-id))]
+    [(AstExpr.MacroExpansion inner-id _ _)
+      (ast-expr-unspan-with-segment-bases
+        segment-bases
+        (ast-expr-segment-bases-get segment-bases inner-id))]
+    [_ expr]))
+
 (define (ast-decl-tag [decl : AstDecl]) : i64
   (match decl
     [(AstDecl.Def decl-meta _ _ _) 1]

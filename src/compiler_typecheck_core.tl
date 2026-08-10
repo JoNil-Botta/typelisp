@@ -34272,6 +34272,17 @@
 ;; name-id-key(intern "module/name") = composite-pair-key-id module-id name-id
 ;; for a non-root bare name; we compute that pair-key directly from the ids
 ;; instead of building and interning the qualified string.
+(define (tc-constructor-non-root-bare-name-id?
+  [module : String]
+  [name-id : i64]) : bool
+  (and
+    (> (string.string-length module) 0)
+    (not (tc-name-qualified-id? name-id))
+    ;; Dotted enum variants use the qualified-variant cache domain below.
+    ;; Treating one as a bare module-local name probes the wrong registry key
+    ;; and can overwrite that same cache entry with a false miss.
+    (< (tc-name-first-dot-id name-id) 0)))
+
 (define (tc-constructor-name-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
     [(TcContext _ symbols registries module ctx-module-id _ _ _ _)
@@ -34281,9 +34292,7 @@
             ctx-module-id
             -1)]
         [non-root-bare? : bool
-          (and
-            (> (string.string-length module) 0)
-            (not (tc-name-qualified-id? name-id)))]
+          (tc-constructor-non-root-bare-name-id? module name-id)]
         [variant-key : i64
           (if non-root-bare?
             (csym.compiler-composite-pair-key-id module-id name-id)

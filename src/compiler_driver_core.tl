@@ -2699,29 +2699,21 @@
         (compiler_load.compiler-load-stdlib-root-configured? stdlib-roots)
         (= (string.string-length configuration) 0))
         CompilerDriverPreludeSurface.Missing
-        (let
-          [previous-arena : i64 (arena.tl_arena_current)]
-          [_set-surface-arena : unit
-            (unsafe
-              (arena.tl_arena_set surface-arena))]
-          [result : CompilerDriverPreludeSurface
-            (match (embedded_tlci.compiler-embedded-stdlib-tlci-surface)
-              [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Unavailable _)
-                CompilerDriverPreludeSurface.Missing]
-              [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Ok
-                  outer-build
-                  source-hash
-                  rodata)
-                (compiler-driver-hydrate-prelude-rodata
-                  outer-build
-                  source-hash
-                  rodata
-                  configuration
-                  pools)])]
-          (begin
-            (unsafe
-              (arena.tl_arena_set previous-arena))
-            result))))))
+        (in-arena
+          (arena.Arena surface-arena)
+          (match (embedded_tlci.compiler-embedded-stdlib-tlci-surface)
+            [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Unavailable _)
+              CompilerDriverPreludeSurface.Missing]
+            [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Ok
+                outer-build
+                source-hash
+                rodata)
+              (compiler-driver-hydrate-prelude-rodata
+                outer-build
+                source-hash
+                rodata
+                configuration
+                pools)]))))))
 
 (define (compiler-driver-note-prelude-source-pipeline!) : unit
   (cfg
@@ -2775,35 +2767,28 @@
   [key : compiler_load.CompilerLoadPreludeCacheKey]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
-  (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [loaded : compiler_load.ResultCompilerLoadWithPaths
+  (in-arena
+    (arena.Arena compiler_ast_types.node-pool-base-arena)
+    (let
+      [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
+        (compiler_load.compiler-load-prelude-cache-key-copy key)]
+      [cold : compiler_load.ResultCompilerLoadWithPaths
+        (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
       (begin
-        (unsafe
-          (arena.tl_arena_set compiler_ast_types.node-pool-base-arena))
-        (let
-          [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
-            (compiler_load.compiler-load-prelude-cache-key-copy key)]
-          [cold : compiler_load.ResultCompilerLoadWithPaths
-            (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
-          (begin
-            (match cold
-              [(compiler_load.ResultCompilerLoadWithPaths.Ok
-                  decls
-                  paths
-                  modules
-                  seen)
-                (compiler-driver-runtime-prelude-cache-store
-                  persistent-key
-                  decls
-                  paths
-                  modules
-                  seen)]
-              [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
-            (unsafe
-              (arena.tl_arena_set prev-arena))
-            cold)))]
-    loaded))
+        (match cold
+          [(compiler_load.ResultCompilerLoadWithPaths.Ok
+              decls
+              paths
+              modules
+              seen)
+            (compiler-driver-runtime-prelude-cache-store
+              persistent-key
+              decls
+              paths
+              modules
+              seen)]
+          [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
+        cold))))
 
 (define (compiler-driver-load-runtime-prelude
   [stdlib-roots : svec.Vec]
@@ -2956,42 +2941,34 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : compiler_ast_types.AstNodePoolContext]) : compiler_load.ResultCompilerLoadWithPaths
-  (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [loaded : compiler_load.ResultCompilerLoadWithPaths
+  (in-arena
+    (arena.Arena (compiler_ast_types.ast-node-pool-context-base-arena pools))
+    (let
+      [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
+        (compiler_load.compiler-load-prelude-cache-key-copy key)]
+      [cold : compiler_load.ResultCompilerLoadWithPaths
+        (compiler-driver-load-runtime-prelude-cold-with-pools
+          load-state
+          stdlib-roots
+          cfgs
+          pools)]
       (begin
-        (unsafe
-          (arena.tl_arena_set
-            (compiler_ast_types.ast-node-pool-context-base-arena pools)))
-        (let
-          [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
-            (compiler_load.compiler-load-prelude-cache-key-copy key)]
-          [cold : compiler_load.ResultCompilerLoadWithPaths
-            (compiler-driver-load-runtime-prelude-cold-with-pools
+        (match cold
+          [(compiler_load.ResultCompilerLoadWithPaths.Ok
+              decls
+              paths
+              modules
+              seen)
+            (compiler-driver-runtime-prelude-cache-store-with-state-and-pools
               load-state
-              stdlib-roots
-              cfgs
+              persistent-key
+              decls
+              paths
+              modules
+              seen
               pools)]
-          (begin
-            (match cold
-              [(compiler_load.ResultCompilerLoadWithPaths.Ok
-                  decls
-                  paths
-                  modules
-                  seen)
-                (compiler-driver-runtime-prelude-cache-store-with-state-and-pools
-                  load-state
-                  persistent-key
-                  decls
-                  paths
-                  modules
-                  seen
-                  pools)]
-              [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
-            (unsafe
-              (arena.tl_arena_set prev-arena))
-            cold)))]
-    loaded))
+          [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
+        cold))))
 
 (define (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
   [load-state : compiler_load.CompilerLoadSessionState]

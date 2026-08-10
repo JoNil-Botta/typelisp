@@ -261,6 +261,9 @@ spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|try
 spmd_foreach_break_reject|check-fail|tests/safety/spmd_foreach_break_reject.tl|-|break inside foreach is not supported
 spmd_foreach_continue_reject|check-fail|tests/safety/spmd_foreach_continue_reject.tl|-|continue inside foreach is not supported
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
+spmd_slice_alias_call_reject|check-fail|tests/safety/spmd_slice_alias_call_reject.tl|-|cannot mutably borrow borrowed place `items`
+spmd_slice_lane_mut_ref_escape_reject|check-fail|tests/safety/spmd_slice_lane_mut_ref_escape_reject.tl|-|foreach varying value type is not supported: (&mut output i64)
+spmd_slice_scatter_reject|check-fail|tests/safety/spmd_slice_scatter_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
 spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support uniform while
 spmd_masked_if_bitwise_float_reject|check-fail|tests/safety/spmd_masked_if_bitwise_float_reject.tl|-|integer operator expects matching integer operands
 spmd_varying_match_string_reject|check-fail|tests/safety/spmd_varying_match_string_reject.tl|-|SPMD masked if result type is not supported: String

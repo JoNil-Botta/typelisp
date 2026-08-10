@@ -20314,6 +20314,8 @@
   (match (ast.ast-node-get expr-id)
     [(ast.AstExpr.Spanned inner-box _)
       (tc-normalize-dotted-local-field-node! env inner-box)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (tc-normalize-dotted-local-field-node! env inner-box)]
     [(ast.AstExpr.Ann inner-box _)
       (tc-normalize-dotted-local-field-node! env inner-box)]
     [(ast.AstExpr.Cast inner-box _)
@@ -35908,6 +35910,8 @@
 (define (tc-call-arg-fact-key [arg : ast.AstExpr]) : i64
   (match arg
     [(ast.AstExpr.Spanned inner-box _) inner-box]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (tc-call-arg-fact-key (ast.ast-node-get inner-box))]
     [_ -1]))
 
 (define (tc-call-arg-fact-lookup [state : TcBodyState] [key : i64]) : TcBodyTypeFact
@@ -40586,6 +40590,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(ast.AstExpr.Var var-name)
       (not
         (and
@@ -41831,6 +41840,11 @@
         expr-bases
         spmd-env
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (tc-spmd-inline-helper-arg-role
+        expr-bases
+        spmd-env
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Ann inner-box _)
       (tc-spmd-inline-helper-arg-role
         expr-bases
@@ -42610,6 +42624,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-spmd-foreach-direct-index expr-bases spmd-env inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-foreach-direct-index expr-bases spmd-env inner))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -42634,6 +42653,11 @@
   [expr : ast.AstExpr]) : ResultTcUnit
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-foreach-index ctx expr-bases env spmd-env inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -42713,6 +42737,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-spmd-masked-if-direct-index expr-bases spmd-env inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-direct-index expr-bases spmd-env inner))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -42740,6 +42769,11 @@
   [expr : ast.AstExpr]) : ResultTcUnit
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-index ctx expr-bases env spmd-env inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -42914,6 +42948,11 @@
   [expr : ast.AstExpr]) : ResultTcUnit
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-expr ctx expr-bases env spmd-env inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -43692,6 +43731,10 @@
       (tc-spmd-scan-body-no-nested-spmd
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Binary _ left-box right-box)
       (tc-spmd-scan-body-no-nested-pair
         expr-bases
@@ -44123,6 +44166,11 @@
   [expr : ast.AstExpr]) : ResultTcSpmdExprInfo
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-reduce-class ctx expr-bases env spmd-env inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -48520,6 +48568,10 @@
   [bound : TcStringList]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (tc-expr-result-uses-cleanup-owner? inner owners bound))]
@@ -55698,6 +55750,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-spmd-value-pure-at expr-bases inner in-index))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-value-pure-at expr-bases inner in-index))]
     [(ast.AstExpr.Literal _) ResultTcUnit.Ok]
     [(ast.AstExpr.SpmdProgramIndex) ResultTcUnit.Ok]
     [(ast.AstExpr.SpmdProgramCount) ResultTcUnit.Ok]
@@ -56738,6 +56795,10 @@
   [expr : ast.AstExpr]) : ResultTcUnit
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
@@ -65778,6 +65839,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-move-bare-var expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-bare-var expr-bases inner))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -65793,6 +65859,11 @@
 (define (tc-move-root-projection-var-id [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeNameId
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-root-projection-var-id expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -65849,6 +65920,11 @@
   [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-aggregate-path-projection? expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -66047,6 +66123,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-move-literal-index expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-literal-index expr-bases inner))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -66066,6 +66147,11 @@
 (define (tc-move-direct-root-base-path [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeMovePath
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-direct-root-base-path expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -66120,6 +66206,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-move-struct-field-path expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-struct-field-path expr-bases inner))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -66147,6 +66238,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-move-tuple-element-path expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-tuple-element-path expr-bases inner))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -66170,6 +66266,11 @@
 (define (tc-move-array-element-path [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeMovePath
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-array-element-path expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -66278,6 +66379,11 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-move-box-projection? expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-box-projection? expr-bases inner))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -66313,6 +66419,11 @@
   [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx expr-bases env inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -71042,6 +71153,16 @@
         moved
         inner-box
         result-ty)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (tc-move-check-global-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        shadowed
+        moved
+        inner-box
+        result-ty)]
     [(ast.AstExpr.If _ then-box else-box)
       (match (tc-move-check-global-result-expr-id
         ctx
@@ -71380,6 +71501,16 @@
   [result-ty : ast.AstType]) : TcMoveResult
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (tc-move-check-result-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        inner-box
+        result-ty)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (tc-move-check-result-expr-id
         ctx
         expr-bases
@@ -72279,6 +72410,11 @@
   [expr : ast.AstExpr]) : TcMaybeMovePath
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (tc-borrow-check-result-direct-borrow-path
+        expr-bases
+        locals
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (tc-borrow-check-result-direct-borrow-path
         expr-bases
         locals
@@ -74420,6 +74556,15 @@
         borrowed
         protected
         inner-box)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (tc-borrow-check-expr-with-protected-id
+        ctx
+        expr-bases
+        env
+        locals
+        borrowed
+        protected
+        inner-box)]
     [(ast.AstExpr.Begin exprs)
       (tc-borrow-check-exprs-with-protected
         ctx
@@ -74581,6 +74726,13 @@
   [lifetime : i64]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (tc-borrow-check-expr-stores-lifetime?
+        ctx
+        expr-bases
+        env
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        lifetime)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (tc-borrow-check-expr-stores-lifetime?
         ctx
         expr-bases
@@ -75097,6 +75249,19 @@
   [expr : ast.AstExpr]) : TcBorrowCheckResult
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr-loop
+          ctx
+          expr-bases
+          env
+          loop-env
+          locals
+          borrowed
+          protected
+          inner))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -77555,6 +77720,11 @@
         ctx
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (tc-borrow-gate-expr-relevant?
+        ctx
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Literal _) false]
     [(ast.AstExpr.BinaryData _) false]
     [(ast.AstExpr.Var _) false]
@@ -78148,7 +78318,11 @@
         [(ast.AstExpr.Var name-id) (TcMaybeMacroCallHead.Some name-id span)]
         [(ast.AstExpr.Spanned nested-id nested-span)
           (tc-macro-call-head ctx (ast.AstExpr.Spanned nested-id nested-span))]
+        [(ast.AstExpr.MacroExpansion expanded-id _ _)
+          (tc-macro-call-head ctx (ast.AstExpr.Spanned expanded-id span))]
         [_ TcMaybeMacroCallHead.No])]
+    [(ast.AstExpr.MacroExpansion inner-id _ _)
+      (tc-macro-call-head ctx (tc-context-expr-get ctx inner-id))]
     [_ TcMaybeMacroCallHead.No]))
 
 ;; Record only call heads whose macro identity has already resolved. A source
@@ -79741,6 +79915,8 @@
 (define (macro-expansion-site-span [ctx : TcContext] [call-expr : ast.AstExpr]) : TcMaybeAstSourceSpan
   (match call-expr
     [(ast.AstExpr.Spanned _ span) (TcMaybeAstSourceSpan.Some span)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (macro-expansion-site-span ctx (tc-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Call func-box _)
       (tc-expr-maybe-span (tc-context-expr-get ctx func-box))]
     [_ (tc-expr-maybe-span call-expr)]))
@@ -87191,6 +87367,8 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
     [(ast.AstExpr.Binary _ left-box right-box)
       (begin
         (macro-hygiene-produced-note-id! expr-bases left-box shared-path?)
@@ -88150,6 +88328,11 @@
         (ast.ast-expr-spanned
           (macro-hygiene-expr expr-bases inner env macro-name depth)
           span))]
+    [(ast.AstExpr.MacroExpansion inner-box provenance-id macro-name-id)
+      (ast.ast-expr-macro-expansion
+        (macro-hygiene-expr expr-bases inner-box env macro-name depth)
+        provenance-id
+        macro-name-id)]
     [(ast.AstExpr.Var name)
       (ast.ast-node-push
         (ast.AstExpr.Var (macro-hygiene-rename-var-id env macro-name name)))]
@@ -91090,6 +91273,10 @@
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (macro-call-decl ctx inner decls call-expr))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        (macro-call-decl ctx inner decls call-expr))]
     [(ast.AstExpr.Var name)
       (if (or
         (csym.compiler-composite-pair-key-id? name)
@@ -91610,6 +91797,8 @@
 (define (macro-expr-span-or-zero [arg : ast.AstExpr]) : ast.AstSourceSpan
   (match arg
     [(ast.AstExpr.Spanned _ span) span]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (macro-expr-span-or-zero (ast.ast-node-get inner-box))]
     [_ (ast.ast-source-span 0 0 0 0)]))
 
 (define (macro-expr-colon? [expr-id : i64]) : bool
@@ -93819,6 +94008,17 @@
         [(ResultMacroExpr.Ok ninner)
           (ResultMacroExpr.Ok (ast.ast-expr-spanned ninner span))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.MacroExpansion inner provenance-id macro-name-id)
+      (match (macro-expand-binding-prefix-form
+        ctx
+        type-env
+        decls
+        depth
+        (ast.ast-node-get inner))
+        [(ResultMacroExpr.Ok ninner)
+          (ResultMacroExpr.Ok
+            (ast.ast-expr-macro-expansion ninner provenance-id macro-name-id))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.BracketClause items)
       (macro-expand-binding-prefix-items ctx type-env decls depth items)]
     [_
@@ -94018,6 +94218,16 @@
           (ast.AstExpr.Spanned
             (macro-generated-type-param-expr pools env inner)
             span)))]
+    [(ast.AstExpr.MacroExpansion inner-box provenance-id macro-name-id)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-node-pool-context-expr-get pools inner-box)]
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (ast.AstExpr.MacroExpansion
+            (macro-generated-type-param-expr pools env inner)
+            provenance-id
+            macro-name-id)))]
     [(ast.AstExpr.Var name)
       (let
         [lookup-id : i64
@@ -97661,6 +97871,8 @@
   (match func
     [(ast.AstExpr.Spanned inner-box _)
       (macro-call-callee-name (ast.ast-node-get inner-box))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (macro-call-callee-name (ast.ast-node-get inner-box))]
     [(ast.AstExpr.Var name)
       (let
         [name-text : String (tc-env-key-display name)]
@@ -97709,6 +97921,8 @@
 (define (macro-call-callee-base-name-id [func : ast.AstExpr]) : TcMaybeNameId
   (match func
     [(ast.AstExpr.Spanned inner-box _)
+      (macro-call-callee-base-name-id (ast.ast-node-get inner-box))]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (macro-call-callee-base-name-id (ast.ast-node-get inner-box))]
     [(ast.AstExpr.Var name-id)
       (cond
@@ -97844,6 +98058,8 @@
   [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
+      (macro-node-uses-macro? ctx decls inner-box)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
       (macro-node-uses-macro? ctx decls inner-box)]
     [(ast.AstExpr.Literal _) false]
     [(ast.AstExpr.Var _) false]
@@ -98776,6 +98992,8 @@
     [(ast.AstExpr.ProgramArgv) false]
     [(ast.AstExpr.ProgramEnvp) false]
     [(ast.AstExpr.Spanned inner-box _) (ctfe-node-has-type-literal? inner-box)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (ctfe-node-has-type-literal? inner-box)]
     [(ast.AstExpr.Call func-box args)
       (begin
         (if (ctfe-node-is-module-value-query? func-box)

@@ -182,6 +182,13 @@ borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_
 borrow_while_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_box_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_box_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
 borrow_call_arg_begin_before_last_use_reject|check-fail|tests/safety/borrow_call_arg_begin_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+borrow_call_arg_final_use_before_nested_write_ok|check-ok|tests/safety/borrow_call_arg_final_use_before_nested_write_ok.tl|-|-
+borrow_call_arg_three_pending_reject|check-fail|tests/safety/borrow_call_arg_three_pending_reject.tl|-|cannot assign to borrowed place `n`
+borrow_call_outer_pending_reject|check-fail|tests/safety/borrow_call_outer_pending_reject.tl|-|cannot assign to borrowed place `n`
+borrow_let_final_use_before_owner_write_ok|check-ok|tests/safety/borrow_let_final_use_before_owner_write_ok.tl|-|-
+borrow_let_three_binding_order_ok|check-ok|tests/safety/borrow_let_three_binding_order_ok.tl|-|-
+borrow_let_later_binding_reject|check-fail|tests/safety/borrow_let_later_binding_reject.tl|-|cannot assign to borrowed place `n`
+borrow_let_closure_call_initializer_ok|check-ok|tests/safety/borrow_let_closure_call_initializer_ok.tl|-|-
 borrow_if_result_before_last_use_reject|check-fail|tests/safety/borrow_if_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_match_result_before_last_use_reject|check-fail|tests/safety/borrow_match_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_if_lifetime_aggregate_result_before_last_use_reject|check-fail|tests/safety/borrow_if_lifetime_aggregate_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`

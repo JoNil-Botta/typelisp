@@ -1170,6 +1170,11 @@ fi
 # authoritative Windows probe measured 3,469,666 used nodes, 3,473,408
 # capacity, and 111,149,056 physical payload bytes. The typecheck Expr pool
 # remains at 32 segments.
+# Reconciled with main through #5493's splice-cache compaction, #6277's backend
+# state ownership, and the dense IR sequence changes, the combined source graph
+# crosses the next macro-expand Expr boundary from 53 to 54 segments: the
+# authoritative Windows CI probe measured 3,487,386 used nodes, 3,538,944
+# capacity, and 113,246,208 physical payload bytes.
 # #5493's removal of the splice-tail rebuild plans and filtered-environment
 # walkers brings ast_type_pool.macro_expand back from 24 to 23 segments: the
 # authoritative Windows probe measured 22,788 used nodes, 23,552 capacity, and
@@ -1284,7 +1289,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 53 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 54 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \

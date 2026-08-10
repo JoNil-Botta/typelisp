@@ -196,10 +196,7 @@
 
 (define (compiler-typecheck-secondary-count
   [labels : cdiag.CompilerDiagnosticLabelList]) : i64
-  (match labels
-    [(CompilerDiagnosticLabelNil) 0]
-    [(CompilerDiagnosticLabelCons _ rest)
-      (+ 1 (compiler-typecheck-secondary-count (box-get rest)))]))
+  (cdiag.compiler-diagnostic-label-list-count labels))
 
 (define (compiler-typecheck-help-present? [diag : cdiag.CompilerDiagnostic]) : bool
   (match (cdiag.compiler-diagnostic-help diag)
@@ -977,17 +974,12 @@
   [notes : cdiag.CompilerDiagnosticNoteList]
   [want-key : String]
   [want-context : String]) : bool
-  (match notes
-    [(CompilerDiagnosticNoteCons identity-note rest)
-      (and
-        (string.eq
-          identity-note
-          (string.append "generated identity: " want-key))
-        (match (box-get rest)
-          [(CompilerDiagnosticNoteCons context-note _)
-            (string.eq context-note want-context)]
-          [(CompilerDiagnosticNoteNil) false]))]
-    [(CompilerDiagnosticNoteNil) false]))
+  (and
+    (= (cdiag.compiler-diagnostic-note-list-count notes) 2)
+    (string.eq
+      (cdiag.compiler-diagnostic-note-list-get notes 0)
+      (string.append "generated identity: " want-key))
+    (string.eq (cdiag.compiler-diagnostic-note-list-get notes 1) want-context)))
 
 (define (compiler-typecheck-generated-fallback-diagnostic-ok?) : bool
   (let

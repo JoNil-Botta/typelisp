@@ -1158,6 +1158,9 @@ fi
 # brings the combined tree back to 31 segments: the authoritative Windows probe
 # measured 2,008,157 used nodes, 2,031,616 capacity, and 65,011,712 physical
 # payload bytes.
+# #6277's function-owned backend scratch context crossed that boundary from 31
+# to 32 segments: the authoritative Windows CI probe measured 2,031,667 used
+# nodes, 2,097,152 capacity, and 67,108,864 physical payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or

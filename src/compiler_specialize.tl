@@ -9747,29 +9747,21 @@
         [(ResultSpecProgram.Err diag)
           (let
             [value : cdiag.CompilerDiagnostic (box-get diag)]
+            [notes : cdiag.CompilerDiagnosticNoteList
+              (cdiag.compiler-diagnostic-notes value)]
             (and
               (string.eq
                 (cdiag.compiler-diagnostic-message value)
                 "generated-decl: duplicate generated key for Box_String has incompatible payload")
-              (match (cdiag.compiler-diagnostic-notes value)
-                [(CompilerDiagnosticNoteCons identity-note rest)
-                  (and
-                    (string.eq
-                      identity-note
-                      (string.append
-                        "generated identity: "
-                        (compiler-generated-decl-expected-string-key)))
-                    (match (box-get rest)
-                      [(CompilerDiagnosticNoteCons declaration-note tail)
-                        (and
-                          (string.eq
-                            declaration-note
-                            "generated declaration: Box_String from sample-family")
-                          (match (box-get tail)
-                            [(CompilerDiagnosticNoteNil) true]
-                            [_ false]))]
-                      [(CompilerDiagnosticNoteNil) false]))]
-                [(CompilerDiagnosticNoteNil) false])))])]
+              (= (cdiag.compiler-diagnostic-note-list-count notes) 2)
+              (string.eq
+                (cdiag.compiler-diagnostic-note-list-get notes 0)
+                (string.append
+                  "generated identity: "
+                  (compiler-generated-decl-expected-string-key)))
+              (string.eq
+                (cdiag.compiler-diagnostic-note-list-get notes 1)
+                "generated declaration: Box_String from sample-family")))])]
     [(parser.ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-incompatible-path-ok?) : bool

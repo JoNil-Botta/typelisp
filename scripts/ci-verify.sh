@@ -180,6 +180,14 @@ run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
 # their output. CI only ever runs the success path, so the diagnostic for a
 # checkout git cannot resolve has no other coverage.
 run_gate "build provenance helper self-tests" scripts/verify-build-provenance.sh
+# The seed capability probe that decides the legacy global shared-view cfg only
+# ever runs one branch per bootstrap, and the branch a published seed selects
+# changes under CI without any source change (#6385). Cover all three branches
+# with stub compilers so a mis-selected cfg fails here, not in the publication
+# workflow that CI never rehearses.
+run_gate \
+    "bootstrap seed global shared-view probe self-tests" \
+    scripts/verify-bootstrap-seed-global-views.sh
 # Help text lives in src/main.tl and option parsing in src/<name>_cli_core.tl,
 # so a flag can be added without the text moving. The existing CLI gates assert
 # that help output exists, not that it matches what the parser accepts.

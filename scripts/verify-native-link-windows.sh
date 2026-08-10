@@ -287,6 +287,61 @@ fi
 assert_empty "$WORKDIR/built-direct-object.stdout"
 assert_empty "$WORKDIR/built-direct-object.stderr"
 
+PACKAGE_DIR="$WORKDIR/direct-object-package"
+PACKAGE_OUTPUT_DIR="$PACKAGE_DIR/target/release"
+PACKAGE_BIN="$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.exe"
+PACKAGE_BIN_DISPLAY=$PACKAGE_BIN
+if command -v cygpath >/dev/null 2>&1; then
+    PACKAGE_BIN_DISPLAY=$(cygpath -m "$PACKAGE_BIN")
+fi
+mkdir -p "$PACKAGE_DIR/src"
+cat > "$PACKAGE_DIR/typelisp.pkg" <<'EOF'
+(package
+  (name "windows_direct_object_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+cat > "$PACKAGE_DIR/src/main.tl" <<'EOF'
+(define (main) : i64 42)
+EOF
+
+echo "[windows-native-link] package bin direct-object without assembler"
+set +e
+TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_package_assembler_fallback__.exe \
+    "$COMPILER" build --manifest-path "$PACKAGE_DIR/typelisp.pkg" \
+    --target windows-x86_64 --opt-level 0 --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/build-package-direct-object.stdout" \
+    2> "$WORKDIR/build-package-direct-object.stderr"
+package_build_status=$?
+set -e
+if [ "$package_build_status" -ne 0 ]; then
+    sed 's/^/  /' "$WORKDIR/build-package-direct-object.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/build-package-direct-object.stderr" >&2 || true
+    fail "package direct-object build without assembler failed"
+fi
+assert_empty "$WORKDIR/build-package-direct-object.stderr"
+assert_contains "$WORKDIR/build-package-direct-object.stdout" "Built $PACKAGE_BIN_DISPLAY"
+[ -s "$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.s" ] || \
+    fail "package direct-object build did not preserve its assembly side artifact"
+[ -s "$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.obj" ] || \
+    fail "package direct-object build did not preserve its object side artifact"
+[ -s "$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.tlci" ] || \
+    fail "package direct-object build did not preserve its tlci artifact"
+[ -x "$PACKAGE_BIN" ] || fail "package direct-object build did not write $PACKAGE_BIN"
+set +e
+"$PACKAGE_BIN" > "$WORKDIR/package-direct-object.stdout" \
+    2> "$WORKDIR/package-direct-object.stderr"
+package_run_status=$?
+set -e
+if [ "$package_run_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/package-direct-object.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/package-direct-object.stderr" >&2 || true
+    fail "package direct-object executable expected exit 42, got $package_run_status"
+fi
+assert_empty "$WORKDIR/package-direct-object.stdout"
+assert_empty "$WORKDIR/package-direct-object.stderr"
+
 echo "[windows-native-link] run --direct direct-object without assembler"
 set +e
 TYPELISP_WINDOWS_DIRECT_OBJECT=1 \

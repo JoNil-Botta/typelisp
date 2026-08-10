@@ -12,6 +12,7 @@
 (import stdlib.io_core)
 (import stdlib.process)
 (import stdlib.string)
+(import stdlib.text_buf)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
 (import stdlib.vector)
@@ -30,6 +31,7 @@
 (import compiler_lower as lower)
 (import compiler_optimize as opt)
 (import compiler_object as cobj)
+(import compiler_windows_coff_core)
 (import doc_test)
 (import test_cli_core)
 (import package_source_core)
@@ -79,6 +81,12 @@
 
 (defenum ResultBuildTarget
   (Ok backend.CompilerBackendTarget)
+  (Err String))
+
+(defenum ResultBuildPackagePreparedRuntime
+  (DirectObject String)
+  (Assembly String String)
+  (Unavailable String)
   (Err String))
 
 (defenum ResultBuildManifest
@@ -2900,7 +2908,7 @@
     [(CompilerPkgKindLib)
       (build_run_core.source-tool-render-archivable-linux-elf-object image)]))
 
-(define (build-package-write-linux-direct-object-artifact
+(define (build-package-write-direct-object-artifact
   [kind : load.CompilerPkgKind]
   [target : backend.CompilerBackendTarget]
   [obj-path : String]
@@ -2971,10 +2979,16 @@
     (build-package-direct-object-owned-path-count paths)
     (build-package-direct-object-owned-path-budget)))
 
-(define (build-package-direct-object-size-ok? [paths : ast.AstDeclPathList]) : bool
-  (or
-    (build_run_core.source-tool-linux-direct-object-enabled?)
-    (build-package-direct-object-within-budget? paths)))
+(define (build-package-direct-object-size-ok?
+  [target : backend.CompilerBackendTarget]
+  [paths : ast.AstDeclPathList]) : bool
+  (match target
+    [(backend.CompilerBackendTarget.Linux)
+      (or
+        (build_run_core.source-tool-linux-direct-object-enabled?)
+        (build-package-direct-object-within-budget? paths))]
+    [(backend.CompilerBackendTarget.Windows)
+      (build-package-direct-object-within-budget? paths)]))
 
 (cfg
   test
@@ -3044,7 +3058,19 @@
       (build-package-direct-object-size-smoke-ok?)
       (io.panic "build package direct object size smoke failed"))))
 
-(define (build-package-try-render-linux-direct-object
+(define (build-package-kind-supports-direct-object?
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]) : bool
+  (match target
+    [(backend.CompilerBackendTarget.Linux) true]
+    ;; COFF archive production remains on the assembler path. Package bins can
+    ;; link the existing backend-owned object directly.
+    [(backend.CompilerBackendTarget.Windows)
+      (match kind
+        [(CompilerPkgKindBin) true]
+        [(CompilerPkgKindLib) false])]))
+
+(define (build-package-try-prepare-direct-runtime
   [kind : load.CompilerPkgKind]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
@@ -3052,32 +3078,68 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : build_run_core.ResultSourceToolString
+  [paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
   (if (and
-    (backend.compiler-backend-target-linux? target)
+    (build-package-kind-supports-direct-object? kind target)
     (build-package-direct-object-mode? mode)
     ;; Direct object emission does not yet preserve scalar f32/f64 parameter
     ;; and return registers for generated private SPMD helpers. Use the
     ;; assembler path so package archives carry the same ABI as side assembly.
     (not (build-package-decls-have-spmd-callable? decls))
-    (build-package-direct-object-size-ok? paths))
-    (match (compiler_driver_core.compiler-driver-emit-package-loaded-object-image
-      ""
-      target
-      true
-      opt-level
-      mode
-      emit-entry
-      crt-entry
-      decls
-      paths)
-      [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
-        (build-package-render-linux-direct-object kind image)]
-      [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
-        (build_run_core.ResultSourceToolString.Err
-          (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (box-get diag)))])
-    (build_run_core.ResultSourceToolString.Err "linux direct object disabled")))
+    (build-package-direct-object-size-ok? target paths))
+    (match target
+      [(backend.CompilerBackendTarget.Linux)
+        (match (compiler_driver_core.compiler-driver-emit-package-loaded-object-image
+          ""
+          target
+          true
+          opt-level
+          mode
+          emit-entry
+          crt-entry
+          decls
+          paths)
+          [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
+            (match (build-package-render-linux-direct-object kind image)
+              [(build_run_core.ResultSourceToolString.Ok object)
+                (ResultBuildPackagePreparedRuntime.DirectObject object)]
+              [(build_run_core.ResultSourceToolString.Err message)
+                (ResultBuildPackagePreparedRuntime.Unavailable message)])]
+          [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
+            (ResultBuildPackagePreparedRuntime.Unavailable
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (box-get diag)))])]
+      [(backend.CompilerBackendTarget.Windows)
+        ;; The shared Windows batch emitter owns the semantic gate as well as
+        ;; the COFF encoding/linkability checks. Its Assembly result is an
+        ;; intentional, stable fallback rather than a compilation failure.
+        (match (compiler_windows_coff_core.compiler-windows-batch-emit-lowered-result
+          ""
+          (compiler_driver_core.compiler-driver-lower-package-loaded
+            ""
+            target
+            mode
+            decls
+            paths)
+          mode
+          opt-level
+          false)
+          [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
+              object)
+            (ResultBuildPackagePreparedRuntime.DirectObject object)]
+          [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
+              asm
+              category)
+            (ResultBuildPackagePreparedRuntime.Assembly
+              (text_buf.render asm)
+              category)]
+          [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
+              diag)
+            (ResultBuildPackagePreparedRuntime.Err
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (box-get diag)))])])
+    (ResultBuildPackagePreparedRuntime.Unavailable
+      "package direct object disabled")))
 
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
@@ -5463,7 +5525,7 @@
                 (let
                   [runtime-status : build_run_core.SourceToolDirectObjectStatus
                     (if runtime-dirty
-                      (build-package-write-linux-direct-object-artifact
+                      (build-package-write-direct-object-artifact
                         kind
                         target
                         (struct-get stage obj)
@@ -5658,7 +5720,7 @@
   [tlci-path : String]
   [tlci-text : String]
   [announce : bool]) : i64
-  (match (build-package-try-render-linux-direct-object
+  (match (build-package-try-prepare-direct-runtime
     kind
     target
     opt-level
@@ -5667,7 +5729,7 @@
     crt-entry
     decls
     owned-paths)
-    [(build_run_core.ResultSourceToolString.Ok object-text)
+    [(ResultBuildPackagePreparedRuntime.DirectObject object-text)
       (build-package-finish-direct-fresh-artifacts
         name
         kind
@@ -5689,7 +5751,29 @@
         tlci-text
         object-text
         announce)]
-    [(build_run_core.ResultSourceToolString.Err _)
+    [(ResultBuildPackagePreparedRuntime.Assembly asm _)
+      (build-package-finish-assembly-fresh-artifacts
+        name
+        kind
+        target
+        opt-level
+        profile
+        mode
+        producer-identity
+        output-dir
+        asm-path
+        obj-path
+        artifact-path
+        link-inputs
+        tlci-path
+        tlci-text
+        asm
+        announce)]
+    [(ResultBuildPackagePreparedRuntime.Err message)
+      (begin
+        (io.print-error message)
+        1)]
+    [(ResultBuildPackagePreparedRuntime.Unavailable _)
       (match (compiler_driver_core.compiler-driver-emit-package-loaded
         ""
         target

@@ -551,7 +551,11 @@
 ;; expression list, list-append pops an element then a list and pushes the
 ;; appended list, push-operand pushes the macro operand named by immediate
 ;; `a`, expr-call pops an argument list then a callee and pushes the call
-;; expression, and commit-result pops the stack top into the session result.
+;; expression. For a quasiquote template call, expr-call's immediates carry the
+;; callee's start line/column and packed end line/column; the host retains that
+;; span when the callee is another visible macro so nested diagnostics match
+;; interpreted expansion. commit-result pops the stack top into the session
+;; result.
 ;; The embedded image and its consumer are always the same source-bound binary.
 ;; Refs #5212.
 (define tlci-host-callback-name-expr-list-empty : String
@@ -709,7 +713,8 @@
 ;; sentinel, like the other data-returning probes); the two accessors push the
 ;; callee expression and the argument list the interpreted
 ;; `(comptime.Expr.Call callee args)` pattern binds. All three unwrap `Spanned`
-;; first, matching `ctfe-match-expr-variant`.
+;; and diagnostic-only macro expansion markers first, matching
+;; `ctfe-match-expr-variant`.
 (define tlci-host-callback-name-operand-expr-call? : String
   "operand-expr-call?")
 (define tlci-host-callback-name-operand-expr-call-callee : String
@@ -721,7 +726,8 @@
 ;; operand-expr-int? answers 1/0 as data with a negative malformed-request
 ;; sentinel; operand-expr-int-value answers the literal's i64 value as data and
 ;; is only issued after the probe, so it has no error channel of its own. Both
-;; unwrap `Spanned` first. local-expr-list-length and local-expr-list-nth are
+;; unwrap `Spanned` and diagnostic-only macro expansion markers first.
+;; local-expr-list-length and local-expr-list-nth are
 ;; the local-slot twins of the operand-only expr-list callbacks: a destructured
 ;; `ExprList` payload lives in a session local, and the fold bodies index it
 ;; there.
@@ -818,8 +824,9 @@
 ;; `comptime.Expr.Var` destructuring: a data probe for "operand `a` is a plain
 ;; identifier expression", and an accessor pushing that identifier's spelling as
 ;; a comptime String so the body can build a derived name from it. The serialize
-;; nested-alias shape needs exactly this pair. Both unwrap `Spanned` first,
-;; matching `ctfe-match-expr-variant`. Refs #5700.
+;; nested-alias shape needs exactly this pair. Both unwrap `Spanned` and
+;; diagnostic-only macro expansion markers first, matching
+;; `ctfe-match-expr-variant`. Refs #5700.
 (define tlci-host-callback-name-operand-expr-var? : String
   "operand-expr-var?")
 (define tlci-host-callback-name-operand-expr-var-name : String

@@ -654,13 +654,17 @@
     [(ctfe_support.CtfeMaybeSyntaxPools.None)
       (ctfe_support.CompilerCtfeValue.Expr node (ast.AstType.Expr))]))
 
-;; The `Spanned`-unwrapped expression an operand denotes, mirroring
+;; The diagnostic-wrapper-free expression an operand denotes, mirroring
 ;; `ctfe-match-expr-variant`'s `ctfe-expr-unspan` before it inspects a variant.
 (define (compiler-comptime-host-unspanned-expr
   [pools : ast.AstNodePoolContext]
   [expr : ast.AstExpr]) : ast.AstExpr
   (match expr
     [(ast.AstExpr.Spanned inner _)
+      (compiler-comptime-host-unspanned-expr
+        pools
+        (ast.ast-node-pool-context-expr-get pools inner))]
+    [(ast.AstExpr.MacroExpansion inner _ _)
       (compiler-comptime-host-unspanned-expr
         pools
         (ast.ast-node-pool-context-expr-get pools inner))]
@@ -1911,9 +1915,9 @@
 
 (define (compiler-comptime-host-callback-expr-call
   [session : i64]
-  [_arg-a : i64]
-  [_arg-b : i64]
-  [_arg-c : i64]) : i64
+  [arg-a : i64]
+  [arg-b : i64]
+  [arg-c : i64]) : i64
   (if (or
     (= compiler-comptime-host-session-cookie 0)
     (not (= session compiler-comptime-host-session-cookie)))
@@ -1944,13 +1948,30 @@
                 (match args-value
                   [(ctfe_support.CompilerCtfeValue.ExprList items)
                     (let
+                      [pools : ast.AstNodePoolContext
+                        (array-ref
+                          (compiler-comptime-host-global-shared-view
+                            compiler-comptime-host-pools)
+                          0)]
+                      [macro-call? : bool
+                        (ctfe_support.ctfe-result-macro-provenance-call-head-with-pools?
+                          pools
+                          callee-node)]
+                      [provenance-callee-node : i64
+                        (if (and macro-call? (> arg-a 0))
+                          (ast.ast-expr-spanned-with-pools
+                            pools
+                            callee-node
+                            (ast.ast-source-span
+                              arg-a
+                              arg-b
+                              (shr arg-c 32)
+                              (bit-and arg-c 4294967295)))
+                          callee-node)]
                       [node : i64
                         (ctfe_support.ctfe-ast-expr-call-with-provenance
-                          (array-ref
-                            (compiler-comptime-host-global-shared-view
-                              compiler-comptime-host-pools)
-                            0)
-                          callee-node
+                          pools
+                          provenance-callee-node
                           items)]
                       (begin
                         (set!

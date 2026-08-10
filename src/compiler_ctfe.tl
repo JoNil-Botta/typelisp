@@ -223,24 +223,27 @@
           (ci.intern-dotted-final-id base-id)
           base-id))]))
 
-(define (ctfe-result-macro-provenance-note-call-head-with-pools!
+(define (ctfe-result-macro-provenance-call-head-with-pools?
   [pools : ast.AstNodePoolContext]
-  [callee-node : i64]) : unit
+  [callee-node : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
     pools
     (ast.ast-node-pool-context-expr-get pools callee-node))
     [(ast.AstExpr.Var name-id)
       (let
         [base-id : i64 (ctfe-macro-provenance-callee-base-name-id name-id)]
-        [hit : bool
-          (or
-            (ctfe_key_map.contains? (& ctfe-visible-macro-name-set) base-id)
-            (= base-id cbi.compiler-builtin-id-fix-when)
-            (= base-id cbi.compiler-builtin-id-fix-unless))]
-        (if hit
-          (ctfe-result-may-contain-macro-note!)
-          unit))]
-    [_ unit]))
+        (or
+          (ctfe_key_map.contains? (& ctfe-visible-macro-name-set) base-id)
+          (= base-id cbi.compiler-builtin-id-fix-when)
+          (= base-id cbi.compiler-builtin-id-fix-unless)))]
+    [_ false]))
+
+(define (ctfe-result-macro-provenance-note-call-head-with-pools!
+  [pools : ast.AstNodePoolContext]
+  [callee-node : i64]) : unit
+  (if (ctfe-result-macro-provenance-call-head-with-pools? pools callee-node)
+    (ctfe-result-may-contain-macro-note!)
+    unit))
 
 (define (ctfe-ast-expr-call-with-provenance
   [pools : ast.AstNodePoolContext]

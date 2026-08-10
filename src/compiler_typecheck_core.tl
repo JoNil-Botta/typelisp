@@ -92848,6 +92848,12 @@
                   capture-expr-types)
                   [(ResultMacroCapturedValue.Ok value)
                     (begin
+                      ;; Fixed captures append caller-origin wrappers through
+                      ;; `ctx`, just as the interpreted binder does. Publish
+                      ;; that advanced pool and hand it to the native host;
+                      ;; the definition snapshot can share the old argument
+                      ;; ids but cannot address the newly appended wrapper.
+                      (tc-context-install-pools! ctx)
                       (array-set! operands param-index value)
                       (macro-capture-params-direct-at
                         ctx
@@ -92861,10 +92867,8 @@
                         (+ param-index 1)
                         (+ arg-index 1)
                         env
-                        (macro-captured-param-syntax-pools-after-check
-                          syntax-pools
-                          value
-                          false)
+                        (ctfe_support.CtfeMaybeSyntaxPools.Some
+                          (tc-context-pools ctx))
                         operands
                         capture-expr-types
                         call-expr))]

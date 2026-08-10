@@ -1142,6 +1142,10 @@ fi
 # #6193's dotted-module migration crossed the next type-pool typecheck boundary,
 # 7 -> 8 segments: the authoritative Windows selfhost probe measured 7346 used
 # nodes, 8192 capacity, and 196608 physical payload bytes.
+# Reconciled with current main through #6425, #6159's lower-state owner crosses
+# the next type-pool typecheck boundary from 8 to 9 segments: the authoritative
+# Windows CI probe measured 8193 used nodes, 9216 capacity, and 221184 physical
+# payload bytes.
 # #6293's derived-symbol table (moving ~50k generated spellings out of the
 # pinned intern pool, plus its tests) crossed the expr typecheck boundary
 # from 29 to 30 segments: the authoritative Windows probe measured 1,902,698
@@ -1231,7 +1235,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_type_pool macro_expand 24 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 8 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 9 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

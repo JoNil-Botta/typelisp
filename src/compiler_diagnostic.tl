@@ -1066,22 +1066,17 @@
       (match (struct-get entry label)
         [(CompilerDiagnosticSomeString text) text]
         [(CompilerDiagnosticNoString) "related location"])]
-    (string.append
+    (str_cat.str-cat
       "\nrelated: "
-      (string.append
-        (if (string.eq path "")
-          primary-path
-          path)
-        (string.append
-          ":"
-          (string.append
-            (string.int->string (compiler-diagnostic-span-start-line (& span)))
-            (string.append
-              ":"
-              (string.append
-                (string.int->string
-                  (compiler-diagnostic-span-start-col (& span)))
-                (string.append ": " label)))))))))
+      (if (string.eq path "")
+        primary-path
+        path)
+      ":"
+      (string.int->string (compiler-diagnostic-span-start-line (& span)))
+      ":"
+      (string.int->string (compiler-diagnostic-span-start-col (& span)))
+      ": "
+      label)))
 
 (define (compiler-diagnostic-render-flat-secondaries
   [primary-path : String]
@@ -1089,19 +1084,17 @@
   (let
     [count : i64 (compiler-diagnostic-label-list-count labels)]
     [index : i64 0]
-    [out : String ""]
+    [out : text_buf.TextBuf (text_buf.empty)]
     (begin
       (while (< index count)
         (begin
-          (set!
+          (text_buf.append!
             out
-            (string.append
-              out
-              (compiler-diagnostic-render-flat-secondary
-                primary-path
-                (compiler-diagnostic-label-list-get labels index))))
+            (compiler-diagnostic-render-flat-secondary
+              primary-path
+              (compiler-diagnostic-label-list-get labels index)))
           (set! index (+ index 1))))
-      out)))
+      (text_buf.render out))))
 
 (define (compiler-diagnostic-render [diag : CompilerDiagnostic]) : String
   (str_cat.str-cat

@@ -4,6 +4,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import stdlib.string)
+(import stdlib.str_cat)
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as diagnostic)
 (import compiler_load as load)
@@ -29,9 +30,7 @@
         (diagnostic.compiler-diagnostic-label-list-get labels index)]
       [span : diagnostic.CompilerDiagnosticSpan (struct-get entry span)]
       [needle : String
-        (string.append
-          "in expansion of macro `"
-          (string.append macro-name "` invoked here"))]
+        (str_cat.str-cat "in expansion of macro `" macro-name "` invoked here")]
       (and
         (string.eq (diagnostic.compiler-diagnostic-span-path (& span)) path)
         (= (diagnostic.compiler-diagnostic-span-start-line (& span)) line)
@@ -244,7 +243,7 @@
               true
               (begin
                 (io.print-error
-                  (string.append
+                  (str_cat.str-cat
                     (diagnostic.compiler-diagnostic-render diag)
                     "\n"))
                 false)))]

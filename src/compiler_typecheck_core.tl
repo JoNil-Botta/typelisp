@@ -72575,12 +72575,19 @@
       (let
         [out2 : TcMovedSet
           (match (struct-get fact kind)
-            [(TcMovedPathKind.BorrowLendingUsed binding-id)
-              (tc-moved-add-path-fact
-                out
-                (struct-get fact path)
-                (TcMovedPathKind.BorrowLendingUsed binding-id)
-                (tc-moved-path-fact-origin fact))]
+            [(TcMovedPathKind.BorrowLendingUsed _)
+              (let
+                [path : TcMovePath (struct-get fact path)]
+                (match (tc-borrow-check-lending-binding
+                  (tc-moved-paths out)
+                  path)
+                  [(TcMaybeNameId.Some binding-id)
+                    (tc-moved-add-path-fact
+                      out
+                      path
+                      (TcMovedPathKind.BorrowLendingUsed binding-id)
+                      (tc-moved-path-fact-origin fact))]
+                  [(TcMaybeNameId.No) out]))]
             [_ out])]
         (tc-borrow-check-propagate-lending-uses-at (box-get rest) out2))]))
 
@@ -72588,6 +72595,58 @@
   [from : TcMovedSet]
   [to : TcMovedSet]) : TcMovedSet
   (tc-borrow-check-propagate-lending-uses-at (tc-moved-paths from) to))
+
+;; A directly called lambda is checked in its own borrow state, so free
+;; reference reads in its body cannot update the enclosing lending markers by
+;; ordinary state propagation. Record those captures at the call boundary;
+;; unlike a stored closure, the direct call itself is the capture's use site.
+(define (tc-borrow-check-note-called-lambda-capture-uses-at
+  [expr-bases : i64]
+  [body : ast.AstExpr]
+  [bound : TcStringList]
+  [facts : TcMovedPathFacts]
+  [out : TcMovedSet]) : TcMovedSet
+  (match facts
+    [(TcMovedPathFacts.Nil) out]
+    [(TcMovedPathFacts.Cons fact rest)
+      (let
+        [out2 : TcMovedSet
+          (match (struct-get fact kind)
+            [(TcMovedPathKind.BorrowLending binding-id)
+              (if (tc-expr-uses-free-name?
+                expr-bases
+                body
+                (tc-env-key-name-text binding-id)
+                bound)
+                (tc-moved-add-path-fact
+                  out
+                  (struct-get fact path)
+                  (TcMovedPathKind.BorrowLendingUsed binding-id)
+                  (tc-moved-path-fact-origin fact))
+                out)]
+            [_ out])]
+        (tc-borrow-check-note-called-lambda-capture-uses-at
+          expr-bases
+          body
+          bound
+          (box-get rest)
+          out2))]))
+
+(define (tc-borrow-check-note-called-lambda-capture-uses
+  [expr-bases : i64]
+  [borrowed : TcMovedSet]
+  [func : ast.AstExpr]) : TcMovedSet
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
+    [(ast.AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(ast.AstLambda.Lambda params _ body-box)
+          (tc-borrow-check-note-called-lambda-capture-uses-at
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body-box)
+            (tc-param-bound-names params)
+            (tc-moved-paths borrowed)
+            borrowed)])]
+    [_ borrowed]))
 
 (define (tc-borrow-check-add-lending-marker
   [borrowed : TcMovedSet]
@@ -77036,7 +77095,7 @@
   [borrowed : TcMovedSet]
   [closure-id : i64]
   [init : ast.AstExpr]) : TcMovedSet
-  (match (ast.ast-expr-unspan init)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
     [(ast.AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
@@ -77230,6 +77289,33 @@
                     bindings
                     body-box
                     index)))]))])))
+
+(define (tc-borrow-check-let-exit
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [outer-locals : TcMovedSet]
+  [outer-borrowed : TcMovedSet]
+  [body-borrowed : TcMovedSet]
+  [body-box : i64]) : TcBorrowCheckResult
+  (let
+    [outer-with-uses : TcMovedSet
+      (tc-borrow-check-propagate-lending-uses body-borrowed outer-borrowed)]
+    (if (<= (tc-moved-len body-borrowed) (tc-moved-len outer-with-uses))
+      (TcBorrowCheckResult.Ok outer-with-uses)
+      (match (tc-body-type-fact-expr-id "borrow.let_return" ctx env body-box)
+        [(ResultTcType.Ok result-ty)
+          (TcBorrowCheckResult.Ok
+            (tc-borrow-check-propagate-return-borrows
+              ctx
+              expr-bases
+              env
+              outer-locals
+              outer-with-uses
+              body-borrowed
+              result-ty
+              (ast.ast-expr-segment-bases-get expr-bases body-box)))]
+        [(ResultTcType.Err _) (TcBorrowCheckResult.Ok outer-with-uses)]))))
 
 (define (tc-borrow-check-resource-bindings
   [ctx : TcContext]
@@ -77666,85 +77752,91 @@
             borrowed
             func-box)
             [(TcBorrowCheckResult.Ok borrowed1)
-              (match (tc-borrow-call-info-id-with-facts
-                "borrow.call_func"
-                ctx
-                expr-bases
-                env
-                func-box
-                args)
-                [(ResultTcBorrowCallInfo.Ok params return-lifetimes)
-                  (match (tc-call-extern-abi ctx func)
-                    [(TcMaybeExternAbi.Some abi)
-                      (if (tc-call-dynamic-c-varargs-abi? abi)
-                        (match (tc-call-extern-varargs-params
-                          ctx
-                          env
-                          func
-                          args
-                          params
-                          abi)
-                          [(ResultTcTypeList.Ok expanded-params)
-                            (tc-borrow-check-call-args-with-types
-                              ctx
-                              expr-bases
-                              env
-                              locals
-                              borrowed1
-                              expr
-                              func-box
-                              func
-                              args
-                              expanded-params
-                              (TcBorrowCallReturnLifetimes.Fallback))]
-                          [(ResultTcTypeList.Err message)
-                            (TcBorrowCheckResult.Err message)])
+              (let
+                [borrowed2 : TcMovedSet
+                  (tc-borrow-check-note-called-lambda-capture-uses
+                    expr-bases
+                    borrowed1
+                    func)]
+                (match (tc-borrow-call-info-id-with-facts
+                  "borrow.call_func"
+                  ctx
+                  expr-bases
+                  env
+                  func-box
+                  args)
+                  [(ResultTcBorrowCallInfo.Ok params return-lifetimes)
+                    (match (tc-call-extern-abi ctx func)
+                      [(TcMaybeExternAbi.Some abi)
+                        (if (tc-call-dynamic-c-varargs-abi? abi)
+                          (match (tc-call-extern-varargs-params
+                            ctx
+                            env
+                            func
+                            args
+                            params
+                            abi)
+                            [(ResultTcTypeList.Ok expanded-params)
+                              (tc-borrow-check-call-args-with-types
+                                ctx
+                                expr-bases
+                                env
+                                locals
+                                borrowed2
+                                expr
+                                func-box
+                                func
+                                args
+                                expanded-params
+                                (TcBorrowCallReturnLifetimes.Fallback))]
+                            [(ResultTcTypeList.Err message)
+                              (TcBorrowCheckResult.Err message)])
+                          (tc-borrow-check-call-args-with-types
+                            ctx
+                            expr-bases
+                            env
+                            locals
+                            borrowed2
+                            expr
+                            func-box
+                            func
+                            args
+                            params
+                            return-lifetimes))]
+                      [(TcMaybeExternAbi.No)
                         (tc-borrow-check-call-args-with-types
                           ctx
                           expr-bases
                           env
                           locals
-                          borrowed1
+                          borrowed2
                           expr
                           func-box
                           func
                           args
                           params
-                          return-lifetimes))]
-                    [(TcMaybeExternAbi.No)
-                      (tc-borrow-check-call-args-with-types
-                        ctx
-                        expr-bases
-                        env
-                        locals
-                        borrowed1
-                        expr
-                        func-box
-                        func
-                        args
-                        params
-                        return-lifetimes)])]
-                [(ResultTcBorrowCallInfo.Err _)
-                  (match (tc-borrow-check-read-exprs
-                    ctx
-                    expr-bases
-                    env
-                    locals
-                    (tc-moved-clone borrowed1)
-                    args)
-                    [(TcBorrowCheckResult.Ok _)
-                      (tc-borrow-check-after-call-effects
-                        ctx
-                        expr-bases
-                        env
-                        locals
-                        borrowed1
-                        expr
-                        func
-                        args
-                        (TcBorrowCallReturnLifetimes.Fallback))]
-                    [(TcBorrowCheckResult.Err message)
-                      (TcBorrowCheckResult.Err message)])])]
+                          return-lifetimes)])]
+                  [(ResultTcBorrowCallInfo.Err _)
+                    (match (tc-borrow-check-read-exprs
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      (tc-moved-clone borrowed2)
+                      args)
+                      [(TcBorrowCheckResult.Ok _)
+                        (tc-borrow-check-after-call-effects
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          borrowed2
+                          expr
+                          func
+                          args
+                          (TcBorrowCallReturnLifetimes.Fallback))]
+                      [(TcBorrowCheckResult.Err message)
+                        (TcBorrowCheckResult.Err message)])]))]
             [(TcBorrowCheckResult.Err message)
               (TcBorrowCheckResult.Err message)])
           (tc-borrow-check-slice-view-call
@@ -77811,25 +77903,14 @@
                 borrowed
                 body-box)
                 [(TcBorrowCheckResult.Ok body-borrowed)
-                  (if (<= (tc-moved-len body-borrowed) (tc-moved-len borrowed))
-                    (TcBorrowCheckResult.Ok borrowed)
-                    (match (tc-body-type-fact-expr-id
-                      "borrow.let_return"
-                      ctx
-                      env2
-                      body-box)
-                      [(ResultTcType.Ok result-ty)
-                        (TcBorrowCheckResult.Ok
-                          (tc-borrow-check-propagate-return-borrows
-                            ctx
-                            expr-bases
-                            env2
-                            locals
-                            borrowed
-                            body-borrowed
-                            result-ty
-                            (ast.ast-expr-segment-bases-get expr-bases body-box)))]
-                      [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)]))]
+                  (tc-borrow-check-let-exit
+                    ctx
+                    expr-bases
+                    env2
+                    locals
+                    borrowed
+                    body-borrowed
+                    body-box)]
                 [(TcBorrowCheckResult.Err message)
                   (match (tc-borrow-check-expr-id-retry-after-prune
                     ctx
@@ -77841,30 +77922,14 @@
                     body-box
                     message)
                     [(TcBorrowCheckResult.Ok retried-borrowed)
-                      (if (<=
-                        (tc-moved-len retried-borrowed)
-                        (tc-moved-len borrowed))
-                        (TcBorrowCheckResult.Ok borrowed)
-                        (match (tc-body-type-fact-expr-id
-                          "borrow.let_return"
-                          ctx
-                          env2
-                          body-box)
-                          [(ResultTcType.Ok result-ty)
-                            (TcBorrowCheckResult.Ok
-                              (tc-borrow-check-propagate-return-borrows
-                                ctx
-                                expr-bases
-                                env2
-                                locals
-                                borrowed
-                                retried-borrowed
-                                result-ty
-                                (ast.ast-expr-segment-bases-get
-                                  expr-bases
-                                  body-box)))]
-                          [(ResultTcType.Err _)
-                            (TcBorrowCheckResult.Ok borrowed)]))]
+                      (tc-borrow-check-let-exit
+                        ctx
+                        expr-bases
+                        env2
+                        locals
+                        borrowed
+                        retried-borrowed
+                        body-box)]
                     [(TcBorrowCheckResult.Err retry-message)
                       (TcBorrowCheckResult.Err retry-message)])])]
             [(TcBorrowCheckBindings.Err message)

@@ -189,6 +189,7 @@ borrow_let_final_use_before_owner_write_ok|check-ok|tests/safety/borrow_let_fina
 borrow_let_three_binding_order_ok|check-ok|tests/safety/borrow_let_three_binding_order_ok.tl|-|-
 borrow_let_later_binding_reject|check-fail|tests/safety/borrow_let_later_binding_reject.tl|-|cannot assign to borrowed place `n`
 borrow_let_closure_call_initializer_ok|check-ok|tests/safety/borrow_let_closure_call_initializer_ok.tl|-|-
+borrow_lambda_capture_final_use_ok|check-ok|tests/safety/borrow_lambda_capture_final_use_ok.tl|-|-
 borrow_if_result_before_last_use_reject|check-fail|tests/safety/borrow_if_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_match_result_before_last_use_reject|check-fail|tests/safety/borrow_match_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_if_lifetime_aggregate_result_before_last_use_reject|check-fail|tests/safety/borrow_if_lifetime_aggregate_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`

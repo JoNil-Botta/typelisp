@@ -16186,6 +16186,7 @@
         (string.eq name "tl_memchr")
         (string.eq name "tl_array_zero")
         (string.eq name "tl_mem_fill8")
+        (string.eq name "tl_abort_string")
         (string.eq name "tl_tlci_call_image_entry")
         (string.eq name "tl_tlci_call_macro_entry")))))
 

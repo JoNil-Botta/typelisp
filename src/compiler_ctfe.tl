@@ -5323,7 +5323,7 @@
         [(ResultCtfeStringArg.Ok text _ arg-fuel)
           (ResultCtfe.Ok (CompilerCtfeValue.I64 (string.>int text)) arg-fuel)]))
     (ResultCtfe.Err
-      (box (ctfe-diagnostic-at-expr expr "string->int expects one string")))))
+      (box (ctfe-diagnostic-at-expr expr "string.>int expects one string")))))
 
 (define (ctfe-eval-int-to-string-call
   [args : ast.AstExprList]
@@ -5414,8 +5414,7 @@
 (define (ctfe-string-to-int-helper-name-id? [name : String] [name-id : i64]) : bool
   (or
     (ctfe-builtin-string-to-int-id? name-id)
-    (ctfe-stdlib-string-helper-name? name ">int")
-    (ctfe-stdlib-string-helper-name? name "string->int")))
+    (ctfe-stdlib-string-helper-name? name ">int")))
 
 ;; Names recognized as comptime helper/accessor calls. `expr-list-length` and
 ;; `expr-list-nth` (and their clause/binding-clause variants) are handled by the

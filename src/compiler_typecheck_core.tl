@@ -20516,7 +20516,7 @@
     [(string.eq base "string=?") (tc-stdlib-string-eq-wrapper-type? ty)]
     [(string.eq base "string-append") (tc-stdlib-string-copy-wrapper-type? ty)]
     [(string.eq base "string-concat") (tc-stdlib-string-copy-wrapper-type? ty)]
-    [(string.eq base "string->int") (tc-stdlib-string-to-int-wrapper-type? ty)]
+    [(string.eq base ">int") (tc-stdlib-string-to-int-wrapper-type? ty)]
     [else false]))
 
 (define (tc-stdlib-string-helper-bound-wrapper?
@@ -34203,7 +34203,6 @@
         (string.eq name "char-at")
         (string.eq name "string-eq")
         (string.eq name "string=?")
-        (string.eq name "string->int")
         (string.eq name "string-append")
         (string.eq name "string-concat"))
       "stdlib.string"]
@@ -34217,6 +34216,13 @@
     " — add (import "
     module
     ")"))
+
+;; Removed public spellings can still receive migration help without becoming
+;; compatibility aliases or pretending that an import makes them available.
+(define (tc-unbound-migration-help [name : String]) : String
+  (if (string.eq name "string->int")
+    "string->int was removed — add (import stdlib.string) and use string.>int"
+    ""))
 
 (define (tc-unbound-suggestion-max-distance [name-len : i64]) : i64
   (cond [(<= name-len 4) 1] [(<= name-len 12) 2] [else 3]))
@@ -34444,17 +34450,21 @@
   [name : String]
   [name-id : i64]) : TcUnboundSuggestion
   (let
-    [provider : String (tc-unbound-stdlib-provider name)]
-    (if (> (string.string-length provider) 0)
-      (TcUnboundSuggestion.Help (tc-unbound-import-help name provider))
+    [migration : String (tc-unbound-migration-help name)]
+    (if (> (string.string-length migration) 0)
+      (TcUnboundSuggestion.Help migration)
       (let
-        [near-miss : String
-          (tc-unbound-near-miss module-qualified module-id env name name-id)]
-        (if (> (string.string-length near-miss) 0)
-          (TcUnboundSuggestion.Replace
-            (str_cat.str-cat "did you mean " near-miss "?")
-            near-miss)
-          (TcUnboundSuggestion.No))))))
+        [provider : String (tc-unbound-stdlib-provider name)]
+        (if (> (string.string-length provider) 0)
+          (TcUnboundSuggestion.Help (tc-unbound-import-help name provider))
+          (let
+            [near-miss : String
+              (tc-unbound-near-miss module-qualified module-id env name name-id)]
+            (if (> (string.string-length near-miss) 0)
+              (TcUnboundSuggestion.Replace
+                (str_cat.str-cat "did you mean " near-miss "?")
+                near-miss)
+              (TcUnboundSuggestion.No))))))))
 
 (define (tc-unbound-finalize-located-error [message : String]) : String
   (if (and (tc-located-error? message) (not (tc-rich-error? message)))

@@ -1744,7 +1744,7 @@
     (compiler-builtin-load-ctfe-id! insert-missing 10 "string-ref")
     (compiler-builtin-load-ctfe-id! insert-missing 11 "char-at")
     (compiler-builtin-load-ctfe-id! insert-missing 12 "__tl_string_to_int")
-    (compiler-builtin-load-ctfe-id! insert-missing 13 "string->int")
+    (compiler-builtin-load-ctfe-id! insert-missing 13 ">int")
     (compiler-builtin-load-ctfe-id! insert-missing 14 "string-append")
     (compiler-builtin-load-ctfe-id! insert-missing 15 "string-concat")
     (compiler-builtin-load-ctfe-id! insert-missing 16 "int->string")
@@ -2322,7 +2322,7 @@
       (compiler-builtin-resolve-name insert-missing "string-concat"))
     (set!
       compiler-builtin-id-string-to-int
-      (compiler-builtin-resolve-name insert-missing "string->int"))
+      (compiler-builtin-resolve-name insert-missing ">int"))
     (set!
       compiler-builtin-id-string-ref
       (compiler-builtin-resolve-name insert-missing "string-ref"))

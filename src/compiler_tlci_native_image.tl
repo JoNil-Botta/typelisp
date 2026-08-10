@@ -10,6 +10,7 @@
 ;; 8-byte slots) plus the named imports the loader must bind before the W^X
 ;; seal. Extern Call/TailCall sites are rejected: host access goes through
 ;; extern *values* (GOT loads), never direct extern calls.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_object as cobj)
 (import compiler_object_elf)
 (import tlci_core)
@@ -231,7 +232,7 @@
   (let
     [qualified-prefix : String "_tl_tlci_entries_comptime_host_"]
     (if (compiler-tlci-native-prefix? name qualified-prefix)
-      (string.append
+      (str_cat.str-cat
         "_tl_comptime_host_"
         (string.substring
           name
@@ -281,7 +282,7 @@
             extern-name)
           (compiler-tlci-native-fail!
             error
-            (string.append "tlci native image: unresolved symbol " name)))))))
+            (str_cat.str-cat "tlci native image: unresolved symbol " name)))))))
 
 ;; Write a little-endian i32 at `offset`.
 (define (compiler-tlci-native-patch-i32!
@@ -358,7 +359,7 @@
                   (begin
                     (compiler-tlci-native-fail!
                       error
-                      (string.append
+                      (str_cat.str-cat
                         "tlci native image: direct extern call "
                         target))
                     (set! ok false))
@@ -379,7 +380,7 @@
                   (begin
                     (compiler-tlci-native-fail!
                       error
-                      (string.append
+                      (str_cat.str-cat
                         "tlci native image: direct extern call "
                         target))
                     (set! ok false))
@@ -842,7 +843,7 @@
   (match (tlci_core.tlci-metadata-parse metadata-text)
     [(tlci_core.ResultTlciMetadata.Err message)
       (ResultCompilerTlciNativeBytes.Err
-        (string.append "package metadata rejected: " message))]
+        (str_cat.str-cat "package metadata rejected: " message))]
     [(tlci_core.ResultTlciMetadata.Ok metadata)
       (match (tlci_core.tlci-emit-native-package-image
         metadata
@@ -905,21 +906,23 @@
               (<= (+ index 9) len)
               (string.eq (string.substring encoded index 9) "_question"))
             (begin
-              (set! out (string.append out "?"))
+              (set! out (str_cat.str-cat out "?"))
               (set! index (+ index 9)))]
           [(and
               (<= (+ index 3) len)
               (string.eq (string.substring encoded index 3) "_gt"))
             (begin
-              (set! out (string.append out ">"))
+              (set! out (str_cat.str-cat out ">"))
               (set! index (+ index 3)))]
           [(= (string.string-ref encoded index) '_')
             (begin
-              (set! out (string.append out "-"))
+              (set! out (str_cat.str-cat out "-"))
               (set! index (+ index 1)))]
           [else
             (begin
-              (set! out (string.append out (string.substring encoded index 1)))
+              (set!
+                out
+                (str_cat.str-cat out (string.substring encoded index 1)))
               (set! index (+ index 1)))]))
       out)))
 
@@ -957,15 +960,15 @@
     (begin
       (while (and (= (string.string-length error) 0) (< index count))
         (let
-          [name : String
-            (compiler-tlci-native-host-import-name
-              (array-ref (struct-get layout import-names) index))]
+          [import-name : String
+            (array-ref (struct-get layout import-names) index)]
+          [name : String (compiler-tlci-native-host-import-name import-name)]
           (if (= (string.string-length name) 0)
             (set!
               error
-              (string.append
+              (str_cat.str-cat-scoped
                 "tlci native image: unknown host import "
-                (array-ref (struct-get layout import-names) index)))
+                import-name))
             (begin
               (array-set! names index name)
               (set! names-len (+ names-len (string.string-length name)))

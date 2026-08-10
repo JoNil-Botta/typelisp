@@ -186,7 +186,7 @@
     (stdlib-comptime-derived-string stdlib-comptime-derived)
     "stdlib-comptime-derived-literal"))
 
-(define (stdlib-comptime-legacy-string-helper-shape) : i64
+(define (stdlib-comptime-canonical-string-helper-shape) : i64
   (stdlib-comptime-string-helper-total stdlib-comptime-derived))
 
 (define (stdlib-comptime-error-branch-shape) : i64
@@ -287,8 +287,8 @@
       unit)))
 
 (test
-  comptime-legacy-string-helper-shape
-  (if (= (stdlib-comptime-legacy-string-helper-shape) 54)
+  comptime-canonical-string-helper-shape
+  (if (= (stdlib-comptime-canonical-string-helper-shape) 54)
     unit
     (begin
       (/ 1 0)

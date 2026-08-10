@@ -255,7 +255,7 @@
   "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--debug|-g] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]\n  typelisp compile --batch <input-output-list> [--debug|-g] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]\n  typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
-  (string.append message (string.append "\n\n" (compile-cli-usage))))
+  (str_cat.str-cat message "\n\n" (compile-cli-usage)))
 
 (define (compile-cli-default-output-with-extension
   [input-path : String]
@@ -278,8 +278,8 @@
               (set! last-sep last-sep))
             (set! i (+ i 1)))))
       (if (> last-dot last-sep)
-        (string.append (string.substring input-path 0 last-dot) extension)
-        (string.append input-path extension)))))
+        (str_cat.str-cat (string.substring input-path 0 last-dot) extension)
+        (str_cat.str-cat input-path extension)))))
 
 (define (compile-cli-default-output [input-path : String]) : String
   (compile-cli-default-output-with-extension input-path ".s"))
@@ -695,9 +695,9 @@
             [else
               (if (compile-cli-flag? current)
                 (ResultCompileCliConfig.Err
-                  (string.append "compile: unknown flag " current))
+                  (str_cat.str-cat "compile: unknown flag " current))
                 (ResultCompileCliConfig.Err
-                  (string.append "compile: unexpected argument " current)))])]))))
+                  (str_cat.str-cat "compile: unexpected argument " current)))])]))))
 
 (define (compile-cli-batch-parse-common-option
   [kind : cli_option.CliCommonOptionKind]
@@ -976,9 +976,9 @@
             [else
               (if (compile-cli-flag? current)
                 (ResultCompileCliBatchConfig.Err
-                  (string.append "compile: unknown flag " current))
+                  (str_cat.str-cat "compile: unknown flag " current))
                 (ResultCompileCliBatchConfig.Err
-                  (string.append "compile: unexpected argument " current)))])]))))
+                  (str_cat.str-cat "compile: unexpected argument " current)))])]))))
 
 (define (compile-cli-config-from [input-idx : i64] [count : i64]) : ResultCompileCliConfig
   (if (>= input-idx count)
@@ -1069,7 +1069,7 @@
                 next-roots)))]
         [(cli_option.CliCommonOption.NotCommon)
           (begin
-            (io.print-error (string.append "Warning: unknown flag: " current))
+            (io.print-error (str_cat.str-cat "Warning: unknown flag: " current))
             (compile-cli-check-parse-options
               (+ idx 1)
               count
@@ -1116,7 +1116,7 @@
         [else
           (CompileCliAction.Error
             (compile-cli-message-with-usage
-              (string.append "Unknown command: " command)))]))))
+              (str_cat.str-cat "Unknown command: " command)))]))))
 
 (define (compile-cli-typecheck-doctests
   [input-path : String]
@@ -1327,7 +1327,8 @@
     (ResultCompileCliWindowsBatchEntry.Err 1)
     (match result
       [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
-          object)
+          object
+          _)
         (let
           [write-status : i64
             (begin
@@ -1363,8 +1364,7 @@
                 (compiler_driver_core.compiler-driver-state-profile _state)))
             (if (= write-status 0)
               (begin
-                (io.print-string
-                  (string.append "Wrote " (string.append object-path "\n")))
+                (io.print-string (str_cat.str-cat "Wrote " object-path "\n"))
                 (ResultCompileCliWindowsBatchEntry.Ok
                   "coff-object"
                   object-path
@@ -1397,8 +1397,7 @@
                 (compiler_driver_core.compiler-driver-state-profile _state)))
             (if (= write-status 0)
               (begin
-                (io.print-string
-                  (string.append "Wrote " (string.append assembly-path "\n")))
+                (io.print-string (str_cat.str-cat "Wrote " assembly-path "\n"))
                 (ResultCompileCliWindowsBatchEntry.Ok
                   "assembly"
                   assembly-path
@@ -2189,8 +2188,7 @@
       (byte_buf.str-as-bytes (& contents)))
       [(io.OkIoUnit)
         (begin
-          (io.print-string
-            (string.append "Wrote " (string.append plan-path "\n")))
+          (io.print-string (str_cat.str-cat "Wrote " plan-path "\n"))
           0)]
       [(io.ErrIoUnit error)
         (begin

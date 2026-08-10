@@ -87,7 +87,7 @@
   (intern-state (__tl_dyn-array ci.InternCompatState))
   (parser-state compiler_parse_core.CompilerParseState)
   (builtin-ids (__tl_dyn-array cbi.CompilerBuiltinIdsState))
-  (lower-arenas (__tl_dyn-array compiler_lower.CompilerLowerArenaState))
+  (lower-state-address (__tl_dyn-array i64))
   (load-session compiler_load.CompilerLoadSessionState)
   (typecheck-state compiler_typecheck_core.TcJobState)
   (backend-state compiler_backend.CompilerBackendState)
@@ -109,8 +109,7 @@
       (array.make-array ci.InternCompatState 1)]
     [builtin-cell : (__tl_dyn-array cbi.CompilerBuiltinIdsState)
       (array.make-array cbi.CompilerBuiltinIdsState 1)]
-    [lower-cell : (__tl_dyn-array compiler_lower.CompilerLowerArenaState)
-      (array.make-array compiler_lower.CompilerLowerArenaState 1)]
+    [lower-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
     [pool-arena-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
     ;; Intern capability identity is shared by parser, lowering, and backend.
     ;; Create it before switching arenas; the backend's own state data is
@@ -126,6 +125,11 @@
         (arena.tl_arena_set surface-arena))]
     [typecheck-state : compiler_typecheck_core.TcJobState
       (compiler_typecheck_core.tc-job-state-new)]
+    [_lower-state-init : unit
+      (array-set!
+        lower-cell
+        0
+        (struct-get (compiler_lower.compiler-lower-state-new) address))]
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new intern-state)]
     [_restore-previous-arena : unit
@@ -136,7 +140,6 @@
       (array-set! type-cell 0 type-pool)
       (array-set! intern-cell 0 intern-state)
       (array-set! builtin-cell 0 (cbi.state-new))
-      (array-set! lower-cell 0 (compiler_lower.compiler-lower-arena-state-new))
       (array-set! pool-arena-cell 0 pool-arena)
       (CompilerDriverState
         expr-cell
@@ -217,7 +220,9 @@
       (cbi.state-capture-from-globals!
         (array-ref (struct-get state builtin-ids) 0))
       (compiler_lower.compiler-lower-arena-state-capture-from-globals!
-        (array-ref (struct-get state lower-arenas) 0))
+        (compiler_lower.compiler-lower-state-arenas
+          (compiler_lower.compiler-lower-state-from-address
+            (array-ref (struct-get state lower-state-address) 0))))
       state)))
 
 (define (compiler-driver-state-session-cache-enabled?
@@ -693,14 +698,20 @@
 (define (compiler-driver-state-owned-builtins [state : CompilerDriverState]) : cbi.CompilerBuiltinIdsState
   (array-ref (struct-get state builtin-ids) 0))
 
-;; The state's owned lower scratch/IR arena carrier.
+;; The state's owned lower traversal/index/cache carrier.
+(define (compiler-driver-state-owned-lower-state [state : CompilerDriverState]) : compiler_lower.CompilerLowerState
+  (compiler_lower.compiler-lower-state-from-address
+    (array-ref (struct-get state lower-state-address) 0)))
+
+;; The lower job owner composes the existing scratch/IR arena carrier.
 (define (compiler-driver-state-owned-lower-arenas [state : CompilerDriverState]) : compiler_lower.CompilerLowerArenaState
-  (array-ref (struct-get state lower-arenas) 0))
+  (compiler_lower.compiler-lower-state-arenas
+    (compiler-driver-state-owned-lower-state state)))
 
 (define (compiler-driver-state-install-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler_lower.compiler-lower-arena-state-install!
-    (array-ref (struct-get state lower-arenas) 0)))
+    (compiler-driver-state-owned-lower-arenas state)))
 
 ;; Legacy/test capture paired with `compiler-driver-state-install-interns!`.
 (define (compiler-driver-state-capture-active-interns!
@@ -734,10 +745,14 @@
   (compiler_lower.compiler-lower-arena-state-release!
     (compiler-driver-state-owned-lower-arenas state)))
 
+(define (compiler-driver-state-reset-lower! [state : CompilerDriverState]) : unit
+  (compiler_lower.compiler-lower-state-reset!
+    (compiler-driver-state-owned-lower-state state)))
+
 (define (compiler-driver-state-capture-active-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler_lower.compiler-lower-arena-state-capture-from-globals!
-    (array-ref (struct-get state lower-arenas) 0)))
+    (compiler-driver-state-owned-lower-arenas state)))
 
 ;; Session-floor snapshot after a batch entry: refresh the state's builtin and
 ;; lower-arena cells from the compatibility globals the phases just used, so a
@@ -925,6 +940,7 @@
         (compiler-driver-state-reset-builtins! state)
         (compiler_typecheck_core.compiler-typecheck-reset-file-state!)
         (compiler_lower.lower-reset-file-state!)
+        (compiler-driver-state-reset-lower! state)
         ;; Drop the previous entry's lowerer arenas. At opt level 0
         ;; the escaped IR stays alive until the next file reset.
         (compiler-driver-state-release-lower-arenas! state)))))
@@ -957,6 +973,7 @@
         (compiler-driver-state-reset-builtins! state)
         (compiler_typecheck_core.compiler-typecheck-reset-file-state!)
         (compiler_lower.lower-reset-file-state!)
+        (compiler-driver-state-reset-lower! state)
         (compiler-driver-state-release-lower-arenas! state)))))
 
 (cfg
@@ -994,6 +1011,7 @@
             ordinal
             "intern-session-cleanup")
           (compiler_lower.lower-reset-file-state!)
+          (compiler-driver-state-reset-lower! state)
           (compiler-driver-state-release-lower-arenas! state)
           (compiler-driver-batch-profile-mark!
             (compiler-driver-state-profile state)
@@ -1109,7 +1127,7 @@
 (cfg
   compile-profile
   (define (compiler-driver-profile-field [value : i64]) : String
-    (string.append "|" (string.int->string value))))
+    (str_cat.str-cat "|" (string.int->string value))))
 
 (cfg
   compile-profile
@@ -1119,17 +1137,14 @@
     [alloc-delta : i64]
     [live-delta : i64]
     [peak-delta : i64]) : String
-    (string.append
+    (str_cat.str-cat
       "compile-profile|"
-      (string.append
-        phase
-        (string.append
-          (compiler-driver-profile-field elapsed-ms)
-          (string.append
-            (compiler-driver-profile-field alloc-delta)
-            (string.append
-              (compiler-driver-profile-field live-delta)
-              (string.append (compiler-driver-profile-field peak-delta) "\n"))))))))
+      phase
+      (compiler-driver-profile-field elapsed-ms)
+      (compiler-driver-profile-field alloc-delta)
+      (compiler-driver-profile-field live-delta)
+      (compiler-driver-profile-field peak-delta)
+      "\n")))
 
 (cfg
   compile-profile
@@ -1142,27 +1157,18 @@
     [peak-delta : i64]
     [live-bytes : i64]
     [baseline-delta : i64]) : String
-    (string.append
+    (str_cat.str-cat
       "\ncompile-batch-profile|"
-      (string.append
-        (string.int->string ordinal)
-        (string.append
-          "|"
-          (string.append
-            marker
-            (string.append
-              (compiler-driver-profile-field elapsed-ms)
-              (string.append
-                (compiler-driver-profile-field alloc-delta)
-                (string.append
-                  (compiler-driver-profile-field live-delta)
-                  (string.append
-                    (compiler-driver-profile-field peak-delta)
-                    (string.append
-                      (compiler-driver-profile-field live-bytes)
-                      (string.append
-                        (compiler-driver-profile-field baseline-delta)
-                        "\n"))))))))))))
+      (string.int->string ordinal)
+      "|"
+      marker
+      (compiler-driver-profile-field elapsed-ms)
+      (compiler-driver-profile-field alloc-delta)
+      (compiler-driver-profile-field live-delta)
+      (compiler-driver-profile-field peak-delta)
+      (compiler-driver-profile-field live-bytes)
+      (compiler-driver-profile-field baseline-delta)
+      "\n")))
 
 (cfg
   compile-profile
@@ -1372,123 +1378,102 @@
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.slice|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern-slice
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-slice-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern-slice
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-slice-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.generated|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern-generated
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-generated-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern-generated
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-generated-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.render|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern-render
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-render-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern-render
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-render-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.lookup|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern-lookup
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-lookup-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern-lookup
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-lookup-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.pool|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string
-                      (-
-                        end-intern-pool-len
-                        (compiler-driver-profile-value
-                          state
-                          compiler-driver-profile-phase-start-intern-pool-len-metric)))
-                    "\n"))))))
+              phase
+              "|"
+              (string.int->string
+                (-
+                  end-intern-pool-len
+                  (compiler-driver-profile-value
+                    state
+                    compiler-driver-profile-phase-start-intern-pool-len-metric)))
+              "\n")))
         (cfg
           compile-profile-summary
           unit
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|intern.phase.invalid_str_ids|"
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string (ci.intern-profile-invalid-str-value))
-                    "\n"))))))))))
+              phase
+              "|"
+              (string.int->string (ci.intern-profile-invalid-str-value))
+              "\n")))))))
 
 (cfg
   compile-profile
@@ -1535,38 +1520,36 @@
       unit
       (begin
         (io.print-error
-          (string.append
+          (str_cat.str-cat
             "compile-profile-detail|prelude.source_pipeline_entries|"
-            (string.append
-              (string.int->string
-                compiler-driver-profile-prelude-source-pipeline-entries)
-              "\n")))
+            (string.int->string
+              compiler-driver-profile-prelude-source-pipeline-entries)
+            "\n"))
         (io.print-error
-          (string.append
+          (str_cat.str-cat
             "compile-profile-detail|prelude.hydrations|"
-            (string.append
-              (string.int->string compiler-driver-profile-prelude-hydrations)
-              "\n")))))))
+            (string.int->string compiler-driver-profile-prelude-hydrations)
+            "\n"))))))
 
 (cfg
   compile-profile
   (define (compiler-driver-profile-intern-line [name : String] [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|intern."
-        (string.append
-          name
-          (string.append (compiler-driver-profile-field value) "|0|0|0\n"))))))
+        name
+        (compiler-driver-profile-field value)
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
   (define (compiler-driver-profile-ctfe-env-line [name : String] [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|ctfe_env."
-        (string.append
-          name
-          (string.append (compiler-driver-profile-field value) "|0|0|0\n"))))))
+        name
+        (compiler-driver-profile-field value)
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
@@ -2716,29 +2699,21 @@
         (compiler_load.compiler-load-stdlib-root-configured? stdlib-roots)
         (= (string.string-length configuration) 0))
         CompilerDriverPreludeSurface.Missing
-        (let
-          [previous-arena : i64 (arena.tl_arena_current)]
-          [_set-surface-arena : unit
-            (unsafe
-              (arena.tl_arena_set surface-arena))]
-          [result : CompilerDriverPreludeSurface
-            (match (embedded_tlci.compiler-embedded-stdlib-tlci-surface)
-              [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Unavailable _)
-                CompilerDriverPreludeSurface.Missing]
-              [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Ok
-                  outer-build
-                  source-hash
-                  rodata)
-                (compiler-driver-hydrate-prelude-rodata
-                  outer-build
-                  source-hash
-                  rodata
-                  configuration
-                  pools)])]
-          (begin
-            (unsafe
-              (arena.tl_arena_set previous-arena))
-            result))))))
+        (in-arena
+          (arena.Arena surface-arena)
+          (match (embedded_tlci.compiler-embedded-stdlib-tlci-surface)
+            [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Unavailable _)
+              CompilerDriverPreludeSurface.Missing]
+            [(embedded_tlci.CompilerEmbeddedStdlibTlciSurface.Ok
+                outer-build
+                source-hash
+                rodata)
+              (compiler-driver-hydrate-prelude-rodata
+                outer-build
+                source-hash
+                rodata
+                configuration
+                pools)]))))))
 
 (define (compiler-driver-note-prelude-source-pipeline!) : unit
   (cfg
@@ -2792,35 +2767,28 @@
   [key : compiler_load.CompilerLoadPreludeCacheKey]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
-  (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [loaded : compiler_load.ResultCompilerLoadWithPaths
+  (in-arena
+    (arena.Arena compiler_ast_types.node-pool-base-arena)
+    (let
+      [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
+        (compiler_load.compiler-load-prelude-cache-key-copy key)]
+      [cold : compiler_load.ResultCompilerLoadWithPaths
+        (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
       (begin
-        (unsafe
-          (arena.tl_arena_set compiler_ast_types.node-pool-base-arena))
-        (let
-          [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
-            (compiler_load.compiler-load-prelude-cache-key-copy key)]
-          [cold : compiler_load.ResultCompilerLoadWithPaths
-            (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
-          (begin
-            (match cold
-              [(compiler_load.ResultCompilerLoadWithPaths.Ok
-                  decls
-                  paths
-                  modules
-                  seen)
-                (compiler-driver-runtime-prelude-cache-store
-                  persistent-key
-                  decls
-                  paths
-                  modules
-                  seen)]
-              [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
-            (unsafe
-              (arena.tl_arena_set prev-arena))
-            cold)))]
-    loaded))
+        (match cold
+          [(compiler_load.ResultCompilerLoadWithPaths.Ok
+              decls
+              paths
+              modules
+              seen)
+            (compiler-driver-runtime-prelude-cache-store
+              persistent-key
+              decls
+              paths
+              modules
+              seen)]
+          [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
+        cold))))
 
 (define (compiler-driver-load-runtime-prelude
   [stdlib-roots : svec.Vec]
@@ -2973,42 +2941,34 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : compiler_ast_types.AstNodePoolContext]) : compiler_load.ResultCompilerLoadWithPaths
-  (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [loaded : compiler_load.ResultCompilerLoadWithPaths
+  (in-arena
+    (arena.Arena (compiler_ast_types.ast-node-pool-context-base-arena pools))
+    (let
+      [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
+        (compiler_load.compiler-load-prelude-cache-key-copy key)]
+      [cold : compiler_load.ResultCompilerLoadWithPaths
+        (compiler-driver-load-runtime-prelude-cold-with-pools
+          load-state
+          stdlib-roots
+          cfgs
+          pools)]
       (begin
-        (unsafe
-          (arena.tl_arena_set
-            (compiler_ast_types.ast-node-pool-context-base-arena pools)))
-        (let
-          [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
-            (compiler_load.compiler-load-prelude-cache-key-copy key)]
-          [cold : compiler_load.ResultCompilerLoadWithPaths
-            (compiler-driver-load-runtime-prelude-cold-with-pools
+        (match cold
+          [(compiler_load.ResultCompilerLoadWithPaths.Ok
+              decls
+              paths
+              modules
+              seen)
+            (compiler-driver-runtime-prelude-cache-store-with-state-and-pools
               load-state
-              stdlib-roots
-              cfgs
+              persistent-key
+              decls
+              paths
+              modules
+              seen
               pools)]
-          (begin
-            (match cold
-              [(compiler_load.ResultCompilerLoadWithPaths.Ok
-                  decls
-                  paths
-                  modules
-                  seen)
-                (compiler-driver-runtime-prelude-cache-store-with-state-and-pools
-                  load-state
-                  persistent-key
-                  decls
-                  paths
-                  modules
-                  seen
-                  pools)]
-              [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
-            (unsafe
-              (arena.tl_arena_set prev-arena))
-            cold)))]
-    loaded))
+          [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
+        cold))))
 
 (define (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -3549,6 +3509,7 @@
                 (compiler_lower.compiler-lower-checked-dest-pools-clear!))]
             [lowered : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
+                (compiler-driver-state-owned-lower-state state)
                 (struct-get state load-session)
                 (struct-get state typecheck-prefix-cache)
                 (struct-get state typecheck-state)
@@ -3801,6 +3762,7 @@
                 (compiler_lower.compiler-lower-checked-dest-pools-clear!))]
             [lowered : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
+                (compiler-driver-state-owned-lower-state state)
                 (struct-get state load-session)
                 (struct-get state typecheck-prefix-cache)
                 (struct-get state typecheck-state)
@@ -4238,9 +4200,7 @@
       (compiler_load.ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
-  (string.append
-    name
-    (string.append " " (string.append (string.int->string value) "\n"))))
+  (str_cat.str-cat name " " (string.int->string value) "\n"))
 
 (define (compiler-driver-ir-summary-render
   [summary : compiler_ir_types.CompilerIrSummary]) : String
@@ -4249,7 +4209,7 @@
     (begin
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "globals"
@@ -4257,7 +4217,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "functions"
@@ -4265,7 +4225,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "externs"
@@ -4273,7 +4233,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "blocks"
@@ -4281,7 +4241,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "instructions"
@@ -4289,7 +4249,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "vars"
@@ -4297,7 +4257,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "empty-blocks"
@@ -4305,7 +4265,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "max-instructions-function"
@@ -4314,7 +4274,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "max-instructions-block"
@@ -4323,7 +4283,7 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "call-arg-entries"
@@ -4331,13 +4291,13 @@
           ""))
       (set!
         out
-        (string.concat3
+        (str_cat.str-cat
           out
           (compiler-driver-ir-summary-line
             "phi-input-entries"
             (compiler_ir_types.compiler-ir-summary-phi-input-entries summary))
           ""))
-      (string.concat3
+      (str_cat.str-cat
         out
         (compiler-driver-ir-summary-line
           "score"
@@ -4463,7 +4423,7 @@
         (box
           (compiler_diagnostic.compiler-diagnostic-at-start
             ""
-            (string.append "IR verification failed: " verify-error))))
+            (str_cat.str-cat "IR verification failed: " verify-error))))
       (let
         [text : String
           (if (> (string.string-length dump-pass) 0)
@@ -4616,8 +4576,7 @@
         (cfg
           compile-profile
           (compiler-driver-profile-finish-total _profile-state))
-        (io.print-string
-          (string.append "Wrote " (string.append output-path "\n")))
+        (io.print-string (str_cat.str-cat "Wrote " output-path "\n"))
         0)]
     [(ResultCompilerDriver.Err diag)
       (begin
@@ -4651,8 +4610,7 @@
             (compiler-driver-profile-finish-total _profile-state))
           (if (= status 0)
             (begin
-              (io.print-string
-                (string.append "Wrote " (string.append output-path "\n")))
+              (io.print-string (str_cat.str-cat "Wrote " output-path "\n"))
               0)
             status)))]
     [(ResultCompilerDriverBuffer.Err diag)
@@ -4666,7 +4624,7 @@
         1)]))
 
 (define (compiler-driver-pic-fixups-path [output-path : String]) : String
-  (string.append output-path ".fixups"))
+  (str_cat.str-cat output-path ".fixups"))
 
 (define (compiler-driver-write-pic-result
   [_profile-state : profile_state.CompilerProfileState]
@@ -4692,10 +4650,8 @@
           (cfg
             compile-profile
             (compiler-driver-profile-finish-total _profile-state))
-          (io.print-string
-            (string.append "Wrote " (string.append output-path "\n")))
-          (io.print-string
-            (string.append "Wrote " (string.append fixups-path "\n")))
+          (io.print-string (str_cat.str-cat "Wrote " output-path "\n"))
+          (io.print-string (str_cat.str-cat "Wrote " fixups-path "\n"))
           0))]
     [(ResultCompilerDriverPic.Err diag)
       (begin

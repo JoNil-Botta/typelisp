@@ -1,4 +1,5 @@
 ;; Build-configured embedded stdlib comptime image and production loader path.
+(import stdlib.str_cat_runtime as str_cat)
 (cfg
   (any stage0-seed-bootstrap test)
   (import compiler_embedded_stdlib_tlci_payload_seed as payload))
@@ -4249,7 +4250,7 @@
                       (while (< index arg-a)
                         (let
                           [name : String
-                            (string.append prefix (string.int->string index))]
+                            (str_cat.str-cat prefix (string.int->string index))]
                           (begin
                             (ast.ast-pattern-list-push
                               (&mut patterns)
@@ -6401,7 +6402,8 @@
       (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
         0
         (match (compiler-comptime-host-operand-expr arg-a)
-          [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) value]
+          [(ast.AstExpr.Literal (ast.AstLiteral.Int value text))
+            (ast.ast-int-literal-value-or-payload value text)]
           [_ 0])))))
 
 ;; Local-slot twins of the operand-only ExprList callbacks: a destructured

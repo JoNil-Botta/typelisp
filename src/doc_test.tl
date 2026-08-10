@@ -351,19 +351,19 @@
                 (cond
                   [(= esc 'n')
                     (begin
-                      (set! out (string.concat3 out "\n" ""))
+                      (set! out (str_cat.str-cat out "\n" ""))
                       (set! i (+ i 2)))]
                   [(= esc 't')
                     (begin
-                      (set! out (string.concat3 out "\t" ""))
+                      (set! out (str_cat.str-cat out "\t" ""))
                       (set! i (+ i 2)))]
                   [(= esc 'r')
                     (begin
-                      (set! out (string.concat3 out "\r" ""))
+                      (set! out (str_cat.str-cat out "\r" ""))
                       (set! i (+ i 2)))]
                   [(= esc '\\')
                     (begin
-                      (set! out (string.concat3 out "\\" ""))
+                      (set! out (str_cat.str-cat out "\\" ""))
                       (set! i (+ i 2)))]
                   [else
                     (set!
@@ -373,7 +373,7 @@
                         (string.substring text (+ i 1) 1)
                         "`"))])))
             (begin
-              (set! out (string.concat3 out (string.substring text i 1) ""))
+              (set! out (str_cat.str-cat out (string.substring text i 1) ""))
               (set! i (+ i 1))))))
       (if (= (string.string-length message) 0)
         (DocTestMaybeOutput.Some out)
@@ -600,7 +600,7 @@
           (doc-test-collect-code-inner
             lines
             (+ index 1)
-            (string.append code (string.append (doc-test-line-text line) "\n"))
+            (str_cat.str-cat code (doc-test-line-text line) "\n")
             collected))))))
 
 (define (doc-test-collect-code [lines : doc_line_vec.Vec] [index : i64]) : DocTestCodeCollect
@@ -1172,28 +1172,25 @@
     [(DocTestRunFailure.Failure path line index message)
       (let
         [location : String
-          (string.append
-            path
-            (string.append ":" (string.append (string.int->string line) ": ")))]
-        (string.append location message))]))
+          (str_cat.str-cat path ":" (string.int->string line) ": ")]
+        (str_cat.str-cat location message))]))
 
 (define (doc-test-unexpected-pass-message [index : i64]) : String
-  (string.append
+  (str_cat.str-cat
     "doctest example "
-    (string.append
-      (string.int->string index)
-      " was expected to fail but passed")))
+    (string.int->string index)
+    " was expected to fail but passed"))
 
 (define (doc-test-public-diagnostic-render [diag : cdiag.CompilerDiagnostic]) : String
   (match (cdiag.compiler-diagnostic-code diag)
     [(CompilerDiagnosticSomeString code)
-      (string.append
+      (str_cat.str-cat
         "error["
-        (string.append
-          code
-          (string.append "]: " (cdiag.compiler-diagnostic-render diag))))]
+        code
+        "]: "
+        (cdiag.compiler-diagnostic-render diag))]
     [CompilerDiagnosticNoString
-      (string.append "error: " (cdiag.compiler-diagnostic-render diag))]))
+      (str_cat.str-cat "error: " (cdiag.compiler-diagnostic-render diag))]))
 
 (define (doc-test-public-diagnostic-render-smoke-ok?) : bool
   (let
@@ -1228,13 +1225,11 @@
 (define (doc-test-unexpected-error-message
   [index : i64]
   [diag : cdiag.CompilerDiagnostic]) : String
-  (string.append
+  (str_cat.str-cat
     "doctest example "
-    (string.append
-      (string.int->string index)
-      (string.append
-        " was expected to pass\n"
-        (doc-test-public-diagnostic-render diag)))))
+    (string.int->string index)
+    " was expected to pass\n"
+    (doc-test-public-diagnostic-render diag)))
 
 ;; Runnable doctests spawn nested build/run commands from a generated test
 ;; binary. This is a required gate on both Linux and Windows because skipped
@@ -1252,50 +1247,46 @@
 (define (doc-test-runnable-unsupported-message
   [index : i64]
   [target : backend.CompilerBackendTarget]) : String
-  (string.append
+  (str_cat.str-cat
     "doctest example "
-    (string.append
-      (string.int->string index)
-      (string.append
-        " is a runnable doctest, but runnable doctests are unsupported on target "
-        (build_run_core.source-tool-target-name target)))))
+    (string.int->string index)
+    " is a runnable doctest, but runnable doctests are unsupported on target "
+    (build_run_core.source-tool-target-name target)))
 
 (define (doc-test-runnable-compile-message [index : i64] [message : String]) : String
-  (string.append
+  (str_cat.str-cat
     "doctest example "
-    (string.append
-      (string.int->string index)
-      (string.append " runnable compile failed\n" message))))
+    (string.int->string index)
+    " runnable compile failed\n"
+    message))
 
 (define (doc-test-runnable-build-message [index : i64] [message : String]) : String
-  (string.append
+  (str_cat.str-cat
     "doctest example "
-    (string.append
-      (string.int->string index)
-      (string.append " runnable build failed\n" message))))
+    (string.int->string index)
+    " runnable build failed\n"
+    message))
 
 (define (doc-test-runnable-exec-message [index : i64] [message : String]) : String
-  (string.append
+  (str_cat.str-cat
     "doctest example "
-    (string.append
-      (string.int->string index)
-      (string.append " runnable execution failed: " message))))
+    (string.int->string index)
+    " runnable execution failed: "
+    message))
 
 (define (doc-test-output-comparison-message
   [name : String]
   [expected : String]
   [actual : String]) : String
-  (string.append
+  (str_cat.str-cat
     "expected "
-    (string.append
-      name
-      (string.append
-        ":\n"
-        (string.append
-          expected
-          (string.append
-            "\nactual "
-            (string.append name (string.append ":\n" actual))))))))
+    name
+    ":\n"
+    expected
+    "\nactual "
+    name
+    ":\n"
+    actual))
 
 (define (doc-test-normalize-windows-crlf [text : String]) : String
   (let
@@ -1309,10 +1300,10 @@
           (< (+ i 1) n)
           (= (string.string-ref text (+ i 1)) '\n'))
           (begin
-            (set! out (string.concat3 out "\n" ""))
+            (set! out (str_cat.str-cat out "\n" ""))
             (set! i (+ i 2)))
           (begin
-            (set! out (string.concat3 out (string.substring text i 1) ""))
+            (set! out (str_cat.str-cat out (string.substring text i 1) ""))
             (set! i (+ i 1)))))
       out)))
 
@@ -1342,31 +1333,23 @@
       (doc-test-normalize-output-for-target
         target
         (process.output-stderr output))]
-    (string.append
+    (str_cat.str-cat
       "doctest example "
-      (string.append
-        (string.int->string index)
-        (string.append
-          " runnable output mismatch\nexpected exit: "
-          (string.append
-            (string.int->string expected-exit)
-            (string.append
-              "\nactual exit: "
-              (string.append
-                (string.int->string actual-exit)
-                (string.append
-                  "\n"
-                  (string.append
-                    (doc-test-output-comparison-message
-                      "stdout"
-                      expected-stdout
-                      actual-stdout)
-                    (string.append
-                      "\n"
-                      (doc-test-output-comparison-message
-                        "stderr"
-                        expected-stderr
-                        actual-stderr))))))))))))
+      (string.int->string index)
+      " runnable output mismatch\nexpected exit: "
+      (string.int->string expected-exit)
+      "\nactual exit: "
+      (string.int->string actual-exit)
+      "\n"
+      (doc-test-output-comparison-message
+        "stdout"
+        expected-stdout
+        actual-stdout)
+      "\n"
+      (doc-test-output-comparison-message
+        "stderr"
+        expected-stderr
+        actual-stderr))))
 
 (define (doc-test-runnable-output-matches?
   [expectation : DocTestExpectation]
@@ -1658,7 +1641,7 @@
               index
               (doc-test-runnable-build-message
                 index
-                (string.append "doctest: failed to create temp dir: " message))))])
+                (str_cat.str-cat "doctest: failed to create temp dir: " message))))])
       (DocTestMaybeFailure.Some
         (DocTestRunFailure.Failure
           path
@@ -1671,7 +1654,7 @@
 ;; relative to a sibling of `path` (the doc'd source file), so examples may
 ;; import the doc'd file without colliding with the virtual source root.
 (define (doc-test-example-virtual-path [path : String] [index : i64]) : String
-  (string.append path (string.append ".doctest." (string.int->string index))))
+  (str_cat.str-cat path ".doctest." (string.int->string index)))
 
 (define (doc-test-typecheck-example-with-roots-and-cfg
   [path : String]
@@ -2206,11 +2189,10 @@
   [index : i64]) : String
   (if (>= index (doc-test-run-failure-list-count failures))
     ""
-    (string.append
-      (string.append
-        (doc-test-run-failure-render
-          (doc-test-run-failure-list-ref failures index))
-        "\n")
+    (str_cat.str-cat
+      (doc-test-run-failure-render
+        (doc-test-run-failure-list-ref failures index))
+      "\n"
       (doc-test-run-failures-render-from failures (+ index 1)))))
 
 (define (doc-test-run-failures-render [failures : doc_run_failure_vec.Vec]) : String
@@ -2224,10 +2206,11 @@
   (match report
     [(DocTestRunReport.Report count failures)
       (if (= (doc-test-run-failure-list-count failures) 0)
-        (string.append
+        (str_cat.str-cat
           "Doc tests passed: "
-          (string.append (string.int->string count) " example(s)"))
-        (string.append
+          (string.int->string count)
+          " example(s)")
+        (str_cat.str-cat
           (str_cat.str-cat
             "doc tests failed: "
             (string.int->string (doc-test-run-failure-list-count failures))
@@ -2277,39 +2260,24 @@
 ")
 
 (define (doc-test-runnable-source) : String
-  (string.append
+  (str_cat.str-cat
     ";# Runnable docs\n"
-    (string.append
-      ";# ```typelisp run\n"
-      (string.append
-        ";# ;; doctest-exit: 0\n"
-        (string.append
-          ";# ;; doctest-stdout: literal:hello\\n\n"
-          (string.append
-            ";# ;; doctest-stderr: literal:error\\tline\\r\n"
-            (string.append
-              ";# (import stdlib.io)\n"
-              (string.append
-                ";# (import stdlib.byte_buf)\n"
-                (string.append
-                  ";# (define (main) : i64\n"
-                  (string.append
-                    ";#   (begin\n"
-                    (string.append
-                      ";#     (let [text : String \"hello\\n\"] (io.stdout-write (byte_buf.str-as-bytes (& text))))\n"
-                      (string.append
-                        ";#     (let [text : String \"error\\tline\\r\"] (io.stderr-write (byte_buf.str-as-bytes (& text))))\n"
-                        (string.append
-                          ";#     0))\n"
-                          (string.append
-                            ";# ```\n"
-                            (string.append
-                              ";# ```tl run\n"
-                              (string.append
-                                ";# ;; doctest-exit: 42\n"
-                                (string.append
-                                  ";# (define (main) : i64 42)\n"
-                                  ";# ```\n")))))))))))))))))
+    ";# ```typelisp run\n"
+    ";# ;; doctest-exit: 0\n"
+    ";# ;; doctest-stdout: literal:hello\\n\n"
+    ";# ;; doctest-stderr: literal:error\\tline\\r\n"
+    ";# (import stdlib.io)\n"
+    ";# (import stdlib.byte_buf)\n"
+    ";# (define (main) : i64\n"
+    ";#   (begin\n"
+    ";#     (let [text : String \"hello\\n\"] (io.stdout-write (byte_buf.str-as-bytes (& text))))\n"
+    ";#     (let [text : String \"error\\tline\\r\"] (io.stderr-write (byte_buf.str-as-bytes (& text))))\n"
+    ";#     0))\n"
+    ";# ```\n"
+    ";# ```tl run\n"
+    ";# ;; doctest-exit: 42\n"
+    ";# (define (main) : i64 42)\n"
+    ";# ```\n"))
 
 (define (doc-test-runnable-malformed-source) : String
   ";# ```typelisp run expect-error
@@ -2922,22 +2890,19 @@ typecheck: return type mismatch"))]
           (and (doc-test-run-report-ok? report) (> hits 0)))))))
 
 (define (doc-test-package-walk-example-source [value : i64]) : String
-  (string.append
+  (str_cat.str-cat
     ";# ```typelisp
 ;# (define (main) : i64 "
-    (string.append (string.int->string value) ")
+    (string.int->string value)
+    ")
 ;# ```
-")))
+"))
 
 (define (doc-test-package-walk-numbered-path
   [root : String]
   [prefix : String]
   [index : i64]) : String
-  (string.append
-    root
-    (string.append
-      "/"
-      (string.append prefix (string.append (string.int->string index) ".tl")))))
+  (str_cat.str-cat root "/" prefix (string.int->string index) ".tl"))
 
 (define (doc-test-package-walk-write-empty-paths
   [root : String]

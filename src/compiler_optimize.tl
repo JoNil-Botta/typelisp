@@ -21,6 +21,7 @@
 ;; Out of scope: broad aggregate/String/array IR optimization.
 (import stdlib.io)
 (cfg compile-profile (import stdlib.profile))
+(cfg test (import stdlib.test))
 (import stdlib.array)
 (import stdlib.vector)
 (import stdlib.text_buf)
@@ -255,103 +256,132 @@
 (cfg
   compile-profile
   (define (compiler-opt-profile-field [value : i64]) : String
-    (string.append "|" (string.int->string value))))
+    (str_cat.str-cat "|" (string.int->string value))))
 
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-max-table-size : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-max-table-size-metric : i64
+    32))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-max-kinds-size : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-max-kinds-size-metric : i64
+    33))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-max-table-cap : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-max-table-cap-metric : i64
+    34))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-max-kinds-cap : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-max-kinds-cap-metric : i64
+    35))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-table-cap-hits : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-table-cap-hits-metric : i64
+    36))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-kinds-cap-hits : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-kinds-cap-hits-metric : i64
+    37))
 (cfg
-  compile-profile
-  (define compiler-opt-load-cse-profile-field-key-drops : i64
-    0))
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-field-key-drops-metric : i64
+    38))
+(cfg
+  (any compile-profile test)
+  (define compiler-opt-load-cse-profile-metric-end : i64
+    39))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-reset) : unit
-    (begin
-      (set! compiler-opt-load-cse-profile-max-table-size 0)
-      (set! compiler-opt-load-cse-profile-max-kinds-size 0)
-      (set! compiler-opt-load-cse-profile-max-table-cap 0)
-      (set! compiler-opt-load-cse-profile-max-kinds-cap 0)
-      (set! compiler-opt-load-cse-profile-table-cap-hits 0)
-      (set! compiler-opt-load-cse-profile-kinds-cap-hits 0)
-      (set! compiler-opt-load-cse-profile-field-key-drops 0))))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-reset
+    [state : profile_state.CompilerProfileState]) : unit
+    (profile_state.compiler-profile-state-metric-reset-range!
+      state
+      compiler-opt-load-cse-profile-max-table-size-metric
+      compiler-opt-load-cse-profile-metric-end)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-table-size [size : i64]) : unit
-    (if (> size compiler-opt-load-cse-profile-max-table-size)
-      (set! compiler-opt-load-cse-profile-max-table-size size)
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-max
+    [metrics : profile_state.CompilerProfileMetrics]
+    [metric : i64]
+    [value : i64]) : unit
+    (if (> value (profile_state.compiler-profile-metrics-value metrics metric))
+      (profile_state.compiler-profile-metrics-set! metrics metric value)
       unit)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-kinds-size [size : i64]) : unit
-    (if (> size compiler-opt-load-cse-profile-max-kinds-size)
-      (set! compiler-opt-load-cse-profile-max-kinds-size size)
-      unit)))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-table-size
+    [metrics : profile_state.CompilerProfileMetrics]
+    [size : i64]) : unit
+    (compiler-opt-load-cse-profile-note-max
+      metrics
+      compiler-opt-load-cse-profile-max-table-size-metric
+      size)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-table-cap [cap : i64]) : unit
-    (if (> cap compiler-opt-load-cse-profile-max-table-cap)
-      (set! compiler-opt-load-cse-profile-max-table-cap cap)
-      unit)))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-kinds-size
+    [metrics : profile_state.CompilerProfileMetrics]
+    [size : i64]) : unit
+    (compiler-opt-load-cse-profile-note-max
+      metrics
+      compiler-opt-load-cse-profile-max-kinds-size-metric
+      size)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-kinds-cap [cap : i64]) : unit
-    (if (> cap compiler-opt-load-cse-profile-max-kinds-cap)
-      (set! compiler-opt-load-cse-profile-max-kinds-cap cap)
-      unit)))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-table-cap
+    [metrics : profile_state.CompilerProfileMetrics]
+    [cap : i64]) : unit
+    (compiler-opt-load-cse-profile-note-max
+      metrics
+      compiler-opt-load-cse-profile-max-table-cap-metric
+      cap)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-table-cap-hit) : unit
-    (set!
-      compiler-opt-load-cse-profile-table-cap-hits
-      (+ compiler-opt-load-cse-profile-table-cap-hits 1))))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-kinds-cap
+    [metrics : profile_state.CompilerProfileMetrics]
+    [cap : i64]) : unit
+    (compiler-opt-load-cse-profile-note-max
+      metrics
+      compiler-opt-load-cse-profile-max-kinds-cap-metric
+      cap)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-kinds-cap-hit) : unit
-    (set!
-      compiler-opt-load-cse-profile-kinds-cap-hits
-      (+ compiler-opt-load-cse-profile-kinds-cap-hits 1))))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-table-cap-hit
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-add!
+      metrics
+      compiler-opt-load-cse-profile-table-cap-hits-metric
+      1)))
 
 (cfg
-  compile-profile
-  (define (compiler-opt-load-cse-profile-note-field-key-drop) : unit
-    (set!
-      compiler-opt-load-cse-profile-field-key-drops
-      (+ compiler-opt-load-cse-profile-field-key-drops 1))))
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-kinds-cap-hit
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-add!
+      metrics
+      compiler-opt-load-cse-profile-kinds-cap-hits-metric
+      1)))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-opt-load-cse-profile-note-field-key-drop
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-add!
+      metrics
+      compiler-opt-load-cse-profile-field-key-drops-metric
+      1)))
 
 (cfg
   compile-profile
   (define (compiler-opt-load-cse-profile-line [name : String] [value : i64]) : unit
     (io.print-error
-      (string.concat5
+      (str_cat.str-cat
         "compile-profile|optimize.load_cse."
         name
         "|"
@@ -360,29 +390,126 @@
 
 (cfg
   compile-profile
-  (define (compiler-opt-load-cse-profile-emit) : unit
+  (define (compiler-opt-load-cse-profile-emit
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
       (compiler-opt-load-cse-profile-line
         "max_table_size"
-        compiler-opt-load-cse-profile-max-table-size)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-max-table-size-metric))
       (compiler-opt-load-cse-profile-line
         "max_kinds_size"
-        compiler-opt-load-cse-profile-max-kinds-size)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-max-kinds-size-metric))
       (compiler-opt-load-cse-profile-line
         "max_table_cap"
-        compiler-opt-load-cse-profile-max-table-cap)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-max-table-cap-metric))
       (compiler-opt-load-cse-profile-line
         "max_kinds_cap"
-        compiler-opt-load-cse-profile-max-kinds-cap)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-max-kinds-cap-metric))
       (compiler-opt-load-cse-profile-line
         "table_cap_hits"
-        compiler-opt-load-cse-profile-table-cap-hits)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-table-cap-hits-metric))
       (compiler-opt-load-cse-profile-line
         "kinds_cap_hits"
-        compiler-opt-load-cse-profile-kinds-cap-hits)
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-kinds-cap-hits-metric))
       (compiler-opt-load-cse-profile-line
         "field_key_drops"
-        compiler-opt-load-cse-profile-field-key-drops))))
+        (profile_state.compiler-profile-state-metric-value
+          state
+          compiler-opt-load-cse-profile-field-key-drops-metric)))))
+
+(cfg
+  test
+  (test
+    compiler-opt-load-cse-profile-job-isolation
+    (let
+      [left : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [right : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [left-metrics : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics left)]
+      [right-metrics : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics right)]
+      (begin
+        (compiler-opt-load-cse-profile-reset left)
+        (compiler-opt-load-cse-profile-reset right)
+        (compiler-opt-load-cse-profile-note-table-size left-metrics 4)
+        (compiler-opt-load-cse-profile-note-table-size right-metrics 19)
+        (compiler-opt-load-cse-profile-note-table-size left-metrics 7)
+        (compiler-opt-load-cse-profile-note-kinds-size left-metrics 6)
+        (compiler-opt-load-cse-profile-note-table-cap left-metrics 31)
+        (compiler-opt-load-cse-profile-note-kinds-cap left-metrics 29)
+        (compiler-opt-load-cse-profile-note-table-cap-hit left-metrics)
+        (compiler-opt-load-cse-profile-note-kinds-cap-hit left-metrics)
+        (compiler-opt-load-cse-profile-note-field-key-drop left-metrics)
+        (compiler-opt-load-cse-profile-reset right)
+        (compiler-opt-load-cse-profile-note-field-key-drop right-metrics)
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-max-table-size-metric)
+          7
+          "left job keeps its table maximum across a right reset")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-max-kinds-size-metric)
+          6
+          "left job keeps its kinds maximum")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-max-table-cap-metric)
+          31
+          "left job keeps its table cap")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-max-kinds-cap-metric)
+          29
+          "left job keeps its kinds cap")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-table-cap-hits-metric)
+          1
+          "left job keeps its table cap hit count")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-kinds-cap-hits-metric)
+          1
+          "left job keeps its kinds cap hit count")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            left
+            compiler-opt-load-cse-profile-field-key-drops-metric)
+          1
+          "left job keeps its field-key drop count")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            right
+            compiler-opt-load-cse-profile-max-table-size-metric)
+          0
+          "right reset clears only the right maximum")
+        (test.assert-i64-eq
+          (profile_state.compiler-profile-state-metric-value
+            right
+            compiler-opt-load-cse-profile-field-key-drops-metric)
+          1
+          "right job restarts its own drop count")))))
 
 (cfg
   compile-profile
@@ -419,32 +546,29 @@
             state
             compiler-opt-profile-start-live-metric))]
       (io.print-error
-        (string.append
+        (str_cat.str-cat
           "compile-profile|optimize."
-          (string.append
-            phase
-            (string.append
-              (compiler-opt-profile-field
-                (-
-                  end-ms
-                  (profile_state.compiler-profile-state-metric-value
-                    state
-                    compiler-opt-profile-start-ms-metric)))
-              (string.append
-                (compiler-opt-profile-field
-                  (-
-                    end-total
-                    (profile_state.compiler-profile-state-metric-value
-                      state
-                      compiler-opt-profile-start-total-metric)))
-                (string.append
-                  (compiler-opt-profile-field
-                    (-
-                      end-live
-                      (profile_state.compiler-profile-state-metric-value
-                        state
-                        compiler-opt-profile-start-live-metric)))
-                  (string.append (compiler-opt-profile-field peak-delta) "\n"))))))))))
+          phase
+          (compiler-opt-profile-field
+            (-
+              end-ms
+              (profile_state.compiler-profile-state-metric-value
+                state
+                compiler-opt-profile-start-ms-metric)))
+          (compiler-opt-profile-field
+            (-
+              end-total
+              (profile_state.compiler-profile-state-metric-value
+                state
+                compiler-opt-profile-start-total-metric)))
+          (compiler-opt-profile-field
+            (-
+              end-live
+              (profile_state.compiler-profile-state-metric-value
+                state
+                compiler-opt-profile-start-live-metric)))
+          (compiler-opt-profile-field peak-delta)
+          "\n")))))
 
 (cfg
   compile-profile
@@ -485,15 +609,14 @@
           unit)
         (if (>= elapsed 1)
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|optimize."
-              (string.append
-                phase
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string elapsed)
-                    (string.append "|" (string.append name "\n")))))))
+              phase
+              "|"
+              (string.int->string elapsed)
+              "|"
+              name
+              "\n"))
           unit)))))
 
 (cfg
@@ -514,17 +637,14 @@
           elapsed)
         (if (>= elapsed 1)
           (io.print-error
-            (string.append
+            (str_cat.str-cat
               "compile-profile-detail|optimize.pass."
-              (string.append
-                pass
-                (string.append
-                  "|"
-                  (string.append
-                    (string.int->string elapsed)
-                    (string.append
-                      "|"
-                      (string.append (ir.compiler-ir-symbol-text name) "\n")))))))
+              pass
+              "|"
+              (string.int->string elapsed)
+              "|"
+              (ir.compiler-ir-symbol-text name)
+              "\n"))
           unit)))))
 
 (cfg
@@ -540,12 +660,16 @@
         compile-profile-summary
         unit
         (io.print-error
-          (string.concat5
+          (str_cat.str-cat
             "compile-profile-detail|optimize.escape."
             phase
             "|"
             (string.int->string elapsed)
-            (string.concat5 "|" (string.int->string level) "|" name "\n")))))))
+            "|"
+            (string.int->string level)
+            "|"
+            name
+            "\n"))))))
 
 (cfg
   compile-profile
@@ -4597,39 +4721,29 @@
           (OptAggregateSroaResult.Result (OptAggregateFieldFacts.Nil) instr)
           (OptAggregateSroaResult.Result def-facts instr)))]))
 
-(define (opt-aggregate-sroa-instr-seq-from
-  [type-segment-bases : i64]
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [facts : OptAggregateFieldFacts]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    ir.CompilerIrInstrList.Nil
-    (match (opt-aggregate-sroa-instr
-      type-segment-bases
-      candidates
-      facts
-      (ir.compiler-ir-instr-seq-ref instrs index))
-      [(OptAggregateSroaResult.Result next-facts next-instr)
-        (ir.compiler-ir-instr-cons
-          next-instr
-          (opt-aggregate-sroa-instr-seq-from
-            type-segment-bases
-            candidates
-            next-facts
-            instrs
-            (+ index 1)))])))
-
 (define (opt-aggregate-sroa-instr-seq
   [type-segment-bases : i64]
   [candidates : opt_aggregate_candidate_vec.Vec]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
-  (opt-aggregate-sroa-instr-seq-from
-    type-segment-bases
-    candidates
-    (OptAggregateFieldFacts.Nil)
-    instrs
-    0))
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    [facts : OptAggregateFieldFacts (OptAggregateFieldFacts.Nil)]
+    (begin
+      (while (< index count)
+        (match (opt-aggregate-sroa-instr
+          type-segment-bases
+          candidates
+          facts
+          (ir.compiler-ir-instr-seq-ref instrs index))
+          [(OptAggregateSroaResult.Result next-facts next-instr)
+            (begin
+              (array-set! slots index next-instr)
+              (set! facts next-facts)
+              (set! index (+ index 1)))]))
+      (ir.CompilerIrInstrSeq slots count))))
 
 (define (opt-aggregate-sroa-block
   [type-segment-bases : i64]
@@ -4637,7 +4751,7 @@
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         label
         (opt-aggregate-sroa-instr-seq type-segment-bases candidates instrs))]))
 
@@ -13243,7 +13357,7 @@
     [entry : i64 (opt-cfg-entry-label blocks)]
     [preheader : i64
       (ir.compiler-ir-label
-        (string.append (ir.compiler-ir-label-text entry) "__ssa_entry"))]
+        (str_cat.str-cat (ir.compiler-ir-label-text entry) "__ssa_entry"))]
     (if (or
       (not (ir.compiler-ir-label-some? entry))
       (opt-cfg-block-exists? blocks preheader))
@@ -13265,7 +13379,7 @@
         (opt-cfg-block-exists?
           blocks
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text entry) "__ssa_entry")))))))
+            (str_cat.str-cat (ir.compiler-ir-label-text entry) "__ssa_entry")))))))
 
 (define (opt-ssa-construct-function
   [type-segment-bases : i64]
@@ -16015,10 +16129,11 @@
 (define (opt-loop-preheaders-candidate-label [header : i64] [suffix : i64]) : i64
   (ir.compiler-ir-label
     (if (= suffix 0)
-      (string.append (ir.compiler-ir-label-text header) "__preheader")
-      (string.append
+      (str_cat.str-cat (ir.compiler-ir-label-text header) "__preheader")
+      (str_cat.str-cat
         (ir.compiler-ir-label-text header)
-        (string.append "__preheader" (string.int->string suffix))))))
+        "__preheader"
+        (string.int->string suffix)))))
 
 (define (opt-loop-preheaders-fresh-label
   [blocks : ir.CompilerIrBlockList]
@@ -16195,23 +16310,27 @@
         ty)]
     [_ instr]))
 
-(define (opt-loop-preheaders-rewrite-header-instrs-from
+(define (opt-loop-preheaders-rewrite-header-instrs
   [outside : OptLabelSet]
   [preheader : i64]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (ir.CompilerIrInstrList.Nil)
-    (ir.compiler-ir-instr-cons
-      (opt-loop-preheaders-rewrite-header-instr
-        outside
-        preheader
-        (ir.compiler-ir-instr-seq-ref instrs index))
-      (opt-loop-preheaders-rewrite-header-instrs-from
-        outside
-        preheader
-        instrs
-        (+ index 1)))))
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (opt-loop-preheaders-rewrite-header-instr
+              outside
+              preheader
+              (ir.compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
 
 (define (opt-loop-preheaders-retarget-label
   [label : i64]
@@ -16298,32 +16417,43 @@
         trap-label)]
     [_ instr]))
 
-(define (opt-loop-preheaders-retarget-instrs-from
+(define (opt-loop-preheaders-retarget-instrs
   [instrs : ir.CompilerIrInstrSeq]
   [header : i64]
-  [preheader : i64]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (ir.CompilerIrInstrList.Nil)
-    (ir.compiler-ir-instr-cons
-      (opt-loop-preheaders-retarget-instr
-        (ir.compiler-ir-instr-seq-ref instrs index)
-        header
-        preheader)
-      (opt-loop-preheaders-retarget-instrs-from
-        instrs
-        header
-        preheader
-        (+ index 1)))))
+  [preheader : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (opt-loop-preheaders-retarget-instr
+              (ir.compiler-ir-instr-seq-ref instrs index)
+              header
+              preheader))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
 
 (define (opt-loop-preheaders-append-jump
-  [instrs : ir.CompilerIrInstrList]
-  [target : i64]) : ir.CompilerIrInstrList
-  (opt-aggregate-instr-list-append
-    instrs
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Jump target)
-      (ir.CompilerIrInstrList.Nil))))
+  [instrs : ir.CompilerIrInstrSeq]
+  [target : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr (+ count 1))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! slots index (ir.compiler-ir-instr-seq-ref instrs index))
+          (set! index (+ index 1))))
+      (array-set! slots count (ir.CompilerIrInstr.Jump target))
+      (ir.CompilerIrInstrSeq slots (+ count 1)))))
 
 (define (opt-loop-preheaders-rewrite-block
   [block : ir.CompilerIrBlock]
@@ -16334,22 +16464,14 @@
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (if (= label header)
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           label
-          (opt-loop-preheaders-rewrite-header-instrs-from
-            outside
-            preheader
-            instrs
-            0))
+          (opt-loop-preheaders-rewrite-header-instrs outside preheader instrs))
         (if (opt-label-contains outside label)
           (let
-            [retargeted : ir.CompilerIrInstrList
-              (opt-loop-preheaders-retarget-instrs-from
-                instrs
-                header
-                preheader
-                0)]
-            (ir.compiler-ir-block
+            [retargeted : ir.CompilerIrInstrSeq
+              (opt-loop-preheaders-retarget-instrs instrs header preheader)]
+            (ir.CompilerIrBlock.Block
               label
               (if (and
                 (= next-label header)
@@ -16386,11 +16508,9 @@
         preheader)]))
 
 (define (opt-loop-preheaders-new-block [preheader : i64] [header : i64]) : ir.CompilerIrBlock
-  (ir.compiler-ir-block
+  (ir.CompilerIrBlock.Block
     preheader
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.Jump header)
-      (ir.CompilerIrInstrList.Nil))))
+    (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump header))))
 
 (define (opt-loop-preheaders-insert-before-header
   [blocks : ir.CompilerIrBlockList]
@@ -16583,7 +16703,7 @@
 ;; verifier gate.
 (defenum OptLoopRotationHeader
   (No)
-  (Header ir.CompilerIrInstrList))
+  (Header ir.CompilerIrInstrSeq))
 
 (define (opt-loop-rotation-header-count
   [loops : OptNaturalLoopList]
@@ -16616,15 +16736,6 @@
       (opt-loop-rotation-guard-instr?
         (ir.compiler-ir-instr-seq-ref instrs index))
       (opt-loop-rotation-header-prefix-ok? instrs (+ index 1) last))))
-
-(define (opt-loop-rotation-header-list-from
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (ir.CompilerIrInstrList.Nil)
-    (ir.compiler-ir-instr-cons
-      (ir.compiler-ir-instr-seq-ref instrs index)
-      (opt-loop-rotation-header-list-from instrs (+ index 1)))))
 
 (define (opt-loop-rotation-body-target?
   [body : OptLabelSet]
@@ -16667,8 +16778,7 @@
                             header
                             false-label)
                           (opt-loop-rotation-exit-target? body true-label))))
-                      (OptLoopRotationHeader.Header
-                        (opt-loop-rotation-header-list-from instrs 0))
+                      (OptLoopRotationHeader.Header instrs)
                       (OptLoopRotationHeader.No))]
                   [_ (OptLoopRotationHeader.No)]))))])]))
 
@@ -16694,37 +16804,44 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (opt-loop-rotation-final-jump-to? instrs target)])]))
 
-(define (opt-loop-rotation-prefix-before-final-from
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [last : i64]) : ir.CompilerIrInstrList
-  (if (>= index last)
-    (ir.CompilerIrInstrList.Nil)
-    (ir.compiler-ir-instr-cons
-      (ir.compiler-ir-instr-seq-ref instrs index)
-      (opt-loop-rotation-prefix-before-final-from instrs (+ index 1) last))))
-
 (define (opt-loop-rotation-replace-final-jump
   [pools : ast.AstNodePoolContext]
   [instrs : ir.CompilerIrInstrSeq]
-  [guard : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (opt-aggregate-instr-list-append
-    (opt-loop-rotation-prefix-before-final-from
-      instrs
-      0
-      (- (ir.compiler-ir-instr-seq-count instrs) 1))
-    (ir.compiler-ir-clone-instr-list pools guard)))
+  [guard : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [instr-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [prefix-count : i64 (- instr-count 1)]
+    [guard-count : i64 (ir.compiler-ir-instr-seq-count guard)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr (+ prefix-count guard-count))]
+    [index : i64 0]
+    (begin
+      (while (< index prefix-count)
+        (begin
+          (array-set! slots index (ir.compiler-ir-instr-seq-ref instrs index))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index guard-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count index)
+            (ir.compiler-ir-clone-instr
+              pools
+              (ir.compiler-ir-instr-seq-ref guard index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots (+ prefix-count guard-count)))))
 
 (define (opt-loop-rotation-rewrite-block
   [pools : ast.AstNodePoolContext]
   [block : ir.CompilerIrBlock]
   [preheader : i64]
   [latch : i64]
-  [guard : ir.CompilerIrInstrList]) : ir.CompilerIrBlock
+  [guard : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (if (or (= label preheader) (= label latch))
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           label
           (opt-loop-rotation-replace-final-jump pools instrs guard))
         block)]))
@@ -16735,7 +16852,7 @@
   [header : i64]
   [preheader : i64]
   [latch : i64]
-  [guard : ir.CompilerIrInstrList]) : ir.CompilerIrBlockList
+  [guard : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -16778,7 +16895,7 @@
   [header : i64]
   [preheader : i64]
   [latch : i64]
-  [guard : ir.CompilerIrInstrList]) : OptBlockListPassResult
+  [guard : ir.CompilerIrInstrSeq]) : OptBlockListPassResult
   (let
     [next : ir.CompilerIrBlockList
       (opt-loop-rotation-rewrite-blocks
@@ -16958,9 +17075,9 @@
   (Some OptRotateSsaPhiRecs))
 
 (defstruct OptRotateSsaShape
-  (phis ir.CompilerIrInstrList)
+  (phis ir.CompilerIrInstrSeq)
   (recs OptRotateSsaPhiRecs)
-  (guard ir.CompilerIrInstrList)
+  (guard ir.CompilerIrInstrSeq)
   (cond-value ir.CompilerIrValue)
   (true-label i64)
   (false-label i64)
@@ -16972,10 +17089,10 @@
   (Some OptRotateSsaShape))
 
 (defenum OptRotateSsaClone
-  (Clone ir.CompilerIrInstrList i64))
+  (Clone ir.CompilerIrInstrSeq i64))
 
 (defenum OptRotateSsaExitPhis
-  (Result ir.CompilerIrInstrList OptCopyEnv i64))
+  (Result ir.CompilerIrInstrSeq OptCopyEnv i64))
 
 (defenum OptRotateSsaRewrite
   (No)
@@ -16989,15 +17106,15 @@
   (body-label i64)
   (exit-label i64)
   (body OptLabelSet)
-  (phis ir.CompilerIrInstrList)
-  (preheader-guard ir.CompilerIrInstrList)
-  (latch-guard ir.CompilerIrInstrList)
-  (exit-phis ir.CompilerIrInstrList)
+  (phis ir.CompilerIrInstrSeq)
+  (preheader-guard ir.CompilerIrInstrSeq)
+  (latch-guard ir.CompilerIrInstrSeq)
+  (exit-phis ir.CompilerIrInstrSeq)
   (exit-env OptCopyEnv))
 
 (define (opt-rotate-ssa-land-label [header : i64]) : i64
   (ir.compiler-ir-label
-    (string.append (ir.compiler-ir-label-text header) "__rotate_land")))
+    (str_cat.str-cat (ir.compiler-ir-label-text header) "__rotate_land")))
 
 (define (opt-rotate-ssa-only-label? [set : OptLabelSet] [label : i64]) : bool
   (and (= (opt-label-count set) 1) (opt-label-contains set label)))
@@ -17014,54 +17131,78 @@
 
 ;; Each header phi must carry exactly the two loop-edge inputs {preheader,
 ;; latch}; the record keeps (dst, preheader input, latch input, type).
+(define (opt-rotate-ssa-phi-recs-from
+  [phis : ir.CompilerIrInstrSeq]
+  [preheader : i64]
+  [latch : i64]
+  [index : i64]) : OptRotateSsaMaybePhiRecs
+  (if (>= index (ir.compiler-ir-instr-seq-count phis))
+    (OptRotateSsaMaybePhiRecs.Some (OptRotateSsaPhiRecs.Nil))
+    (match (opt-rotate-ssa-phi-recs-from phis preheader latch (+ index 1))
+      [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybePhiRecs.No)]
+      [(OptRotateSsaMaybePhiRecs.Some recs)
+        (match (ir.compiler-ir-instr-seq-ref phis index)
+          [(ir.CompilerIrInstr.Phi dst inputs ty)
+            (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+              [(ir.CompilerIrPhiInputList.Cons first-value first-label rest1)
+                (match (box-get rest1)
+                  [(ir.CompilerIrPhiInputList.Cons
+                      second-value
+                      second-label
+                      rest2)
+                    (match (box-get rest2)
+                      [(ir.CompilerIrPhiInputList.Nil)
+                        (cond
+                          [(and
+                              (= first-label preheader)
+                              (= second-label latch))
+                            (OptRotateSsaMaybePhiRecs.Some
+                              (OptRotateSsaPhiRecs.Cons
+                                dst
+                                first-value
+                                second-value
+                                ty
+                                (box recs)))]
+                          [(and
+                              (= first-label latch)
+                              (= second-label preheader))
+                            (OptRotateSsaMaybePhiRecs.Some
+                              (OptRotateSsaPhiRecs.Cons
+                                dst
+                                second-value
+                                first-value
+                                ty
+                                (box recs)))]
+                          [else (OptRotateSsaMaybePhiRecs.No)])]
+                      [_ (OptRotateSsaMaybePhiRecs.No)])]
+                  [_ (OptRotateSsaMaybePhiRecs.No)])]
+              [_ (OptRotateSsaMaybePhiRecs.No)])]
+          [_ (OptRotateSsaMaybePhiRecs.No)])])))
+
 (define (opt-rotate-ssa-phi-recs
-  [phis : ir.CompilerIrInstrList]
+  [phis : ir.CompilerIrInstrSeq]
   [preheader : i64]
   [latch : i64]) : OptRotateSsaMaybePhiRecs
-  (match phis
-    [(ir.CompilerIrInstrList.Nil)
-      (OptRotateSsaMaybePhiRecs.Some (OptRotateSsaPhiRecs.Nil))]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (opt-rotate-ssa-phi-recs (box-get rest) preheader latch)
-        [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybePhiRecs.No)]
-        [(OptRotateSsaMaybePhiRecs.Some recs)
-          (match instr
-            [(ir.CompilerIrInstr.Phi dst inputs ty)
-              (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-                [(ir.CompilerIrPhiInputList.Cons first-value first-label rest1)
-                  (match (box-get rest1)
-                    [(ir.CompilerIrPhiInputList.Cons
-                        second-value
-                        second-label
-                        rest2)
-                      (match (box-get rest2)
-                        [(ir.CompilerIrPhiInputList.Nil)
-                          (cond
-                            [(and
-                                (= first-label preheader)
-                                (= second-label latch))
-                              (OptRotateSsaMaybePhiRecs.Some
-                                (OptRotateSsaPhiRecs.Cons
-                                  dst
-                                  first-value
-                                  second-value
-                                  ty
-                                  (box recs)))]
-                            [(and
-                                (= first-label latch)
-                                (= second-label preheader))
-                              (OptRotateSsaMaybePhiRecs.Some
-                                (OptRotateSsaPhiRecs.Cons
-                                  dst
-                                  second-value
-                                  first-value
-                                  ty
-                                  (box recs)))]
-                            [else (OptRotateSsaMaybePhiRecs.No)])]
-                        [_ (OptRotateSsaMaybePhiRecs.No)])]
-                    [_ (OptRotateSsaMaybePhiRecs.No)])]
-                [_ (OptRotateSsaMaybePhiRecs.No)])]
-            [_ (OptRotateSsaMaybePhiRecs.No)])])]))
+  (opt-rotate-ssa-phi-recs-from phis preheader latch 0))
+
+(define (opt-rotate-ssa-instr-seq-range
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [last : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (- last first)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (ir.compiler-ir-instr-seq-ref instrs (+ first index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
 
 (define (opt-rotate-ssa-shape-from-branch
   [instrs : ir.CompilerIrInstrSeq]
@@ -17084,26 +17225,26 @@
         (opt-loop-rotation-body-target? body header false-label)
         (opt-loop-rotation-exit-target? body true-label))]
     (if (or true-is-body false-is-body)
-      (match (opt-rotate-ssa-phi-recs
-        (opt-loop-rotation-prefix-before-final-from instrs 0 phi-end)
-        preheader
-        latch)
-        [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybeShape.No)]
-        [(OptRotateSsaMaybePhiRecs.Some recs)
-          (OptRotateSsaMaybeShape.Some
-            (OptRotateSsaShape
-              (opt-loop-rotation-prefix-before-final-from instrs 0 phi-end)
-              recs
-              (opt-loop-rotation-prefix-before-final-from instrs phi-end last)
-              cond-value
-              true-label
-              false-label
-              (if true-is-body
+      (let
+        [phis : ir.CompilerIrInstrSeq
+          (opt-rotate-ssa-instr-seq-range instrs 0 phi-end)]
+        (match (opt-rotate-ssa-phi-recs phis preheader latch)
+          [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybeShape.No)]
+          [(OptRotateSsaMaybePhiRecs.Some recs)
+            (OptRotateSsaMaybeShape.Some
+              (OptRotateSsaShape
+                phis
+                recs
+                (opt-rotate-ssa-instr-seq-range instrs phi-end last)
+                cond-value
                 true-label
-                false-label)
-              (if true-is-body
                 false-label
-                true-label)))])
+                (if true-is-body
+                  true-label
+                  false-label)
+                (if true-is-body
+                  false-label
+                  true-label)))]))
       (OptRotateSsaMaybeShape.No))))
 
 ;; Header shape: leading phis (zero or more), then a whitelisted pure guard
@@ -17252,17 +17393,22 @@
 ;; inside the header by the guard/branch itself; `uses` covers all other
 ;; blocks plus the header's own phi inputs.
 (define (opt-rotate-ssa-guard-dsts-local?
-  [guard : ir.CompilerIrInstrList]
+  [guard : ir.CompilerIrInstrSeq]
   [uses : opt_i64_i64_map.Map]) : bool
-  (match guard
-    [(ir.CompilerIrInstrList.Nil) true]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (let
-        [dst : i64 (opt-rotate-ssa-instr-dst instr)]
-        (and
-          (>= dst 0)
-          (not (opt-used-contains uses dst))
-          (opt-rotate-ssa-guard-dsts-local? (box-get rest) uses)))]))
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count guard)]
+    [index : i64 0]
+    [local? : bool true]
+    (begin
+      (while (and local? (< index count))
+        (let
+          [dst : i64
+            (opt-rotate-ssa-instr-dst
+              (ir.compiler-ir-instr-seq-ref guard index))]
+          (begin
+            (set! local? (and (>= dst 0) (not (opt-used-contains uses dst))))
+            (set! index (+ index 1)))))
+      local?)))
 
 ;; Map each header-phi destination to the input value carried by one loop
 ;; edge: the preheader input for the preheader clone, the latch input for the
@@ -17308,110 +17454,170 @@
 ;; orientation) on the remapped condition.
 (define (opt-rotate-ssa-clone-guard
   [env : OptCopyEnv]
-  [guard : ir.CompilerIrInstrList]
+  [guard : ir.CompilerIrInstrSeq]
   [cond-value : ir.CompilerIrValue]
   [true-label : i64]
   [false-label : i64]
   [next-var : i64]) : OptRotateSsaClone
-  (match guard
-    [(ir.CompilerIrInstrList.Nil)
-      (OptRotateSsaClone.Clone
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Branch
-            (opt-copy-resolve env cond-value)
-            true-label
-            false-label)
-          (ir.CompilerIrInstrList.Nil))
-        next-var)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (let
-        [cloned : ir.CompilerIrInstr
-          (opt-rotate-ssa-clone-guard-instr env next-var instr)]
-        [next-env : OptCopyEnv
-          (OptCopyEnv.Cons
-            (opt-rotate-ssa-instr-dst instr)
-            (ir.CompilerIrValue.Var next-var)
-            (box env))]
-        (match (opt-rotate-ssa-clone-guard
-          next-env
-          (box-get rest)
-          cond-value
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count guard)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr (+ count 1))]
+    [index : i64 0]
+    [out-env : OptCopyEnv env]
+    [out-var : i64 next-var]
+    (begin
+      (while (< index count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref guard index)]
+          (begin
+            (array-set!
+              slots
+              index
+              (opt-rotate-ssa-clone-guard-instr out-env out-var instr))
+            (set!
+              out-env
+              (OptCopyEnv.Cons
+                (opt-rotate-ssa-instr-dst instr)
+                (ir.CompilerIrValue.Var out-var)
+                (box out-env)))
+            (set! out-var (+ out-var 1))
+            (set! index (+ index 1)))))
+      (array-set!
+        slots
+        count
+        (ir.CompilerIrInstr.Branch
+          (opt-copy-resolve out-env cond-value)
           true-label
-          false-label
-          (+ next-var 1))
-          [(OptRotateSsaClone.Clone cloned-rest out-var)
-            (OptRotateSsaClone.Clone
-              (ir.compiler-ir-instr-cons cloned cloned-rest)
-              out-var)]))]))
+          false-label))
+      (OptRotateSsaClone.Clone
+        (ir.CompilerIrInstrSeq slots (+ count 1))
+        out-var))))
 
 ;; Rebuild the header phis for the top of the loop-body block: same
 ;; destinations, initial input relabeled to the landing block (the body's new
 ;; preheader-side predecessor), latch input unchanged.
+(define (opt-rotate-ssa-phi-rec-count [recs : OptRotateSsaPhiRecs]) : i64
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) 0]
+    [(OptRotateSsaPhiRecs.Cons _ _ _ _ rest)
+      (+ 1 (opt-rotate-ssa-phi-rec-count (box-get rest)))]))
+
+(define (opt-rotate-ssa-moved-phis-fill!
+  [recs : OptRotateSsaPhiRecs]
+  [land-label : i64]
+  [latch : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]) : unit
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) unit]
+    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
+      (begin
+        (array-set!
+          slots
+          index
+          (ir.CompilerIrInstr.Phi
+            dst
+            (ir.compiler-ir-phi-input-cons
+              init
+              land-label
+              (ir.compiler-ir-phi-input-cons
+                back
+                latch
+                (ir.CompilerIrPhiInputList.Nil)))
+            ty))
+        (opt-rotate-ssa-moved-phis-fill!
+          (box-get rest)
+          land-label
+          latch
+          slots
+          (+ index 1)))]))
+
 (define (opt-rotate-ssa-moved-phis
   [recs : OptRotateSsaPhiRecs]
   [land-label : i64]
-  [latch : i64]) : ir.CompilerIrInstrList
-  (match recs
-    [(OptRotateSsaPhiRecs.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.Phi
-          dst
-          (ir.compiler-ir-phi-input-cons
-            init
-            land-label
-            (ir.compiler-ir-phi-input-cons
-              back
-              latch
-              (ir.CompilerIrPhiInputList.Nil)))
-          ty)
-        (opt-rotate-ssa-moved-phis (box-get rest) land-label latch))]))
+  [latch : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (opt-rotate-ssa-phi-rec-count recs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    (begin
+      (opt-rotate-ssa-moved-phis-fill! recs land-label latch slots 0)
+      (ir.CompilerIrInstrSeq slots count))))
 
 ;; For each header phi whose destination is used outside the loop body, mint a
 ;; fresh exit phi merging the same edge inputs at the exit block, and record
 ;; the destination remap for the outside-use rewrite.
+(define (opt-rotate-ssa-exit-phis-from
+  [recs : OptRotateSsaPhiRecs]
+  [outside-uses : opt_i64_i64_map.Map]
+  [preheader : i64]
+  [latch : i64]
+  [next-var : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [write : i64]) : OptRotateSsaExitPhis
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil)
+      (OptRotateSsaExitPhis.Result
+        (ir.CompilerIrInstrSeq slots write)
+        (OptCopyEnv.Nil)
+        next-var)]
+    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
+      (if (opt-used-contains outside-uses dst)
+        (begin
+          (array-set!
+            slots
+            write
+            (ir.CompilerIrInstr.Phi
+              next-var
+              (ir.compiler-ir-phi-input-cons
+                init
+                preheader
+                (ir.compiler-ir-phi-input-cons
+                  back
+                  latch
+                  (ir.CompilerIrPhiInputList.Nil)))
+              ty))
+          (match (opt-rotate-ssa-exit-phis-from
+            (box-get rest)
+            outside-uses
+            preheader
+            latch
+            (+ next-var 1)
+            slots
+            (+ write 1))
+            [(OptRotateSsaExitPhis.Result phis env out-var)
+              (OptRotateSsaExitPhis.Result
+                phis
+                (OptCopyEnv.Cons
+                  dst
+                  (ir.CompilerIrValue.Var next-var)
+                  (box env))
+                out-var)]))
+        (opt-rotate-ssa-exit-phis-from
+          (box-get rest)
+          outside-uses
+          preheader
+          latch
+          next-var
+          slots
+          write))]))
+
 (define (opt-rotate-ssa-exit-phis
   [recs : OptRotateSsaPhiRecs]
   [outside-uses : opt_i64_i64_map.Map]
   [preheader : i64]
   [latch : i64]
   [next-var : i64]) : OptRotateSsaExitPhis
-  (match recs
-    [(OptRotateSsaPhiRecs.Nil)
-      (OptRotateSsaExitPhis.Result
-        (ir.CompilerIrInstrList.Nil)
-        (OptCopyEnv.Nil)
-        next-var)]
-    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
-      (if (opt-used-contains outside-uses dst)
-        (match (opt-rotate-ssa-exit-phis
-          (box-get rest)
-          outside-uses
-          preheader
-          latch
-          (+ next-var 1))
-          [(OptRotateSsaExitPhis.Result phis env out-var)
-            (OptRotateSsaExitPhis.Result
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Phi
-                  next-var
-                  (ir.compiler-ir-phi-input-cons
-                    init
-                    preheader
-                    (ir.compiler-ir-phi-input-cons
-                      back
-                      latch
-                      (ir.CompilerIrPhiInputList.Nil)))
-                  ty)
-                phis)
-              (OptCopyEnv.Cons dst (ir.CompilerIrValue.Var next-var) (box env))
-              out-var)])
-        (opt-rotate-ssa-exit-phis
-          (box-get rest)
-          outside-uses
-          preheader
-          latch
-          next-var))]))
+  (opt-rotate-ssa-exit-phis-from
+    recs
+    outside-uses
+    preheader
+    latch
+    next-var
+    (array.make-array ir.CompilerIrInstr (opt-rotate-ssa-phi-rec-count recs))
+    0))
 
 (define (opt-rotate-ssa-subst-phi-inputs
   [env : OptCopyEnv]
@@ -17441,64 +17647,55 @@
         ty)]
     [_ (opt-copy-subst-instr env instr)]))
 
-(define (opt-rotate-ssa-rewrite-instr-seq-from
-  [env : OptCopyEnv]
-  [subst? : bool]
-  [replace-index : i64]
-  [guard : ir.CompilerIrInstrList]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [acc : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (if (< index 0)
-    acc
-    (if (= index replace-index)
-      (opt-rotate-ssa-rewrite-instr-seq-from
-        env
-        subst?
-        replace-index
-        guard
-        instrs
-        (- index 1)
-        guard)
-      (let
-        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-        [rewritten : ir.CompilerIrInstr
-          (if subst?
-            (opt-rotate-ssa-subst-instr env instr)
-            instr)]
-        (opt-rotate-ssa-rewrite-instr-seq-from
-          env
-          subst?
-          replace-index
-          guard
-          instrs
-          (- index 1)
-          (ir.compiler-ir-instr-cons rewritten acc))))))
-
 (define (opt-rotate-ssa-rewrite-instr-seq
   [env : OptCopyEnv]
   [subst? : bool]
   [replace-final? : bool]
-  [guard : ir.CompilerIrInstrList]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
+  [prefix : ir.CompilerIrInstrSeq]
+  [guard : ir.CompilerIrInstrSeq]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [replace-index : i64
+    [prefix-count : i64 (ir.compiler-ir-instr-seq-count prefix)]
+    [body-count : i64
       (if (and replace-final? (> count 0))
         (- count 1)
-        (- 0 1))]
-    [initial : ir.CompilerIrInstrList
-      (if (and replace-final? (= count 0))
-        guard
-        ir.CompilerIrInstrList.Nil)]
-    (opt-rotate-ssa-rewrite-instr-seq-from
-      env
-      subst?
-      replace-index
-      guard
-      instrs
-      (- count 1)
-      initial)))
+        count)]
+    [guard-count : i64
+      (if replace-final?
+        (ir.compiler-ir-instr-seq-count guard)
+        0)]
+    [out-count : i64 (+ prefix-count (+ body-count guard-count))]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr out-count)]
+    [index : i64 0]
+    (begin
+      (while (< index prefix-count)
+        (begin
+          (array-set! slots index (ir.compiler-ir-instr-seq-ref prefix index))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index body-count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          (begin
+            (array-set!
+              slots
+              (+ prefix-count index)
+              (if subst?
+                (opt-rotate-ssa-subst-instr env instr)
+                instr))
+            (set! index (+ index 1)))))
+      (set! index 0)
+      (while (< index guard-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count (+ body-count index))
+            (ir.compiler-ir-instr-seq-ref guard index))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots out-count))))
 
 (define (opt-rotate-ssa-block-touched? [plan : OptRotateSsaPlan] [label : i64]) : bool
   (or
@@ -17515,31 +17712,30 @@
 (define (opt-rotate-ssa-rewrite-instrs
   [plan : OptRotateSsaPlan]
   [label : i64]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrList
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [replace-final? : bool
       (or
         (= label (struct-get plan preheader))
         (= label (struct-get plan latch)))]
-    [guard : ir.CompilerIrInstrList
+    [prefix : ir.CompilerIrInstrSeq
+      (cond
+        [(= label (struct-get plan body-label)) (struct-get plan phis)]
+        [(= label (struct-get plan exit-label)) (struct-get plan exit-phis)]
+        [else (ir.compiler-ir-instr-seq-empty)])]
+    [guard : ir.CompilerIrInstrSeq
       (cond
         [(= label (struct-get plan preheader))
           (struct-get plan preheader-guard)]
         [(= label (struct-get plan latch)) (struct-get plan latch-guard)]
-        [else ir.CompilerIrInstrList.Nil])]
-    [retargeted : ir.CompilerIrInstrList
-      (opt-rotate-ssa-rewrite-instr-seq
-        (struct-get plan exit-env)
-        (not (opt-label-contains (struct-get plan body) label))
-        replace-final?
-        guard
-        instrs)]
-    (cond
-      [(= label (struct-get plan body-label))
-        (opt-aggregate-instr-list-append (struct-get plan phis) retargeted)]
-      [(= label (struct-get plan exit-label))
-        (opt-aggregate-instr-list-append (struct-get plan exit-phis) retargeted)]
-      [else retargeted])))
+        [else (ir.compiler-ir-instr-seq-empty)])]
+    (opt-rotate-ssa-rewrite-instr-seq
+      (struct-get plan exit-env)
+      (not (opt-label-contains (struct-get plan body) label))
+      replace-final?
+      prefix
+      guard
+      instrs)))
 
 ;; The deleted header's slot in the block list is reused for the landing
 ;; block, keeping the layout deterministic; the accepted shape guarantees no
@@ -17555,13 +17751,12 @@
         [(ir.CompilerIrBlock.Block label instrs)
           (ir.compiler-ir-block-cons
             (if (= label (struct-get plan header))
-              (ir.compiler-ir-block
+              (ir.CompilerIrBlock.Block
                 (struct-get plan land-label)
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Jump (struct-get plan body-label))
-                  (ir.CompilerIrInstrList.Nil)))
+                (ir.compiler-ir-instr-seq1
+                  (ir.CompilerIrInstr.Jump (struct-get plan body-label))))
               (if (opt-rotate-ssa-block-touched? plan label)
-                (ir.compiler-ir-block
+                (ir.CompilerIrBlock.Block
                   label
                   (opt-rotate-ssa-rewrite-instrs plan label instrs))
                 block))
@@ -17584,9 +17779,9 @@
     [body-label : i64 (struct-get shape body-label)]
     [exit-label : i64 (struct-get shape exit-label)]
     [land-label : i64 (opt-rotate-ssa-land-label header)]
-    [phis : ir.CompilerIrInstrList (struct-get shape phis)]
+    [phis : ir.CompilerIrInstrSeq (struct-get shape phis)]
     [recs : OptRotateSsaPhiRecs (struct-get shape recs)]
-    [guard : ir.CompilerIrInstrList (struct-get shape guard)]
+    [guard : ir.CompilerIrInstrSeq (struct-get shape guard)]
     (if (and
       (not (= exit-label preheader))
       (not (opt-cfg-block-exists? blocks land-label))
@@ -17602,7 +17797,7 @@
       (opt-rotate-ssa-guard-dsts-local?
         guard
         (opt-rotate-ssa-uses-except-header
-          (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) phis)
+          (opt-collect-instr-seq-uses (opt_i64_i64_map.with-capacity 64) phis)
           blocks
           header)))
       ;; The preheader clone's loop arm targets the landing block instead of
@@ -20066,7 +20261,7 @@
   [label : i64]) : i64
   (if (opt-label-contains body-labels label)
     (ir.compiler-ir-label
-      (string.append
+      (str_cat.str-cat
         (ir.compiler-ir-label-text label)
         (opt-licm-unswitch-suffix)))
     label))
@@ -20453,7 +20648,7 @@
           (if (opt-label-contains all-labels ok-label)
             ok-label
             (ir.compiler-ir-label
-              (string.append
+              (str_cat.str-cat
                 (ir.compiler-ir-label-text ok-label)
                 (opt-licm-unswitch-suffix))))))]
     [(ir.CompilerIrInstr.Phi dst inputs ty)
@@ -22991,17 +23186,48 @@
 
 (define (opt-dead-phi-keep-instrs
   [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [live : (__tl_dyn-array i64)]) : ir.CompilerIrInstrList
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (ir.CompilerIrInstrList.Nil)
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      [tail : ir.CompilerIrInstrList
-        (opt-dead-phi-keep-instrs instrs (+ index 1) live)]
-      (if (opt-dead-phi-instr-dead? instr live)
-        tail
-        (ir.compiler-ir-instr-cons instr tail)))))
+  [live : (__tl_dyn-array i64)]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (array.make-array ir.CompilerIrInstr count)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs read)]
+          (begin
+            (when
+              (not (opt-dead-phi-instr-dead? instr live))
+              (begin
+                (array-set! slots write instr)
+                (set! write (+ write 1))))
+            (set! read (+ read 1)))))
+      (ir.CompilerIrInstrSeq slots write))))
+
+(define (opt-dead-phi-rewrite-block-seq
+  [blocks : ir.CompilerIrBlockSeq]
+  [live : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
+    [slots : (__tl_dyn-array ir.CompilerIrBlock)
+      (array.make-array ir.CompilerIrBlock count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (match (ir.compiler-ir-block-seq-ref blocks index)
+              [(ir.CompilerIrBlock.Block label instrs)
+                (ir.CompilerIrBlock.Block
+                  label
+                  (opt-dead-phi-keep-instrs instrs live))]))
+          (set! index (+ index 1))))
+      (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count)))))
 
 (define (opt-dead-phi-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -23012,22 +23238,20 @@
       (ir.compiler-ir-block-cons
         (match block
           [(ir.CompilerIrBlock.Block label instrs)
-            (ir.compiler-ir-block
+            (ir.CompilerIrBlock.Block
               label
-              (opt-dead-phi-keep-instrs instrs 0 live))])
+              (opt-dead-phi-keep-instrs instrs live))])
         (opt-dead-phi-rewrite-blocks (box-get rest) live))]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-dead-phi-rewrite-blocks (ir.compiler-ir-block-seq-to-list seq) live)]))
+      (opt-dead-phi-rewrite-block-seq seq live)]))
 
 ;; --- driver -------------------------------------------------------------------
 ;;
-;; Placed at the tail of the pipeline, immediately before DCE: the cycles this
-;; retires are lowering artifacts that every round rebuilds nothing of, so one
-;; sweep per round at the end is enough, and running it there leaves the loop
-;; cluster's own round-1 decisions -- which loop `rotate_ssa` canonicalizes,
-;; which loops `bce_version` clones -- reading exactly the IR they read before.
-;; DCE immediately after retires the chains the removed phis were the last
-;; readers of.
+;; Placed after scratch-reset and before the loop cluster: the cycles this
+;; retires are lowering artifacts that every round rebuilds nothing of, and the
+;; loop passes must see their loop-defined inputs without dead outside readers.
+;; DCE at the tail of the same round retires chains the removed phis were the
+;; last readers of.
 (define (opt-dead-phi-blocks [blocks : ir.CompilerIrBlockList] [frame : i64]) : ir.CompilerIrBlockList
   (if (not (opt-dead-phi-blocks-have-phi? blocks))
     blocks
@@ -26456,9 +26680,10 @@
   [source-label : i64]
   [suffix : i64]) : i64
   (ir.compiler-ir-label
-    (string.append
+    (str_cat.str-cat
       (ir.compiler-ir-label-text source-label)
-      (string.append "__bool_and." (string.int->string suffix)))))
+      "__bool_and."
+      (string.int->string suffix))))
 
 (define (opt-bool-branch-chain-labels
   [blocks : ir.CompilerIrBlockList]
@@ -31411,7 +31636,7 @@
                       (let
                         [trap-label : i64
                           (ir.compiler-ir-label
-                            (string.append
+                            (str_cat.str-cat
                               "match_total_trap__"
                               (ir.compiler-ir-label-text label)))]
                         ;; Switch formation removes at least four compare
@@ -32804,6 +33029,7 @@
 ;; Replace dominated repeated pure scalar expressions with a copy from the first
 ;; dominating value; existing copy propagation and DCE remove the dead copies.
 (define (opt-gvn-blocks-with-context-and-call-memory
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : ir.CompilerIrParamList]
@@ -32820,6 +33046,7 @@
     [hs : OptLoadHeaderSet
       (opt-load-header-set-from-function type-segment-bases params gvn)]
     (opt-load-gvn-blocks-with-context
+      profile-state
       type-segment-bases
       context
       sources
@@ -32833,6 +33060,8 @@
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (opt-gvn-blocks-with-context-and-call-memory
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
     type-segment-bases
     (opt-cfg-context-build blocks)
     params
@@ -39424,6 +39653,7 @@
           (= (opt-block-fold-scan scan-work opt-fold-scan-tag instrs) 0))])))
 
 (define (optimize-block-hs-full
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39455,6 +39685,7 @@
           (set!
             work
             (opt-dead-store-instr-seq-known-with-kinds
+              profile-state
               type-segment-bases
               hs
               store-capacity
@@ -39464,6 +39695,7 @@
             type-segment-bases
             hs
             (opt-load-cse-empty-state-for-size-with-kinds
+              profile-state
               (ir.compiler-ir-instr-seq-count work)
               load-kinds
               load-facts)
@@ -39472,6 +39704,7 @@
           (ir.CompilerIrBlock.Block label work)))]))
 
 (define (optimize-block-hs-with-kinds
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39484,6 +39717,7 @@
   (if (opt-block-scan-skippable? scan-work block)
     block
     (optimize-block-hs-full
+      profile-state
       pools
       type-segment-bases
       hs
@@ -39493,6 +39727,7 @@
       block)))
 
 (define (optimize-block-hs
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39501,6 +39736,7 @@
   (if (opt-block-scan-skippable? scan-work block)
     block
     (optimize-block-hs-full
+      profile-state
       pools
       type-segment-bases
       hs
@@ -39514,6 +39750,8 @@
   [type-segment-bases : i64]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (optimize-block-hs
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
     pools
     type-segment-bases
     (opt-load-header-set-empty)
@@ -39531,6 +39769,7 @@
         (opt-alias-empty))]))
 
 (define (optimize-block-seq-hs
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39553,6 +39792,7 @@
               slots
               index
               (optimize-block-hs-with-kinds
+                profile-state
                 pools
                 type-segment-bases
                 hs
@@ -39574,6 +39814,7 @@
   (+ base (* index 2)))
 
 (define (optimize-block-seq-hs-dense-from
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39600,6 +39841,7 @@
               slots
               index
               (optimize-block-hs-with-kinds
+                profile-state
                 pools
                 type-segment-bases
                 hs
@@ -39624,6 +39866,7 @@
 ;; workspace this shares was dead code); the two arms otherwise run identical
 ;; per-block work.
 (define (optimize-block-list-hs-dense
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39638,6 +39881,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (ir.compiler-ir-block-cons
         (optimize-block-hs-with-kinds
+          profile-state
           pools
           type-segment-bases
           hs
@@ -39654,6 +39898,7 @@
           scan-work
           block)
         (optimize-block-list-hs-dense
+          profile-state
           pools
           type-segment-bases
           hs
@@ -39665,6 +39910,7 @@
           (box-get rest)))]
     [(ir.CompilerIrBlockList.Array seq)
       (optimize-block-seq-hs-dense-from
+        profile-state
         pools
         type-segment-bases
         hs
@@ -39676,6 +39922,7 @@
         seq)]))
 
 (define (optimize-block-list-hs
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -39688,6 +39935,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (ir.compiler-ir-block-cons
         (optimize-block-hs-with-kinds
+          profile-state
           pools
           type-segment-bases
           hs
@@ -39698,6 +39946,7 @@
           scan-work
           block)
         (optimize-block-list-hs
+          profile-state
           pools
           type-segment-bases
           hs
@@ -39707,6 +39956,7 @@
           (box-get rest)))]
     [(ir.CompilerIrBlockList.Array seq)
       (optimize-block-seq-hs
+        profile-state
         pools
         type-segment-bases
         hs
@@ -39747,6 +39997,7 @@
 ;; generation stamps reset it per block in O(1), and stale bytes can only ever
 ;; over-report "maybe" (safe), never skip a firing block.
 (define (optimize-block-list-for-function-pass
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [frame : i64]
@@ -39776,6 +40027,7 @@
           (match blocks
             [(ir.CompilerIrBlockList.Array seq)
               (optimize-block-seq-hs-dense-from
+                profile-state
                 pools
                 type-segment-bases
                 hs
@@ -39787,6 +40039,7 @@
                 seq)]
             [_
               (optimize-block-list-hs-dense
+                profile-state
                 pools
                 type-segment-bases
                 hs
@@ -39805,12 +40058,14 @@
           changed)))))
 
 (define (optimize-block-list-for-function
+  [profile-state : profile_state.CompilerProfileMetrics]
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [frame : i64]
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match (optimize-block-list-for-function-pass
+    profile-state
     pools
     type-segment-bases
     frame
@@ -39823,6 +40078,8 @@
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (optimize-block-list-hs
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
     pools
     type-segment-bases
     (opt-load-header-set-empty)
@@ -40669,11 +40926,11 @@
     (opt-cfg-block-exists?
       blocks
       (ir.compiler-ir-label
-        (string.append (ir.compiler-ir-label-text label) "__unroll_guard")))
+        (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_guard")))
     (opt-cfg-block-exists?
       blocks
       (ir.compiler-ir-label
-        (string.append (ir.compiler-ir-label-text label) "__unroll_body")))
+        (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_body")))
     (not (opt-unroll-pred-retargetable? blocks pred-label)))
     (OptUnrollMaybeShape.No)
     (match (opt-unroll-collect-other-phis
@@ -40906,7 +41163,7 @@
                       (opt-cfg-block-exists?
                         blocks
                         (ir.compiler-ir-label
-                          (string.append
+                          (str_cat.str-cat
                             (ir.compiler-ir-label-text label)
                             "__bce_fast")))))
                     (opt-unroll-shape-scan blocks label instrs count cond-var)
@@ -40967,7 +41224,7 @@
       fresh)))
 
 (define (opt-unroll-copy-suffix [copy : i64]) : String
-  (string.append "__u" (string.int->string copy)))
+  (str_cat.str-cat "__u" (string.int->string copy)))
 
 ;; Clone one whitelisted body instruction: substitute uses through the remap
 ;; first, then allocate a fresh dst and record it. Only the kinds accepted by
@@ -41121,7 +41378,7 @@
         (opt-unroll-subst-value remap index)
         (opt-unroll-subst-value remap length)
         (ir.compiler-ir-label
-          (string.append
+          (str_cat.str-cat
             (ir.compiler-ir-label-text ok-label)
             (opt-unroll-copy-suffix copy))))]
     [_ instr]))
@@ -41541,10 +41798,10 @@
         [pred-label : i64 (struct-get shape pred-label)]
         [guard-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__unroll_guard"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_guard"))]
         [unrolled-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__unroll_body"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_body"))]
         [remap : (__tl_dyn-array ir.CompilerIrValue)
           (array.make-array ir.CompilerIrValue frame)]
         [_fill : unit (opt-unroll-remap-fill remap 0)]
@@ -42046,7 +42303,7 @@
   [pred-label : i64]) : bool
   (let
     [pred : String (ir.compiler-ir-label-text pred-label)]
-    [want : String (string.append prefix "__bce_")]
+    [want : String (str_cat.str-cat prefix "__bce_")]
     [n : i64 (string.string-length (& pred))]
     [m : i64 (string.string-length (& want))]
     (and
@@ -42055,7 +42312,7 @@
       (string.eq (string.substring (& pred) 0 m) want)
       (opt-cfg-block-exists?
         blocks
-        (ir.compiler-ir-label (string.append prefix "__bce_guard"))))))
+        (ir.compiler-ir-label (str_cat.str-cat prefix "__bce_guard"))))))
 
 ;; The body must be exactly: one `store_ptr <gep(base, iphi)>, K`, plus copies
 ;; and the counter arithmetic. Any Load, BoundsCheck, second store, call or
@@ -43096,7 +43353,7 @@
                       (opt-cfg-block-exists?
                         blocks
                         (ir.compiler-ir-label
-                          (string.append
+                          (str_cat.str-cat
                             (ir.compiler-ir-label-text label)
                             "__bce_fast"))))
                       (OptUnrollConstMaybeShape.No)
@@ -44155,7 +44412,7 @@
       (opt-cfg-block-exists?
         blocks
         (ir.compiler-ir-label
-          (string.append (ir.compiler-ir-label-text label) "__bce_guard")))
+          (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_guard")))
       (not (opt-unroll-const-guard-exit-ok? blocks exit-label)))
       (OptUcePlan.No)
       (let
@@ -44507,12 +44764,14 @@
               [pred-label : i64 (struct-get shape pred-label)]
               [guard-label : i64
                 (ir.compiler-ir-label
-                  (string.append
+                  (str_cat.str-cat
                     (ir.compiler-ir-label-text label)
                     "__bce_guard"))]
               [fast-label : i64
                 (ir.compiler-ir-label
-                  (string.append (ir.compiler-ir-label-text label) "__bce_fast"))]
+                  (str_cat.str-cat
+                    (ir.compiler-ir-label-text label)
+                    "__bce_fast"))]
               [copies : ir.CompilerIrInstrList
                 (opt-unroll-const-copies
                   instrs
@@ -44926,21 +45185,21 @@
                                       (opt-cfg-block-exists?
                                         blocks
                                         (ir.compiler-ir-label
-                                          (string.append
+                                          (str_cat.str-cat
                                             (ir.compiler-ir-label-text label)
                                             "__unroll_guard"))))
                                     (not
                                       (opt-cfg-block-exists?
                                         blocks
                                         (ir.compiler-ir-label
-                                          (string.append
+                                          (str_cat.str-cat
                                             (ir.compiler-ir-label-text label)
                                             "__unroll_body"))))
                                     (not
                                       (opt-cfg-block-exists?
                                         blocks
                                         (ir.compiler-ir-label
-                                          (string.append
+                                          (str_cat.str-cat
                                             (ir.compiler-ir-label-text label)
                                             "__unroll_exit")))))
                                     (match (opt-unroll-simd-outside-pred
@@ -45393,13 +45652,13 @@
         [tail-label : i64 (struct-get shape tail-label)]
         [guard-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__unroll_guard"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_guard"))]
         [unrolled-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__unroll_body"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_body"))]
         [exit-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__unroll_exit"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_exit"))]
         [memory-bases : OptUnrollSimdMemoryList (struct-get shape memory-bases)]
         [memory-count : i64 (struct-get shape memory-count)]
         [remap : (__tl_dyn-array ir.CompilerIrValue)
@@ -48954,14 +49213,14 @@
                   (opt-cfg-block-exists?
                     blocks
                     (ir.compiler-ir-label
-                      (string.append
+                      (str_cat.str-cat
                         (ir.compiler-ir-label-text label)
                         "__bce_guard"))))
                 (not
                   (opt-cfg-block-exists?
                     blocks
                     (ir.compiler-ir-label
-                      (string.append
+                      (str_cat.str-cat
                         (ir.compiler-ir-label-text label)
                         "__bce_fast"))))
                 (opt-unroll-pred-retargetable? blocks pred-label))
@@ -49478,10 +49737,10 @@
             [_ label])]
         [guard-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__bce_guard"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_guard"))]
         [fast-label : i64
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__bce_fast"))]
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast"))]
         [defs : opt_i64_i64_map.Map
           (opt-unroll-block-defs
             (struct-get instrs slots)
@@ -50384,7 +50643,7 @@
         (if (opt-cfg-block-exists?
           blocks
           (ir.compiler-ir-label
-            (string.append (ir.compiler-ir-label-text label) "__bce_fast")))
+            (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast")))
           false
           (opt-bce-mb-fast-labels-fresh? blocks (opt-label-tail body-labels))))]))
 
@@ -50462,7 +50721,7 @@
       (opt-cfg-block-exists?
         blocks
         (ir.compiler-ir-label
-          (string.append (ir.compiler-ir-label-text header) "__bce_guard")))
+          (str_cat.str-cat (ir.compiler-ir-label-text header) "__bce_guard")))
       (opt-bce-mb-has-nested-loop? loops header body-labels)
       (opt-bce-mb-body-has-total-enum-switch? body-blocks)
       (not (opt-bce-mb-fast-labels-fresh? blocks body-labels))
@@ -50765,7 +51024,9 @@
               (opt-cfg-block-exists?
                 blocks
                 (ir.compiler-ir-label
-                  (string.append (ir.compiler-ir-label-text stub) "__bce_fast"))))
+                  (str_cat.str-cat
+                    (ir.compiler-ir-label-text stub)
+                    "__bce_fast"))))
               false
               (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
                 [(ir.CompilerIrInstr.Jump target)
@@ -53131,7 +53392,7 @@
 (define (opt-bce-mb-fast-label [body-labels : OptLabelSet] [label : i64]) : i64
   (if (opt-label-contains body-labels label)
     (ir.compiler-ir-label
-      (string.append (ir.compiler-ir-label-text label) "__bce_fast"))
+      (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast"))
     label))
 
 ;; Pass A: allocate a fresh id for every def in the loop BEFORE any clone
@@ -53328,7 +53589,9 @@
           (if (opt-label-contains all-labels ok-label)
             ok-label
             (ir.compiler-ir-label
-              (string.append (ir.compiler-ir-label-text ok-label) "__bce_fast")))))]
+              (str_cat.str-cat
+                (ir.compiler-ir-label-text ok-label)
+                "__bce_fast")))))]
     ;; unreachable: the shape scan whitelisted every loop instruction
     [_ instr]))
 
@@ -53431,7 +53694,7 @@
           (ir.compiler-ir-block-cons
             (ir.compiler-ir-block
               (ir.compiler-ir-label
-                (string.append (ir.compiler-ir-label-text label) "__bce_fast"))
+                (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast"))
               (opt-bce-mb-clone-instrs
                 label
                 instrs
@@ -53485,7 +53748,7 @@
             (ir.compiler-ir-phi-input-cons
               (opt-unroll-subst-value remap value)
               (ir.compiler-ir-label
-                (string.append (ir.compiler-ir-label-text label) "__bce_fast"))
+                (str_cat.str-cat (ir.compiler-ir-label-text label) "__bce_fast"))
               tail))
           (ir.compiler-ir-phi-input-cons value label tail)))]))
 
@@ -53556,7 +53819,7 @@
                           0
                           (struct-get shape preheader)
                           (ir.compiler-ir-label
-                            (string.append
+                            (str_cat.str-cat
                               (ir.compiler-ir-label-text
                                 (struct-get shape header))
                               "__bce_guard"))))
@@ -53570,7 +53833,7 @@
                       0
                       (struct-get shape header)
                       (ir.compiler-ir-label
-                        (string.append
+                        (str_cat.str-cat
                           (ir.compiler-ir-label-text (struct-get shape header))
                           "__bce_guard"))))
                   tail)]
@@ -53617,7 +53880,7 @@
         (opt-label-add
           acc
           (ir.compiler-ir-label
-            (string.append
+            (str_cat.str-cat
               (ir.compiler-ir-label-text (opt-label-ref labels 0))
               "__bce_fast"))))]))
 
@@ -54007,8 +54270,7 @@
   [blocks : ir.CompilerIrBlockList]
   [label : i64]) : ir.CompilerIrInstrSeq
   (match blocks
-    [(ir.CompilerIrBlockList.Nil)
-      (ir.compiler-ir-instr-seq-from-list (ir.CompilerIrInstrList.Nil))]
+    [(ir.CompilerIrBlockList.Nil) (ir.compiler-ir-instr-seq-empty)]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match block
         [(ir.CompilerIrBlock.Block block-label instrs)
@@ -54051,7 +54313,7 @@
               (=
                 label
                 (ir.compiler-ir-label
-                  (string.append
+                  (str_cat.str-cat
                     (ir.compiler-ir-label-text (struct-get shape header))
                     "__bce_guard")))
               (opt-label-contains
@@ -54501,7 +54763,7 @@
           [_alloc : unit (opt-bce-mb-alloc-defs! body-blocks remap cell)]
           [guard-label : i64
             (ir.compiler-ir-label
-              (string.append
+              (str_cat.str-cat
                 (ir.compiler-ir-label-text (struct-get shape header))
                 "__bce_guard"))]
           [fast-blocks : ir.CompilerIrBlockList
@@ -54519,7 +54781,7 @@
               guard-instrs
               guard-value
               (ir.compiler-ir-label
-                (string.append
+                (str_cat.str-cat
                   (ir.compiler-ir-label-text (struct-get shape header))
                   "__bce_fast"))
               (struct-get shape header))]
@@ -54539,7 +54801,7 @@
                   (struct-get shape header)
                   (struct-get shape preheader)
                   (ir.compiler-ir-label
-                    (string.append
+                    (str_cat.str-cat
                       (ir.compiler-ir-label-text (struct-get shape header))
                       "__bce_guard"))
                   (opt-bce-mb-canon-value blocks (struct-get shape seed))
@@ -54926,14 +55188,14 @@
   [copy : i64]) : i64
   (if (opt-label-contains body-labels label)
     (ir.compiler-ir-label
-      (string.append
+      (str_cat.str-cat
         (ir.compiler-ir-label-text label)
         (opt-unroll-mb-copy-suffix copy)))
     label))
 
 (define (opt-unroll-mb-guard-label [header : i64]) : i64
   (ir.compiler-ir-label
-    (string.append (ir.compiler-ir-label-text header) "__unroll2_guard")))
+    (str_cat.str-cat (ir.compiler-ir-label-text header) "__unroll2_guard")))
 
 (define (opt-unroll-mb-block-terminator-ok? [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -55040,14 +55302,14 @@
             (opt-cfg-block-exists?
               blocks
               (ir.compiler-ir-label
-                (string.append
+                (str_cat.str-cat
                   (ir.compiler-ir-label-text label)
                   (opt-unroll-mb-copy-suffix 0)))))
           (not
             (opt-cfg-block-exists?
               blocks
               (ir.compiler-ir-label
-                (string.append
+                (str_cat.str-cat
                   (ir.compiler-ir-label-text label)
                   (opt-unroll-mb-copy-suffix 1)))))
           (opt-unroll-mb-labels-fresh? blocks (opt-label-tail labels))))]))
@@ -61119,6 +61381,9 @@
   [func : ir.CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunction
   (let
+    [load-cse-profile : profile_state.CompilerProfileMetrics
+      (profile_state.compiler-profile-state-metrics
+        (struct-get summaries profile-state))]
     [_t-tailrec : i64 (cfg compile-profile (profile.now-ms) 0)]
     [tailrec : ir.CompilerIrFunction
       (compiler-opt-debug-observe-function
@@ -61157,6 +61422,7 @@
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
           [fold-result : OptBlockListPassResult
             (optimize-block-list-for-function-pass
+              load-cse-profile
               pools
               type-segment-bases
               frame
@@ -61458,6 +61724,7 @@
                           ssa-frame
                           (if run-heavy?
                             (opt-gvn-blocks-with-context-and-call-memory
+                              load-cse-profile
                               type-segment-bases
                               ssa-context
                               params
@@ -62485,6 +62752,9 @@
   (match func
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
+        [load-cse-profile : profile_state.CompilerProfileMetrics
+          (profile_state.compiler-profile-state-metrics
+            (struct-get summaries profile-state))]
         [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
         [folded : ir.CompilerIrBlockList
           (compiler-opt-debug-observe-blocks
@@ -62495,6 +62765,7 @@
             ret-ty
             frame
             (optimize-block-list-for-function
+              load-cse-profile
               pools
               type-segment-bases
               frame
@@ -65801,9 +66072,7 @@
   (if (string.eq prefix "")
     label
     (ir.compiler-ir-label
-      (string.append
-        (string.append prefix ".")
-        (ir.compiler-ir-label-text label)))))
+      (str_cat.str-cat prefix "." (ir.compiler-ir-label-text label)))))
 
 (define (opt-inline-clone-instr
   [instr : ir.CompilerIrInstr]
@@ -66202,17 +66471,17 @@
   [block-label : i64]
   [pos : i64]
   [_callee-name : i64]) : String
-  (string.append
-    (string.append
-      (string.append "inl." (ir.compiler-ir-label-text block-label))
-      ".")
+  (str_cat.str-cat
+    "inl."
+    (ir.compiler-ir-label-text block-label)
+    "."
     (string.int->string pos)))
 
 (define (opt-inline-prefix-label [prefix : String] [label : i64]) : i64
   (opt-inline-maybe-prefix-label prefix label))
 
 (define (opt-inline-cont-label [prefix : String]) : i64
-  (ir.compiler-ir-label (string.append prefix ".cont")))
+  (ir.compiler-ir-label (str_cat.str-cat prefix ".cont")))
 
 (define (opt-inline-remap-phi-inputs
   [inputs : ir.CompilerIrPhiInputList]
@@ -74563,7 +74832,7 @@
                 [_load-cse-profile-reset : unit
                   (cfg
                     compile-profile
-                    (compiler-opt-load-cse-profile-reset)
+                    (compiler-opt-load-cse-profile-reset profile-state)
                     unit)]
                 [optimized-functions : ir.CompilerIrFunctionList
                   (optimize-function-list-with-level-and-summaries
@@ -74580,7 +74849,9 @@
                     compile-profile-summary
                     (compiler-opt-profile-summary-emit
                       (struct-get summaries profile-state)))
-                  (cfg compile-profile (compiler-opt-load-cse-profile-emit))
+                  (cfg
+                    compile-profile
+                    (compiler-opt-load-cse-profile-emit profile-state))
                   (cfg
                     compile-profile
                     (compiler-opt-profile-start profile-state))
@@ -75037,7 +75308,7 @@
                     [_load-cse-profile-reset : unit
                       (cfg
                         compile-profile
-                        (compiler-opt-load-cse-profile-reset)
+                        (compiler-opt-load-cse-profile-reset profile-state)
                         unit)]
                     [optimized-functions : ir.CompilerIrFunctionList
                       (optimize-function-list-with-level-and-summaries
@@ -75077,7 +75348,9 @@
                         compile-profile-summary
                         (compiler-opt-profile-summary-emit
                           (struct-get summaries profile-state)))
-                      (cfg compile-profile (compiler-opt-load-cse-profile-emit))
+                      (cfg
+                        compile-profile
+                        (compiler-opt-load-cse-profile-emit profile-state))
                       (cfg
                         compile-profile
                         (compiler-opt-profile-start profile-state))
@@ -76317,27 +76590,24 @@
     [allocs : i64]
     [bytes : i64]
     [reason : String]) : String
-    (string.concat5
+    (str_cat.str-cat
       "compile-profile-detail|scratch_region|"
       status
       "|scope="
       scope
-      (string.concat5
-        "|function="
-        function
-        "|label="
-        (ir.compiler-ir-label-text label)
-        (string.concat5
-          "|latch="
-          (ir.compiler-ir-label-text latch)
-          "|allocs="
-          (string.int->string allocs)
-          (string.concat5
-            "|known_bytes="
-            (string.int->string bytes)
-            "|blocker="
-            reason
-            "\n"))))))
+      "|function="
+      function
+      "|label="
+      (ir.compiler-ir-label-text label)
+      "|latch="
+      (ir.compiler-ir-label-text latch)
+      "|allocs="
+      (string.int->string allocs)
+      "|known_bytes="
+      (string.int->string bytes)
+      "|blocker="
+      reason
+      "\n")))
 
 (cfg
   compile-profile
@@ -77630,6 +77900,7 @@
 ;; Range-checked Field constructor: out-of-range components degrade to Unknown
 ;; (the encoding packs base<2^30, off<2^20, 0<w<512).
 (define (opt-load-loc-field-checked
+  [_profile-state : profile_state.CompilerProfileMetrics]
   [base : i64]
   [off : i64]
   [width : i64]
@@ -77643,12 +77914,15 @@
     (< width opt-load-loc-field-width-limit))
     (OptLoadLocField base off width header?)
     (begin
-      (cfg compile-profile (compiler-opt-load-cse-profile-note-field-key-drop))
+      (cfg
+        compile-profile
+        (compiler-opt-load-cse-profile-note-field-key-drop _profile-state))
       (OptLoadLocUnknown))))
 
 ;; Range-checked ScaledField constructor (same packing limits, index in the
 ;; offset slot).
 (define (opt-load-loc-scaled-field-checked
+  [_profile-state : profile_state.CompilerProfileMetrics]
   [base : i64]
   [index : i64]
   [width : i64]
@@ -77662,7 +77936,9 @@
     (< width opt-load-loc-field-width-limit))
     (OptLoadLocScaledField base index width header?)
     (begin
-      (cfg compile-profile (compiler-opt-load-cse-profile-note-field-key-drop))
+      (cfg
+        compile-profile
+        (compiler-opt-load-cse-profile-note-field-key-drop _profile-state))
       (OptLoadLocUnknown))))
 
 ;; Pointer-kind env: var -> encoded kind, plus a base-var refcount so the
@@ -77709,9 +77985,13 @@
     [(OptLoadPtrKinds.Dense work generation len _)
       (OptLoadPtrKinds.Dense work generation len cap)]))
 
-(define (opt-load-kinds-empty-with-cap [cap : i64]) : OptLoadPtrKinds
+(define (opt-load-kinds-empty-with-cap
+  [_profile-state : profile_state.CompilerProfileMetrics]
+  [cap : i64]) : OptLoadPtrKinds
   (begin
-    (cfg compile-profile (compiler-opt-load-cse-profile-note-kinds-cap cap))
+    (cfg
+      compile-profile
+      (compiler-opt-load-cse-profile-note-kinds-cap _profile-state cap))
     (OptLoadPtrKinds.Sparse
       (opt_i64_i64_map.with-capacity 17)
       (opt_i64_i64_map.with-capacity 17)
@@ -77858,6 +78138,7 @@
 ;; Bind var -> kind. Unknown removes; the env is size-capped (conservative:
 ;; new pointers just stay unclassified once the cap is hit).
 (define (opt-load-kinds-bind
+  [_profile-state : profile_state.CompilerProfileMetrics]
   [kinds : OptLoadPtrKinds]
   [var : i64]
   [kind : OptLoadLocKind]) : OptLoadPtrKinds
@@ -77873,15 +78154,20 @@
               (begin
                 (cfg
                   compile-profile
-                  (compiler-opt-load-cse-profile-note-kinds-size current-len))
+                  (compiler-opt-load-cse-profile-note-kinds-size
+                    _profile-state
+                    current-len))
                 (cfg
                   compile-profile
-                  (compiler-opt-load-cse-profile-note-kinds-cap cap))
+                  (compiler-opt-load-cse-profile-note-kinds-cap
+                    _profile-state
+                    cap))
                 (if (>= current-len cap)
                   (begin
                     (cfg
                       compile-profile
-                      (compiler-opt-load-cse-profile-note-kinds-cap-hit))
+                      (compiler-opt-load-cse-profile-note-kinds-cap-hit
+                        _profile-state))
                     removed)
                   (let
                     [refs2 : opt_i64_i64_map.Map
@@ -77890,6 +78176,7 @@
                       (cfg
                         compile-profile
                         (compiler-opt-load-cse-profile-note-kinds-size
+                          _profile-state
                           (+ current-len 1)))
                       (OptLoadPtrKinds.Sparse
                         (let
@@ -77915,7 +78202,8 @@
                   unit
                   (cfg
                     compile-profile
-                    (compiler-opt-load-cse-profile-note-kinds-cap-hit)))
+                    (compiler-opt-load-cse-profile-note-kinds-cap-hit
+                      _profile-state)))
                 removed)
               (begin
                 (opt-load-kinds-dense-ref-add-kind! work generation kind 1)
@@ -77928,7 +78216,9 @@
                 (array-set! (struct-get work kind-stamps) var generation)
                 (cfg
                   compile-profile
-                  (compiler-opt-load-cse-profile-note-kinds-size (+ len 1)))
+                  (compiler-opt-load-cse-profile-note-kinds-size
+                    _profile-state
+                    (+ len 1)))
                 (OptLoadPtrKinds.Dense work generation (+ len 1) cap)))]))]))
 
 ;; Redefinition of `var`: drop its own binding, and (only when some Field kind
@@ -78010,6 +78300,7 @@
           (opt-load-kinds-dense-drop-base-from removed var 0))])))
 
 (define (opt-load-kinds-dense-clone-from
+  [profile-state : profile_state.CompilerProfileMetrics]
   [kinds : OptLoadPtrKinds]
   [index : i64]
   [out : OptLoadPtrKinds (:consume)]) : OptLoadPtrKinds
@@ -78020,12 +78311,19 @@
         (let
           [var : i64 (array-ref (struct-get work active) index)]
           (opt-load-kinds-dense-clone-from
+            profile-state
             kinds
             (+ index 1)
-            (opt-load-kinds-bind out var (opt-load-kinds-lookup kinds var)))))]
+            (opt-load-kinds-bind
+              profile-state
+              out
+              var
+              (opt-load-kinds-lookup kinds var)))))]
     [_ out]))
 
-(define (opt-load-kinds-clone [kinds : OptLoadPtrKinds]) : OptLoadPtrKinds
+(define (opt-load-kinds-clone
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [kinds : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match kinds
     [(OptLoadPtrKinds.Sparse map refs cap)
       (let
@@ -78053,18 +78351,23 @@
           (OptLoadPtrKinds.Sparse out out-refs cap)))]
     [(OptLoadPtrKinds.Dense _ _ _ cap)
       (opt-load-kinds-dense-clone-from
+        profile-state
         kinds
         0
-        (opt-load-kinds-empty-with-cap cap))]))
+        (opt-load-kinds-empty-with-cap profile-state cap))]))
 
 ;; Control-flow join: keep only bindings identical on both edges.
-(define (opt-load-kinds-intersect [a : OptLoadPtrKinds] [b : OptLoadPtrKinds]) : OptLoadPtrKinds
+(define (opt-load-kinds-intersect
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [a : OptLoadPtrKinds]
+  [b : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match a
     [(OptLoadPtrKinds.Sparse amap _ acap)
       (match b
         [(OptLoadPtrKinds.Sparse bmap _ _)
           (let
-            [out : OptLoadPtrKinds (opt-load-kinds-empty-with-cap acap)]
+            [out : OptLoadPtrKinds
+              (opt-load-kinds-empty-with-cap profile-state acap)]
             [capacity : i64 (opt_i64_i64_map.capacity (& amap))]
             [i : i64 (opt_i64_i64_map.next-occupied (& amap) 0)]
             (begin
@@ -78078,6 +78381,7 @@
                             (set!
                               out
                               (opt-load-kinds-bind
+                                profile-state
                                 out
                                 var
                                 (opt-load-loc-kind-decode value)))
@@ -78087,9 +78391,15 @@
                   (set! i (opt_i64_i64_map.next-occupied (& amap) (+ i 1)))))
               out))]
         [(OptLoadPtrKinds.Dense _ _ _ _)
-          (opt-load-kinds-intersect a (opt-load-kinds-clone b))])]
+          (opt-load-kinds-intersect
+            profile-state
+            a
+            (opt-load-kinds-clone profile-state b))])]
     [(OptLoadPtrKinds.Dense _ _ _ _)
-      (opt-load-kinds-intersect (opt-load-kinds-clone a) b)]))
+      (opt-load-kinds-intersect
+        profile-state
+        (opt-load-kinds-clone profile-state a)
+        b)]))
 
 ;; A (var, kind) binding that no unseen back edge can kill: the var and every
 ;; var its kind references are single-source, so nothing anywhere redefines
@@ -78115,12 +78425,14 @@
 ;; a single-source var's kind is a property of its VALUE, which the back edge
 ;; cannot change, so those bindings carry into the loop.
 (define (opt-load-kinds-filter-stable
+  [profile-state : profile_state.CompilerProfileMetrics]
   [kinds : OptLoadPtrKinds]
   [sources : opt_i64_i64_map.Map]) : OptLoadPtrKinds
   (match kinds
     [(OptLoadPtrKinds.Sparse map _ cap)
       (let
-        [out : OptLoadPtrKinds (opt-load-kinds-empty-with-cap cap)]
+        [out : OptLoadPtrKinds
+          (opt-load-kinds-empty-with-cap profile-state cap)]
         [capacity : i64 (opt_i64_i64_map.capacity (& map))]
         [i : i64 (opt_i64_i64_map.next-occupied (& map) 0)]
         (begin
@@ -78131,17 +78443,23 @@
                   (let
                     [kind : OptLoadLocKind (opt-load-loc-kind-decode value)]
                     (if (opt-load-kind-binding-gvn-stable? sources var kind)
-                      (set! out (opt-load-kinds-bind out var kind))
+                      (set!
+                        out
+                        (opt-load-kinds-bind profile-state out var kind))
                       unit))]
                 [(opt_i64_i64_map.EntryNone) unit])
               (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
           out))]
     [(OptLoadPtrKinds.Dense _ _ _ _)
-      (opt-load-kinds-filter-stable (opt-load-kinds-clone kinds) sources)]))
+      (opt-load-kinds-filter-stable
+        profile-state
+        (opt-load-kinds-clone profile-state kinds)
+        sources)]))
 
 ;; Kind transfer for one instruction: redefinitions first (own binding + the
 ;; base-reference sweep), then the deriving arms.
 (define (opt-load-kinds-step
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [kinds : OptLoadPtrKinds]
   [hs : OptLoadHeaderSet]
@@ -78163,14 +78481,21 @@
                   ;; array share one load key.
                   [(ir.CompilerIrValue.Var index-var)
                     (opt-load-kinds-bind
+                      profile-state
                       invalidated
                       dst
                       (opt-load-loc-scaled-field-checked
+                        profile-state
                         bvar
                         index-var
                         (opt-load-loc-type-size type-segment-bases ty)
                         false))]
-                  [_ (opt-load-kinds-bind invalidated dst (OptLoadLocElement))])]
+                  [_
+                    (opt-load-kinds-bind
+                      profile-state
+                      invalidated
+                      dst
+                      (OptLoadLocElement))])]
               [(OptLoadLocField b0 o0 _ h0)
                 (match offset
                   [(ir.CompilerIrValue.I64 k)
@@ -78178,18 +78503,26 @@
                       [sz : i64 (opt-load-loc-type-size type-segment-bases ty)]
                       (if (> sz 0)
                         (opt-load-kinds-bind
+                          profile-state
                           invalidated
                           dst
-                          (opt-load-loc-field-checked b0 (+ o0 (* k sz)) sz h0))
+                          (opt-load-loc-field-checked
+                            profile-state
+                            b0
+                            (+ o0 (* k sz))
+                            sz
+                            h0))
                         invalidated))]
                   [(ir.CompilerIrValue.Var index-var)
                     ;; Only a zero-offset field base is a provable element
                     ;; base; a nonzero offset would be lost by the scaled key.
                     (if (= o0 0)
                       (opt-load-kinds-bind
+                        profile-state
                         invalidated
                         dst
                         (opt-load-loc-scaled-field-checked
+                          profile-state
                           b0
                           index-var
                           (opt-load-loc-type-size type-segment-bases ty)
@@ -78205,9 +78538,11 @@
                       [sz : i64 (opt-load-loc-type-size type-segment-bases ty)]
                       (if (and (> sz 0) (not (= bvar dst)))
                         (opt-load-kinds-bind
+                          profile-state
                           invalidated
                           dst
                           (opt-load-loc-field-checked
+                            profile-state
                             bvar
                             (* k sz)
                             sz
@@ -78219,7 +78554,11 @@
                 ;; the canonical ScaledField key, but it is still an element
                 ;; address. Keep the coarser location fact so stores through
                 ;; inline slot-field Geps do not masquerade as unknown writes.
-                (opt-load-kinds-bind invalidated dst (OptLoadLocElement))])]
+                (opt-load-kinds-bind
+                  profile-state
+                  invalidated
+                  dst
+                  (OptLoadLocElement))])]
           [_ invalidated])]
       [(ir.CompilerIrInstr.Load dst src ty)
         (match src
@@ -78230,7 +78569,11 @@
                   header?
                   (= off 0)
                   (= (opt-load-loc-type-size type-segment-bases ty) 8))
-                  (opt-load-kinds-bind invalidated dst (OptLoadLocElement))
+                  (opt-load-kinds-bind
+                    profile-state
+                    invalidated
+                    dst
+                    (OptLoadLocElement))
                   invalidated)]
               [_
                 (if (and
@@ -78238,7 +78581,11 @@
                   (= (opt-load-loc-type-size type-segment-bases ty) 8))
                   ;; A header var's first word is the data pointer (the element
                   ;; base), whether or not the var already has a Field kind.
-                  (opt-load-kinds-bind invalidated dst (OptLoadLocElement))
+                  (opt-load-kinds-bind
+                    profile-state
+                    invalidated
+                    dst
+                    (OptLoadLocElement))
                   invalidated)])]
           [_ invalidated])]
       [(ir.CompilerIrInstr.Mov dst src _)
@@ -78247,14 +78594,20 @@
             (match (opt-load-kinds-lookup invalidated s)
               [(OptLoadLocUnknown) invalidated]
               [(OptLoadLocElement)
-                (opt-load-kinds-bind invalidated dst (OptLoadLocElement))]
+                (opt-load-kinds-bind
+                  profile-state
+                  invalidated
+                  dst
+                  (OptLoadLocElement))]
               [(OptLoadLocField base off width header?)
                 (opt-load-kinds-bind
+                  profile-state
                   invalidated
                   dst
                   (OptLoadLocField base off width header?))]
               [(OptLoadLocScaledField base index width header?)
                 (opt-load-kinds-bind
+                  profile-state
                   invalidated
                   dst
                   (OptLoadLocScaledField base index width header?))])]
@@ -78366,9 +78719,16 @@
   (Some i64 i64 bool))
 
 ;; facts, table, pointer kinds, table cap, allocation-epoch counter, resolved
-;; global-based addresses.
+;; global-based addresses, and the owning compile-profile job.
 (defenum OptLoadCseState
-  (State OptAliasFacts OptLoadTable OptLoadPtrKinds i64 i64 OptLoadGlobalBases))
+  (State
+    OptAliasFacts
+    OptLoadTable
+    OptLoadPtrKinds
+    i64
+    i64
+    OptLoadGlobalBases
+    profile_state.CompilerProfileMetrics))
 
 (defenum OptLoadCseResult
   (Result OptLoadCseState ir.CompilerIrInstr))
@@ -78807,6 +79167,7 @@
 ;; Bind key -> value. Since granular invalidation lets tables survive stores,
 ;; cap growth: a fresh key is skipped once the table reaches the state cap.
 (define (opt-load-table-bind
+  [_profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [table : OptLoadTable]
   [cap : i64]
@@ -78824,20 +79185,24 @@
         (begin
           (cfg
             compile-profile
-            (compiler-opt-load-cse-profile-note-table-size current-len))
+            (compiler-opt-load-cse-profile-note-table-size
+              _profile-state
+              current-len))
           (cfg
             compile-profile
-            (compiler-opt-load-cse-profile-note-table-cap cap))
+            (compiler-opt-load-cse-profile-note-table-cap _profile-state cap))
           (if (>= current-len cap)
             (begin
               (cfg
                 compile-profile
-                (compiler-opt-load-cse-profile-note-table-cap-hit))
+                (compiler-opt-load-cse-profile-note-table-cap-hit
+                  _profile-state))
               table)
             (begin
               (cfg
                 compile-profile
                 (compiler-opt-load-cse-profile-note-table-size
+                  _profile-state
                   (+ current-len 1)))
               (OptLoadTable.Cons
                 (OptLoadEntry.Entry key value epoch)
@@ -78863,6 +79228,7 @@
 ;; The synthesized destination entry is created by THIS CopyBytes, so it takes
 ;; the state's current allocation epoch, not the source entry's older one.
 (define (opt-load-copy-transfer-entry
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [table : OptLoadTable]
   [cap : i64]
@@ -78899,12 +79265,20 @@
                 (opt-load-value-gvn-stable? sources value))
               true)]
           (if eligible?
-            (opt-load-table-bind type-segment-bases table cap key value epoch)
+            (opt-load-table-bind
+              profile-state
+              type-segment-bases
+              table
+              cap
+              key
+              value
+              epoch)
             table))]
       [_ table])
     table))
 
 (define (opt-load-table-transfer-copy-fields
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [source : OptLoadTable]
   [out : OptLoadTable]
@@ -78922,9 +79296,11 @@
     [(OptLoadTable.Nil) out]
     [(OptLoadTable.Cons entry rest)
       (opt-load-table-transfer-copy-fields
+        profile-state
         type-segment-bases
         (box-get rest)
         (opt-load-copy-transfer-entry
+          profile-state
           type-segment-bases
           out
           cap
@@ -79361,6 +79737,7 @@
       stores)))
 
 (define (opt-dead-store-instr-seq-known-with-kinds
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [store-capacity : i64]
@@ -79391,7 +79768,12 @@
                   instr))
               (set!
                 kinds
-                (opt-load-kinds-step type-segment-bases kinds hs instr))
+                (opt-load-kinds-step
+                  profile-state
+                  type-segment-bases
+                  kinds
+                  hs
+                  instr))
               (set! index (+ index 1)))))
         (opt-dead-store-compact! (&mut instrs) dead count)
         instrs))
@@ -79403,6 +79785,8 @@
   [store-capacity : i64]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (opt-dead-store-instr-seq-known-with-kinds
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
     type-segment-bases
     hs
     store-capacity
@@ -79494,7 +79878,14 @@
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (let
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
@@ -79507,10 +79898,11 @@
           (match (opt-instr-def-var instr)
             [(option_i64.Some dst) (opt-load-table-invalidate-var table dst)]
             [(option_i64.None) table])
-          (opt-load-kinds-step type-segment-bases kinds hs instr)
+          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
           table-cap
           next-epoch
-          (opt-load-global-bases-step type-segment-bases bases instr)))]))
+          (opt-load-global-bases-step type-segment-bases bases instr)
+          profile-state))]))
 
 ;; Calls/unknown effects: the table clears entirely; pointer kinds are value
 ;; properties and survive (only the instr's own def is invalidated). The
@@ -79525,7 +79917,7 @@
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts _ kinds table-cap epoch bases)
+    [(OptLoadCseState.State facts _ kinds table-cap epoch bases profile-state)
       (let
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
@@ -79536,10 +79928,11 @@
             instr
             next-epoch)
           (OptLoadTable.Nil)
-          (opt-load-kinds-step type-segment-bases kinds hs instr)
+          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
           table-cap
           next-epoch
-          (opt-load-global-bases-clear bases)))]))
+          (opt-load-global-bases-clear bases)
+          profile-state))]))
 
 ;; Apply one callee parameter-write bit to the cached load table. The callee
 ;; summary carries no byte-range fact, so filtering is root-only: a write
@@ -79592,7 +79985,14 @@
     ;; summary lets table entries live: those entries survive only where the
     ;; callee provably cannot reach them, while a base map binding would have to
     ;; re-prove that the global SLOT is untouched, which no summary states.
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (let
         ;; Filtering reads the PRE-call facts and table, so a tl_alloc call
         ;; cannot use its own (not yet bound) fresh root to keep entries.
@@ -79625,10 +80025,11 @@
             instr
             next-epoch)
           (opt-load-table-invalidate-var filtered dst)
-          (opt-load-kinds-step type-segment-bases kinds hs instr)
+          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
           table-cap
           next-epoch
-          (opt-load-global-bases-clear bases)))]))
+          (opt-load-global-bases-clear bases)
+          profile-state))]))
 
 ;; StorePtr: granular invalidation, then store-to-load forwarding. The
 ;; forwarded value must be a copy-safe source (no hidden global reads). Sub-word
@@ -79648,7 +80049,14 @@
   (match state
     ;; The store may land on a global slot (an unclassified pointer can address
     ;; anything), so the base map clears whatever the class turns out to be.
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (let
         [width : i64 (opt-load-loc-type-size type-segment-bases ty)]
         [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
@@ -79679,7 +80087,8 @@
               kinds
               table-cap
               next-epoch
-              (opt-load-global-bases-clear bases))]
+              (opt-load-global-bases-clear bases)
+              profile-state)]
           [_
             (let
               [key : OptLoadKey (opt-load-key-for-address kinds bases ptr ty)]
@@ -79707,6 +80116,7 @@
                 (match forwarded
                   [(ir.CompilerIrMaybeValue.Some forwarded-value)
                     (opt-load-table-bind
+                      profile-state
                       type-segment-bases
                       filtered
                       table-cap
@@ -79717,7 +80127,8 @@
                 kinds
                 table-cap
                 next-epoch
-                (opt-load-global-bases-clear bases)))]))]))
+                (opt-load-global-bases-clear bases)
+                profile-state))]))]))
 
 ;; CopyBytes writes `size` bytes through its dst pointer: same granular
 ;; invalidation, plus conservative field-to-field forwarding when source and
@@ -79734,7 +80145,14 @@
   (match state
     ;; Same reasoning as the StorePtr arm: a copy through an unclassified
     ;; pointer may write a global slot, so the base map clears here too.
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (let
         [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
         [src-class : OptLoadStoreClass (opt-load-classify-store kinds src size)]
@@ -79762,7 +80180,8 @@
               kinds
               table-cap
               next-epoch
-              (opt-load-global-bases-clear bases))]
+              (opt-load-global-bases-clear bases)
+              profile-state)]
           [(OptLoadStoreElement)
             (OptLoadCseState.State
               facts2
@@ -79770,7 +80189,8 @@
               kinds
               table-cap
               next-epoch
-              (opt-load-global-bases-clear bases))]
+              (opt-load-global-bases-clear bases)
+              profile-state)]
           [(OptLoadStoreField dst-base dst-off _ dst-header?)
             (let
               [copied : OptLoadTable
@@ -79787,6 +80207,7 @@
                           0))
                       (opt-load-ranges-disjoint? src-off size dst-off size))
                       (opt-load-table-transfer-copy-fields
+                        profile-state
                         type-segment-bases
                         filtered
                         filtered
@@ -79808,7 +80229,8 @@
                 kinds
                 table-cap
                 next-epoch
-                (opt-load-global-bases-clear bases)))]))]))
+                (opt-load-global-bases-clear bases)
+                profile-state))]))]))
 
 (define (opt-load-cse-core-load
   [type-segment-bases : i64]
@@ -79823,7 +80245,14 @@
   (match state
     ;; A Load writes nothing, so the base map is carried (through the same
     ;; transfer the pure arm uses -- the rewritten Mov can inherit a binding).
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (let
         ;; The dst redefinition drops stale entries first; the key is computed
         ;; from the PRE-def kinds and bases (a `Load dst <- dst` reads the old
@@ -79855,13 +80284,19 @@
                     new-instr
                     next-epoch)
                   table2
-                  (opt-load-kinds-step type-segment-bases kinds hs new-instr)
+                  (opt-load-kinds-step
+                    profile-state
+                    type-segment-bases
+                    kinds
+                    hs
+                    new-instr)
                   table-cap
                   next-epoch
                   (opt-load-global-bases-step
                     type-segment-bases
                     bases
-                    new-instr))
+                    new-instr)
+                  profile-state)
                 new-instr))]
           [(ir.CompilerIrMaybeValue.No)
             (let
@@ -79878,6 +80313,7 @@
                     next-epoch)
                   (if record?
                     (opt-load-table-bind
+                      profile-state
                       type-segment-bases
                       table2
                       table-cap
@@ -79885,10 +80321,16 @@
                       (ir.CompilerIrValue.Var dst)
                       next-epoch)
                     table2)
-                  (opt-load-kinds-step type-segment-bases kinds hs instr)
+                  (opt-load-kinds-step
+                    profile-state
+                    type-segment-bases
+                    kinds
+                    hs
+                    instr)
                   table-cap
                   next-epoch
-                  (opt-load-global-bases-step type-segment-bases bases instr))
+                  (opt-load-global-bases-step type-segment-bases bases instr)
+                  profile-state)
                 instr))]))]))
 
 ;; Shared per-instruction dispatcher for the block-local (gated? false) and
@@ -80015,30 +80457,43 @@
   (Rewrite OptLoadCseState ir.CompilerIrInstrSeq))
 
 (define (opt-load-cse-state-with-caps-and-facts
+  [profile-state : profile_state.CompilerProfileMetrics]
   [table-cap : i64]
   [kinds-cap : i64]
   [facts : OptAliasFacts]) : OptLoadCseState
   (begin
     (cfg
       compile-profile
-      (compiler-opt-load-cse-profile-note-table-cap table-cap))
+      (compiler-opt-load-cse-profile-note-table-cap profile-state table-cap))
     (OptLoadCseState.State
       facts
       (OptLoadTable.Nil)
-      (opt-load-kinds-empty-with-cap kinds-cap)
+      (opt-load-kinds-empty-with-cap profile-state kinds-cap)
       table-cap
       0
-      (opt-load-global-bases-empty))))
+      (opt-load-global-bases-empty)
+      profile-state)))
 
-(define (opt-load-cse-empty-state-with-caps [table-cap : i64] [kinds-cap : i64]) : OptLoadCseState
-  (opt-load-cse-state-with-caps-and-facts table-cap kinds-cap (opt-alias-empty)))
+(define (opt-load-cse-empty-state-with-caps
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [table-cap : i64]
+  [kinds-cap : i64]) : OptLoadCseState
+  (opt-load-cse-state-with-caps-and-facts
+    profile-state
+    table-cap
+    kinds-cap
+    (opt-alias-empty)))
 
-(define (opt-load-cse-empty-state-for-size [instr-count : i64]) : OptLoadCseState
+(define (opt-load-cse-empty-state-for-size
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [instr-count : i64]) : OptLoadCseState
   (opt-load-cse-empty-state-with-caps
+    profile-state
     (opt-load-cse-table-cap-for-size instr-count)
     (opt-load-cse-kinds-cap-for-size instr-count)))
 
 (define (opt-load-cse-empty-state-for-size-with-kinds
+  [profile-state : profile_state.CompilerProfileMetrics]
   [instr-count : i64]
   [kinds : OptLoadPtrKinds]
   [facts : OptAliasFacts]) : OptLoadCseState
@@ -80047,7 +80502,7 @@
     (begin
       (cfg
         compile-profile
-        (compiler-opt-load-cse-profile-note-table-cap table-cap))
+        (compiler-opt-load-cse-profile-note-table-cap profile-state table-cap))
       (OptLoadCseState.State
         facts
         (OptLoadTable.Nil)
@@ -80056,21 +80511,30 @@
           (opt-load-cse-kinds-cap-for-size instr-count))
         table-cap
         0
-        (opt-load-global-bases-empty)))))
+        (opt-load-global-bases-empty)
+        profile-state))))
 
 ;; The load table is persistent, but alias facts, pointer kinds, and global
 ;; bases are mutable tables; entering a block through a single predecessor must
 ;; process copies.
 (define (opt-load-cse-state-clone-facts [state : OptLoadCseState]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
       (OptLoadCseState.State
         (opt-alias-clone facts)
         table
-        (opt-load-kinds-clone kinds)
+        (opt-load-kinds-clone profile-state kinds)
         table-cap
         epoch
-        (opt-load-global-bases-clone bases))]))
+        (opt-load-global-bases-clone bases)
+        profile-state)]))
 
 (defenum OptMaybeLoadEntry
   (No)
@@ -80131,13 +80595,20 @@
   [a : OptLoadCseState]
   [b : OptLoadCseState]) : OptLoadCseState
   (match a
-    [(OptLoadCseState.State afacts atable akinds atable-cap aepoch abases)
+    [(OptLoadCseState.State
+        afacts
+        atable
+        akinds
+        atable-cap
+        aepoch
+        abases
+        profile-state)
       (match b
-        [(OptLoadCseState.State bfacts btable bkinds btable-cap bepoch bbases)
+        [(OptLoadCseState.State bfacts btable bkinds btable-cap bepoch bbases _)
           (OptLoadCseState.State
             (opt-alias-intersect afacts bfacts)
             (opt-load-table-intersect type-segment-bases atable btable)
-            (opt-load-kinds-intersect akinds bkinds)
+            (opt-load-kinds-intersect profile-state akinds bkinds)
             (if (< atable-cap btable-cap)
               atable-cap
               btable-cap)
@@ -80146,7 +80617,8 @@
             (if (< aepoch bepoch)
               bepoch
               aepoch)
-            (opt-load-global-bases-intersect abases bbases))])]))
+            (opt-load-global-bases-intersect abases bbases)
+            profile-state)])]))
 
 ;; --- loop-header descriptor-entry carry ---------------------------------------
 ;;
@@ -80361,22 +80833,30 @@
       ;; NOT carry: the unprocessed edge may write the global slot a binding
       ;; read, which would make the binding name a stale address.
       (match acc
-        [(OptLoadCseState.State _ acc-table acc-kinds _ acc-epoch _)
+        [(OptLoadCseState.State
+            _
+            acc-table
+            acc-kinds
+            _
+            acc-epoch
+            _
+            profile-state)
           (match empty-state
-            [(OptLoadCseState.State empty-facts empty-table _ empty-cap _ _)
+            [(OptLoadCseState.State empty-facts empty-table _ empty-cap _ _ _)
               (OptLoadCseState.State
                 empty-facts
                 (if (opt-load-gvn-loop-safe-contains? loop-safe label)
                   (opt-load-table-filter-descriptor-stable acc-table sources)
                   empty-table)
-                (opt-load-kinds-filter-stable acc-kinds sources)
+                (opt-load-kinds-filter-stable profile-state acc-kinds sources)
                 empty-cap
                 ;; Carried entries keep their creation epochs, so the counter
                 ;; must be the accumulated predecessors' value: resetting it to
                 ;; zero would let a loop-body allocation claim an epoch that a
                 ;; surviving entry already used.
                 acc-epoch
-                (opt-load-global-bases-empty))])])
+                (opt-load-global-bases-empty)
+                profile-state)])])
       acc)
     (let
       [pred : i64 (array-ref (struct-get (struct-get index preds) edges) edge)]
@@ -80673,6 +81153,7 @@
       (opt-load-gvn-block-seq-has-load? seq 0)]))
 
 (define (opt-load-gvn-blocks-with-context
+  [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
@@ -80699,6 +81180,7 @@
           (opt-cfg-natural-loops-with-context blocks context))]
       [empty-state : OptLoadCseState
         (opt-load-cse-state-with-caps-and-facts
+          profile-state
           (opt-load-cse-table-cap-for-size
             (ir.compiler-ir-block-list-instruction-count blocks))
           (opt-load-cse-kinds-cap-for-size

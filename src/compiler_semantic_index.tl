@@ -1,4 +1,5 @@
 ;; compiler_semantic_index.tl - Owned semantic source index for compiler tooling.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.array)
 (import stdlib.io)
@@ -649,8 +650,8 @@
   [name-id : i64]
   [name : String]) : String
   (match kind
-    [(CompilerSemanticSymbolKind.Struct) (string.append "struct " name)]
-    [(CompilerSemanticSymbolKind.Enum) (string.append "enum " name)]
+    [(CompilerSemanticSymbolKind.Struct) (str_cat.str-cat "struct " name)]
+    [(CompilerSemanticSymbolKind.Enum) (str_cat.str-cat "enum " name)]
     [(CompilerSemanticSymbolKind.Macro)
       (match decl
         [(ast.AstDecl.DefMacro _ _ params ret _)
@@ -863,7 +864,7 @@
                 documentation
                 (if (string.eq documentation "")
                   (compiler-semantic-doc-comment-text source previous)
-                  (string.concat3
+                  (str_cat.str-cat
                     (compiler-semantic-doc-comment-text source previous)
                     "\n"
                     documentation)))

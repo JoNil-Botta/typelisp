@@ -3492,6 +3492,8 @@
         instrs)]
     [fold-fire-result : compiler_optimize.OptBlockListPassResult
       (compiler_optimize.optimize-block-list-for-function-pass
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
         (compiler_ast_types.ast-node-pool-reader-context-current)
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         8
@@ -3503,6 +3505,8 @@
           compiler_ir_types.CompilerIrBlockList.Nil))]
     [fold-noop-result : compiler_optimize.OptBlockListPassResult
       (compiler_optimize.optimize-block-list-for-function-pass
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))
         (compiler_ast_types.ast-node-pool-reader-context-current)
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         1
@@ -30020,6 +30024,11 @@
     [twice : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-dead-phi-function (opt-dead-phi-test-wrap swept)))]
+    [dense-swept : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-dead-phi-function
+          (compiler_ir_types.compiler-ir-function-compact-blocks
+            (opt-dead-phi-test-function 0))))]
     (cond
       ;; the fixture the negative variants rely on is well formed to start with
       [(not
@@ -30059,6 +30068,14 @@
               (opt-dead-phi-test-function 2))))
         12]
       [(not (opt-dead-phi-test-unchanged? 2)) 13]
+      ;; Current production IR is dense. The sweep must retain that container
+      ;; shape instead of rebuilding the recursive compatibility lists.
+      [(not
+          (match dense-swept
+            [(compiler_ir_types.CompilerIrBlockList.Array _) true]
+            [_ false]))
+        14]
+      [(not (compiler_optimize.opt-block-list-eq bases swept dense-swept)) 15]
       [else 42])))
 
 (test
@@ -36403,6 +36420,8 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler_optimize.opt-load-header-set-empty)
     (compiler_optimize.opt-load-cse-empty-state-for-size
+      (profile_state.compiler-profile-state-metrics
+        (profile_state.compiler-profile-state-new))
       (compiler_ir_types.compiler-ir-instr-list-count instrs))
     instrs))
 
@@ -36431,6 +36450,8 @@
           instrs)
         (compiler_ir_types.CompilerIrBlockList.Nil)))
     (compiler_optimize.opt-load-cse-empty-state-for-size
+      (profile_state.compiler-profile-state-metrics
+        (profile_state.compiler-profile-state-new))
       (compiler_ir_types.compiler-ir-instr-list-count instrs))
     instrs))
 
@@ -36448,6 +36469,8 @@
           instrs)
         (compiler_ir_types.CompilerIrBlockList.Nil)))
     (compiler_optimize.opt-load-cse-state-with-caps-and-facts
+      (profile_state.compiler-profile-state-metrics
+        (profile_state.compiler-profile-state-new))
       (compiler_optimize.opt-load-cse-table-cap-for-size
         (compiler_ir_types.compiler-ir-instr-list-count instrs))
       (compiler_optimize.opt-load-cse-kinds-cap-for-size
@@ -36474,6 +36497,8 @@
     (opt_i64_i64_map.with-capacity 1)
     call-memory
     (compiler_optimize.opt-load-cse-state-with-caps-and-facts
+      (profile_state.compiler-profile-state-metrics
+        (profile_state.compiler-profile-state-new))
       (compiler_optimize.opt-load-cse-table-cap-for-size
         (compiler_ir_types.compiler-ir-instr-list-count instrs))
       (compiler_optimize.opt-load-cse-kinds-cap-for-size
@@ -38024,6 +38049,9 @@
 
 (define (opt-load-cse-cap-self-test?) : bool
   (let
+    [profile-state : profile_state.CompilerProfileMetrics
+      (profile_state.compiler-profile-state-metrics
+        (profile_state.compiler-profile-state-new))]
     [key0 : compiler_optimize.OptLoadKey
       (compiler_optimize.OptLoadKey.Raw
         (compiler_ir_types.CompilerIrValue.Var 0)
@@ -38036,6 +38064,7 @@
         false)]
     [table1 : compiler_optimize.OptLoadTable
       (compiler_optimize.opt-load-table-bind
+        profile-state
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptLoadTable.Nil)
         1
@@ -38044,6 +38073,7 @@
         0)]
     [table2 : compiler_optimize.OptLoadTable
       (compiler_optimize.opt-load-table-bind
+        profile-state
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         table1
         1
@@ -38052,6 +38082,7 @@
         0)]
     [table-updated : compiler_optimize.OptLoadTable
       (compiler_optimize.opt-load-table-bind
+        profile-state
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         table2
         1
@@ -38060,19 +38091,26 @@
         0)]
     [kinds1 : compiler_optimize.OptLoadPtrKinds
       (compiler_optimize.opt-load-kinds-bind
-        (compiler_optimize.opt-load-kinds-empty-with-cap 1)
+        profile-state
+        (compiler_optimize.opt-load-kinds-empty-with-cap profile-state 1)
         1
         (OptLoadLocElement))]
     [kinds2 : compiler_optimize.OptLoadPtrKinds
-      (compiler_optimize.opt-load-kinds-bind kinds1 2 (OptLoadLocElement))]
+      (compiler_optimize.opt-load-kinds-bind
+        profile-state
+        kinds1
+        2
+        (OptLoadLocElement))]
     [field-ok : compiler_optimize.OptLoadLocKind
       (compiler_optimize.opt-load-loc-field-checked
+        profile-state
         (- compiler_optimize.opt-load-loc-field-base-limit 1)
         (- compiler_optimize.opt-load-loc-field-offset-limit 1)
         (- compiler_optimize.opt-load-loc-field-width-limit 1)
         true)]
     [field-bad : compiler_optimize.OptLoadLocKind
       (compiler_optimize.opt-load-loc-field-checked
+        profile-state
         compiler_optimize.opt-load-loc-field-base-limit
         0
         8
@@ -39263,7 +39301,7 @@
             (compiler_ir_types.CompilerIrValue.Var a)
             (compiler_ir_types.CompilerIrValue.Var 2)
             (compiler_ir_types.compiler-ir-label
-              (string.append "lc_b" (string.int->string j))))
+              (str_cat.str-cat "lc_b" (string.int->string j))))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Gep
               g
@@ -42359,7 +42397,7 @@
 ;; invocation must schedule across loop boundaries.
 (define (opt-loop-budget-label [prefix : String] [k : i64]) : i64
   (compiler_ir_types.compiler-ir-label
-    (string.append prefix (string.int->string k))))
+    (str_cat.str-cat prefix (string.int->string k))))
 
 ;; loop_k of the unroll fixture: i/acc phis, acc += i, i += 1, i' < n -- the
 ;; canonical counted self-loop the guarded x16 arm rewrites.

@@ -1,4 +1,5 @@
 ;; compiler_driver_smoke_tests.tl - Shared driver/lowering integration smokes.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.string)
 (import stdlib.io)
@@ -15,6 +16,8 @@
 (import compiler_parse_core)
 (import compiler_backend)
 (import compiler_ir_types)
+(import compiler_load)
+(import sym_i64_env)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import compiler_profile_state as profile_state)
@@ -148,6 +151,8 @@
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (let
+        [lower-state : compiler_lower.CompilerLowerState
+          (compiler_lower.compiler-lower-state-new)]
         [source-id : i64 (ci.intern "same-name")]
         [module-id : i64 (ci.intern "identity-module")]
         [link-id : i64 (ci.intern-generated-name "same-name")]
@@ -171,10 +176,11 @@
             source-id
             true)]
         [root-cache : compiler_lower.LowerNameCache
-          (compiler_lower.lower-name-cache-from-env root-env)]
+          (compiler_lower.lower-name-cache-from-env lower-state root-env)]
         [entry-main-source-id : i64 (ci.intern-generated-name "main")]
         [entry-main-env : compiler_lower.LowerNameEnv
           (compiler_lower.lower-name-env-add-decl-module-binding-id
+            lower-state
             compiler_lower.LowerNameEnv.Nil
             "entry.tl"
             "entry.tl"
@@ -183,11 +189,12 @@
             "main"
             entry-main-source-id)]
         [entry-main-cache : compiler_lower.LowerNameCache
-          (compiler_lower.lower-name-cache-from-env entry-main-env)]
+          (compiler_lower.lower-name-cache-from-env lower-state entry-main-env)]
         [stale-main-symbol-id : i64
           (ci.intern-generated-name "package-entry-main")]
         [stale-main-cache : compiler_lower.LowerNameCache
           (compiler_lower.lower-name-cache-from-env
+            lower-state
             (compiler_lower.lower-name-env-bind-logical-symbol-id
               entry-main-source-id
               cbi.compiler-builtin-id-fix-main
@@ -380,6 +387,56 @@
         (compiler-driver-pic-smoke-contains? path needle)
         (compiler-driver-pic-smoke-paths-contain? rest needle))]))
 
+;; A cache miss builds its persistent key and runtime-prelude result in the
+;; process-lifetime node-pool arena. Verify that this nested target restores the
+;; caller's arena and that the cached paths remain readable after that caller is
+;; destroyed.
+(define (compiler-driver-runtime-prelude-cache-in-caller-ok?
+  [caller : arena.Arena]
+  [caller-handle : i64]
+  [key : compiler_load.CompilerLoadPreludeCacheKey]
+  [roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : bool
+  (in-arena
+    caller
+    (match (compiler_driver_core.compiler-driver-load-runtime-prelude-cache-miss
+      key
+      roots
+      cfgs)
+      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ paths _ _)
+        (and
+          (= (arena.tl_arena_current) caller-handle)
+          (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl"))]
+      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (compiler-driver-runtime-prelude-cache-arena-scope-ok?) : bool
+  (let
+    [roots : svec.Vec (compiler-driver-pic-smoke-roots)]
+    [cfgs : sym_i64_env.SymI64Env (compiler_cfg_core.compiler-cfg-empty)]
+    [key : compiler_load.CompilerLoadPreludeCacheKey
+      (compiler_load.compiler-load-runtime-prelude-cache-key roots cfgs)]
+    [home-handle : i64 (arena.tl_arena_current)]
+    [caller : arena.Arena (arena.make)]
+    [caller-handle : i64 (arena.raw-handle caller)]
+    [scoped-ok? : bool
+      (compiler-driver-runtime-prelude-cache-in-caller-ok?
+        caller
+        caller-handle
+        key
+        roots
+        cfgs)]
+    [home-restored? : bool (= (arena.tl_arena_current) home-handle)]
+    (begin
+      (arena.destroy-safe! caller)
+      (match (compiler_driver_core.compiler-driver-runtime-prelude-cache-lookup
+        key)
+        [(compiler_load.CompilerLoadPreludeCacheHit _ paths _ _)
+          (and
+            scoped-ok?
+            home-restored?
+            (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl"))]
+        [(compiler_load.CompilerLoadPreludeCacheMiss) false]))))
+
 (define (compiler-driver-pic-smoke-output-ok?
   [output : compiler_backend.CompilerBackendPicOutput]) : bool
   (let
@@ -524,7 +581,7 @@
 
 (define (compiler-driver-reader-context-smoke-fail [message : String]) : bool
   (begin
-    (io.print-string (string.append "driver reader-context smoke: " message))
+    (io.print-string (str_cat.str-cat "driver reader-context smoke: " message))
     (io.print-string "\n")
     false))
 
@@ -647,12 +704,12 @@
               [else true])]
           [(compiler_backend.ResultCompilerBackend.Err diag)
             (compiler-driver-reader-context-smoke-fail
-              (string.append
+              (str_cat.str-cat
                 "state A backend failed: "
                 (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]))]
     [(compiler_backend.ResultCompilerBackend.Err diag)
       (compiler-driver-reader-context-smoke-fail
-        (string.append
+        (str_cat.str-cat
           "state B backend failed: "
           (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]))
 
@@ -781,12 +838,12 @@
               ok))]
         [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
           (compiler-driver-reader-context-smoke-fail
-            (string.append
+            (str_cat.str-cat
               "state B lower failed: "
               (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))])]
     [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
       (compiler-driver-reader-context-smoke-fail
-        (string.append
+        (str_cat.str-cat
           "state A lower failed: "
           (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]))
 
@@ -941,7 +998,7 @@
                         state-b)))))]
             [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
               (compiler-driver-reader-context-smoke-fail
-                (string.append
+                (str_cat.str-cat
                   "state A lower failed: "
                   (compiler_diagnostic.compiler-diagnostic-render
                     (box-get diag))))]))))))
@@ -1102,6 +1159,74 @@
                       (compiler_lower.lower-arenas-release!)
                       (and isolated-ok? b-released-ok?))))))))))))
 
+;; The driver owns one opaque lower job state per compile state. Populate A
+;; through a successful lower, drive B through a semantic failure, then reset B
+;; through the driver lifecycle. The 30-cell structural observation of A must
+;; remain exact, while B returns to its fresh observation.
+(define (compiler-driver-lower-state-isolation-ok?) : bool
+  (let
+    [state-a : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [state-b : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [lower-a : compiler_lower.CompilerLowerState
+      (compiler_driver_core.compiler-driver-state-owned-lower-state state-a)]
+    [lower-b : compiler_lower.CompilerLowerState
+      (compiler_driver_core.compiler-driver-state-owned-lower-state state-b)]
+    [initial-a : compiler_lower.CompilerLowerStateObservation
+      (compiler_lower.compiler-lower-state-observe lower-a)]
+    (match (compiler_lower.lower-compiler-source-with-state
+      lower-a
+      "(define (helper) : i64 42)
+(module main)
+(define (main) : i64 (helper))")
+      [(compiler_lower.ResultCompilerLower.Err diag)
+        (compiler-driver-reader-context-smoke-fail
+          (str_cat.str-cat
+            "lower state A failed: "
+            (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]
+      [(compiler_lower.ResultCompilerLower.Ok _ _)
+        (let
+          [a-before : compiler_lower.CompilerLowerStateObservation
+            (compiler_lower.compiler-lower-state-observe lower-a)]
+          [b-failed : bool
+            (match (compiler_lower.lower-compiler-source-with-state
+              lower-b
+              "(module main)
+(define (main) : i64 lower-state-controlled-failure)")
+              [(compiler_lower.ResultCompilerLower.Err _) true]
+              [(compiler_lower.ResultCompilerLower.Ok _ _) false])]
+          (begin
+            (compiler_driver_core.compiler-driver-state-reset-lower! state-b)
+            (let
+              [a-after : compiler_lower.CompilerLowerStateObservation
+                (compiler_lower.compiler-lower-state-observe lower-a)]
+              (cond
+                [(not (= (compiler_lower.compiler-lower-state-size) 8))
+                  (compiler-driver-reader-context-smoke-fail
+                    "lower state carrier is not one word")]
+                [(= (struct-get lower-a address) (struct-get lower-b address))
+                  (compiler-driver-reader-context-smoke-fail
+                    "lower state owners alias")]
+                [(compiler_lower.compiler-lower-state-observation-eq?
+                    initial-a
+                    a-before)
+                  (compiler-driver-reader-context-smoke-fail
+                    "successful lower did not populate state A")]
+                [(not b-failed)
+                  (compiler-driver-reader-context-smoke-fail
+                    "controlled lower state B failure succeeded")]
+                [(not
+                    (compiler_lower.compiler-lower-state-observation-eq?
+                      a-before
+                      a-after))
+                  (compiler-driver-reader-context-smoke-fail
+                    "state B failure/reset mutated state A")]
+                [(not (compiler_lower.compiler-lower-state-reset? lower-b))
+                  (compiler-driver-reader-context-smoke-fail
+                    "state B reset did not restore fresh state")]
+                [else true]))))])))
+
 (define (compiler-driver-base-transients-smoke-ok?) : bool
   (let
     [state-a : compiler_driver_core.CompilerDriverState
@@ -1187,7 +1312,8 @@
                   isolated-ok?
                   (compiler-driver-base-transients-lower-arenas-ok?
                     state-a
-                    state-b))))))))))
+                    state-b)
+                  (compiler-driver-lower-state-isolation-ok?))))))))))
 
 (define (compiler-driver-base-transients-smoke-main) : i64
   (if (compiler-driver-base-transients-smoke-ok?)
@@ -1236,4 +1362,5 @@
     (unless
       (compiler-driver-pic-smoke-user-cfg-keeps-runtime-prelude?)
       (return 4))
+    (unless (compiler-driver-runtime-prelude-cache-arena-scope-ok?) (return 8))
     42))

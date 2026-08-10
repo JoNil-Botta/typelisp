@@ -213,79 +213,97 @@
             1))
         (or (< def-var 0) (live.compiler-live-set-contains? defs def-var))))))
 
-(define (compiler-live-instr-ids-list-match-set?
-  [instrs : ir.CompilerIrInstrList]) : bool
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) true]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (and
-        (compiler-live-instr-ids-match-set? instr)
-        (compiler-live-instr-ids-list-match-set? (box-get rest)))]))
+(define (compiler-live-instr-ids-seq-match-set-from?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (and
+      (compiler-live-instr-ids-match-set?
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      (compiler-live-instr-ids-seq-match-set-from? instrs (+ index 1)))))
+
+(define (compiler-live-instr-ids-seq-match-set?
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (compiler-live-instr-ids-seq-match-set-from? instrs 0))
 
 ;; Instruction shapes that exercise the parts of the decode a straight
 ;; one-operand arm does not: a repeated operand (the set de-duplicates, so the
 ;; id list must too), a two-arg call, a phi input list, a packed value list, a
 ;; raw-var AddrOf operand, and a def-less terminator.
-(define (compiler-live-ids-sample-instrs) : ir.CompilerIrInstrList
-  (ir.compiler-ir-instr-cons
-    (ir.CompilerIrInstr.Mov
-      0
-      (ir.CompilerIrValue.Var 10)
-      (compiler-live-i64-ty))
-    (ir.compiler-ir-instr-cons
-      (ir.CompilerIrInstr.BinOp
-        1
-        ir.CompilerIrBinOp.Add
-        (ir.CompilerIrValue.Var 7)
-        (ir.CompilerIrValue.Var 7)
-        (compiler-live-i64-ty))
-      (ir.compiler-ir-instr-cons
-        (ir.CompilerIrInstr.AddrOf 2 33)
-        (ir.compiler-ir-instr-cons
-          (ir.CompilerIrInstr.Gep
-            3
-            (ir.CompilerIrValue.Var 40)
-            (ir.CompilerIrValue.I64 8)
-            (compiler-live-i64-ty))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Call
-              4
-              (ir.compiler-ir-test-symbol "f")
-              (ir.CompilerIrCallArgs.Two
-                (ir.CompilerIrValue.Var 41)
-                (ir.CompilerIrValue.Var 41))
-              (compiler-live-i64-ty))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Pack
-                5
-                (ir.compiler-ir-value-cons
-                  (ir.CompilerIrValue.Var 42)
-                  (ir.compiler-ir-value-cons
-                    (ir.CompilerIrValue.Var 43)
-                    ir.CompilerIrValueList.Nil))
-                (compiler-live-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Phi
-                  6
-                  (ir.compiler-ir-phi-input-cons
-                    (ir.CompilerIrValue.Var 44)
-                    (ir.compiler-ir-label "a")
-                    (ir.compiler-ir-phi-input-cons
-                      (ir.CompilerIrValue.Var 44)
-                      (ir.compiler-ir-label "b")
-                      ir.CompilerIrPhiInputList.Nil))
-                  (compiler-live-i64-ty))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.StorePtr
-                    (ir.CompilerIrValue.Var 45)
-                    (ir.CompilerIrValue.Var 46)
-                    (compiler-live-i64-ty))
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Var 47)
-                      (ir.compiler-ir-label "a")
-                      (ir.compiler-ir-label "b"))
-                    ir.CompilerIrInstrList.Nil))))))))))
+(define (compiler-live-ids-sample-instrs) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 9)]
+    (begin
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Mov
+          0
+          (ir.CompilerIrValue.Var 10)
+          (compiler-live-i64-ty)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.BinOp
+          1
+          ir.CompilerIrBinOp.Add
+          (ir.CompilerIrValue.Var 7)
+          (ir.CompilerIrValue.Var 7)
+          (compiler-live-i64-ty)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.AddrOf 2 33))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Gep
+          3
+          (ir.CompilerIrValue.Var 40)
+          (ir.CompilerIrValue.I64 8)
+          (compiler-live-i64-ty)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Call
+          4
+          (ir.compiler-ir-test-symbol "f")
+          (ir.CompilerIrCallArgs.Two
+            (ir.CompilerIrValue.Var 41)
+            (ir.CompilerIrValue.Var 41))
+          (compiler-live-i64-ty)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Pack
+          5
+          (ir.compiler-ir-value-cons
+            (ir.CompilerIrValue.Var 42)
+            (ir.compiler-ir-value-cons
+              (ir.CompilerIrValue.Var 43)
+              ir.CompilerIrValueList.Nil))
+          (compiler-live-i64-ty)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Phi
+          6
+          (ir.compiler-ir-phi-input-cons
+            (ir.CompilerIrValue.Var 44)
+            (ir.compiler-ir-label "a")
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.Var 44)
+              (ir.compiler-ir-label "b")
+              ir.CompilerIrPhiInputList.Nil))
+          (compiler-live-i64-ty)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.StorePtr
+          (ir.CompilerIrValue.Var 45)
+          (ir.CompilerIrValue.Var 46)
+          (compiler-live-i64-ty)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var 47)
+          (ir.compiler-ir-label "a")
+          (ir.compiler-ir-label "b")))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 ;; The two id-driven scratch steps must leave the row -- and the trimmed active
 ;; count -- exactly where the bitset forms leave them.
@@ -371,11 +389,73 @@
       step-ok
       use-def-ok
       overflow-ok
-      (compiler-live-instr-ids-list-match-set?
-        (compiler-live-ids-sample-instrs)))))
+      (compiler-live-instr-ids-seq-match-set? (compiler-live-ids-sample-instrs)))))
 
 (define (compiler-live-i64-ty) : ast.AstType
   (ast.AstType.I64))
+
+(define (compiler-live-instr-seq6
+  [first : ir.CompilerIrInstr]
+  [second : ir.CompilerIrInstr]
+  [third : ir.CompilerIrInstr]
+  [fourth : ir.CompilerIrInstr]
+  [fifth : ir.CompilerIrInstr]
+  [sixth : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (make-array ir.CompilerIrInstr 6)]
+    (begin
+      (array-set! slots 0 first)
+      (array-set! slots 1 second)
+      (array-set! slots 2 third)
+      (array-set! slots 3 fourth)
+      (array-set! slots 4 fifth)
+      (array-set! slots 5 sixth)
+      (ir.CompilerIrInstrSeq slots 6))))
+
+(define (compiler-live-instr-seq7
+  [first : ir.CompilerIrInstr]
+  [second : ir.CompilerIrInstr]
+  [third : ir.CompilerIrInstr]
+  [fourth : ir.CompilerIrInstr]
+  [fifth : ir.CompilerIrInstr]
+  [sixth : ir.CompilerIrInstr]
+  [seventh : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (make-array ir.CompilerIrInstr 7)]
+    (begin
+      (array-set! slots 0 first)
+      (array-set! slots 1 second)
+      (array-set! slots 2 third)
+      (array-set! slots 3 fourth)
+      (array-set! slots 4 fifth)
+      (array-set! slots 5 sixth)
+      (array-set! slots 6 seventh)
+      (ir.CompilerIrInstrSeq slots 7))))
+
+(define (compiler-live-instr-seq8
+  [first : ir.CompilerIrInstr]
+  [second : ir.CompilerIrInstr]
+  [third : ir.CompilerIrInstr]
+  [fourth : ir.CompilerIrInstr]
+  [fifth : ir.CompilerIrInstr]
+  [sixth : ir.CompilerIrInstr]
+  [seventh : ir.CompilerIrInstr]
+  [eighth : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (make-array ir.CompilerIrInstr 8)]
+    (begin
+      (array-set! slots 0 first)
+      (array-set! slots 1 second)
+      (array-set! slots 2 third)
+      (array-set! slots 3 fourth)
+      (array-set! slots 4 fifth)
+      (array-set! slots 5 sixth)
+      (array-set! slots 6 seventh)
+      (array-set! slots 7 eighth)
+      (ir.CompilerIrInstrSeq slots 8))))
 
 (define (compiler-live-straight-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -384,24 +464,21 @@
     (compiler-live-i64-ty)
     3
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (ir.compiler-ir-instr-seq3
           (ir.CompilerIrInstr.Mov
             0
             (ir.CompilerIrValue.I64 1)
             (compiler-live-i64-ty))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.BinOp
-              1
-              ir.CompilerIrBinOp.Add
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 2)
-              (compiler-live-i64-ty))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-              ir.CompilerIrInstrList.Nil))))
+          (ir.CompilerIrInstr.BinOp
+            1
+            ir.CompilerIrBinOp.Add
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 2)
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))))
       ir.CompilerIrBlockList.Nil)))
 
 (define (compiler-live-branch-function) : ir.CompilerIrFunction
@@ -411,28 +488,25 @@
     (compiler-live-i64-ty)
     3
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (ir.compiler-ir-instr-seq1
           (ir.CompilerIrInstr.Branch
             (ir.CompilerIrValue.Var 0)
             (ir.compiler-ir-label "then")
-            (ir.compiler-ir-label "else"))
-          ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-label "else"))))
       (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "then")
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq1
             (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-            ir.CompilerIrInstrList.Nil))
+              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))))
         (ir.compiler-ir-block-cons
-          (ir.compiler-ir-block
+          (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "else")
-            (ir.compiler-ir-instr-cons
+            (ir.compiler-ir-instr-seq1
               (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-              ir.CompilerIrInstrList.Nil))
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))))
           ir.CompilerIrBlockList.Nil)))))
 
 (define (compiler-live-phi-function) : ir.CompilerIrFunction
@@ -442,40 +516,35 @@
     (compiler-live-i64-ty)
     4
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (ir.compiler-ir-instr-seq1
           (ir.CompilerIrInstr.Branch
             (ir.CompilerIrValue.Var 0)
             (ir.compiler-ir-label "left")
-            (ir.compiler-ir-label "right"))
-          ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-label "right"))))
       (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "left")
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq2
             (ir.CompilerIrInstr.Mov
               1
               (ir.CompilerIrValue.I64 10)
               (compiler-live-i64-ty))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-              ir.CompilerIrInstrList.Nil)))
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))
         (ir.compiler-ir-block-cons
-          (ir.compiler-ir-block
+          (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "right")
-            (ir.compiler-ir-instr-cons
+            (ir.compiler-ir-instr-seq2
               (ir.CompilerIrInstr.Mov
                 2
                 (ir.CompilerIrValue.I64 20)
                 (compiler-live-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-                ir.CompilerIrInstrList.Nil)))
+              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))
           (ir.compiler-ir-block-cons
-            (ir.compiler-ir-block
+            (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "join")
-              (ir.compiler-ir-instr-cons
+              (ir.compiler-ir-instr-seq2
                 (ir.CompilerIrInstr.Phi
                   3
                   (ir.compiler-ir-phi-input-cons
@@ -486,65 +555,54 @@
                       (ir.compiler-ir-label "right")
                       ir.CompilerIrPhiInputList.Nil))
                   (compiler-live-i64-ty))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Return
-                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-                  ir.CompilerIrInstrList.Nil)))
+                (ir.CompilerIrInstr.Return
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
             ir.CompilerIrBlockList.Nil))))))
 
 (define (compiler-live-use-def-ok?) : bool
   (let
     [use-def : live.CompilerLiveUseDef
       (live.compiler-live-block-use-def
-        (ir.compiler-ir-instr-cons
+        (compiler-live-instr-seq8
           (ir.CompilerIrInstr.Mov
             0
             (ir.CompilerIrValue.Var 10)
             (compiler-live-i64-ty))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.BinOp
-              1
-              ir.CompilerIrBinOp.Add
-              (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.Var 11)
-              (compiler-live-i64-ty))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.UnOp
-                2
-                ir.CompilerIrUnOp.Neg
-                (ir.CompilerIrValue.Var 12)
-                (compiler-live-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Call
-                  3
-                  (ir.compiler-ir-test-symbol "f")
-                  (ir.CompilerIrCallArgs.Two
-                    (ir.CompilerIrValue.Var 1)
-                    (ir.CompilerIrValue.Var 13))
-                  (compiler-live-i64-ty))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Store
-                    (ir.compiler-ir-test-symbol "g")
-                    (ir.CompilerIrValue.Var 14)
-                    (compiler-live-i64-ty))
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Var 15)
-                      (ir.compiler-ir-label "a")
-                      (ir.compiler-ir-label "b"))
-                    (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.Phi
-                        4
-                        (ir.compiler-ir-phi-input-cons
-                          (ir.CompilerIrValue.Var 16)
-                          (ir.compiler-ir-label "a")
-                          ir.CompilerIrPhiInputList.Nil)
-                        (compiler-live-i64-ty))
-                      (ir.compiler-ir-instr-cons
-                        (ir.CompilerIrInstr.Return
-                          (ir.CompilerIrMaybeValue.Some
-                            (ir.CompilerIrValue.Var 4)))
-                        ir.CompilerIrInstrList.Nil)))))))))]
+          (ir.CompilerIrInstr.BinOp
+            1
+            ir.CompilerIrBinOp.Add
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 11)
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.UnOp
+            2
+            ir.CompilerIrUnOp.Neg
+            (ir.CompilerIrValue.Var 12)
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.Call
+            3
+            (ir.compiler-ir-test-symbol "f")
+            (ir.CompilerIrCallArgs.Two
+              (ir.CompilerIrValue.Var 1)
+              (ir.CompilerIrValue.Var 13))
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.Store
+            (ir.compiler-ir-test-symbol "g")
+            (ir.CompilerIrValue.Var 14)
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var 15)
+            (ir.compiler-ir-label "a")
+            (ir.compiler-ir-label "b"))
+          (ir.CompilerIrInstr.Phi
+            4
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.Var 16)
+              (ir.compiler-ir-label "a")
+              ir.CompilerIrPhiInputList.Nil)
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))]
     (and
       (live.compiler-live-set-eq?
         (struct-get use-def uses)
@@ -557,33 +615,27 @@
   (let
     [use-def : live.CompilerLiveUseDef
       (live.compiler-live-block-use-def
-        (ir.compiler-ir-instr-cons
+        (compiler-live-instr-seq6
           (ir.CompilerIrInstr.Alloc 0 (compiler-live-i64-ty))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.AddrOf 1 0)
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Gep
-                2
-                (ir.CompilerIrValue.Var 1)
-                (ir.CompilerIrValue.Var 10)
-                (compiler-live-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Load
-                  3
-                  (ir.CompilerIrValue.Var 2)
-                  (compiler-live-i64-ty))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.StorePtr
-                    (ir.CompilerIrValue.Var 2)
-                    (ir.CompilerIrValue.Var 11)
-                    (compiler-live-i64-ty))
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Cast
-                      4
-                      (ir.CompilerIrValue.Var 3)
-                      (compiler-live-i64-ty)
-                      (ast.AstType.I32))
-                    ir.CompilerIrInstrList.Nil)))))))]
+          (ir.CompilerIrInstr.AddrOf 1 0)
+          (ir.CompilerIrInstr.Gep
+            2
+            (ir.CompilerIrValue.Var 1)
+            (ir.CompilerIrValue.Var 10)
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.Load
+            3
+            (ir.CompilerIrValue.Var 2)
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.StorePtr
+            (ir.CompilerIrValue.Var 2)
+            (ir.CompilerIrValue.Var 11)
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.Cast
+            4
+            (ir.CompilerIrValue.Var 3)
+            (compiler-live-i64-ty)
+            (ast.AstType.I32))))]
     (and
       (live.compiler-live-set-eq?
         (struct-get use-def uses)
@@ -596,51 +648,44 @@
   (let
     [use-def : live.CompilerLiveUseDef
       (live.compiler-live-block-use-def
-        (ir.compiler-ir-instr-cons
+        (compiler-live-instr-seq7
           (ir.CompilerIrInstr.LaneId 0 4 (compiler-live-i64-ty))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Splat
-              1
-              (ir.CompilerIrValue.Var 10)
-              4
-              (compiler-live-i64-ty))
-            (ir.compiler-ir-instr-cons
-              (ir.ir-instr-vector-bin-op
-                2
-                (ir.CompilerIrBinOp.Add)
-                (ir.CompilerIrValue.Var 0)
-                (ir.CompilerIrValue.Var 1)
-                4
-                (compiler-live-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.TailMask
-                  3
-                  (ir.CompilerIrValue.Var 11)
-                  (ir.CompilerIrValue.Var 12)
-                  4)
-                (ir.compiler-ir-instr-cons
-                  (ir.ir-instr-predicated-load
-                    4
-                    (ir.CompilerIrValue.Var 13)
-                    (ir.CompilerIrValue.Var 11)
-                    (ir.CompilerIrValue.Var 3)
-                    4
-                    (compiler-live-i64-ty))
-                  (ir.compiler-ir-instr-cons
-                    (ir.ir-instr-predicated-store
-                      (ir.CompilerIrValue.Var 14)
-                      (ir.CompilerIrValue.Var 11)
-                      (ir.CompilerIrValue.Var 2)
-                      (ir.CompilerIrValue.Var 3)
-                      4
-                      (compiler-live-i64-ty))
-                    (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.MaskReduce
-                        5
-                        (ir.CompilerIrMaskReduceOp.Any)
-                        (ir.CompilerIrValue.Var 3)
-                        4)
-                      ir.CompilerIrInstrList.Nil))))))))]
+          (ir.CompilerIrInstr.Splat
+            1
+            (ir.CompilerIrValue.Var 10)
+            4
+            (compiler-live-i64-ty))
+          (ir.ir-instr-vector-bin-op
+            2
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 1)
+            4
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.TailMask
+            3
+            (ir.CompilerIrValue.Var 11)
+            (ir.CompilerIrValue.Var 12)
+            4)
+          (ir.ir-instr-predicated-load
+            4
+            (ir.CompilerIrValue.Var 13)
+            (ir.CompilerIrValue.Var 11)
+            (ir.CompilerIrValue.Var 3)
+            4
+            (compiler-live-i64-ty))
+          (ir.ir-instr-predicated-store
+            (ir.CompilerIrValue.Var 14)
+            (ir.CompilerIrValue.Var 11)
+            (ir.CompilerIrValue.Var 2)
+            (ir.CompilerIrValue.Var 3)
+            4
+            (compiler-live-i64-ty))
+          (ir.CompilerIrInstr.MaskReduce
+            5
+            (ir.CompilerIrMaskReduceOp.Any)
+            (ir.CompilerIrValue.Var 3)
+            4)))]
     (and
       (live.compiler-live-set-eq?
         (struct-get use-def uses)
@@ -806,10 +851,9 @@
         4
         cases
         (ir.compiler-ir-label "other"))]
-    [instrs : ir.CompilerIrInstrList
-      (ir.compiler-ir-instr-cons instr ir.CompilerIrInstrList.Nil)]
+    [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq1 instr)]
     [block : ir.CompilerIrBlock
-      (ir.compiler-ir-block (ir.compiler-ir-label "entry") instrs)]
+      (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)]
     [successors : live.CompilerLiveLabelSet
       (live.compiler-live-block-successors block)]
     [use-def : live.CompilerLiveUseDef

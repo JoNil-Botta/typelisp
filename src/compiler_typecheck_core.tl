@@ -105,6 +105,11 @@
   (chain-prev (__tl_dyn-array i64))
   (ids tc_i64_i64_map.Map)
   (values (__tl_dyn-array ast.AstType))
+  ;; Only top-env signatures that still contain Var/VarArgs can change after
+  ;; an additive splice. Explicit layers fuse that shrinking candidate-name
+  ;; list into the tail of `unsafe-flags`: [flags x capacity, live count,
+  ;; names x capacity]. The existing `ids` map recovers each value slot. This
+  ;; keeps the hot cache record at its original width.
   (unsafe-flags (__tl_dyn-array i64))
   (c-abi-fnptr-flags (__tl_dyn-array i64))
   (shadow-flags (__tl_dyn-array i64))
@@ -378,7 +383,11 @@
   (thread-name-kind TcThreadNameKindState)
   (inlay-hints TcInlayHintState)
   (macro-call-sites TcMacroCallSiteState)
-  (scratch-arenas TcScratchArenaState))
+  (scratch-arenas TcScratchArenaState)
+  ;; Lazily points into the expansion scratch arena while one macro walk owns
+  ;; a segmented declaration/path view. Zero outside that structural scope, so
+  ;; idle compiler jobs retain no segment table or maximum-capacity storage.
+  (macro-program-view-address i64))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
@@ -526,7 +535,8 @@
           (tc-thread-name-kind-state-new)
           (tc-inlay-hint-state-new)
           (tc-macro-call-site-state-new)
-          (tc-scratch-arena-state-new)))
+          (tc-scratch-arena-state-new)
+          0))
       (TcJobState
         (cast
           (unsafe
@@ -564,6 +574,22 @@
 
 (define (tc-job-state-scratch-arenas [state : TcJobState]) : TcScratchArenaState
   (struct-get (tc-job-state-data state) scratch-arenas))
+
+(define (tc-job-state-macro-program-view-address [state : TcJobState]) : i64
+  (tc-job-state-field state macro-program-view-address i64))
+
+(define (tc-job-state-set-macro-program-view-address!
+  [state : TcJobState]
+  [address : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast (struct-get state address) : u64) : (Ptr u8))
+          (comptime
+            (offset-of (type TcJobStateData) macro-program-view-address)))
+        : (MutPtr i64))
+      address)))
 
 (define (tc-scratch-arena-state-data [state : TcScratchArenaState]) : TcScratchArenaStateData
   (unsafe
@@ -2732,7 +2758,7 @@
   [state : TcPrefixSnapshotCacheState]
   [label : String]) : unit
   (io.print-error
-    (string.append
+    (str_cat.str-cat
       (tc-prefix-snapshot-cache-stats-line-for-state state label)
       "\n")))
 
@@ -3432,7 +3458,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-profile-field [value : i64]) : String
-    (string.append "|" (string.int->string value))))
+    (str_cat.str-cat "|" (string.int->string value))))
 
 (cfg
   compile-profile
@@ -3452,20 +3478,16 @@
       [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64 (- (profile.alloc-peak) compiler-tc-profile-start-live)]
       (io.print-error
-        (string.append
+        (str_cat.str-cat
           "compile-profile|typecheck."
-          (string.append
-            phase
-            (string.append
-              (compiler-tc-profile-field
-                (- end-ms compiler-tc-profile-start-ms))
-              (string.append
-                (compiler-tc-profile-field
-                  (- end-total compiler-tc-profile-start-total))
-                (string.append
-                  (compiler-tc-profile-field
-                    (- end-live compiler-tc-profile-start-live))
-                  (string.append (compiler-tc-profile-field peak-delta) "\n"))))))))))
+          phase
+          (compiler-tc-profile-field (- end-ms compiler-tc-profile-start-ms))
+          (compiler-tc-profile-field
+            (- end-total compiler-tc-profile-start-total))
+          (compiler-tc-profile-field
+            (- end-live compiler-tc-profile-start-live))
+          (compiler-tc-profile-field peak-delta)
+          "\n")))))
 
 ;; Fine-grained walk-region accumulators. The ms clock cannot resolve the
 ;; per-call regions inside the macro walk, so these use a nanosecond
@@ -4132,6 +4154,233 @@
   (define compiler-tc-walk-decl-fire-count : i64
     0))
 
+;; Fired-declaration ownership attribution.  Survivor bytes are allocations
+;; made while the exhaustive generation copy-out persists the returned graph
+;; (including declaration/path shells and vector/list/string backing payload).
+;; Superseded bytes are bump storage added to the declaration generation; the
+;; ring's later destroy is reported separately so the signed non-output live
+;; contribution can reconcile the existing fired-decl live lane.
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-attributed-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-survivor-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-survivor-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-superseded-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-superseded-released-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-committed-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-post-boundary-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-boundary-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-boundary-pending : bool
+    false))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-source-shared-expr-refs : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-source-shared-type-refs : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-survivor-expr-nodes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-survivor-type-nodes : i64
+    0))
+
+;; Union of the two nested fired-decl lanes.  Hygiene can run inside a
+;; produced-node rewalk, so subtracting the two existing totals independently
+;; double-counts their overlap.  This depth counts outer lane activations and
+;; times their union once; fired self time is fire total minus this value.
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-child-depth : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-child-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-fire-child-ns : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-fire-child-enter!) : unit
+    (if (= compiler-tc-walk-decl-sample-kind 2)
+      (begin
+        (if (= compiler-tc-walk-decl-fire-child-depth 0)
+          (set!
+            compiler-tc-walk-decl-fire-child-start-ns
+            (compiler-tc-walk-now-ns))
+          unit)
+        (set!
+          compiler-tc-walk-decl-fire-child-depth
+          (+ compiler-tc-walk-decl-fire-child-depth 1)))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-fire-child-leave!) : unit
+    (if (> compiler-tc-walk-decl-fire-child-depth 0)
+      (begin
+        (set!
+          compiler-tc-walk-decl-fire-child-depth
+          (- compiler-tc-walk-decl-fire-child-depth 1))
+        (if (= compiler-tc-walk-decl-fire-child-depth 0)
+          (set!
+            compiler-tc-walk-decl-fire-child-ns
+            (+
+              compiler-tc-walk-decl-fire-child-ns
+              (-
+                (compiler-tc-walk-now-ns)
+                compiler-tc-walk-decl-fire-child-start-ns)))
+          unit))
+      unit)))
+
+;; Return bytes allocated in an arena since a cursor mark.  The active chain is
+;; newest-first, so the common case (one declaration stays in its current
+;; segment) is one iteration.  Unlike a whole-arena census this work is bounded
+;; by segments grown by this declaration and runs only after a macro actually
+;; fired, keeping the profiler from becoming a material compiler workload.
+(cfg
+  compile-profile
+  (define (compiler-tc-profile-arena-bytes-since
+    [arena-handle : i64]
+    [mark : i64]) : i64
+    (if (or (= arena-handle 0) (= mark 0))
+      0
+      (let
+        [root-candidate : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr arena-handle : (Ptr i64)) 5)))]
+        [root : i64
+          (if (= root-candidate 0)
+            arena-handle
+            root-candidate)]
+        [active : i64
+          (let
+            [current : i64
+              (unsafe
+                (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+            (if (= current 0)
+              root
+              current))]
+        [used : i64 0]
+        [cursor : i64 active]
+        [done : bool false]
+        (begin
+          (while (and (not done) (not (= cursor 0)))
+            (let
+              [base : i64
+                (unsafe
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1)))]
+              [end : i64
+                (unsafe
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))]
+              (begin
+                (if (and (>= mark base) (<= mark end))
+                  (begin
+                    (set! used (+ used (- end mark)))
+                    (set! done true))
+                  (begin
+                    (if (> end base)
+                      (set! used (+ used (- end base)))
+                      unit)
+                    (set!
+                      cursor
+                      (unsafe
+                        (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 0)))))))))
+          used)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-fire-attribution-note!
+    [survivor-alloc : i64]
+    [survivor-live : i64]
+    [superseded-alloc : i64]
+    [superseded-released : i64]
+    [committed-live : i64]
+    [boundary-live : i64]
+    [source-expr-refs : i64]
+    [source-type-refs : i64]
+    [survivor-expr-nodes : i64]
+    [survivor-type-nodes : i64]) : unit
+    (begin
+      (set!
+        compiler-tc-walk-decl-fire-attributed-calls
+        (+ compiler-tc-walk-decl-fire-attributed-calls 1))
+      (set!
+        compiler-tc-walk-decl-fire-survivor-alloc-bytes
+        (+ compiler-tc-walk-decl-fire-survivor-alloc-bytes survivor-alloc))
+      (set!
+        compiler-tc-walk-decl-fire-survivor-live-bytes
+        (+ compiler-tc-walk-decl-fire-survivor-live-bytes survivor-live))
+      (set!
+        compiler-tc-walk-decl-fire-superseded-alloc-bytes
+        (+ compiler-tc-walk-decl-fire-superseded-alloc-bytes superseded-alloc))
+      (set!
+        compiler-tc-walk-decl-fire-superseded-released-bytes
+        (+
+          compiler-tc-walk-decl-fire-superseded-released-bytes
+          superseded-released))
+      (set!
+        compiler-tc-walk-decl-fire-committed-live-bytes
+        (+ compiler-tc-walk-decl-fire-committed-live-bytes committed-live))
+      (set! compiler-tc-walk-decl-fire-boundary-live boundary-live)
+      (set! compiler-tc-walk-decl-fire-boundary-pending true)
+      (set!
+        compiler-tc-walk-decl-fire-source-shared-expr-refs
+        (+ compiler-tc-walk-decl-fire-source-shared-expr-refs source-expr-refs))
+      (set!
+        compiler-tc-walk-decl-fire-source-shared-type-refs
+        (+ compiler-tc-walk-decl-fire-source-shared-type-refs source-type-refs))
+      (set!
+        compiler-tc-walk-decl-fire-survivor-expr-nodes
+        (+ compiler-tc-walk-decl-fire-survivor-expr-nodes survivor-expr-nodes))
+      (set!
+        compiler-tc-walk-decl-fire-survivor-type-nodes
+        (+ compiler-tc-walk-decl-fire-survivor-type-nodes survivor-type-nodes)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-fire-attribution-flush! [fired : bool]) : unit
+    (begin
+      (if (and fired compiler-tc-walk-decl-fire-boundary-pending)
+        (set!
+          compiler-tc-walk-decl-fire-post-boundary-live-bytes
+          (+
+            compiler-tc-walk-decl-fire-post-boundary-live-bytes
+            (- (profile.alloc-live) compiler-tc-walk-decl-fire-boundary-live)))
+        unit)
+      (set! compiler-tc-walk-decl-fire-boundary-pending false))))
+
 ;; R3-P1 observability: how many firing declarations got their own arena
 ;; generation, how many fell back to the ambient arena (no scratch pipeline or
 ;; no installed pool context), and how many expression rows the per-declaration
@@ -4185,8 +4434,8 @@
   (define (compiler-tc-walk-decl-sample-note! [kind : i64]) : unit
     (set! compiler-tc-walk-decl-sample-kind kind)))
 
-;; Splice sub-kind buckets: 4 = marker-only import with deferred refresh,
-;; 5 = marker-only import with the full top-env refresh, 6 = forced inline
+;; Splice sub-kind buckets: 4 = marker-only import batched without a cache,
+;; 5 = marker-only import that flushes the additive cache batch, 6 = forced inline
 ;; splice, 7 = generated-normal-import materialization. Kind 3 remains the
 ;; placeholder arm's default (empty expansions and any path that noted
 ;; nothing more specific).
@@ -4253,6 +4502,82 @@
 (cfg
   compile-profile
   (define compiler-tc-walk-decl-sp-mat-count : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-nodes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-splits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-delta-decls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flattens : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-alias-flattens : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-file-flattens : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-start-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-fallback-flatten-start-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flattens : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-start-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-segment-final-flatten-start-live : i64
     0))
 (cfg
   compile-profile
@@ -4367,38 +4692,63 @@
   (define compiler-tc-walk-splice-ctfe-clear-file : i64
     0))
 
+;; Additive top-env splice accounting. Candidates are unresolved cache entries
+;; revisited against a new symbol surface, updates are entries whose type
+;; changed, and remaining is the unresolved set retained for a later surface.
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-env-reresolve-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-env-reresolve-candidates : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-env-reresolve-updates : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-env-reresolve-remaining : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-env-fallbacks : i64
+    0))
+
 ;; Marker-path sub-probe: 0 = whole-program list copies + context build,
 ;; 1 = macro-extend-top-env-with-module-marker, 2 = the env cache layer,
-;; 3 = tc-build-top-env-list-explicit-in-module. Array-indexed accumulators
+;; 3 = bounded fallback tail build, 4 = unresolved-signature re-resolution.
+;; Array-indexed accumulators
 ;; (plain globals, allocated at process init like the reinfer site arrays).
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-ns : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-alloc : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-live : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-calls : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-start-ns : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-start-alloc : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-start-live : (__tl_dyn-array i64)
-    (array.make-array i64 4)))
+    (array.make-array i64 5)))
 
 (cfg
   compile-profile
@@ -4449,6 +4799,117 @@
         compiler-tc-walk-sp-probe-calls
         index
         (+ (array-ref compiler-tc-walk-sp-probe-calls index) 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-node-note!) : unit
+    (set! compiler-tc-walk-segment-nodes (+ compiler-tc-walk-segment-nodes 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-split-note! [delta-decls : i64]) : unit
+    (begin
+      (set!
+        compiler-tc-walk-segment-splits
+        (+ compiler-tc-walk-segment-splits 1))
+      (set!
+        compiler-tc-walk-segment-delta-decls
+        (+ compiler-tc-walk-segment-delta-decls delta-decls)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-fallback-flatten-start!) : unit
+    (begin
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-start-ns
+        (compiler-tc-walk-now-ns))
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-start-alloc
+        (profile.alloc-total))
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-start-live
+        (profile.alloc-live)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-fallback-flatten-finish! [reason : i64]) : unit
+    (begin
+      (set!
+        compiler-tc-walk-segment-fallback-flattens
+        (+ compiler-tc-walk-segment-fallback-flattens 1))
+      (if (= reason 1)
+        (set!
+          compiler-tc-walk-segment-fallback-alias-flattens
+          (+ compiler-tc-walk-segment-fallback-alias-flattens 1))
+        (if (= reason 2)
+          (set!
+            compiler-tc-walk-segment-fallback-file-flattens
+            (+ compiler-tc-walk-segment-fallback-file-flattens 1))
+          unit))
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-ns
+        (+
+          compiler-tc-walk-segment-fallback-flatten-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-walk-segment-fallback-flatten-start-ns)))
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-alloc
+        (+
+          compiler-tc-walk-segment-fallback-flatten-alloc
+          (-
+            (profile.alloc-total)
+            compiler-tc-walk-segment-fallback-flatten-start-alloc)))
+      (set!
+        compiler-tc-walk-segment-fallback-flatten-live
+        (+
+          compiler-tc-walk-segment-fallback-flatten-live
+          (-
+            (profile.alloc-live)
+            compiler-tc-walk-segment-fallback-flatten-start-live))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-final-flatten-start!) : unit
+    (begin
+      (set!
+        compiler-tc-walk-segment-final-flatten-start-ns
+        (compiler-tc-walk-now-ns))
+      (set!
+        compiler-tc-walk-segment-final-flatten-start-alloc
+        (profile.alloc-total))
+      (set!
+        compiler-tc-walk-segment-final-flatten-start-live
+        (profile.alloc-live)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-segment-final-flatten-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-walk-segment-final-flattens
+        (+ compiler-tc-walk-segment-final-flattens 1))
+      (set!
+        compiler-tc-walk-segment-final-flatten-ns
+        (+
+          compiler-tc-walk-segment-final-flatten-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-walk-segment-final-flatten-start-ns)))
+      (set!
+        compiler-tc-walk-segment-final-flatten-alloc
+        (+
+          compiler-tc-walk-segment-final-flatten-alloc
+          (-
+            (profile.alloc-total)
+            compiler-tc-walk-segment-final-flatten-start-alloc)))
+      (set!
+        compiler-tc-walk-segment-final-flatten-live
+        (+
+          compiler-tc-walk-segment-final-flatten-live
+          (-
+            (profile.alloc-live)
+            compiler-tc-walk-segment-final-flatten-start-live))))))
 
 (cfg
   compile-profile
@@ -4734,28 +5195,32 @@
 (cfg
   compile-profile
   (define (compiler-tc-walk-decl-sample-flush!) : unit
-    (begin
-      (if (= compiler-tc-walk-decl-sample-kind 0)
-        unit
-        (compiler-tc-walk-decl-sample-add!
-          compiler-tc-walk-decl-sample-kind
-          (- (compiler-tc-walk-now-ns) compiler-tc-walk-decl-sample-start-ns)
-          (- (profile.alloc-total) compiler-tc-walk-decl-sample-start-alloc)
-          (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live)
-          (>
-            (+
-              compiler-tc-macro-walk-bind-params-calls
-              compiler-tc-macro-walk-direct-marshal-calls)
-            compiler-tc-walk-decl-sample-start-captures)))
-      (set! compiler-tc-walk-decl-sample-kind 0)
-      (set! compiler-tc-walk-decl-sample-start-ns (compiler-tc-walk-now-ns))
-      (set! compiler-tc-walk-decl-sample-start-alloc (profile.alloc-total))
-      (set! compiler-tc-walk-decl-sample-start-live (profile.alloc-live))
-      (set!
-        compiler-tc-walk-decl-sample-start-captures
-        (+
-          compiler-tc-macro-walk-bind-params-calls
-          compiler-tc-macro-walk-direct-marshal-calls)))))
+    (let
+      [fired : bool
+        (>
+          (+
+            compiler-tc-macro-walk-bind-params-calls
+            compiler-tc-macro-walk-direct-marshal-calls)
+          compiler-tc-walk-decl-sample-start-captures)]
+      (begin
+        (compiler-tc-walk-decl-fire-attribution-flush! fired)
+        (if (= compiler-tc-walk-decl-sample-kind 0)
+          unit
+          (compiler-tc-walk-decl-sample-add!
+            compiler-tc-walk-decl-sample-kind
+            (- (compiler-tc-walk-now-ns) compiler-tc-walk-decl-sample-start-ns)
+            (- (profile.alloc-total) compiler-tc-walk-decl-sample-start-alloc)
+            (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live)
+            fired))
+        (set! compiler-tc-walk-decl-sample-kind 0)
+        (set! compiler-tc-walk-decl-sample-start-ns (compiler-tc-walk-now-ns))
+        (set! compiler-tc-walk-decl-sample-start-alloc (profile.alloc-total))
+        (set! compiler-tc-walk-decl-sample-start-live (profile.alloc-live))
+        (set!
+          compiler-tc-walk-decl-sample-start-captures
+          (+
+            compiler-tc-macro-walk-bind-params-calls
+            compiler-tc-macro-walk-direct-marshal-calls))))))
 
 ;; Hygiene-rebuild and transformer-output-rewalk regions. Both re-enter
 ;; themselves (hygiene through its own recursion, the output re-walk through
@@ -4829,6 +5294,7 @@
       (set! compiler-tc-walk-hygiene-depth (+ compiler-tc-walk-hygiene-depth 1))
       (if (= compiler-tc-walk-hygiene-depth 1)
         (begin
+          (compiler-tc-walk-decl-fire-child-enter!)
           (set! compiler-tc-walk-hygiene-start-ns (compiler-tc-walk-now-ns))
           (set! compiler-tc-walk-hygiene-start-alloc (profile.alloc-total))
           (set! compiler-tc-walk-hygiene-start-live (profile.alloc-live)))
@@ -4857,7 +5323,8 @@
               (- (profile.alloc-live) compiler-tc-walk-hygiene-start-live)))
           (set!
             compiler-tc-walk-hygiene-calls
-            (+ compiler-tc-walk-hygiene-calls 1)))
+            (+ compiler-tc-walk-hygiene-calls 1))
+          (compiler-tc-walk-decl-fire-child-leave!))
         unit)
       (set! compiler-tc-walk-hygiene-depth (- compiler-tc-walk-hygiene-depth 1)))))
 
@@ -4925,6 +5392,7 @@
       (set! compiler-tc-walk-rewalk-depth (+ compiler-tc-walk-rewalk-depth 1))
       (if (= compiler-tc-walk-rewalk-depth 1)
         (begin
+          (compiler-tc-walk-decl-fire-child-enter!)
           (set! compiler-tc-walk-rewalk-start-ns (compiler-tc-walk-now-ns))
           (set! compiler-tc-walk-rewalk-start-alloc (profile.alloc-total))
           (set! compiler-tc-walk-rewalk-start-live (profile.alloc-live)))
@@ -4953,7 +5421,8 @@
               (- (profile.alloc-live) compiler-tc-walk-rewalk-start-live)))
           (set!
             compiler-tc-walk-rewalk-calls
-            (+ compiler-tc-walk-rewalk-calls 1)))
+            (+ compiler-tc-walk-rewalk-calls 1))
+          (compiler-tc-walk-decl-fire-child-leave!))
         unit)
       (set! compiler-tc-walk-rewalk-depth (- compiler-tc-walk-rewalk-depth 1)))))
 
@@ -5189,13 +5658,15 @@
     [macro-name : (& macro-name str)]
     [arity : i64]
     [calls : i64]) : String
-    (string.append
-      macro-name
-      (string.append
+    (let
+      [arity-text : String (string.int->string arity)]
+      [calls-text : String (string.int->string calls)]
+      (str_cat.str-cat-scoped
+        macro-name
         " arity="
-        (string.append
-          (string.int->string arity)
-          (string.append " calls=" (string.int->string calls)))))))
+        arity-text
+        " calls="
+        calls-text))))
 
 (cfg
   compile-profile
@@ -5208,15 +5679,12 @@
       compile-profile-summary
       unit
       (io.print-error
-        (string.append
+        (str_cat.str-cat
           "compile-profile-detail|typecheck.macro_expand|"
-          (string.append
-            (string.int->string total-ms)
-            (string.append
-              "|"
-              (string.append
-                (compiler-tc-macro-profile-detail macro-name arity calls)
-                "\n"))))))))
+          (string.int->string total-ms)
+          "|"
+          (compiler-tc-macro-profile-detail macro-name arity calls)
+          "\n")))))
 
 (cfg
   compile-profile
@@ -5586,15 +6054,13 @@
     [alloc-delta : i64]
     [live-delta : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.reinfer."
-        (string.append
-          site
-          (string.append
-            (compiler-tc-profile-field elapsed-ms)
-            (string.append
-              (compiler-tc-profile-field alloc-delta)
-              (string.append (compiler-tc-profile-field live-delta) "|0\n"))))))))
+        site
+        (compiler-tc-profile-field elapsed-ms)
+        (compiler-tc-profile-field alloc-delta)
+        (compiler-tc-profile-field live-delta)
+        "|0\n"))))
 
 (cfg
   compile-profile
@@ -5606,7 +6072,7 @@
         (array-ref compiler-tc-reinfer-profile-alloc index)
         (array-ref compiler-tc-reinfer-profile-live index))
       (compiler-tc-reinfer-profile-line
-        (string.append (compiler-tc-reinfer-profile-site-name index) ".calls")
+        (str_cat.str-cat (compiler-tc-reinfer-profile-site-name index) ".calls")
         (array-ref compiler-tc-reinfer-profile-calls index)
         0
         0))))
@@ -6158,6 +6624,19 @@
       (set! compiler-tc-macro-walk-decls-shared 0)
       (set! compiler-tc-macro-walk-decls-expanded 0)
       (set! compiler-tc-macro-walk-share-gate-open 0)
+      (set! compiler-tc-walk-segment-nodes 0)
+      (set! compiler-tc-walk-segment-splits 0)
+      (set! compiler-tc-walk-segment-delta-decls 0)
+      (set! compiler-tc-walk-segment-fallback-flattens 0)
+      (set! compiler-tc-walk-segment-fallback-alias-flattens 0)
+      (set! compiler-tc-walk-segment-fallback-file-flattens 0)
+      (set! compiler-tc-walk-segment-fallback-flatten-ns 0)
+      (set! compiler-tc-walk-segment-fallback-flatten-alloc 0)
+      (set! compiler-tc-walk-segment-fallback-flatten-live 0)
+      (set! compiler-tc-walk-segment-final-flattens 0)
+      (set! compiler-tc-walk-segment-final-flatten-ns 0)
+      (set! compiler-tc-walk-segment-final-flatten-alloc 0)
+      (set! compiler-tc-walk-segment-final-flatten-live 0)
       (set! compiler-tc-walk-splice-registry-incremental 0)
       (set! compiler-tc-walk-splice-registry-invalidated 0)
       (set! compiler-tc-walk-splice-ctfe-deferred 0)
@@ -6179,7 +6658,12 @@
       (set! compiler-tc-walk-splice-ctfe-capacity-grows 0)
       (set! compiler-tc-walk-splice-ctfe-cache-unavailable 0)
       (set! compiler-tc-walk-splice-ctfe-clear-ordinary 0)
-      (set! compiler-tc-walk-splice-ctfe-clear-file 0))))
+      (set! compiler-tc-walk-splice-ctfe-clear-file 0)
+      (set! compiler-tc-walk-splice-env-reresolve-calls 0)
+      (set! compiler-tc-walk-splice-env-reresolve-candidates 0)
+      (set! compiler-tc-walk-splice-env-reresolve-updates 0)
+      (set! compiler-tc-walk-splice-env-reresolve-remaining 0)
+      (set! compiler-tc-walk-splice-env-fallbacks 0))))
 
 (cfg
   compile-profile
@@ -6415,22 +6899,24 @@
           unit
           (if (>= elapsed 1)
             (io.print-error
-              (string.append
+              (str_cat.str-cat
                 "compile-profile-detail|typecheck.fn_expr|"
-                (string.append
-                  (string.int->string elapsed)
-                  (string.append "|" (string.append name "\n")))))
+                (string.int->string elapsed)
+                "|"
+                name
+                "\n"))
             unit))
         (cfg
           compile-profile-summary
           unit
           (if (>= live-delta 131072)
             (io.print-error
-              (string.append
+              (str_cat.str-cat
                 "compile-profile-detail|typecheck.fn_live_kb|"
-                (string.append
-                  (string.int->string (/ live-delta 1024))
-                  (string.append "|" (string.append name "\n")))))
+                (string.int->string (/ live-delta 1024))
+                "|"
+                name
+                "\n"))
             unit))))))
 
 (cfg
@@ -6586,64 +7072,64 @@
   compile-profile
   (define (compiler-tc-decl-profile-line [phase : String] [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.decl."
-        (string.append
-          phase
-          (string.append (compiler-tc-profile-field value) "|0|0|0\n"))))))
+        phase
+        (compiler-tc-profile-field value)
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
   (define (compiler-tc-env-profile-line [phase : String] [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.env."
-        (string.append
-          phase
-          (string.append (compiler-tc-profile-field value) "|0|0|0\n"))))))
+        phase
+        (compiler-tc-profile-field value)
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
   (define (compiler-tc-env-profile-emit-prefix [prefix : String]) : unit
     (begin
       (compiler-tc-env-profile-line
-        (string.append prefix "binds")
+        (str_cat.str-cat prefix "binds")
         compiler-tc-env-profile-binds)
       (compiler-tc-env-profile-line
-        (string.append prefix "lookups")
+        (str_cat.str-cat prefix "lookups")
         compiler-tc-env-profile-lookups)
       (compiler-tc-env-profile-line
-        (string.append prefix "cache_builds")
+        (str_cat.str-cat prefix "cache_builds")
         compiler-tc-env-profile-cache-builds)
       (compiler-tc-env-profile-line
-        (string.append prefix "cache_entries")
+        (str_cat.str-cat prefix "cache_entries")
         compiler-tc-env-profile-cache-entries)
       (compiler-tc-env-profile-line
-        (string.append prefix "marker_scans")
+        (str_cat.str-cat prefix "marker_scans")
         compiler-tc-env-profile-marker-scans)
       (compiler-tc-env-profile-line
-        (string.append prefix "module_local_hits")
+        (str_cat.str-cat prefix "module_local_hits")
         compiler-tc-env-profile-module-local-hits)
       (compiler-tc-env-profile-line
-        (string.append prefix "module_local_misses")
+        (str_cat.str-cat prefix "module_local_misses")
         compiler-tc-env-profile-module-local-misses)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_binds")
+        (str_cat.str-cat prefix "scoped_binds")
         compiler-tc-env-profile-scoped-binds)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_cache_hits")
+        (str_cat.str-cat prefix "scoped_cache_hits")
         compiler-tc-env-profile-scoped-cache-hits)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_cache_misses")
+        (str_cat.str-cat prefix "scoped_cache_misses")
         compiler-tc-env-profile-scoped-cache-misses)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_tail_fallbacks")
+        (str_cat.str-cat prefix "scoped_tail_fallbacks")
         compiler-tc-env-profile-scoped-tail-fallbacks)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_materializations")
+        (str_cat.str-cat prefix "scoped_materializations")
         compiler-tc-env-profile-scoped-materializations)
       (compiler-tc-env-profile-line
-        (string.append prefix "scoped_materialized_slots")
+        (str_cat.str-cat prefix "scoped_materialized_slots")
         compiler-tc-env-profile-scoped-materialized-slots))))
 
 (cfg
@@ -6652,23 +7138,21 @@
     [phase : String]
     [value : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.macro."
-        (string.append
-          phase
-          (string.append (compiler-tc-profile-field value) "|0|0|0\n"))))))
+        phase
+        (compiler-tc-profile-field value)
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
   (define (tc-lp-line [phase : String] [index : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.layout."
-        (string.append
-          phase
-          (string.append
-            (compiler-tc-profile-field (tc-lp-count index))
-            "|0|0|0\n"))))))
+        phase
+        (compiler-tc-profile-field (tc-lp-count index))
+        "|0|0|0\n"))))
 
 (cfg
   compile-profile
@@ -6678,15 +7162,13 @@
     [alloc : i64]
     [live : i64]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|typecheck.decl."
-        (string.append
-          phase
-          (string.append
-            (compiler-tc-profile-field value)
-            (string.append
-              (compiler-tc-profile-field alloc)
-              (string.append (compiler-tc-profile-field live) "|0\n"))))))))
+        phase
+        (compiler-tc-profile-field value)
+        (compiler-tc-profile-field alloc)
+        (compiler-tc-profile-field live)
+        "|0\n"))))
 
 (cfg
   compile-profile
@@ -7034,8 +7516,105 @@
         "walk_decl_fire_live_kb"
         (/ compiler-tc-walk-decl-fire-live 1024))
       (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_live_bytes"
+        compiler-tc-walk-decl-fire-live)
+      (compiler-tc-macro-counter-profile-line
         "walk_decl_fire_count"
         compiler-tc-walk-decl-fire-count)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_self_us"
+        (/
+          (if (>
+            compiler-tc-walk-decl-fire-ns
+            compiler-tc-walk-decl-fire-child-ns)
+            (-
+              compiler-tc-walk-decl-fire-ns
+              compiler-tc-walk-decl-fire-child-ns)
+            0)
+          1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_nested_us"
+        (/ compiler-tc-walk-decl-fire-child-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_attributed_calls"
+        compiler-tc-walk-decl-fire-attributed-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_alloc_bytes"
+        compiler-tc-walk-decl-fire-survivor-alloc-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_live_bytes"
+        compiler-tc-walk-decl-fire-survivor-live-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_pool_node_bytes"
+        (+
+          (*
+            compiler-tc-walk-decl-fire-survivor-expr-nodes
+            (ast.ast-expr-node-bytes))
+          (*
+            compiler-tc-walk-decl-fire-survivor-type-nodes
+            (ast.ast-type-node-bytes))))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_bytes"
+        (+
+          compiler-tc-walk-decl-fire-survivor-alloc-bytes
+          (+
+            (*
+              compiler-tc-walk-decl-fire-survivor-expr-nodes
+              (ast.ast-expr-node-bytes))
+            (*
+              compiler-tc-walk-decl-fire-survivor-type-nodes
+              (ast.ast-type-node-bytes)))))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_superseded_alloc_bytes"
+        compiler-tc-walk-decl-fire-superseded-alloc-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_superseded_released_bytes"
+        compiler-tc-walk-decl-fire-superseded-released-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_nonoutput_live_bytes"
+        (-
+          compiler-tc-walk-decl-fire-superseded-alloc-bytes
+          compiler-tc-walk-decl-fire-superseded-released-bytes))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_residual_live_bytes"
+        (-
+          compiler-tc-walk-decl-fire-live
+          (+
+            compiler-tc-walk-decl-fire-survivor-live-bytes
+            (-
+              compiler-tc-walk-decl-fire-superseded-alloc-bytes
+              compiler-tc-walk-decl-fire-superseded-released-bytes))))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_residual_committed_live_bytes"
+        compiler-tc-walk-decl-fire-committed-live-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_residual_post_boundary_live_bytes"
+        compiler-tc-walk-decl-fire-post-boundary-live-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_residual_unattributed_live_bytes"
+        (-
+          compiler-tc-walk-decl-fire-live
+          (+
+            compiler-tc-walk-decl-fire-survivor-live-bytes
+            (+
+              (-
+                compiler-tc-walk-decl-fire-superseded-alloc-bytes
+                compiler-tc-walk-decl-fire-superseded-released-bytes)
+              (+
+                compiler-tc-walk-decl-fire-committed-live-bytes
+                compiler-tc-walk-decl-fire-post-boundary-live-bytes)))))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_source_shared_expr_refs"
+        compiler-tc-walk-decl-fire-source-shared-expr-refs)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_source_shared_type_refs"
+        compiler-tc-walk-decl-fire-source-shared-type-refs)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_expr_nodes"
+        compiler-tc-walk-decl-fire-survivor-expr-nodes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_fire_survivor_type_nodes"
+        compiler-tc-walk-decl-fire-survivor-type-nodes)
       (compiler-tc-macro-counter-profile-line
         "walk_decl_generations"
         compiler-tc-walk-decl-generations)
@@ -7100,28 +7679,28 @@
         "walk_rewalk_provenance_skips"
         compiler-tc-walk-rewalk-provenance-skips)
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_defer_us"
+        "walk_decl_sp_batch_us"
         (/ compiler-tc-walk-decl-sp-defer-ns 1000))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_defer_alloc_kb"
+        "walk_decl_sp_batch_alloc_kb"
         (/ compiler-tc-walk-decl-sp-defer-alloc 1024))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_defer_live_kb"
+        "walk_decl_sp_batch_live_kb"
         (/ compiler-tc-walk-decl-sp-defer-live 1024))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_defer_count"
+        "walk_decl_sp_batch_count"
         compiler-tc-walk-decl-sp-defer-count)
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_refresh_us"
+        "walk_decl_sp_flush_us"
         (/ compiler-tc-walk-decl-sp-refresh-ns 1000))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_refresh_alloc_kb"
+        "walk_decl_sp_flush_alloc_kb"
         (/ compiler-tc-walk-decl-sp-refresh-alloc 1024))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_refresh_live_kb"
+        "walk_decl_sp_flush_live_kb"
         (/ compiler-tc-walk-decl-sp-refresh-live 1024))
       (compiler-tc-macro-counter-profile-line
-        "walk_decl_sp_refresh_count"
+        "walk_decl_sp_flush_count"
         compiler-tc-walk-decl-sp-refresh-count)
       (compiler-tc-macro-counter-profile-line
         "walk_decl_sp_inline_us"
@@ -7214,6 +7793,60 @@
         "walk_splice_prescan_resets"
         compiler-tc-walk-splice-prescan-resets)
       (compiler-tc-macro-counter-profile-line
+        "walk_splice_env_reresolve_calls"
+        compiler-tc-walk-splice-env-reresolve-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_env_reresolve_candidates"
+        compiler-tc-walk-splice-env-reresolve-candidates)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_env_reresolve_updates"
+        compiler-tc-walk-splice-env-reresolve-updates)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_env_reresolve_remaining"
+        compiler-tc-walk-splice-env-reresolve-remaining)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_env_fallbacks"
+        compiler-tc-walk-splice-env-fallbacks)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_nodes"
+        compiler-tc-walk-segment-nodes)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_splits"
+        compiler-tc-walk-segment-splits)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_delta_decls"
+        compiler-tc-walk-segment-delta-decls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_flattens"
+        compiler-tc-walk-segment-fallback-flattens)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_alias_flattens"
+        compiler-tc-walk-segment-fallback-alias-flattens)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_file_flattens"
+        compiler-tc-walk-segment-fallback-file-flattens)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_flatten_us"
+        (/ compiler-tc-walk-segment-fallback-flatten-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_flatten_alloc_kb"
+        (/ compiler-tc-walk-segment-fallback-flatten-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_fallback_flatten_live_kb"
+        (/ compiler-tc-walk-segment-fallback-flatten-live 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_final_flattens"
+        compiler-tc-walk-segment-final-flattens)
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_final_flatten_us"
+        (/ compiler-tc-walk-segment-final-flatten-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_final_flatten_alloc_kb"
+        (/ compiler-tc-walk-segment-final-flatten-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_segment_final_flatten_live_kb"
+        (/ compiler-tc-walk-segment-final-flatten-live 1024))
+      (compiler-tc-macro-counter-profile-line
         "walk_sp_copy_us"
         (/ (array-ref compiler-tc-walk-sp-probe-ns 0) 1000))
       (compiler-tc-macro-counter-profile-line
@@ -7261,6 +7894,18 @@
       (compiler-tc-macro-counter-profile-line
         "walk_sp_envbuild_calls"
         (array-ref compiler-tc-walk-sp-probe-calls 3))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_reresolve_us"
+        (/ (array-ref compiler-tc-walk-sp-probe-ns 4) 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_reresolve_alloc_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-alloc 4) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_reresolve_live_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-live 4) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_reresolve_calls"
+        (array-ref compiler-tc-walk-sp-probe-calls 4))
       (compiler-tc-reinfer-profile-emit)
       (compiler-tc-body-fact-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
@@ -7302,13 +7947,11 @@
         [with-context : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-with-note
             diag
-            (string.append
-              "generated declaration: "
-              (string.append item (string.append " from " generator))))]
+            (str_cat.str-cat "generated declaration: " item " from " generator))]
         (if (> (string.string-length key) 0)
           (cdiag.compiler-diagnostic-with-note
             with-context
-            (string.append "generated identity: " key))
+            (str_cat.str-cat "generated identity: " key))
           with-context))]
     [(ast.AstGeneratedDeclMeta.No) diag]))
 
@@ -7581,7 +8224,7 @@
       [(TcMaybeAstSourceSpan.Some span)
         (tc-rich-error-one-secondary
           span
-          (string.append
+          (str_cat.str-cat
             message
             "; direct aggregate reads through a shared vector borrow are not owned values; borrow slots from a vector place or use the generated vector get helper")
           "a direct aggregate read through this shared vector reference is not an owned value; borrow slots from a vector place or use the generated vector get helper"
@@ -7927,10 +8570,11 @@
     (ptr-read ,cache-ptr)))
 
 ;; Physical byte offsets in TcTypeEnvCache after the four-word chain prefix:
-;; ids=32 (the map is inline and 24 bytes), values=56, scalar lanes=64/72/80,
-;; flags=88/89, and rest/below=96/104.  Keep these literals paired with the
-;; raw-layout smoke and cache behavior tests; `offset-of` currently treats the
-;; inline map as one word and therefore under-reports every following field.
+;; ids=32 (the map is inline and 24 bytes), values=56, sidecar arrays=64/72/80,
+;; flags=88/89, and rest/below=96/104. Keep these literals paired with the
+;; raw-layout smoke and
+;; cache behavior tests; `offset-of` currently treats the inline map as one word
+;; and therefore under-reports every following field.
 (defmacro (tc-type-env-cache-field-at
   [cache-ptr : comptime.Expr]
   [byte-offset : comptime.Expr]
@@ -10895,6 +11539,7 @@
   [env : TcTypeEnv]
   [ids : tc_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array ast.AstType)]
+  [track-resolution : bool]
   [unsafe-flags : (__tl_dyn-array i64)]
   [c-abi-fnptr-flags : (__tl_dyn-array i64)]
   [shadow-flags : (__tl_dyn-array i64)]
@@ -10904,6 +11549,7 @@
     [head : i64 (struct-get env head)]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
+    [resolution-next : i64 0]
     [position : i64 0]
     [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
     [region-marker-id : i64 (tc-region-marker-id)]
@@ -10953,7 +11599,16 @@
                     ordinary-arena-marker-id
                     atomic-arena-marker-id)
                   position)
-                  (set! next (+ next 1))
+                  (begin
+                    (if (and track-resolution (tc-type-needs-resolution? ty))
+                      (begin
+                        (array-set!
+                          unsafe-flags
+                          (+ (array.length values) 1 resolution-next)
+                          name-id)
+                        (set! resolution-next (+ resolution-next 1)))
+                      unit)
+                    (set! next (+ next 1)))
                   unit)
                 (let
                   [marker-lifetime-id : i64
@@ -10991,6 +11646,11 @@
                     store-handle
                     (tc-type-env-cache-index head)))]
               (set! head (struct-get cache rest)))]))
+      ;; The final slot is a construction-only handoff to the cache node. It
+      ;; avoids a second result aggregate around the consuming map.
+      (if track-resolution
+        (array-set! unsafe-flags (array.length values) resolution-next)
+        unit)
       cur-ids)))
 
 (define (tc-env-cache-fill-prefix
@@ -10998,6 +11658,7 @@
   [remaining : i64]
   [ids : tc_i64_i64_map.Map (:consume)]
   [values : (__tl_dyn-array ast.AstType)]
+  [track-resolution : bool]
   [unsafe-flags : (__tl_dyn-array i64)]
   [c-abi-fnptr-flags : (__tl_dyn-array i64)]
   [shadow-flags : (__tl_dyn-array i64)]
@@ -11008,6 +11669,7 @@
     [left : i64 remaining]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
+    [resolution-next : i64 0]
     [position : i64 0]
     [signature-marker-id : i64 (tc-signature-lifetime-marker-id)]
     [region-marker-id : i64 (tc-region-marker-id)]
@@ -11054,7 +11716,16 @@
                     ordinary-arena-marker-id
                     atomic-arena-marker-id)
                   position)
-                  (set! next (+ next 1))
+                  (begin
+                    (if (and track-resolution (tc-type-needs-resolution? ty))
+                      (begin
+                        (array-set!
+                          unsafe-flags
+                          (+ (array.length values) 1 resolution-next)
+                          name-id)
+                        (set! resolution-next (+ resolution-next 1)))
+                      unit)
+                    (set! next (+ next 1)))
                   unit)
                 (let
                   [marker-lifetime-id : i64
@@ -11101,12 +11772,15 @@
                 (set! head (struct-get cache rest))
                 (set! done true)))]
           [else (set! done true)]))
+      (if track-resolution
+        (array-set! unsafe-flags (array.length values) resolution-next)
+        unit)
       cur-ids)))
 
 ;; --- structural index over the explicit top-env layer forest -----------------
 ;;
-;; `tc-env-with-cache-layer-over-explicit` pushes one immutable explicit layer
-;; per module extension / splice refresh, each layer's `below` being the layer
+;; `tc-env-with-cache-layer-over-explicit` pushes one explicit layer per module
+;; extension / additive splice, each layer's `below` being the layer
 ;; it extends. A self-compile builds 343 such layers over 2 explicit roots, and
 ;; because splices and module extensions re-extend older base snapshots the
 ;; result is a FOREST, not a stack (measured: 214 of 343 pushes did not sit on
@@ -11134,7 +11808,7 @@
 ;;
 ;; No value is ever copied into the index: a reference is (layer node address,
 ;; slot), and every payload read goes to that layer's live arrays. This is what
-;; keeps `tc-top-env-reresolve-cache-layer!` (issue #6268) sound -- it rewrites
+;; keeps `tc-top-env-reresolve-cache-node!` (issue #5493) sound -- it rewrites
 ;; `values` in place and never touches `ids`, so a re-resolved signature is
 ;; observed identically through the index and through the walk. The index is
 ;; append-only and is extended only where a layer is created, so nothing has to
@@ -11514,7 +12188,12 @@
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (__tl_dyn-array ast.AstType)
         (array.make-array ast.AstType capacity)]
-      [unsafe-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [unsafe-flags : (__tl_dyn-array i64)
+        (array.make-array
+          i64
+          (if scan-through
+            capacity
+            (+ (* capacity 2) 1)))]
       [c-abi-fnptr-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
@@ -11522,6 +12201,7 @@
           env
           (tc_i64_i64_map.with-capacity capacity)
           values
+          (not scan-through)
           unsafe-flags
           c-abi-fnptr-flags
           shadow-flags
@@ -11576,7 +12256,12 @@
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (__tl_dyn-array ast.AstType)
         (array.make-array ast.AstType capacity)]
-      [unsafe-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [unsafe-flags : (__tl_dyn-array i64)
+        (array.make-array
+          i64
+          (if scan-through
+            capacity
+            (+ (* capacity 2) 1)))]
       [c-abi-fnptr-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
@@ -11585,6 +12270,7 @@
           count
           (tc_i64_i64_map.with-capacity capacity)
           values
+          (not scan-through)
           unsafe-flags
           c-abi-fnptr-flags
           shadow-flags
@@ -12201,7 +12887,7 @@
   (tc-hygiene-name-base name (tc-hygiene-global-prefix)))
 
 (define (tc-hygiene-global-name [name : String]) : String
-  (string.append (tc-hygiene-global-prefix) name))
+  (str_cat.str-cat (tc-hygiene-global-prefix) name))
 
 (define (tc-hygiene-global-context-name [module : String] [name : String]) : String
   (tc-hygiene-global-name (str_cat.str-cat module "|" name)))
@@ -12665,9 +13351,7 @@
   (if (tc-in-loop-target? env)
     (ResultTcType.Ok (ast.AstType.Never))
     (ResultTcType.Err
-      (string.append
-        "typecheck: "
-        (string.append form " requires enclosing scalar while")))))
+      (str_cat.str-cat "typecheck: " form " requires enclosing scalar while"))))
 
 (define (tc-type-list1 [a : ast.AstType]) : ast.AstTypeList
   (ast.ast-type-cons a (ast.ast-type-list-new)))
@@ -14971,9 +15655,7 @@
     (csym.compiler-composite-pair-key-id? name-id)
     (csym.compiler-composite-triple-key-id? name-id))
     (tc-hygiene-name-text-id name-id)
-    (string.append
-      "<structural-id:"
-      (string.append (string.int->string name-id) ">"))))
+    (str_cat.str-cat "<structural-id:" (string.int->string name-id) ">")))
 
 (define (tc-env-key-name-text [name-id : i64]) : String
   (if (or
@@ -15054,7 +15736,7 @@
             (tc-poison-observation-note! found-ty)
             (ResultTcType.Ok found-ty))
           (ResultTcType.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: unbound name "
               (tc-env-key-display display-id))))))))
 
@@ -15285,7 +15967,7 @@
             (tc-poison-observation-note! found-ty)
             (ResultTcTypeUnsafe.Ok found-ty found-unsafe))
           (ResultTcTypeUnsafe.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: unbound name "
               (tc-env-key-display display-id))))))))
 
@@ -15338,7 +16020,7 @@
             display-id)
             unit
             (io.panic
-              (string.append
+              (str_cat.str-cat
                 "typecheck: scoped unsafe lookup diverged for "
                 (tc-env-key-display display-id)))))
         (match scoped
@@ -17889,7 +18571,7 @@
 (define (tc-elided-lifetime-name [index : i64]) : i64
   (let
     [name : String
-      (string.append
+      (str_cat.str-cat
         (tc-elided-lifetime-name-prefix)
         (string.int->string index))]
     (tc-generated-name-id name)))
@@ -18843,9 +19525,10 @@
             (tc-region-list-can-flow-into env value-regions target-regions))
             ResultTcUnit.Ok
             (ResultTcUnit.Err
-              (string.append
+              (str_cat.str-cat
                 "typecheck: cannot store region-tagged value into "
-                (string.append context "; region value would escape")))))])))
+                context
+                "; region value would escape"))))])))
 
 (define (tc-resolve-type-list [ctx : TcContext] [types : ast.AstTypeList]) : ast.AstTypeList
   (if (tc-type-list-needs-resolution? types)
@@ -19103,7 +19786,7 @@
               "."
               (string.substring name i 1))]
           (begin
-            (set! out (string.concat3 out chunk ""))
+            (set! out (str_cat.str-cat out chunk ""))
             (set! i (+ i 1)))))
       out)))
 
@@ -19689,11 +20372,17 @@
               (if (= cached -2)
                 (let
                   [found : bool
-                    (tc-imported-module-identity-ids?
-                      (box-get decls-box)
-                      current-module-id
-                      target-id
-                      cbi.compiler-builtin-id-fix-empty)]
+                    (if (macro-segmented-program-active?
+                      (tc-context-job-state ctx))
+                      (macro-segmented-imported-module-identity-ids?
+                        (tc-context-job-state ctx)
+                        current-module-id
+                        target-id)
+                      (tc-imported-module-identity-ids?
+                        (box-get decls-box)
+                        current-module-id
+                        target-id
+                        cbi.compiler-builtin-id-fix-empty))]
                   (begin
                     (tc-imported-module-identity-cache-put!
                       current-module-id
@@ -19827,7 +20516,7 @@
     [(string.eq base "string=?") (tc-stdlib-string-eq-wrapper-type? ty)]
     [(string.eq base "string-append") (tc-stdlib-string-copy-wrapper-type? ty)]
     [(string.eq base "string-concat") (tc-stdlib-string-copy-wrapper-type? ty)]
-    [(string.eq base "string->int") (tc-stdlib-string-to-int-wrapper-type? ty)]
+    [(string.eq base ">int") (tc-stdlib-string-to-int-wrapper-type? ty)]
     [else false]))
 
 (define (tc-stdlib-string-helper-bound-wrapper?
@@ -21091,6 +21780,27 @@
     [(TcMaybeNameId.No)
       (macro-import-alias-target-cached-id decls current-module-id alias-id)]))
 
+(define (tc-source-dotted-alias-target-id-in-context
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [current-module-id : i64]
+  [alias-id : i64]) : TcMaybeNameId
+  (match (tc-lazy-import-stub-target-id current-module-id alias-id)
+    [(TcMaybeNameId.Some target-module-id)
+      (if (= target-module-id alias-id)
+        (macro-import-alias-target-cached-id-in-context
+          ctx
+          decls
+          current-module-id
+          alias-id)
+        (TcMaybeNameId.Some target-module-id))]
+    [(TcMaybeNameId.No)
+      (macro-import-alias-target-cached-id-in-context
+        ctx
+        decls
+        current-module-id
+        alias-id)]))
+
 (define (tc-call-builtin-lookup-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -21145,7 +21855,8 @@
             [base-id : i64 (ci.intern-dotted-tail-id name-id)]
             (match (tc-context-program ctx)
               [(ast.AstProgram.Program decls-box)
-                (match (tc-source-dotted-alias-target-id
+                (match (macro-import-alias-target-cached-id-in-context
+                  ctx
                   (box-get decls-box)
                   current-module-id
                   alias-id)
@@ -21196,7 +21907,8 @@
           [(TcContext program _ _ _ current-module-id _ _ _ _)
             (match program
               [(ast.AstProgram.Program decls-box)
-                (match (macro-import-alias-target-cached-id
+                (match (macro-import-alias-target-cached-id-in-context
+                  ctx
                   (box-get decls-box)
                   current-module-id
                   alias-id)
@@ -21224,11 +21936,11 @@
   [message : String]) : String
   (let
     [lookup-unbound : String
-      (string.append "typecheck: unbound name " lookup-name)]
+      (str_cat.str-cat "typecheck: unbound name " lookup-name)]
     (match (tc-source-alias-display-key ctx source-name source-name-id)
       [(TcMaybeString.Some display-name)
         (if (string.eq message lookup-unbound)
-          (string.append "typecheck: unbound name " display-name)
+          (str_cat.str-cat "typecheck: unbound name " display-name)
           message)]
       [(TcMaybeString.No) message])))
 
@@ -21895,6 +22607,7 @@
       (match program
         [(ast.AstProgram.Program decls-box)
           (macro-resolve-qualified-module-id
+            ctx
             (box-get decls-box)
             current-module-id
             qualifier-id)])]))
@@ -22438,7 +23151,8 @@
             [(ast.AstProgram.Program decls-box)
               (let
                 [symbols : csym.CompilerSymbols (tc-context-symbols ctx)]
-                (match (tc-source-dotted-alias-target-id
+                (match (tc-source-dotted-alias-target-id-in-context
+                  ctx
                   (box-get decls-box)
                   (tc-context-module-id ctx)
                   alias-id)
@@ -22453,13 +23167,28 @@
                         key-id)
                         [(option_i64.Some _) (option_i64.Some key-id)]
                         [(option_i64.None)
-                          (match (tc-lazy-import-unique-type-key-id
-                            symbols
-                            alias-id
-                            base-id)
-                            [(TcMaybeNameId.Some unique-key-id)
-                              (option_i64.Some unique-key-id)]
-                            [(TcMaybeNameId.No) option_i64.None])]))]
+                          ;; A generated module's nested import is present in
+                          ;; the segmented view before its target module is
+                          ;; materialized. Its temporary self-target is an
+                          ;; explicit unresolved alias, not permission to pick
+                          ;; the sole same-base nominal from another generated
+                          ;; module (for example i64 `vec.Vec` while building
+                          ;; the later i32 specialization). Keep the signature
+                          ;; unresolved until the alias delta publishes its
+                          ;; canonical target; the splice re-resolution pass
+                          ;; then resolves it to the right specialization.
+                          (if (and
+                            (macro-segmented-program-active?
+                              (tc-context-job-state ctx))
+                            (= target-module-id alias-id))
+                            option_i64.None
+                            (match (tc-lazy-import-unique-type-key-id
+                              symbols
+                              alias-id
+                              base-id)
+                              [(TcMaybeNameId.Some unique-key-id)
+                                (option_i64.Some unique-key-id)]
+                              [(TcMaybeNameId.No) option_i64.None]))]))]
                   [(TcMaybeNameId.No)
                     (let
                       [key-id : i64
@@ -22998,11 +23727,10 @@
     [(string.eq name "mask")
       "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal"]
     [else
-      (string.append
+      (str_cat.str-cat
         "typecheck: unknown type "
-        (string.append
-          name
-          "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead"))]))
+        name
+        "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead")]))
 
 (define (tc-nominal-lifetimes-from-decl [decl : ast.AstDecl]) : ResultTcLifetimeList
   (match decl
@@ -23746,8 +24474,9 @@
   "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
 
 (define (tc-spmd-lane-scope-message [name : String]) : String
-  (string.append
-    (string.append "typecheck: " name)
+  (str_cat.str-cat
+    "typecheck: "
+    name
     " is only valid inside a foreach body or spmd-reduce value expression"))
 
 (define (tc-source-expr-list-spmd-broadcast-scope-ok
@@ -26352,11 +27081,11 @@
 (define (tc-match-arm-merge-message
   [previous : ast.AstType]
   [current : ast.AstType]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: match arms must agree: previous arm type "
-    (string.append
-      (tc-type-render previous)
-      (string.append ", current arm type " (tc-type-render current)))))
+    (tc-type-render previous)
+    ", current arm type "
+    (tc-type-render current)))
 
 (define (tc-integer-type? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -26377,7 +27106,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string.concat3 out piece ""))
+          (set! out (str_cat.str-cat out piece ""))
           (set! i (+ i 1))))
       out)))
 
@@ -26385,7 +27114,7 @@
   (tc-repeat-text "1" bits))
 
 (define (tc-binary-min-signed [bits : i64]) : String
-  (string.append "1" (tc-repeat-text "0" (- bits 1))))
+  (str_cat.str-cat "1" (tc-repeat-text "0" (- bits 1))))
 
 (define (tc-integer-literal-fits-positive-type?
   [text : String]
@@ -26905,17 +27634,13 @@
   (if (tc-atomic-load-name? name)
     (match (tc-raw-pointer-elem
       (tc-resolve-type ctx ptr-ty)
-      (string.append
-        "typecheck: "
-        (string.append name " requires a raw pointer operand")))
+      (str_cat.str-cat "typecheck: " name " requires a raw pointer operand"))
       [(ResultTcType.Ok elem)
         (tc-atomic-check-elem name (tc-resolve-type ctx elem))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])
     (match (tc-mut-pointer-elem
       (tc-resolve-type ctx ptr-ty)
-      (string.append
-        "typecheck: "
-        (string.append name " requires a MutPtr pointer operand")))
+      (str_cat.str-cat "typecheck: " name " requires a MutPtr pointer operand"))
       [(ResultTcType.Ok elem)
         (tc-atomic-check-elem name (tc-resolve-type ctx elem))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
@@ -26926,9 +27651,7 @@
     "typecheck: atomic value type mismatch"))
 
 (define (tc-atomic-load-arity-message [name : String]) : String
-  (string.append
-    "typecheck: "
-    (string.append name " expects exactly one argument")))
+  (str_cat.str-cat "typecheck: " name " expects exactly one argument"))
 
 (define (tc-atomic-update-arity-message [name : String]) : String
   (if (tc-atomic-kind-volatile? name)
@@ -27157,9 +27880,7 @@
       (tc-unused-unsafe-mark-current-used!)
       ResultTcUnit.Ok)
     (ResultTcUnit.Err
-      (string.append
-        "typecheck: "
-        (string.append name " requires unsafe context")))))
+      (str_cat.str-cat "typecheck: " name " requires unsafe context"))))
 
 (define (tc-dyn-array-elem-list-supported?
   [env : TcTypeEnv]
@@ -27321,7 +28042,7 @@
     (tc-spmd-varying? class)
     (not (tc-spmd-varying-expr-type-supported? ty)))
     (ResultTcSpmdExprInfo.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: foreach varying value type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))
     (ResultTcSpmdExprInfo.Ok (TcSpmdExprInfo ty class env))))
@@ -27352,7 +28073,7 @@
       (not (tc-spmd-lane-type-supported? resolved))
       (not supported-enum))
       (ResultTcSpmdExprInfo.Err
-        (string.append
+        (str_cat.str-cat
           "typecheck: foreach varying array lane type is not supported: "
           (tc-type-render (tc-type-strip-region resolved))))
       (if (and (tc-spmd-varying? class) supported-enum)
@@ -27848,7 +28569,7 @@
             (tc-bind-id
               segment-grown
               (ci.intern
-                (string.append "segment-" (string.int->string segment-index)))
+                (str_cat.str-cat "segment-" (string.int->string segment-index)))
               (ast.AstType.I64)))
           (set! segment-index (+ segment-index 1))))
       (while (< cache-segment-index (+ (tc-type-env-cache-segment-capacity) 2))
@@ -27859,7 +28580,7 @@
               (tc-bind-id
                 cache-segment-base
                 (ci.intern
-                  (string.append
+                  (str_cat.str-cat
                     "cache-segment-"
                     (string.int->string cache-segment-index)))
                 (ast.AstType.I64))))
@@ -27939,7 +28660,7 @@
             out
             (tc-bind-id
               out
-              (ci.intern (string.append "local" (string.int->string i)))
+              (ci.intern (str_cat.str-cat "local" (string.int->string i)))
               (ast.AstType.I64)))
           (set! i (+ i 1))))
       out)))
@@ -27959,7 +28680,7 @@
       (while (< i count)
         (let
           [name-id : i64
-            (ci.intern (string.append "local" (string.int->string i)))]
+            (ci.intern (str_cat.str-cat "local" (string.int->string i)))]
           (begin
             (if (= i 0)
               (set! first-id name-id)
@@ -28620,7 +29341,8 @@
     (begin
       (while (< i count)
         (let
-          [name : String (string.append "carrier-local" (string.int->string i))]
+          [name : String
+            (str_cat.str-cat "carrier-local" (string.int->string i))]
           (begin
             (set!
               out
@@ -29125,7 +29847,7 @@
           (=
             key
             (ci.intern
-              (string.append
+              (str_cat.str-cat
                 "local"
                 (string.int->string
                   (- (+ (* (tc-local-cache-threshold) 2) 8) 1)))))]
@@ -29688,30 +30410,26 @@
               (if (= scoped-unsafe persistent-unsafe)
                 true
                 (io.panic
-                  (string.append
+                  (str_cat.str-cat
                     "typecheck: scoped unsafe flag diverged for "
                     (tc-env-key-display display-id))))
               (io.panic
-                (string.append
-                  (string.append
-                    (string.append
-                      (string.append
-                        "typecheck: scoped unsafe type diverged for "
-                        (tc-env-key-display display-id))
-                      ": scoped=")
-                    (tc-type-env-scoped-dual-type-kind scoped-ty))
-                  (string.append
-                    " persistent="
-                    (tc-type-env-scoped-dual-type-kind persistent-ty)))))]
+                (str_cat.str-cat
+                  "typecheck: scoped unsafe type diverged for "
+                  (tc-env-key-display display-id)
+                  ": scoped="
+                  (tc-type-env-scoped-dual-type-kind scoped-ty)
+                  " persistent="
+                  (tc-type-env-scoped-dual-type-kind persistent-ty))))]
           [(ResultTcTypeUnsafe.Err _)
             (io.panic
-              (string.append
+              (str_cat.str-cat
                 "typecheck: scoped unsafe lookup found persistent miss for "
                 (tc-env-key-display display-id)))])]
       [(ResultTcTypeUnsafe.Err _)
         (if (tc-name-bound-persistent-key-id? env persistent-id)
           (io.panic
-            (string.append
+            (str_cat.str-cat
               "typecheck: scoped unsafe lookup missed persistent binding for "
               (tc-env-key-display display-id)))
           true)])))
@@ -29861,12 +30579,14 @@
                       (tc-context-pools ctx)
                       (ast.AstExpr.Var
                         (tc-generated-name-id
-                          (string.append (tc-env-key-name-text name) "$first"))))
+                          (str_cat.str-cat (tc-env-key-name-text name) "$first"))))
                     (ast.ast-node-pool-context-expr-push
                       (tc-context-pools ctx)
                       (ast.AstExpr.Var
                         (tc-generated-name-id
-                          (string.append (tc-env-key-name-text name) "$second"))))))]
+                          (str_cat.str-cat
+                            (tc-env-key-name-text name)
+                            "$second"))))))]
               [(tc-macro-expr-binding-clause-type?
                   (tc-resolve-type ctx (tc-macro-signature-type ty)))
                 (let
@@ -29883,7 +30603,9 @@
                         (tc-context-pools ctx)
                         (ast.AstExpr.Var
                           (tc-generated-name-id
-                            (string.append (tc-env-key-name-text name) "$init"))))
+                            (str_cat.str-cat
+                              (tc-env-key-name-text name)
+                              "$init"))))
                       (ctfe_support.ctfe-untyped-expr-type)
                       (ast.ast-source-span 0 0 0 0))))]
               [else
@@ -29973,7 +30695,7 @@
     (csym.compiler-symbol-module-key-id-by-id (tc-context-module-id ctx) name)))
 
 (define (tc-dispatch-variant-non-function-message [name : i64]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: defdispatch variant is not a function "
     (tc-env-key-name-text name)))
 
@@ -30025,7 +30747,7 @@
                 (ResultTcType.Err
                   (tc-dispatch-variant-non-function-message variant-name)))))
           (ResultTcType.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: unknown defdispatch variant "
               (ci.intern-str variant-name))))))))
 
@@ -31177,7 +31899,7 @@
     ;; A whole-program rebuild replaces the active declaration view. Rebuild
     ;; the compact value-signature index from that same view so declarations
     ;; removed by a non-inert splice cannot survive as stale reflection hits.
-    ;; Incremental Extend/Refresh plans bypass this entry and update the index
+    ;; Incremental Extend plans bypass this entry and update the index
     ;; as they bind only their additive/refreshed declarations.
     (ctfe_support.ctfe-module-value-reset!)
     ;; Expanded declarations retain their source aliases after lazy imports are
@@ -31250,7 +31972,9 @@
 ;; Append-only env extension (plan P2). Given the live top-env and a materialized
 ;; module's export-summary (its decl list: `(module NAME)` header + generated
 ;; body, as recorded in the P1 memo), fold that module's exported symbols into the
-;; env without a whole-program rebuild. This is the incremental counterpart of
+;; env without a whole-program rebuild. The caller folds the generated module's
+;; import marker into the same raw prefix and publishes one cache layer for the
+;; combined delta. This is the incremental counterpart of
 ;; tc-build-top-env: because generated splices are additive/inert (they introduce
 ;; new names in their own module namespace and never redefine existing ones, see
 ;; macro-decl-cannot-fire? / the inert-splice arm), extending the env with a module
@@ -31270,8 +31994,7 @@
         top-env
         ""
         cbi.compiler-builtin-id-fix-empty)
-        [(ResultTcEnv.Ok next-env)
-          (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit next-env))]
+        [(ResultTcEnv.Ok next-env) (ResultTcEnv.Ok next-env)]
         [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
 
 ;; Most module-owned values are uniquely named and can resolve through their
@@ -31666,24 +32389,26 @@
   [module-id : i64]) : ResultTcEnv
   (if (= module-id cbi.compiler-builtin-id-fix-empty)
     (ResultTcEnv.Ok top-env)
-    (match (tc-context-program ctx)
-      [(ast.AstProgram.Program decls-box)
-        (let
-          [decls : ast.AstDeclList (box-get decls-box)]
-          (match (tc-module-local-env-list
+    (match (if (macro-segmented-program-active? (tc-context-job-state ctx))
+      (macro-segmented-module-local-env-id
+        (tc-context-with-module-id ctx module module-id)
+        top-env
+        module-id)
+      (match (tc-context-program ctx)
+        [(ast.AstProgram.Program decls-box)
+          (tc-module-local-env-list
             (tc-context-with-module-id ctx module module-id)
-            decls
+            (box-get decls-box)
             top-env
             module
             module-id
-            "")
-            [(ResultTcEnv.Ok env)
-              ;; A module view is immutable once built. Publish its local
-              ;; bindings as one explicit cache layer so every function-local
-              ;; cache falls through to it instead of copying the complete
-              ;; module prefix again.
-              (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit env))]
-            [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))])))
+            "")]))
+      [(ResultTcEnv.Ok env)
+        ;; A module view is immutable once built. Publish its local bindings as
+        ;; one explicit cache layer so every function-local cache falls through
+        ;; to it instead of copying the complete module prefix again.
+        (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit env))]
+      [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))
 
 (define (tc-module-local-env-cache-lookup-at
   [cache : TcModuleLocalEnvCache]
@@ -32379,11 +33104,10 @@
       (ResultTcType.Ok (ast.AstType.Expr))]
     [(ctfe_support.CompilerCtfeValue.Type ty)
       (ResultTcType.Err
-        (string.append
+        (str_cat.str-cat
           "type value "
-          (string.append
-            (tc-type-render (tc-resolve-type ctx ty))
-            " is compile-time only")))]
+          (tc-type-render (tc-resolve-type ctx ty))
+          " is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.ExprList _)
       (ResultTcType.Ok (ast.AstType.ExprList))]
     [(ctfe_support.CompilerCtfeValue.CapturedExprList _ _)
@@ -33444,7 +34168,8 @@
       [alias-id : i64 (ci.intern-leading-dot-id name-id)]
       (match (tc-context-program ctx)
         [(ast.AstProgram.Program decls-box)
-          (match (tc-source-dotted-alias-target-id
+          (match (tc-source-dotted-alias-target-id-in-context
+            ctx
             (box-get decls-box)
             (tc-context-module-id ctx)
             alias-id)
@@ -33478,7 +34203,6 @@
         (string.eq name "char-at")
         (string.eq name "string-eq")
         (string.eq name "string=?")
-        (string.eq name "string->int")
         (string.eq name "string-append")
         (string.eq name "string-concat"))
       "stdlib.string"]
@@ -33492,6 +34216,13 @@
     " — add (import "
     module
     ")"))
+
+;; Removed public spellings can still receive migration help without becoming
+;; compatibility aliases or pretending that an import makes them available.
+(define (tc-unbound-migration-help [name : String]) : String
+  (if (string.eq name "string->int")
+    "string->int was removed — add (import stdlib.string) and use string.>int"
+    ""))
 
 (define (tc-unbound-suggestion-max-distance [name-len : i64]) : i64
   (cond [(<= name-len 4) 1] [(<= name-len 12) 2] [else 3]))
@@ -33719,17 +34450,21 @@
   [name : String]
   [name-id : i64]) : TcUnboundSuggestion
   (let
-    [provider : String (tc-unbound-stdlib-provider name)]
-    (if (> (string.string-length provider) 0)
-      (TcUnboundSuggestion.Help (tc-unbound-import-help name provider))
+    [migration : String (tc-unbound-migration-help name)]
+    (if (> (string.string-length migration) 0)
+      (TcUnboundSuggestion.Help migration)
       (let
-        [near-miss : String
-          (tc-unbound-near-miss module-qualified module-id env name name-id)]
-        (if (> (string.string-length near-miss) 0)
-          (TcUnboundSuggestion.Replace
-            (string.append "did you mean " (string.append near-miss "?"))
-            near-miss)
-          (TcUnboundSuggestion.No))))))
+        [provider : String (tc-unbound-stdlib-provider name)]
+        (if (> (string.string-length provider) 0)
+          (TcUnboundSuggestion.Help (tc-unbound-import-help name provider))
+          (let
+            [near-miss : String
+              (tc-unbound-near-miss module-qualified module-id env name name-id)]
+            (if (> (string.string-length near-miss) 0)
+              (TcUnboundSuggestion.Replace
+                (str_cat.str-cat "did you mean " near-miss "?")
+                near-miss)
+              (TcUnboundSuggestion.No))))))))
 
 (define (tc-unbound-finalize-located-error [message : String]) : String
   (if (and (tc-located-error? message) (not (tc-rich-error? message)))
@@ -33766,7 +34501,7 @@
                     (string.string-length clean-message)
                     (string.string-length (tc-unbound-name-message-prefix))))]
               [display-message : String
-                (string.append (tc-unbound-name-message-prefix) name)]
+                (str_cat.str-cat (tc-unbound-name-message-prefix) name)]
               (if (string.eq (tc-name-slashes-to-dots clean-name) name)
                 (let
                   [span : ast.AstSourceSpan
@@ -33914,21 +34649,15 @@
   [func : ast.AstExpr]
   [expected : i64]
   [actual : i64]) : String
-  (string.append
+  (str_cat.str-cat
     (tc-call-arity-message-prefix)
-    (string.append
-      (tc-call-arity-callee-name func)
-      (string.append
-        " expected "
-        (string.append
-          (string.int->string expected)
-          (string.append
-            (tc-call-arity-argument-word expected)
-            (string.append
-              ", got "
-              (string.append
-                (string.int->string actual)
-                (tc-call-arity-argument-word actual)))))))))
+    (tc-call-arity-callee-name func)
+    " expected "
+    (string.int->string expected)
+    (tc-call-arity-argument-word expected)
+    ", got "
+    (string.int->string actual)
+    (tc-call-arity-argument-word actual)))
 
 (define (tc-call-arity-message
   [func : ast.AstExpr]
@@ -35709,7 +36438,8 @@
           [alias-target-id : i64
             (match (tc-context-program ctx)
               [(ast.AstProgram.Program decls-box)
-                (match (tc-source-dotted-alias-target-id
+                (match (tc-source-dotted-alias-target-id-in-context
+                  ctx
                   (box-get decls-box)
                   current-module-id
                   alias-id)
@@ -38456,13 +39186,12 @@
   [args : ast.AstExprList]) : ResultTcType
   (if (= (struct-get (& args) len) 1)
     (ResultTcType.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: "
-        (string.append name " is compile-time only; wrap it in (comptime ...)")))
+        name
+        " is compile-time only; wrap it in (comptime ...)"))
     (ResultTcType.Err
-      (string.append
-        "typecheck: "
-        (string.append name " expects exactly one type argument")))))
+      (str_cat.str-cat "typecheck: " name " expects exactly one type argument"))))
 
 (define (tc-offset-layout-query-runtime-call [args : ast.AstExprList]) : ResultTcType
   (if (= (struct-get (& args) len) 2)
@@ -38478,9 +39207,10 @@
 
 (define (tc-reflection-query-runtime-call [name : String]) : ResultTcType
   (ResultTcType.Err
-    (string.append
+    (str_cat.str-cat
       "typecheck: "
-      (string.append name " is compile-time only; wrap it in (comptime ...)"))))
+      name
+      " is compile-time only; wrap it in (comptime ...)")))
 
 ;; The clone-able type set is a whole-program fixpoint (O(types*fields) plus a
 ;; type-name map build). It is invariant across a compile, but `tc-clone-able-
@@ -38762,17 +39492,21 @@
     (set! tc-clone-able-cache (clone_support.clone-name-set-empty))))
 
 (define (tc-clone-able-set-build [ctx : TcContext]) : clone_support.CloneNameSet
-  (match (tc-context-program ctx)
-    [(ast.AstProgram.Program decls-box)
-      (let
-        [decls : ast.AstDeclList (box-get decls-box)]
-        [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-        (clone_support.clone-fixpoint
-          pools
-          decls
-          (clone_support.clone-all-type-names
+  (if (macro-segmented-program-active? (tc-context-job-state ctx))
+    (macro-segmented-clone-able-set-build
+      (tc-context-job-state ctx)
+      (tc-context-pools ctx))
+    (match (tc-context-program ctx)
+      [(ast.AstProgram.Program decls-box)
+        (let
+          [decls : ast.AstDeclList (box-get decls-box)]
+          [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+          (clone_support.clone-fixpoint
+            pools
             decls
-            (clone_support.clone-name-set-for-decls decls))))]))
+            (clone_support.clone-all-type-names
+              decls
+              (clone_support.clone-name-set-for-decls decls))))])))
 
 (define (tc-clone-able-cache-populate! [ctx : TcContext]) : unit
   (begin
@@ -38815,7 +39549,7 @@
                 (tc-clone-root-collection-note! ctx clone-ty)
                 (ResultTcType.Ok clone-ty))
               (ResultTcType.Err
-                (string.append
+                (str_cat.str-cat
                   "typecheck: clone unsupported type "
                   (tc-type-render
                     (tc-type-without-regions (tc-resolve-type ctx arg-ty)))))))]
@@ -40974,7 +41708,7 @@
                         (tc-spmd-varying? arg-class)
                         (not (tc-spmd-varying-value-type-supported? bound-ty)))
                         (ResultTcSpmdInlineCallState.Err
-                          (string.append
+                          (str_cat.str-cat
                             "typecheck: SPMD helper varying parameter type is not supported: "
                             (tc-type-render (tc-type-strip-region bound-ty))))
                         (tc-spmd-inline-helper-bind-args-at
@@ -41602,7 +42336,7 @@
 
 (define (tc-spmd-masked-if-unsupported [detail : String]) : ResultTcUnit
   (ResultTcUnit.Err
-    (string.append "typecheck: SPMD masked if does not support " detail)))
+    (str_cat.str-cat "typecheck: SPMD masked if does not support " detail)))
 
 (define (tc-spmd-masked-if-result-type-supported? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -41613,7 +42347,7 @@
   (if (tc-spmd-masked-if-result-type-supported? ty)
     ResultTcUnit.Ok
     (ResultTcUnit.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: SPMD masked if result type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))))
 
@@ -41848,7 +42582,7 @@
   (if (tc-spmd-lane-type-supported? ty)
     ResultTcUnit.Ok
     (ResultTcUnit.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: SPMD masked if lane type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))))
 
@@ -42363,7 +43097,7 @@
     true))
 
 (define (tc-spmd-match-pattern-binding-diagnostic [ty : ast.AstType]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: foreach varying match pattern binding type is not supported: "
     (tc-type-render (tc-type-strip-region ty))))
 
@@ -43953,7 +44687,7 @@
                                               (tc-spmd-lane-type-supported?
                                                 (ast.ty-node-get elem-ty))))
                                             (ResultTcSpmdExprInfo.Err
-                                              (string.append
+                                              (str_cat.str-cat
                                                 "typecheck: foreach varying array lane type is not supported: "
                                                 (tc-type-render
                                                   (tc-type-strip-region
@@ -43969,7 +44703,7 @@
                                               (tc-spmd-lane-type-supported?
                                                 (ast.ty-node-get elem-ty))))
                                             (ResultTcSpmdExprInfo.Err
-                                              (string.append
+                                              (str_cat.str-cat
                                                 "typecheck: foreach varying array lane type is not supported: "
                                                 (tc-type-render
                                                   (tc-type-strip-region
@@ -44025,7 +44759,7 @@
                                   (tc-spmd-lane-type-supported?
                                     (tc-type-strip-region field-ty))))
                                 (ResultTcSpmdExprInfo.Err
-                                  (string.append
+                                  (str_cat.str-cat
                                     "typecheck: foreach varying struct field type is not supported: "
                                     (tc-type-render
                                       (tc-type-strip-region field-ty))))
@@ -44064,7 +44798,7 @@
                                   (tc-spmd-lane-type-supported?
                                     (ast.ty-node-get elem-ty))))
                                 (ResultTcSpmdExprInfo.Err
-                                  (string.append
+                                  (str_cat.str-cat
                                     "typecheck: foreach varying array lane type is not supported: "
                                     (tc-type-render
                                       (tc-type-strip-region
@@ -47999,7 +48733,7 @@
       (parser.ResultAstVariantDefList.Ok variants)]
     [_
       (parser.ResultAstVariantDefList.Err
-        (string.append "typecheck: unknown enum " enum-name))]))
+        (str_cat.str-cat "typecheck: unknown enum " enum-name))]))
 
 (define (tc-program-enum-variants-id
   [program : ast.AstProgram]
@@ -48021,7 +48755,7 @@
               enum-name)]
           [(tc_i64_i64_map.LookupMissing)
             (parser.ResultAstVariantDefList.Err
-              (string.append "typecheck: unknown enum " enum-name))]))]))
+              (str_cat.str-cat "typecheck: unknown enum " enum-name))]))]))
 
 (define (tc-context-enum-variants-id
   [ctx : TcContext]
@@ -48048,11 +48782,11 @@
                 (parser.ResultAstVariantDefList.Ok variants)]
               [_
                 (parser.ResultAstVariantDefList.Err
-                  (string.append "typecheck: unknown enum " enum-name))])]
+                  (str_cat.str-cat "typecheck: unknown enum " enum-name))])]
           [(parser.ResultAstDecl.Err message)
             (parser.ResultAstVariantDefList.Err message)])
         (parser.ResultAstVariantDefList.Err
-          (string.append "typecheck: unknown enum " enum-name)))
+          (str_cat.str-cat "typecheck: unknown enum " enum-name)))
       (tc-program-enum-variants-id
         (tc-context-program ctx)
         enum-name-id
@@ -48079,7 +48813,7 @@
             (parser.ResultAstVariantDefList.Ok variants)]
           [_
             (parser.ResultAstVariantDefList.Err
-              (string.append "typecheck: unknown enum " enum-name))])]
+              (str_cat.str-cat "typecheck: unknown enum " enum-name))])]
       [(parser.ResultAstDecl.Err message)
         (parser.ResultAstVariantDefList.Err message)])
     (tc-context-enum-variants-id ctx enum-name-id enum-name)))
@@ -48636,11 +49370,11 @@
               [(parser.ResultAstDecl.Err message)
                 (ResultTcStructDecl.Err message)])
             (ResultTcStructDecl.Err
-              (string.append
+              (str_cat.str-cat
                 "typecheck: unknown struct "
                 (tc-nominal-name-id-display struct-name-id))))
           (ResultTcStructDecl.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: unknown struct "
               (tc-nominal-name-id-display struct-name-id)))))]))
 
@@ -48697,11 +49431,11 @@
               [(parser.ResultAstDecl.Err message)
                 (ResultTcEnumDecl.Err message)])
             (ResultTcEnumDecl.Err
-              (string.append
+              (str_cat.str-cat
                 "typecheck: unknown enum "
                 (tc-nominal-name-id-display enum-name-id))))
           (ResultTcEnumDecl.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: unknown enum "
               (tc-nominal-name-id-display enum-name-id)))))]))
 
@@ -48859,7 +49593,7 @@
                       (tc-string-list-cons stack name))])]
               [(ResultTcStructDecl.Err message) (ResultTcUnit.Err message)])
             (ResultTcUnit.Err
-              (string.append "typecheck: unknown aggregate " name))))
+              (str_cat.str-cat "typecheck: unknown aggregate " name))))
         (match (tc-context-enum-variants-id ctx name-id name)
           [(parser.ResultAstVariantDefList.Ok variants)
             (tc-inline-aggregate-variants-finite-ok
@@ -48868,7 +49602,7 @@
               (tc-string-list-cons stack name))]
           [(parser.ResultAstVariantDefList.Err _)
             (ResultTcUnit.Err
-              (string.append "typecheck: unknown aggregate " name))])))))
+              (str_cat.str-cat "typecheck: unknown aggregate " name))])))))
 
 (define (tc-inline-aggregate-type-finite-ok
   [ctx : TcContext]
@@ -49363,7 +50097,7 @@
           handle
           stack)
         (ResultTcInlineAggregateLayout.Err
-          (string.append "typecheck: unknown aggregate " name))))))
+          (str_cat.str-cat "typecheck: unknown aggregate " name))))))
 
 (define (tc-inline-aggregate-layout-fill-cache
   [ctx : TcContext]
@@ -49449,7 +50183,7 @@
             stack)]
         [(parser.ResultAstVariantDefList.Err _)
           (ResultTcInlineAggregateLayout.Err
-            (string.append "typecheck: unknown aggregate " name))]))))
+            (str_cat.str-cat "typecheck: unknown aggregate " name))]))))
 
 ;; Borrowed slices are represented physically as a data pointer plus a signed
 ;; length.  Their referent is stored in the type pool, so inspect that node
@@ -50128,7 +50862,7 @@
   [seen : TcStringList]) : ResultTcReprCLayout
   (if (tc-string-list-contains seen struct-name)
     (ResultTcReprCLayout.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: recursive repr c struct layout cycle involving "
         struct-name))
     (match (tc-struct-decl-id ctx struct-name-id)
@@ -50144,7 +50878,9 @@
                 0
                 (tc-string-list-add seen struct-name))
               (ResultTcReprCLayout.Err
-                (string.append "typecheck: struct is not repr c: " struct-name)))])]
+                (str_cat.str-cat
+                  "typecheck: struct is not repr c: "
+                  struct-name)))])]
       [(ResultTcStructDecl.Err message) (ResultTcReprCLayout.Err message)])))
 
 (define (tc-repr-c-struct-layout-id
@@ -50463,7 +51199,7 @@
           ctx
           (ast.ast-type-list-get (& fields) 0 (ast.ast-type-id-fallback)))))
     (ResultTcType.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: try requires Result-like variant with one payload "
         (ci.intern-str variant-name)))))
 
@@ -50490,7 +51226,7 @@
   (if (ast.ast-type-list-empty? (& fields))
     (ResultTcType.Ok (ast.AstType.Unit))
     (ResultTcType.Err
-      (string.append
+      (str_cat.str-cat
         "typecheck: try requires Option-like variant with no payload "
         (ci.intern-str variant-name)))))
 
@@ -50806,7 +51542,7 @@
   [field-id : i64]) : String
   (let
     [base : String
-      (string.append
+      (str_cat.str-cat
         "typecheck: unknown struct field "
         (csym.compiler-struct-field-key
           (tc-nominal-name-id-display struct-name-id)
@@ -50814,11 +51550,10 @@
     [decl-result : ResultTcStructDecl (tc-struct-decl-id ctx struct-name-id)]
     (match decl-result
       [(ResultTcStructDecl.Ok decl)
-        (string.append
+        (str_cat.str-cat
           base
-          (string.append
-            "; available fields: "
-            (tc-struct-decl-field-name-list-render decl)))]
+          "; available fields: "
+          (tc-struct-decl-field-name-list-render decl))]
       [(ResultTcStructDecl.Err _) base])))
 
 (define (tc-struct-field-type-id
@@ -50892,7 +51627,7 @@
 
 (define (tc-comptime-unknown-field-id [owner : String] [field-id : i64]) : ResultTcType
   (ResultTcType.Err
-    (string.append
+    (str_cat.str-cat
       "typecheck: unknown struct field "
       (csym.compiler-struct-field-key owner (ci.intern-str field-id)))))
 
@@ -51225,7 +51960,7 @@
               (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
         [_
           (ResultTcBorrowPlace.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: array-ref borrow requires array place, got "
               (tc-type-render
                 (tc-type-strip-region (tc-resolve-type ctx array-ty)))))])]))
@@ -51482,18 +52217,16 @@
               target-lifetime)
               ResultTcUnit.Ok
               (ResultTcUnit.Err
-                (string.append
+                (str_cat.str-cat
                   "typecheck: cannot store reference into longer-lived "
-                  (string.append
-                    context
-                    "; reference value would escape lexical scope"))))]
+                  context
+                  "; reference value would escape lexical scope")))]
           [(ResultTcNameId.Err _)
             (ResultTcUnit.Err
-              (string.append
+              (str_cat.str-cat
                 "typecheck: cannot store reference into non-place "
-                (string.append
-                  context
-                  "; reference value would escape lexical scope")))])])))
+                context
+                "; reference value would escape lexical scope"))])])))
 
 (define (tc-borrow-place-result-type
   [mutable : bool]
@@ -51859,15 +52592,15 @@
                   (ResultTcEnv.Err message)])]
             [(parser.ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
           (ResultTcEnv.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: variant "
-              (string.append
-                variant-name
-                (string.append
-                  " belongs to enum "
-                  (string.append owner (string.append ", not " enum-name))))))))
+              variant-name
+              " belongs to enum "
+              owner
+              ", not "
+              enum-name))))
       (ResultTcEnv.Err
-        (string.append "typecheck: unknown variant " variant-name)))))
+        (str_cat.str-cat "typecheck: unknown variant " variant-name)))))
 
 (define (tc-box-pattern-name? [name : i64]) : bool
   (string.eq (tc-env-key-name-text name) "box"))
@@ -52572,15 +53305,15 @@
                   (ResultTcEnv.Err message)])]
             [(parser.ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
           (ResultTcEnv.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: variant "
-              (string.append
-                variant-name
-                (string.append
-                  " belongs to enum "
-                  (string.append owner (string.append ", not " enum-name))))))))
+              variant-name
+              " belongs to enum "
+              owner
+              ", not "
+              enum-name))))
       (ResultTcEnv.Err
-        (string.append "typecheck: unknown variant " variant-name)))))
+        (str_cat.str-cat "typecheck: unknown variant " variant-name)))))
 
 (define (tc-bind-borrowed-sub-pattern
   [ctx : TcContext]
@@ -53367,7 +54100,8 @@
         [target-module-id : i64
           (match (tc-context-program ctx)
             [(ast.AstProgram.Program decls-box)
-              (match (tc-source-dotted-alias-target-id
+              (match (tc-source-dotted-alias-target-id-in-context
+                ctx
                 (box-get decls-box)
                 (tc-context-module-id ctx)
                 alias-id)
@@ -53442,7 +54176,8 @@
       option_i64.None
       (match (tc-context-program ctx)
         [(ast.AstProgram.Program decls-box)
-          (match (tc-source-dotted-alias-target-id
+          (match (tc-source-dotted-alias-target-id-in-context
+            ctx
             (box-get decls-box)
             (tc-context-module-id ctx)
             alias-id)
@@ -53533,7 +54268,8 @@
       [(option_i64.None)
         (match (tc-context-program ctx)
           [(ast.AstProgram.Program decls-box)
-            (match (tc-source-dotted-alias-target-id
+            (match (tc-source-dotted-alias-target-id-in-context
+              ctx
               (box-get decls-box)
               (tc-context-module-id ctx)
               alias-id)
@@ -54245,7 +54981,7 @@
             (+ index 1)))])))
 
 (define (tc-match-missing-variant-message [variant-name : String]) : String
-  (string.append "typecheck: match missing arm for variant " variant-name))
+  (str_cat.str-cat "typecheck: match missing arm for variant " variant-name))
 
 (define (tc-pattern-mentions-variant?
   [ctx : TcContext]
@@ -55456,12 +56192,12 @@
     [(ResultTcNameId.Err message) (ResultTcType.Err message)]))
 
 (define (tc-init-unsupported-message [ctx : TcContext] [ty : ast.AstType]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: init unsupported type "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
 
 (define (tc-init-cleanup-owning-message [ctx : TcContext] [ty : ast.AstType]) : String
-  (string.append
+  (str_cat.str-cat
     "typecheck: init does not support cleanup-owning aggregate "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
 
@@ -55885,9 +56621,10 @@
       [(ResultTcType.Ok body-ty)
         (if (tc-type-contains-region body-ty region)
           (ResultTcType.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: region-tagged value cannot escape with-arena '"
-              (string.append (tc-lifetime-name-render region) "'")))
+              (tc-lifetime-name-render region)
+              "'"))
           (ResultTcType.Ok body-ty))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
@@ -55903,9 +56640,10 @@
       [(ResultTcType.Ok body-ty)
         (if (tc-type-contains-region body-ty region)
           (ResultTcType.Err
-            (string.append
+            (str_cat.str-cat
               "typecheck: region-tagged value cannot escape with-arena '"
-              (string.append (tc-lifetime-name-render region) "'")))
+              (tc-lifetime-name-render region)
+              "'"))
           (ResultTcType.Ok body-ty))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
@@ -56457,7 +57195,7 @@
                             (ResultTcType.Err message)])]
                       [(ResultTcUnit.Err message)
                         (ResultTcType.Err
-                          (string.append
+                          (str_cat.str-cat
                             "typecheck: array-take! element cannot be reinitialized; "
                             message))])])]
               [(ResultTcArrayReceiver.Err message) (ResultTcType.Err message)])]
@@ -56619,7 +57357,7 @@
       [global-id : i64 (macro-hygiene-global-source-name-id-or name -1)]
       (if (< global-id 0)
         (ResultTcType.Err
-          (string.append
+          (str_cat.str-cat
             "typecheck: macro hygiene source id unavailable: "
             name-text))
         (if (macro-hygiene-global-id? name)
@@ -56758,16 +57496,14 @@
     (if (>= name-id 0)
       (ResultTcExprId.Ok name-id)
       (ResultTcExprId.Err
-        (string.append
+        (str_cat.str-cat
           "typecheck: internal scalar for planner expected a variable for "
-          (string.append
-            role
-            (string.append
-              ", got "
-              (ctfe_support.ctfe-describe-expr
-                (ast.ast-expr-unspan-with-pools
-                  (tc-context-pools ctx)
-                  (tc-context-expr-get ctx expr-id))))))))))
+          role
+          ", got "
+          (ctfe_support.ctfe-describe-expr
+            (ast.ast-expr-unspan-with-pools
+              (tc-context-pools ctx)
+              (tc-context-expr-get ctx expr-id))))))))
 
 (define (tc-for-owned-expected-type [ctx : TcContext] [expected-id : i64]) : ResultTcType
   (let
@@ -56947,12 +57683,10 @@
             (tc-var-expr-after-local-field-check ctx env name name-text))))]
     [(ast.AstExpr.TypeLiteral ty-id)
       (ResultTcType.Err
-        (string.append
+        (str_cat.str-cat
           "type value "
-          (string.append
-            (tc-type-render
-              (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
-            " is compile-time only")))]
+          (tc-type-render (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
+          " is compile-time only"))]
     [(ast.AstExpr.Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id maybe-ty-id)
         [(ast.AstMaybeType.Some ty) (tc-init-expr ctx env ty)]
@@ -57811,12 +58545,16 @@
   [position : String]
   [ty : ast.AstType]) : String
   (if (tc-extern-abi-enum-aggregate-type? ty)
-    (string.append
+    (str_cat.str-cat
       "typecheck: extern ABI c does not support enum aggregate "
-      (string.append position (string.append " type " (tc-type-render ty))))
-    (string.append
+      position
+      " type "
+      (tc-type-render ty))
+    (str_cat.str-cat
       "typecheck: extern ABI c does not support "
-      (string.append position (string.append " type " (tc-type-render ty))))))
+      position
+      " type "
+      (tc-type-render ty))))
 
 ;; A public Slice reference is a two-word (pointer, length) value in the
 ;; language ABI, but native externals do not have a corresponding direct
@@ -63481,16 +64219,15 @@
       [(tc_i64_i64_map.LookupMissing) TcMoveConflict.No])))
 
 (define (tc-move-use-message [name : String]) : String
-  (string.append (string.append "typecheck: use of moved value `" name) "`"))
+  (str_cat.str-cat "typecheck: use of moved value `" name "`"))
 
 (define (tc-move-loop-carried-message [name : String]) : String
-  (string.append
-    (string.append "typecheck: cannot move loop-carried owner value `" name)
-    "`"))
+  (str_cat.str-cat "typecheck: cannot move loop-carried owner value `" name "`"))
 
 (define (tc-move-cleanup-owner-exit-message [name : String]) : String
-  (string.append
-    (string.append "typecheck: cleanup owner `" name)
+  (str_cat.str-cat
+    "typecheck: cleanup owner `"
+    name
     "` moved before with scope exit"))
 
 (define (tc-move-help) : String
@@ -63739,34 +64476,30 @@
                   [(= (struct-get node kind) tc-move-path-segment-kind-field)
                     (set!
                       out
-                      (string.append
+                      (str_cat.str-cat
                         out
-                        (string.append
-                          "."
-                          (tc-env-key-name-text (struct-get node value)))))]
+                        "."
+                        (tc-env-key-name-text (struct-get node value))))]
                   [(= (struct-get node kind) tc-move-path-segment-kind-tuple)
                     (set!
                       out
-                      (string.append
+                      (str_cat.str-cat
                         out
-                        (string.append
-                          "."
-                          (string.int->string (struct-get node value)))))]
+                        "."
+                        (string.int->string (struct-get node value))))]
                   [else
                     (set!
                       out
-                      (string.append
+                      (str_cat.str-cat
                         out
-                        (string.append
-                          "["
-                          (string.append
-                            (string.int->string (struct-get node value))
-                            "]"))))])
+                        "["
+                        (string.int->string (struct-get node value))
+                        "]"))])
                 (set! read-index (+ read-index 1)))))
           out)))))
 
 (define (tc-move-path-render [path : TcMovePath]) : String
-  (string.append
+  (str_cat.str-cat
     (tc-env-key-name-text (struct-get path root))
     (tc-move-path-segments-render (struct-get path segments))))
 
@@ -64960,25 +65693,23 @@
             [(= (% index 3) 0)
               (begin
                 (set! deep (tc-move-path-segments-append-field deep alpha-id))
-                (set! deep-render (string.append deep-render ".alpha")))]
+                (set! deep-render (str_cat.str-cat deep-render ".alpha")))]
             [(= (% index 3) 1)
               (begin
                 (set! deep (tc-move-path-segments-append-tuple deep index))
                 (set!
                   deep-render
-                  (string.append
-                    deep-render
-                    (string.append "." (string.int->string index)))))]
+                  (str_cat.str-cat deep-render "." (string.int->string index))))]
             [else
               (begin
                 (set! deep (tc-move-path-segments-append-array deep index))
                 (set!
                   deep-render
-                  (string.append
+                  (str_cat.str-cat
                     deep-render
-                    (string.append
-                      "["
-                      (string.append (string.int->string index) "]")))))])
+                    "["
+                    (string.int->string index)
+                    "]")))])
           (set! index (+ index 1))))
       (and
         (tc-move-path-eq? mixed-path same-path)
@@ -65027,7 +65758,9 @@
         (tc-move-literal-index expr-bases inner))]
     [(ast.AstExpr.Literal lit)
       (match lit
-        [(ast.AstLiteral.Int index _) (TcMoveMaybeIndex.Some index)]
+        [(ast.AstLiteral.Int index text)
+          (TcMoveMaybeIndex.Some
+            (ast.ast-int-literal-value-or-payload index text))]
         [_ (TcMoveMaybeIndex.No)])]
     [_ (TcMoveMaybeIndex.No)]))
 
@@ -65582,7 +66315,8 @@
     [target-module-id : i64
       (match (tc-context-program ctx)
         [(ast.AstProgram.Program decls-box)
-          (match (tc-source-dotted-alias-target-id
+          (match (tc-source-dotted-alias-target-id-in-context
+            ctx
             (box-get decls-box)
             (tc-context-module-id ctx)
             alias-id)
@@ -70846,31 +71580,22 @@
   (Some i64))
 
 (define (tc-borrow-check-move-message [path : String]) : String
-  (string.append
-    (string.append "typecheck: cannot move borrowed place `" path)
-    "`"))
+  (str_cat.str-cat "typecheck: cannot move borrowed place `" path "`"))
 
 (define (tc-borrow-check-assign-message [path : String]) : String
-  (string.append
-    (string.append "typecheck: cannot assign to borrowed place `" path)
-    "`"))
+  (str_cat.str-cat "typecheck: cannot assign to borrowed place `" path "`"))
 
 (define (tc-borrow-check-mutably-borrow-message [path : String]) : String
-  (string.append
-    (string.append "typecheck: cannot mutably borrow borrowed place `" path)
-    "`"))
+  (str_cat.str-cat "typecheck: cannot mutably borrow borrowed place `" path "`"))
 
 (define (tc-borrow-check-immutably-borrow-message [path : String]) : String
-  (string.append
-    (string.append
-      "typecheck: cannot immutably borrow mutably borrowed place `"
-      path)
+  (str_cat.str-cat
+    "typecheck: cannot immutably borrow mutably borrowed place `"
+    path
     "`"))
 
 (define (tc-borrow-check-read-message [path : String]) : String
-  (string.append
-    (string.append "typecheck: cannot read mutably borrowed place `" path)
-    "`"))
+  (str_cat.str-cat "typecheck: cannot read mutably borrowed place `" path "`"))
 
 (define (tc-borrow-check-help) : String
   "let the last reference use occur before this operation, shorten the borrow with a narrower lexical scope, clone the owner before borrowing when ownership must move later, or use an immutable borrow for non-mutating access")
@@ -77243,16 +77968,14 @@
   (Ok TcContext TcTypeEnv)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-;; A generated module is additive: its canonical declarations live in a fresh
-;; module namespace and its trailing marker only imports that module into the
-;; caller. Keep the already-built top env and fold those two pieces into it.
-;; Arbitrary Decls splices re-resolve stale cached signatures and refresh their
-;; local source tail. Freshly loaded files retain the conservative whole-program
-;; rebuild because their imports can alter arbitrary module alias surfaces.
+;; Every forced splice is additive. Ordinary Decls and loaded-file deltas bind
+;; only their new declarations; generated modules additionally bind their
+;; isolated summary and trailing import marker. Existing unresolved signatures
+;; are re-resolved through the cache-local candidate index before one delta
+;; cache layer is published. No plan carries or scans the remaining source tail.
 (defenum MacroSpliceEnvPlan
-  (Rebuild)
-  (Refresh TcTypeEnv ast.AstDeclList ast.AstDeclList)
-  (Extend TcTypeEnv ast.AstDeclList ast.AstDeclList ast.AstDeclList))
+  (Extend TcTypeEnv ast.AstDeclList)
+  (ExtendGeneratedModule TcTypeEnv ast.AstDeclList ast.AstDeclList))
 
 (defenum MacroMaybeGeneratedModuleExtension
   (No)
@@ -77294,10 +78017,8 @@
   (No)
   (Some ast.AstDeclList))
 
-;; Keep the scalar head opaque without using a one-field struct: Linux opt2
-;; currently miscompiles that aggregate argument/return shape (#5953).
-(defenum MacroHygieneEnv
-  (Snapshot i64))
+(defstruct MacroHygieneEnv
+  (head i64))
 
 ;; Hygiene environments are immutable snapshots into this dense append-only
 ;; store. A branch extends a retained head without copying or mutating its
@@ -78200,6 +78921,50 @@
     unit
     (macro-live-prescan-ensure-fresh! decls)))
 
+;; Publish a generated declaration segment directly into the hoisted prescan.
+;; The splice walk will visit the delta itself, so this updates only the
+;; whole-program facts and name sets that later declarations consult.
+(define (macro-live-prescan-append-decls!
+  [decls : ast.AstDeclList]
+  [module-id : i64]) : unit
+  (let
+    [expr-bases : i64 (ast.ast-node-pool-active-expr-segment-bases)]
+    [delta-has-defmacro : bool (macro-program-has-defmacro? decls)]
+    (begin
+      (set!
+        macro-live-prescan-has-defmacro
+        (or macro-live-prescan-has-defmacro delta-has-defmacro))
+      (set!
+        macro-live-prescan-needs-expansion
+        (or
+          macro-live-prescan-needs-expansion
+          (macro-program-needs-expansion? expr-bases decls)))
+      (set!
+        macro-live-prescan-summary-import
+        (or
+          macro-live-prescan-summary-import
+          (macro-program-has-summary-macro-import? decls)))
+      (if delta-has-defmacro
+        (begin
+          (set!
+            macro-live-prescan-expr-type-names
+            (macro-collect-expr-type-macro-names-in
+              expr-bases
+              decls
+              module-id
+              macro-live-prescan-expr-type-names))
+          (set!
+            macro-live-prescan-visible-names
+            (macro-collect-macro-names-in
+              decls
+              module-id
+              macro-live-prescan-visible-names))
+          (macro-expand-set-expr-type-macro-names!
+            macro-live-prescan-expr-type-names)
+          (macro-expand-set-macro-names! macro-live-prescan-visible-names))
+        unit)
+      (set! macro-live-prescan-ready true))))
+
 ;; Whether the current compile needs the CTFE reflection/layout metadata at all
 ;; (i.e. the program contains a `(type T)` literal). Set per compile at the top of
 ;; macro-expand-program; when false, tc-ctfe-env returns an empty env and skips
@@ -78217,47 +78982,6 @@
 (define macro-expand-scratch-arena : i64
   0)
 
-;; Whole-program declaration/path views are replaced at every forced splice.
-;; They must outlive the context/env rebuild that consumes them, but no later
-;; splice needs a view older than its immediate predecessor. Keep those large
-;; backing arrays in two independently owned generations: the next splice can
-;; read the current view while it builds its replacement, then the generation
-;; retired by the preceding splice can be released. This bounds view retention
-;; to two splice generations instead of the full expansion walk.
-(define macro-splice-view-arena : i64
-  0)
-(define macro-splice-view-retired-arena : i64
-  0)
-
-(define (macro-splice-view-arena-begin!) : unit
-  (if macro-expand-scratch-enabled
-    (let
-      [previous : i64 macro-splice-view-arena]
-      [retired : i64 macro-splice-view-retired-arena]
-      [next : i64 (arena.tl_arena_make)]
-      (begin
-        (set! macro-splice-view-arena next)
-        (set! macro-splice-view-retired-arena previous)
-        (if (= retired 0)
-          unit
-          (unsafe
-            (arena.tl_arena_destroy retired)))))
-    unit))
-
-(define (macro-splice-view-arenas-release!) : unit
-  (let
-    [current : i64 macro-splice-view-arena]
-    [retired : i64 macro-splice-view-retired-arena]
-    (begin
-      (set! macro-splice-view-arena 0)
-      (set! macro-splice-view-retired-arena 0)
-      (if (= current 0)
-        unit
-        (macro-generation-destroy! current))
-      (if (or (= retired 0) (= retired current))
-        unit
-        (macro-generation-destroy! retired)))))
-
 ;; R3-P1: a firing declaration's expansion allocates superseded intermediate
 ;; forms -- hygiene copies and re-walk products -- into the ambient macro
 ;; arena, where they stay live for the whole walk and are only reclaimed by the
@@ -78267,8 +78991,8 @@
 ;; then grows by the survivors only, and the existing `macro_finalize`
 ;; compaction becomes incremental rather than the sole reclamation point.
 ;;
-;; Two generations, not one, for the same reason as the splice-view ring above:
-;; the copy-out reads the generation it is retiring, and the walk's own step
+;; Two generations, not one: the copy-out reads the generation it is retiring,
+;; and the walk's own step
 ;; (`out-rev` prepend, module-id update, path reversal) runs after the copy but
 ;; before the next expansion begins. Retiring one behind keeps a whole
 ;; declaration boundary of slack over any reader the copy-out cannot see.
@@ -78559,16 +79283,6 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
-        "macro-splice-view-current"
-        macro-splice-view-arena)
-      (allocation_profile.compiler-allocation-profile-control!
-        2
-        "typecheck.macro.peak"
-        "macro-splice-view-retired"
-        macro-splice-view-retired-arena)
-      (allocation_profile.compiler-allocation-profile-control!
-        2
-        "typecheck.macro.peak"
         "macro-symbols-current"
         macro-live-symbols-arena)
       (allocation_profile.compiler-allocation-profile-control!
@@ -78672,8 +79386,7 @@
   (if (= macro-expand-scratch-arena 0)
     (begin
       (set! macro-expand-scratch-enabled false)
-      (macro-decl-generations-release!)
-      (macro-splice-view-arenas-release!))
+      (macro-decl-generations-release!))
     (let
       [scratch : i64 macro-expand-scratch-arena]
       [current : i64 (arena.tl_arena_current)]
@@ -78688,7 +79401,6 @@
         (set! macro-expand-scratch-arena 0)
         (macro-expand-scratch-clear-owned-caches!)
         (macro-decl-generations-release!)
-        (macro-splice-view-arenas-release!)
         ;; Macro timing entries were emitted before this boundary and live in
         ;; scratch. Clear the global before destroying their backing storage so
         ;; a later lowering-time declaration macro starts from a valid list.
@@ -78737,7 +79449,7 @@
             (if (>= source-id 0)
               source-id
               (io.panic
-                (string.append
+                (str_cat.str-cat
                   "macro template symbol missing source id at "
                   site))))
           name-id))]))
@@ -78761,9 +79473,11 @@
       (ci.intern-str name-id)]
     [else
       (io.panic
-        (string.append
+        (str_cat.str-cat
           "macro output received structural id at "
-          (string.append site (string.append ": " (string.int->string name-id)))))]))
+          site
+          ": "
+          (string.int->string name-id)))]))
 
 ;; id-taking variant: callers have the interned name id; avoids the (intern
 ;; source-name) the String variant does inside tc-source-slash-qualified?.
@@ -79394,308 +80108,1305 @@
         (macro-decl-path-list-reverse prefix-rev)
         suffix))))
 
-(defstruct MacroSpliceDeclView
-  (view ast.AstDeclList)
-  (tail ast.AstDeclList))
+(defstruct MacroProgramSegmentNodeData
+  (decls ast.AstDeclList)
+  (paths ast.AstDeclPathList)
+  (next i64))
 
-(defstruct MacroSplicePathView
-  (view ast.AstDeclPathList)
-  (tail ast.AstDeclPathList))
+(defstruct MacroSegmentedProgramViewData
+  ;; Declarations already emitted by the walk retain its cheap reversed
+  ;; builder shape. Logical indexed access reverses only the index; it never
+  ;; copies the prefix merely to publish a new splice view.
+  (prefix-rev ast.AstDeclList)
+  (prefix-paths-rev ast.AstDeclPathList)
+  ;; The unprocessed program is an immutable linked sequence of array slices.
+  ;; A splice allocates one persisted delta node and, when necessary, one
+  ;; zero-copy suffix slice node.
+  (head i64)
+  (cursor i64)
+  (queue-len i64)
+  (generation i64))
 
-;; Whole-program view and walk tail for a forced splice, built in ONE backing
-;; array per list with the shape [reversed prefix | spliced decls | remaining
-;; decls]. The previous construction (append of the spliced decls onto the
-;; tail, then reverse + append for the prefix, which always missed the prepend
-;; headroom fast path) materialized three full-program arrays per list per
-;; splice and dominated the macro scratch arena (~5MB per splice on a
-;; self-compile). The tail shares the view's backing array, so each segment is
-;; copied exactly once.
-(define (macro-splice-decl-view-build
+(define (macro-program-segment-node-data [address : i64]) : MacroProgramSegmentNodeData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast address : u64) : (Ptr MacroProgramSegmentNodeData)))))
+
+(define (macro-segmented-program-view-data [address : i64]) : MacroSegmentedProgramViewData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast address : u64) : (Ptr MacroSegmentedProgramViewData)))))
+
+(define (macro-segmented-program-view-data-set!
+  [address : i64]
+  [data : MacroSegmentedProgramViewData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast address : u64) : (MutPtr MacroSegmentedProgramViewData))
+      data)))
+
+(define (macro-program-segment-node-new-current
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [next : i64]) : i64
+  (let
+    [cell : (__tl_dyn-array MacroProgramSegmentNodeData)
+      (array.make-array MacroProgramSegmentNodeData 1)]
+    (begin
+      (cfg compile-profile (compiler-tc-walk-segment-node-note!))
+      (array-set! cell 0 (MacroProgramSegmentNodeData decls paths next))
+      (cast
+        (unsafe
+          (ptr->int
+            (ptr-cast (array-data cell) : (Ptr MacroProgramSegmentNodeData))))
+        : i64))))
+
+(define (macro-segmented-program-view-new-current
   [prefix-rev : ast.AstDeclList]
-  [middle : ast.AstDeclList]
-  [suffix : ast.AstDeclList]) : MacroSpliceDeclView
+  [prefix-paths-rev : ast.AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : i64
   (let
-    [prefix-count : i64 (ast.ast-decl-list-len (& prefix-rev))]
-    [middle-count : i64 (ast.ast-decl-list-len (& middle))]
-    [suffix-count : i64 (ast.ast-decl-list-len (& suffix))]
-    [total : i64 (+ prefix-count (+ middle-count suffix-count))]
-    [slots : (__tl_dyn-array ast.AstDecl)
-      (array.make-array
-        ast.AstDecl
-        (if (< total 1)
-          1
-          total))]
-    ;; Copy each row array-to-array. `ast-decl-list-ref` returns `AstDecl`
-    ;; through an SRET pointer, so the old shape copied all 104 B into a stack
-    ;; temporary and then copied it again into `slots` -- two row copies and a
-    ;; call per declaration. Reading the backing slot directly leaves one.
-    [prefix-slots : (__tl_dyn-array ast.AstDecl) (struct-get prefix-rev slots)]
-    [prefix-offset : i64 (struct-get prefix-rev offset)]
-    [middle-slots : (__tl_dyn-array ast.AstDecl) (struct-get middle slots)]
-    [middle-offset : i64 (struct-get middle offset)]
-    [suffix-slots : (__tl_dyn-array ast.AstDecl) (struct-get suffix slots)]
-    [suffix-offset : i64 (struct-get suffix offset)]
-    [index : i64 0]
+    [head : i64
+      (if (<= (ast.ast-decl-list-len (& decls)) 0)
+        0
+        (macro-program-segment-node-new-current decls paths 0))]
+    [cell : (__tl_dyn-array MacroSegmentedProgramViewData)
+      (array.make-array MacroSegmentedProgramViewData 1)]
     (begin
-      (while (< index prefix-count)
-        (begin
-          (array-set!
-            slots
-            (- (- prefix-count 1) index)
-            (array-ref prefix-slots (+ prefix-offset index)))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index middle-count)
-        (begin
-          (array-set!
-            slots
-            (+ prefix-count index)
-            (array-ref middle-slots (+ middle-offset index)))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index suffix-count)
-        (begin
-          (array-set!
-            slots
-            (+ prefix-count (+ middle-count index))
-            (array-ref suffix-slots (+ suffix-offset index)))
-          (set! index (+ index 1))))
-      (MacroSpliceDeclView
-        (ast.AstDeclList slots 0 total true)
-        (ast.AstDeclList slots prefix-count (+ middle-count suffix-count) true)))))
+      (array-set!
+        cell
+        0
+        (MacroSegmentedProgramViewData
+          prefix-rev
+          prefix-paths-rev
+          head
+          0
+          (ast.ast-decl-list-len (& decls))
+          0))
+      (cast
+        (unsafe
+          (ptr->int
+            (ptr-cast (array-data cell) : (Ptr MacroSegmentedProgramViewData))))
+        : i64))))
 
-(define (macro-splice-path-view-build
-  [prefix-rev : ast.AstDeclPathList]
-  [middle : ast.AstDeclPathList]
-  [suffix : ast.AstDeclPathList]) : MacroSplicePathView
+(define (macro-segmented-program-begin!
+  [state : TcJobState]
+  [prefix-rev : ast.AstDeclList]
+  [prefix-paths-rev : ast.AstDeclPathList]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : unit
   (let
-    [prefix-count : i64 (ast.ast-decl-path-list-len (& prefix-rev))]
-    [middle-count : i64 (ast.ast-decl-path-list-len (& middle))]
-    [suffix-count : i64 (ast.ast-decl-path-list-len (& suffix))]
-    [total : i64 (+ prefix-count (+ middle-count suffix-count))]
-    [cap : i64
-      (if (< total 1)
-        1
-        total)]
-    [slots : (__tl_dyn-array String) (array.make-array String cap)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 cap)]
-    [index : i64 0]
+    [enclosing : i64 (arena.tl_arena_current)]
+    [storage : i64
+      (if macro-expand-scratch-enabled
+        (macro-expand-scratch-arena-get)
+        enclosing)]
     (begin
-      (while (< index prefix-count)
+      (unsafe
+        (arena.tl_arena_set storage))
+      (let
+        [address : i64
+          (macro-segmented-program-view-new-current
+            prefix-rev
+            prefix-paths-rev
+            decls
+            paths)]
+        [storage-head : i64 (arena.tl_arena_current)]
         (begin
-          (array-set!
-            slots
-            (- (- prefix-count 1) index)
-            (ast.ast-decl-path-list-get (& prefix-rev) index ""))
-          (array-set!
-            owner-ids
-            (- (- prefix-count 1) index)
-            (ast.ast-decl-path-list-owner-id
-              (& prefix-rev)
-              index
-              cbi.compiler-builtin-id-fix-empty))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index middle-count)
-        (begin
-          (array-set!
-            slots
-            (+ prefix-count index)
-            (ast.ast-decl-path-list-get (& middle) index ""))
-          (array-set!
-            owner-ids
-            (+ prefix-count index)
-            (ast.ast-decl-path-list-owner-id
-              (& middle)
-              index
-              cbi.compiler-builtin-id-fix-empty))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index suffix-count)
-        (begin
-          (array-set!
-            slots
-            (+ prefix-count (+ middle-count index))
-            (ast.ast-decl-path-list-get (& suffix) index ""))
-          (array-set!
-            owner-ids
-            (+ prefix-count (+ middle-count index))
-            (ast.ast-decl-path-list-owner-id
-              (& suffix)
-              index
-              cbi.compiler-builtin-id-fix-empty))
-          (set! index (+ index 1))))
-      (MacroSplicePathView
-        (ast.AstDeclPathList slots owner-ids 0 total true)
-        (ast.AstDeclPathList
-          slots
-          owner-ids
-          prefix-count
-          (+ middle-count suffix-count)
-          true)))))
+          (if macro-expand-scratch-enabled
+            (set! macro-expand-scratch-arena storage-head)
+            unit)
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          (tc-job-state-set-macro-program-view-address! state address))))))
 
-(define (macro-splice-path-tail-copy [suffix : ast.AstDeclPathList]) : ast.AstDeclPathList
+(define (macro-segmented-program-end! [state : TcJobState]) : unit
+  (tc-job-state-set-macro-program-view-address! state 0))
+
+(define (macro-segmented-program-active? [state : TcJobState]) : bool
+  (> (tc-job-state-macro-program-view-address state) 0))
+
+(define (macro-segmented-program-prefix-set!
+  [state : TcJobState]
+  [prefix-rev : ast.AstDeclList]
+  [prefix-paths-rev : ast.AstDeclPathList]) : unit
   (let
-    [count : i64 (ast.ast-decl-path-list-len (& suffix))]
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    (if (= address 0)
+      unit
+      (let
+        [data : MacroSegmentedProgramViewData
+          (macro-segmented-program-view-data address)]
+        (begin
+          (set! (struct-get data prefix-rev) prefix-rev)
+          (set! (struct-get data prefix-paths-rev) prefix-paths-rev)
+          (macro-segmented-program-view-data-set! address data))))))
+
+(define (macro-segmented-program-normalize-head! [state : TcJobState]) : MacroSegmentedProgramViewData
+  (let
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data address)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (> (struct-get data head) 0))
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data (struct-get data head))]
+          (if (<
+            (struct-get data cursor)
+            (ast.ast-decl-list-len (& (struct-get node decls))))
+            (set! done true)
+            (begin
+              (set! (struct-get data head) (struct-get node next))
+              (set! (struct-get data cursor) 0)))))
+      (macro-segmented-program-view-data-set! address data)
+      data)))
+
+(define (macro-segmented-program-empty? [state : TcJobState]) : bool
+  (if (not (macro-segmented-program-active? state))
+    true
+    (let
+      [data : MacroSegmentedProgramViewData
+        (macro-segmented-program-normalize-head! state)]
+      (or (<= (struct-get data queue-len) 0) (= (struct-get data head) 0)))))
+
+(define (macro-segmented-program-current-decl [state : TcJobState]) : ast.AstDecl
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data (struct-get data head))]
+    (ast.ast-decl-list-ref (struct-get node decls) (struct-get data cursor))))
+
+(define (macro-segmented-program-current-path [state : TcJobState]) : String
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data (struct-get data head))]
+    (ast.ast-decl-path-list-get
+      (& (struct-get node paths))
+      (struct-get data cursor)
+      "")))
+
+(define (macro-segmented-program-current-owner-id [state : TcJobState]) : i64
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data (struct-get data head))]
+    (ast.ast-decl-path-list-owner-id
+      (& (struct-get node paths))
+      (struct-get data cursor)
+      cbi.compiler-builtin-id-fix-empty)))
+
+(define (macro-segmented-program-advance! [state : TcJobState]) : unit
+  (let
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    (begin
+      (if (> (struct-get data queue-len) 0)
+        (begin
+          (set! (struct-get data cursor) (+ (struct-get data cursor) 1))
+          (set! (struct-get data queue-len) (- (struct-get data queue-len) 1)))
+        unit)
+      (macro-segmented-program-view-data-set! address data)
+      (macro-segmented-program-normalize-head! state)
+      unit)))
+
+(define (macro-segmented-path-drop [paths : ast.AstDeclPathList] [count : i64]) : ast.AstDeclPathList
+  (let
+    [len : i64 (ast.ast-decl-path-list-len (& paths))]
+    [drop : i64 (cond [(< count 0) 0] [(> count len) len] [else count])]
+    (ast.AstDeclPathList
+      (struct-get paths slots)
+      (struct-get paths owner-ids)
+      (+ (struct-get paths offset) drop)
+      (- len drop)
+      false)))
+
+(define (macro-segmented-decl-copy-current [decls : ast.AstDeclList]) : ast.AstDeclList
+  (let
+    [count : i64 (ast.ast-decl-list-len (& decls))]
     [capacity : i64
       (if (< count 1)
         1
         count)]
-    [slots : (__tl_dyn-array String) (array.make-array String capacity)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [slots : (__tl_dyn-array ast.AstDecl)
+      (array.make-array ast.AstDecl capacity)]
+    [src-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [src-offset : i64 (struct-get decls offset)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
+          (array-set! slots index (array-ref src-slots (+ src-offset index)))
+          (set! index (+ index 1))))
+      (ast.AstDeclList slots 0 count true))))
+
+(define (macro-segmented-path-copy-current
+  [paths : ast.AstDeclPathList]
+  [decl-count : i64]) : ast.AstDeclPathList
+  (let
+    [capacity : i64
+      (if (< decl-count 1)
+        1
+        decl-count)]
+    [slots : (__tl_dyn-array String) (array.make-array String capacity)]
+    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index decl-count)
+        (begin
           (array-set!
             slots
             index
-            (ast.ast-decl-path-list-get (& suffix) index ""))
+            (ast.ast-decl-path-list-get (& paths) index ""))
           (array-set!
             owner-ids
             index
             (ast.ast-decl-path-list-owner-id
-              (& suffix)
+              (& paths)
               index
               cbi.compiler-builtin-id-fix-empty))
           (set! index (+ index 1))))
-      (ast.AstDeclPathList slots owner-ids 0 count true))))
+      (ast.AstDeclPathList slots owner-ids 0 decl-count true))))
 
-(define (macro-scratch-splice-decl-view-build
-  [prefix-rev : ast.AstDeclList]
+(define (macro-segmented-program-splice-current-in-scratch!
+  [state : TcJobState]
   [middle : ast.AstDeclList]
-  [suffix : ast.AstDeclList]) : MacroSpliceDeclView
+  [middle-paths : ast.AstDeclPathList]) : unit
+  (let
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data (struct-get data head))]
+    [next-index : i64 (+ (struct-get data cursor) 1)]
+    [node-decls : ast.AstDeclList (struct-get node decls)]
+    [node-paths : ast.AstDeclPathList (struct-get node paths)]
+    [node-count : i64 (ast.ast-decl-list-len (& node-decls))]
+    [suffix-count : i64 (- node-count next-index)]
+    [suffix-head : i64
+      (if (> suffix-count 0)
+        (macro-program-segment-node-new-current
+          (ast.AstDeclList
+            (struct-get node-decls slots)
+            (+ (struct-get node-decls offset) next-index)
+            suffix-count
+            false)
+          (macro-segmented-path-drop node-paths next-index)
+          (struct-get node next))
+        (struct-get node next))]
+    [middle-count : i64 (ast.ast-decl-list-len (& middle))]
+    [stable-middle : ast.AstDeclList (macro-segmented-decl-copy-current middle)]
+    [stable-paths : ast.AstDeclPathList
+      (macro-segmented-path-copy-current middle-paths middle-count)]
+    [next-head : i64
+      (if (> middle-count 0)
+        (macro-program-segment-node-new-current
+          stable-middle
+          stable-paths
+          suffix-head)
+        suffix-head)]
+    (begin
+      (cfg compile-profile (compiler-tc-walk-segment-split-note! middle-count))
+      (set! (struct-get data head) next-head)
+      (set! (struct-get data cursor) 0)
+      (set!
+        (struct-get data queue-len)
+        (+ (- (struct-get data queue-len) 1) middle-count))
+      (set! (struct-get data generation) (+ (struct-get data generation) 1))
+      (macro-segmented-program-view-data-set! address data))))
+
+(define (macro-segmented-program-splice-current!
+  [state : TcJobState]
+  [middle : ast.AstDeclList]
+  [middle-paths : ast.AstDeclPathList]) : unit
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [storage : i64 (macro-expand-scratch-arena-get)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set storage))
+      (macro-segmented-program-splice-current-in-scratch!
+        state
+        middle
+        middle-paths)
+      (set! macro-expand-scratch-arena (arena.tl_arena_current))
+      (unsafe
+        (arena.tl_arena_set enclosing)))))
+
+(define (macro-segmented-program-decl-count [state : TcJobState]) : i64
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    (+
+      (ast.ast-decl-list-len (& (struct-get data prefix-rev)))
+      (struct-get data queue-len))))
+
+(define (macro-segmented-program-decl-at
+  [state : TcJobState]
+  [logical-index : i64]
+  [fallback : ast.AstDecl]) : ast.AstDecl
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix-count : i64 (ast.ast-decl-list-len (& prefix))]
+    (if (or
+      (< logical-index 0)
+      (>= logical-index (+ prefix-count (struct-get data queue-len))))
+      fallback
+      (if (< logical-index prefix-count)
+        (ast.ast-decl-list-ref prefix (- (- prefix-count 1) logical-index))
+        (let
+          [remaining : i64 (- logical-index prefix-count)]
+          [node-address : i64 (struct-get data head)]
+          [node-index : i64 (struct-get data cursor)]
+          [found : bool false]
+          [out : ast.AstDecl fallback]
+          (begin
+            (while (and (not found) (> node-address 0))
+              (let
+                [node : MacroProgramSegmentNodeData
+                  (macro-program-segment-node-data node-address)]
+                [decls : ast.AstDeclList (struct-get node decls)]
+                [available : i64
+                  (- (ast.ast-decl-list-len (& decls)) node-index)]
+                (if (< remaining available)
+                  (begin
+                    (set!
+                      out
+                      (ast.ast-decl-list-ref decls (+ node-index remaining)))
+                    (set! found true))
+                  (begin
+                    (set! remaining (- remaining available))
+                    (set! node-address (struct-get node next))
+                    (set! node-index 0)))))
+            out))))))
+
+(define (macro-segmented-program-path-at
+  [state : TcJobState]
+  [logical-index : i64]
+  [fallback : String]) : String
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclPathList (struct-get data prefix-paths-rev)]
+    [prefix-count : i64
+      (ast.ast-decl-list-len (& (struct-get data prefix-rev)))]
+    (if (or
+      (< logical-index 0)
+      (>= logical-index (+ prefix-count (struct-get data queue-len))))
+      fallback
+      (if (< logical-index prefix-count)
+        (ast.ast-decl-path-list-get
+          (& prefix)
+          (- (- prefix-count 1) logical-index)
+          fallback)
+        (let
+          [remaining : i64 (- logical-index prefix-count)]
+          [node-address : i64 (struct-get data head)]
+          [node-index : i64 (struct-get data cursor)]
+          [found : bool false]
+          [out : String ""]
+          (begin
+            (while (and (not found) (> node-address 0))
+              (let
+                [node : MacroProgramSegmentNodeData
+                  (macro-program-segment-node-data node-address)]
+                [decls : ast.AstDeclList (struct-get node decls)]
+                [available : i64
+                  (- (ast.ast-decl-list-len (& decls)) node-index)]
+                (if (< remaining available)
+                  (begin
+                    (set!
+                      out
+                      (ast.ast-decl-path-list-get
+                        (& (struct-get node paths))
+                        (+ node-index remaining)
+                        fallback))
+                    (set! found true))
+                  (begin
+                    (set! remaining (- remaining available))
+                    (set! node-address (struct-get node next))
+                    (set! node-index 0)))))
+            (if found
+              out
+              fallback)))))))
+
+(define (macro-segmented-program-owner-id-at
+  [state : TcJobState]
+  [logical-index : i64]
+  [fallback : i64]) : i64
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclPathList (struct-get data prefix-paths-rev)]
+    [prefix-count : i64
+      (ast.ast-decl-list-len (& (struct-get data prefix-rev)))]
+    (if (or
+      (< logical-index 0)
+      (>= logical-index (+ prefix-count (struct-get data queue-len))))
+      fallback
+      (if (< logical-index prefix-count)
+        (ast.ast-decl-path-list-owner-id
+          (& prefix)
+          (- (- prefix-count 1) logical-index)
+          fallback)
+        (let
+          [remaining : i64 (- logical-index prefix-count)]
+          [node-address : i64 (struct-get data head)]
+          [node-index : i64 (struct-get data cursor)]
+          [found : bool false]
+          [out : i64 fallback]
+          (begin
+            (while (and (not found) (> node-address 0))
+              (let
+                [node : MacroProgramSegmentNodeData
+                  (macro-program-segment-node-data node-address)]
+                [decls : ast.AstDeclList (struct-get node decls)]
+                [available : i64
+                  (- (ast.ast-decl-list-len (& decls)) node-index)]
+                (if (< remaining available)
+                  (begin
+                    (set!
+                      out
+                      (ast.ast-decl-path-list-owner-id
+                        (& (struct-get node paths))
+                        (+ node-index remaining)
+                        fallback))
+                    (set! found true))
+                  (begin
+                    (set! remaining (- remaining available))
+                    (set! node-address (struct-get node next))
+                    (set! node-index 0)))))
+            out))))))
+
+(defstruct MacroSegmentedProgramIter
+  (prefix-rev ast.AstDeclList)
+  (prefix-paths-rev ast.AstDeclPathList)
+  (prefix-index i64)
+  (node-address i64)
+  (node-index i64))
+
+(defstruct MacroSegmentedProgramBorrow
+  (decls ast.AstDeclList)
+  (paths ast.AstDeclPathList)
+  (index i64))
+
+(defenum MacroSegmentedProgramStep
+  (Nil)
+  (Cons MacroSegmentedProgramBorrow MacroSegmentedProgramIter))
+
+(define (macro-segmented-program-borrow-decl
+  [item : MacroSegmentedProgramBorrow]) : ast.AstDecl
+  (ast.ast-decl-list-ref (struct-get item decls) (struct-get item index)))
+
+(define (macro-segmented-program-borrow-path
+  [item : MacroSegmentedProgramBorrow]) : String
+  (ast.ast-decl-path-list-get
+    (& (struct-get item paths))
+    (struct-get item index)
+    ""))
+
+(define (macro-segmented-program-borrow-owner-id
+  [item : MacroSegmentedProgramBorrow]) : i64
+  (ast.ast-decl-path-list-owner-id
+    (& (struct-get item paths))
+    (struct-get item index)
+    cbi.compiler-builtin-id-fix-empty))
+
+(define (macro-segmented-program-iter [state : TcJobState]) : MacroSegmentedProgramIter
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    (MacroSegmentedProgramIter
+      prefix
+      (struct-get data prefix-paths-rev)
+      (- (ast.ast-decl-list-len (& prefix)) 1)
+      (struct-get data head)
+      (struct-get data cursor))))
+
+;; Allocation-free logical step across the reversed prefix and ordered segment
+;; chain. Expansion-time derived indexes use this instead of restarting an
+;; indexed head scan for every declaration.
+(define (macro-segmented-program-step [iter : MacroSegmentedProgramIter]) : MacroSegmentedProgramStep
+  (if (>= (struct-get iter prefix-index) 0)
+    (let
+      [index : i64 (struct-get iter prefix-index)]
+      (MacroSegmentedProgramStep.Cons
+        (MacroSegmentedProgramBorrow
+          (struct-get iter prefix-rev)
+          (struct-get iter prefix-paths-rev)
+          index)
+        (MacroSegmentedProgramIter
+          (struct-get iter prefix-rev)
+          (struct-get iter prefix-paths-rev)
+          (- index 1)
+          (struct-get iter node-address)
+          (struct-get iter node-index))))
+    (if (= (struct-get iter node-address) 0)
+      (MacroSegmentedProgramStep.Nil)
+      (let
+        [node : MacroProgramSegmentNodeData
+          (macro-program-segment-node-data (struct-get iter node-address))]
+        [index : i64 (struct-get iter node-index)]
+        [decls : ast.AstDeclList (struct-get node decls)]
+        (if (>= index (ast.ast-decl-list-len (& decls)))
+          (macro-segmented-program-step
+            (MacroSegmentedProgramIter
+              (struct-get iter prefix-rev)
+              (struct-get iter prefix-paths-rev)
+              -1
+              (struct-get node next)
+              0))
+          (MacroSegmentedProgramStep.Cons
+            (MacroSegmentedProgramBorrow decls (struct-get node paths) index)
+            (MacroSegmentedProgramIter
+              (struct-get iter prefix-rev)
+              (struct-get iter prefix-paths-rev)
+              -1
+              (struct-get iter node-address)
+              (+ index 1))))))))
+
+(define (macro-segmented-clone-name-set-note-decl
+  [names : clone_support.CloneNameSet]
+  [module-id : i64]
+  [decl : ast.AstDecl]) : clone_support.CloneNameSet
+  (match (ast.ast-decl-unwrapped decl)
+    [(ast.AstDecl.Import
+        _
+        (ast.AstImportSpec.Spec
+          _
+          _
+          (ast.AstMaybeModuleName.Some target)
+          (ast.AstMaybeImportAlias.Some alias)
+          _))
+      (clone_support.clone-name-set-insert-alias-id
+        names
+        module-id
+        alias
+        target)]
+    [(ast.AstDecl.DefEnum _ name _ _)
+      (clone_support.clone-name-set-insert-id
+        names
+        (clone_support.clone-name-key-id-in-module module-id name))]
+    [(ast.AstDecl.DefStruct _ name _ _ _)
+      (clone_support.clone-name-set-insert-id
+        names
+        (clone_support.clone-name-key-id-in-module module-id name))]
+    [_ names]))
+
+(define (macro-segmented-clone-name-set-for-program [state : TcJobState]) : clone_support.CloneNameSet
+  (let
+    [empty : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
+    [names : clone_support.CloneNameSet
+      (clone_support.clone-name-set-with-capacity
+        (macro-segmented-program-decl-count state)
+        (clone_support.clone-name-set-aliases empty))]
+    [module-id : i64 (clone_support.clone-root-module-id)]
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (macro-segmented-program-step iter)
+          [(MacroSegmentedProgramStep.Nil) (set! done true)]
+          [(MacroSegmentedProgramStep.Cons item rest)
+            (begin
+              (set! iter rest)
+              (if (or
+                (ast.ast-decl-list-unwrapped-module-or-import-at?
+                  (& (struct-get item decls))
+                  (struct-get item index))
+                (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+                  (& (struct-get item decls))
+                  (struct-get item index)))
+                (let
+                  [decl : ast.AstDecl
+                    (ast.ast-decl-unwrapped
+                      (macro-segmented-program-borrow-decl item))]
+                  (match decl
+                    [(ast.AstDecl.Module next-module)
+                      (set! module-id next-module)]
+                    [_
+                      (set!
+                        names
+                        (macro-segmented-clone-name-set-note-decl
+                          names
+                          module-id
+                          decl))]))
+                unit)
+              unit)]))
+      names)))
+
+(define (macro-segmented-clone-fixpoint-step
+  [state : TcJobState]
+  [pools : ast.AstNodePoolContext]
+  [names : clone_support.CloneNameSet]) : clone_support.CloneNameSet
+  (let
+    [out : clone_support.CloneNameSet
+      (clone_support.clone-name-set-with-capacity
+        (clone_support.clone-name-set-capacity names)
+        (clone_support.clone-name-set-aliases names))]
+    [module-id : i64 (clone_support.clone-root-module-id)]
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (macro-segmented-program-step iter)
+          [(MacroSegmentedProgramStep.Nil) (set! done true)]
+          [(MacroSegmentedProgramStep.Cons item rest)
+            (begin
+              (set! iter rest)
+              (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+                (& (struct-get item decls))
+                (struct-get item index))
+                (match (ast.ast-decl-unwrapped
+                  (macro-segmented-program-borrow-decl item))
+                  [(ast.AstDecl.Module next-module)
+                    (set! module-id next-module)]
+                  [(ast.AstDecl.DefEnum _ name _ variants)
+                    (if (clone_support.clone-variant-list-able?
+                      pools
+                      variants
+                      names
+                      module-id)
+                      (set!
+                        out
+                        (clone_support.clone-name-set-insert-id
+                          out
+                          (clone_support.clone-name-key-id-in-module
+                            module-id
+                            name)))
+                      unit)]
+                  [(ast.AstDecl.DefStruct _ name _ _ fields)
+                    (if (clone_support.clone-struct-fields-able?
+                      pools
+                      fields
+                      names
+                      module-id)
+                      (set!
+                        out
+                        (clone_support.clone-name-set-insert-id
+                          out
+                          (clone_support.clone-name-key-id-in-module
+                            module-id
+                            name)))
+                      unit)]
+                  [_ unit])
+                unit)
+              unit)]))
+      out)))
+
+(define (macro-segmented-clone-able-set-build
+  [state : TcJobState]
+  [pools : ast.AstNodePoolContext]) : clone_support.CloneNameSet
+  (let
+    [names : clone_support.CloneNameSet
+      (macro-segmented-clone-name-set-for-program state)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [next : clone_support.CloneNameSet
+            (macro-segmented-clone-fixpoint-step state pools names)]
+          (if (=
+            (clone_support.clone-name-set-len next)
+            (clone_support.clone-name-set-len names))
+            (begin
+              (set! names next)
+              (set! done true))
+            (set! names next))))
+      names)))
+
+(defstruct MacroSegmentedProgramFlatView
+  (decls ast.AstDeclList)
+  (paths ast.AstDeclPathList))
+
+(define (macro-segmented-program-flatten-raw [state : TcJobState]) : MacroSegmentedProgramFlatView
+  (let
+    [count : i64 (macro-segmented-program-decl-count state)]
+    [capacity : i64
+      (if (< count 1)
+        1
+        count)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl)
+      (array.make-array ast.AstDecl capacity)]
+    [path-slots : (__tl_dyn-array String) (array.make-array String capacity)]
+    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix-decls : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix-paths : ast.AstDeclPathList (struct-get data prefix-paths-rev)]
+    [prefix-count : i64 (ast.ast-decl-list-len (& prefix-decls))]
+    [index : i64 0]
+    (begin
+      ;; The prefix builder is reversed, so write it back-to-front. The queued
+      ;; suffix is already ordered inside each segment; walk every node once
+      ;; instead of paying an indexed head scan for every output declaration.
+      (while (< index prefix-count)
+        (begin
+          (array-set!
+            decl-slots
+            index
+            (ast.ast-decl-list-ref prefix-decls (- (- prefix-count 1) index)))
+          (array-set!
+            path-slots
+            index
+            (ast.ast-decl-path-list-get
+              (& prefix-paths)
+              (- (- prefix-count 1) index)
+              ""))
+          (array-set!
+            owner-ids
+            index
+            (ast.ast-decl-path-list-owner-id
+              (& prefix-paths)
+              (- (- prefix-count 1) index)
+              cbi.compiler-builtin-id-fix-empty))
+          (set! index (+ index 1))))
+      (let
+        [node-address : i64 (struct-get data head)]
+        [node-index : i64 (struct-get data cursor)]
+        (while (and (< index count) (> node-address 0))
+          (let
+            [node : MacroProgramSegmentNodeData
+              (macro-program-segment-node-data node-address)]
+            [decls : ast.AstDeclList (struct-get node decls)]
+            [paths : ast.AstDeclPathList (struct-get node paths)]
+            [node-count : i64 (ast.ast-decl-list-len (& decls))]
+            (begin
+              (while (and (< index count) (< node-index node-count))
+                (begin
+                  (array-set!
+                    decl-slots
+                    index
+                    (ast.ast-decl-list-ref decls node-index))
+                  (array-set!
+                    path-slots
+                    index
+                    (ast.ast-decl-path-list-get (& paths) node-index ""))
+                  (array-set!
+                    owner-ids
+                    index
+                    (ast.ast-decl-path-list-owner-id
+                      (& paths)
+                      node-index
+                      cbi.compiler-builtin-id-fix-empty))
+                  (set! index (+ index 1))
+                  (set! node-index (+ node-index 1))))
+              (set! node-address (struct-get node next))
+              (set! node-index 0)))))
+      (MacroSegmentedProgramFlatView
+        (ast.AstDeclList decl-slots 0 count true)
+        (ast.AstDeclPathList path-slots owner-ids 0 count true)))))
+
+;; Intermediate materialization is reserved for the documented conservative
+;; source-file/alias fallback. Ordinary marker and generated-module splices
+;; remain segmented until the walk's single final reverse.
+(define (macro-segmented-program-flatten-fallback
+  [state : TcJobState]
+  [_reason : i64]) : MacroSegmentedProgramFlatView
+  (begin
+    (cfg compile-profile (compiler-tc-walk-segment-fallback-flatten-start!))
+    (let
+      [out : MacroSegmentedProgramFlatView
+        (macro-segmented-program-flatten-raw state)]
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-walk-segment-fallback-flatten-finish! _reason))
+        out))))
+
+(define (macro-segmented-program-current-starts-module-import-placeholder?
+  [state : TcJobState]) : bool
+  (if (macro-segmented-program-empty? state)
+    false
+    (macro-decl-module-import-placeholder?
+      (macro-segmented-program-current-decl state))))
+
+(define (macro-segmented-bind-import-alias-module
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [target-module : i64]
+  [alias : i64]
+  [importer-module : i64]
+  [import-unqualified : bool]) : ResultTcEnv
+  (let
+    [state : TcJobState (tc-context-job-state ctx)]
+    [cur-env : TcTypeEnv env]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [message : String ""]
+    [ok : bool true]
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    [done : bool false]
+    (begin
+      (while (and ok (not done))
+        (match (macro-segmented-program-step iter)
+          [(MacroSegmentedProgramStep.Nil) (set! done true)]
+          [(MacroSegmentedProgramStep.Cons item rest)
+            (begin
+              (set! iter rest)
+              (match (ast.ast-decl-list-ref-borrowed
+                (& (struct-get item decls))
+                (struct-get item index))
+                [(ast.AstDecl.Module _)
+                  (set!
+                    cur-module-id
+                    (ast.ast-decl-list-module-id-at
+                      (& (struct-get item decls))
+                      (struct-get item index)
+                      cbi.compiler-builtin-id-fix-empty))]
+                [(ast.AstDecl.Import _ _) unit]
+                [(ast.AstDecl.IncludeStr _ _) unit]
+                [(ast.AstDecl.IncludeStrComptime _ _) unit]
+                [(ast.AstDecl.IncludeStrLzss _ _) unit]
+                [(ast.AstDecl.IncludeBin _ _) unit]
+                [(ast.AstDecl.Test _ _ _) unit]
+                [_
+                  (if (= cur-module-id target-module)
+                    (match (tc-bind-import-alias-decl-in-module
+                      ctx
+                      cur-env
+                      alias
+                      importer-module
+                      import-unqualified
+                      cur-module-id
+                      (macro-segmented-program-borrow-decl item))
+                      [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                      [(ResultTcEnv.Err step-message)
+                        (begin
+                          (set! message step-message)
+                          (set! ok false))])
+                    unit)])
+              unit)]))
+      (if (string.eq message "")
+        (ResultTcEnv.Ok cur-env)
+        (ResultTcEnv.Err message)))))
+
+(define (macro-segmented-imported-module-identity-ids?
+  [state : TcJobState]
+  [current-module-id : i64]
+  [target-id : i64]) : bool
+  (let
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    [module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [found : bool false]
+    [done : bool false]
+    (begin
+      (while (and (not found) (not done))
+        (match (macro-segmented-program-step iter)
+          [(MacroSegmentedProgramStep.Nil) (set! done true)]
+          [(MacroSegmentedProgramStep.Cons item rest)
+            (begin
+              (set! iter rest)
+              (match (ast.ast-decl-list-ref-borrowed
+                (& (struct-get item decls))
+                (struct-get item index))
+                [(ast.AstDecl.Module _)
+                  (set!
+                    module-id
+                    (ast.ast-decl-list-module-id-at
+                      (& (struct-get item decls))
+                      (struct-get item index)
+                      cbi.compiler-builtin-id-fix-empty))]
+                [(ast.AstDecl.Import _ _)
+                  (if (= module-id current-module-id)
+                    (match (macro-segmented-program-borrow-decl item)
+                      [(ast.AstDecl.Import
+                          _
+                          (ast.AstImportSpec.Spec _ _ expected _ _))
+                        (match expected
+                          [(ast.AstMaybeModuleName.Some target)
+                            (if (tc-module-identity-id-eq? target target-id)
+                              (set! found true)
+                              unit)]
+                          [(ast.AstMaybeModuleName.No) unit])]
+                      [_ unit])
+                    unit)]
+                [_ unit])
+              unit)]))
+      found)))
+
+(define (macro-segmented-module-local-root-shadow-note-at!
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [decls : ast.AstDeclList]
+  [index : i64]
+  [cur-module-id : i64]) : i64
+  (match (ast.ast-decl-list-ref-borrowed (& decls) index)
+    [(ast.AstDecl.Module _)
+      (ast.ast-decl-list-module-id-at
+        (& decls)
+        index
+        cbi.compiler-builtin-id-fix-empty)]
+    [_
+      (begin
+        (if (= cur-module-id cbi.compiler-builtin-id-fix-empty)
+          (tc-module-local-root-shadow-decl-note!
+            seen
+            (ast.ast-decl-list-ref decls index))
+          unit)
+        cur-module-id)]))
+
+(define (macro-segmented-module-local-root-shadow-names-note!
+  [state : TcJobState]
+  [seen : (&mut seen tc_i64_i64_map.Map)]) : unit
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [node-address : i64 (struct-get data head)]
+    [node-index : i64 (struct-get data cursor)]
+    (begin
+      (while (>= prefix-index 0)
+        (begin
+          (set!
+            cur-module-id
+            (macro-segmented-module-local-root-shadow-note-at!
+              seen
+              prefix
+              prefix-index
+              cur-module-id))
+          (set! prefix-index (- prefix-index 1))))
+      (while (> node-address 0)
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data node-address)]
+          [decls : ast.AstDeclList (struct-get node decls)]
+          [count : i64 (ast.ast-decl-list-len (& decls))]
+          (begin
+            (while (< node-index count)
+              (begin
+                (set!
+                  cur-module-id
+                  (macro-segmented-module-local-root-shadow-note-at!
+                    seen
+                    decls
+                    node-index
+                    cur-module-id))
+                (set! node-index (+ node-index 1))))
+            (set! node-address (struct-get node next))
+            (set! node-index 0)))))))
+
+(define (macro-segmented-module-local-env-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [target-module-id : i64]) : ResultTcEnv
+  (let
+    [state : TcJobState (tc-context-job-state ctx)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
+    [node-address : i64 (struct-get data head)]
+    [node-index : i64 (struct-get data cursor)]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    ;; This map grows only to root plus target-module names. A whole-program
+    ;; reserve retained hundreds of MiB across cached module environments;
+    ;; counting first avoided that retention but paid a third full traversal.
+    [seen : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 64)]
+    [cur-env : TcTypeEnv env]
+    [message : String ""]
+    [ok : bool true]
+    (begin
+      ;; Root declarations shadow imported module-local aliases regardless of
+      ;; segment boundaries, matching tc-module-local-env-list's index pass.
+      (macro-segmented-module-local-root-shadow-names-note! state (&mut seen))
+      (while (and ok (>= prefix-index 0))
+        (begin
+          (match (ast.ast-decl-list-ref-borrowed (& prefix) prefix-index)
+            [(ast.AstDecl.Module _)
+              (set!
+                cur-module-id
+                (ast.ast-decl-list-module-id-at
+                  (& prefix)
+                  prefix-index
+                  cbi.compiler-builtin-id-fix-empty))]
+            [_
+              (if (= cur-module-id target-module-id)
+                (match (tc-module-local-env-add-decl
+                  ctx
+                  cur-env
+                  (&mut seen)
+                  (ast.ast-decl-list-ref prefix prefix-index))
+                  [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                  [(ResultTcEnv.Err step-message)
+                    (begin
+                      (set! message step-message)
+                      (set! ok false))])
+                unit)])
+          (set! prefix-index (- prefix-index 1))))
+      (while (and ok (> node-address 0))
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data node-address)]
+          [decls : ast.AstDeclList (struct-get node decls)]
+          [count : i64 (ast.ast-decl-list-len (& decls))]
+          (begin
+            (while (and ok (< node-index count))
+              (begin
+                (match (ast.ast-decl-list-ref-borrowed (& decls) node-index)
+                  [(ast.AstDecl.Module _)
+                    (set!
+                      cur-module-id
+                      (ast.ast-decl-list-module-id-at
+                        (& decls)
+                        node-index
+                        cbi.compiler-builtin-id-fix-empty))]
+                  [_
+                    (if (= cur-module-id target-module-id)
+                      (match (tc-module-local-env-add-decl
+                        ctx
+                        cur-env
+                        (&mut seen)
+                        (ast.ast-decl-list-ref decls node-index))
+                        [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                        [(ResultTcEnv.Err step-message)
+                          (begin
+                            (set! message step-message)
+                            (set! ok false))])
+                      unit)])
+                (set! node-index (+ node-index 1))))
+            (set! node-address (struct-get node next))
+            (set! node-index 0))))
+      (if ok
+        (ResultTcEnv.Ok cur-env)
+        (ResultTcEnv.Err message)))))
+
+(define (macro-segmented-program-module-id-at-or
+  [state : TcJobState]
+  [index : i64]
+  [fallback : i64]) : i64
+  (match (macro-segmented-program-decl-at
+    state
+    index
+    (ast.AstDecl.Module fallback))
+    [(ast.AstDecl.Module name) name]
+    [_ fallback]))
+
+(define (macro-segmented-program-boundary-smoke?) : bool
+  (let
+    [p0 : i64 (ci.intern "seg-prefix-0")]
+    [p1 : i64 (ci.intern "seg-prefix-1")]
+    [a : i64 (ci.intern "seg-a")]
+    [b : i64 (ci.intern "seg-b")]
+    [c : i64 (ci.intern "seg-c")]
+    [x : i64 (ci.intern "seg-x")]
+    [y : i64 (ci.intern "seg-y")]
+    [z : i64 (ci.intern "seg-z")]
+    [prefix-rev : ast.AstDeclList
+      (ast.ast-decl-cons
+        (ast.AstDecl.Module p1)
+        (ast.ast-decl-cons (ast.AstDecl.Module p0) (ast.ast-decl-list-new)))]
+    [prefix-paths-rev : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id
+        "p1"
+        11
+        (ast.ast-decl-path-cons-with-owner-id
+          "p0"
+          10
+          (ast.ast-decl-path-list-new)))]
+    [source : ast.AstDeclList
+      (ast.ast-decl-cons
+        (ast.AstDecl.Module a)
+        (ast.ast-decl-cons
+          (ast.AstDecl.Module b)
+          (ast.ast-decl-cons (ast.AstDecl.Module c) (ast.ast-decl-list-new))))]
+    [source-paths : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id
+        "a"
+        20
+        (ast.ast-decl-path-cons-with-owner-id
+          "b"
+          21
+          (ast.ast-decl-path-cons-with-owner-id
+            "c"
+            22
+            (ast.ast-decl-path-list-new))))]
+    [xy : ast.AstDeclList
+      (ast.ast-decl-cons
+        (ast.AstDecl.Module x)
+        (ast.ast-decl-cons (ast.AstDecl.Module y) (ast.ast-decl-list-new)))]
+    [xy-paths : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id
+        "x"
+        30
+        (ast.ast-decl-path-cons-with-owner-id
+          "y"
+          31
+          (ast.ast-decl-path-list-new)))]
+    [zs : ast.AstDeclList
+      (ast.ast-decl-cons (ast.AstDecl.Module z) (ast.ast-decl-list-new))]
+    [z-paths : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id "z" 40 (ast.ast-decl-path-list-new))]
+    [state : TcJobState (tc-job-state-new)]
+    [out-rev : ast.AstDeclList prefix-rev]
+    [out-paths-rev : ast.AstDeclPathList prefix-paths-rev]
+    (begin
+      (macro-expand-scratch-begin!)
+      (macro-segmented-program-begin!
+        state
+        out-rev
+        out-paths-rev
+        source
+        source-paths)
+      (let
+        [initial-ok : bool
+          (and
+            (= (macro-segmented-program-decl-count state) 5)
+            (= (macro-segmented-program-module-id-at-or state 0 -1) p0)
+            (= (macro-segmented-program-module-id-at-or state 1 -1) p1)
+            (= (macro-segmented-program-module-id-at-or state 2 -1) a)
+            (= (macro-segmented-program-module-id-at-or state 3 -1) b)
+            (= (macro-segmented-program-module-id-at-or state 4 -1) c)
+            (string.eq (macro-segmented-program-path-at state 0 "") "p0")
+            (= (macro-segmented-program-owner-id-at state 4 -1) 22))]
+        (begin
+          (macro-segmented-program-splice-current! state xy xy-paths)
+          ;; Nested compiler work resets derived file state while a splice is
+          ;; active; that boundary must not cancel the walk-owned cursor.
+          (tc-job-state-reset-file-state! state)
+          (let
+            [first-splice-ok : bool
+              (and
+                (macro-segmented-program-active? state)
+                (= (macro-segmented-program-decl-count state) 6)
+                (= (macro-segmented-program-current-owner-id state) 30)
+                (string.eq (macro-segmented-program-current-path state) "x"))]
+            (begin
+              (set!
+                out-rev
+                (ast.ast-decl-list-prepend-builder
+                  (macro-segmented-program-current-decl state)
+                  out-rev))
+              (set!
+                out-paths-rev
+                (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                  (macro-segmented-program-current-path state)
+                  (macro-segmented-program-current-owner-id state)
+                  out-paths-rev))
+              (macro-segmented-program-advance! state)
+              (macro-segmented-program-prefix-set! state out-rev out-paths-rev)
+              (macro-segmented-program-splice-current! state zs z-paths)
+              (let
+                [flat : MacroSegmentedProgramFlatView
+                  (macro-segmented-program-flatten-raw state)]
+                [flat-decls : ast.AstDeclList (struct-get flat decls)]
+                [flat-paths : ast.AstDeclPathList (struct-get flat paths)]
+                [iter : MacroSegmentedProgramIter
+                  (macro-segmented-program-iter state)]
+                [iter-index : i64 0]
+                [iter-ok : bool true]
+                [iter-done : bool false]
+                [nested-ok : bool
+                  (and
+                    (= (ast.ast-decl-list-len (& flat-decls)) 6)
+                    (= (macro-segmented-program-module-id-at-or state 0 -1) p0)
+                    (= (macro-segmented-program-module-id-at-or state 1 -1) p1)
+                    (= (macro-segmented-program-module-id-at-or state 2 -1) x)
+                    (= (macro-segmented-program-module-id-at-or state 3 -1) z)
+                    (= (macro-segmented-program-module-id-at-or state 4 -1) b)
+                    (= (macro-segmented-program-module-id-at-or state 5 -1) c)
+                    (string.eq
+                      (ast.ast-decl-path-list-get (& flat-paths) 3 "")
+                      "z")
+                    (= (ast.ast-decl-path-list-owner-id (& flat-paths) 3 -1) 40)
+                    (string.eq
+                      (ast.ast-decl-path-list-get (& flat-paths) 4 "")
+                      "b")
+                    (= (ast.ast-decl-path-list-owner-id (& flat-paths) 5 -1) 22))]
+                (begin
+                  ;; The derived-index iterator must preserve declaration,
+                  ;; path, and owner alignment across prefix, split, and
+                  ;; inserted-segment boundaries.
+                  (while (and iter-ok (not iter-done))
+                    (match (macro-segmented-program-step iter)
+                      [(MacroSegmentedProgramStep.Nil) (set! iter-done true)]
+                      [(MacroSegmentedProgramStep.Cons item rest)
+                        (begin
+                          (if (>= iter-index 6)
+                            (set! iter-ok false)
+                            (let
+                              [expected-id : i64
+                                (match (ast.ast-decl-list-ref
+                                  flat-decls
+                                  iter-index)
+                                  [(ast.AstDecl.Module name) name]
+                                  [_ -1])]
+                              [actual-id : i64
+                                (match (macro-segmented-program-borrow-decl
+                                  item)
+                                  [(ast.AstDecl.Module name) name]
+                                  [_ -1])]
+                              (if (and
+                                (= actual-id expected-id)
+                                (string.eq
+                                  (macro-segmented-program-borrow-path item)
+                                  (ast.ast-decl-path-list-get
+                                    (& flat-paths)
+                                    iter-index
+                                    ""))
+                                (=
+                                  (macro-segmented-program-borrow-owner-id item)
+                                  (ast.ast-decl-path-list-owner-id
+                                    (& flat-paths)
+                                    iter-index
+                                    -1)))
+                                unit
+                                (set! iter-ok false))))
+                          (set! iter rest)
+                          (set! iter-index (+ iter-index 1)))]))
+                  (macro-segmented-program-end! state)
+                  (macro-expand-scratch-release!)
+                  (and
+                    initial-ok
+                    first-splice-ok
+                    nested-ok
+                    iter-ok
+                    (= iter-index 6)
+                    (not (macro-segmented-program-active? state))))))))))))
+
+(cfg
+  test
+  (test
+    macro-segmented-program-boundaries
+    (if (macro-segmented-program-boundary-smoke?)
+      unit
+      (io.panic "typecheck: segmented macro program boundary smoke failed"))))
+
+(define (macro-expand-scratch-program [decls : ast.AstDeclList]) : ast.AstProgram
   (if macro-expand-scratch-enabled
     (let
       [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64
-        (if (= macro-splice-view-arena 0)
-          (macro-expand-scratch-arena-get)
-          macro-splice-view-arena)]
+      [storage : i64 (macro-expand-scratch-arena-get)]
       (begin
         (unsafe
           (arena.tl_arena_set storage))
-        (let
-          [out : MacroSpliceDeclView
-            (macro-splice-decl-view-build prefix-rev middle suffix)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (if (= macro-splice-view-arena 0)
-              (set! macro-expand-scratch-arena storage-head)
-              (set! macro-splice-view-arena storage-head))
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))
-    (macro-splice-decl-view-build prefix-rev middle suffix)))
-
-(define (macro-scratch-splice-path-view-build
-  [prefix-rev : ast.AstDeclPathList]
-  [middle : ast.AstDeclPathList]
-  [suffix : ast.AstDeclPathList]) : MacroSplicePathView
-  (if macro-expand-scratch-enabled
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64
-        (if (= macro-splice-view-arena 0)
-          (macro-expand-scratch-arena-get)
-          macro-splice-view-arena)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
-        (let
-          [out : MacroSplicePathView
-            (macro-splice-path-view-build prefix-rev middle suffix)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (if (= macro-splice-view-arena 0)
-              (set! macro-expand-scratch-arena storage-head)
-              (set! macro-splice-view-arena storage-head))
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))
-    (macro-splice-path-view-build prefix-rev middle suffix)))
-
-(define (macro-scratch-splice-path-tail-copy [suffix : ast.AstDeclPathList]) : ast.AstDeclPathList
-  (if macro-expand-scratch-enabled
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64
-        (if (= macro-splice-view-arena 0)
-          (macro-expand-scratch-arena-get)
-          macro-splice-view-arena)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
-        (let
-          [out : ast.AstDeclPathList (macro-splice-path-tail-copy suffix)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (if (= macro-splice-view-arena 0)
-              (set! macro-expand-scratch-arena storage-head)
-              (set! macro-splice-view-arena storage-head))
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))
-    (macro-splice-path-tail-copy suffix)))
-
-(define (macro-splice-view-program [decls : ast.AstDeclList]) : ast.AstProgram
-  (if (and macro-expand-scratch-enabled (not (= macro-splice-view-arena 0)))
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set macro-splice-view-arena))
         (let
           [program : ast.AstProgram (ast.ast-program decls)]
           [storage-head : i64 (arena.tl_arena_current)]
           (begin
-            (set! macro-splice-view-arena storage-head)
+            (set! macro-expand-scratch-arena storage-head)
             (unsafe
               (arena.tl_arena_set enclosing))
             program))))
     (ast.ast-program decls)))
-
-;; R3-P2: the per-splice refresh list is a `|rest|`-sized declaration copy that
-;; is read exactly once, by the top-env rebuild of the splice that built it, so
-;; it belongs in the splice-view generation like every other per-splice backing
-;; array. All four call sites run after their splice's
-;; `macro-splice-view-arena-begin!`, so the list is released two splices later,
-;; long after its only consumer has returned. Built into the NON-generational
-;; `macro-expand-scratch-arena` instead, these copies accumulated for the whole
-;; walk: 25.9 MB still resident at `typecheck.macro_scratch_release` on the
-;; opt1 self-compile, over 94 splices.
-;;
-;; The consumers (`tc-build-top-env-list-explicit-in-module` and
-;; `tc-refresh-top-env-for-splice`) read declarations out of the list and bind
-;; types resolved through POOL ids; nothing they retain points at this slot
-;; array. They also run with the enclosing arena restored, so the env spines
-;; they build still land in the macro arena, not in the view generation.
-(define (macro-scratch-decl-list-filter-path
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [wanted-path : String]) : ast.AstDeclList
-  (if macro-expand-scratch-enabled
-    (let
-      [enclosing : i64 (arena.tl_arena_current)]
-      [storage : i64
-        (if (= macro-splice-view-arena 0)
-          (macro-expand-scratch-arena-get)
-          macro-splice-view-arena)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set storage))
-        (let
-          [out : ast.AstDeclList
-            (macro-decl-list-filter-path decls paths wanted-path)]
-          [storage-head : i64 (arena.tl_arena_current)]
-          (begin
-            (if (= macro-splice-view-arena 0)
-              (set! macro-expand-scratch-arena storage-head)
-              (set! macro-splice-view-arena storage-head))
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            out))))
-    (macro-decl-list-filter-path decls paths wanted-path)))
 
 (define macro-active-decl-owner-id : i64
   -1)
@@ -80214,7 +81925,7 @@
           (spec.ResultGenKey.Err diag))])))
 
 (define (macro-decls-generated-key [identity : String]) : String
-  (string.append "decls:" identity))
+  (str_cat.str-cat "decls:" identity))
 
 (define (macro-generated-meta
   [generator : String]
@@ -81389,6 +83100,63 @@
           (set! index (+ index 1))))
       (macro-decl-list-reverse out-rev))))
 
+(define (macro-segmented-find-module-body-decls
+  [state : TcJobState]
+  [target-module : String]) : MacroMaybeDeclList
+  (let
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    [module : String ""]
+    [found : bool false]
+    [done : bool false]
+    [out-rev : ast.AstDeclList (ast.ast-decl-list-new)]
+    (begin
+      (while (not done)
+        (match (macro-segmented-program-step iter)
+          [(MacroSegmentedProgramStep.Nil) (set! done true)]
+          [(MacroSegmentedProgramStep.Cons item rest)
+            (begin
+              (set! iter rest)
+              (match (ast.ast-decl-list-ref-borrowed
+                (& (struct-get item decls))
+                (struct-get item index))
+                [(ast.AstDecl.Module _)
+                  (begin
+                    (set!
+                      module
+                      (ci.intern-str
+                        (ast.ast-decl-list-module-id-at
+                          (& (struct-get item decls))
+                          (struct-get item index)
+                          cbi.compiler-builtin-id-fix-empty)))
+                    (if (string.eq module target-module)
+                      (set! found true)
+                      unit))]
+                [_
+                  (if (string.eq module target-module)
+                    (set!
+                      out-rev
+                      (ast.ast-decl-list-prepend-builder
+                        (macro-segmented-program-borrow-decl item)
+                        out-rev))
+                    unit)])
+              unit)]))
+      (if found
+        (MacroMaybeDeclList.Some (macro-decl-list-reverse out-rev))
+        (MacroMaybeDeclList.No)))))
+
+(define (macro-find-module-body-decls-in-context
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [target-module : String]) : MacroMaybeDeclList
+  (if (macro-segmented-program-active? (tc-context-job-state ctx))
+    (macro-segmented-find-module-body-decls
+      (tc-context-job-state ctx)
+      target-module)
+    (if (macro-module-exists? decls target-module)
+      (MacroMaybeDeclList.Some
+        (macro-collect-module-body-decls decls target-module ""))
+      (MacroMaybeDeclList.No))))
+
 (define (macro-find-module-body-decls
   [decls : ast.AstDeclList]
   [target-module : String]) : MacroMaybeDeclList
@@ -81639,7 +83407,7 @@
     [(ast.AstExpr.Var name-id)
       (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
         (ci.intern-str name-id)
-        (string.append "<var:" (string.append (string.int->string name-id) ">")))]
+        (str_cat.str-cat "<var:" (string.int->string name-id) ">"))]
     [(ast.AstExpr.TypeLiteral ty-id)
       (let
         [ty : ast.AstType (ast.ty-node-get ty-id)]
@@ -81647,9 +83415,7 @@
           [(ast.AstType.Var name-id)
             (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
               (ci.intern-str name-id)
-              (string.append
-                "<type-var:"
-                (string.append (string.int->string name-id) ">")))]
+              (str_cat.str-cat "<type-var:" (string.int->string name-id) ">"))]
           [_ (tc-type-render ty)]))]
     [_ "<expression>"]))
 
@@ -81669,9 +83435,7 @@
             (macro-output-origin-arg-name
               (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0)))
             "<no-args>")]
-        (string.append
-          func-name
-          (string.append "(" (string.append arg-name ")"))))]
+        (str_cat.str-cat func-name "(" arg-name ")"))]
     [(ast.AstExpr.Var name-id)
       (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
         (ci.intern-str name-id)
@@ -81823,7 +83587,7 @@
     [(ast.AstType.Var name)
       (if (< name 0)
         (io.panic
-          (string.append
+          (str_cat.str-cat
             "macro output received invalid type-var id in origin "
             (macro-output-origin-name origin)))
         (ResultMacroSexpr.Ok
@@ -83033,15 +84797,16 @@
 ;; Index cursor rather than `ast-decl-list-step`: the module arm reads one id
 ;; out of the row and the other arm hands the row to `macro-collect-decl-name`,
 ;; so the step result's 144 B and its row copy are both pure overhead.
-(define (macro-collect-macro-names
+(define (macro-collect-macro-names-in
   [decls : ast.AstDeclList]
+  [module-id : i64]
   [acc : TcNameIdList]) : TcNameIdList
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
     [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
     [index : i64 0]
-    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [cur-module-id : i64 module-id]
     [out : TcNameIdList acc]
     (begin
       (while (< index count)
@@ -83063,6 +84828,11 @@
                   out))])
           (set! index (+ index 1))))
       out)))
+
+(define (macro-collect-macro-names
+  [decls : ast.AstDeclList]
+  [acc : TcNameIdList]) : TcNameIdList
+  (macro-collect-macro-names-in decls cbi.compiler-builtin-id-fix-empty acc))
 
 (define (macro-collect-surface-decl-name
   [decl : cload.CompilerLoadSurfaceDecl]
@@ -84010,11 +85780,10 @@
   4)
 
 (define (macro-hygiene-env-empty) : MacroHygieneEnv
-  (MacroHygieneEnv.Snapshot -1))
+  (MacroHygieneEnv -1))
 
 (define (macro-hygiene-env-head [env : MacroHygieneEnv]) : i64
-  (match env
-    [(MacroHygieneEnv.Snapshot head) head]))
+  (struct-get env head))
 
 (define (macro-hygiene-env-reset!) : unit
   (set! macro-hygiene-env-slot-count 0))
@@ -84148,7 +85917,7 @@
           (macro-hygiene-env-head env))
         (set! macro-hygiene-env-slot-count (+ macro-hygiene-env-slot-count 1))
         (cfg compile-profile (compiler-tc-macro-hygiene-note-binding!))
-        (MacroHygieneEnv.Snapshot index)))))
+        (MacroHygieneEnv index)))))
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
   (let
@@ -84669,7 +86438,7 @@
                       (when
                         (< source-name-id 0)
                         (io.panic
-                          (string.append
+                          (str_cat.str-cat
                             "typecheck: missing macro template source id: "
                             base)))
                       (if (and
@@ -86595,6 +88364,8 @@
 ;; "no alias import" answer.
 (define macro-alias-cache-built : bool
   false)
+(define macro-alias-cache-built-segmented : bool
+  false)
 (define macro-alias-cache-complete : bool
   false)
 (define macro-alias-cache-built-decl-count : i64
@@ -86741,7 +88512,7 @@
     (unsafe
       (arena.set! producer))
     (let
-      [ty : String (string.append "lifetime-hint-" (string.int->string 42))]
+      [ty : String (str_cat.str-cat "lifetime-hint-" (string.int->string 42))]
       (tc-inlay-hint-record-for-state! state 7 11 ty))))
 
 ;; Exercise every retained no-state adapter against the one serial state. The
@@ -87713,6 +89484,7 @@
         (set! macro-alias-cache-count 0)
         (set! macro-alias-cache-generation (ci.intern-generation))
         (set! macro-alias-cache-built false)
+        (set! macro-alias-cache-built-segmented false)
         (set! macro-alias-cache-complete false)
         (set! macro-alias-cache-ready true)))))
 
@@ -87845,6 +89617,47 @@
           (set! i (+ i 1))))
       cur-module-id)))
 
+;; The expansion prefix is a prepend builder and therefore stored in reverse
+;; program order. Index it back-to-front without constructing the large
+;; generic segmented iterator result for every declaration.
+(define (macro-alias-cache-index-reverse-range!
+  [decls : ast.AstDeclList]
+  [start : i64]
+  [start-module-id : i64]) : i64
+  (let
+    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [cur-module-id : i64 start-module-id]
+    [i : i64 start]
+    (begin
+      (while (>= i 0)
+        (begin
+          (if (ast.ast-decl-list-unwrapped-module-or-import-at? (& decls) i)
+            (match (ast.ast-decl-unwrapped
+              (array-ref decl-slots (+ decl-offset i)))
+              [(ast.AstDecl.Module next-module)
+                (set! cur-module-id next-module)]
+              [(ast.AstDecl.Import
+                  _decl-meta
+                  (ast.AstImportSpec.Spec _ _ expected maybe-alias _))
+                (match maybe-alias
+                  [(ast.AstMaybeImportAlias.Some alias)
+                    (let
+                      [target-id : i64
+                        (match expected
+                          [(ast.AstMaybeModuleName.Some target) target]
+                          [(ast.AstMaybeModuleName.No) alias])]
+                      (if (>=
+                        (* macro-alias-cache-count 2)
+                        macro-alias-cache-capacity)
+                        (set! macro-alias-cache-complete false)
+                        (macro-alias-cache-put! cur-module-id alias target-id)))]
+                  [(ast.AstMaybeImportAlias.No) unit])]
+              [_ unit])
+            unit)
+          (set! i (- i 1))))
+      cur-module-id)))
+
 ;; One-pass eager index over the program's aliased imports: record every
 ;; (module, alias) -> target mapping in program order (first import wins,
 ;; matching macro-import-alias-target-ids' first-match scan). Each per-pair
@@ -87867,11 +89680,52 @@
           count
           cbi.compiler-builtin-id-fix-empty))
       (set! macro-alias-cache-built true)
+      (set! macro-alias-cache-built-segmented false)
       (set! macro-alias-cache-built-decl-count count)
       (set! macro-alias-cache-built-decl-offset (struct-get decls offset))
       (set!
         macro-alias-cache-built-decl-slots-addr
         (macro-decl-list-slots-data-addr decls)))))
+
+(define (macro-alias-cache-build-segmented! [state : TcJobState]) : unit
+  (let
+    [count : i64 (macro-segmented-program-decl-count state)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data
+        (tc-job-state-macro-program-view-address state))]
+    [prefix : ast.AstDeclList (struct-get data prefix-rev)]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [node-address : i64 (struct-get data head)]
+    [node-index : i64 (struct-get data cursor)]
+    (begin
+      (set! macro-alias-cache-complete true)
+      (set!
+        cur-module-id
+        (macro-alias-cache-index-reverse-range!
+          prefix
+          (- (ast.ast-decl-list-len (& prefix)) 1)
+          cur-module-id))
+      (while (> node-address 0)
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data node-address)]
+          [decls : ast.AstDeclList (struct-get node decls)]
+          (begin
+            (set!
+              cur-module-id
+              (macro-alias-cache-index-range!
+                decls
+                node-index
+                (ast.ast-decl-list-len (& decls))
+                cur-module-id))
+            (set! node-address (struct-get node next))
+            (set! node-index 0))))
+      (set! macro-alias-cache-built-end-module-id cur-module-id)
+      (set! macro-alias-cache-built true)
+      (set! macro-alias-cache-built-segmented true)
+      (set! macro-alias-cache-built-decl-count count)
+      (set! macro-alias-cache-built-decl-offset -1)
+      (set! macro-alias-cache-built-decl-slots-addr 0))))
 
 ;; Macro expansion appends generated declarations to the active program view.
 ;; Keep the eager index synchronized once per larger view. When the backing
@@ -87997,11 +89851,33 @@
                     (TcMaybeNameId.Some cached))])])]
         [else (TcMaybeNameId.Some cached)]))))
 
+(define (macro-import-alias-target-cached-id-in-context
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [current-module-id : i64]
+  [qualifier-id : i64]) : TcMaybeNameId
+  (let
+    [state : TcJobState (tc-context-job-state ctx)]
+    (begin
+      (if (macro-segmented-program-active? state)
+        (begin
+          (macro-alias-cache-ensure!)
+          (if (and macro-alias-cache-built macro-alias-cache-built-segmented)
+            unit
+            (begin
+              (set! macro-alias-cache-ready false)
+              (macro-alias-cache-ensure!)
+              (macro-alias-cache-build-segmented! state))))
+        unit)
+      (macro-import-alias-target-cached-id decls current-module-id qualifier-id))))
+
 (define (macro-resolve-qualified-module-id
+  [ctx : TcContext]
   [decls : ast.AstDeclList]
   [current-module-id : i64]
   [qualifier-id : i64]) : i64
-  (match (macro-import-alias-target-cached-id
+  (match (macro-import-alias-target-cached-id-in-context
+    ctx
     decls
     current-module-id
     qualifier-id)
@@ -88009,7 +89885,7 @@
     [(TcMaybeNameId.No) qualifier-id]))
 
 (define (macro-missing-macro-message [name : String]) : String
-  (string.append "typecheck: missing macro " name))
+  (str_cat.str-cat "typecheck: missing macro " name))
 
 (define (macro-source-module-id [module-id : i64]) : i64
   (if (csym.compiler-symbol-root-module-id? module-id)
@@ -88122,6 +89998,7 @@
       (let
         [target-module-id : i64
           (macro-resolve-qualified-module-id
+            ctx
             decls
             (tc-context-module-id ctx)
             qualifier-id)]
@@ -88135,7 +90012,9 @@
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
             call-expr
-            (string.append "typecheck: qualified macro has no source id: " name)))))))
+            (str_cat.str-cat
+              "typecheck: qualified macro has no source id: "
+              name)))))))
 
 ;; The implicit core macro prelude module (stdlib/core_macros.tl). A bare name
 ;; that is not bound as a macro in the current module falls back to this module's
@@ -88600,7 +90479,7 @@
       (box
         (ctfe_support.ctfe-diagnostic-at-expr
           call-expr
-          (string.append
+          (str_cat.str-cat
             "typecheck: macro hygiene source id unavailable: "
             lookup-name))))
     (if (and
@@ -89067,7 +90946,8 @@
             [(TcContext program _ _ current-module current-module-id _ _ _ _)
               (match program
                 [(ast.AstProgram.Program decls-box)
-                  (match (macro-import-alias-target-cached-id
+                  (match (macro-import-alias-target-cached-id-in-context
+                    ctx
                     (box-get decls-box)
                     current-module-id
                     name-id)
@@ -89341,7 +91221,7 @@
           (box
             (tc-expr-diag
               arg
-              (string.append
+              (str_cat.str-cat
                 "typecheck: macro operand typecheck failed: "
                 message))))])))
 
@@ -91627,7 +93507,8 @@
             (tc-source-slash-qualified-id? lookup-name source-id)
             (>= (tc-name-first-dot-id source-id) 0))
             fallback
-            (match (macro-import-alias-target-cached-id
+            (match (macro-import-alias-target-cached-id-in-context
+              ctx
               decls
               module-id
               source-id)
@@ -93292,36 +95173,6 @@
         false)]
     [(ast.AstDeclListStep.Nil) false]))
 
-(define (macro-decl-list-filter-path
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [wanted-path : String]) : ast.AstDeclList
-  ;; Index cursor rather than `ast-decl-list-step`: the filter never inspects a
-  ;; declaration, it only copies the retained rows into the builder, so the step
-  ;; result's 144 B (and the paths cursor's two steps per element) are pure
-  ;; overhead. Running off the end of the paths list still yields "", as the
-  ;; exhausted cursor did.
-  (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
-    [index : i64 0]
-    [out-rev : ast.AstDeclList (ast.ast-decl-list-new)]
-    (begin
-      (while (< index count)
-        (let
-          [decl-path : String (ast.ast-decl-path-list-get (& paths) index "")]
-          (begin
-            (if (string.eq decl-path wanted-path)
-              (set!
-                out-rev
-                (ast.ast-decl-list-prepend-builder
-                  (array-ref decl-slots (+ decl-offset index))
-                  out-rev))
-              unit)
-            (set! index (+ index 1)))))
-      (macro-decl-list-reverse out-rev))))
-
 (define (macro-extend-top-env-with-module-marker
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -93341,14 +95192,22 @@
               (ast.AstMaybeImportAlias.Some alias)
               _))
           (if (= alias cbi.compiler-builtin-id-fix-empty)
-            (tc-bind-import-alias-module
-              ctx
-              all-decls
-              top-env
-              target-module
-              cbi.compiler-builtin-id-fix-empty
-              module-id
-              true)
+            (if (macro-segmented-program-active? (tc-context-job-state ctx))
+              (macro-segmented-bind-import-alias-module
+                ctx
+                top-env
+                target-module
+                cbi.compiler-builtin-id-fix-empty
+                module-id
+                true)
+              (tc-bind-import-alias-module
+                ctx
+                all-decls
+                top-env
+                target-module
+                cbi.compiler-builtin-id-fix-empty
+                module-id
+                true))
             (begin
               (tc-lazy-import-stub-record-for-job!
                 (tc-context-job-state ctx)
@@ -93689,7 +95548,10 @@
       macro-name
       decl-path
       memoize?
-      (match (macro-find-module-body-decls orig-decls target-module)
+      (match (macro-find-module-body-decls-in-context
+        ctx
+        orig-decls
+        target-module)
         [(MacroMaybeDeclList.Some existing-body)
           (if (macro-decls-contain-generated-key? existing-body identity)
             ;: The module for this identity is already materialized and recorded in
@@ -94278,7 +96140,8 @@
                                               alias
                                               span)]
                                           [expanded : ast.AstDeclList
-                                            (match (macro-find-module-body-decls
+                                            (match (macro-find-module-body-decls-in-context
+                                              ctx
                                               orig-decls
                                               target-module)
                                               [(MacroMaybeDeclList.Some _)
@@ -94665,10 +96528,22 @@
       [enclosing : i64 (arena.tl_arena_current)]
       [entry-base-arena : i64 (ast.ast-node-pool-base-arena-handle)]
       [entry-expr-len : i64 (ast.ast-node-pool-len)]
+      [_profile-entry-type-len : i64 (ast.ty-node-pool-len)]
+      [_profile-live-before-enter : i64
+        (cfg compile-profile (profile.alloc-live) 0)]
+      [_profile-captures-before : i64
+        (cfg
+          compile-profile
+          (+
+            compiler-tc-macro-walk-bind-params-calls
+            compiler-tc-macro-walk-direct-marshal-calls)
+          0)]
       [generation : i64
         (if splice?
           (macro-splice-generation-enter!)
           (macro-decl-generation-enter!))]
+      [_profile-live-after-enter : i64
+        (cfg compile-profile (profile.alloc-live) 0)]
       ;; R3-P2b: whatever this expansion records in a splice memo is noted and
       ;; re-persisted below. The window is exactly the expansion call -- a memo
       ;; put from anywhere else already lands in a long-lived arena and must not
@@ -94677,6 +96552,10 @@
       [_enter : unit
         (unsafe
           (arena.tl_arena_set generation))]
+      [_profile-generation-mark : i64
+        (cfg compile-profile (arena.tl_region_mark) 0)]
+      [_profile-raw-start-live : i64
+        (cfg compile-profile (profile.alloc-live) 0)]
       [_escape-open : unit (set! macro-decl-generation-active true)]
       ;; R3-P2c: publish which generation is live, so anything that installs a
       ;; pool context from inside this expansion is repaired at the destroy.
@@ -94692,6 +96571,25 @@
           module-id
           decl
           decl-path)]
+      [_profile-fired : bool
+        (cfg
+          compile-profile
+          (>
+            (+
+              compiler-tc-macro-walk-bind-params-calls
+              compiler-tc-macro-walk-direct-marshal-calls)
+            _profile-captures-before)
+          false)]
+      [_profile-raw-end-live : i64 (cfg compile-profile (profile.alloc-live) 0)]
+      [_profile-generation-raw-bytes : i64
+        (cfg
+          compile-profile
+          (if _profile-fired
+            (compiler-tc-profile-arena-bytes-since
+              generation
+              _profile-generation-mark)
+            0)
+          0)]
       [_escape-close : unit (set! macro-decl-generation-active false)]
       [_witness-off : unit (ast.ast-node-pool-context-transient-witness! 0)]
       ;; Clamped: the walk never truncates the pool below the length it entered
@@ -94707,7 +96605,21 @@
       [expr-map : (__tl_dyn-array i32)
         (ast.ast-compaction-id-map-create
           (- (ast.ast-node-pool-len) shared-expr-base))]
-      [type-map : (__tl_dyn-array i32) (ast.ast-compaction-id-map-create 0)]
+      [type-map : (__tl_dyn-array i32)
+        (ast.ast-compaction-id-map-create
+          (cfg
+            compile-profile
+            (- (ast.ty-node-pool-len) _profile-entry-type-len)
+            0))]
+      [_profile-generation-used-end : i64
+        (cfg
+          compile-profile
+          (if _profile-fired
+            (compiler-tc-profile-arena-bytes-since
+              generation
+              _profile-generation-mark)
+            0)
+          0)]
       ;; The generation is reused by the rest of its batch, so its newest head
       ;; has to be published before the arena is switched away -- keeping the
       ;; `make` root would restart the next declaration on a filled segment and
@@ -94729,6 +96641,17 @@
           enclosing
           entry-base-arena
           (ast.ast-node-pool-context-base-arena pools))]
+      [_profile-copy-start-total : i64
+        (cfg compile-profile (profile.alloc-total) 0)]
+      [_profile-copy-start-live : i64
+        (cfg compile-profile (profile.alloc-live) 0)]
+      [_profile-census-start : unit
+        (cfg
+          compile-profile
+          (if (and (not splice?) _profile-fired)
+            (ast.ast-compaction-profile-start! _profile-entry-type-len type-map)
+            unit)
+          unit)]
       [_copy-start-len : i64 (ast.ast-node-pool-context-expr-len pools)]
       ;; Every existing type id is shared, so the copy-out and the escape pass
       ;; push no type node at all. Read once so both passes see the same base.
@@ -94749,6 +96672,38 @@
           expr-map
           type-map
           splice?)]
+      [_profile-copy-end-total : i64
+        (cfg compile-profile (profile.alloc-total) 0)]
+      [_profile-copy-end-live : i64
+        (cfg compile-profile (profile.alloc-live) 0)]
+      [_profile-attribution : unit
+        (cfg
+          compile-profile
+          (if (and (not splice?) _profile-fired)
+            (let
+              [committed-live : i64
+                (-
+                  (- _profile-raw-end-live _profile-raw-start-live)
+                  _profile-generation-raw-bytes)]
+              [released : i64
+                (- _profile-live-before-enter _profile-live-after-enter)]
+              (begin
+                (ast.ast-compaction-profile-finish!)
+                (compiler-tc-walk-decl-fire-attribution-note!
+                  (- _profile-copy-end-total _profile-copy-start-total)
+                  (- _profile-copy-end-live _profile-copy-start-live)
+                  _profile-generation-used-end
+                  (if (> released 0)
+                    released
+                    0)
+                  committed-live
+                  _profile-copy-end-live
+                  (ast.ast-compaction-profile-source-shared-expr-ref-count)
+                  (ast.ast-compaction-profile-source-shared-type-ref-count)
+                  (ast.ast-compaction-profile-survivor-expr-node-count)
+                  (ast.ast-compaction-profile-survivor-type-node-count))))
+            unit)
+          unit)]
       (begin
         (cfg
           compile-profile
@@ -96242,12 +98197,11 @@
 
 ;; A forced splice installs the current live symbols/registries in a new
 ;; context. Generated modules append to those tables; arbitrary splices and
-;; materialized files rebuild them. The top env follows the narrowest correct
-;; plan: generated
-;; modules append an isolated namespace, arbitrary Decls refresh unresolved
-;; cached signatures plus their source-local tail, and newly loaded files keep
-;; the conservative whole-program rebuild because imports can alter unrelated
-;; alias surfaces. `module` is the active namespace at the splice site.
+;; materialized files rebuild them. Every top-env plan is additive: it revisits
+;; only cached signatures that remain unresolved, binds the splice delta, and
+;; publishes one explicit cache layer. Generated modules add their isolated
+;; summary and marker through the same contract. `module` is the active
+;; namespace at the splice site.
 (define (tc-top-env-binding-context [ctx : TcContext] [name-id : i64]) : TcContext
   (if (tc-name-qualified-id? name-id)
     (let
@@ -96257,79 +98211,123 @@
         ctx))
     (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)))
 
-;; A splice updates symbols before it rebuilds the type env. Most cached
-;; bindings are already final nominal/scalar types; only signatures that still
-;; contain `Var`/`VarArgs` nodes can change when the new symbols appear. Walk
-;; each cache's retained binding keys until every indexed value has been seen,
-;; and re-resolve just those values in the binding's module context. The seen
-;; array preserves the cache's head-most binding when a raw spine contains
-;; shadowed duplicates.
-(define (tc-top-env-reresolve-cache-layer!
+;; A splice updates symbols before it updates the type env. Final
+;; nominal/scalar bindings cannot change; only signatures that still contain
+;; Var/VarArgs nodes are candidates. Every cache records that candidate set at
+;; construction, and this walk compacts it in place as names become resolvable.
+;; The fixed-width scan is proportional to unresolved signatures, never the
+;; retained top-env spine or source tail.
+(define (tc-top-env-reresolve-cache-node!
   [ctx : TcContext]
-  [ids : tc_i64_i64_map.Map]
-  [values : (__tl_dyn-array ast.AstType)]
-  [env : TcTypeEnv]) : unit
+  [cache-ptr : (Ptr TcTypeEnvCache)]) : i64
   (let
-    [seen : (__tl_dyn-array i64) (array.make-array i64 (array.length values))]
-    [remaining : i64 (tc_i64_i64_map.len (& ids))]
-    [cur : TcTypeEnv env]
-    [done : bool false]
-    (while (and (not done) (> remaining 0))
-      (match (tc-type-env-view cur)
-        [(TcTypeEnvView.Nil) (set! done true)]
-        [(TcTypeEnvView.Cache _ _ _ rest _) (set! cur rest)]
-        [(TcTypeEnvView.Bind name-id _ rest)
+    [cache : TcTypeEnvCache
+      (unsafe
+        (ptr-read cache-ptr))]
+    [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+    [values : (__tl_dyn-array ast.AstType) (struct-get cache values)]
+    [sidecar : (__tl_dyn-array i64) (struct-get cache unsafe-flags)]
+    [capacity : i64 (array.length values)]
+    [count : i64 (array-ref sidecar capacity)]
+    [read-index : i64 0]
+    [write-index : i64 0]
+    (begin
+      (while (< read-index count)
+        (let
+          [name-id : i64 (array-ref sidecar (+ capacity 1 read-index))]
+          [value-slot : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
           (begin
-            (let
-              [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
-              (if (>= index 0)
-                (if (< index (array.length values))
-                  (if (= (array-ref seen index) 0)
-                    (let
-                      [ty : ast.AstType (array-ref values index)]
-                      (begin
-                        (if (tc-type-needs-resolution? ty)
+            (if (and (>= value-slot 0) (< value-slot (array.length values)))
+              (let
+                [before : ast.AstType (array-ref values value-slot)]
+                (if (tc-type-needs-resolution? before)
+                  (let
+                    [binding-ctx : TcContext
+                      (tc-top-env-binding-context ctx name-id)]
+                    [after : ast.AstType (tc-resolve-type binding-ctx before)]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (set!
+                          compiler-tc-walk-splice-env-reresolve-candidates
+                          (+ compiler-tc-walk-splice-env-reresolve-candidates 1)))
+                      (if (ast.ast-type-eq? before after)
+                        unit
+                        (begin
+                          (array-set! values value-slot after)
+                          (cfg
+                            compile-profile
+                            (set!
+                              compiler-tc-walk-splice-env-reresolve-updates
+                              (+
+                                compiler-tc-walk-splice-env-reresolve-updates
+                                1)))))
+                      (if (tc-type-needs-resolution? after)
+                        (begin
                           (array-set!
-                            values
-                            index
-                            (tc-resolve-type
-                              (tc-top-env-binding-context ctx name-id)
-                              ty))
-                          unit)
-                        (array-set! seen index 1)
-                        (set! remaining (- remaining 1))))
-                    unit)
-                  (io.panic
-                    (string.append
-                      "typecheck: top-env cache index out of bounds: "
-                      (string.append
-                        (string.int->string index)
-                        (string.append
-                          " / "
-                          (string.int->string (array.length values)))))))
-                unit))
-            (set! cur rest))]))))
+                            sidecar
+                            (+ capacity 1 write-index)
+                            name-id)
+                          (set! write-index (+ write-index 1)))
+                        unit)))
+                  unit))
+              (io.panic
+                (str_cat.str-cat
+                  "typecheck: top-env resolution slot out of bounds: "
+                  (string.int->string value-slot)
+                  " / "
+                  (string.int->string (array.length values)))))
+            (set! read-index (+ read-index 1)))))
+      (array-set! sidecar capacity write-index)
+      (cfg
+        compile-profile
+        (set!
+          compiler-tc-walk-splice-env-reresolve-remaining
+          (+ compiler-tc-walk-splice-env-reresolve-remaining write-index)))
+      write-index)))
 
 (define (tc-top-env-reresolve-caches! [ctx : TcContext] [env : TcTypeEnv]) : unit
-  (match (tc-type-env-view env)
-    [(TcTypeEnvView.Cache cache-ptr _ partial rest below)
-      (let
-        [ids : tc_i64_i64_map.Map
-          (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
-        [values : (__tl_dyn-array ast.AstType)
-          (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
-        (begin
-          (tc-top-env-reresolve-cache-layer! ctx ids values rest)
-          (if partial
-            (tc-top-env-reresolve-caches! ctx below)
-            unit)))]
-    [_ unit]))
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    [done : bool false]
+    (begin
+      (cfg
+        compile-profile
+        (set!
+          compiler-tc-walk-splice-env-reresolve-calls
+          (+ compiler-tc-walk-splice-env-reresolve-calls 1)))
+      ;; A batch of consecutive module markers can leave a small raw prefix.
+      ;; Skip it to the first explicit layer, then follow only partial `below`
+      ;; links, exactly like the lookup chain being invalidated.
+      (while (not done)
+        (cond
+          [(= head -1) (set! done true)]
+          [(>= head 0)
+            (set!
+              head
+              (tc-type-env-binding-parent-at
+                (tc-type-env-binding-ptr store-handle head)))]
+          [else
+            (let
+              [cache-ptr : (Ptr TcTypeEnvCache)
+                (unsafe
+                  (int->ptr
+                    (cast (tc-type-env-cache-index head) : u64)
+                    : (Ptr TcTypeEnvCache)))]
+              [cache : TcTypeEnvCache
+                (unsafe
+                  (ptr-read (ptr-cast cache-ptr : (Ptr TcTypeEnvCache))))]
+              (begin
+                (tc-top-env-reresolve-cache-node! ctx cache-ptr)
+                (if (struct-get cache partial)
+                  (set! head (struct-get cache below))
+                  (set! done true))))])))))
 
-(define (tc-refresh-top-env-for-splice
+(define (tc-extend-top-env-for-splice
   [ctx : TcContext]
   [base-env : TcTypeEnv]
   [splice : ast.AstDeclList]
-  [refresh-decls : ast.AstDeclList]
   [module : String]
   [module-id : i64]) : ResultTcEnv
   (begin
@@ -96341,36 +98339,20 @@
       module
       module-id)
       [(ResultTcEnv.Ok splice-env)
-        (match (tc-build-top-env-list-explicit-in-module
-          ctx
-          refresh-decls
-          splice-env
-          module
-          module-id)
-          [(ResultTcEnv.Ok refreshed-env)
-            (ResultTcEnv.Ok
-              (tc-env-with-cache-layer-over-explicit refreshed-env))]
-          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
+        (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit splice-env))]
       [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))
 
 (define (macro-splice-top-env
   [ctx : TcContext]
-  [program : ast.AstProgram]
+  [_program : ast.AstProgram]
   [decls : ast.AstDeclList]
   [module : String]
   [module-id : i64]
   [plan : MacroSpliceEnvPlan]) : ResultTcEnv
   (match plan
-    [(MacroSpliceEnvPlan.Rebuild) (tc-build-top-env ctx program)]
-    [(MacroSpliceEnvPlan.Refresh base-env splice refresh-decls)
-      (tc-refresh-top-env-for-splice
-        ctx
-        base-env
-        splice
-        refresh-decls
-        module
-        module-id)]
-    [(MacroSpliceEnvPlan.Extend base-env summary marker refresh-decls)
+    [(MacroSpliceEnvPlan.Extend base-env splice)
+      (tc-extend-top-env-for-splice ctx base-env splice module module-id)]
+    [(MacroSpliceEnvPlan.ExtendGeneratedModule base-env summary marker)
       (match (env-extend-with-module ctx base-env summary)
         [(ResultTcEnv.Ok module-env)
           (match (macro-extend-top-env-with-module-marker
@@ -96381,16 +98363,13 @@
             module
             module-id)
             [(ResultTcEnv.Ok marker-env)
-              (match (tc-build-top-env-list-explicit-in-module
-                ctx
-                refresh-decls
-                marker-env
-                module
-                module-id)
-                [(ResultTcEnv.Ok refreshed-env)
-                  (ResultTcEnv.Ok
-                    (tc-env-with-cache-layer-over-explicit refreshed-env))]
-                [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
+              (begin
+                ;; The marker records a named lazy-import surface before old
+                ;; unresolved signatures are revisited. The combined summary
+                ;; + marker prefix is then cached once.
+                (tc-top-env-reresolve-caches! ctx marker-env)
+                (ResultTcEnv.Ok
+                  (tc-env-with-cache-layer-over-explicit marker-env)))]
             [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
         [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
 
@@ -96403,7 +98382,16 @@
   [env-plan : MacroSpliceEnvPlan]) : ResultMacroSpliceRebuild
   (let
     [pools : ast.AstNodePoolContext (tc-context-pools cur-ctx)]
-    [next-program : ast.AstProgram (macro-splice-view-program next-decls)]
+    [reuse-segmented? : bool
+      (and
+        macro-live-symbols-ready
+        (not macro-live-symbols-fallback)
+        macro-live-registries-ready
+        (not macro-live-registries-fallback))]
+    [next-program : ast.AstProgram
+      (if reuse-segmented?
+        (tc-context-program cur-ctx)
+        (macro-expand-scratch-program next-decls))]
     (begin
       ;; Existing symbol handles and their cached owner names remain stable
       ;; across an append-only splice. The one-entry type lookup also caches a
@@ -96509,8 +98497,7 @@
     ;; rebuilding it from the whole expanded program per import retained tens
     ;; of megabytes of obsolete persistent-env bindings.
     [cur-materialize-seen : sym_i64_env.SymI64Env initial-materialize-seen]
-    [cur-decls : ast.AstDeclList decls]
-    [cur-paths : ast.AstDeclPathList paths]
+    [walk-state : TcJobState (tc-context-job-state ctx)]
     [cur-module : String module]
     [cur-module-id : i64 module-id]
     [cur-orig-decls : ast.AstDeclList orig-decls]
@@ -96524,39 +98511,47 @@
         (box (tc-diag-at-start "macro: internal decl expansion walk")))]
     [done : bool false]
     (begin
+      (macro-segmented-program-begin!
+        walk-state
+        out-rev
+        out-paths-rev
+        decls
+        paths)
       (while (not done)
         (begin
           (cfg compile-profile (compiler-tc-walk-decl-sample-flush!))
-          (match (ast.ast-decl-list-step cur-decls)
+          (match (if (macro-segmented-program-empty? walk-state)
+            (ast.AstDeclListStep.Nil)
+            (ast.AstDeclListStep.Cons
+              (macro-segmented-program-current-decl walk-state)
+              (ast.ast-decl-list-new)))
             [(ast.AstDeclListStep.Nil)
-              (begin
-                (set!
-                  result
-                  (ResultMacroDeclsWithPaths.Ok
-                    (macro-decl-list-reverse out-rev)
-                    (macro-decl-path-list-reverse out-paths-rev)))
-                (set! done true))]
-            [(ast.AstDeclListStep.Cons decl rest)
               (let
-                [rest : ast.AstDeclList rest]
+                [_final-flatten-start : unit
+                  (cfg
+                    compile-profile
+                    (compiler-tc-walk-segment-final-flatten-start!))]
+                [final-decls : ast.AstDeclList
+                  (macro-decl-list-reverse out-rev)]
+                [final-paths : ast.AstDeclPathList
+                  (macro-decl-path-list-reverse out-paths-rev)]
+                [_final-flatten-finish : unit
+                  (cfg
+                    compile-profile
+                    (compiler-tc-walk-segment-final-flatten-finish!))]
+                (begin
+                  (set!
+                    result
+                    (ResultMacroDeclsWithPaths.Ok final-decls final-paths))
+                  (set! done true)))]
+            [(ast.AstDeclListStep.Cons decl _rest)
+              (let
                 [decl-path : String
-                  (match (ast.ast-decl-path-list-step cur-paths)
-                    [(ast.AstDeclPathListStep.Cons path _) path]
-                    [(ast.AstDeclPathListStep.Nil) ""])]
+                  (macro-segmented-program-current-path walk-state)]
                 [decl-owner-id : i64
-                  (ast.ast-decl-path-list-owner-id
-                    (& cur-paths)
-                    0
-                    cbi.compiler-builtin-id-fix-empty)]
+                  (macro-segmented-program-current-owner-id walk-state)]
                 [_set-decl-owner : unit
                   (set! macro-active-decl-owner-id decl-owner-id)]
-                [rest-paths : ast.AstDeclPathList
-                  (match (ast.ast-decl-path-list-step cur-paths)
-                    [(ast.AstDeclPathListStep.Cons _ path-rest)
-                      (let
-                        [path-rest : ast.AstDeclPathList path-rest]
-                        path-rest)]
-                    [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)])]
                 (match decl
                   [(ast.AstDecl.Module next-module)
                     (begin
@@ -96572,8 +98567,11 @@
                           decl-path
                           decl-owner-id
                           out-paths-rev))
-                      (set! cur-decls rest)
-                      (set! cur-paths rest-paths)
+                      (macro-segmented-program-advance! walk-state)
+                      (macro-segmented-program-prefix-set!
+                        walk-state
+                        out-rev
+                        out-paths-rev)
                       (set! cur-module (ci.intern-str next-module))
                       (set! cur-module-id next-module))]
                   [_
@@ -96609,9 +98607,7 @@
                               ;; no new name, so no context rebuild is needed.
                               (match (ast.ast-decl-list-step expanded)
                                 [(ast.AstDeclListStep.Nil)
-                                  (begin
-                                    (set! cur-decls rest)
-                                    (set! cur-paths rest-paths))]
+                                  (macro-segmented-program-advance! walk-state)]
                                 [_
                                   (if (and
                                     (macro-decl-module-import-placeholder? decl)
@@ -96630,65 +98626,43 @@
                                           compile-profile
                                           (compiler-tc-walk-sp-probe-start! 0)
                                           unit)]
-                                      [_splice-view-generation : unit
-                                        (macro-splice-view-arena-begin!)]
-                                      ;; Share one scratch-arena backing array
-                                      ;; across the marker splice's whole-program
-                                      ;; declaration view instead of copying the
-                                      ;; complete program through two appends.
-                                      [marker-decl-view : MacroSpliceDeclView
-                                        (macro-scratch-splice-decl-view-build
-                                          out-rev
+                                      [_segment-splice : unit
+                                        (macro-segmented-program-splice-current!
+                                          walk-state
                                           expanded
-                                          rest)]
-                                      [next-decls : ast.AstDeclList
-                                        (struct-get marker-decl-view view)]
-                                      ;; Marker-only splices do not walk the
-                                      ;; generated marker again, but the walk
-                                      ;; tail still has to move into this view
-                                      ;; generation. Otherwise a later splice
-                                      ;; could reclaim the older backing array
-                                      ;; that `rest` still references.
-                                      [marker-rest : ast.AstDeclList
-                                        (ast.AstDeclList
-                                          (struct-get next-decls slots)
-                                          (+
-                                            (struct-get next-decls offset)
-                                            (+
-                                              (ast.ast-decl-list-len
-                                                (& out-rev))
-                                              (ast.ast-decl-list-len
-                                                (& expanded))))
-                                          (ast.ast-decl-list-len (& rest))
-                                          false)]
-                                      [marker-rest-paths : ast.AstDeclPathList
-                                        (macro-scratch-splice-path-tail-copy
-                                          rest-paths)]
-                                      [next-decls-for-ctx : ast.AstDeclList
-                                        (ast.AstDeclList
-                                          (struct-get next-decls slots)
-                                          (struct-get next-decls offset)
-                                          (struct-get next-decls len)
-                                          false)]
-                                      [next-ctx : TcContext
-                                        (tc-context-with-program
-                                          cur-ctx
-                                          (macro-splice-view-program
-                                            next-decls-for-ctx))]
-                                      ;; R3-P2: the refresh list is built at
-                                      ;; its only use site, on the non-deferred
-                                      ;; branch below. Built here it was a
-                                      ;; `|rest|`-sized copy that the deferred
-                                      ;; branch threw away unread -- 9 of the 94
-                                      ;; splices on the opt1 self-compile.
-                                      ;; `macro-decl-list-filter-path` is a pure
-                                      ;; filter over `rest` / `rest-paths`,
-                                      ;; neither of which the env extend below
-                                      ;; touches, so moving the call past it is
-                                      ;; order-independent.
-                                      [defer-refresh? : bool
-                                        (macro-decls-start-with-module-import-placeholder?
-                                          rest)]
+                                          expanded-paths)]
+                                      [_commit-marker-prefix : unit
+                                        (let
+                                          [remaining : i64
+                                            (ast.ast-decl-list-len (& expanded))]
+                                          (begin
+                                            (set!
+                                              out-rev
+                                              (macro-decl-list-reverse-into
+                                                expanded
+                                                out-rev))
+                                            (set!
+                                              out-paths-rev
+                                              (macro-decl-path-list-reverse-into
+                                                expanded-paths
+                                                out-paths-rev))
+                                            (while (> remaining 0)
+                                              (begin
+                                                (macro-segmented-program-advance!
+                                                  walk-state)
+                                                (set! remaining (- remaining 1))))
+                                            (macro-segmented-program-prefix-set!
+                                              walk-state
+                                              out-rev
+                                              out-paths-rev)))]
+                                      ;; Consecutive markers can share one raw
+                                      ;; delta prefix. Lookups still see every
+                                      ;; imported binding, but the explicit cache
+                                      ;; and unresolved-signature pass are paid
+                                      ;; once when the marker batch ends.
+                                      [defer-cache? : bool
+                                        (macro-segmented-program-current-starts-module-import-placeholder?
+                                          walk-state)]
                                       [_sp-probe-copy-finish : unit
                                         (cfg
                                           compile-profile
@@ -96703,7 +98677,7 @@
                                             (macro-extend-top-env-with-module-marker
                                               cur-ctx
                                               cur-top-env
-                                              next-decls
+                                              cur-orig-decls
                                               expanded
                                               cur-module
                                               cur-module-id)]
@@ -96719,11 +98693,30 @@
                                               (macro-alias-derived-cache-reset!)
                                               (tc-job-state-reset-derived-caches!
                                                 (tc-context-job-state cur-ctx))
-                                              (if defer-refresh?
+                                              (if defer-cache?
                                                 (begin
                                                   (cfg
                                                     compile-profile
                                                     (compiler-tc-walk-decl-sample-note!
+                                                      4))
+                                                  (set!
+                                                    cur-top-env
+                                                    next-top-env))
+                                                (begin
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-decl-sample-note!
+                                                      5))
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-start!
+                                                      4))
+                                                  (tc-top-env-reresolve-caches!
+                                                    cur-ctx
+                                                    next-top-env)
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-finish!
                                                       4))
                                                   (cfg
                                                     compile-profile
@@ -96736,96 +98729,8 @@
                                                   (cfg
                                                     compile-profile
                                                     (compiler-tc-walk-sp-probe-finish!
-                                                      2))
-                                                  (set!
-                                                    cur-orig-decls
-                                                    next-decls)
-                                                  (set! cur-ctx next-ctx)
-                                                  (set!
-                                                    out-rev
-                                                    (macro-decl-list-reverse-into
-                                                      expanded
-                                                      out-rev))
-                                                  (set!
-                                                    out-paths-rev
-                                                    (macro-decl-path-list-reverse-into
-                                                      expanded-paths
-                                                      out-paths-rev))
-                                                  (set! cur-decls marker-rest)
-                                                  (set!
-                                                    cur-paths
-                                                    marker-rest-paths))
-                                                (begin
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-walk-sp-probe-start!
-                                                      3))
-                                                  (match (let
-                                                    [refresh-result : ResultTcEnv
-                                                      (tc-build-top-env-list-explicit-in-module
-                                                        next-ctx
-                                                        (macro-scratch-decl-list-filter-path
-                                                          rest
-                                                          rest-paths
-                                                          decl-path)
-                                                        next-top-env
-                                                        cur-module
-                                                        cur-module-id)]
-                                                    (begin
-                                                      (cfg
-                                                        compile-profile
-                                                        (compiler-tc-walk-sp-probe-finish!
-                                                          3))
-                                                      refresh-result))
-                                                    [(ResultTcEnv.Ok
-                                                        refreshed-top-env)
-                                                      (begin
-                                                        (cfg
-                                                          compile-profile
-                                                          (compiler-tc-walk-decl-sample-note!
-                                                            5))
-                                                        (cfg
-                                                          compile-profile
-                                                          (compiler-tc-walk-sp-probe-start!
-                                                            2))
-                                                        (set!
-                                                          cur-top-env
-                                                          (tc-env-with-cache-layer-over-explicit
-                                                            refreshed-top-env))
-                                                        (cfg
-                                                          compile-profile
-                                                          (compiler-tc-walk-sp-probe-finish!
-                                                            2))
-                                                        (set!
-                                                          cur-orig-decls
-                                                          next-decls)
-                                                        (set! cur-ctx next-ctx)
-                                                        (set!
-                                                          out-rev
-                                                          (macro-decl-list-reverse-into
-                                                            expanded
-                                                            out-rev))
-                                                        (set!
-                                                          out-paths-rev
-                                                          (macro-decl-path-list-reverse-into
-                                                            expanded-paths
-                                                            out-paths-rev))
-                                                        (set!
-                                                          cur-decls
-                                                          marker-rest)
-                                                        (set!
-                                                          cur-paths
-                                                          marker-rest-paths))]
-                                                    [(ResultTcEnv.Err
-                                                        refresh-message)
-                                                      (begin
-                                                        (set!
-                                                          result
-                                                          (ResultMacroDeclsWithPaths.Err
-                                                            (box
-                                                              (tc-diag-at-start
-                                                                refresh-message))))
-                                                        (set! done true))]))))]
+                                                      2))))
+                                              unit)]
                                           [(ResultTcEnv.Err message)
                                             (begin
                                               (set!
@@ -96836,11 +98741,11 @@
                                               (set! done true))])
                                         unit))
                                     ;; Force the splice inline: append the generated
-                                    ;; symbols/registries and rebuild the context/env
-                                    ;; over the spliced whole-program view so the
-                                    ;; generated names resolve, and continue the
-                                    ;; walk over the spliced body itself (its nested
-                                    ;; placeholders and generated file imports included).
+                                    ;; symbols/registries and rebuild the context over
+                                    ;; the spliced whole-program view. The top env takes
+                                    ;; only the declaration delta, then the walk continues
+                                    ;; over the spliced body itself (nested placeholders
+                                    ;; and generated file imports included).
                                     (let
                                       [_update-materialize-seen : unit
                                         (set!
@@ -96850,52 +98755,58 @@
                                             (& expanded-paths)
                                             cur-materialize-seen
                                             cur-module-id))]
-                                      ;; Build the whole-program view and the walk
-                                      ;; tail in one shared backing array per list
-                                      ;; instead of append + reverse + append
-                                      ;; copies (~5MB of scratch per splice on a
-                                      ;; self-compile).
-                                      [_splice-view-generation : unit
-                                        (macro-splice-view-arena-begin!)]
-                                      [splice-decl-view : MacroSpliceDeclView
-                                        (macro-scratch-splice-decl-view-build
-                                          out-rev
+                                      [_segment-splice : unit
+                                        (macro-segmented-program-splice-current!
+                                          walk-state
                                           expanded
-                                          rest)]
-                                      [splice-path-view : MacroSplicePathView
-                                        (macro-scratch-splice-path-view-build
-                                          out-paths-rev
-                                          expanded-paths
-                                          rest-paths)]
-                                      [spliced-tail : ast.AstDeclList
-                                        (struct-get splice-decl-view tail)]
-                                      [spliced-path-tail : ast.AstDeclPathList
-                                        (struct-get splice-path-view tail)]
-                                      [next-decls : ast.AstDeclList
-                                        (struct-get splice-decl-view view)]
-                                      [next-paths : ast.AstDeclPathList
-                                        (struct-get splice-path-view view)]
-                                      [splice-index : i64
-                                        (csym.compiler-decl-list-index-count
-                                          out-rev)]
+                                          expanded-paths)]
                                       [generated-ext : MacroMaybeGeneratedModuleExtension
                                         (macro-generated-module-extension
                                           expanded
                                           cur-module-id)]
                                       [symbols-inserted : bool
-                                        (match generated-ext
-                                          [(MacroMaybeGeneratedModuleExtension.Some
-                                              _
-                                              _)
-                                            (and
-                                              (csym.compiler-symbols-insert-aliases-self-contained?
-                                                expanded
-                                                expanded)
-                                              (macro-live-symbols-insert-decls!
-                                                expanded
-                                                cur-module-id))]
-                                          [(MacroMaybeGeneratedModuleExtension.No)
-                                            false])]
+                                        (and
+                                          (csym.compiler-symbols-insert-aliases-self-contained?
+                                            expanded
+                                            expanded)
+                                          (macro-live-symbols-insert-decls!
+                                            expanded
+                                            cur-module-id))]
+                                      [registries-inserted : bool
+                                        (and
+                                          symbols-inserted
+                                          (macro-live-registries-append-decls!
+                                            expanded
+                                            expanded-paths
+                                            cur-module-id))]
+                                      [incremental? : bool
+                                        (and
+                                          symbols-inserted
+                                          registries-inserted)]
+                                      [_invalidate-fallback : unit
+                                        (if incremental?
+                                          unit
+                                          (begin
+                                            (macro-live-symbols-invalidate!)
+                                            (macro-live-registries-invalidate!)))]
+                                      [flat-view : MacroSegmentedProgramFlatView
+                                        (if incremental?
+                                          (MacroSegmentedProgramFlatView
+                                            expanded
+                                            expanded-paths)
+                                          (macro-segmented-program-flatten-fallback
+                                            walk-state
+                                            1))]
+                                      [next-decls : ast.AstDeclList
+                                        (struct-get flat-view decls)]
+                                      [next-paths : ast.AstDeclPathList
+                                        (struct-get flat-view paths)]
+                                      [_prescan-delta : unit
+                                        (if incremental?
+                                          (macro-live-prescan-append-decls!
+                                            expanded
+                                            cur-module-id)
+                                          unit)]
                                       ;; Any reflection-relevant delta gets the
                                       ;; append-safety classification after the
                                       ;; post-splice registries exist. Fresh
@@ -96910,55 +98821,13 @@
                                         (cfg
                                           compile-profile
                                           (compiler-tc-walk-decl-sample-note! 6))
-                                        (if symbols-inserted
-                                          (if (macro-live-registries-append-decls!
-                                            expanded
-                                            expanded-paths
-                                            cur-module-id)
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-walk-splice-flag-note!
-                                                1)
-                                              unit)
-                                            (begin
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-walk-splice-flag-note!
-                                                  2))
-                                              (macro-live-symbols-invalidate!)
-                                              (macro-live-registries-invalidate!)))
-                                          (if (and
-                                            (macro-decls-registry-incremental-safe?
-                                              expanded)
-                                            (not
-                                              (macro-decls-have-unqualified-import-of-module?
-                                                next-decls
-                                                cur-module-id)))
-                                            (if (macro-live-registries-insert-decls!
-                                              expanded
-                                              expanded-paths
-                                              splice-index
-                                              cur-module-id)
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-walk-splice-flag-note!
-                                                  1)
-                                                unit)
-                                              (begin
-                                                (cfg
-                                                  compile-profile
-                                                  (compiler-tc-walk-splice-flag-note!
-                                                    2))
-                                                (macro-live-registries-invalidate!)))
-                                            (begin
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-walk-splice-flag-note!
-                                                  2))
-                                              (macro-live-registries-invalidate!))))
-                                        (if symbols-inserted
-                                          unit
-                                          (macro-live-symbols-invalidate!))
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-splice-flag-note!
+                                            (if incremental?
+                                              1
+                                              2))
+                                          unit)
                                         (cfg
                                           compile-profile
                                           (if extend-ctfe-metadata?
@@ -96984,11 +98853,14 @@
                                               compile-profile
                                               (compiler-tc-walk-splice-flag-note!
                                                 5))
-                                            (macro-live-prescan-reset!)
-                                            (macro-live-prescan-ensure!
-                                              next-decls)
-                                            (macro-expand-set-expr-type-macro-names!
-                                              macro-live-prescan-expr-type-names)
+                                            (if incremental?
+                                              unit
+                                              (begin
+                                                (macro-live-prescan-reset!)
+                                                (macro-live-prescan-ensure!
+                                                  next-decls)
+                                                (macro-expand-set-expr-type-macro-names!
+                                                  macro-live-prescan-expr-type-names)))
                                             (set!
                                               ctfe-needs-metadata
                                               (or
@@ -97004,24 +98876,16 @@
                                           cur-module-id
                                           (match generated-ext
                                             [(MacroMaybeGeneratedModuleExtension.No)
-                                              (MacroSpliceEnvPlan.Refresh
+                                              (MacroSpliceEnvPlan.Extend
                                                 cur-top-env
-                                                expanded
-                                                (macro-scratch-decl-list-filter-path
-                                                  rest
-                                                  rest-paths
-                                                  decl-path))]
+                                                expanded)]
                                             [(MacroMaybeGeneratedModuleExtension.Some
                                                 summary
                                                 marker)
-                                              (MacroSpliceEnvPlan.Extend
+                                              (MacroSpliceEnvPlan.ExtendGeneratedModule
                                                 cur-top-env
                                                 summary
-                                                marker
-                                                (macro-scratch-decl-list-filter-path
-                                                  rest
-                                                  rest-paths
-                                                  decl-path))]))
+                                                marker)]))
                                           [(ResultMacroSpliceRebuild.Ok
                                               next-ctx
                                               next-top-env)
@@ -97063,10 +98927,11 @@
                                                   [_ unit])
                                                 unit)
                                               (set! cur-ctx next-ctx)
-                                              (set! cur-orig-decls next-decls)
+                                              (if incremental?
+                                                unit
+                                                (set! cur-orig-decls next-decls))
                                               (set! cur-top-env next-top-env)
-                                              (set! cur-decls spliced-tail)
-                                              (set! cur-paths spliced-path-tail))]
+                                              unit)]
                                           [(ResultMacroSpliceRebuild.Err diag)
                                             (begin
                                               (set!
@@ -97128,24 +98993,23 @@
                                 (let
                                   [_install-after-load : unit
                                     (tc-context-install-pools! cur-ctx)]
-                                  [_splice-view-generation : unit
-                                    (macro-splice-view-arena-begin!)]
-                                  [splice-decl-view : MacroSpliceDeclView
-                                    (macro-scratch-splice-decl-view-build
-                                      out-rev
+                                  [_segment-splice : unit
+                                    (macro-segmented-program-splice-current!
+                                      walk-state
                                       materialized-decls
-                                      rest)]
-                                  [splice-path-view : MacroSplicePathView
-                                    (macro-scratch-splice-path-view-build
-                                      out-paths-rev
-                                      materialized-paths
-                                      rest-paths)]
-                                  [materialized-tail : ast.AstDeclList
-                                    (struct-get splice-decl-view tail)]
+                                      materialized-paths)]
+                                  ;; Source-file materialization is the explicit
+                                  ;; conservative fallback: arbitrary aliases and
+                                  ;; index-bearing declarations require fresh
+                                  ;; whole-program symbols and registries.
+                                  [flat-view : MacroSegmentedProgramFlatView
+                                    (macro-segmented-program-flatten-fallback
+                                      walk-state
+                                      2)]
                                   [next-decls : ast.AstDeclList
-                                    (struct-get splice-decl-view view)]
+                                    (struct-get flat-view decls)]
                                   [next-paths : ast.AstDeclPathList
-                                    (struct-get splice-path-view view)]
+                                    (struct-get flat-view paths)]
                                   [extend-ctfe-metadata? : bool
                                     (macro-decls-reflection-relevant?
                                       materialized-decls)]
@@ -97181,13 +99045,9 @@
                                       next-paths
                                       cur-module
                                       cur-module-id
-                                      (MacroSpliceEnvPlan.Refresh
+                                      (MacroSpliceEnvPlan.Extend
                                         cur-top-env
-                                        materialized-decls
-                                        (macro-scratch-decl-list-filter-path
-                                          rest
-                                          rest-paths
-                                          decl-path)))
+                                        materialized-decls))
                                       [(ResultMacroSpliceRebuild.Ok
                                           next-ctx
                                           next-top-env)
@@ -97215,10 +99075,7 @@
                                           (set! cur-ctx next-ctx)
                                           (set! cur-orig-decls next-decls)
                                           (set! cur-top-env next-top-env)
-                                          (set! cur-decls materialized-tail)
-                                          (set!
-                                            cur-paths
-                                            (struct-get splice-path-view tail)))]
+                                          unit)]
                                       [(ResultMacroSpliceRebuild.Err diag)
                                         (begin
                                           (set!
@@ -97260,8 +99117,11 @@
                               decl-path
                               decl-owner-id
                               out-paths-rev))
-                          (set! cur-decls rest)
-                          (set! cur-paths rest-paths))]
+                          (macro-segmented-program-advance! walk-state)
+                          (macro-segmented-program-prefix-set!
+                            walk-state
+                            out-rev
+                            out-paths-rev))]
                       [else
                         (begin
                           (cfg
@@ -97314,14 +99174,18 @@
                                 (set!
                                   cur-module
                                   (macro-decl-module-display cur-module-id))
-                                (set! cur-decls rest)
-                                (set! cur-paths rest-paths))]
+                                (macro-segmented-program-advance! walk-state)
+                                (macro-segmented-program-prefix-set!
+                                  walk-state
+                                  out-rev
+                                  out-paths-rev))]
                             [(ResultMacroDeclExpansion.Err diag)
                               (begin
                                 (set!
                                   result
                                   (ResultMacroDeclsWithPaths.Err diag))
                                 (set! done true))]))])]))])))
+      (macro-segmented-program-end! walk-state)
       result)))
 
 (define (macro-expr-needs-compat-expansion?
@@ -97518,9 +99382,10 @@
         (io.print-error
           "compile-profile-detail|prelude.macro_walk_decl_visits|0\n")
         (io.print-error
-          (string.append
+          (str_cat.str-cat
             "compile-profile-detail|prelude.macro_walk_skipped_decls|"
-            (string.append (string.int->string count) "\n")))))))
+            (string.int->string count)
+            "\n"))))))
 
 (define (macro-surface-prefix-plan
   [decls : ast.AstDeclList]
@@ -98435,7 +100300,8 @@
   [cleanup-name : i64]) : i64
   (match (tc-context-program ctx)
     [(ast.AstProgram.Program decls-box)
-      (match (macro-import-alias-target-cached-id
+      (match (macro-import-alias-target-cached-id-in-context
+        ctx
         (box-get decls-box)
         (tc-context-module-id ctx)
         (ci.intern-qualified-module-id cleanup-name))
@@ -100237,9 +102103,10 @@
         (io.print-error
           "compile-profile-detail|prelude.typecheck_decl_checks|0\n")
         (io.print-error
-          (string.append
+          (str_cat.str-cat
             "compile-profile-detail|prelude.typecheck_skipped_decls|"
-            (string.append (string.int->string count) "\n")))))))
+            (string.int->string count)
+            "\n"))))))
 
 (define (tc-check-decls-with-surface-prefix-hit
   [ctx : TcContext]
@@ -100516,7 +102383,7 @@
     [poison-names : TcPoisonNameList
       (TcPoisonNameList (array.make-array i64 0) 0)]
     [diagnostics : cdiag.CompilerDiagnosticList
-      cdiag.CompilerDiagnosticList.Nil]
+      (cdiag.compiler-diagnostic-list-empty)]
     [type-module-cache-valid : bool false]
     [type-module-cache-path-owner-id : i64 -1]
     [type-module-cache-id : i64 -1]
@@ -100534,12 +102401,9 @@
               (cfg compile-profile (compiler-tc-decl-profile-finish))
               (set!
                 result
-                (match diagnostics
-                  [(cdiag.CompilerDiagnosticList.Nil)
-                    (ResultCompilerTypecheck.Ok cur-summary)]
-                  [_
-                    (ResultCompilerTypecheck.Err
-                      (box (cdiag.compiler-diagnostic-list-reverse diagnostics)))]))
+                (if (= (cdiag.compiler-diagnostic-list-count diagnostics) 0)
+                  (ResultCompilerTypecheck.Ok cur-summary)
+                  (ResultCompilerTypecheck.Err (box diagnostics))))
               (set! done true))]
           [(ast.AstDeclListStep.Cons decl rest)
             (let
@@ -100602,36 +102466,32 @@
                               (cfg
                                 compile-profile
                                 (compiler-tc-decl-profile-add-local-env))
+                              (cdiag.compiler-diagnostic-list-push!
+                                (&mut diagnostics)
+                                (tc-typecheck-diag-with-rest-path
+                                  (& rest)
+                                  decl
+                                  decl-path
+                                  message))
                               (set!
                                 result
-                                (ResultCompilerTypecheck.Err
-                                  (box
-                                    (cdiag.compiler-diagnostic-list-reverse
-                                      (cdiag.compiler-diagnostic-list-prepend
-                                        (tc-typecheck-diag-with-rest-path
-                                          (& rest)
-                                          decl
-                                          decl-path
-                                          message)
-                                        diagnostics)))))
+                                (ResultCompilerTypecheck.Err (box diagnostics)))
                               (set! done true))])]
                       [(ResultTcModuleLocalEnv.Err message)
                         (begin
                           (cfg
                             compile-profile
                             (compiler-tc-decl-profile-add-local-env))
+                          (cdiag.compiler-diagnostic-list-push!
+                            (&mut diagnostics)
+                            (tc-typecheck-diag-with-rest-path
+                              (& rest)
+                              decl
+                              decl-path
+                              message))
                           (set!
                             result
-                            (ResultCompilerTypecheck.Err
-                              (box
-                                (cdiag.compiler-diagnostic-list-reverse
-                                  (cdiag.compiler-diagnostic-list-prepend
-                                    (tc-typecheck-diag-with-rest-path
-                                      (& rest)
-                                      decl
-                                      decl-path
-                                      message)
-                                    diagnostics)))))
+                            (ResultCompilerTypecheck.Err (box diagnostics)))
                           (set! done true))]))]
                 [_
                   (if (and
@@ -100741,15 +102601,13 @@
                               (tc-unused-unsafe-restore-current-path! prev-path)
                               (if tc-poison-observed
                                 unit
-                                (set!
-                                  diagnostics
-                                  (cdiag.compiler-diagnostic-list-prepend
-                                    (tc-typecheck-diag-with-rest-path
-                                      (& rest)
-                                      decl
-                                      decl-path
-                                      message)
-                                    diagnostics)))
+                                (cdiag.compiler-diagnostic-list-push!
+                                  (&mut diagnostics)
+                                  (tc-typecheck-diag-with-rest-path
+                                    (& rest)
+                                    decl
+                                    decl-path
+                                    message)))
                               (set!
                                 cur-local-env
                                 (tc-poison-decl-env

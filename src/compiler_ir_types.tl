@@ -1382,6 +1382,56 @@
       (compiler-ir-instr-list-fill-array instrs slots 0)
       (CompilerIrInstrSeq slots count))))
 
+(define (compiler-ir-instr-seq-empty) : CompilerIrInstrSeq
+  (CompilerIrInstrSeq (array.make-array CompilerIrInstr 0) 0))
+
+(define (compiler-ir-instr-seq1 [first : CompilerIrInstr]) : CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrInstr)
+      (array.make-array CompilerIrInstr 1)]
+    (begin
+      (array-set! slots 0 first)
+      (CompilerIrInstrSeq slots 1))))
+
+(define (compiler-ir-instr-seq2
+  [first : CompilerIrInstr]
+  [second : CompilerIrInstr]) : CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrInstr)
+      (array.make-array CompilerIrInstr 2)]
+    (begin
+      (array-set! slots 0 first)
+      (array-set! slots 1 second)
+      (CompilerIrInstrSeq slots 2))))
+
+(define (compiler-ir-instr-seq3
+  [first : CompilerIrInstr]
+  [second : CompilerIrInstr]
+  [third : CompilerIrInstr]) : CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrInstr)
+      (array.make-array CompilerIrInstr 3)]
+    (begin
+      (array-set! slots 0 first)
+      (array-set! slots 1 second)
+      (array-set! slots 2 third)
+      (CompilerIrInstrSeq slots 3))))
+
+(define (compiler-ir-instr-seq4
+  [first : CompilerIrInstr]
+  [second : CompilerIrInstr]
+  [third : CompilerIrInstr]
+  [fourth : CompilerIrInstr]) : CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrInstr)
+      (array.make-array CompilerIrInstr 4)]
+    (begin
+      (array-set! slots 0 first)
+      (array-set! slots 1 second)
+      (array-set! slots 2 third)
+      (array-set! slots 3 fourth)
+      (CompilerIrInstrSeq slots 4))))
+
 (define (compiler-ir-instr-seq-to-list-rev
   [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
@@ -3631,13 +3681,13 @@
 
 (define (compiler-ir-value-render [value : CompilerIrValue]) : String
   (match value
-    [(CompilerIrValue.Var id) (string.append "%" (string.int->string id))]
+    [(CompilerIrValue.Var id) (str_cat.str-cat "%" (string.int->string id))]
     [(CompilerIrValue.Global name)
-      (string.append "@" (compiler-ir-symbol-text name))]
+      (str_cat.str-cat "@" (compiler-ir-symbol-text name))]
     [(CompilerIrValue.GlobalAddr name)
-      (string.append "&@" (compiler-ir-symbol-text name))]
+      (str_cat.str-cat "&@" (compiler-ir-symbol-text name))]
     [(CompilerIrValue.Function name)
-      (string.append "fn@" (compiler-ir-symbol-text name))]
+      (str_cat.str-cat "fn@" (compiler-ir-symbol-text name))]
     [(CompilerIrValue.I64 value) (string.int->string value)]
     [(CompilerIrValue.F64 value)
       (str_cat.str-cat "float-bits:" (compiler-ir-u64-payload-render value))]
@@ -3653,7 +3703,7 @@
         (string.int->string (string.string-length value))
         ">")]
     [(CompilerIrValue.RuntimeGlobal init)
-      (string.append "runtime-init@" (compiler-ir-symbol-text init))]
+      (str_cat.str-cat "runtime-init@" (compiler-ir-symbol-text init))]
     [(CompilerIrValue.Unit) "unit"]))
 
 (define (compiler-ir-value-list-render [values : CompilerIrValueList]) : String
@@ -7884,16 +7934,12 @@
 
 (define (compiler-ir-instr-seq-mutable-rewrite-ok?) : bool
   (let
-    [instrs : CompilerIrInstrList
-      (compiler-ir-instr-cons
+    [seq : CompilerIrInstrSeq
+      (compiler-ir-instr-seq3
         (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (ast.AstType.I64))
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (ast.AstType.I64))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Return
-              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
-            CompilerIrInstrList.Nil)))]
-    [seq : CompilerIrInstrSeq (compiler-ir-instr-seq-from-list instrs)]
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (ast.AstType.I64))
+        (CompilerIrInstr.Return
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2))))]
     (begin
       (compiler-ir-instr-seq-rewrite! seq compiler-ir-instr-seq-test-rewrite)
       (and
@@ -7904,18 +7950,13 @@
 
 (define (compiler-ir-instr-seq-mutable-compact-ok?) : bool
   (let
-    [instrs : CompilerIrInstrList
-      (compiler-ir-instr-cons
+    [seq : CompilerIrInstrSeq
+      (compiler-ir-instr-seq4
         (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (ast.AstType.I64))
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.Alloc 9 (ast.AstType.I64))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (ast.AstType.I64))
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Return
-                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
-              CompilerIrInstrList.Nil))))]
-    [seq : CompilerIrInstrSeq (compiler-ir-instr-seq-from-list instrs)]
+        (CompilerIrInstr.Alloc 9 (ast.AstType.I64))
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (ast.AstType.I64))
+        (CompilerIrInstr.Return
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2))))]
     [roundtrip : CompilerIrInstrList CompilerIrInstrList.Nil]
     (begin
       (compiler-ir-instr-seq-compact!
@@ -8005,8 +8046,7 @@
       (compiler-ir-block-builder-with-capacity 1)]
     [function-builder : CompilerIrFunctionBuilder
       (compiler-ir-function-builder-with-capacity 1)]
-    [instrs : CompilerIrInstrSeq
-      (compiler-ir-instr-seq-from-list CompilerIrInstrList.Nil)]
+    [instrs : CompilerIrInstrSeq (compiler-ir-instr-seq-empty)]
     [blocks : CompilerIrBlockList CompilerIrBlockList.Nil]
     [functions : CompilerIrFunctionList CompilerIrFunctionList.Nil]
     (begin
@@ -8023,13 +8063,19 @@
       (set! instrs (compiler-ir-instr-builder-to-seq instr-builder))
       (compiler-ir-block-builder-push!
         (&mut block-builder)
-        (compiler-ir-block (compiler-ir-label "entry") CompilerIrInstrList.Nil))
+        (CompilerIrBlock.Block
+          (compiler-ir-label "entry")
+          (compiler-ir-instr-seq-empty)))
       (compiler-ir-block-builder-push!
         (&mut block-builder)
-        (compiler-ir-block (compiler-ir-label "middle") CompilerIrInstrList.Nil))
+        (CompilerIrBlock.Block
+          (compiler-ir-label "middle")
+          (compiler-ir-instr-seq-empty)))
       (compiler-ir-block-builder-push!
         (&mut block-builder)
-        (compiler-ir-block (compiler-ir-label "done") CompilerIrInstrList.Nil))
+        (CompilerIrBlock.Block
+          (compiler-ir-label "done")
+          (compiler-ir-instr-seq-empty)))
       (set! blocks (compiler-ir-block-builder-to-list block-builder))
       (compiler-ir-function-builder-push!
         (&mut function-builder)

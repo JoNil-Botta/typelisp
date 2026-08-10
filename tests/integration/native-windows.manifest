@@ -22,6 +22,7 @@ ptr_addr_of_places|tests/integration/ptr_addr_of_places.tl|0|-|-|-
 ptr_aggregate_copy|tests/integration/ptr_aggregate_copy.tl|0|-|-|stdlib/array.tl
 raw_pointer_register_addr_of|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-
 auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl
+stdlib_string_to_int|tests/integration/stdlib_string_to_int.tl|42|-|-|stdlib/string.tl
 mut_to_immut_reborrow_call|tests/integration/mut_to_immut_reborrow_call.tl|42|-|-|-
 borrow_reborrow_stored_reference|tests/integration/borrow_reborrow_stored_reference.tl|0|-|-|-
 borrow_reborrow_stored_reference_aggregate|tests/integration/borrow_reborrow_stored_reference_aggregate.tl|42|-|-|-
@@ -75,6 +76,7 @@ arg_register_swap_cycle|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdl
 arg_cycle_stack_break|tests/integration/arg_cycle_stack_break.tl|42|-|-|stdlib/io.tl
 save_reload_elide|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl
 global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+scalar_indexed_snapshot|tests/integration/scalar_indexed_snapshot.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 call_spanning_split|tests/integration/call_spanning_split.tl|42|-|-|stdlib/io.tl
 call_spanning_split_single|tests/integration/call_spanning_split_single.tl|42|-|-|stdlib/io.tl
 loopcarry_coalesce|tests/integration/loopcarry_coalesce.tl|42|-|-|stdlib/io.tl
@@ -165,6 +167,10 @@ box_pattern_direct|tests/integration/box_pattern_direct.tl|42|-|-|-
 box_pattern_enum_payload|tests/integration/box_pattern_enum_payload.tl|42|-|-|-
 make_array_negative_trap|tests/integration/make_array_negative_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 make_array_overflow_trap|tests/integration/make_array_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+intern_pool_active_source_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|0|compiler_intern.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_pool_active_generated_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|1|compiler_intern.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_pool_state_source_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|2|compiler_intern.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_pool_state_generated_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|3|compiler_intern.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
 bce_paired_underflow_sp0_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_paired_underflow_sp0_trap/bce_paired_underflow_sp0_trap.tl:39:47: array index out of bounds: index=-1 length=4\n
 bce_paired_underflow_sp1_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_paired_underflow_sp1_trap/bce_paired_underflow_sp1_trap.tl:40:46: array index out of bounds: index=-1 length=4\n
 bce_affine_versioning|tests/integration/bce_affine_versioning.tl|42|-|0|stdlib/io.tl stdlib/string.tl
@@ -224,6 +230,7 @@ opt2_f32_mandelbrot_loop|tests/integration/opt2_f32_mandelbrot_loop.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
 integer_literal_default_i32|tests/integration/integer_literal_default_i32.tl|42|-|-|-
 integer_literal_default_i32_and_wide_cast|tests/integration/integer_literal_default_i32_and_wide_cast.tl|42|-|-|-
+integer_literal_boundary_matrix|tests/integration/integer_literal_boundary_matrix.tl|42|-|-|stdlib/comptime.tl
 integer_literal_u64_full_range|tests/integration/integer_literal_u64_full_range.tl|42|-|-|-
 inline_alloc_scavenge_live_through|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl
 parser|tests/integration/parser.tl|14|-|-|-

@@ -1,10 +1,12 @@
 ;; compiler_windows_coff_core.tl - Shared Windows COFF eligibility and
 ;; one-optimization object-or-assembly emission.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.text_buf)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as windows_coff_svec)
 (import compiler_object as cobj)
+(import compiler_object_asm)
 (import compiler_profile_state as profile_state)
 (import compiler_object_coff)
 (import compiler_driver_core)
@@ -21,8 +23,12 @@
   (Linkable)
   (Unavailable String))
 
+(defenum CompilerWindowsBatchSideAssembly
+  (None)
+  (Some String))
+
 (defenum ResultCompilerWindowsBatchArtifact
-  (CoffObject String)
+  (CoffObject String CompilerWindowsBatchSideAssembly)
   (Assembly text_buf.TextBuf String)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
@@ -535,6 +541,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [mode : compiler_backend.CompilerBackendMode]
   [force-assembly : bool]
+  [emit-side-assembly : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
   (if force-assembly
     (compiler-windows-batch-emit-assembly
@@ -599,7 +606,25 @@
                               "render.coff-object"))
                           (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
                             "render.coff-object")
-                          (ResultCompilerWindowsBatchArtifact.CoffObject object))]
+                          (if emit-side-assembly
+                            (match (compiler_object_asm.compiler-object-asm-render
+                              image)
+                              [(compiler_object_asm.ResultCompilerObjectAsm.Ok
+                                  asm)
+                                (ResultCompilerWindowsBatchArtifact.CoffObject
+                                  object
+                                  (CompilerWindowsBatchSideAssembly.Some asm))]
+                              [(compiler_object_asm.ResultCompilerObjectAsm.Err
+                                  message)
+                                (ResultCompilerWindowsBatchArtifact.Err
+                                  (compiler-windows-batch-diagnostic
+                                    input-path
+                                    (str_cat.str-cat
+                                      "assembly side artifact rendering failed: "
+                                      message)))])
+                            (ResultCompilerWindowsBatchArtifact.CoffObject
+                              object
+                              CompilerWindowsBatchSideAssembly.None)))]
                       [(compiler_object_coff.ResultCompilerObjectCoff.Err
                           message)
                         (begin
@@ -611,7 +636,7 @@
                           (ResultCompilerWindowsBatchArtifact.Err
                             (compiler-windows-batch-diagnostic
                               input-path
-                              (string.append
+                              (str_cat.str-cat
                                 "COFF serialization failed: "
                                 message))))]))]
                 [(CompilerWindowsCoffLinkability.Unavailable category)
@@ -645,6 +670,7 @@
   [mode : compiler_backend.CompilerBackendMode]
   [opt-level : i64]
   [force-assembly : bool]
+  [emit-side-assembly : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerWindowsBatchArtifact.Err
@@ -692,6 +718,7 @@
                   optimized-spans
                   mode
                   force-assembly
+                  emit-side-assembly
                   profile-state))))]))))
 
 (define (compiler-windows-batch-emit-lowered-result
@@ -699,7 +726,8 @@
   [lowered : compiler_driver_core.ResultCompilerDriverLowered]
   [mode : compiler_backend.CompilerBackendMode]
   [opt-level : i64]
-  [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
+  [force-assembly : bool]
+  [emit-side-assembly : bool]) : ResultCompilerWindowsBatchArtifact
   (match lowered
     [(compiler_driver_core.ResultCompilerDriverLowered.Ok
         program
@@ -733,6 +761,7 @@
               mode
               opt-level
               force-assembly
+              emit-side-assembly
               profile-state))]
         (begin
           (if (= opt-level 0)
@@ -781,4 +810,5 @@
         lowered
         mode
         opt-level
-        force-assembly))))
+        force-assembly
+        false))))

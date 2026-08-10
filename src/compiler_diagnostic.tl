@@ -3,6 +3,7 @@
 (import token)
 (import compiler_ast_types as ast)
 (import stdlib.string)
+(import stdlib.text_buf)
 
 (defenum CompilerDiagnosticLevel
   (CompilerDiagnosticError)
@@ -24,15 +25,13 @@
   (span CompilerDiagnosticSpan)
   (label CompilerDiagnosticMaybeString))
 
-(defenum CompilerDiagnosticLabelList
-  (CompilerDiagnosticLabelNil)
-  (CompilerDiagnosticLabelCons
-    CompilerDiagnosticLabel
-    (Box CompilerDiagnosticLabelList)))
+(defstruct CompilerDiagnosticLabelList
+  (slots (__tl_dyn-array CompilerDiagnosticLabel))
+  (len i64))
 
-(defenum CompilerDiagnosticNoteList
-  (CompilerDiagnosticNoteNil)
-  (CompilerDiagnosticNoteCons String (Box CompilerDiagnosticNoteList)))
+(defstruct CompilerDiagnosticNoteList
+  (slots (__tl_dyn-array String))
+  (len i64))
 
 (defenum CompilerDiagnosticApplicability
   (CompilerDiagnosticMachineApplicable)
@@ -70,49 +69,113 @@
   (notes CompilerDiagnosticNoteList)
   (fixes CompilerDiagnosticFixSeq))
 
-(defenum CompilerDiagnosticList
-  (Nil)
-  (Cons CompilerDiagnostic (Box CompilerDiagnosticList)))
+(defstruct CompilerDiagnosticList
+  (slots (__tl_dyn-array CompilerDiagnostic))
+  (len i64))
+
+(define (compiler-diagnostic-list-with-capacity [capacity : i64]) : CompilerDiagnosticList
+  (CompilerDiagnosticList (make-array CompilerDiagnostic capacity) 0))
+
+(define (compiler-diagnostic-list-empty) : CompilerDiagnosticList
+  (compiler-diagnostic-list-with-capacity 0))
 
 (define (compiler-diagnostic-list-single [diag : CompilerDiagnostic]) : CompilerDiagnosticList
-  (CompilerDiagnosticList.Cons diag (box CompilerDiagnosticList.Nil)))
+  (let
+    [diagnostics : CompilerDiagnosticList
+      (compiler-diagnostic-list-with-capacity 1)]
+    (begin
+      (array-set! (struct-get diagnostics slots) 0 diag)
+      (set! (struct-get diagnostics len) 1)
+      diagnostics)))
 
 (define (compiler-diagnostic-list-box-single [diag : (Box CompilerDiagnostic)]) : (Box
     CompilerDiagnosticList)
   (box (compiler-diagnostic-list-single (box-get diag))))
 
-(define (compiler-diagnostic-list-prepend
-  [diag : CompilerDiagnostic]
-  [diagnostics : CompilerDiagnosticList]) : CompilerDiagnosticList
-  (CompilerDiagnosticList.Cons diag (box diagnostics)))
-
-(define (compiler-diagnostic-list-reverse-into
-  [diagnostics : CompilerDiagnosticList]
-  [out : CompilerDiagnosticList]) : CompilerDiagnosticList
-  (match diagnostics
-    [(CompilerDiagnosticList.Nil) out]
-    [(CompilerDiagnosticList.Cons diag rest)
-      (compiler-diagnostic-list-reverse-into
-        (box-get rest)
-        (compiler-diagnostic-list-prepend diag out))]))
-
-(define (compiler-diagnostic-list-reverse
-  [diagnostics : CompilerDiagnosticList]) : CompilerDiagnosticList
-  (compiler-diagnostic-list-reverse-into diagnostics CompilerDiagnosticList.Nil))
-
 (define (compiler-diagnostic-list-count [diagnostics : CompilerDiagnosticList]) : i64
-  (match diagnostics
-    [(CompilerDiagnosticList.Nil) 0]
-    [(CompilerDiagnosticList.Cons _ rest)
-      (+ 1 (compiler-diagnostic-list-count (box-get rest)))]))
+  (struct-get diagnostics len))
+
+(define (compiler-diagnostic-list-get
+  [diagnostics : CompilerDiagnosticList]
+  [index : i64]) : CompilerDiagnostic
+  (array-ref (struct-get diagnostics slots) index))
+
+(define (compiler-diagnostic-list-ref
+  [diagnostics : (& diagnostics CompilerDiagnosticList)]
+  [index : i64]) : (& diagnostics CompilerDiagnostic)
+  (& (array-ref (struct-get diagnostics slots) index)))
+
+(define (compiler-diagnostic-list-copy-range!
+  [dst : (&mut dst (__tl_dyn-array CompilerDiagnostic))]
+  [src : (& src (__tl_dyn-array CompilerDiagnostic))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-diagnostic-list-grow!
+  [diagnostics : (&mut diagnostics CompilerDiagnosticList)]) : unit
+  (let
+    [count : i64 (struct-get diagnostics len)]
+    [old-capacity : i64 (array-length (struct-get diagnostics slots))]
+    [new-capacity : i64
+      (if (< old-capacity 1)
+        4
+        (* old-capacity 2))]
+    [new-slots : (__tl_dyn-array CompilerDiagnostic)
+      (make-array CompilerDiagnostic new-capacity)]
+    (begin
+      (compiler-diagnostic-list-copy-range!
+        (&mut new-slots)
+        (& (struct-get diagnostics slots))
+        count)
+      (set! (struct-get diagnostics slots) new-slots))))
+
+(define (compiler-diagnostic-list-push!
+  [diagnostics : (&mut diagnostics CompilerDiagnosticList)]
+  [diag : CompilerDiagnostic]) : unit
+  (begin
+    (if (<
+      (struct-get diagnostics len)
+      (array-length (struct-get diagnostics slots)))
+      unit
+      (compiler-diagnostic-list-grow! diagnostics))
+    (let
+      [index : i64 (struct-get diagnostics len)]
+      (begin
+        (array-set! (struct-get diagnostics slots) index diag)
+        (set! (struct-get diagnostics len) (+ index 1))))))
+
+(define (compiler-diagnostic-list-insert!
+  [diagnostics : (&mut diagnostics CompilerDiagnosticList)]
+  [index : i64]
+  [diag : CompilerDiagnostic]) : unit
+  (let
+    [count : i64 (struct-get diagnostics len)]
+    (begin
+      (if (< count (array-length (struct-get diagnostics slots)))
+        unit
+        (compiler-diagnostic-list-grow! diagnostics))
+      (let
+        [cursor : i64 count]
+        (begin
+          (while (> cursor index)
+            (begin
+              (array-set!
+                (struct-get diagnostics slots)
+                cursor
+                (array-ref (struct-get diagnostics slots) (- cursor 1)))
+              (set! cursor (- cursor 1))))
+          (array-set! (struct-get diagnostics slots) index diag)
+          (set! (struct-get diagnostics len) (+ count 1)))))))
 
 (define (compiler-diagnostic-list-first [diagnostics : CompilerDiagnosticList]) : CompilerDiagnostic
-  (match diagnostics
-    [(CompilerDiagnosticList.Cons diag _) diag]
-    [(CompilerDiagnosticList.Nil)
-      (compiler-diagnostic-at-start
-        ""
-        "compiler: internal empty diagnostic list")]))
+  (if (> (struct-get diagnostics len) 0)
+    (array-ref (struct-get diagnostics slots) 0)
+    (compiler-diagnostic-at-start "" "compiler: internal empty diagnostic list")))
 
 (define (compiler-diagnostic-span-path [span : (& span CompilerDiagnosticSpan)]) : String
   (string.copy (& (struct-get span path))))
@@ -306,25 +369,101 @@
     (struct-get span end-line)
     (struct-get span end-col)))
 
+(define (compiler-diagnostic-label-list-empty) : CompilerDiagnosticLabelList
+  (CompilerDiagnosticLabelList (make-array CompilerDiagnosticLabel 0) 0))
+
+(define (compiler-diagnostic-label-list-count
+  [labels : CompilerDiagnosticLabelList]) : i64
+  (struct-get labels len))
+
+(define (compiler-diagnostic-label-list-get
+  [labels : CompilerDiagnosticLabelList]
+  [index : i64]) : CompilerDiagnosticLabel
+  (array-ref (struct-get labels slots) index))
+
+;; Label attachment is a persistent update. A right-sized replacement keeps the
+;; source diagnostic isolated while retaining the established newest-first order.
+(define (compiler-diagnostic-label-list-prepend
+  [label : CompilerDiagnosticLabel]
+  [labels : CompilerDiagnosticLabelList]) : CompilerDiagnosticLabelList
+  (let
+    [count : i64 (struct-get labels len)]
+    [src : (__tl_dyn-array CompilerDiagnosticLabel) (struct-get labels slots)]
+    [dst : (__tl_dyn-array CompilerDiagnosticLabel)
+      (make-array CompilerDiagnosticLabel (+ count 1))]
+    [index : i64 0]
+    (begin
+      (array-set! dst 0 label)
+      (while (< index count)
+        (begin
+          (array-set! dst (+ index 1) (array-ref src index))
+          (set! index (+ index 1))))
+      (CompilerDiagnosticLabelList dst (+ count 1)))))
+
 (define (compiler-diagnostic-copy-label-list
   [labels : CompilerDiagnosticLabelList]) : CompilerDiagnosticLabelList
-  (match labels
-    [CompilerDiagnosticLabelNil CompilerDiagnosticLabelNil]
-    [(CompilerDiagnosticLabelCons label rest)
-      (CompilerDiagnosticLabelCons
-        (CompilerDiagnosticLabel
-          (compiler-diagnostic-copy-span (struct-get label span))
-          (compiler-diagnostic-copy-maybe-string (struct-get label label)))
-        (box (compiler-diagnostic-copy-label-list (box-get rest))))]))
+  (let
+    [count : i64 (struct-get labels len)]
+    [src : (__tl_dyn-array CompilerDiagnosticLabel) (struct-get labels slots)]
+    [dst : (__tl_dyn-array CompilerDiagnosticLabel)
+      (make-array CompilerDiagnosticLabel count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [label : CompilerDiagnosticLabel (array-ref src index)]
+          (begin
+            (array-set!
+              dst
+              index
+              (CompilerDiagnosticLabel
+                (compiler-diagnostic-copy-span (struct-get label span))
+                (compiler-diagnostic-copy-maybe-string (struct-get label label))))
+            (set! index (+ index 1)))))
+      (CompilerDiagnosticLabelList dst count))))
+
+(define (compiler-diagnostic-note-list-empty) : CompilerDiagnosticNoteList
+  (CompilerDiagnosticNoteList (make-array String 0) 0))
+
+(define (compiler-diagnostic-note-list-count
+  [notes : CompilerDiagnosticNoteList]) : i64
+  (struct-get notes len))
+
+(define (compiler-diagnostic-note-list-get
+  [notes : CompilerDiagnosticNoteList]
+  [index : i64]) : String
+  (array-ref (struct-get notes slots) index))
+
+;; Notes have the same persistent newest-first attachment contract as labels.
+(define (compiler-diagnostic-note-list-prepend
+  [note : String]
+  [notes : CompilerDiagnosticNoteList]) : CompilerDiagnosticNoteList
+  (let
+    [count : i64 (struct-get notes len)]
+    [src : (__tl_dyn-array String) (struct-get notes slots)]
+    [dst : (__tl_dyn-array String) (make-array String (+ count 1))]
+    [index : i64 0]
+    (begin
+      (array-set! dst 0 note)
+      (while (< index count)
+        (begin
+          (array-set! dst (+ index 1) (array-ref src index))
+          (set! index (+ index 1))))
+      (CompilerDiagnosticNoteList dst (+ count 1)))))
 
 (define (compiler-diagnostic-copy-note-list
   [notes : CompilerDiagnosticNoteList]) : CompilerDiagnosticNoteList
-  (match notes
-    [CompilerDiagnosticNoteNil CompilerDiagnosticNoteNil]
-    [(CompilerDiagnosticNoteCons note rest)
-      (CompilerDiagnosticNoteCons
-        (string.copy (& note))
-        (box (compiler-diagnostic-copy-note-list (box-get rest))))]))
+  (let
+    [count : i64 (struct-get notes len)]
+    [src : (__tl_dyn-array String) (struct-get notes slots)]
+    [dst : (__tl_dyn-array String) (make-array String count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! dst index (string.copy (& (array-ref src index))))
+          (set! index (+ index 1))))
+      (CompilerDiagnosticNoteList dst count))))
 
 (define (compiler-diagnostic-copy-text-edit [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEdit
   (CompilerDiagnosticTextEdit
@@ -596,8 +735,8 @@
     CompilerDiagnosticNoString
     (CompilerDiagnosticSpan path line col line col)
     CompilerDiagnosticNoString
-    CompilerDiagnosticLabelNil
-    CompilerDiagnosticNoteNil))
+    (compiler-diagnostic-label-list-empty)
+    (compiler-diagnostic-note-list-empty)))
 
 (define (compiler-diagnostic-from-span
   [path : String]
@@ -615,8 +754,8 @@
       (token.span-end-line span)
       (token.span-end-col span))
     CompilerDiagnosticNoString
-    CompilerDiagnosticLabelNil
-    CompilerDiagnosticNoteNil))
+    (compiler-diagnostic-label-list-empty)
+    (compiler-diagnostic-note-list-empty)))
 
 (define (compiler-diagnostic-from-ast-span
   [path : String]
@@ -634,8 +773,8 @@
       (ast.ast-source-span-end-line span)
       (ast.ast-source-span-end-col span))
     CompilerDiagnosticNoString
-    CompilerDiagnosticLabelNil
-    CompilerDiagnosticNoteNil))
+    (compiler-diagnostic-label-list-empty)
+    (compiler-diagnostic-note-list-empty)))
 
 (define (compiler-diagnostic-from-source-error
   [path : String]
@@ -734,9 +873,9 @@
     (compiler-diagnostic-category diag)
     (compiler-diagnostic-primary-span diag)
     (compiler-diagnostic-help diag)
-    (CompilerDiagnosticLabelCons
+    (compiler-diagnostic-label-list-prepend
       (CompilerDiagnosticLabel span label)
-      (box (compiler-diagnostic-secondary-spans diag)))
+      (compiler-diagnostic-secondary-spans diag))
     (compiler-diagnostic-notes diag)
     (compiler-diagnostic-fixes diag)))
 
@@ -751,7 +890,9 @@
     (compiler-diagnostic-primary-span diag)
     (compiler-diagnostic-help diag)
     (compiler-diagnostic-secondary-spans diag)
-    (CompilerDiagnosticNoteCons note (box (compiler-diagnostic-notes diag)))
+    (compiler-diagnostic-note-list-prepend
+      note
+      (compiler-diagnostic-notes diag))
     (compiler-diagnostic-fixes diag)))
 
 (define (compiler-diagnostic-with-primary-span
@@ -844,26 +985,27 @@
     diag))
 
 (define (compiler-diagnostic-render-notes [notes : CompilerDiagnosticNoteList]) : String
-  (match notes
-    [(CompilerDiagnosticNoteNil) ""]
-    [(CompilerDiagnosticNoteCons note rest)
-      (string.append
-        "\nnote: "
-        (string.append note (compiler-diagnostic-render-notes (box-get rest))))]))
+  (let
+    [count : i64 (compiler-diagnostic-note-list-count notes)]
+    [index : i64 0]
+    [out : text_buf.TextBuf (text_buf.empty)]
+    (begin
+      (while (< index count)
+        (begin
+          (text_buf.append! out "\nnote: ")
+          (text_buf.append! out (compiler-diagnostic-note-list-get notes index))
+          (set! index (+ index 1))))
+      (text_buf.render out))))
 
 (define (compiler-diagnostic-render [diag : CompilerDiagnostic]) : String
-  (string.append
-    (string.append
-      (compiler-diagnostic-path diag)
-      (string.append
-        ":"
-        (string.append
-          (string.int->string (compiler-diagnostic-line diag))
-          (string.append
-            ":"
-            (string.append
-              (string.int->string (compiler-diagnostic-col diag))
-              (string.append ": " (compiler-diagnostic-message diag)))))))
+  (str_cat.str-cat
+    (compiler-diagnostic-path diag)
+    ":"
+    (string.int->string (compiler-diagnostic-line diag))
+    ":"
+    (string.int->string (compiler-diagnostic-col diag))
+    ": "
+    (compiler-diagnostic-message diag)
     (compiler-diagnostic-render-notes (compiler-diagnostic-notes diag))))
 
 (define (compiler-diagnostic-level-render [level : CompilerDiagnosticLevel]) : String
@@ -875,19 +1017,19 @@
 (define (compiler-diagnostic-repeat [chunk : String] [count : i64]) : String
   (let
     [idx : i64 0]
-    [out : String ""]
+    [out : text_buf.TextBuf (text_buf.empty)]
     (begin
       (while (< idx count)
         (begin
-          (set! out (string.concat3 out chunk ""))
+          (text_buf.append! out (string.copy chunk))
           (set! idx (+ idx 1))))
-      out)))
+      (text_buf.render out))))
 
 (define (compiler-diagnostic-line-gutter [line : i64]) : String
   (let
     [line-text : String (string.int->string line)]
     (if (< line 10)
-      (string.append " " line-text)
+      (str_cat.str-cat " " line-text)
       line-text)))
 
 (define (compiler-diagnostic-blank-gutter [line : i64]) : String
@@ -970,7 +1112,7 @@
         (str_cat.str-cat
           level-text
           ": "
-          (string.append (compiler-diagnostic-message diag) "\n"))])))
+          (str_cat.str-cat (compiler-diagnostic-message diag) "\n"))])))
 
 (define (compiler-diagnostic-render-span-location-with-fallback
   [fallback-path : String]
@@ -1002,7 +1144,7 @@
 (define (compiler-diagnostic-render-label-suffix
   [label : CompilerDiagnosticMaybeString]) : String
   (match label
-    [(CompilerDiagnosticSomeString text) (string.append " " text)]
+    [(CompilerDiagnosticSomeString text) (str_cat.str-cat " " text)]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-source-snippet
@@ -1024,8 +1166,8 @@
               (compiler-diagnostic-span-start-col span)))]
         [underline : String
           (compiler-diagnostic-repeat "^" (compiler-diagnostic-span-width span))]
-        (string.append
-          (str_cat.str-cat gutter " | " (string.append line-text "\n"))
+        (str_cat.str-cat
+          (str_cat.str-cat gutter " | " (str_cat.str-cat line-text "\n"))
           (str_cat.str-cat
             blank
             " | "
@@ -1039,7 +1181,7 @@
   [label : CompilerDiagnosticMaybeString]) : String
   (match label
     [(CompilerDiagnosticSomeString text)
-      (string.append "   = label: " (string.append text "\n"))]
+      (str_cat.str-cat "   = label: " text "\n")]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-secondary-span
@@ -1062,33 +1204,38 @@
         span
         (& source)
         (& label-suffix))]
-    (string.concat3
+    (str_cat.str-cat
       (compiler-diagnostic-render-span-location-with-fallback
         (string.copy primary-path)
         span)
-      (string.concat3
-        "   |\n"
-        (if same-path
-          (if (string.eq snippet "")
-            (string.copy label-only)
-            (string.copy snippet))
-          (string.copy label-only))
-        "")
+      "   |\n"
+      (if same-path
+        (if (string.eq snippet "")
+          (string.copy label-only)
+          (string.copy snippet))
+        (string.copy label-only))
+      ""
       "")))
 
 (define (compiler-diagnostic-render-secondary-spans
   [primary-path : String]
   [source : String]
   [labels : CompilerDiagnosticLabelList]) : String
-  (match labels
-    [(CompilerDiagnosticLabelNil) ""]
-    [(CompilerDiagnosticLabelCons entry rest)
-      (string.append
-        (compiler-diagnostic-render-secondary-span primary-path source entry)
-        (compiler-diagnostic-render-secondary-spans
-          primary-path
-          source
-          (box-get rest)))]))
+  (let
+    [count : i64 (compiler-diagnostic-label-list-count labels)]
+    [index : i64 0]
+    [out : text_buf.TextBuf (text_buf.empty)]
+    (begin
+      (while (< index count)
+        (begin
+          (text_buf.append!
+            out
+            (compiler-diagnostic-render-secondary-span
+              primary-path
+              source
+              (compiler-diagnostic-label-list-get labels index)))
+          (set! index (+ index 1))))
+      (text_buf.render out))))
 
 (define (compiler-diagnostic-render-help [help : CompilerDiagnosticMaybeString]) : String
   (match help
@@ -1098,15 +1245,18 @@
 
 (define (compiler-diagnostic-render-source-notes
   [notes : CompilerDiagnosticNoteList]) : String
-  (match notes
-    [(CompilerDiagnosticNoteNil) ""]
-    [(CompilerDiagnosticNoteCons note rest)
-      (str_cat.str-cat
-        "   = note: "
-        note
-        (string.append
-          "\n"
-          (compiler-diagnostic-render-source-notes (box-get rest))))]))
+  (let
+    [count : i64 (compiler-diagnostic-note-list-count notes)]
+    [index : i64 0]
+    [out : text_buf.TextBuf (text_buf.empty)]
+    (begin
+      (while (< index count)
+        (begin
+          (text_buf.append! out "   = note: ")
+          (text_buf.append! out (compiler-diagnostic-note-list-get notes index))
+          (text_buf.append! out "\n")
+          (set! index (+ index 1))))
+      (text_buf.render out))))
 
 (define (compiler-diagnostic-render-source-with-metadata
   [diag : CompilerDiagnostic]
@@ -1118,26 +1268,20 @@
     [primary-span : CompilerDiagnosticSpan
       (compiler-diagnostic-primary-span diag)]
     [empty-label : String ""]
-    (string.append
+    (str_cat.str-cat
       (compiler-diagnostic-render-header diag level code)
-      (string.append
-        (compiler-diagnostic-render-location diag)
-        (string.append
-          "   |\n"
-          (string.append
-            (compiler-diagnostic-render-source-snippet
-              primary-span
-              (& source)
-              (& empty-label))
-            (string.append
-              (compiler-diagnostic-render-secondary-spans
-                (compiler-diagnostic-path diag)
-                source
-                (compiler-diagnostic-secondary-spans diag))
-              (string.append
-                (compiler-diagnostic-render-help help)
-                (compiler-diagnostic-render-source-notes
-                  (compiler-diagnostic-notes diag))))))))))
+      (compiler-diagnostic-render-location diag)
+      "   |\n"
+      (compiler-diagnostic-render-source-snippet
+        primary-span
+        (& source)
+        (& empty-label))
+      (compiler-diagnostic-render-secondary-spans
+        (compiler-diagnostic-path diag)
+        source
+        (compiler-diagnostic-secondary-spans diag))
+      (compiler-diagnostic-render-help help)
+      (compiler-diagnostic-render-source-notes (compiler-diagnostic-notes diag)))))
 
 (define (compiler-diagnostic-render-source
   [diag : CompilerDiagnostic]

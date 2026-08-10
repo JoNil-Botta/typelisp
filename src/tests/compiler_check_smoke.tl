@@ -1,4 +1,5 @@
 ;; compiler_check_smoke.tl - Runnable smoke for virtual-source check helpers.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -55,7 +56,7 @@
     (if (or (< start 0) (< end start))
       cdiag.CompilerDiagnosticNoString
       (cdiag.CompilerDiagnosticSomeString
-        (string.concat3
+        (str_cat.str-cat
           (string.substring source 0 start)
           (cdiag.compiler-diagnostic-text-edit-replacement edit)
           (string.substring source end (- source-len end)))))))
@@ -317,33 +318,26 @@
     [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
+        [second : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
+        [third : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-get diagnostics 2)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
-          (match diagnostics
-            [(cdiag.CompilerDiagnosticList.Cons first first-rest)
-              (match (box-get first-rest)
-                [(cdiag.CompilerDiagnosticList.Cons second second-rest)
-                  (match (box-get second-rest)
-                    [(cdiag.CompilerDiagnosticList.Cons third third-rest)
-                      (and
-                        (string.eq
-                          (cdiag.compiler-diagnostic-message first)
-                          "typecheck: unbound name unknown-one")
-                        (= (cdiag.compiler-diagnostic-line first) 1)
-                        (string.eq
-                          (cdiag.compiler-diagnostic-message second)
-                          "typecheck: unbound name unknown-two")
-                        (= (cdiag.compiler-diagnostic-line second) 2)
-                        (string.eq
-                          (cdiag.compiler-diagnostic-message third)
-                          "typecheck: integer operator expects matching integer operands")
-                        (= (cdiag.compiler-diagnostic-line third) 3)
-                        (match (box-get third-rest)
-                          [(cdiag.CompilerDiagnosticList.Nil) true]
-                          [_ false]))]
-                    [_ false])]
-                [_ false])]
-            [_ false])))]))
+          (string.eq
+            (cdiag.compiler-diagnostic-message first)
+            "typecheck: unbound name unknown-one")
+          (= (cdiag.compiler-diagnostic-line first) 1)
+          (string.eq
+            (cdiag.compiler-diagnostic-message second)
+            "typecheck: unbound name unknown-two")
+          (= (cdiag.compiler-diagnostic-line second) 2)
+          (string.eq
+            (cdiag.compiler-diagnostic-message third)
+            "typecheck: integer operator expects matching integer operands")
+          (= (cdiag.compiler-diagnostic-line third) 3)))]))
 
 (define (compiler-check-parser-recovery-result-ok?
   [result : compiler_check_core.ResultCompilerCheck]) : bool
@@ -352,36 +346,29 @@
     [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
+        [second : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
+        [third : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-get diagnostics 2)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
-          (match diagnostics
-            [(cdiag.CompilerDiagnosticList.Cons first first-rest)
-              (match (box-get first-rest)
-                [(cdiag.CompilerDiagnosticList.Cons second second-rest)
-                  (match (box-get second-rest)
-                    [(cdiag.CompilerDiagnosticList.Cons third third-rest)
-                      (and
-                        (string.eq
-                          (cdiag.compiler-diagnostic-message first)
-                          "parse: malformed define")
-                        (string.eq
-                          (cdiag.compiler-diagnostic-code-or-empty first)
-                          (cdiag.compiler-diagnostic-code-parse))
-                        (= (cdiag.compiler-diagnostic-line first) 1)
-                        (string.eq
-                          (cdiag.compiler-diagnostic-message second)
-                          "typecheck: unbound name missing-a")
-                        (= (cdiag.compiler-diagnostic-line second) 2)
-                        (string.eq
-                          (cdiag.compiler-diagnostic-message third)
-                          "typecheck: unbound name missing-b")
-                        (= (cdiag.compiler-diagnostic-line third) 3)
-                        (match (box-get third-rest)
-                          [(cdiag.CompilerDiagnosticList.Nil) true]
-                          [_ false]))]
-                    [_ false])]
-                [_ false])]
-            [_ false])))]))
+          (string.eq
+            (cdiag.compiler-diagnostic-message first)
+            "parse: malformed define")
+          (string.eq
+            (cdiag.compiler-diagnostic-code-or-empty first)
+            (cdiag.compiler-diagnostic-code-parse))
+          (= (cdiag.compiler-diagnostic-line first) 1)
+          (string.eq
+            (cdiag.compiler-diagnostic-message second)
+            "typecheck: unbound name missing-a")
+          (= (cdiag.compiler-diagnostic-line second) 2)
+          (string.eq
+            (cdiag.compiler-diagnostic-message third)
+            "typecheck: unbound name missing-b")
+          (= (cdiag.compiler-diagnostic-line third) 3)))]))
 
 (define (compiler-check-parser-recovery-diagnostics-ok?) : bool
   (let

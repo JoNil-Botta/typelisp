@@ -10674,7 +10674,7 @@
       pred-counts)))
 
 (define (compiler-reg-edge-copy-refusal [from-label : i64] [to-label : i64]) : String
-  (string.concat5
+  (str_cat.str-cat
     "regalloc: edge copy from "
     (ir.compiler-ir-label-text from-label)
     " to "
@@ -10797,7 +10797,7 @@
             [(CompilerRegEdgeCopyPlacementResult.Refused message)
               (CompilerRegEdgeCopyPlan.Refused message)])))
       (CompilerRegEdgeCopyPlan.Refused
-        (string.concat3
+        (str_cat.str-cat
           "regalloc: edge copy target block not found: "
           (ir.compiler-ir-label-text to-label)
           "")))))
@@ -11056,7 +11056,7 @@
   (match blocks
     [(ir.CompilerIrBlockList.Nil)
       (CompilerRegEdgeCopyRewrite.Refused
-        (string.concat3
+        (str_cat.str-cat
           "regalloc: edge copy insertion block not found: "
           (ir.compiler-ir-label-text (compiler-reg-edge-copy-target-label copy))
           ""))]
@@ -11102,7 +11102,7 @@
             (CompilerRegEdgeCopyRewrite.Rewrite
               (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count)))
             (CompilerRegEdgeCopyRewrite.Refused
-              (string.concat3
+              (str_cat.str-cat
                 "regalloc: edge copy insertion block not found: "
                 (ir.compiler-ir-label-text target)
                 "")))))]))
@@ -12249,11 +12249,9 @@
             [pred-label : i64
               (compiler-reg-preheader-block-label (array-ref orig pred))]
             (ir.compiler-ir-block-cons
-              (ir.compiler-ir-block
+              (ir.CompilerIrBlock.Block
                 ph-label
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Jump h-label)
-                  ir.CompilerIrInstrList.Nil))
+                (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump h-label)))
               (ir.compiler-ir-block-cons
                 (compiler-reg-preheader-relabel-header
                   redirected
@@ -12295,11 +12293,10 @@
                         (compiler-reg-preheader-block-label
                           (array-ref orig pred))]
                       (ir.compiler-ir-block-cons
-                        (ir.compiler-ir-block
+                        (ir.CompilerIrBlock.Block
                           ph-label
-                          (ir.compiler-ir-instr-cons
-                            (ir.CompilerIrInstr.Jump h-label)
-                            ir.CompilerIrInstrList.Nil))
+                          (ir.compiler-ir-instr-seq1
+                            (ir.CompilerIrInstr.Jump h-label)))
                         (ir.compiler-ir-block-cons
                           (compiler-reg-preheader-relabel-header
                             redirected
@@ -15467,7 +15464,7 @@
 
 (define (compiler-reg-early-exit-framed-label [label : i64]) : i64
   (ir.compiler-ir-label
-    (string.append (ir.compiler-ir-label-text label) "__shrinkwrap_framed")))
+    (str_cat.str-cat (ir.compiler-ir-label-text label) "__shrinkwrap_framed")))
 
 (define (compiler-reg-early-exit-bare-label-at
   [prefix : String]
@@ -15483,7 +15480,8 @@
             (set! ordinal (+ ordinal 1))
             unit)
           (set! i (+ i 1))))
-      (ir.compiler-ir-label (string.append prefix (string.int->string ordinal))))))
+      (ir.compiler-ir-label
+        (str_cat.str-cat prefix (string.int->string ordinal))))))
 
 ;; mode 0 is the initial prefix, 1 is the ordinary body, and 2 is a framed
 ;; guard clone. Only terminators change, preserving all variable identities.
@@ -15887,11 +15885,11 @@
                       (let
                         [saving-label : i64
                           (ir.compiler-ir-label
-                            (string.append
+                            (str_cat.str-cat
                               (ir.compiler-ir-label-text entry-label)
                               "__shrinkwrap_save"))]
                         [bare-prefix : String
-                          (string.append
+                          (str_cat.str-cat
                             (ir.compiler-ir-label-text entry-label)
                             "__shrinkwrap_bare")]
                         [framed-count : i64
@@ -17598,7 +17596,7 @@
   (define (compiler-reg-call-span-census-row
     [bucket-name : String]
     [bucket : i64]) : String
-    (string.concat5
+    (str_cat.str-cat
       "regalloc-call-span-census|"
       bucket-name
       "|"
@@ -17607,20 +17605,19 @@
           (& compiler-reg-call-span-census-total)
           bucket
           (compiler-reg-call-span-outcome-register)))
-      (string.concat5
-        "|"
-        (string.int->string
-          (compiler-reg-call-span-census-count
-            (& compiler-reg-call-span-census-total)
-            bucket
-            (compiler-reg-call-span-outcome-spill)))
-        "|"
-        (string.int->string
-          (compiler-reg-call-span-census-count
-            (& compiler-reg-call-span-census-total)
-            bucket
-            (compiler-reg-call-span-outcome-unassigned)))
-        "\n"))))
+      "|"
+      (string.int->string
+        (compiler-reg-call-span-census-count
+          (& compiler-reg-call-span-census-total)
+          bucket
+          (compiler-reg-call-span-outcome-spill)))
+      "|"
+      (string.int->string
+        (compiler-reg-call-span-census-count
+          (& compiler-reg-call-span-census-total)
+          bucket
+          (compiler-reg-call-span-outcome-unassigned)))
+      "\n")))
 
 (cfg
   regalloc-census
@@ -17894,35 +17891,30 @@
       (io.print-error
         "regalloc-move-census|harvested|coalesced|samevalue_unco|disjoint_unco|interfere|disjoint_rootfree|disjoint_rootblocked|rootfree_paircompat|rootfree_group|rootfree_typemismatch|rootfree_other\n")
       (io.print-error
-        (string.concat5
+        (str_cat.str-cat
           "regalloc-move-census|"
           (compiler-reg-move-census-count-text 0)
           "|"
           (compiler-reg-move-census-count-text 1)
-          (string.concat5
-            "|"
-            (compiler-reg-move-census-count-text 2)
-            "|"
-            (compiler-reg-move-census-count-text 3)
-            (string.concat5
-              "|"
-              (compiler-reg-move-census-count-text 4)
-              "|"
-              (compiler-reg-move-census-count-text 5)
-              (string.concat5
-                "|"
-                (compiler-reg-move-census-count-text 6)
-                "|"
-                (compiler-reg-move-census-count-text 7)
-                (string.concat5
-                  "|"
-                  (compiler-reg-move-census-count-text 8)
-                  "|"
-                  (compiler-reg-move-census-count-text 9)
-                  (string.concat3
-                    "|"
-                    (compiler-reg-move-census-count-text 10)
-                    "\n"))))))))))
+          "|"
+          (compiler-reg-move-census-count-text 2)
+          "|"
+          (compiler-reg-move-census-count-text 3)
+          "|"
+          (compiler-reg-move-census-count-text 4)
+          "|"
+          (compiler-reg-move-census-count-text 5)
+          "|"
+          (compiler-reg-move-census-count-text 6)
+          "|"
+          (compiler-reg-move-census-count-text 7)
+          "|"
+          (compiler-reg-move-census-count-text 8)
+          "|"
+          (compiler-reg-move-census-count-text 9)
+          "|"
+          (compiler-reg-move-census-count-text 10)
+          "\n")))))
 
 ;; Mark every var that is a member of `member-set` AND whose live interval
 ;; spans a call point as ineligible. Used by the SIMD planner to keep
@@ -33634,7 +33626,7 @@
     [_ false]))
 
 (define (compiler-regalloc-self-test-failure-message [name : String]) : String
-  (string.append "regalloc self-test failed: " name))
+  (str_cat.str-cat "regalloc self-test failed: " name))
 
 (define (compiler-regalloc-self-test-require! [name : String] [ok : bool]) : unit
   (if ok

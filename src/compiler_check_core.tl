@@ -1,4 +1,5 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers.
+(cfg compile-profile (import stdlib.str_cat_runtime as str_cat))
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -38,16 +39,13 @@
   compile-profile
   (define (compiler-check-profile-finish [phase : String]) : unit
     (io.print-error
-      (string.append
+      (str_cat.str-cat
         "compile-profile|check."
-        (string.append
-          phase
-          (string.append
-            "|"
-            (string.append
-              (string.int->string
-                (- (profile.now-ms) compiler-check-profile-start-ms))
-              "|0|0|0\n")))))))
+        phase
+        "|"
+        (string.int->string
+          (- (profile.now-ms) compiler-check-profile-start-ms))
+        "|0|0|0\n"))))
 
 (define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs
@@ -64,79 +62,100 @@
 (define (compiler-check-diagnostics-with-fallback-path
   [diagnostics : cdiag.CompilerDiagnosticList]
   [path : String]) : cdiag.CompilerDiagnosticList
-  (match diagnostics
-    [(cdiag.CompilerDiagnosticList.Nil) cdiag.CompilerDiagnosticList.Nil]
-    [(cdiag.CompilerDiagnosticList.Cons diag rest)
-      (cdiag.CompilerDiagnosticList.Cons
-        (compiler-check-diagnostic-with-fallback-path diag path)
-        (box
-          (compiler-check-diagnostics-with-fallback-path (box-get rest) path)))]))
+  (let
+    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
+    [index : i64 0]
+    [out : cdiag.CompilerDiagnosticList
+      (cdiag.compiler-diagnostic-list-with-capacity count)]
+    (begin
+      (while (< index count)
+        (begin
+          (cdiag.compiler-diagnostic-list-push!
+            (&mut out)
+            (compiler-check-diagnostic-with-fallback-path
+              (cdiag.compiler-diagnostic-list-get diagnostics index)
+              path))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-check-diagnostic-before?
-  [left : cdiag.CompilerDiagnostic]
-  [right : cdiag.CompilerDiagnostic]) : bool
+  [left : (& left cdiag.CompilerDiagnostic)]
+  [right : (& right cdiag.CompilerDiagnostic)]) : bool
   (let
-    [left-path : String (cdiag.compiler-diagnostic-path left)]
-    [right-path : String (cdiag.compiler-diagnostic-path right)]
-    (if (string.eq left-path right-path)
+    [left-primary : (& left cdiag.CompilerDiagnosticSpan)
+      (& (struct-get left primary))]
+    [right-primary : (& right cdiag.CompilerDiagnosticSpan)
+      (& (struct-get right primary))]
+    (if (string.eq
+      (& (struct-get left-primary path))
+      (& (struct-get right-primary path)))
       (let
-        [left-line : i64 (cdiag.compiler-diagnostic-line left)]
-        [right-line : i64 (cdiag.compiler-diagnostic-line right)]
+        [left-line : i64 (struct-get left-primary start-line)]
+        [right-line : i64 (struct-get right-primary start-line)]
         (or
           (< left-line right-line)
           (and
             (= left-line right-line)
             (<
-              (cdiag.compiler-diagnostic-col left)
-              (cdiag.compiler-diagnostic-col right)))))
+              (struct-get left-primary start-col)
+              (struct-get right-primary start-col)))))
       false)))
 
 (define (compiler-check-diagnostic-list-insert-source-order
   [diag : cdiag.CompilerDiagnostic]
-  [sorted : cdiag.CompilerDiagnosticList]) : cdiag.CompilerDiagnosticList
-  (match sorted
-    [(cdiag.CompilerDiagnosticList.Nil)
-      (cdiag.compiler-diagnostic-list-single diag)]
-    [(cdiag.CompilerDiagnosticList.Cons head rest)
-      (if (compiler-check-diagnostic-before? diag head)
-        (cdiag.CompilerDiagnosticList.Cons
-          diag
-          (box (cdiag.CompilerDiagnosticList.Cons head rest)))
-        (cdiag.CompilerDiagnosticList.Cons
-          head
-          (box
-            (compiler-check-diagnostic-list-insert-source-order
-              diag
-              (box-get rest)))))]))
+  [sorted : (&mut sorted cdiag.CompilerDiagnosticList)]) : unit
+  (let
+    [count : i64 (struct-get sorted len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (if (compiler-check-diagnostic-before?
+          (& diag)
+          (cdiag.compiler-diagnostic-list-ref sorted index))
+          (set! found true)
+          (set! index (+ index 1))))
+      (cdiag.compiler-diagnostic-list-insert! sorted index diag))))
 
 (define (compiler-check-diagnostic-list-insert-all-source-order
   [incoming : cdiag.CompilerDiagnosticList]
-  [sorted : cdiag.CompilerDiagnosticList]) : cdiag.CompilerDiagnosticList
-  (match incoming
-    [(cdiag.CompilerDiagnosticList.Nil) sorted]
-    [(cdiag.CompilerDiagnosticList.Cons diag rest)
-      (compiler-check-diagnostic-list-insert-all-source-order
-        (box-get rest)
-        (compiler-check-diagnostic-list-insert-source-order diag sorted))]))
+  [sorted : (&mut sorted cdiag.CompilerDiagnosticList)]) : unit
+  (let
+    [count : i64 (cdiag.compiler-diagnostic-list-count incoming)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (compiler-check-diagnostic-list-insert-source-order
+          (cdiag.compiler-diagnostic-list-get incoming index)
+          sorted)
+        (set! index (+ index 1))))))
 
 (define (compiler-check-result-with-parse-diagnostics
   [parse-diagnostics : cdiag.CompilerDiagnosticList]
   [result : ResultCompilerCheck]) : ResultCompilerCheck
-  (match parse-diagnostics
-    [(cdiag.CompilerDiagnosticList.Nil) result]
-    [(cdiag.CompilerDiagnosticList.Cons first rest)
-      (let
-        [owned-parse : cdiag.CompilerDiagnosticList
-          (cdiag.CompilerDiagnosticList.Cons first rest)]
+  (if (= (cdiag.compiler-diagnostic-list-count parse-diagnostics) 0)
+    result
+    (let
+      [count : i64 (cdiag.compiler-diagnostic-list-count parse-diagnostics)]
+      [index : i64 0]
+      [owned-parse : cdiag.CompilerDiagnosticList
+        (cdiag.compiler-diagnostic-list-with-capacity count)]
+      (begin
+        (while (< index count)
+          (begin
+            (cdiag.compiler-diagnostic-list-push!
+              (&mut owned-parse)
+              (cdiag.compiler-diagnostic-list-get parse-diagnostics index))
+            (set! index (+ index 1))))
         (match result
           [(ResultCompilerCheck.Ok _)
             (ResultCompilerCheck.Err (box owned-parse))]
           [(ResultCompilerCheck.Err semantic-diagnostics)
-            (ResultCompilerCheck.Err
-              (box
-                (compiler-check-diagnostic-list-insert-all-source-order
-                  (box-get semantic-diagnostics)
-                  owned-parse)))]))]))
+            (begin
+              (compiler-check-diagnostic-list-insert-all-source-order
+                (box-get semantic-diagnostics)
+                (&mut owned-parse))
+              (ResultCompilerCheck.Err (box owned-parse)))])))))
 
 (define (compiler-check-reset-pools!) : unit
   (compiler_load.compiler-load-session-reset-pools!))

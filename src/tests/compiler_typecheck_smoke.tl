@@ -1,4 +1,5 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.vector)
@@ -73,7 +74,7 @@
   [limit : i64]
   [out : String]) : String
   (if (>= index limit)
-    (string.append
+    (str_cat.str-cat
       out
       "(define (main) : unit
   (let
@@ -83,15 +84,13 @@
     (compiler-typecheck-lambda-large-global-env-source-from
       (+ index 1)
       limit
-      (string.append
+      (str_cat.str-cat
         out
-        (string.append
-          "(define (lambda-global-"
-          (string.append
-            (string.int->string index)
-            (string.append
-              ") : i64 "
-              (string.append (string.int->string index) ")\n"))))))))
+        "(define (lambda-global-"
+        (string.int->string index)
+        ") : i64 "
+        (string.int->string index)
+        ")\n"))))
 
 (define (compiler-typecheck-lambda-large-global-env-source) : String
   (compiler-typecheck-lambda-large-global-env-source-from 0 192 ""))
@@ -969,16 +968,24 @@
 (define (compiler-typecheck-secondary-label-contains?
   [labels : diagnostic.CompilerDiagnosticLabelList]
   [needle : String]) : bool
-  (match labels
-    [(CompilerDiagnosticLabelNil) false]
-    [(CompilerDiagnosticLabelCons entry rest)
-      (match (struct-get entry label)
-        [(CompilerDiagnosticSomeString text)
-          (if (string.contains (& text) (& needle))
-            true
-            (compiler-typecheck-secondary-label-contains? (box-get rest) needle))]
-        [CompilerDiagnosticNoString
-          (compiler-typecheck-secondary-label-contains? (box-get rest) needle)])]))
+  (let
+    [count : i64 (diagnostic.compiler-diagnostic-label-list-count labels)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (let
+          [entry : diagnostic.CompilerDiagnosticLabel
+            (diagnostic.compiler-diagnostic-label-list-get labels index)]
+          (begin
+            (match (struct-get entry label)
+              [(CompilerDiagnosticSomeString text)
+                (if (string.contains (& text) (& needle))
+                  (set! found true)
+                  unit)]
+              [CompilerDiagnosticNoString unit])
+            (set! index (+ index 1)))))
+      found)))
 
 (define (compiler-typecheck-help-contains?
   [diag : diagnostic.CompilerDiagnostic]
@@ -2057,25 +2064,21 @@
       (let
         [value : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first (box-get diag))]
+        [notes : diagnostic.CompilerDiagnosticNoteList
+          (diagnostic.compiler-diagnostic-notes value)]
         (and
           (string.eq
             (diagnostic.compiler-diagnostic-message value)
             "generated-decl: duplicate generated key for BundleBox has incompatible payload")
           (= (diagnostic.compiler-diagnostic-line value) 9)
           (= (diagnostic.compiler-diagnostic-col value) 1)
-          (match (diagnostic.compiler-diagnostic-notes value)
-            [(CompilerDiagnosticNoteCons identity-note rest)
-              (and
-                (tc_core.tc-string-prefix?
-                  identity-note
-                  "generated identity: decls:")
-                (match (box-get rest)
-                  [(CompilerDiagnosticNoteCons item-note _)
-                    (string.eq
-                      item-note
-                      "conflicting generated item: BundleBox")]
-                  [(CompilerDiagnosticNoteNil) false]))]
-            [(CompilerDiagnosticNoteNil) false])))]))
+          (= (diagnostic.compiler-diagnostic-note-list-count notes) 2)
+          (tc_core.tc-string-prefix?
+            (diagnostic.compiler-diagnostic-note-list-get notes 0)
+            "generated identity: decls:")
+          (string.eq
+            (diagnostic.compiler-diagnostic-note-list-get notes 1)
+            "conflicting generated item: BundleBox")))]))
 
 (define (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source) : String
   "(module bundle.family)
@@ -3617,7 +3620,7 @@
         name)]
     (if (>= name-id 0)
       name-id
-      (io.panic (string.append context name)))))
+      (io.panic (str_cat.str-cat context name)))))
 
 (define (compiler-typecheck-smoke-module-key-id
   [ctx : tc_core.TcContext]

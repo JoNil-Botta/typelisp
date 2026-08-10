@@ -2517,7 +2517,7 @@ and owned `String` results for allocation sites.
 
 | Category | Members | Ownership contract |
 |----------|---------|--------------------|
-| Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
+| Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string.>int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
 | Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Text-to-binary I/O conversion is explicit. |
 | Active-arena owned string results | `arg`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
@@ -4359,14 +4359,29 @@ runtime-sized buffers, reading through `array-ref` and writing through
   Numeric `=`, `!=`, `<`, `<=`, `>`, and `>=` maps produce private masks that
   are stored through `bool` array lanes.
 
-Runtime-sized SPMD inputs and outputs need not be spelled as unsized
-`(Array T)` parameters: vector/slice-style sources and mutable destinations
-borrow storage instead of copying collections. Generated vector
-`slots`/`slots-mut` accessors and generated full-slice `slots` fields may be
-borrowed into inferred local bindings before a `foreach` body; callers do not
-name either the compatibility `(Array T)` spelling or the compiler-private
-dynamic backing type. The body then uses ordinary `array-ref`/`array-set!`
-over those borrowed buffers.
+Runtime-sized SPMD inputs and outputs need not use compatibility `(Array T)`
+parameters. Native `(& owner (Slice T))` and `(&mut owner (Slice T))` values
+are first-class contiguous SPMD sources and destinations, including checked
+subviews of fixed arrays and generated vectors. A Slice's data pointer is the
+start of its logical zero-based range, and its length supplies the bounds for
+every logical access; a nonzero owner offset is therefore invisible to the
+`foreach` body. Empty ranges, sub-gang ranges, full gangs, multiple gangs, and
+partial tails preserve the scalar reference behavior.
+
+Shared Slice references permit reads. Mutable Slice references permit reads
+and the same statically lane-disjoint contiguous writes as other SPMD buffers.
+The ordinary borrow checker continues to enforce owner provenance, exclusive
+mutable access, and non-escape rules at call and view boundaries. SIMD modes
+vectorize only the proven contiguous access shapes and the explicitly
+supported gather-only read surface above; accepting a Slice does not infer an
+arbitrary scatter operation. Unsupported varying control or alias shapes are
+rejected with a diagnostic. Ordinary scalar `for` and `while` loops are not
+implicitly converted into SPMD or SIMD loops.
+
+Generated vector `slots`/`slots-mut` accessors and generated full-slice `slots`
+fields may likewise be borrowed into inferred local bindings before a
+`foreach` body. Callers do not name the compiler-private dynamic backing type;
+the body uses ordinary `array-ref`/`array-set!` over the borrowed view.
 
 Uniform and varying rules:
 
@@ -5969,7 +5984,7 @@ imported:
 | `string-length` | `String → i64` / `(& r str) → i64` | String byte length |
 | `string-ref` / `char-at` | `(& r str) i64 → char` | Read byte from string (bounds checked) |
 | `string-eq` / `string=?` | `(& l str) (& r str) → bool` | Byte-wise string comparison |
-| `string->int` | `(& r str) → i64` | Decimal parse; legacy decimal parser rules |
+| `string.>int` | `(& r str) → i64` | Decimal parse; legacy decimal parser rules |
 
 These helpers lower through private compiler-owned intrinsics
 (`__tl_string_length`, `__tl_string_ref`, `__tl_string_eq`,
@@ -6625,7 +6640,7 @@ from escaping.
 
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
-| Non-allocating inspection | `length`/`array-length`; `stdlib.string` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, and string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
+| Non-allocating inspection | `length`/`array-length`; `stdlib.string` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string.>int`, and string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
 | Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib.string` `string-replace` when no match is found; `stdlib.io` `read-file-or` when the path is missing | Returns the caller-provided aggregate unchanged. Reference-typed signatures express the caller-owned result; without lifetime information in the signature, the conservative arena-tagging rule above applies inside a scoped arena. |
 | Mutates caller-provided storage | `array-set!`, `byte-buf-set!`/`bytes-set!` mutation helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
@@ -7030,8 +7045,10 @@ in documentation passes.
 - SPMD: scalar reference lowering for `foreach`, `spmd-reduce`,
   `spmd-scan`, `spmd-broadcast`, `spmd-shuffle`, lane identity forms,
   masked varying `if`, varying `while`, and varying `match` (enum tags and
-  payload bindings). AVX2/AVX-512 contiguous `foreach` map/zip subsets over
-  all scalar integer and float lane types, including straight-line
+  payload bindings), with native borrowed Slice data/length lowering for
+  contiguous scalar, AVX2, and AVX-512 sources and destinations.
+  AVX2/AVX-512 contiguous `foreach` map/zip subsets over all scalar integer and
+  float lane types, including straight-line
   multi-destination maps with one shared lane shape, distinct destinations,
   and no destination read by a fused value; eligible vectorized
   `spmd-reduce` folds; canonical contiguous range-wide AVX2/AVX-512

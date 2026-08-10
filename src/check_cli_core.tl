@@ -3,6 +3,7 @@
 ;; Factored out of `check.tl` so the unified `cli.tl` dispatcher and the
 ;; retained check compatibility/coverage driver share the command without a
 ;; duplicate `main`.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
@@ -141,7 +142,7 @@
                       cfg-names)]
                   [(target_cfg.ResultCompilerTargetCfg.Err message)
                     (ResultSelfhostCheckConfig.Err
-                      (string.append "selfhost-check: " message))]))]
+                      (str_cat.str-cat "selfhost-check: " message))]))]
             [(cli_option.CliCommonOptionKind.OptLevel)
               (ResultSelfhostCheckConfig.Err
                 "selfhost-check: internal unsupported common option")])]
@@ -167,10 +168,10 @@
                     cfg-names)))]
             [(selfhost-check-flag? current)
               (ResultSelfhostCheckConfig.Err
-                (string.append "selfhost-check: unknown flag " current))]
+                (str_cat.str-cat "selfhost-check: unknown flag " current))]
             [has-input
               (ResultSelfhostCheckConfig.Err
-                (string.append "selfhost-check: unexpected argument " current))]
+                (str_cat.str-cat "selfhost-check: unexpected argument " current))]
             [else
               (selfhost-check-parse-args
                 (+ idx 1)
@@ -237,13 +238,15 @@
 
 (define (selfhost-check-report-diagnostics
   [diagnostics : cdiag.CompilerDiagnosticList]) : unit
-  (match diagnostics
-    [(cdiag.CompilerDiagnosticList.Nil) unit]
-    [(cdiag.CompilerDiagnosticList.Cons diag rest)
+  (let
+    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
+    [index : i64 0]
+    (while (< index count)
       (begin
         (io.print-error
-          (compiler_driver_core.compiler-driver-render-source-diagnostic diag))
-        (selfhost-check-report-diagnostics (box-get rest)))]))
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (cdiag.compiler-diagnostic-list-get diagnostics index)))
+        (set! index (+ index 1))))))
 
 (define (selfhost-check-file
   [input-path : String]

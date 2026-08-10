@@ -1,4 +1,5 @@
 ;; Test-only coverage for persistent typechecker list storage.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_typecheck_core as tc_core)
 (import compiler_typecheck_api as tc_api)
 (import compiler_diagnostic as diagnostic)
@@ -55,7 +56,7 @@
         scratch-child
         (tc_core.tc-string-list-cons
           string-base
-          (string.append "scratch-" "owned")))
+          (str_cat.str-cat "scratch-" "owned")))
       (unsafe
         (begin
           (arena.set! home)
@@ -133,41 +134,28 @@
           (begin
             (set!
               macro-params
-              (string.append
-                macro-params
-                (string.append " [m" (string.append suffix " : Expr]"))))
+              (str_cat.str-cat macro-params " [m" suffix " : Expr]"))
             (set!
               function-params
-              (string.append
-                function-params
-                (string.append " [p" (string.append suffix " : i64]"))))
-            (set! args (string.append args (string.append " " suffix)))
+              (str_cat.str-cat function-params " [p" suffix " : i64]"))
+            (set! args (str_cat.str-cat args " " suffix))
             (set! index (+ index 1)))))
       (let
         [last : String (string.int->string (- count 1))]
-        (string.append
+        (str_cat.str-cat
           "(defmacro (wide-macro"
-          (string.append
-            macro-params
-            (string.append
-              ") : Expr m"
-              (string.append
-                last
-                (string.append
-                  ")\n(define (wide-fn"
-                  (string.append
-                    function-params
-                    (string.append
-                      ") : i64 p"
-                      (string.append
-                        last
-                        (string.append
-                          ")\n(define (sibling [flag : bool]) : i64\n  (let [outer : i64 1]\n    (+ outer (if flag (let [left : i64 2] left) (let [right : i64 3] right)))))\n(define (main) : i64\n  (+ (sibling true)\n    (+ (wide-fn"
-                          (string.append
-                            args
-                            (string.append
-                              ")\n      (wide-macro"
-                              (string.append args "))))"))))))))))))))))
+          macro-params
+          ") : Expr m"
+          last
+          ")\n(define (wide-fn"
+          function-params
+          ") : i64 p"
+          last
+          ")\n(define (sibling [flag : bool]) : i64\n  (let [outer : i64 1]\n    (+ outer (if flag (let [left : i64 2] left) (let [right : i64 3] right)))))\n(define (main) : i64\n  (+ (sibling true)\n    (+ (wide-fn"
+          args
+          ")\n      (wide-macro"
+          args
+          "))))")))))
 
 (define (compiler-typecheck-wide-list-storage-ok?) : bool
   (match (tc_api.typecheck-compiler-source

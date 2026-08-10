@@ -3,6 +3,7 @@
 ;; The extractor exposes module docs and documented top-level items. It
 ;; does not expose undocumented declarations as separate records, so this
 ;; renderer emits exactly the declarations present in the extracted model.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import doc_extract)
 (import stdlib.string)
@@ -78,10 +79,10 @@
           [c : char (string.string-ref name i)]
           (begin
             (if (doc-render-anchor-char? c)
-              (set! out (string.concat3 out (string.substring name i 1) ""))
+              (set! out (str_cat.str-cat out (string.substring name i 1) ""))
               (set!
                 out
-                (string.concat3
+                (str_cat.str-cat
                   out
                   "-"
                   (string.int->string (doc-render-code c)))))
@@ -113,51 +114,44 @@
     (begin
       (while (< i n)
         (begin
-          (set! out (string.concat3 out (doc-render-escape-one text i) ""))
+          (set! out (str_cat.str-cat out (doc-render-escape-one text i) ""))
           (set! i (+ i 1))))
       out)))
 
 (define (doc-render-code-block [source : String]) : String
-  (string.append "```typelisp\n" (string.append source "\n```\n")))
+  (str_cat.str-cat "```typelisp\n" source "\n```\n"))
 
 (define (doc-render-module-doc [module-doc : String]) : String
   (if (= (string.string-length module-doc) 0)
     "_No module docs._\n\n"
-    (string.append (doc-render-escape-markdown module-doc) "\n\n")))
+    (str_cat.str-cat (doc-render-escape-markdown module-doc) "\n\n")))
 
 (define (doc-render-item-doc [doc-text : String]) : String
   (if (= (string.string-length doc-text) 0)
     "_No item docs._\n"
-    (string.append (doc-render-escape-markdown doc-text) "\n")))
+    (str_cat.str-cat (doc-render-escape-markdown doc-text) "\n")))
 
 (define (doc-render-item-heading [item : doc_extract.DocItem]) : String
   (let
     [name : String (doc_extract.doc-item-name item)]
     [anchor : String (doc-render-anchor (doc_extract.doc-item-name item))]
-    (string.append
+    (str_cat.str-cat
       "<a id=\""
-      (string.append
-        anchor
-        (string.append
-          "\"></a>\n\n### "
-          (string.append (doc-render-escape-markdown name) "\n\n"))))))
+      anchor
+      "\"></a>\n\n### "
+      (doc-render-escape-markdown name)
+      "\n\n")))
 
 (define (doc-render-item [item : doc_extract.DocItem]) : String
-  (string.append
+  (str_cat.str-cat
     (doc-render-item-heading item)
-    (string.append
-      "Kind: "
-      (string.append
-        (doc_extract.doc-kind-name (doc_extract.doc-item-kind item))
-        (string.append
-          "\n\n"
-          (string.append
-            (doc-render-code-block (doc_extract.doc-item-signature item))
-            (string.append
-              "\n"
-              (string.append
-                (doc-render-item-doc (doc_extract.doc-item-doc item))
-                "\n"))))))))
+    "Kind: "
+    (doc_extract.doc-kind-name (doc_extract.doc-item-kind item))
+    "\n\n"
+    (doc-render-code-block (doc_extract.doc-item-signature item))
+    "\n"
+    (doc-render-item-doc (doc_extract.doc-item-doc item))
+    "\n"))
 
 (define (doc-render-item-list-from
   [items : doc_item_vec.Vec]
@@ -165,7 +159,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (string.append
+    (str_cat.str-cat
       (doc-render-item (doc_extract.doc-item-list-ref items index))
       (doc-render-item-list-from items (+ index 1) count))))
 
@@ -178,22 +172,21 @@
     (doc-render-item-list items)))
 
 (define (doc-render-markdown [docs : doc_extract.DocExtraction]) : String
-  (string.append
+  (str_cat.str-cat
     "# TypeLisp Documentation\n\n"
-    (string.append
-      (doc-render-module-doc (doc_extract.doc-extraction-module-doc docs))
-      (string.append
-        "## Items\n\n"
-        (doc-render-items (doc_extract.doc-extraction-items docs))))))
+    (doc-render-module-doc (doc_extract.doc-extraction-module-doc docs))
+    "## Items\n\n"
+    (doc-render-items (doc_extract.doc-extraction-items docs))))
 
 (define (doc-render-module-nav-item [module : DocModule]) : String
   (let
     [path : String (doc-module-path module)]
-    (string.append
+    (str_cat.str-cat
       "- ["
-      (string.append
-        (doc-render-escape-markdown path)
-        (string.append "](#" (string.append (doc-render-anchor path) ")\n"))))))
+      (doc-render-escape-markdown path)
+      "](#"
+      (doc-render-anchor path)
+      ")\n")))
 
 (define (doc-render-module-nav-from
   [modules : doc_module_vec.Vec]
@@ -201,7 +194,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (string.append
+    (str_cat.str-cat
       (doc-render-module-nav-item (doc-module-list-ref modules index))
       (doc-render-module-nav-from modules (+ index 1) count))))
 
@@ -212,24 +205,16 @@
   (let
     [path : String (doc-module-path module)]
     [docs : doc_extract.DocExtraction (doc-module-docs module)]
-    (string.append
+    (str_cat.str-cat
       "<a id=\""
-      (string.append
-        (doc-render-anchor path)
-        (string.append
-          "\"></a>\n\n## "
-          (string.append
-            (doc-render-escape-markdown path)
-            (string.append
-              "\n\nSource: `"
-              (string.append
-                (doc-render-escape-markdown path)
-                (string.append
-                  "`\n\n"
-                  (string.append
-                    (doc-render-module-doc
-                      (doc_extract.doc-extraction-module-doc docs))
-                    (doc-render-items (doc_extract.doc-extraction-items docs))))))))))))
+      (doc-render-anchor path)
+      "\"></a>\n\n## "
+      (doc-render-escape-markdown path)
+      "\n\nSource: `"
+      (doc-render-escape-markdown path)
+      "`\n\n"
+      (doc-render-module-doc (doc_extract.doc-extraction-module-doc docs))
+      (doc-render-items (doc_extract.doc-extraction-items docs)))))
 
 (define (doc-render-module-sections-from
   [modules : doc_module_vec.Vec]
@@ -237,7 +222,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (string.append
+    (str_cat.str-cat
       (doc-render-module-section (doc-module-list-ref modules index))
       (doc-render-module-sections-from modules (+ index 1) count))))
 
@@ -245,13 +230,12 @@
   (doc-render-module-sections-from modules 0 (doc-module-list-count modules)))
 
 (define (doc-render-module-graph-markdown [modules : doc_module_vec.Vec]) : String
-  (string.append
+  (str_cat.str-cat
     "# TypeLisp Documentation\n\n"
-    (string.append
-      "## Modules\n\n"
-      (string.append
-        (doc-render-module-nav modules)
-        (string.append "\n" (doc-render-module-sections modules))))))
+    "## Modules\n\n"
+    (doc-render-module-nav modules)
+    "\n"
+    (doc-render-module-sections modules)))
 
 (define (doc-render-smoke-source) : String
   ";# Module docs with `code`, [links], <tag>, & amp.

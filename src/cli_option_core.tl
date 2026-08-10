@@ -1,6 +1,7 @@
 ;; Shared recognition for value-taking command options. Command modules keep
 ;; their own config/result types and value validation, while this module owns
 ;; flag spelling, argv bounds checks, and the common missing-value diagnostic.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -73,11 +74,11 @@
 (define (cli-common-option-missing-message-default
   [command : String]
   [kind : CliCommonOptionKind]) : String
-  (string.append
+  (str_cat.str-cat
     command
-    (string.append
-      ": "
-      (string.append (cli-common-option-name kind) " requires a value"))))
+    ": "
+    (cli-common-option-name kind)
+    " requires a value"))
 
 ;; Keep the diagnostics covered by the assembly-level self-host audit as
 ;; complete literals. Other commands use the same centralized wording below.

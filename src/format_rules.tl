@@ -5,6 +5,7 @@
 ;; formatting path renders those rules directly from the CST; doc-algebra
 ;; compatibility coverage lives in format_rules_doc_compat.tl so production CLI
 ;; builds do not import the full document algebra.
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import format_tokens as tokens)
 (import format_cst as cst)
@@ -2153,7 +2154,7 @@
               limit
               buf)
             (format-rules-layout-inline-form
-              (string.append ":" name)
+              (str_cat.str-cat ":" name)
               tail
               emit
               width

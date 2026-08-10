@@ -5,6 +5,7 @@
 ;; src/types.rs closely enough for the Sexpr -> real-AST parser to target them.
 ;; Parser result/error wrappers, typechecker registries, inferred types, and
 ;; lowered IR metadata live elsewhere.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
 (import stdlib.array)
@@ -64,22 +65,16 @@
         (ci.intern-composite-rendered-name-record!
           name-id
           (if (ci.intern-composite-triple-id? name-id)
-            (string.append
+            (str_cat.str-cat
               (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
-              (string.append
-                "/"
-                (string.append
-                  (ci.intern-str
-                    (ci.intern-composite-middle-id-unchecked name-id))
-                  (string.append
-                    "."
-                    (ci.intern-str
-                      (ci.intern-composite-right-id-unchecked name-id))))))
-            (string.append
+              "/"
+              (ci.intern-str (ci.intern-composite-middle-id-unchecked name-id))
+              "."
+              (ci.intern-str (ci.intern-composite-right-id-unchecked name-id)))
+            (str_cat.str-cat
               (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
-              (string.append
-                "/"
-                (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))))))
+              "/"
+              (ci.intern-str (ci.intern-composite-right-id-unchecked name-id)))))))
     (if (ci.intern-renderable-id? name-id)
       (ci.intern-str name-id)
       "<structural-nominal>")))
@@ -103,40 +98,36 @@
           state
           name-id
           (if (ci.intern-compat-state-composite-triple-id? state name-id)
-            (string.append
+            (str_cat.str-cat
               (ci.intern-compat-state-str
                 state
                 (ci.intern-compat-state-composite-left-id-unchecked
                   state
                   name-id))
-              (string.append
-                "/"
-                (string.append
-                  (ci.intern-compat-state-str
-                    state
-                    (ci.intern-compat-state-composite-middle-id-unchecked
-                      state
-                      name-id))
-                  (string.append
-                    "."
-                    (ci.intern-compat-state-str
-                      state
-                      (ci.intern-compat-state-composite-right-id-unchecked
-                        state
-                        name-id))))))
-            (string.append
+              "/"
+              (ci.intern-compat-state-str
+                state
+                (ci.intern-compat-state-composite-middle-id-unchecked
+                  state
+                  name-id))
+              "."
+              (ci.intern-compat-state-str
+                state
+                (ci.intern-compat-state-composite-right-id-unchecked
+                  state
+                  name-id)))
+            (str_cat.str-cat
               (ci.intern-compat-state-str
                 state
                 (ci.intern-compat-state-composite-left-id-unchecked
                   state
                   name-id))
-              (string.append
-                "/"
-                (ci.intern-compat-state-str
+              "/"
+              (ci.intern-compat-state-str
+                state
+                (ci.intern-compat-state-composite-right-id-unchecked
                   state
-                  (ci.intern-compat-state-composite-right-id-unchecked
-                    state
-                    name-id))))))))
+                  name-id)))))))
     (if (ci.intern-renderable-id? name-id)
       (ci.intern-compat-state-str state name-id)
       "<structural-nominal>")))
@@ -301,6 +292,42 @@
       [(= base 2)
         (ast-int-literal-magnitude-leq-limit? text start end limit-bin)]
       [else (ast-int-literal-magnitude-leq-limit? text start end limit-dec)])))
+
+;; Rebuild the checked source magnitude as unsigned bits. The lexer payload is
+;; only an i64 compatibility field and may already have crossed a signed
+;; boundary before contextual typing selects the literal's actual type.
+(define (ast-int-literal-u64-magnitude [text : String]) : u64
+  (let
+    [base : u64 (cast (ast-int-literal-base text) : u64)]
+    [i : i64 (ast-int-literal-value-start text)]
+    [n : i64 (string.string-length text)]
+    [value : u64 (cast 0 : u64)]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            value
+            (+
+              (* value base)
+              (cast
+                (ast-int-literal-digit-value (string.string-ref text i))
+                : u64)))
+          (set! i (+ i 1))))
+      value)))
+
+(define (ast-int-literal-i64-bits [text : String]) : i64
+  (let
+    [magnitude : u64 (ast-int-literal-u64-magnitude text)]
+    (if (ast-int-literal-negative? text)
+      (cast (- (cast 0 : u64) magnitude) : i64)
+      (cast magnitude : i64))))
+
+;; Return the exact low 64 bits selected by checked literal source text, or the
+;; compatibility payload for compiler-generated literals that have no text.
+(define (ast-int-literal-value-or-payload [payload : i64] [text : String]) : i64
+  (if (> (string.string-length text) 0)
+    (ast-int-literal-i64-bits text)
+    payload))
 
 (defenum AstBinOp
   (Add)
@@ -7239,6 +7266,126 @@
   (shared-type-base i64)
   (persist-in-place bool))
 
+;; Compile-profile-only reachability census for the per-declaration macro
+;; generation copy-out.  The copy walk is the ownership authority: ids below
+;; the declaration's entry bases are source/shared references, while the first
+;; visit to an id at or above a base is a macro-pool survivor.  Keeping the
+;; census here avoids a second graph traversal and, importantly, counts the
+;; same exhaustive set of AstExpr/AstDecl variants as the copy itself.
+;;
+;; Type nodes are committed at push time, so the copy's operational
+;; `shared-type-base` is taken after expansion.  `source-type-base` preserves
+;; the entry boundary for attribution, and `survivor-type-map` deduplicates the
+;; newly committed type ids that the returned declaration actually reaches.
+(cfg
+  compile-profile
+  (define ast-compaction-profile-active : bool
+    false))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-source-type-base : i64
+    0))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-survivor-type-map : (__tl_dyn-array i32)
+    (array.make-array i32 1)))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-source-shared-expr-refs : i64
+    0))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-source-shared-type-refs : i64
+    0))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-survivor-expr-nodes : i64
+    0))
+(cfg
+  compile-profile
+  (define ast-compaction-profile-survivor-type-nodes : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-start!
+    [source-type-base : i64]
+    [survivor-type-map : (__tl_dyn-array i32)]) : unit
+    (begin
+      (set! ast-compaction-profile-source-type-base source-type-base)
+      (set! ast-compaction-profile-survivor-type-map survivor-type-map)
+      (set! ast-compaction-profile-source-shared-expr-refs 0)
+      (set! ast-compaction-profile-source-shared-type-refs 0)
+      (set! ast-compaction-profile-survivor-expr-nodes 0)
+      (set! ast-compaction-profile-survivor-type-nodes 0)
+      (set! ast-compaction-profile-active true))))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-finish!) : unit
+    (set! ast-compaction-profile-active false)))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-note-source-expr!) : unit
+    (if ast-compaction-profile-active
+      (set!
+        ast-compaction-profile-source-shared-expr-refs
+        (+ ast-compaction-profile-source-shared-expr-refs 1))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-note-survivor-expr!) : unit
+    (if ast-compaction-profile-active
+      (set!
+        ast-compaction-profile-survivor-expr-nodes
+        (+ ast-compaction-profile-survivor-expr-nodes 1))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-note-shared-type! [id : i64]) : unit
+    (if (not ast-compaction-profile-active)
+      unit
+      (if (< id ast-compaction-profile-source-type-base)
+        (set!
+          ast-compaction-profile-source-shared-type-refs
+          (+ ast-compaction-profile-source-shared-type-refs 1))
+        (let
+          [slot : i64 (- id ast-compaction-profile-source-type-base)]
+          (if (or
+            (< slot 0)
+            (>= slot (array-length ast-compaction-profile-survivor-type-map)))
+            unit
+            (if (> (array-ref ast-compaction-profile-survivor-type-map slot) 0)
+              unit
+              (begin
+                (array-set! ast-compaction-profile-survivor-type-map slot 1)
+                (set!
+                  ast-compaction-profile-survivor-type-nodes
+                  (+ ast-compaction-profile-survivor-type-nodes 1))))))))))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-source-shared-expr-ref-count) : i64
+    ast-compaction-profile-source-shared-expr-refs))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-source-shared-type-ref-count) : i64
+    ast-compaction-profile-source-shared-type-refs))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-survivor-expr-node-count) : i64
+    ast-compaction-profile-survivor-expr-nodes))
+
+(cfg
+  compile-profile
+  (define (ast-compaction-profile-survivor-type-node-count) : i64
+    ast-compaction-profile-survivor-type-nodes))
+
 (define (ast-compaction-id-map-create [count : i64]) : (__tl_dyn-array i32)
   (let
     [cap : i64
@@ -7375,7 +7522,9 @@
   (let
     [base : i64 (struct-get remap shared-type-base)]
     (if (< id base)
-      id
+      (begin
+        (cfg compile-profile (ast-compaction-profile-note-shared-type! id))
+        id)
       (let
         [type-map : (__tl_dyn-array i32) (struct-get remap type-map)]
         [slot : i64 (- id base)]
@@ -8282,7 +8431,9 @@
   (let
     [base : i64 (struct-get remap shared-expr-base)]
     (if (< id base)
-      id
+      (begin
+        (cfg compile-profile (ast-compaction-profile-note-source-expr!))
+        id)
       (let
         [expr-map : (__tl_dyn-array i32) (struct-get remap expr-map)]
         [slot : i64 (- id base)]
@@ -8299,7 +8450,12 @@
             ;; local first, so writing it back after the children are done can
             ;; never race the read.
             (let
-              [_mark : unit (array-set! expr-map slot (cast 1 : i32))]
+              [_mark : unit
+                (begin
+                  (array-set! expr-map slot (cast 1 : i32))
+                  (cfg
+                    compile-profile
+                    (ast-compaction-profile-note-survivor-expr!)))]
               [source-expr : AstExpr
                 (ast-expr-segment-bases-get
                   (struct-get remap source-expr-bases)

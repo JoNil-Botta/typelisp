@@ -12,6 +12,7 @@
 ;; clone-able named type. Function, reference, raw-pointer, str, and
 ;; compile-time-only values are not clone-able. Clone-ability is a
 ;; least-fixed-point over the type graph.
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
@@ -95,9 +96,10 @@
 
 (define (clone-name-key-string [key-id : i64]) : String
   (if (clone-name-key-qualified? key-id)
-    (string.append
+    (str_cat.str-cat
       (ci.intern-str (clone-name-key-module-id key-id))
-      (string.append "/" (ci.intern-str (clone-name-key-base-id key-id))))
+      "/"
+      (ci.intern-str (clone-name-key-base-id key-id)))
     (if (ci.intern-renderable-id? key-id)
       (ci.intern-str key-id)
       "<structural-name>")))
@@ -153,7 +155,7 @@
     (clone-name-key-id-in-module module-id name-id)))
 
 (define (clone-local-helper-name [type-name : String]) : String
-  (string.append "clone$" (clone-type-name-base type-name)))
+  (str_cat.str-cat "clone$" (clone-type-name-base type-name)))
 
 (define (clone-helper-name [type-name : String]) : String
   (let
@@ -161,7 +163,7 @@
     [local : String (clone-local-helper-name type-name)]
     (if (string.eq module "")
       local
-      (string.append (string.append module "/") local))))
+      (str_cat.str-cat module "/" local))))
 
 (define (clone-name-set-empty) : CloneNameSet
   (CloneNameSet (clone_id_map.with-capacity 8) (clone_id_map.with-capacity 8)))
@@ -213,6 +215,20 @@
 
 (define (clone-name-set-aliases [names : CloneNameSet]) : clone_id_map.Map
   (struct-get names aliases))
+
+(define (clone-name-set-insert-alias-id
+  [names : CloneNameSet]
+  [module-id : i64]
+  [alias-id : i64]
+  [target-module-id : i64]) : CloneNameSet
+  (let
+    [aliases : clone_id_map.Map (clone-name-set-aliases names)]
+    (begin
+      (clone_id_map.insert-ref!
+        (&mut aliases)
+        (clone-import-alias-key-id module-id alias-id)
+        target-module-id)
+      (CloneNameSet (clone-name-set-map names) aliases))))
 
 (define (clone-name-set-insert-id [names : CloneNameSet] [key-id : i64]) : CloneNameSet
   (let
@@ -695,7 +711,7 @@
       (> (clone-name-set-capacity grown) seed-capacity))))
 
 (define (clone-root-entries-smoke-key-id [index : i64]) : i64
-  (ci.intern (string.append "CloneDenseSmokeRoot" (string.int->string index))))
+  (ci.intern (str_cat.str-cat "CloneDenseSmokeRoot" (string.int->string index))))
 
 (define (clone-root-entries-smoke-add-sequential
   [roots : CloneRootEntries]

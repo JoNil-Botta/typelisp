@@ -7,8 +7,11 @@
   "message_checks": [
     {"jsonpath_id": 2, "raw_contains": "\"success\":true"},
     {"jsonpath_id": 3, "raw_contains": "\"success\":false", "raw_contains": "\"error\""},
+    {"jsonpath_id": 30, "json_contains": "\"result\":null", "jsonpath_result": null},
+    {"jsonpath_id": 31, "json_contains": "\"result\":null", "jsonpath_result": null},
     {"jsonpath_id": 4, "raw_contains": "\"success\":true"},
     {"jsonpath_id": 5, "raw_contains": "\"uri\":\"${{TMP_URI}}/snapshot.tl\"", "raw_contains": "\"line\":0", "raw_contains": "\"character\":8", "raw_contains": "\"character\":14"},
+    {"jsonpath_id": 50, "raw_contains": "answer : i64", "raw_contains": "\"range\":{\"start\":{\"line\":1,\"character\":20},\"end\":{\"line\":1,\"character\":26}}"},
     {"jsonpath_id": 6, "json_contains": "\"result\":null", "jsonpath_result": null}
   ]
 }

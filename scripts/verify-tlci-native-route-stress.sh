@@ -1,12 +1,12 @@
 #!/usr/bin/env sh
 set -eu
 
-# Production macro-walk sustained stress for the opt-in embedded stdlib TLCI
-# route (#5926). The compiler supplied here is the one profile CLI built by
-# verify-compile-profile.sh with compile-profile, embedded-stdlib-tlci,
-# tlci-native-route, and tlci-native-route-stress. A runtime workload variable
-# is the second key: only these invocations may override the Windows production
-# stand-down. Normal compiler builds and normal profile fixtures remain off.
+# Production macro-walk sustained stress for the embedded stdlib TLCI route
+# (#5926). The compiler supplied here is the profile CLI built by
+# verify-compile-profile.sh with compile-profile, embedded-stdlib-tlci, and
+# tlci-native-route-stress. Production routing follows normal trusted-source
+# policy on both hosts; the runtime workload variable enables only the durable
+# fixed-width stress telemetry used by this gate.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

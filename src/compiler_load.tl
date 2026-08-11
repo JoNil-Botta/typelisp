@@ -1257,10 +1257,10 @@
   [state : CompilerLoadSessionState]) : unit
   (array-set! (struct-get state cache-enabled) 1 true))
 
-;; Canonical ids of modules whose source came from the embedded stdlib
-;; payload in this process. The tlci macro route consults this per defining
-;; module: a stdlib module loaded from an explicit root must expand from its
-;; own source even when the embedded catalog knows its identities.
+;; Canonical ids of modules whose source matches the embedded stdlib payload
+;; in this process. The tlci macro route consults this per defining module:
+;; embedded source and byte-identical disk source may use the catalog, while
+;; modified or otherwise untrusted roots must expand from their own source.
 (define compiler-load-provenance-arena-handle : i64
   0)
 

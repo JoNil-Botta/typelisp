@@ -673,7 +673,6 @@ if ! "$COMPILER" compile src/main.tl \
     --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route \
     --cfg tlci-native-route-stress \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
@@ -797,7 +796,6 @@ set +e
     --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
 status=$?
 set -e
@@ -848,7 +846,6 @@ set +e
     --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
 status=$?
 set -e
@@ -1341,6 +1338,13 @@ fi
 # boundary from 31 to 32 segments: the authoritative Windows CI probe measured
 # 2,031,667 used nodes, 2,097,152 capacity, and 67,108,864 physical payload
 # bytes.
+# #5460's default trusted TLCI route changes where the byte-identical selfhost
+# graph is retained: native commits put macro_expand at 46 segments (2,989,325
+# used nodes, 3,014,656 capacity, 96,468,992 payload bytes) and reduce typecheck
+# to 32 segments (2,045,446 used nodes, 2,097,152 capacity, 67,108,864 payload
+# bytes). The controlled route-off/default-route outputs had identical
+# 66,255,493-byte assembly; default routing reduced total time by 2.57%, while
+# peak live allocation increased by 1.29% without changing its budget.
 # #5493's removal of the splice-tail rebuild plans and filtered-environment
 # walkers brings ast_type_pool.macro_expand back from 24 to 23 segments: the
 # authoritative Windows probe measured 22,788 used nodes, 23,552 capacity, and
@@ -1480,12 +1484,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 46 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # Path-sensitive scalar-loop ownership joins (#6227) put the checked
-    # selfhost expression graph just past the former 32-segment boundary.
+    # Native result commit leaves the checked expression graph within the
+    # 32-segment boundary; macro_expand owns the corresponding exact increase.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 33 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \
@@ -1737,30 +1741,12 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_mar
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_calls|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_alloc_kb|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_live_kb|"
-# The repo's own stdlib is content-identical to the embedded payload, so
-# the catalog dispatches here too; shell entries keep the counted
-# interpreted fallback (and their per-identity profile rows above). On
-# Windows the route is gated off until #5460 closes, so the stand-down
-# shape is asserted instead.
-if [ "$NL_HOST_OS" = windows ]; then
-    assert_profile_counter_eq_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_tlci_catalog_hits" \
-        0 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-    assert_profile_counter_at_least_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_source_interpreted" \
-        1 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-else
-    # #5634: the macro-detail fixture's last interpreted shells are going
-    # native (#5596's zero-shell end state), so a non-zero fallback count can
-    # no longer be required here. Assert the catalog route is live and exact
-    # instead (same shape as the routing fixture below); the row-exists
-    # assertion above keeps the fallback counter's plumbing covered.
+# The repo's own stdlib is content-identical to the embedded payload, so the
+# catalog dispatches on both hosts. #5634 is moving the macro-detail fixture's
+# last interpreted shells native (#5596's zero-shell end state), so a non-zero
+# fallback count can no longer be required here. Assert the catalog route is
+# live and exact instead; the row-exists assertion above keeps fallback
+# counter plumbing covered.
     assert_profile_counter_at_least_in \
         "$CHECK_STDERR" \
         "typecheck.macro.stdlib_tlci_catalog_hits" \
@@ -1813,7 +1799,6 @@ else
         0 \
         "$CHECK_STDOUT" \
         "$CHECK_STDERR"
-fi
 # The multi-pass fixed-point loop and its follow-up worklist are deleted: macro
 # expansion is a single demand-driven pass, so the fixed_point_* counters no
 # longer exist.
@@ -1825,9 +1810,6 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_f
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.misses|"
 
-if [ "$NL_HOST_OS" = windows ]; then
-    echo "[compile-profile] skip routing differential on windows (route gated, #5460)"
-else
 echo "[compile-profile] verify embedded stdlib tlci routing and differential output"
 mkdir -p "$STDLIB_TLCI_DIR"
 if ! (
@@ -2678,7 +2660,6 @@ for FMT_DIAG_CASE in unmatched-open too-few-arguments too-many-arguments \
         fail "format scanner diagnostics differ by route for $FMT_DIAG_CASE"
     fi
 done
-fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_core.tl \

@@ -223,6 +223,8 @@ while [ "$i" -le "$STAGES" ]; do
     if [ "$i" -gt 1 ]; then
         scripts/build-embedded-stdlib-tlci.sh \
             "$PREV" target/embedded-stdlib-tlci/stdlib.tlci "$NL_HOST_OS"
+        # Stage2 and later contain the trusted image; native stdlib macro
+        # routing is the default policy of an embedded-stdlib-tlci build.
         EMBEDDED_STDLIB_TLCI_ARGS="--cfg embedded-stdlib-tlci"
     fi
     echo "[build-stage0] stage$i: compile src/main.tl ($NL_BOOTSTRAP_TARGET)"

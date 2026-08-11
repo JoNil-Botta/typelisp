@@ -11011,6 +11011,31 @@
       (compiler-typecheck-param-storage-shallow-handle-source))
     (compiler-typecheck-ok? (compiler-typecheck-param-storage-consuming-source))))
 
+(define (compiler-typecheck-moved-set-growth
+  [set : tc_core.TcMovedSet]
+  [root-id : i64]
+  [count : i64]
+  [origin : ast.AstExpr]) : tc_core.TcMovedSet
+  (let
+    [out : tc_core.TcMovedSet set]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (tc_core.tc-moved-add-path-fact
+              out
+              (tc_core.TcMovePath
+                root-id
+                (tc_core.tc-move-path-segments-append-array
+                  (tc_core.tc-move-path-segments-empty)
+                  index))
+              (tc_core.TcMovedPathKind.BorrowShared)
+              (ast.ast-node-push origin)))
+          (set! index (+ index 1))))
+      out)))
+
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
     [alpha-id : i64 (ci.intern "alpha")]
@@ -11130,6 +11155,61 @@
         shadowed-root)
         [(tc_core.TcMoveConflict.Some _ _) false]
         [tc_core.TcMoveConflict.No true])]
+    [retained-parent : tc_core.TcMovedSet (tc_core.tc-moved-empty)]
+    [growth-successor : tc_core.TcMovedSet
+      (compiler-typecheck-moved-set-growth retained-parent items-id 32 origin-a)]
+    [sibling-successor : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        retained-parent
+        shadowed-root
+        (tc_core.TcMovedPathKind.BorrowShared)
+        (ast.ast-node-push origin-b))]
+    [retained-parent-isolated : bool
+      (and
+        (match (tc_core.tc-moved-path-exact-conflict-kind
+          retained-parent
+          items0
+          (tc_core.TcMovedPathKind.BorrowShared))
+          [(tc_core.TcMoveConflict.Some _ _) false]
+          [tc_core.TcMoveConflict.No true])
+        (match (tc_core.tc-moved-path-exact-conflict-kind
+          retained-parent
+          shadowed-root
+          (tc_core.TcMovedPathKind.BorrowShared))
+          [(tc_core.TcMoveConflict.Some _ _) false]
+          [tc_core.TcMoveConflict.No true]))]
+    [successors-isolated : bool
+      (and
+        (match (tc_core.tc-moved-path-exact-conflict-kind
+          growth-successor
+          items0
+          (tc_core.TcMovedPathKind.BorrowShared))
+          [(tc_core.TcMoveConflict.Some _ origin-id)
+            (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
+          [tc_core.TcMoveConflict.No false])
+        (match (tc_core.tc-moved-path-exact-conflict-kind
+          growth-successor
+          shadowed-root
+          (tc_core.TcMovedPathKind.BorrowShared))
+          [(tc_core.TcMoveConflict.Some _ _) false]
+          [tc_core.TcMoveConflict.No true])
+        (match (tc_core.tc-moved-path-exact-conflict-kind
+          sibling-successor
+          items0
+          (tc_core.TcMovedPathKind.BorrowShared))
+          [(tc_core.TcMoveConflict.Some _ _) false]
+          [tc_core.TcMoveConflict.No true]))]
+    [query-agrees-with-facts : bool
+      (and
+        (tc_core.tc-moved-path-facts-contains-exact-kind?
+          (tc_core.tc-moved-paths growth-successor)
+          items0
+          (tc_core.TcMovedPathKind.BorrowShared))
+        (not
+          (tc_core.tc-moved-path-facts-contains-exact-kind?
+            (tc_core.tc-moved-paths growth-successor)
+            shadowed-root
+            (tc_core.TcMovedPathKind.BorrowShared))))]
     [union-left : tc_core.TcMovedSet
       (tc_core.tc-moved-add-value (tc_core.tc-moved-empty) shared-id 101)]
     [union-right : tc_core.TcMovedSet
@@ -11156,6 +11236,9 @@
       partial-clears-sibling
       partial-clears-marker
       root-path-clears
+      retained-parent-isolated
+      successors-isolated
+      query-agrees-with-facts
       union-origin-left)))
 
 ;; Returns true when use-after-move is rejected (straight-line and after a

@@ -19,15 +19,6 @@
 (import (hashmap.hashmap i64 i64) as reg_i64_i64_map)
 (cfg test (import stdlib.test))
 
-(define (compiler-reg-liveness-census-reset!) : unit
-  (reg.compiler-reg-liveness-census-reset!))
-
-(define (compiler-reg-liveness-census-baseline-count) : i64
-  (reg.compiler-reg-liveness-census-baseline-count))
-
-(define (compiler-reg-liveness-census-edge-precise-count) : i64
-  (reg.compiler-reg-liveness-census-edge-precise-count))
-
 (cfg
   test
   (define (compiler-reg-low-bit-index32-powers-ok? [bit : i64] [value : i64]) : bool

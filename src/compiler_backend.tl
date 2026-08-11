@@ -834,6 +834,17 @@
   (Ok cobj.CompilerObjectImage)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
+;; Serialization support is weaker than semantic support while direct object
+;; lowering is incremental. Direct ELF/COFF callers consume this result before
+;; choosing an object artifact; internal object-image consumers that do not
+;; link the image retain their existing lower-level contract.
+(defenum CompilerBackendObjectEligibility
+  (Eligible)
+  (Unsupported String))
+
+(define (compiler-backend-object-unsupported-semantics-category) : String
+  "unsupported-object-semantics")
+
 (defenum CompilerBackendSwitchValidation
   (Ok)
   (Err String))
@@ -19474,20 +19485,6 @@
             (compiler-backend-slot-with-backend-state
               backend-state
               (+ var index))))])))
-
-;; Compatibility boundary for older callers that do not yet carry a backend
-;; capability. Production emission uses the explicit-state twin above.
-(define (compiler-backend-group-word-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [var : i64]
-  [index : i64]
-  [vars : i64]) : ResultCompilerBackend
-  (compiler-backend-group-word-operand-with-backend-state
-    assignments
-    var
-    index
-    vars
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))))
 
 ;; Load a group value's two words into `reg0`/`reg1` (for return -> rax:rdx
 ;; or an argument register pair). The value must be a group var.
@@ -59065,13 +59062,6 @@
       (+ point 1)
       (compiler_abi.compiler-abi-register-id-from-spelling reg))))
 
-;; Register scavenger context (step 15b). Holds the FINAL-IR per-var live
-;; intervals + assignments for one explicitly passed function owner, so the
-;; backend can ask which physical register is free at an instruction's point
-;; instead of hardcoding scratch. Installed once per function (read-only).
-(define (compiler-backend-scavenge-empty-assignments) : compiler_regalloc.CompilerRegAssignmentTable
-  (compiler_regalloc.compiler-reg-assignment-table-empty))
-
 ;; Forward span (in point units; each instruction step is +2) that a scavenged
 ;; STAGING register is queried across, beyond its emit position. Loads sharing a
 ;; base register fuse into one emit step but the lowering numbers their def points
@@ -68959,24 +68949,6 @@
     spans
     emit-entry))
 
-(define (compiler-backend-emit-program-target-with-mode-buffer
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    false
-    false
-    (profile_state.compiler-profile-state-new)))
-
 (define (compiler-backend-emit-program-prefix-buffer
   [target : CompilerBackendTarget]
   [entry-functions : compiler_ir_types.CompilerIrFunctionList]
@@ -72835,6 +72807,324 @@
         (compiler-backend-runtime-plan-tail plan))
       emit-entry
       crt-entry)))
+
+(define (compiler-backend-object-semantic-binop-supported?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [ty : compiler_ast_types.AstType]) : bool
+  (and
+    (not (compiler-backend-float-type? ty))
+    (match op
+      [(compiler_ir_types.CompilerIrBinOp.Add) true]
+      [(compiler_ir_types.CompilerIrBinOp.Sub) true]
+      [(compiler_ir_types.CompilerIrBinOp.Mul) true]
+      [(compiler_ir_types.CompilerIrBinOp.Eq) true]
+      [(compiler_ir_types.CompilerIrBinOp.Ne) true]
+      [(compiler_ir_types.CompilerIrBinOp.Lt) true]
+      [(compiler_ir_types.CompilerIrBinOp.Le) true]
+      [(compiler_ir_types.CompilerIrBinOp.Gt) true]
+      [(compiler_ir_types.CompilerIrBinOp.Ge) true]
+      [(compiler_ir_types.CompilerIrBinOp.BitTestEq) true]
+      [(compiler_ir_types.CompilerIrBinOp.BitTestNe) true]
+      [(compiler_ir_types.CompilerIrBinOp.And) true]
+      [(compiler_ir_types.CompilerIrBinOp.Or) true]
+      [(compiler_ir_types.CompilerIrBinOp.BitAnd) true]
+      [(compiler_ir_types.CompilerIrBinOp.BitOr) true]
+      [(compiler_ir_types.CompilerIrBinOp.BitXor) true]
+      [_ false])))
+
+(define (compiler-backend-object-semantic-value-supported?
+  [value : compiler_ir_types.CompilerIrValue]) : bool
+  (match value
+    ;; The object emitter currently uses `REX.W C7 /0`, whose imm32 operand is
+    ;; sign-extended. Keep wider constants on the assembly path until movabs
+    ;; lowering is shared with the object backend.
+    [(compiler_ir_types.CompilerIrValue.I64 value)
+      (and (>= value -2147483648) (<= value 2147483647))]
+    ;; This placeholder only records the initializer reference today.
+    [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) false]
+    [_ true]))
+
+(define (compiler-backend-object-semantic-call-args-supported?
+  [args : compiler_ir_types.CompilerIrCallArgs]) : bool
+  (match args
+    [(compiler_ir_types.CompilerIrCallArgs.Nil) true]
+    [(compiler_ir_types.CompilerIrCallArgs.One value)
+      (compiler-backend-object-semantic-value-supported? value)]
+    [(compiler_ir_types.CompilerIrCallArgs.Two lhs rhs)
+      (and
+        (compiler-backend-object-semantic-value-supported? lhs)
+        (compiler-backend-object-semantic-value-supported? rhs))]
+    [(compiler_ir_types.CompilerIrCallArgs.Array values)
+      (let
+        [index : i64 0]
+        [count : i64 (array-length values)]
+        [supported : bool true]
+        (begin
+          (while (and supported (< index count))
+            (begin
+              (set!
+                supported
+                (compiler-backend-object-semantic-value-supported?
+                  (array-ref values index)))
+              (set! index (+ index 1))))
+          supported))]))
+
+(define (compiler-backend-object-semantic-call-supported?
+  [backend-state : CompilerBackendState]
+  [name : i64]) : bool
+  (let
+    [text : String (compiler-backend-symbol-text-state backend-state name)]
+    (and
+      (not (compiler-backend-stdlib-runtime-function-name? text))
+      (not (compiler-backend-string-prefix-at? text "tl_" 0))
+      (not (compiler-backend-fixed-fault-symbol-id? backend-state name)))))
+
+;; Object-image lowering is deliberately incremental. ELF and COFF can
+;; serialize every byte record produced by the cases below, but several IR
+;; instructions still have reference-discovery-only placeholders in the object
+;; emitter. This shared scan is therefore the authoritative direct-object
+;; semantic contract; target serializers and linkability checks remain
+;; separate, weaker contracts.
+(define (compiler-backend-object-instr-semantically-supported?
+  [backend-state : CompilerBackendState]
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
+      (compiler-backend-object-semantic-value-supported? src)]
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ op lhs rhs ty)
+      (and
+        (compiler-backend-object-semantic-binop-supported? op ty)
+        (compiler-backend-object-semantic-value-supported? lhs)
+        (compiler-backend-object-semantic-value-supported? rhs))]
+    [(compiler_ir_types.CompilerIrInstr.UnOp _ op src _)
+      (and
+        (compiler-backend-object-semantic-value-supported? src)
+        (match op
+          [(compiler_ir_types.CompilerIrUnOp.Sqrt) false]
+          [_ true]))]
+    [(compiler_ir_types.CompilerIrInstr.Call _ name args _)
+      (and
+        (compiler-backend-object-semantic-call-supported? backend-state name)
+        (compiler-backend-object-semantic-call-args-supported? args))]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirect _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ callee args _)
+      (and
+        (compiler-backend-object-semantic-value-supported? callee)
+        (compiler-backend-object-semantic-call-args-supported? args))]
+    [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult _) false]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult _) false]
+    [(compiler_ir_types.CompilerIrInstr.TailCall _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Store _ value _)
+      (compiler-backend-object-semantic-value-supported? value)]
+    [(compiler_ir_types.CompilerIrInstr.Jump _) true]
+    ;; The object-only control-flow implementation still has differential
+    ;; mismatches for conditions, early returns, and enum matches.
+    [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Return maybe)
+      (match maybe
+        [(compiler_ir_types.CompilerIrMaybeValue.No) true]
+        [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+          (compiler-backend-object-semantic-value-supported? value)])]
+    [(compiler_ir_types.CompilerIrInstr.Phi _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
+      (and
+        (compiler-backend-object-semantic-value-supported? base)
+        (compiler-backend-object-semantic-value-supported? offset))]
+    [(compiler_ir_types.CompilerIrInstr.Load _ src _)
+      (compiler-backend-object-semantic-value-supported? src)]
+    [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.CopyBytes _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Cast _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Bitcast _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Splat _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorBinOp _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorPrefix _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorCompare _) false]
+    [(compiler_ir_types.CompilerIrInstr.MaskBinOp _ _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.MaskNot _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.MaskReduce _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Select _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorLoad _ _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorStore _) false]
+    [(compiler_ir_types.CompilerIrInstr.PredicatedStore _) false]
+    [(compiler_ir_types.CompilerIrInstr.PredicatedLoad _) false]
+    [(compiler_ir_types.CompilerIrInstr.GatherLoad _) false]
+    [(compiler_ir_types.CompilerIrInstr.VectorShuffle _) false]
+    [(compiler_ir_types.CompilerIrInstr.TailMask _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.CpuId _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Xgetbv _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Syscall _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.SpmdCall _) false]
+    [(compiler_ir_types.CompilerIrInstr.Pack _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Word _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.Alloc _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.LaneId _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.EntryArgc _) false]
+    [(compiler_ir_types.CompilerIrInstr.EntryArgv _) false]
+    [(compiler_ir_types.CompilerIrInstr.EntryEnvp _) false]
+    [(compiler_ir_types.CompilerIrInstr.Switch _ _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) false]))
+
+(define (compiler-backend-object-instrs-semantically-supported?
+  [backend-state : CompilerBackendState]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+    [supported : bool true]
+    (begin
+      (while (and supported (< index count))
+        (begin
+          (set!
+            supported
+            (compiler-backend-object-instr-semantically-supported?
+              backend-state
+              (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      supported)))
+
+(define (compiler-backend-object-blocks-semantically-supported?
+  [backend-state : CompilerBackendState]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (let
+    [cursor : compiler_ir_types.CompilerIrBlockList blocks]
+    (begin
+      (while true
+        (match cursor
+          [(compiler_ir_types.CompilerIrBlockList.Nil) (return true)]
+          [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+            (match block
+              [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+                (if (compiler-backend-object-instrs-semantically-supported?
+                  backend-state
+                  instrs)
+                  (set! cursor (__tl-box-place rest))
+                  (return false))])]
+          [(compiler_ir_types.CompilerIrBlockList.Array seq)
+            (let
+              [index : i64 0]
+              [count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+              (begin
+                (while (< index count)
+                  (begin
+                    (match (compiler_ir_types.compiler-ir-block-seq-ref
+                      seq
+                      index)
+                      [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+                        (when
+                          (not
+                            (compiler-backend-object-instrs-semantically-supported?
+                              backend-state
+                              instrs))
+                          (return false))])
+                    (set! index (+ index 1))))
+                (return true)))]))
+      false)))
+
+(define (compiler-backend-object-globals-semantically-supported?
+  [globals : compiler_ir_types.CompilerIrGlobalList]) : bool
+  (let
+    [cursor : compiler_ir_types.CompilerIrGlobalList globals]
+    (begin
+      (while true
+        (match cursor
+          [(compiler_ir_types.CompilerIrGlobalList.Nil) (return true)]
+          [(compiler_ir_types.CompilerIrGlobalList.Cons global rest)
+            (match global
+              [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
+                (if (compiler-backend-object-semantic-value-supported? value)
+                  (set! cursor (__tl-box-place rest))
+                  (return false))])]
+          [(compiler_ir_types.CompilerIrGlobalList.Array seq)
+            (let
+              [index : i64 0]
+              [count : i64 (compiler_ir_types.compiler-ir-global-seq-count seq)]
+              (begin
+                (while (< index count)
+                  (begin
+                    (match (compiler_ir_types.compiler-ir-global-seq-ref
+                      seq
+                      index)
+                      [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
+                        (when
+                          (not
+                            (compiler-backend-object-semantic-value-supported?
+                              value))
+                          (return false))])
+                    (set! index (+ index 1))))
+                (return true)))]))
+      false)))
+
+(define (compiler-backend-object-functions-semantically-supported?
+  [backend-state : CompilerBackendState]
+  [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
+  (let
+    [cursor : compiler_ir_types.CompilerIrFunctionList functions]
+    (begin
+      (while true
+        (match cursor
+          [(compiler_ir_types.CompilerIrFunctionList.Nil) (return true)]
+          [(compiler_ir_types.CompilerIrFunctionList.Cons function rest)
+            (match function
+              [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
+                (if (or
+                  (compiler-backend-stdlib-runtime-function-name?
+                    (compiler-backend-symbol-text-state backend-state name))
+                  (compiler-backend-object-blocks-semantically-supported?
+                    backend-state
+                    blocks))
+                  (set! cursor (__tl-box-place rest))
+                  (return false))])]
+          [(compiler_ir_types.CompilerIrFunctionList.Array seq)
+            (let
+              [index : i64 0]
+              [count : i64
+                (compiler_ir_types.compiler-ir-function-seq-count seq)]
+              (begin
+                (while (< index count)
+                  (begin
+                    (match (compiler_ir_types.compiler-ir-function-seq-ref
+                      seq
+                      index)
+                      [(compiler_ir_types.CompilerIrFunction.Function
+                          name
+                          _
+                          _
+                          _
+                          blocks)
+                        (when
+                          (not
+                            (or
+                              (compiler-backend-stdlib-runtime-function-name?
+                                (compiler-backend-symbol-text-state
+                                  backend-state
+                                  name))
+                              (compiler-backend-object-blocks-semantically-supported?
+                                backend-state
+                                blocks)))
+                          (return false))])
+                    (set! index (+ index 1))))
+                (return true)))]))
+      false)))
+
+(define (compiler-backend-object-program-eligibility
+  [backend-state : CompilerBackendState]
+  [program : compiler_ir_types.CompilerIrProgram]) : CompilerBackendObjectEligibility
+  (match program
+    [(compiler_ir_types.CompilerIrProgram.Program globals functions _)
+      (if (and
+        (compiler-backend-object-globals-semantically-supported? globals)
+        (compiler-backend-object-functions-semantically-supported?
+          backend-state
+          functions))
+        CompilerBackendObjectEligibility.Eligible
+        (CompilerBackendObjectEligibility.Unsupported
+          (compiler-backend-object-unsupported-semantics-category)))]))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-prepared-backend-state
   [backend-state : CompilerBackendState]
@@ -80259,16 +80549,6 @@
     compiler-backend-function-i64-array-addr-of-forwarding-src
     value))
 
-(define (compiler-backend-test-set-compiler-backend-assembly-stream-home-arena!
-  [stream : CompilerBackendStreamState]
-  [value : arena.Arena]) : unit
-  (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (begin
-      (set! data.assembly-home-arena value)
-      (compiler-backend-stream-state-data-set! stream data))))
-
 (define (compiler-backend-function-scratch-fixture-set-const-hoist-frame-count!
   [function-state : CompilerBackendFunctionState]
   [value : i64]) : unit
@@ -80590,12 +80870,6 @@
   (compiler-backend-function-scratch-i64
     function-state
     compiler-backend-scratch-i64-scavenge-plan-reg-mask))
-
-(define (compiler-backend-function-scratch-fixture-get-scavenge-ctx-scratch-masks
-  [function-state : CompilerBackendFunctionState]) : (__tl_dyn-array i64)
-  (compiler-backend-function-scratch-i64-array
-    function-state
-    compiler-backend-scratch-i64-array-scavenge-scratch-masks))
 
 (define (compiler-backend-test-get-compiler-backend-peephole-memory-base-none) : i64
   compiler-backend-peephole-memory-base-none)
@@ -81059,12 +81333,6 @@
   (compiler-backend-function-scratch-bool?
     function-state
     compiler-backend-scratch-bool-emergency-used))
-
-(define (compiler-backend-function-scratch-fixture-get-emergency-regs
-  [function-state : CompilerBackendFunctionState]) : (__tl_dyn-array i64)
-  (compiler-backend-function-scratch-i64-array
-    function-state
-    compiler-backend-scratch-i64-array-emergency-regs))
 
 (define (compiler-backend-test-get-compiler-backend-gep-fold-ready
   [backend-state : CompilerBackendState]) : bool

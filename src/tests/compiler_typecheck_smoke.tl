@@ -3406,6 +3406,20 @@
 (import tc.lazy.summary.macro.comptime_provider as provider)
 (define (main) : i64 (provider.capture 41))")
 
+(define (compiler-typecheck-smoke-lazy-summary-macro-context-provider-source) : String
+  "(module tc.lazy.summary.macro.context_provider)
+(import tc.lazy.summary.macro.helper as helper)
+(defmacro (hook [value : i64]) : i64 `(helper.bump ,value))")
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-context-source) : String
+  "(module tc.lazy.summary.macro.helper)
+(define (bump [value : i64]) : i64 (+ value 1))
+(module tc.lazy.summary.macro.context_provider)
+(define summary-stub : i64 0)
+(module tc.lazy.summary.macro.entry)
+(import tc.lazy.summary.macro.context_provider as provider)
+(define (main) : i64 (provider.hook 41))")
+
 (define (compiler-typecheck-smoke-lazy-summary-macro-check
   [provider-source : String]
   [entry-source : String]
@@ -3432,6 +3446,8 @@
                     (if (= expected-forces 0)
                       (= (tc_core.tc-lazy-import-summary-macro-force-count) 0)
                       (> (tc_core.tc-lazy-import-summary-macro-force-count) 0))))]
+              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _)
+                (set! ok false)]
               [(tc_core.ResultCompilerTypecheckChecked.Err _) (set! ok false)])]
           [(parser.ResultAstProgramDiagnostic.Err _) (set! ok false)])
         (set! ok false))
@@ -3461,6 +3477,12 @@
   (compiler-typecheck-smoke-lazy-summary-macro-check
     (compiler-typecheck-smoke-lazy-summary-macro-comptime-provider-source)
     (compiler-typecheck-smoke-lazy-summary-macro-comptime-source)
+    1))
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-context-ok?) : bool
+  (compiler-typecheck-smoke-lazy-summary-macro-check
+    (compiler-typecheck-smoke-lazy-summary-macro-context-provider-source)
+    (compiler-typecheck-smoke-lazy-summary-macro-context-source)
     1))
 
 (define (compiler-typecheck-smoke-nested-dotted-nominal-source) : String
@@ -3818,6 +3840,7 @@
                     "typecheck smoke: missing full.entry id: "
                     "full.entry"))
                 env)]
+            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
             [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
         [(parser.ResultAstProgramDiagnostic.Err _) false])]
     (begin
@@ -4743,6 +4766,7 @@
                           [(tc_core.ResultTcType.Ok _) true]
                           [(tc_core.ResultTcType.Err _) false]))]
                     [(tc_core.ResultTcEnv.Err _) false])))]
+            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
             [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
         [(parser.ResultAstProgramDiagnostic.Err _) false])]
     (begin
@@ -4766,6 +4790,7 @@
                     env
                     (ci.intern
                       (compiler_symbols.compiler-symbol-module-key "vec" "Vec")))))]
+            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
             [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
         [(load.ResultCompilerLoadWithPaths.Err _) false])]
     (begin
@@ -4798,6 +4823,7 @@
                     (io.panic
                       "typecheck: lazy import stdlib.array materialized")
                     true)]
+                [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
                 [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                   (let
                     [message : String
@@ -4838,6 +4864,7 @@
                 paths)
                 [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
                   (and (= skip-count 0) result-materialized)]
+                [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
                 [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                   (let
                     [message : String
@@ -4869,6 +4896,7 @@
               (ast.ast-program decls)
               paths)
               [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
+              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
               [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [message : String
@@ -4900,6 +4928,7 @@
               (ast.ast-program decls)
               paths)
               [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
+              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
               [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [message : String
@@ -4934,6 +4963,7 @@
                 paths)
                 [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
                   (= skip-count 0)]
+                [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
                 [(tc_core.ResultCompilerTypecheckChecked.Err _) false]))]
           [(load.ResultCompilerLoadWithPaths.Err _) false]))]
     (begin
@@ -4951,6 +4981,7 @@
             (ast.ast-program decls)
             paths)
             [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
+            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
             [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
         [(load.ResultCompilerLoadWithPaths.Err _) false])]
     (begin
@@ -4968,6 +4999,7 @@
             (ast.ast-program decls)
             paths)
             [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
+            [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
             [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
         [(load.ResultCompilerLoadWithPaths.Err _) false])]
     (begin
@@ -5482,6 +5514,7 @@
                   test
                   (= (tc_core.tc-proof-reuse-skips-total-value) expected-skips)
                   true)]
+              [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
               [(tc_core.ResultCompilerTypecheckChecked.Err diagnostics)
                 (let
                   [message : String
@@ -5549,6 +5582,16 @@
                 roots
                 cfgs))
               [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _) false]
+              [(tc_core.ResultCompilerTypecheckChecked.Partial
+                  diagnostics
+                  _
+                  _
+                  _)
+                (load.compiler-load-string-contains?
+                  (diagnostic.compiler-diagnostic-message
+                    (diagnostic.compiler-diagnostic-list-first
+                      (deref diagnostics)))
+                  expected-substring)]
               [(tc_core.ResultCompilerTypecheckChecked.Err diagnostics)
                 (load.compiler-load-string-contains?
                   (diagnostic.compiler-diagnostic-message
@@ -5950,6 +5993,9 @@
     (unless
       (compiler-typecheck-smoke-lazy-summary-macro-comptime-ok?)
       (io.panic "typecheck: lazy summary macro comptime param smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-summary-macro-context-ok?)
+      (io.panic "typecheck: lazy summary macro definition context smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-state-isolation-ok?)
       (io.panic "typecheck: prefix cache state isolation smoke failed"))

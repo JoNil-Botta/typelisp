@@ -1,7 +1,10 @@
 {
   "exit": 0,
   "stderr_exact": "",
+  "stdout_contains": [
+    "\"code\":\"E0100\""
+  ],
   "message_checks": [
-    {"jsonpath_id": 2, "raw_contains": "\"success\":false", "raw_contains": "\"error\"", "raw_contains": "at line", "raw_not_contains": "LSP request"}
+    {"jsonpath_id": 2, "raw_contains": "\"success\":false", "raw_contains": "\"error\"", "raw_contains": "reader: unterminated list", "raw_not_contains": "LSP request"}
   ]
 }

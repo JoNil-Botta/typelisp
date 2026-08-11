@@ -22,6 +22,53 @@ for required in bench.tl bounds.tl kernel.ispc driver.c case.tsv LICENSE.BSD-3-C
     }
 done
 
+BENCH_SOURCE="$CASE_DIR/bench.tl"
+BOUNDS_SOURCE="$CASE_DIR/bounds.tl"
+if grep -Eq '\(Array[[:space:]]+[A-Za-z_][A-Za-z0-9_.]*\)' \
+   "$BENCH_SOURCE" "$BOUNDS_SOURCE"; then
+    echo "perfbench_gathers: public unsized Array compatibility form remains" >&2
+    exit 1
+fi
+if grep -Fq '__tl_dyn-array' "$BENCH_SOURCE" "$BOUNDS_SOURCE"; then
+    echo "perfbench_gathers: caller-authored private dynamic array remains" >&2
+    exit 1
+fi
+if grep -Fq '(import stdlib.array)' "$BENCH_SOURCE" "$BOUNDS_SOURCE" ||
+   grep -Fq '(array.make-array ' "$BENCH_SOURCE" "$BOUNDS_SOURCE"; then
+    echo "perfbench_gathers: fixture still owns compatibility array backing" >&2
+    exit 1
+fi
+for required_surface in \
+    '(import stdlib.vector)' \
+    '(import (vector.vector f32) as f32v)' \
+    '(import (vector.vector i64) as i64v)' \
+    '[values : (&mut values (Slice f32))]' \
+    '[offsets : (&mut offsets (Slice i64))]' \
+    '[offsets : i64v.Vec (gathers-i64-buffer 32)]'; do
+    grep -Fq "$required_surface" "$BENCH_SOURCE" || {
+        echo "perfbench_gathers: missing Vec/Slice surface: $required_surface" >&2
+        exit 1
+    }
+done
+grep -Fq '(while (< repetition 100)' "$BENCH_SOURCE" || {
+    echo "perfbench_gathers: missing 100-call measured loop" >&2
+    exit 1
+}
+view_count=$(grep -Eh '\((f32v|i64v)\.view(-mut)?[[:space:]]' \
+    "$BENCH_SOURCE" "$BOUNDS_SOURCE" | wc -l | tr -d ' ')
+[ "$view_count" -eq 6 ] || {
+    echo "perfbench_gathers: expected six persistent Vec views, found $view_count" >&2
+    exit 1
+}
+awk '
+    /\(while \(< repetition 100\)/ { measured = 1 }
+    measured && /\((f32v|i64v)\.view(-mut)?[[:space:]]/ { bad = 1 }
+    END { exit bad ? 1 : 0 }
+' "$BENCH_SOURCE" || {
+    echo "perfbench_gathers: Vec view construction entered the measured loop" >&2
+    exit 1
+}
+
 awk -F '\t' '
 BEGIN {
     expected_header = "schema\tcase\tmode\ttypelisp_status\ttypelisp_diagnostic\tispc_status\tispc_diagnostic\tispc_target\tgang_width\tlane_type\ttypelisp_source\ttypelisp_symbol\tispc_source\tispc_symbol\tdriver\targuments\trepetitions\texpected_exit\tupstream_tag\tupstream_commit\tupstream_path\tupstream_function\tlicense"

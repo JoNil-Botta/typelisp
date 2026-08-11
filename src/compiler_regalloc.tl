@@ -24569,7 +24569,7 @@
 ;;  * NOT tail-call args (restore-order analysis kept out of v1), NOT params
 ;;    (entry marshalling), NOT address-taken/memory-targeted vars.
 ;;  * Call results, returns, Pack/Word and switch dispatch all read through
-;;    compiler-backend-group-word-operand, which is pair-aware. Group arguments
+;;    compiler-backend-group-word-operand-with-backend-state, which is pair-aware. Group arguments
 ;;    to ordinary direct and indirect calls may use a CSR pair, but not r8:r9,
 ;;    until their multiword ABI marshalling participates in the pair
 ;;    parallel-move solver. A CSR pair is preserved across calls by the callee,
@@ -36449,11 +36449,3 @@
     [(CompilerRegMaybeLocation.Some location)
       (compiler-reg-location-uses-register? location reg)]
     [_ false]))
-
-(define (compiler-regalloc-self-test-failure-message [name : String]) : String
-  (str_cat.str-cat "regalloc self-test failed: " name))
-
-(define (compiler-regalloc-self-test-require! [name : String] [ok : bool]) : unit
-  (if ok
-    unit
-    (io.panic (compiler-regalloc-self-test-failure-message name))))

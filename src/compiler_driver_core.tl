@@ -55,6 +55,7 @@
 
 (defenum ResultCompilerDriverObject
   (Ok cobj.CompilerObjectImage)
+  (Unavailable String)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
 (defenum ResultCompilerDriverLowered
@@ -1947,59 +1948,73 @@
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase profile-state "optimize"))
-            (compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-              (ResultCompilerDriverObject.Err
-                (box
-                  (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
+              (begin
+                (compiler-driver-release-lowered-ir! opt-level)
+                (ResultCompilerDriverObject.Err
+                  (box
+                    (compiler-driver-ty-node-pool-exhausted-diagnostic
+                      input-path))))
               (begin
                 (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
                   backend-state
                   (>= opt-level 2))
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-start-phase profile-state))
-                (match (if has-target
-                  (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
-                    backend-state
-                    pools
-                    optimized
-                    target
-                    mode
-                    optimized-spans
-                    emit-entry
-                    crt-entry
-                    profile-state)
-                  (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
-                    backend-state
-                    pools
-                    optimized
-                    (compiler_backend.CompilerBackendTarget.Linux)
-                    mode
-                    optimized-spans
-                    emit-entry
-                    crt-entry
-                    profile-state))
-                  [(compiler_backend.ResultCompilerBackendObject.Ok image)
+                (match (compiler_backend.compiler-backend-object-program-eligibility
+                  backend-state
+                  optimized)
+                  [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
+                      category)
+                    ;; Preserve the original lowered program for the caller's
+                    ;; assembly fallback. At optimized levels the release must
+                    ;; happen only after object eligibility is established.
+                    (ResultCompilerDriverObject.Unavailable category)]
+                  [(compiler_backend.CompilerBackendObjectEligibility.Eligible)
                     (begin
+                      (compiler-driver-release-lowered-ir! opt-level)
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-finish-phase
-                          profile-state
-                          "backend"))
-                      (ResultCompilerDriverObject.Ok image))]
-                  [(compiler_backend.ResultCompilerBackendObject.Err diag)
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-driver-profile-finish-phase
-                          profile-state
-                          "backend"))
-                      (ResultCompilerDriverObject.Err
-                        (box
-                          (compiler_diagnostic.compiler-diagnostic-with-path
-                            (__tl-box-place diag)
-                            input-path))))]))))]))))
+                        (compiler-driver-profile-start-phase profile-state))
+                      (match (if has-target
+                        (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                          backend-state
+                          pools
+                          optimized
+                          target
+                          mode
+                          optimized-spans
+                          emit-entry
+                          crt-entry
+                          profile-state)
+                        (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                          backend-state
+                          pools
+                          optimized
+                          (compiler_backend.CompilerBackendTarget.Linux)
+                          mode
+                          optimized-spans
+                          emit-entry
+                          crt-entry
+                          profile-state))
+                        [(compiler_backend.ResultCompilerBackendObject.Ok image)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-driver-profile-finish-phase
+                                profile-state
+                                "backend"))
+                            (ResultCompilerDriverObject.Ok image))]
+                        [(compiler_backend.ResultCompilerBackendObject.Err diag)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-driver-profile-finish-phase
+                                profile-state
+                                "backend"))
+                            (ResultCompilerDriverObject.Err
+                              (box
+                                (compiler_diagnostic.compiler-diagnostic-with-path
+                                  (__tl-box-place diag)
+                                  input-path))))]))]))))]))))
 
 (define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state
   [pools : compiler_ast_types.AstNodePoolContext]

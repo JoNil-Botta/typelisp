@@ -1440,6 +1440,88 @@
       (compiler-backend-asm-ok? asm)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-object-semantic-eligibility-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [empty-program : compiler_ir_types.CompilerIrProgram
+      (compiler_ir_types.CompilerIrProgram.Program
+        compiler_ir_types.CompilerIrGlobalList.Nil
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    [runtime-globals : compiler_ir_types.CompilerIrGlobalList
+      (compiler_ir_types.CompilerIrGlobalList.Cons
+        (compiler_ir_types.CompilerIrGlobal.Global
+          1
+          (compiler_ast_types.AstType.I64)
+          (compiler_ir_types.CompilerIrValue.RuntimeGlobal 2))
+        (box compiler_ir_types.CompilerIrGlobalList.Nil))]
+    [runtime-global-program : compiler_ir_types.CompilerIrProgram
+      (compiler_ir_types.CompilerIrProgram.Program
+        runtime-globals
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    (and
+      (match (compiler_backend.compiler-backend-object-program-eligibility
+        backend-state
+        empty-program)
+        [(compiler_backend.CompilerBackendObjectEligibility.Eligible) true]
+        [(compiler_backend.CompilerBackendObjectEligibility.Unsupported _)
+          false])
+      (match (compiler_backend.compiler-backend-object-program-eligibility
+        backend-state
+        runtime-global-program)
+        [(compiler_backend.CompilerBackendObjectEligibility.Eligible) false]
+        [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
+            category)
+          (string.eq
+            category
+            (compiler_backend.compiler-backend-object-unsupported-semantics-category))])
+      (compiler_backend.backend-and8
+        (compiler_backend.compiler-backend-object-semantic-value-supported?
+          (compiler_ir_types.CompilerIrValue.I64 -2147483648))
+        (compiler_backend.compiler-backend-object-semantic-value-supported?
+          (compiler_ir_types.CompilerIrValue.I64 2147483647))
+        (not
+          (compiler_backend.compiler-backend-object-semantic-value-supported?
+            (compiler_ir_types.CompilerIrValue.I64 2147483648)))
+        (not
+          (compiler_backend.compiler-backend-object-instr-semantically-supported?
+            backend-state
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              1
+              2)))
+        (not
+          (compiler_backend.compiler-backend-object-instr-semantically-supported?
+            backend-state
+            (compiler_ir_types.CompilerIrInstr.TailCall
+              1
+              compiler_ir_types.CompilerIrCallArgs.Nil
+              (compiler_ast_types.AstType.I64))))
+        (not
+          (compiler_backend.compiler-backend-object-instr-semantically-supported?
+            backend-state
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))))
+        (not
+          (compiler_backend.compiler-backend-object-instr-semantically-supported?
+            backend-state
+            (compiler_ir_types.CompilerIrInstr.CopyBytes
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              8)))
+        (not
+          (compiler_backend.compiler-backend-object-instr-semantically-supported?
+            backend-state
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              0)))))))
+
 (define (compiler-backend-object-image-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
 (extern (unused-foreign-call [arg0 : i64]) : i64 (:symbol \"unused_foreign_exact\"))
@@ -44360,6 +44442,7 @@ b_keep:
         (compiler-backend-user-symbol-cache-scratch-ok?)
         (compiler-backend-runtime-leaf-user-symbol-ok?)
         (compiler-backend-program-index-id-maps-ok?)
-        (compiler-backend-program-index-explicit-extern-ids-ok?))))
+        (compiler-backend-program-index-explicit-extern-ids-ok?)))
+    (compiler-backend-object-semantic-eligibility-ok?))
     42
     (io.panic "backend: smoke output mismatch")))

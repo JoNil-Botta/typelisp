@@ -1,0 +1,21 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"positionEncoding\":\"utf-16\""},
+    {"jsonpath_id": 2, "raw_contains": "\"uri\":\"${{TMP_URI}}/semantic-navigation.tl\"", "raw_contains": "\"range\":{\"start\":{\"line\":6,\"character\":16},\"end\":{\"line\":6,\"character\":19}}"},
+    {"jsonpath_id": 3, "raw_contains": "\"range\":{\"start\":{\"line\":7,\"character\":8},\"end\":{\"line\":7,\"character\":13}}"},
+    {"jsonpath_id": 4, "raw_contains": "\"range\":{\"start\":{\"line\":0,\"character\":40},\"end\":{\"line\":0,\"character\":43}}"},
+    {"jsonpath_id": 5, "raw_contains": "documented : i64", "raw_contains": "Stable documented value.", "raw_contains": "\"range\":{\"start\":{\"line\":10,\"character\":31},\"end\":{\"line\":10,\"character\":41}}"},
+    {"jsonpath_id": 6, "raw_contains": "\"range\":{\"start\":{\"line\":3,\"character\":11},\"end\":{\"line\":3,\"character\":19}}"},
+    {"jsonpath_id": 7, "raw_contains": "identity", "raw_contains": "\"range\":{\"start\":{\"line\":11,\"character\":25},\"end\":{\"line\":11,\"character\":33}}"},
+    {"jsonpath_id": 8, "json_contains": "\"result\":null", "jsonpath_result": null},
+    {"jsonpath_id": 9, "json_contains": "\"result\":null", "jsonpath_result": null},
+    {"jsonpath_id": 10, "json_contains": "\"result\":null", "jsonpath_result": null},
+    {"jsonpath_id": 11, "json_contains": "\"result\":null", "jsonpath_result": null},
+    {"jsonpath_id": 12, "json_contains": "\"result\":null", "jsonpath_result": null},
+    {"jsonpath_id": 13, "raw_contains": "(if cond then else)", "raw_contains": "\"range\":{\"start\":{\"line\":9,\"character\":25},\"end\":{\"line\":9,\"character\":27}}"},
+    {"jsonpath_id": 14, "raw_contains": "\"range\":{\"start\":{\"line\":4,\"character\":11},\"end\":{\"line\":4,\"character\":25}}"},
+    {"jsonpath_id": 15, "json_contains": "\"result\":null", "jsonpath_result": null}
+  ]
+}

@@ -7,6 +7,7 @@
 (import compiler_lower_tests)
 (import compiler_lower_package_tests)
 (import compiler_backend_tests)
+(import compiler_backend_object_target_tests as object_target_tests)
 (import compiler_driver_smoke_tests)
 (import compiler_builtin_ids as cbi)
 
@@ -58,6 +59,8 @@
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
         (compiler_backend_tests.compiler-backend-self-test))]
+    [(string.eq name "backend-object-target")
+      (object_target_tests.compiler-backend-object-target-tests-main)]
     [(string.eq name "lower-symbol-identity")
       (compiler_driver_smoke_tests.compiler-lower-symbol-identity-smoke-main)]
     [(string.eq name "driver-pic")
@@ -105,6 +108,9 @@
       (compiler-smoke-suite-require-child
         "backend"
         "compiler smoke suite: compiler_backend_smoke failed")
+      (compiler-smoke-suite-require-child
+        "backend-object-target"
+        "compiler smoke suite: compiler_backend_object_target_smoke failed")
       (compiler-smoke-suite-require-child
         "lower-symbol-identity"
         "compiler smoke suite: compiler_lower_symbol_identity_smoke failed")

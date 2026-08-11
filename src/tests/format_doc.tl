@@ -58,9 +58,9 @@
     [(Doc.SoftLine) 1]
     [(Doc.HardLine) 1000000]
     [(Doc.Concat left right)
-      (+ (flat-width (box-get left)) (flat-width (box-get right)))]
-    [(Doc.Nest _ inner) (flat-width (box-get inner))]
-    [(Doc.Group inner) (flat-width (box-get inner))]))
+      (+ (flat-width (__tl-box-place left)) (flat-width (__tl-box-place right)))]
+    [(Doc.Nest _ inner) (flat-width (__tl-box-place inner))]
+    [(Doc.Group inner) (flat-width (__tl-box-place inner))]))
 
 ;; Add the flat width of `doc` to `acc`, but stop descending as soon as the
 ;; running total exceeds `limit`: once a subtree is over budget the rest is left
@@ -80,11 +80,11 @@
       [(Doc.HardLine) (+ acc 1000000)]
       [(Doc.Concat left right)
         (flat-width-capped
-          (box-get right)
-          (flat-width-capped (box-get left) acc limit)
+          (__tl-box-place right)
+          (flat-width-capped (__tl-box-place left) acc limit)
           limit)]
-      [(Doc.Nest _ inner) (flat-width-capped (box-get inner) acc limit)]
-      [(Doc.Group inner) (flat-width-capped (box-get inner) acc limit)])))
+      [(Doc.Nest _ inner) (flat-width-capped (__tl-box-place inner) acc limit)]
+      [(Doc.Group inner) (flat-width-capped (__tl-box-place inner) acc limit)])))
 
 (define (fits-flat [doc : Doc] [remaining : i64]) : bool
   (<= (flat-width-capped doc 0 remaining) remaining))
@@ -123,14 +123,20 @@
     [(Doc.Concat left right)
       (let
         [left-col : i64
-          (render-doc-into (box-get left) width indent col flat buf)]
-        (render-doc-into (box-get right) width indent left-col flat buf))]
+          (render-doc-into (__tl-box-place left) width indent col flat buf)]
+        (render-doc-into (__tl-box-place right) width indent left-col flat buf))]
     [(Doc.Nest extra inner)
-      (render-doc-into (box-get inner) width (+ indent extra) col flat buf)]
+      (render-doc-into
+        (__tl-box-place inner)
+        width
+        (+ indent extra)
+        col
+        flat
+        buf)]
     [(Doc.Group inner)
-      (if (fits-flat (box-get inner) (- width col))
-        (render-doc-into (box-get inner) width indent col true buf)
-        (render-doc-into (box-get inner) width indent col false buf))]))
+      (if (fits-flat (__tl-box-place inner) (- width col))
+        (render-doc-into (__tl-box-place inner) width indent col true buf)
+        (render-doc-into (__tl-box-place inner) width indent col false buf))]))
 
 (define (render-doc-width [doc : Doc] [width : i64]) : String
   (let

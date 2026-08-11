@@ -28,7 +28,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (+ i 1))
+        (set! (array-ref a i) (+ i 1))
         (set! i (+ i 1))))))
 
 (define (main) : i64

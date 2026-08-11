@@ -60,7 +60,7 @@
           [(surface_identity.ResultSurfaceIdentityPayload.Err message)
             (ResultCompilerSurfaceKey.Err message)]
           [(surface_identity.ResultSurfaceIdentityPayload.Ok payload)
-            (ResultCompilerSurfaceKey.Ok (struct-get payload key))]))]))
+            (ResultCompilerSurfaceKey.Ok payload.key)]))]))
 
 (define (compiler-surface-hydrate-payloads
   [identity-bytes : (__tl_dyn-array u8)]
@@ -74,16 +74,13 @@
     [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch message)
       (ResultCompilerSurfaceHydration.KeyMismatch message)]
     [(surface_identity.ResultSurfaceIdentityHydration.Ok identity)
-      (match (surface_ast.surface-ast-decode
-        ast-bytes
-        (struct-get identity remap)
-        pools)
+      (match (surface_ast.surface-ast-decode ast-bytes identity.remap pools)
         [(surface_ast.ResultSurfaceAstHydration.Err message)
           (ResultCompilerSurfaceHydration.Err message)]
         [(surface_ast.ResultSurfaceAstHydration.Ok hydration)
           (match (surface_facts.surface-typecheck-facts-decode
             fact-bytes
-            (struct-get identity remap))
+            identity.remap)
             [(surface_facts.ResultSurfaceTypecheckFacts.Err message)
               (ResultCompilerSurfaceHydration.Err message)]
             [(surface_facts.ResultSurfaceTypecheckFacts.Ok facts)
@@ -142,9 +139,9 @@
       [source-names : (__tl_dyn-array String) (make-array String 2)]
       [key : surface_identity.SurfaceIdentityKey
         (begin
-          (array-set! package-modules 0 "pkg/main.tl")
-          (array-set! source-names 0 "decl")
-          (array-set! source-names 1 "root")
+          (set! (array-ref package-modules 0) "pkg/main.tl")
+          (set! (array-ref source-names 0) "decl")
+          (set! (array-ref source-names 1) "root")
           (surface_identity.SurfaceIdentityKey
             "pkg"
             package-modules
@@ -239,14 +236,14 @@
               unit
               (set! ok false))
             (match (compiler-surface-hydrate-payloads
-              (struct-get payloads identity-bytes)
-              (struct-get payloads ast-bytes)
-              (struct-get payloads fact-one-bytes)
-              (struct-get payloads key)
+              payloads.identity-bytes
+              payloads.ast-bytes
+              payloads.fact-one-bytes
+              payloads.key
               pools)
               [(ResultCompilerSurfaceHydration.Ok hydration)
                 (begin
-                  (set! first-hydrated (struct-get hydration facts))
+                  (set! first-hydrated hydration.facts)
                   (match (surface_facts.surface-typecheck-facts-builder-append
                     builder
                     first-hydrated)
@@ -268,10 +265,10 @@
             ;; Both the active publication and the reusable completed builder
             ;; must remain unchanged.
             (match (compiler-surface-hydrate-payloads
-              (struct-get payloads identity-bytes)
-              (struct-get payloads ast-bytes)
+              payloads.identity-bytes
+              payloads.ast-bytes
               (make-array u8 0)
-              (struct-get payloads key)
+              payloads.key
               pools)
               [(ResultCompilerSurfaceHydration.Err _) unit]
               [_ (set! ok false)])
@@ -286,15 +283,15 @@
                   unit
                   (set! ok false))])
             (match (compiler-surface-hydrate-payloads
-              (struct-get payloads identity-bytes)
-              (struct-get payloads ast-bytes)
-              (struct-get payloads fact-two-bytes)
-              (struct-get payloads key)
+              payloads.identity-bytes
+              payloads.ast-bytes
+              payloads.fact-two-bytes
+              payloads.key
               pools)
               [(ResultCompilerSurfaceHydration.Ok hydration)
                 (match (surface_facts.surface-typecheck-facts-builder-append
                   builder
-                  (struct-get hydration facts))
+                  hydration.facts)
                   [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Err _)
                     (set! ok false)]
                   [(surface_facts.ResultSurfaceTypecheckFactsBuilder.Ok next)
@@ -307,14 +304,14 @@
                         [(surface_facts.ResultSurfaceTypecheckFacts.Ok
                             composite)
                           (if (surface_facts.surface-typecheck-facts-i64-array-eq?
-                            (struct-get composite clone-call-indices)
+                            composite.clone-call-indices
                             (make-array 0 1))
                             unit
                             (set! ok false))]))])]
               [_ (set! ok false)])
             (match (compiler-surface-hydrate
               (make-array u8 0)
-              (struct-get payloads key)
+              payloads.key
               pools)
               [(ResultCompilerSurfaceHydration.Missing) unit]
               [_ (set! ok false)])

@@ -29,17 +29,17 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-parallel-move-edge-push!
   [seq : (&mut seq CompilerParallelMoveEdgeSeq)]
   [edge : CompilerParallelMoveEdge]) : unit
   (begin
-    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+    (if (< seq.len (array-length seq.slots))
       unit
       (let
-        [old-capacity : i64 (array-length (struct-get seq slots))]
+        [old-capacity : i64 (array-length seq.slots)]
         [bigger : (__tl_dyn-array CompilerParallelMoveEdge)
           (make-array
             CompilerParallelMoveEdge
@@ -49,14 +49,14 @@
         (begin
           (compiler-parallel-move-edge-seq-copy-range!
             (&mut bigger)
-            (& (struct-get seq slots))
-            (struct-get seq len))
-          (set! (struct-get seq slots) bigger))))
+            (& seq.slots)
+            seq.len)
+          (set! seq.slots bigger))))
     (let
-      [index : i64 (struct-get seq len)]
+      [index : i64 seq.len]
       (begin
-        (array-set! (struct-get seq slots) index edge)
-        (set! (struct-get seq len) (+ index 1))))))
+        (set! (array-ref seq.slots index) edge)
+        (set! seq.len (+ index 1))))))
 
 (define (compiler-parallel-move-edge-id [edge : CompilerParallelMoveEdge]) : i64
   (match edge
@@ -79,8 +79,8 @@
   [resource : i64]
   [exclude-id : i64]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerParallelMoveEdge) (struct-get edges slots)]
-    [count : i64 (struct-get edges len)]
+    [slots : (__tl_dyn-array CompilerParallelMoveEdge) edges.slots]
+    [count : i64 edges.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -116,8 +116,8 @@
   [edges : CompilerParallelMoveEdgeSeq]
   [blockers : CompilerParallelMoveEdgeSeq]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerParallelMoveEdge) (struct-get edges slots)]
-    [count : i64 (struct-get edges len)]
+    [slots : (__tl_dyn-array CompilerParallelMoveEdge) edges.slots]
+    [count : i64 edges.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -134,9 +134,8 @@
   [remaining : CompilerParallelMoveEdgeSeq]
   [blockers : CompilerParallelMoveEdgeSeq]) : CompilerParallelMoveDecision
   (let
-    [slots : (__tl_dyn-array CompilerParallelMoveEdge)
-      (struct-get remaining slots)]
-    [count : i64 (struct-get remaining len)]
+    [slots : (__tl_dyn-array CompilerParallelMoveEdge) remaining.slots]
+    [count : i64 remaining.len]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -154,15 +153,14 @@
 (define (compiler-parallel-move-decision
   [remaining : CompilerParallelMoveEdgeSeq]
   [blockers : CompilerParallelMoveEdgeSeq]) : CompilerParallelMoveDecision
-  (if (= (struct-get remaining len) 0)
+  (if (= remaining.len 0)
     CompilerParallelMoveDone
     (match (compiler-parallel-move-find-unblocked remaining blockers)
       [(CompilerParallelMoveUnblocked id) (CompilerParallelMoveUnblocked id)]
       [(CompilerParallelMoveCycle id) (CompilerParallelMoveCycle id)]
       [(CompilerParallelMoveDone)
         (CompilerParallelMoveCycle
-          (compiler-parallel-move-edge-id
-            (array-ref (struct-get remaining slots) 0)))])))
+          (compiler-parallel-move-edge-id (array-ref remaining.slots 0)))])))
 
 (define (compiler-parallel-move-test-edge
   [id : i64]

@@ -9,5 +9,5 @@
       (begin
         (thread.join-box-i64 worker)
         (match (thread.join-box-i64 worker)
-          [(ThreadBoxI64JoinOk cell) (box-get cell)]
+          [(ThreadBoxI64JoinOk cell) (__tl-box-place cell)]
           [(ThreadBoxI64JoinErr _) 2]))]))

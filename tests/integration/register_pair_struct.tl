@@ -9,4 +9,4 @@
 (define (main) : i64
   (let
     [p : P (P 17 25)]
-    (+ (struct-get p a) (struct-get p b))))
+    (+ p.a p.b)))

@@ -8,8 +8,8 @@
   (foreach
     ([i : i64 0 n])
     (if (large-enough? i)
-      (array-set! out i 1)
-      (array-set! out i 0))))
+      (set! (array-ref out i) 1)
+      (set! (array-ref out i) 0))))
 
 (define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let

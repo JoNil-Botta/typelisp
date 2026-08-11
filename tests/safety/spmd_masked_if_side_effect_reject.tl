@@ -11,4 +11,4 @@
       [tmp : i64 0]
       (if (> (array-ref xs i) 0)
         (set! tmp (array-ref xs i))
-        (array-set! out i tmp)))))
+        (set! (array-ref out i) tmp)))))

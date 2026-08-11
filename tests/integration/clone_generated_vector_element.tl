@@ -33,7 +33,7 @@
 (define (bag-sum [bag : (& bag VecItemBag)]) : i64
   (let
     [i : i64 0]
-    [n : i64 (vec_item_vec.len (& (struct-get bag items)))]
+    [n : i64 (vec_item_vec.len (& bag.items))]
     [acc : i64 0]
     (begin
       (while (< i n)
@@ -42,8 +42,8 @@
             acc
             (+
               acc
-              (struct-get
-                (array-ref (vec_item_vec.slots (& (struct-get bag items))) i)
+              (__tl-project-field
+                (array-ref (vec_item_vec.slots (& bag.items)) i)
                 n)))
           (set! i (+ i 1))))
       acc)))

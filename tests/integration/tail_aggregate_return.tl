@@ -16,8 +16,8 @@
 (define (main) : i64
   (let
     [value : Big (count-big 100000 39)]
-    (if (= (struct-get value a) 100039)
-      (if (= (struct-get value c) 100041)
+    (if (= value.a 100039)
+      (if (= value.c 100041)
         42
         2)
       1)))

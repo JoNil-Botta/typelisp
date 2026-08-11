@@ -25,32 +25,32 @@
   (foreach
     ([i : i64 0 n])
     (begin
-      (array-set! out-x i (+ (* (array-ref a i) scale) (array-ref b i)))
-      (array-set! out-y i (+ (* (array-ref a i) scale) offset)))))")
+      (set! (array-ref out-x i) (+ (* (array-ref a i) scale) (array-ref b i)))
+      (set! (array-ref out-y i) (+ (* (array-ref a i) scale) offset)))))")
 
 (define (compiler-lower-smoke-foreach-multi-output-same-destination-source) : String
   "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (begin
-      (array-set! out i (+ (array-ref a i) 1))
-      (array-set! out i (+ (array-ref a i) 2)))))")
+      (set! (array-ref out i) (+ (array-ref a i) 1))
+      (set! (array-ref out i) (+ (array-ref a i) 2)))))")
 
 (define (compiler-lower-smoke-foreach-multi-output-alias-source) : String
   "(define (fill [out-x : (Array i64)] [out-y : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (begin
-      (array-set! out-x i (+ (array-ref out-x i) 1))
-      (array-set! out-y i (+ (array-ref out-x i) 2)))))")
+      (set! (array-ref out-x i) (+ (array-ref out-x i) 1))
+      (set! (array-ref out-y i) (+ (array-ref out-x i) 2)))))")
 
 (define (compiler-lower-smoke-foreach-multi-output-mixed-source) : String
   "(define (fill [a : (Array i64)] [b : (Array i32)] [out-x : (Array i64)] [out-y : (Array i32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (begin
-      (array-set! out-x i (+ (array-ref a i) 1))
-      (array-set! out-y i (+ (array-ref b i) 2)))))")
+      (set! (array-ref out-x i) (+ (array-ref a i) 1))
+      (set! (array-ref out-y i) (+ (array-ref b i) 2)))))")
 
 (define (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
   [mode : compiler_lower.CompilerLowerMode]
@@ -135,10 +135,10 @@
     (let
       [x : i64 (array-ref xs i)]
       (begin
-        (array-set! copy i x)
+        (set! (array-ref copy i) x)
         (if (< x 0)
-          (array-set! out i x)
-          (array-set! out i 0))))))")
+          (set! (array-ref out i) x)
+          (set! (array-ref out i) 0))))))")
 
 (define (compiler-lower-smoke-masked-full-gang-mode-ok?
   [mode : compiler_lower.CompilerLowerMode]) : bool
@@ -293,9 +293,11 @@
             paths)
             [(compiler_lower.ResultCompilerLower.Ok _ _) true]
             [(compiler_lower.ResultCompilerLower.Err diag)
-              (io.panic (diagnostic.compiler-diagnostic-message (box-get diag)))])]
+              (io.panic
+                (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])]
         [(load.ResultCompilerLoadWithPaths.Err diag)
-          (io.panic (diagnostic.compiler-diagnostic-message (box-get diag)))]))))
+          (io.panic
+            (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
 (define (compiler-lower-smoke-stdlib-args-ok?) : bool
   (let
@@ -369,7 +371,8 @@
         (parser.compiler-cfg-empty))
         [(compiler_driver_core.ResultCompilerDriver.Ok _) true]
         [(compiler_driver_core.ResultCompilerDriver.Err diag)
-          (io.panic (diagnostic.compiler-diagnostic-message (box-get diag)))]))))
+          (io.panic
+            (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
 (define (compiler-lower-smoke-direct-no-main-keeps-source-symbols?) : bool
   (let
@@ -400,7 +403,8 @@
               "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
             (string.contains (& asm) (& needle)))]
         [(compiler_driver_core.ResultCompilerDriverBuffer.Err diag)
-          (io.panic (diagnostic.compiler-diagnostic-message (box-get diag)))]))))
+          (io.panic
+            (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
 ;; P4/C4.3 per-instantiation typecheck-completeness regression.
 ;;
@@ -427,7 +431,7 @@
 (defstruct C43Point (x i64) (y i64))
 (import (vector.vector C43Point) as pvec)
 (define (c43-bump [p : C43Point]) : C43Point
-  (C43Point (+ (struct-get p x) 1) (struct-get p y)))
+  (C43Point (+ p.x 1) p.y))
 (define (main) : i64
   (let
     [v : pvec.Vec (pvec.new)]
@@ -556,7 +560,8 @@
                         (io.panic
                           "lower: module entry main helper call missing"))))))])]
         [(compiler_lower.ResultCompilerLower.Err diag)
-          (io.panic (diagnostic.compiler-diagnostic-message (box-get diag)))])]
+          (io.panic
+            (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])]
     [(parser.ResultAstProgram.Err _)
       (io.panic "lower: module entry main parse failed")]))
 

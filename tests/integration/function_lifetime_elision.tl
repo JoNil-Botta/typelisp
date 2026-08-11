@@ -34,7 +34,7 @@
 (define (call-view
   [view : (-> (& ElisionItem) (& ElisionItem))]
   [item : (& ElisionItem)]) : i64
-  (struct-get (view item) value))
+  (__tl-project-field (view item) value))
 
 (define (main) : i64
   (let
@@ -44,9 +44,9 @@
     (if (and
       (= view.value 42)
       (same-value? view (& item))
-      (= (struct-get (tuple-ref (tuple-view view) 0) value) 42)
-      (= (struct-get (array-ref (array-view views) 0) value) 42)
-      (= (struct-get (shared-left (& item) (& item)) value) 42)
+      (= (__tl-project-field (tuple-ref (tuple-view view) 0) value) 42)
+      (= (__tl-project-field (array-ref (array-view views) 0) value) 42)
+      (= (__tl-project-field (shared-left (& item) (& item)) value) 42)
       (mixed-inputs? (& item) (& item))
       (=
         (call-view

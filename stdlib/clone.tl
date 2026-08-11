@@ -159,7 +159,7 @@
                                         (comptime.pattern-list-empty))))]
                                 [next-tail : comptime.Expr
                                   (if boxed-self
-                                    `(box-get tail)
+                                    `(__tl-box-place tail)
                                     `tail)]
                                 [acc-tail : comptime.Expr
                                   (if boxed-self

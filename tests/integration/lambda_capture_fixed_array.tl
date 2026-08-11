@@ -29,7 +29,7 @@
       (lambda () : i64
         (array-ref a 0))]
     (begin
-      (array-set! a 0 5)
+      (set! (array-ref a 0) 5)
       (= (f) 42))))
 
 (define (main) : i64

@@ -373,7 +373,7 @@
     [(build_cli_core.ResultBuildManifest.Ok manifest)
       (let
         [manifest-dir : String (load.compiler-load-dirname manifest-path)]
-        [name : String (struct-get manifest name)]
+        [name : String manifest.name]
         [status : i64 0]
         (if (not (clean-package-name-safe? name))
           (begin

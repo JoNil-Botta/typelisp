@@ -27,11 +27,11 @@
         (comptime.expr-int 0)))))
 
 (defmacro (stdlib-comptime-public-field-count [args : comptime.Expr ...]) : i64
-  (comptime.expr-int (struct-get args len)))
+  (comptime.expr-int args.len))
 
 (defmacro (stdlib-comptime-public-field-second [args : comptime.Expr ...]) : i64
-  (if (> (struct-get args len) 1)
-    (__tl_array-ref (struct-get args items) 1)
+  (if (> args.len 1)
+    (__tl_array-ref args.items 1)
     (comptime.expr-int 0)))
 
 (defmacro (stdlib-comptime-clause-count [arms : comptime.ExprClause ...]) : i64
@@ -39,12 +39,12 @@
     (comptime.expr-list-length (comptime.expr-clause-list->expr-list arms))))
 
 (defmacro (stdlib-comptime-public-clause-count [arms : comptime.ExprClause ...]) : i64
-  (comptime.expr-int (struct-get arms len)))
+  (comptime.expr-int arms.len))
 
 (defmacro (stdlib-comptime-public-clause-first-result
   [arms : comptime.ExprClause ...]) : i64
-  (if (> (struct-get arms len) 0)
-    (match (__tl_array-ref (struct-get arms items) 0)
+  (if (> arms.len 0)
+    (match (__tl_array-ref arms.items 0)
       [(ExprClause _ result) result])
     (comptime.expr-int 0)))
 
@@ -61,27 +61,26 @@
 (defmacro (stdlib-comptime-quoted-dense-second) : i64
   (match (quote (stdlib-comptime-quoted-dense-source 5 37))
     [(comptime.Expr.Call _ args)
-      (if (= (struct-get args len) 2)
-        (__tl_array-ref (struct-get args items) 1)
+      (if (= args.len 2)
+        (__tl_array-ref args.items 1)
         (comptime.expr-int 0))]
     [_ (comptime.expr-int 0)]))
 
 (defmacro (stdlib-comptime-spliced-dense-second [args : comptime.Expr ...]) : i64
   (match `(stdlib-comptime-spliced-dense-source ,@args)
     [(comptime.Expr.Call _ operands)
-      (if (= (struct-get operands len) 2)
-        (__tl_array-ref (struct-get operands items) 1)
+      (if (= operands.len 2)
+        (__tl_array-ref operands.items 1)
         (comptime.expr-int 0))]
     [_ (comptime.expr-int 0)]))
 
 (defmacro (stdlib-comptime-public-binding-init
   [bindings : comptime.ExprBindingClause ...]) : i64
-  (if (> (struct-get bindings len) 0)
+  (if (> bindings.len 0)
     (let
-      [first : comptime.ExprBindingClause
-        (__tl_array-ref (struct-get bindings items) 0)]
-      (if (string.eq (struct-get first name) "value")
-        (struct-get first init)
+      [first : comptime.ExprBindingClause (__tl_array-ref bindings.items 0)]
+      (if (string.eq first.name "value")
+        first.init
         (comptime.expr-int 0)))
     (comptime.expr-int 0)))
 

@@ -514,7 +514,7 @@
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls))
       (compiler_load.compiler-load-structural-member-demand
-        (box-get decls)
+        (__tl-box-place decls)
         alias)]
     [(ResultAstProgramDiagnostic.Err _) (CompilerLoadStructuralFullDemand)]))
 
@@ -606,7 +606,7 @@
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls))
       (match (compiler_load.compiler-load-structural-member-demand
-        (box-get decls)
+        (__tl-box-place decls)
         cbi.compiler-builtin-id-fix-subject)
         [(CompilerLoadStructuralFullDemand) true]
         [_ false])]
@@ -647,7 +647,7 @@
             state-a
             true
             (ast.AstMaybeImportAlias.Some alias)
-            (box-get decls)
+            (__tl-box-place decls)
             pools)]
         [observed-a : compiler_load.CompilerLoadLazyQualifiedObserverResult
           (compiler_load.compiler-load-session-state-lazy-qualified-observer-end-pair!
@@ -660,16 +660,14 @@
             state-b)]
         [ok : bool
           (and
-            (struct-get demand qualified)
-            (not (struct-get demand unknown))
-            (sym_i64_env.sym-i64-contains-id (struct-get demand members) member)
-            (sym_i64_env.sym-i64-contains-id
-              (struct-get observed-a primary-members)
-              member)
+            demand.qualified
+            (not demand.unknown)
+            (sym_i64_env.sym-i64-contains-id demand.members member)
+            (sym_i64_env.sym-i64-contains-id observed-a.primary-members member)
             b-still-active
             (not
               (sym_i64_env.sym-i64-contains-id
-                (struct-get observed-b primary-members)
+                observed-b.primary-members
                 member)))]
         (begin
           (compiler_load.compiler-load-session-state-use! previous-state)

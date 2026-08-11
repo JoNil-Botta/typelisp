@@ -1,7 +1,7 @@
 ;; Differential corpus for the template node kinds that became native tlci
-;; entries in #5605: `return` and `box`/`box-get` inside the `stdlib.json`
+;; entries in #5605: `return` and `box`/`deref` inside the `stdlib.json`
 ;; decode/sequence hooks, a float literal inside `stdlib.math/abs`, and
-;; `(set! (struct-get ...) ...)` inside `stdlib.text_buf/append!`. The
+;; dotted-field `set!` inside `stdlib.text_buf/append!`. The
 ;; compile-profile gate compiles this file through the embedded (native) and
 ;; the source (interpreted) macro routes and requires byte-identical assembly,
 ;; so any divergence in the reconstructed nodes fails the build.
@@ -36,11 +36,11 @@
     [__math_abs_value : f64 100.0]
     (+ (math.abs value) (- __math_abs_value 100.0))))
 
-;; `text_buf/append!` expands `(set! (struct-get ,buf chunks) ...)` twice.
+;; `text_buf/append!` expands `(set! buf.chunks ...)` twice.
 (define (label-of [sample : Sample]) : String
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
-    [text-buf-append-chunk : String (struct-get sample label)]
+    [text-buf-append-chunk : String sample.label]
     (begin
       (text_buf.append! buf text-buf-append-chunk)
       (text_buf.append! buf "!")
@@ -49,15 +49,15 @@
 ;; Encoding drives object-field/object-finish/sequence-element/sequence-finish
 ;; (the `box` template kind); decoding drives expect-object/field-value/
 ;; decode-bool/decode-string/sequence-length/sequence-element-value (the
-;; `return` and `box-get` template kinds).
+;; `return` and internal BoxGet template kinds).
 (define (round-trip [sample : Sample]) : i64
   (match (sample_json.decode (sample_json.encode sample))
     [(sample_json.Ok decoded)
       (if (and
-        (string.eq (struct-get decoded label) (struct-get sample label))
-        (= (struct-get decoded count) (struct-get sample count))
-        (= (struct-get decoded active) (struct-get sample active)))
-        (array-ref (struct-get decoded marks) 2)
+        (string.eq decoded.label sample.label)
+        (= decoded.count sample.count)
+        (= decoded.active sample.active))
+        (array-ref decoded.marks 2)
         -1)]
     [(sample_json.Err _) -2]))
 

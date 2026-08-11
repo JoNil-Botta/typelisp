@@ -61,17 +61,17 @@
         (Empty)
         (Ok ,T))
       (define (slots [q : (& q ,deque-name)]) : (& q (__tl_dyn-array ,T))
-        (& (struct-get q slots)))
+        (& q.slots))
       (define (slots-mut [q : (&mut q ,deque-name)]) : (&mut
           q
           (__tl_dyn-array ,T))
-        (&mut (struct-get q slots)))
+        (&mut q.slots))
       (define (head [q : (& q ,deque-name)]) : i64
-        (struct-get q head))
+        q.head)
       (define (len [q : (& q ,deque-name)]) : i64
-        (struct-get q len))
+        q.len)
       (define (len-mut [q : (&mut q ,deque-name)]) : i64
-        (struct-get q len))
+        q.len)
       (define (capacity [q : (& q ,deque-name)]) : i64
         (array-length (slots q)))
       (define (is-empty? [q : (& q ,deque-name)]) : bool
@@ -115,94 +115,75 @@
         (if (>= index count)
           unit
           (begin
-            (array-set!
-              dst
-              index
+            (set!
+              (array-ref dst index)
               (array-ref src (physical-index-from head capacity index)))
             (copy-live! dst src head capacity count (+ index 1)))))
       (define (grow [q : (&mut q ,deque-name)]) : unit
         (let
-          [n : i64 (struct-get q len)]
-          [old-cap : i64 (array-length (struct-get q slots))]
+          [n : i64 q.len]
+          [old-cap : i64 (array-length q.slots)]
           [new-cap : i64
             (if (< old-cap 1)
               1
               (* old-cap 2))]
           [bigger : (__tl_dyn-array ,T) (make-array ,T new-cap)]
           (begin
-            (copy-live!
-              (&mut bigger)
-              (& (struct-get q slots))
-              (struct-get q head)
-              old-cap
-              n
-              0)
-            (set! (struct-get q slots) bigger)
-            (set! (struct-get q head) 0))))
+            (copy-live! (&mut bigger) (& q.slots) q.head old-cap n 0)
+            (set! q.slots bigger)
+            (set! q.head 0))))
       (define (push-back-ref! [q : (&mut q ,deque-name)] [value : ,T]) : unit
         (begin
-          (if (< (struct-get q len) (array-length (struct-get q slots)))
+          (if (< q.len (array-length q.slots))
             unit
             (grow q))
           (let
-            [old-len : i64 (struct-get q len)]
+            [old-len : i64 q.len]
             [tail : i64
-              (physical-index-from
-                (struct-get q head)
-                (array-length (struct-get q slots))
-                old-len)]
+              (physical-index-from q.head (array-length q.slots) old-len)]
             (begin
-              (array-set! (struct-get q slots) tail value)
-              (set! (struct-get q len) (+ old-len 1))))))
+              (set! (array-ref q.slots tail) value)
+              (set! q.len (+ old-len 1))))))
       (define (push-front-ref! [q : (&mut q ,deque-name)] [value : ,T]) : unit
         (begin
-          (if (< (struct-get q len) (array-length (struct-get q slots)))
+          (if (< q.len (array-length q.slots))
             unit
             (grow q))
           (let
-            [new-head : i64
-              (prev-index
-                (struct-get q head)
-                (array-length (struct-get q slots)))]
+            [new-head : i64 (prev-index q.head (array-length q.slots))]
             (begin
-              (array-set! (struct-get q slots) new-head value)
-              (set! (struct-get q head) new-head)
-              (set! (struct-get q len) (+ (struct-get q len) 1))))))
+              (set! (array-ref q.slots new-head) value)
+              (set! q.head new-head)
+              (set! q.len (+ q.len 1))))))
       (define (pop-front-ref! [q : (&mut q ,deque-name)]) : ,pop-name
-        (if (<= (struct-get q len) 0)
+        (if (<= q.len 0)
           (,pop-empty-name)
           (let
-            [value : ,T
-              (clone (array-ref (struct-get q slots) (struct-get q head)))]
-            [new-len : i64 (- (struct-get q len) 1)]
+            [value : ,T (clone (array-ref q.slots q.head))]
+            [new-len : i64 (- q.len 1)]
             [new-head : i64
               (if (= new-len 0)
                 0
-                (next-index
-                  (struct-get q head)
-                  (array-length (struct-get q slots))))]
+                (next-index q.head (array-length q.slots)))]
             (begin
-              (set! (struct-get q head) new-head)
-              (set! (struct-get q len) new-len)
+              (set! q.head new-head)
+              (set! q.len new-len)
               (,pop-ok-name value)))))
       (define (pop-back-ref! [q : (&mut q ,deque-name)]) : ,pop-name
-        (if (<= (struct-get q len) 0)
+        (if (<= q.len 0)
           (,pop-empty-name)
           (let
             [last-index : i64
-              (physical-index-from
-                (struct-get q head)
-                (array-length (struct-get q slots))
-                (- (struct-get q len) 1))]
-            [value : ,T (clone (array-ref (struct-get q slots) last-index))]
-            [new-len : i64 (- (struct-get q len) 1)]
+              (physical-index-from q.head (array-length q.slots) (- q.len 1))]
+            [value : ,T (clone (array-ref q.slots last-index))]
+            [new-len : i64 (- q.len 1)]
             [new-head : i64
               (if (= new-len 0)
                 0
-                (struct-get q head))]
+                q.head)]
             (begin
-              (set! (struct-get q head) new-head)
-              (set! (struct-get q len) new-len)
+              (set! q.head new-head)
+              (set! q.len new-len)
               (,pop-ok-name value)))))
       ;; Public mutators take a caller place and reuse the ordinary explicit
       ;; mutable-borrow helper above. `*-ref!` remains for implementation code

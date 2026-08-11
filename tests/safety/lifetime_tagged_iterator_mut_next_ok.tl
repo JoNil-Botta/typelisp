@@ -13,13 +13,13 @@
 
 (define (next [iter : (&mut iter (Iter source))]) : Next
   (let
-    [index : i64 (struct-get iter index)]
-    (if (>= index (struct-get iter len))
+    [index : i64 iter.index]
+    (if (>= index iter.len)
       (Done)
       (let
-        [value : i64 (array-ref (struct-get iter slots) index)]
+        [value : i64 (array-ref iter.slots index)]
         (begin
-          (set! (struct-get iter index) (+ index 1))
+          (set! iter.index (+ index 1))
           (Item value))))))
 
 (define (value-or [result : Next] [fallback : i64]) : i64
@@ -36,8 +36,8 @@
   (let
     [items : (__tl_dyn-array i64) (array.make-array i64 2)]
     (begin
-      (array-set! items 0 19)
-      (array-set! items 1 23)
+      (set! (array-ref items 0) 19)
+      (set! (array-ref items 1) 23)
       (let
         [iter : (Iter items) (Iter (& items) 2 0)]
         [step1 : Next (next (&mut iter))]
@@ -47,6 +47,6 @@
           (= (value-or step1 0) 19)
           (= (value-or step2 0) 23)
           (done? step3)
-          (= (struct-get iter index) 2))
+          (= iter.index 2))
           42
           1)))))

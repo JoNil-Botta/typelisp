@@ -36,9 +36,8 @@
           [i : i64 0]
           (while (< i width)
             (begin
-              (array-set!
-                output
-                (+ i (* j width))
+              (set!
+                (array-ref output (+ i (* j width)))
                 (mandel-scalar
                   (+ x0 (* (cast i : f32) dx))
                   (+ y0 (* (cast j : f32) dy))

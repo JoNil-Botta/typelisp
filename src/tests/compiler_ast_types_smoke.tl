@@ -216,7 +216,7 @@
   ;; back below the measured 37.5K-node surface.
   (>=
     (array-length
-      (struct-get (ast.ast-type-node-pool-state-create 1) dedup-slots))
+      (__tl-project-field (ast.ast-type-node-pool-state-create 1) dedup-slots))
     131072))
 
 (define (compiler-ast-state-owned-node-pools-smoke?) : bool
@@ -256,11 +256,9 @@
 (define (compiler-ast-context-base-arenas-match?
   [pools : ast.AstNodePoolContext]) : bool
   (let
-    [expr-pool : ast.AstExprNodePoolState
-      (array-ref (struct-get pools expr-pool) 0)]
-    [type-pool : ast.AstTypeNodePoolState
-      (array-ref (struct-get pools type-pool) 0)]
-    (= (struct-get expr-pool base-arena) (struct-get type-pool base-arena))))
+    [expr-pool : ast.AstExprNodePoolState (array-ref pools.expr-pool 0)]
+    [type-pool : ast.AstTypeNodePoolState (array-ref pools.type-pool 0)]
+    (= expr-pool.base-arena type-pool.base-arena)))
 
 (define (compiler-ast-context-clone-types-only-smoke?) : bool
   (let
@@ -431,7 +429,7 @@
   [source-make : i64]) : bool
   (match program
     [(ast.AstProgram.Program decls-box)
-      (match (ast.ast-decl-list-step (box-get decls-box))
+      (match (ast.ast-decl-list-step (__tl-box-place decls-box))
         [(ast.AstDeclListStep.Cons first rest-box)
           (match first
             [(ast.AstDecl.Def _ _ maybe-ty first-body)
@@ -586,7 +584,7 @@
           [installed-ok : bool
             (match out-program
               [(ast.AstProgram.Program decls-box)
-                (match (ast.ast-decl-list-step (box-get decls-box))
+                (match (ast.ast-decl-list-step (__tl-box-place decls-box))
                   [(ast.AstDeclListStep.Cons first _)
                     (match first
                       [(ast.AstDecl.Def _ _ maybe-ty body)
@@ -670,7 +668,7 @@
           (compiler-ast-context-expr-int-lit? out-pools 0 111)
           (match out-program
             [(ast.AstProgram.Program decls-box)
-              (match (ast.ast-decl-list-step (box-get decls-box))
+              (match (ast.ast-decl-list-step (__tl-box-place decls-box))
                 [(ast.AstDeclListStep.Cons decl rest)
                   (match decl
                     [(ast.AstDecl.Def _ _ maybe-type body)
@@ -717,7 +715,7 @@
       [(ast.AstProgramCompaction out-program out-pools)
         (match out-program
           [(ast.AstProgram.Program decls-box)
-            (match (ast.ast-decl-list-step (box-get decls-box))
+            (match (ast.ast-decl-list-step (__tl-box-place decls-box))
               [(ast.AstDeclListStep.Cons decl _)
                 (match decl
                   [(ast.AstDecl.Def _ _ _ body)
@@ -828,7 +826,7 @@
 (define (compiler-ast-compaction-extern-ok? [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.Extern _ _ _ metadata _)
-      (match (box-get metadata)
+      (match (__tl-box-place metadata)
         [(ast.AstExternMetadata.Metadata
             (ast.AstExternAbi.C)
             symbol
@@ -1019,7 +1017,7 @@
         (match out-program
           [(ast.AstProgram.Program decls-box)
             (let
-              [decls : ast.AstDeclList (box-get decls-box)]
+              [decls : ast.AstDeclList (__tl-box-place decls-box)]
               (and
                 (compiler-ast-compaction-string-def-ok?
                   out-pools
@@ -1162,12 +1160,12 @@
             0
             (ast.ast-expr-binding-clause-fallback))]
         (and
-          (= (struct-get (& clause-tail) len) 2)
-          (= (struct-get first-clause first) 3)
-          (= (struct-get first-clause second) 4)
-          (= (struct-get (& binding-tail) len) 2)
-          (= (struct-get first-binding name) 11)
-          (= (struct-get first-binding init) 101))))))
+          (= clause-tail.len 2)
+          (= first-clause.first 3)
+          (= first-clause.second 4)
+          (= binding-tail.len 2)
+          (= first-binding.name 11)
+          (= first-binding.init 101))))))
 
 (define (compiler-ast-generated-path-owner-smoke?) : bool
   (let

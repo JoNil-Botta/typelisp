@@ -17,10 +17,9 @@
     (begin
       (while (< i capacity)
         (begin
-          (array-set! xs i (cast (- i 9) : i32))
-          (array-set!
-            counts
-            i
+          (set! (array-ref xs i) (cast (- i 9) : i32))
+          (set!
+            (array-ref counts i)
             (if (< i n)
               (cast (% i 31) : i32)
               (cast 32 : i32)))
@@ -28,8 +27,8 @@
       (foreach
         ([j : i64 0 n])
         (begin
-          (array-set! left j (shl (array-ref xs j) (array-ref counts j)))
-          (array-set! right j (shr (array-ref xs j) (array-ref counts j)))))
+          (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
+          (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
       (set! i 0)
       (while (and ok (< i n))
         (begin
@@ -55,10 +54,9 @@
     (begin
       (while (< i capacity)
         (begin
-          (array-set! xs i (cast (+ (* i 17) 3) : u32))
-          (array-set!
-            counts
-            i
+          (set! (array-ref xs i) (cast (+ (* i 17) 3) : u32))
+          (set!
+            (array-ref counts i)
             (if (< i n)
               (cast (% i 31) : u32)
               (cast 32 : u32)))
@@ -66,8 +64,8 @@
       (foreach
         ([j : i64 0 n])
         (begin
-          (array-set! left j (shl (array-ref xs j) (array-ref counts j)))
-          (array-set! right j (shr (array-ref xs j) (array-ref counts j)))))
+          (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
+          (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
       (set! i 0)
       (while (and ok (< i n))
         (begin
@@ -93,10 +91,9 @@
     (begin
       (while (< i capacity)
         (begin
-          (array-set! xs i (- i 7))
-          (array-set!
-            counts
-            i
+          (set! (array-ref xs i) (- i 7))
+          (set!
+            (array-ref counts i)
             (if (< i n)
               (% i 63)
               (cast 64 : i64)))
@@ -104,8 +101,8 @@
       (foreach
         ([j : i64 0 n])
         (begin
-          (array-set! left j (shl (array-ref xs j) (array-ref counts j)))
-          (array-set! right j (shr (array-ref xs j) (array-ref counts j)))))
+          (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
+          (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
       (set! i 0)
       (while (and ok (< i n))
         (begin
@@ -131,10 +128,9 @@
     (begin
       (while (< i capacity)
         (begin
-          (array-set! xs i (cast (+ (* i 31) 5) : u64))
-          (array-set!
-            counts
-            i
+          (set! (array-ref xs i) (cast (+ (* i 31) 5) : u64))
+          (set!
+            (array-ref counts i)
             (if (< i n)
               (cast (% i 63) : u64)
               (cast 64 : u64)))
@@ -142,8 +138,8 @@
       (foreach
         ([j : i64 0 n])
         (begin
-          (array-set! left j (shl (array-ref xs j) (array-ref counts j)))
-          (array-set! right j (shr (array-ref xs j) (array-ref counts j)))))
+          (set! (array-ref left j) (shl (array-ref xs j) (array-ref counts j)))
+          (set! (array-ref right j) (shr (array-ref xs j) (array-ref counts j)))))
       (set! i 0)
       (while (and ok (< i n))
         (begin

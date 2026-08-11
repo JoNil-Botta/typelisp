@@ -114,7 +114,7 @@
       (compiler-symbols-expr-maybe-span (ast.ast-node-get body))]
     [(ast.AstDecl.Test _ _ span) (CompilerSymbolsMaybeSpan.Some span)]
     [(ast.AstDecl.Unsafe inner-box)
-      (compiler-symbols-decl-maybe-span (box-get inner-box))]
+      (compiler-symbols-decl-maybe-span (__tl-box-place inner-box))]
     [_ CompilerSymbolsMaybeSpan.No]))
 
 (define (compiler-symbols-note-last-error-fallback!
@@ -270,8 +270,8 @@
   [map : (& map CompilerSymbolMap)]
   [key : i64]) : i64
   (let
-    [keys : (__tl_dyn-array i64) (struct-get map keys)]
-    [values : (__tl_dyn-array i64) (struct-get map values)]
+    [keys : (__tl_dyn-array i64) map.keys]
+    [values : (__tl_dyn-array i64) map.values]
     [capacity : i64 (array-length keys)]
     (if (<= capacity 0)
       (compiler-symbol-map-missing-handle)
@@ -310,8 +310,8 @@
   [key : i64]
   [handle : i64]) : unit
   (let
-    [keys : (__tl_dyn-array i64) (struct-get map keys)]
-    [values : (__tl_dyn-array i64) (struct-get map values)]
+    [keys : (__tl_dyn-array i64) map.keys]
+    [values : (__tl_dyn-array i64) map.values]
     [key-data : (MutPtr i64)
       (unsafe
         (ptr-cast (array-data keys) : (MutPtr i64)))]
@@ -341,11 +341,9 @@
                   (unsafe
                     (ptr-write! (ptr-offset key-data target) encoded)
                     (ptr-write! (ptr-offset value-data target) handle))
-                  (set! (struct-get map len) (+ (struct-get map len) 1))
+                  (set! map.len (+ map.len 1))
                   (if (>= first-deleted 0)
-                    (set!
-                      (struct-get map deleted)
-                      (- (struct-get map deleted) 1))
+                    (set! map.deleted (- map.deleted 1))
                     unit)
                   (return unit)))]
             [(= present -1)
@@ -364,8 +362,8 @@
 
 (define (compiler-symbol-map-grow! [map : (&mut map CompilerSymbolMap)]) : unit
   (let
-    [old-keys : (__tl_dyn-array i64) (struct-get map keys)]
-    [old-values : (__tl_dyn-array i64) (struct-get map values)]
+    [old-keys : (__tl_dyn-array i64) map.keys]
+    [old-values : (__tl_dyn-array i64) map.values]
     [old-capacity : i64 (array-length old-keys)]
     [new-capacity : i64
       (if (> old-capacity 0)
@@ -373,10 +371,10 @@
         4)]
     [i : i64 0]
     (begin
-      (set! (struct-get map keys) (make-array i64 new-capacity))
-      (set! (struct-get map values) (make-array i64 new-capacity))
-      (set! (struct-get map len) 0)
-      (set! (struct-get map deleted) 0)
+      (set! map.keys (make-array i64 new-capacity))
+      (set! map.values (make-array i64 new-capacity))
+      (set! map.len 0)
+      (set! map.deleted 0)
       (while (< i old-capacity)
         (let
           [encoded : i64 (array-ref old-keys i)]
@@ -394,8 +392,8 @@
   [key : i64]
   [handle : i64]) : unit
   (let
-    [capacity : i64 (array-length (struct-get map keys))]
-    [used : i64 (+ (struct-get map len) (struct-get map deleted))]
+    [capacity : i64 (array-length map.keys)]
+    [used : i64 (+ map.len map.deleted)]
     (begin
       (if (or (<= capacity 0) (>= (* used 4) (* capacity 3)))
         (compiler-symbol-map-grow! map)
@@ -406,7 +404,7 @@
   [map : (&mut map CompilerSymbolMap)]
   [key : i64]) : bool
   (let
-    [capacity : i64 (array-length (struct-get map keys))]
+    [capacity : i64 (array-length map.keys)]
     (if (<= capacity 0)
       false
       (let
@@ -416,16 +414,14 @@
         (begin
           (while (< walked capacity)
             (let
-              [present : i64 (array-ref (struct-get map keys) slot)]
+              [present : i64 (array-ref map.keys slot)]
               (cond
                 [(= present 0) (return false)]
                 [(= present encoded)
                   (begin
-                    (array-set! (struct-get map keys) slot -1)
-                    (set! (struct-get map len) (- (struct-get map len) 1))
-                    (set!
-                      (struct-get map deleted)
-                      (+ (struct-get map deleted) 1))
+                    (set! (array-ref map.keys slot) -1)
+                    (set! map.len (- map.len 1))
+                    (set! map.deleted (+ map.deleted 1))
                     (return true))]
                 [else
                   (begin
@@ -458,12 +454,11 @@
     [count : i64 0]
     [index : i64 0]
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-offset : i64 decls.offset]
     (begin
       (while (< index decl-count)
         (let
-          [decl : ast.AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          [decl : ast.AstDecl (array-ref decls.slots (+ decl-offset index))]
           (begin
             (match decl
               [(ast.AstDecl.Import decl-meta _) unit]
@@ -471,7 +466,9 @@
               [(ast.AstDecl.ModuleBody _ body-box)
                 (set!
                   count
-                  (+ count (compiler-decl-list-index-count (box-get body-box))))]
+                  (+
+                    count
+                    (compiler-decl-list-index-count (__tl-box-place body-box))))]
               [(ast.AstDecl.Test _ _ _) unit]
               [_ (set! count (+ count 1))])
             (set! index (+ index 1)))))
@@ -645,10 +642,9 @@
             (begin
               (while (< index decl-count)
                 (begin
-                  (array-set! next-decls index (array-ref decls index))
-                  (array-set!
-                    next-owner-module-ids
-                    index
+                  (set! (array-ref next-decls index) (array-ref decls index))
+                  (set!
+                    (array-ref next-owner-module-ids index)
                     (array-ref owner-module-ids index))
                   (set! index (+ index 1))))
               (CompilerSymbols
@@ -810,16 +806,7 @@
     [else (compiler-composite-pair-key-id module-id name-id)]))
 
 (define (compiler-symbol-name-id-key [name-id : i64]) : i64
-  (if (not (ci.intern-renderable-id? name-id))
-    name-id
-    (if (ci.intern-qualified? name-id)
-      (let
-        [module-id : i64 (ci.intern-qualified-module-id name-id)]
-        [base-id : i64 (ci.intern-qualified-base-id name-id)]
-        (if (compiler-symbol-root-module-id? module-id)
-          base-id
-          (compiler-composite-pair-key-id module-id base-id)))
-      name-id)))
+  (ast.ast-nominal-name-id-key name-id))
 
 (define (compiler-symbol-dotted-variant-key-id-in-module
   [name-id : i64]
@@ -1568,15 +1555,15 @@
     [(ast.AstDecl.Module _) (ResultCompilerSymbols.Ok symbols)]
     [(ast.AstDecl.ModuleBody name body-box)
       (build-compiler-symbol-list-in-module
-        (box-get body-box)
-        (box-get body-box)
+        (__tl-box-place body-box)
+        (__tl-box-place body-box)
         symbols
         index
         name)]
     [(ast.AstDecl.Test _ _ _) (ResultCompilerSymbols.Ok symbols)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (compiler-symbols-add-decl-in-module symbols module-id inner index))]))
 
 (define (compiler-symbols-add-decl-in-module
@@ -1749,7 +1736,7 @@
         index)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (compiler-symbols-add-decl-alias-in-module symbols alias-id inner index))]
     [(ast.AstDecl.ModuleBody _ _) symbols]
     [_ symbols]))
@@ -1766,7 +1753,7 @@
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (compiler-symbols-remove-decl-macro-alias symbols inner index))]
     [_ symbols]))
 
@@ -1781,10 +1768,13 @@
         (sym_i64_env.sym-i64-bind-id modules module-id 1))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (compiler-symbols-macro-module-set-add-decl modules module-id inner))]
     [(ast.AstDecl.ModuleBody name body-box)
-      (compiler-symbols-macro-module-set-list (box-get body-box) name modules)]
+      (compiler-symbols-macro-module-set-list
+        (__tl-box-place body-box)
+        name
+        modules)]
     [_ modules]))
 
 (define (compiler-symbols-macro-module-set-list
@@ -1796,12 +1786,11 @@
     [cur-module : i64 module-id]
     [index : i64 0]
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-offset : i64 decls.offset]
     (begin
       (while (< index decl-count)
         (let
-          [decl : ast.AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          [decl : ast.AstDecl (array-ref decls.slots (+ decl-offset index))]
           (begin
             (match decl
               [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
@@ -1890,17 +1879,16 @@
   [module-id : i64]
   [sets : CompilerSymbolsModuleSets]) : CompilerSymbolsModuleSets
   (let
-    [macro-modules : sym_i64_env.SymI64Env (struct-get sets macro-modules)]
-    [dotted-modules : sym_i64_env.SymI64Env (struct-get sets dotted-modules)]
+    [macro-modules : sym_i64_env.SymI64Env sets.macro-modules]
+    [dotted-modules : sym_i64_env.SymI64Env sets.dotted-modules]
     [cur-module : i64 module-id]
     [index : i64 0]
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-offset : i64 decls.offset]
     (begin
       (while (< index decl-count)
         (let
-          [decl : ast.AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          [decl : ast.AstDecl (array-ref decls.slots (+ decl-offset index))]
           (begin
             (match decl
               [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
@@ -1922,12 +1910,12 @@
                 (let
                   [nested : CompilerSymbolsModuleSets
                     (compiler-symbols-module-sets-list
-                      (box-get body-box)
+                      (__tl-box-place body-box)
                       name
                       (CompilerSymbolsModuleSets macro-modules dotted-modules))]
                   (begin
-                    (set! macro-modules (struct-get nested macro-modules))
-                    (set! dotted-modules (struct-get nested dotted-modules))))]
+                    (set! macro-modules nested.macro-modules)
+                    (set! dotted-modules nested.dotted-modules)))]
               [(ast.AstDecl.IncludeStr _ _) unit]
               [(ast.AstDecl.IncludeStrComptime _ _) unit]
               [(ast.AstDecl.IncludeStrLzss _ _) unit]
@@ -2002,8 +1990,8 @@
       (if (> decl-count 0)
         decl-count
         1)]
-    [decl-offset : i64 (struct-get decls offset)]
-    [slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 decls.offset]
+    [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [mod-ids : (__tl_dyn-array i64) (make-array i64 cap)]
     [mod-head : (__tl_dyn-array i64) (make-array i64 cap)]
     [mod-tail : (__tl_dyn-array i64) (make-array i64 cap)]
@@ -2046,25 +2034,24 @@
                   (if (< slot 0)
                     (begin
                       (set! slot num-modules)
-                      (array-set! mod-ids num-modules cur-module)
-                      (array-set! mod-head num-modules -1)
-                      (array-set! mod-tail num-modules -1)
+                      (set! (array-ref mod-ids num-modules) cur-module)
+                      (set! (array-ref mod-head num-modules) -1)
+                      (set! (array-ref mod-tail num-modules) -1)
                       (set! num-modules (+ num-modules 1)))
                     unit)
                   (set! cur-slot slot)
-                  (array-set! ent-pos num-entries position)
-                  (array-set! ent-ridx num-entries real-index)
-                  (array-set! ent-next num-entries -1)
+                  (set! (array-ref ent-pos num-entries) position)
+                  (set! (array-ref ent-ridx num-entries) real-index)
+                  (set! (array-ref ent-next num-entries) -1)
                   (if (< (array-ref mod-head slot) 0)
                     (begin
-                      (array-set! mod-head slot num-entries)
-                      (array-set! mod-tail slot num-entries))
+                      (set! (array-ref mod-head slot) num-entries)
+                      (set! (array-ref mod-tail slot) num-entries))
                     (begin
-                      (array-set!
-                        ent-next
-                        (array-ref mod-tail slot)
+                      (set!
+                        (array-ref ent-next (array-ref mod-tail slot))
                         num-entries)
-                      (array-set! mod-tail slot num-entries)))
+                      (set! (array-ref mod-tail slot) num-entries)))
                   (set! num-entries (+ num-entries 1))
                   (set! real-index (+ real-index 1))))])
           (set! position (+ position 1))))
@@ -2093,13 +2080,13 @@
   (match symbols
     [(CompilerSymbols _ _ macros _ _ _)
       (let
-        [capacity : i64 (array-length (struct-get macros keys))]
+        [capacity : i64 (array-length macros.keys)]
         [index : i64 0]
         (begin
           (while (< index capacity)
-            (if (> (array-ref (struct-get macros keys) index) 0)
+            (if (> (array-ref macros.keys index) 0)
               (let
-                [handle : i64 (array-ref (struct-get macros values) index)]
+                [handle : i64 (array-ref macros.values index)]
                 (when
                   (and
                     (=
@@ -2122,14 +2109,14 @@
   (match symbols
     [(CompilerSymbols _ _ macros decls _ _)
       (let
-        [capacity : i64 (array-length (struct-get macros keys))]
+        [capacity : i64 (array-length macros.keys)]
         [cur-symbols : CompilerSymbols symbols]
         [index : i64 0]
         (begin
           (while (< index capacity)
-            (if (> (array-ref (struct-get macros keys) index) 0)
+            (if (> (array-ref macros.keys index) 0)
               (let
-                [handle : i64 (array-ref (struct-get macros values) index)]
+                [handle : i64 (array-ref macros.values index)]
                 [decl-index : i64 (compiler-symbol-handle-index handle)]
                 (if (and
                   (>= decl-index 0)
@@ -2163,8 +2150,8 @@
   (match index
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
-        [decl-offset : i64 (struct-get decls offset)]
-        [slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+        [decl-offset : i64 decls.offset]
+        [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
         [cur-symbols : CompilerSymbols symbols]
         [k : i64 (compiler-module-decl-index-head index target-module-id)]
         (begin
@@ -2196,8 +2183,8 @@
   (match index
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
-        [decl-offset : i64 (struct-get decls offset)]
-        [slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+        [decl-offset : i64 decls.offset]
+        [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
         [cur-symbols : CompilerSymbols symbols]
         [k : i64 (compiler-module-decl-index-head index target-module-id)]
         (begin
@@ -2232,14 +2219,13 @@
     [cur-module-id : i64 module-id]
     [index : i64 0]
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-offset : i64 decls.offset]
     [decl-index : ModuleDeclIndex
       (compiler-symbols-build-module-decl-index all-decls)]
     (begin
       (while (< index decl-count)
         (let
-          [decl : ast.AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          [decl : ast.AstDecl (array-ref decls.slots (+ decl-offset index))]
           [next-symbols : CompilerSymbols
             (match decl
               [(ast.AstDecl.Import
@@ -2364,7 +2350,7 @@
         (match decl
           [(ast.AstDecl.ModuleBody _ body-box)
             (let
-              [body : ast.AstDeclList (box-get body-box)]
+              [body : ast.AstDeclList (__tl-box-place body-box)]
               [body-count : i64 (compiler-decl-list-index-count body)]
               (if (< target (+ index body-count))
                 (compiler-symbol-path-at-index
@@ -2486,7 +2472,7 @@
         decl-path)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
           symbols
           all-decls
@@ -2501,7 +2487,7 @@
   (match decl
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         inner)]
     [_ decl]))
 
@@ -2561,8 +2547,10 @@
   (let
     [indexed : ast.AstDecl (compiler-symbol-indexed-decl decl)]
     (begin
-      (array-set! (compiler-symbols-decls symbols) index indexed)
-      (array-set! (compiler-symbols-owner-module-ids symbols) index module-id))))
+      (set! (array-ref (compiler-symbols-decls symbols) index) indexed)
+      (set!
+        (array-ref (compiler-symbols-owner-module-ids symbols) index)
+        module-id))))
 
 (define (compiler-symbols-owner-module-id-at-index-or
   [symbols : CompilerSymbols]
@@ -2668,7 +2656,7 @@
               next-module)]
           [(ast.AstDecl.ModuleBody name body-box)
             (let
-              [body : ast.AstDeclList (box-get body-box)]
+              [body : ast.AstDeclList (__tl-box-place body-box)]
               [body-count : i64 (compiler-decl-list-index-count body)]
               (match (build-compiler-symbol-list-in-module
                 all-decls
@@ -2725,7 +2713,7 @@
     ;; declaration failure can still recover that declaration's cold origin.
     [decl-origin-key : i64
       (parser.compiler-parse-decl-list-storage-key (& decls))]
-    [decl-origin-offset : i64 (struct-get decls offset)]
+    [decl-origin-offset : i64 decls.offset]
     [cur-decls : ast.AstDeclList decls]
     [cur-paths : ast.AstDeclPathList paths]
     [cur-symbols : CompilerSymbols symbols]
@@ -2796,7 +2784,7 @@
                     (set! cur-module-id next-module))]
                 [(ast.AstDecl.ModuleBody name body-box)
                   (let
-                    [body : ast.AstDeclList (box-get body-box)]
+                    [body : ast.AstDeclList (__tl-box-place body-box)]
                     [body-count : i64 (compiler-decl-list-index-count body)]
                     [body-paths : ast.AstDeclPathList
                       (compiler-symbol-path-list-repeat
@@ -2916,7 +2904,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (build-compiler-symbol-list
           decls
           (compiler-symbols-empty-with-decls
@@ -2944,7 +2932,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [module-sets : CompilerSymbolsModuleSets
           (compiler-symbols-module-sets decls)]
         [decl-count : i64 (compiler-decl-list-index-count decls)]
@@ -2958,7 +2946,7 @@
             (if (> requested-capacity decl-count)
               requested-capacity
               decl-count))
-          (struct-get module-sets dotted-modules)
+          module-sets.dotted-modules
           0
           (compiler-symbol-root-module-id))
           [(ResultCompilerSymbols.Ok symbols)
@@ -2969,7 +2957,7 @@
                   decls
                   symbols
                   (compiler-symbol-root-module-id)
-                  (struct-get module-sets macro-modules))]
+                  module-sets.macro-modules)]
               (ResultCompilerSymbols.Ok aliased))]
           [(ResultCompilerSymbols.Err message)
             (ResultCompilerSymbols.Err message)]))]))
@@ -3025,15 +3013,15 @@
             (or
               (= module-id target-module-id)
               (compiler-symbols-decls-declare-module-id?
-                (box-get body-box)
+                (__tl-box-place body-box)
                 target-module-id))]
           [(ast.AstDecl.Unsafe inner-box)
-            (match (box-get inner-box)
+            (match (__tl-box-place inner-box)
               [(ast.AstDecl.ModuleBody module-id body-box)
                 (or
                   (= module-id target-module-id)
                   (compiler-symbols-decls-declare-module-id?
-                    (box-get body-box)
+                    (__tl-box-place body-box)
                     target-module-id))]
               [_ false])]
           [_ false])
@@ -3080,9 +3068,9 @@
           [(ast.AstDecl.ModuleBody _ body-box)
             (compiler-symbols-insert-aliases-self-contained?
               all-decls
-              (box-get body-box))]
+              (__tl-box-place body-box))]
           [(ast.AstDecl.Unsafe inner-box)
-            (match (box-get inner-box)
+            (match (__tl-box-place inner-box)
               [(ast.AstDecl.Import
                   decl-meta
                   (ast.AstImportSpec.Spec
@@ -3448,8 +3436,8 @@
   (match index
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
-        [decl-offset : i64 (struct-get decls offset)]
-        [slots : (__tl_dyn-array ast.AstDecl) (struct-get decls slots)]
+        [decl-offset : i64 decls.offset]
+        [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
         [cur-registries : CompilerRegistries registries]
         [k : i64 (compiler-module-decl-index-head index target-module-id)]
         (begin
@@ -3489,12 +3477,11 @@
         [cur-module-id : i64 module-id]
         [index : i64 0]
         [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-        [decl-offset : i64 (struct-get decls offset)]
+        [decl-offset : i64 decls.offset]
         (begin
           (while (< index decl-count)
             (let
-              [decl : ast.AstDecl
-                (array-ref (struct-get decls slots) (+ decl-offset index))]
+              [decl : ast.AstDecl (array-ref decls.slots (+ decl-offset index))]
               [next-registries : CompilerRegistries
                 (match decl
                   [(ast.AstDecl.Import
@@ -3650,7 +3637,7 @@
     [cur-module-id : i64 module-id]
     [position : i64 0]
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-offset : i64 decls.offset]
     [result : ResultCompilerRegistries
       (ResultCompilerRegistries.Err "symbols: internal registry walk")]
     [done : bool false]
@@ -3662,7 +3649,7 @@
             (set! done true))
           (let
             [decl : ast.AstDecl
-              (array-ref (struct-get decls slots) (+ decl-offset position))]
+              (array-ref decls.slots (+ decl-offset position))]
             [decl-path : String
               (ast.ast-decl-path-list-get (& paths) position "")]
             (match decl
@@ -3678,7 +3665,7 @@
                   (set! cur-module-id next-module))]
               [(ast.AstDecl.ModuleBody name body-box)
                 (let
-                  [body : ast.AstDeclList (box-get body-box)]
+                  [body : ast.AstDeclList (__tl-box-place body-box)]
                   [body-count : i64 (compiler-decl-list-index-count body)]
                   [body-paths : ast.AstDeclPathList
                     (compiler-symbol-path-list-repeat
@@ -3811,7 +3798,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (build-compiler-registries-for-decls-with-paths
           decls
           (compiler-symbol-path-list-repeat
@@ -3845,16 +3832,15 @@
   (if (<= delta 0)
     unit
     (let
-      [capacity : i64 (array-length (struct-get map keys))]
+      [capacity : i64 (array-length map.keys)]
       [index : i64 0]
       (while (< index capacity)
         (begin
-          (if (> (array-ref (struct-get map keys) index) 0)
+          (if (> (array-ref map.keys index) 0)
             (let
-              [handle : i64 (array-ref (struct-get map values) index)]
-              (array-set!
-                (struct-get map values)
-                index
+              [handle : i64 (array-ref map.values index)]
+              (set!
+                (array-ref map.values index)
                 (compiler-registry-handle-shift-owner-index
                   handle
                   insertion-index
@@ -3937,7 +3923,7 @@
     (match program
       [(ast.AstProgram.Program decls-box)
         (let
-          [decls : ast.AstDeclList (box-get decls-box)]
+          [decls : ast.AstDeclList (__tl-box-place decls-box)]
           (match (build-compiler-registries-for-decls-with-paths decls paths)
             [(ResultCompilerRegistries.Ok registries)
               (ResultCompilerRegistriesDiagnostic.Ok registries)]
@@ -3965,12 +3951,11 @@
     [slot : i64 0]
     [logical-index : i64 index]
     [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
+    [decl-offset : i64 decls.offset]
     (begin
       (while (< slot decl-count)
         (let
-          [decl : ast.AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset slot))]
+          [decl : ast.AstDecl (array-ref decls.slots (+ decl-offset slot))]
           (begin
             (match decl
               [(ast.AstDecl.Import decl-meta _) unit]
@@ -3986,7 +3971,7 @@
                     (match decl
                       [(ast.AstDecl.Unsafe inner-box)
                         (let
-                          [inner : ast.AstDecl (box-get inner-box)]
+                          [inner : ast.AstDecl (__tl-box-place inner-box)]
                           (parser.ResultAstDecl.Ok inner))]
                       [_ (parser.ResultAstDecl.Ok decl)]))
                   (set! logical-index (+ logical-index 1)))])
@@ -3999,7 +3984,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (compiler-decl-list-at-index decls target 0))]))
 
 (define (compiler-symbols-decl-at-index
@@ -4924,7 +4909,8 @@
                   (match splice-program
                     [(ast.AstProgram.Program splice-box)
                       (let
-                        [splice-decls : ast.AstDeclList (box-get splice-box)]
+                        [splice-decls : ast.AstDeclList
+                          (__tl-box-place splice-box)]
                         [splice-paths : ast.AstDeclPathList
                           (compiler-symbol-path-list-repeat
                             splice-decls
@@ -4986,7 +4972,7 @@
                 [(ast.AstProgram.Program splice-box)
                   (match (compiler-symbols-insert-decls
                     base-symbols
-                    (box-get splice-box)
+                    (__tl-box-place splice-box)
                     (compiler-symbol-root-module-id))
                     [(ResultCompilerSymbols.Ok appended)
                       (let
@@ -5030,7 +5016,8 @@
                   (match splice-program
                     [(ast.AstProgram.Program splice-box)
                       (let
-                        [splice-decls : ast.AstDeclList (box-get splice-box)]
+                        [splice-decls : ast.AstDeclList
+                          (__tl-box-place splice-box)]
                         [splice-paths : ast.AstDeclPathList
                           (compiler-symbol-path-list-repeat
                             splice-decls
@@ -5426,7 +5413,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [index : i64 0]
         [count : i64 (ast.ast-decl-list-len (& decls))]
         (begin
@@ -5663,9 +5650,9 @@
       (unless (compiler-symbol-map-remove-id! (&mut map) 8) (return false))
       (compiler-symbol-map-put! (&mut map) 16 50)
       (and
-        (= (array-length (struct-get map keys)) 8)
-        (= (struct-get map len) 4)
-        (= (struct-get map deleted) 0)
+        (= (array-length map.keys) 8)
+        (= map.len 4)
+        (= map.deleted 0)
         (= (compiler-symbol-map-lookup-handle-id (& map) 0) 10)
         (= (compiler-symbol-map-lookup-handle-id (& map) 4) 21)
         (=

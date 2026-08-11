@@ -40,8 +40,8 @@
     (begin
       (unless (= direct 38) (return 1))
       (unless (= via-ptr 84) (return 2))
-      (unless (= (struct-get made a) (cast 19 : u64)) (return 3))
-      (unless (= (struct-get made b) (cast 29 : u64)) (return 4))
-      (unless (= (struct-get made c) (cast 39 : u64)) (return 5))
+      (unless (= made.a (cast 19 : u64)) (return 3))
+      (unless (= made.b (cast 29 : u64)) (return 4))
+      (unless (= made.c (cast 39 : u64)) (return 5))
       (unless (= nested-score 26) (return 6))
       42)))

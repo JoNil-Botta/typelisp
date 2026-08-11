@@ -149,6 +149,7 @@
               "tc-self-generator"
               (str_cat.str-cat "tc-self-item-" (string.int->string index))
               (str_cat.str-cat "tc-self-identity-" (string.int->string index))
+              (ci.intern "tc-self-module")
               (ast.ast-decl-fallback))
             (set! index (+ index 1))))
         unit)
@@ -156,6 +157,7 @@
         "tc-self-generator"
         "tc-self-item-0"
         "tc-self-identity-replacement"
+        (ci.intern "tc-self-replacement-module")
         (ast.ast-decl-fallback))
       (if (let
         [family-slot : i64
@@ -185,11 +187,13 @@
         "tc-self-first-wins-generator"
         "tc-self-first-wins-item"
         "tc-self-first-wins-identity"
+        (ci.intern "tc-self-first-wins-module")
         (ast.AstDecl.Module (ci.intern "tc-self-first-wins-module")))
       (tc_core.record-slot
         "tc-self-first-wins-generator"
         "tc-self-first-wins-item"
         "tc-self-first-wins-replacement"
+        (ci.intern "tc-self-first-wins-replacement-module")
         (ast.AstDecl.Module (ci.intern "tc-self-first-wins-replacement-module")))
       (if (let
         [family-slot : i64
@@ -336,12 +340,14 @@
         [owned-kind : String "tc-self-owned-kind-novel"]
         [owned-identity-id : i64
           (tc_core.tc-generated-module-name-id owned-identity)]
+        [owned-module-id : i64 (ci.intern "tc-self-owned-module")]
         [source-mark : i64 (ci.intern-pool-len)]
         (begin
           (tc_core.record-slot
             owned-generator
             owned-item
             owned-identity
+            owned-module-id
             (ast.ast-decl-fallback))
           (tc_core.scratch-reset-context)
           (tc_core.scratch-plan-result owned-type-key owned-kind)
@@ -402,6 +408,7 @@
         "tc-self-lifecycle-generator"
         "tc-self-lifecycle-item"
         "tc-self-lifecycle-identity"
+        (ci.intern "tc-self-lifecycle-module")
         (ast.AstDecl.Module (ci.intern "tc-self-lifecycle-module")))
       (tc_core.macro-expand-scratch-clear-owned-caches!)
       (if (tc_core.complete-key "tc-self-lifecycle-complete")
@@ -1084,7 +1091,7 @@
                     (match program
                       [(ast.AstProgram.Program decls-box)
                         (let
-                          [decls : ast.AstDeclList (box-get decls-box)]
+                          [decls : ast.AstDeclList (__tl-box-place decls-box)]
                           [decl-count : i64 (ast.ast-decl-list-len (& decls))]
                           (if (or
                             (< first-module-index 0)
@@ -1104,9 +1111,9 @@
                                   [(ast.AstDecl.ModuleBody _ next-body-box)
                                     (let
                                       [first-body : ast.AstDeclList
-                                        (box-get first-body-box)]
+                                        (__tl-box-place first-body-box)]
                                       [next-body : ast.AstDeclList
-                                        (box-get next-body-box)]
+                                        (__tl-box-place next-body-box)]
                                       [first-count : i64
                                         (ast.ast-decl-list-len (& first-body))]
                                       [next-count : i64
@@ -1212,7 +1219,7 @@
                     (match program
                       [(ast.AstProgram.Program decls-box)
                         (let
-                          [decls : ast.AstDeclList (box-get decls-box)]
+                          [decls : ast.AstDeclList (__tl-box-place decls-box)]
                           [decl-count : i64 (ast.ast-decl-list-len (& decls))]
                           (if (or
                             (< first-module-index 0)
@@ -1232,9 +1239,9 @@
                                   [(ast.AstDecl.ModuleBody _ next-body-box)
                                     (let
                                       [first-body : ast.AstDeclList
-                                        (box-get first-body-box)]
+                                        (__tl-box-place first-body-box)]
                                       [next-body : ast.AstDeclList
-                                        (box-get next-body-box)]
+                                        (__tl-box-place next-body-box)]
                                       [first-count : i64
                                         (ast.ast-decl-list-len (& first-body))]
                                       [next-count : i64
@@ -1327,6 +1334,266 @@
         true)
         unit
         (set! ok false))
+      ;; DefMacro: stable Expr parameters and a fixed CTFE mut-call surface may
+      ;; reuse when the generated helper string is exactly the enclosing
+      ;; identity substitution and every suffix byte remains unchanged.
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (push! [place : Expr] [value : Expr]) : unit
+    (expr-mut-call1 (expr-var \"tc-walker-first.push-ref!\") place value)))
+(module tc-walker-next
+  (defmacro (push! [place : Expr] [value : Expr]) : unit
+    (expr-mut-call1 (expr-var \"tc-walker-next.push-ref!\") place value)))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        true
+        true)
+        unit
+        (set! ok false))
+      ;; Ordered type-kind constraints and variadic shape are part of the
+      ;; exact macro signature, while the fixed `type` operand is intrinsic to
+      ;; the macro checker and its lexical use is paired.
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (build [T : type (:kind i64 u8)] [items : Expr ...]) : Expr T))
+(module tc-walker-next
+  (defmacro (build [T : type (:kind i64 u8)] [items : Expr ...]) : Expr T))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        true
+        true)
+        unit
+        (set! ok false))
+      ;; Parameter count/name/type/variadic and ordered kind changes fail the
+      ;; declaration walk rather than reaching Rule 4.
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (shape [value : Expr]) : Expr value))
+(module tc-walker-next
+  (defmacro (shape [value : Expr] [extra : Expr]) : Expr value))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (shape [value : Expr]) : Expr value))
+(module tc-walker-next
+  (defmacro (shape [other : Expr]) : Expr other))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (shape [value : Expr]) : Expr value))
+(module tc-walker-next
+  (defmacro (shape [value : String]) : Expr value))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (shape [values : Expr ...]) : Expr values))
+(module tc-walker-next
+  (defmacro (shape [values : Expr]) : Expr values))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (shape [T : type (:kind i64 u8)]) : Expr T))
+(module tc-walker-next
+  (defmacro (shape [T : type (:kind u8 i64)]) : Expr T))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      ;; Return and ownership-bearing composite parameter types remain exact.
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (shape [value : Expr]) : unit value))
+(module tc-walker-next
+  (defmacro (shape [value : Expr]) : bool value))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (shape [value : (Box i64)]) : Expr value))
+(module tc-walker-next
+  (defmacro (shape [value : (Box u8)]) : Expr value))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      ;; A stale identity, a changed helper suffix, or any unrelated changed
+      ;; string cannot masquerade as the generated helper substitution.
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (push! [place : Expr]) : unit
+    (expr-mut-call0 (expr-var \"tc-walker-first.push-ref!\") place)))
+(module tc-walker-next
+  (defmacro (push! [place : Expr]) : unit
+    (expr-mut-call0 (expr-var \"tc-walker-first.push-ref!\") place)))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (push! [place : Expr]) : unit
+    (expr-mut-call0 (expr-var \"tc-walker-first.push-ref!\") place)))
+(module tc-walker-next
+  (defmacro (push! [place : Expr]) : unit
+    (expr-mut-call0 (expr-var \"tc-walker-next.pop-ref!\") place)))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      ;; Exact syntax alone does not authorize a captured user dependency: its
+      ;; module-qualified identity changes outside the established declaration
+      ;; name/string surface, so the pair remains concrete.
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (captured [value : Expr]) : Expr (tc-walker-first.helper value)))
+(module tc-walker-next
+  (defmacro (captured [value : Expr]) : Expr (tc-walker-next.helper value)))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      ;; Literal/operator changes and unsupported expression constructors fail
+      ;; closed inside macro bodies just as they do for runtime declarations.
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (changed) : i64 (+ 1 2)))
+(module tc-walker-next
+  (defmacro (changed) : i64 (- 1 2)))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-walker-pair?
+        "(module tc-walker-first
+  (defmacro (unsupported [value : Expr]) : Expr (if true value value)))
+(module tc-walker-next
+  (defmacro (unsupported [value : Expr]) : Expr (if true value value)))"
+        0
+        1
+        0
+        0
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        false
+        false)
+        unit
+        (set! ok false))
       ;; Fixed-size arrays are dependent even when their shapes compare equal;
       ;; the exact type fast path must veto the i64 -> u8 substitution.
       (if (compiler-typecheck-generated-walker-pair?
@@ -1346,17 +1613,17 @@
         false)
         unit
         (set! ok false))
-      ;; DefFn: a nominal type nested in the reference parameter is outside
-      ;; the audited type surface, so the declaration fails closed.
+      ;; DefFn is structurally exact, but a nominal type nested in the
+      ;; reference parameter is outside the audited safe-reuse type surface.
       (if (compiler-typecheck-generated-walker-pair?
         "(module tc-walker-first
   (defstruct Vec (slots (& caller (__tl_dyn-array i64))))
   (define (slots [v : (& caller Vec)]) : (& caller (__tl_dyn-array i64))
-    (struct-get (& v) slots)))
+    (__tl_struct-get v slots)))
 (module tc-walker-next
   (defstruct Vec (slots (& caller (__tl_dyn-array u8))))
   (define (slots [v : (& caller Vec)]) : (& caller (__tl_dyn-array u8))
-    (struct-get (& v) slots)))"
+    (__tl_struct-get v slots)))"
         0
         1
         1
@@ -1365,7 +1632,7 @@
         "i64"
         "u8"
         "u8"
-        false
+        true
         false)
         unit
         (set! ok false))
@@ -1484,15 +1751,58 @@
         false)
         unit
         (set! ok false))
+      ;; A public dotted projection and its normalized StructGet form are one
+      ;; semantic AST.  Native TLCI and source/shell expansion may hand the
+      ;; proof lane either representation, in either identity order.
+      (if (compiler-typecheck-generated-context-walker-pair?
+        "(module tc-walker-first
+  (defstruct Vec (len i64))
+  (define (len [v : (& v Vec)]) : i64 (__tl_struct-get v len)))
+(module tc-walker-next
+  (defstruct Vec (len i64))
+  (define (len [v : (& v Vec)]) : i64 v.len))"
+        0
+        1
+        1
+        1
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        true
+        true
+        true)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-generated-context-walker-pair?
+        "(module tc-walker-first
+  (defstruct Vec (len i64))
+  (define (len [v : (& v Vec)]) : i64 v.len))
+(module tc-walker-next
+  (defstruct Vec (len i64))
+  (define (len [v : (& v Vec)]) : i64 (__tl_struct-get v len)))"
+        0
+        1
+        1
+        1
+        "i64"
+        "i64"
+        "u8"
+        "u8"
+        true
+        true
+        true)
+        unit
+        (set! ok false))
       ;; StructGet's field result is selected by the receiver's hidden nominal
       ;; type, so a fixed field beside a substituted payload needs checking.
       (if (compiler-typecheck-generated-context-walker-pair?
         "(module tc-walker-first
   (defstruct Box (fixed i64) (payload i64))
-  (define (field [value : Box]) : i64 (struct-get value fixed)))
+  (define (field [value : Box]) : i64 (__tl_struct-get value fixed)))
 (module tc-walker-next
   (defstruct Box (fixed i64) (payload u8))
-  (define (field [value : Box]) : u8 (struct-get value fixed)))"
+  (define (field [value : Box]) : u8 (__tl_struct-get value fixed)))"
         0
         1
         1
@@ -1829,7 +2139,7 @@
                   (match program
                     [(ast.AstProgram.Program decls-box)
                       (let
-                        [decls : ast.AstDeclList (box-get decls-box)]
+                        [decls : ast.AstDeclList (__tl-box-place decls-box)]
                         [first-module : ast.AstDecl
                           (ast.ast-decl-list-get
                             (& decls)
@@ -1846,9 +2156,9 @@
                               [(ast.AstDecl.ModuleBody _ next-box)
                                 (let
                                   [first-body : ast.AstDeclList
-                                    (box-get first-box)]
+                                    (__tl-box-place first-box)]
                                   [next-body : ast.AstDeclList
-                                    (box-get next-box)]
+                                    (__tl-box-place next-box)]
                                   [first-decl : ast.AstDecl
                                     (ast.ast-decl-list-get
                                       (& first-body)

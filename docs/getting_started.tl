@@ -50,8 +50,8 @@
 ;#     (+ p.x (area (Rect 5 6)))))
 ;# ```
 ;#
-;# `p.x` is sugar for `(struct-get p x)`. Mutate in place with
-;# `(set! p.x 10)` rather than rebuilding the struct.
+;# `p.x` projects the `x` field. Mutate in place with `(set! p.x 10)` rather
+;# than rebuilding the struct.
 ;#
 ;# ## 3. Move semantics, and the error you will hit first
 ;#
@@ -154,7 +154,7 @@
 ;#   (match t
 ;#     [(Tree.Leaf value) value]
 ;#     [(Tree.Node left right)
-;#       (+ (total (box-take left)) (total (box-take right)))]))
+;#       (+ (total (deref left)) (total (deref right)))]))
 ;#
 ;# (define (main) : i64
 ;#   (let

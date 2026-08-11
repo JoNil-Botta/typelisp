@@ -17,12 +17,12 @@
 (define (next [iter : (&mut state (ReborrowSiblingIter source))]) : (ReborrowSiblingNext
     source)
   (let
-    [index : i64 (struct-get iter index)]
+    [index : i64 iter.index]
     (if (>= index 1)
       (ReborrowSiblingNext.Done)
       (begin
-        (set! (struct-get iter index) (+ index 1))
-        (ReborrowSiblingNext.Item (& (array-ref (struct-get iter slots) index)))))))
+        (set! iter.index (+ index 1))
+        (ReborrowSiblingNext.Item (& (array-ref iter.slots index)))))))
 
 (define (consume [value : (ReborrowSiblingNext source)]) : unit
   (match value
@@ -37,8 +37,8 @@
       [first : (ReborrowSiblingNext pairs)
         (let
           [iter : (ReborrowSiblingIter pairs)
-            (ReborrowSiblingIter (& (struct-get pairs left)) 0)]
+            (ReborrowSiblingIter (& pairs.left) 0)]
           (next (&mut iter)))]
       (begin
-        (array-set! (struct-get pairs right) 0 42)
+        (set! (array-ref pairs.right 0) 42)
         (consume first)))))

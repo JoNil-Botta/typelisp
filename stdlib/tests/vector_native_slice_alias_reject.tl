@@ -11,5 +11,5 @@
         [exclusive : (&mut items (Slice i64)) (vec.view-mut (&mut items))]
         [shared : (& items (Slice i64)) (vec.view (& items))]
         (begin
-          (array-set! exclusive 0 20)
+          (set! (array-ref exclusive 0) 20)
           (array-ref shared 0))))))

@@ -6,7 +6,7 @@
   (let
     [values : (Array i64 1) (array 41)]
     [exclusive : (&mut values (Array i64 1)) (&mut values)]
-    [ignored : unit (array-set! exclusive 0 42)]
+    [ignored : unit (set! (array-ref exclusive 0) 42)]
     (if (= (array-ref values 0) 42)
       42
       1)))

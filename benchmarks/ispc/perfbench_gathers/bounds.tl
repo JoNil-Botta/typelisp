@@ -21,11 +21,11 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! values i (cast (+ i 1) : f32))
-          (array-set! offsets i 0)
+          (set! (array-ref values i) (cast (+ i 1) : f32))
+          (set! (array-ref offsets i) 0)
           (set! i (+ i 1))))
       ;; Lane zero is invalid in scalar, AVX2, and AVX-512 modes.
-      (array-set! offsets 0 count)
+      (set! (array-ref offsets 0) count)
       (if (> (gathers-bounds-probe values offsets count) (cast 0.0 : f32))
         1
         2))))

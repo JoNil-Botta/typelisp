@@ -15,7 +15,7 @@
 
 (define (safe-threading-join-box-value [worker : ThreadBoxI64] [failure : i64]) : i64
   (match (thread.join-box-i64 worker)
-    [(ThreadBoxI64JoinOk cell) (box-get cell)]
+    [(ThreadBoxI64JoinOk cell) (__tl-box-place cell)]
     [(ThreadBoxI64JoinErr _) failure]))
 
 (define (safe-threading-join-string-ok? [worker : ThreadString]) : bool

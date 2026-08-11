@@ -19,7 +19,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (+ (* i 3) 1))
+        (set! (array-ref a i) (+ (* i 3) 1))
         (set! i (+ i 1))))))
 
 (define (main) : i64
@@ -35,9 +35,8 @@
         (begin
           (foreach
             ([i : i64 0 array-len])
-            (array-set!
-              out
-              i
+            (set!
+              (array-ref out i)
               (spmd-shuffle (+ (array-ref a i) r) (program-index))))
           (set! acc (+ acc (array-ref out (bit-and r (- array-len 1)))))
           (set! r (+ r 1))))

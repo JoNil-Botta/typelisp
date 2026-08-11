@@ -54,7 +54,9 @@
   [mutex : mutex_i64.Mutex]) : unit
   (begin
     (mutex_i64.store-raw! mutex ctx 0)
-    (array-set! ctx (mutex_i64.raw-field-count) sync-mutex-integration-count)))
+    (set!
+      (array-ref ctx (mutex_i64.raw-field-count))
+      sync-mutex-integration-count)))
 
 (define (sync-mutex-integration-total [mutex : mutex_i64.Mutex]) : i64
   (with ([guard (mutex_i64.lock mutex) mutex_i64.unlock]) (mutex_i64.get guard)))

@@ -9,7 +9,7 @@
     (begin
       (while (< i limit)
         (begin
-          (set! (box-get cell) (& n))
+          (set! (deref cell) (& n))
           (set! n 2)
           (set! i (+ i 1))))
       (read-cell cell))))

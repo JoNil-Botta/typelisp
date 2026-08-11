@@ -6,7 +6,7 @@
     (defstruct Payload
       (value i64))
     (define (consume [payload : Payload (:consume)]) : i64
-      (struct-get payload value))))
+      payload.value)))
 
 (import (generated-consumer-module) as generated)
 
@@ -15,4 +15,4 @@
     [payload : generated.Payload (generated.Payload 1)]
     (begin
       (generated.consume payload)
-      (struct-get payload value))))
+      payload.value)))

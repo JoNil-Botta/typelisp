@@ -16,13 +16,12 @@
 (define (next [iter : (&mut state (AggregateReborrowIter source))]) : (AggregateReborrowNext
     source)
   (let
-    [index : i64 (struct-get iter index)]
+    [index : i64 iter.index]
     (if (>= index 1)
       (AggregateReborrowNext.Done)
       (begin
-        (set! (struct-get iter index) (+ index 1))
-        (AggregateReborrowNext.Item
-          (&mut (array-ref (struct-get iter slots) index)))))))
+        (set! iter.index (+ index 1))
+        (AggregateReborrowNext.Item (&mut (array-ref iter.slots index)))))))
 
 (define (main) : i64
   (let

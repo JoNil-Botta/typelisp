@@ -4,7 +4,7 @@
   (value i64))
 
 (define (consume [payload : Payload (:consume)]) : i64
-  (struct-get payload value))
+  payload.value)
 
 (define (main) : i64
   (let

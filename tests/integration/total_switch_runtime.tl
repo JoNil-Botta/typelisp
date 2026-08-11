@@ -26,12 +26,12 @@
     [i : i64 0]
     [sum : i64 0]
     (begin
-      (array-set! values 0 (TotalSwitchValue.Zero))
-      (array-set! values 1 (TotalSwitchValue.One))
-      (array-set! values 2 (TotalSwitchValue.Two))
-      (array-set! values 3 (TotalSwitchValue.Three))
-      (array-set! values 4 (TotalSwitchValue.Four))
-      (array-set! values 5 (TotalSwitchValue.Five))
+      (set! (array-ref values 0) (TotalSwitchValue.Zero))
+      (set! (array-ref values 1) (TotalSwitchValue.One))
+      (set! (array-ref values 2) (TotalSwitchValue.Two))
+      (set! (array-ref values 3) (TotalSwitchValue.Three))
+      (set! (array-ref values 4) (TotalSwitchValue.Four))
+      (set! (array-ref values 5) (TotalSwitchValue.Five))
       (while (< i 6)
         (begin
           (set! sum (+ sum (total-switch-score (array.ref values i))))

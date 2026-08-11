@@ -3,7 +3,7 @@
   (box 42))
 
 (define (take-box [cell : (Box i64)]) : i64
-  (box-get cell))
+  (__tl-box-place cell))
 
 (define (main) : i64
   (take-box

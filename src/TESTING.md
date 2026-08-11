@@ -849,14 +849,19 @@ Before each self-host generation after stage1, the preceding compiler builds
 the exact 42-module embedded source manifest into `stdlib.tlci`. The generated
 compiler includes those bytes, maps them with the production W^X loader, and
 the bootstrap smoke requires `typelisp inspect embedded:stdlib.tlci` to register
-every current macro identity. `verify-embedded-stdlib-tlci.sh` separately
+every current macro identity. Trusted embedded-stdlib native routing is the
+default on both hosts; the bootstrap embedded-provenance parity compile proves
+the staged disk-source and embedded-source paths converge. The
+`verify-embedded-stdlib-tlci.sh` gate separately
 checks byte determinism, proves that a source-only mutation changes the image,
 ratchets source-lowered native-entry coverage, and stress-tests the mapped
 host callback/session bridge on both hosts. Unsupported transformer shapes
 remain explicit registration shells and fall back to interpreted CTFE.
 `verify-compile-profile.sh` compares mapped-image and explicit-source assembly;
 its native-result counters require real `Module` and `Decls` results to commit
-through the existing module/declaration validation and splice paths.
+through the existing module/declaration validation and splice paths. The
+production-route stress gate additionally crosses five pool-reset and image
+release/remap cycles with more than 25,000 routed calls per host.
 
 Run it from Git Bash with:
 

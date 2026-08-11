@@ -86,7 +86,7 @@
 
 (define (payload-score [value : result_payload_status.Result]) : i64
   (match value
-    [(result_payload_status.Ok payload) (struct-get payload value)]
+    [(result_payload_status.Ok payload) payload.value]
     [(result_payload_status.Err status)
       (match status
         [(StatusOk) 10]
@@ -94,8 +94,7 @@
 
 (define (rich-payload-score [value : result_rich_payload_status.Result]) : i64
   (match value
-    [(result_rich_payload_status.Ok payload)
-      (struct-get (struct-get payload span) col)]
+    [(result_rich_payload_status.Ok payload) payload.span.col]
     [(result_rich_payload_status.Err status)
       (match status
         [(StatusOk) 10]
@@ -104,7 +103,7 @@
 (define (rich-error-score [value : result_i64_rich_error.Result]) : i64
   (match value
     [(result_i64_rich_error.Ok n) n]
-    [(result_i64_rich_error.Err err) (struct-get (struct-get err span) col)]))
+    [(result_i64_rich_error.Err err) err.span.col]))
 
 (define (nested-score [value : result_nested.Result]) : i64
   (match value

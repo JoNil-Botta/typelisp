@@ -23,9 +23,9 @@
   (if (< n 0)
     (poke-sum xs (+ n 1))
     (begin
-      (array-set! xs 0 (+ n 40))
-      (array-set! xs 1 (* n 3))
-      (array-set! xs 2 (- (array.ref xs 0) (array.ref xs 1)))
+      (set! (array-ref xs 0) (+ n 40))
+      (set! (array-ref xs 1) (* n 3))
+      (set! (array-ref xs 2) (- (array.ref xs 0) (array.ref xs 1)))
       (+ (array.ref xs 2) (array.ref xs 1)))))
 
 (define (main) : i64

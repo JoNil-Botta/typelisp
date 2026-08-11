@@ -15,10 +15,10 @@
     (let
       [result : (& pair i64)
         (let
-          [temporary : (& pair i64) (& (array-ref (struct-get pair left) 0))]
+          [temporary : (& pair i64) (& (array-ref pair.left 0))]
           (begin
             (consume temporary)
-            (& (array-ref (struct-get pair right) 0))))]
+            (& (array-ref pair.right 0))))]
       (begin
-        (array-set! (struct-get pair left) 0 42)
+        (set! (array-ref pair.left 0) 42)
         (consume result)))))

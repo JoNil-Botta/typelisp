@@ -25,16 +25,17 @@
     [(Some _) 0]))
 
 (define (point-score [value : Point]) : i64
-  (+ (struct-get value x) (score-bool (not (struct-get value flag)))))
+  (+ value.x (score-bool (not value.flag))))
 
 (define (bag-score [bags : (__tl_dyn-array Bag)]) : i64
-  (begin
-    (array-push! (struct-get (array-ref bags 0) items) 7)
-    (score-bool
-      (and
-        (= (array-length (struct-get (array-ref bags 0) items)) 1)
-        (= (array-ref (struct-get (array-ref bags 0) items) 0) 7)
-        (= (array-length (struct-get (array-ref bags 1) items)) 0)))))
+  (let
+    [first : (&mut bags Bag) (&mut (array-ref bags 0))]
+    [first-ok : bool
+      (begin
+        (array-push! first.items 7)
+        (and (= (array-length first.items) 1) (= (array-ref first.items 0) 7)))]
+    [second : (& bags Bag) (& (array-ref bags 1))]
+    (score-bool (and first-ok (= (array-length second.items) 0)))))
 
 (define (main) : i64
   (let

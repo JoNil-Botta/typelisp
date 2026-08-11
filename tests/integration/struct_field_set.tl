@@ -1,4 +1,4 @@
-;; #1521: `(set! (struct-get place field) value)` mutates the field in place,
+;; #1521: `(set! place.field value)` mutates the field in place,
 ;; including register-resident locals, compatibility dynamic-array elements,
 ;; fixed-array elements, tuple projections, mutable references, and nested fields.
 (import stdlib.array)
@@ -15,9 +15,9 @@
   (let
     [p : Pair (Pair 10 20)]
     (begin
-      (set! (struct-get p x) 17)
-      (set! (struct-get p y) 25)
-      (+ (struct-get p x) (struct-get p y)))))
+      (set! p.x 17)
+      (set! p.y 25)
+      (+ p.x p.y))))
 
 ;; Compatibility dynamic-array regression coverage kept until public unsized
 ;; `(Array T)` removal in #3581.
@@ -27,40 +27,46 @@
     (begin
       (array-push! items (Pair 1 2))
       (array-push! items (Pair 3 4))
-      (set! (struct-get (array-ref items 1) x) 30)
-      (set! (struct-get (array-ref items 0) y) 12)
-      (+ (struct-get (array-ref items 1) x) (struct-get (array-ref items 0) y)))))
+      (__tl-project-set-field (array-ref items 1) x 30)
+      (__tl-project-set-field (array-ref items 0) y 12)
+      (+
+        (__tl-project-field (array-ref items 1) x)
+        (__tl-project-field (array-ref items 0) y)))))
 
 (define (fixed-array-element-field-set) : i64
   (let
     [items : (Array Pair 2) (array (Pair 1 2) (Pair 3 4))]
     (begin
-      (set! (struct-get (array-ref items 1) y) 15)
-      (+ (struct-get (array-ref items 1) x) (struct-get (array-ref items 1) y)))))
+      (__tl-project-set-field (array-ref items 1) y 15)
+      (+
+        (__tl-project-field (array-ref items 1) x)
+        (__tl-project-field (array-ref items 1) y)))))
 
 (define (nested-field-set) : i64
   (let
     [o : Outer (Outer (Pair 5 6) 30)]
     (begin
-      (set! (struct-get (struct-get o p) y) 12)
-      (+ (struct-get (struct-get o p) y) (struct-get o z)))))
+      (set! o.p.y 12)
+      (+ o.p.y o.z))))
 
 (define (mut-ref-field-set! [p : (&mut p Pair)]) : unit
-  (set! (struct-get p x) 8))
+  (set! p.x 8))
 
 (define (mut-ref-field-set-score) : i64
   (let
     [items : (Array Pair 1) (array (Pair 1 2))]
     (begin
       (mut-ref-field-set! (&mut (array-ref items 0)))
-      (struct-get (array-ref items 0) x))))
+      (__tl-project-field (array-ref items 0) x))))
 
 (define (tuple-field-set) : i64
   (let
     [t : (Tuple Pair i64) (tuple (Pair 6 7) 0)]
     (begin
-      (set! (struct-get (tuple-ref t 0) x) 11)
-      (+ (struct-get (tuple-ref t 0) x) (struct-get (tuple-ref t 0) y)))))
+      (__tl-project-set-field (tuple-ref t 0) x 11)
+      (+
+        (__tl-project-field (tuple-ref t 0) x)
+        (__tl-project-field (tuple-ref t 0) y)))))
 
 (define (main) : i64
   (-

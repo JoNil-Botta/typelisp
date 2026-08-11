@@ -50,7 +50,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! values i (loads-case-value case-id i))
+        (set! (array-ref values i) (loads-case-value case-id i))
         (set! i (+ i 1))))))
 
 (define (loads-case-expected-bits [case-id : i64]) : u32

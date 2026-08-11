@@ -9,4 +9,4 @@
     ([i : i64 0 n])
     (let
       [j : i64 (array-ref ix i)]
-      (array-set! out j i))))
+      (set! (array-ref out j) i))))

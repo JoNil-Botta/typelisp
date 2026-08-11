@@ -8,6 +8,6 @@
     sum
     ([i : i64 0 n] [prefix : i64 0])
     (let
-      [ignored : unit (array-set! xs i 0)]
+      [ignored : unit (set! (array-ref xs i) 0)]
       (array-ref xs i))
     unit))

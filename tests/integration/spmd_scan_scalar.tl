@@ -17,7 +17,7 @@
 (define (fill-i64 [xs : (&mut xs i64v.Vec)] [n : i64]) : unit
   (let
     [xs-slots (i64v.slots-mut xs)]
-    (foreach ([i : i64 0 n]) (array-set! xs-slots i (+ i 1)))))
+    (foreach ([i : i64 0 n]) (set! (array-ref xs-slots i) (+ i 1)))))
 
 (define (fill-i64-mixed [xs : (&mut xs i64v.Vec)] [n : i64]) : unit
   (let
@@ -25,9 +25,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          xs-slots
-          i
+        (set!
+          (array-ref xs-slots i)
           (match (% i 5)
             [0 6]
             [1 (- 0 2)]
@@ -42,9 +41,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          xs-slots
-          i
+        (set!
+          (array-ref xs-slots i)
           (cast
             (match (% i 5)
               [0 (- 0 3)]
@@ -65,8 +63,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! all-slots i (!= (% i 11) 7))
-        (array-set! any-slots i (= (% i 13) 9))
+        (set! (array-ref all-slots i) (!= (% i 11) 7))
+        (set! (array-ref any-slots i) (= (% i 13) 9))
         (set! i (+ i 1))))))
 
 (define (scan-sum-i64
@@ -80,7 +78,7 @@
       sum
       ([i : i64 0 n] [prefix : i64 0])
       (array-ref xs-slots i)
-      (array-set! out-slots i prefix))))
+      (set! (array-ref out-slots i) prefix))))
 
 (define (scan-min-i64
   [xs : (& xs i64v.Vec)]
@@ -93,7 +91,7 @@
       min
       ([i : i64 0 n] [prefix : i64 20])
       (array-ref xs-slots i)
-      (array-set! out-slots i prefix))))
+      (set! (array-ref out-slots i) prefix))))
 
 (define (scan-max-i64
   [xs : (& xs i64v.Vec)]
@@ -106,7 +104,7 @@
       max
       ([i : i64 0 n] [prefix : i64 (- 0 20)])
       (array-ref xs-slots i)
-      (array-set! out-slots i prefix))))
+      (set! (array-ref out-slots i) prefix))))
 
 (define (scan-sum-i32
   [xs : (& xs i32v.Vec)]
@@ -119,7 +117,7 @@
       sum
       ([i : i64 0 n] [prefix : i32 (cast 0 : i32)])
       (array-ref xs-slots i)
-      (array-set! out-slots i prefix))))
+      (set! (array-ref out-slots i) prefix))))
 
 (define (scan-min-i32
   [xs : (& xs i32v.Vec)]
@@ -132,7 +130,7 @@
       min
       ([i : i64 0 n] [prefix : i32 (cast 10 : i32)])
       (array-ref xs-slots i)
-      (array-set! out-slots i prefix))))
+      (set! (array-ref out-slots i) prefix))))
 
 (define (scan-max-i32
   [xs : (& xs i32v.Vec)]
@@ -145,7 +143,7 @@
       max
       ([i : i64 0 n] [prefix : i32 (cast (- 0 10) : i32)])
       (array-ref xs-slots i)
-      (array-set! out-slots i prefix))))
+      (set! (array-ref out-slots i) prefix))))
 
 (define (scan-all-bool
   [xs : (& xs boolv.Vec)]
@@ -158,7 +156,7 @@
       all
       ([i : i64 0 n] [prefix : bool true])
       (array-ref xs-slots i)
-      (array-set! out-slots i prefix))))
+      (set! (array-ref out-slots i) prefix))))
 
 (define (scan-any-bool
   [xs : (& xs boolv.Vec)]
@@ -171,14 +169,14 @@
       any
       ([i : i64 0 n] [prefix : bool false])
       (array-ref xs-slots i)
-      (array-set! out-slots i prefix))))
+      (set! (array-ref out-slots i) prefix))))
 
 (define (take-bound [bounds : (&mut bounds i64v.Vec)]) : i64
   (let
     [bounds-slots (i64v.slots-mut bounds)]
     [n : i64 (array-ref bounds-slots 0)]
     (begin
-      (array-set! bounds-slots 0 0)
+      (set! (array-ref bounds-slots 0) 0)
       n)))
 
 (define (case-sum-i64 [n : i64]) : bool
@@ -291,7 +289,7 @@
           sum
           ([lane : i64 0 4] [prefix : i64 9223372036854775806])
           (array-ref src lane)
-          (array-set! dst lane prefix)))
+          (set! (array-ref dst lane) prefix)))
       (let
         [src (i32v.slots (& i32-in))]
         [dst (i32v.slots-mut (&mut i32-out))]
@@ -299,7 +297,7 @@
           sum
           ([lane : i64 0 8] [prefix : i32 (cast 2147483646 : i32)])
           (array-ref src lane)
-          (array-set! dst lane prefix)))
+          (set! (array-ref dst lane) prefix)))
       (set! i 0)
       (while (< i 8)
         (begin
@@ -357,7 +355,7 @@
           sum
           ([i : i64 0 0] [prefix : i64 99])
           (array-ref src 99)
-          (array-set! dst 99 prefix)))
+          (set! (array-ref dst 99) prefix)))
       (= (i64v.get (& out) 0 0) 7))))
 
 (define (case-extreme-empty-ranges) : bool
@@ -374,12 +372,12 @@
             sum
             ([i : i64 (- 0 1) (- 0 1)] [prefix : i64 3])
             (array-ref src i)
-            (array-set! dst i prefix))
+            (set! (array-ref dst i) prefix))
           (spmd-scan
             sum
             ([i : i64 9223372036854775807 9223372036854775807] [prefix : i64 5])
             (array-ref src i)
-            (array-set! dst i prefix))))
+            (set! (array-ref dst i) prefix))))
       (= (i64v.get (& out) 0 0) 17))))
 
 (define (case-end-bound-evaluated-once) : bool
@@ -397,7 +395,7 @@
           sum
           ([i : i64 0 (take-bound (&mut bounds))] [prefix : i64 0])
           (array-ref src i)
-          (array-set! dst i prefix)))
+          (set! (array-ref dst i) prefix)))
       (and (= (i64v.get (& bounds) 0 0) 0) (= (i64v.get (& out) 2 0) 6)))))
 
 (define (case-nonzero-seeded-range) : bool
@@ -421,7 +419,7 @@
           ([i : i64 (take-bound (&mut start-box)) (take-bound (&mut end-box))]
             [prefix : i64 (take-bound (&mut init-box))])
           (array-ref src i)
-          (array-set! dst i prefix)))
+          (set! (array-ref dst i) prefix)))
       (and
         (= (i64v.get (& start-box) 0 0) 0)
         (= (i64v.get (& end-box) 0 0) 0)
@@ -455,7 +453,7 @@
           ([i : i64 0 3] [prefix : i64 0])
           (array-ref src i)
           (begin
-            (array-set! dst i prefix)
+            (set! (array-ref dst i) prefix)
             (set! prefix 0))))
       (and
         (= (i64v.get (& out) 0 0) 1)

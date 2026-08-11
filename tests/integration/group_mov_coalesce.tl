@@ -50,9 +50,8 @@
     (begin
       (while (< i n)
         (begin
-          (array-set!
-            ops
-            i
+          (set!
+            (array-ref ops i)
             (if (= (% i 3) 0)
               (Add (+ i 2))
               (if (= (% i 3) 1)

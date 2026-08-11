@@ -259,7 +259,8 @@
             1)])]
     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
-        (io.print-error (cdiag.compiler-diagnostic-render (box-get diag)))
+        (io.print-error
+          (cdiag.compiler-diagnostic-render (__tl-box-place diag)))
         1)]))
 
 (define (doc-generate-package
@@ -279,7 +280,7 @@
         (doc-write-text
           output-path
           (doc_render.doc-render-module-graph-markdown
-            (doc-modules-from-package-sources (struct-get source-set sources))))
+            (doc-modules-from-package-sources source-set.sources)))
         (doc-print-wrote output-path)
         0)]))
 
@@ -644,7 +645,7 @@
         (io.print-error (str_cat.str-cat message "\n"))
         1)]
     [(package_source_core.ResultPackageSourceSet.Ok source-set)
-      (doc-test-package-files (struct-get source-set sources) stdlib-roots 0)]))
+      (doc-test-package-files source-set.sources stdlib-roots 0)]))
 
 (define (doc-default-config-finish
   [input-paths : doc_svec.Vec]

@@ -126,7 +126,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-switch-instr-seq instrs)
-            (opt-count-switch-blocks (box-get rest)))])]
+            (opt-count-switch-blocks (__tl-box-place rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-count-switch-blocks (ir.compiler-ir-block-seq-to-list seq))]))
 
@@ -134,8 +134,8 @@
   (match cases
     [(ir.CompilerIrSwitchCaseList.Nil) 0]
     [(ir.CompilerIrSwitchCaseList.Cons _ rest)
-      (+ 1 (opt-switch-case-list-count (box-get rest)))]
-    [(ir.CompilerIrSwitchCaseList.Array seq) (struct-get seq len)]))
+      (+ 1 (opt-switch-case-list-count (__tl-box-place rest)))]
+    [(ir.CompilerIrSwitchCaseList.Array seq) seq.len]))
 
 (define (opt-switch-entry-base [blocks : ir.CompilerIrBlockList]) : i64
   (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry"))
@@ -354,7 +354,10 @@
         [(ir.CompilerIrSwitchCase.Case tag label)
           (if (= tag want-tag)
             (= label want-label)
-            (opt-switch-test-cases-have? (box-get rest) want-tag want-label))])]
+            (opt-switch-test-cases-have?
+              (__tl-box-place rest)
+              want-tag
+              want-label))])]
     [(ir.CompilerIrSwitchCaseList.Array seq)
       (opt-switch-test-cases-have?
         (ir.compiler-ir-switch-case-seq-to-list seq)
@@ -1206,8 +1209,8 @@
                 (ast.ast-node-pool-reader-type-segment-bases)
                 mov-ty
                 ty))
-            (smoke-mov-dst-var-type? (box-get rest) dst src ty))]
-        [_ (smoke-mov-dst-var-type? (box-get rest) dst src ty)])]))
+            (smoke-mov-dst-var-type? (__tl-box-place rest) dst src ty))]
+        [_ (smoke-mov-dst-var-type? (__tl-box-place rest) dst src ty)])]))
 
 (define (smoke-cast-dst-var-types?
   [instrs : ir.CompilerIrInstrList]
@@ -1235,8 +1238,19 @@
                 (ast.ast-node-pool-reader-type-segment-bases)
                 cast-to
                 to-ty))
-            (smoke-cast-dst-var-types? (box-get rest) dst src from-ty to-ty))]
-        [_ (smoke-cast-dst-var-types? (box-get rest) dst src from-ty to-ty)])]))
+            (smoke-cast-dst-var-types?
+              (__tl-box-place rest)
+              dst
+              src
+              from-ty
+              to-ty))]
+        [_
+          (smoke-cast-dst-var-types?
+            (__tl-box-place rest)
+            dst
+            src
+            from-ty
+            to-ty)])]))
 
 (define (smoke-noop-int-cast-mov-instrs) : ir.CompilerIrInstrList
   (ir.compiler-ir-instr-cons
@@ -1727,7 +1741,7 @@
           (ir.compiler-ir-instr-cons
             (ir.CompilerIrInstr.Call
               80
-              (struct-get symbols touch)
+              symbols.touch
               (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var object-var))
               (ast.AstType.Unit))
             tail)
@@ -2561,7 +2575,7 @@
               plain
               (ir.CompilerIrInstrList.Nil))
             (ir.CompilerIrFunctionList.Nil))))]
-    [starts : (__tl_dyn-array i64) (struct-get index leaf-starts)]
+    [starts : (__tl_dyn-array i64) index.leaf-starts]
     (cond
       [(not (= (array-length starts) 2)) 1]
       [(not (= (array-ref starts 0) (opt.opt-symbol-leaf-start qualified))) 2]
@@ -2646,6 +2660,14 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bounds-dom-self-test"
       (compiler_optimize_tests.compiler-optimize-bounds-dom-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dom-cmp-rule-a-self-test"
+      (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dom-cmp-rule-a-cfg-self-test"
+      (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-cfg-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-object-bounds-self-test"
@@ -2796,7 +2818,7 @@
   [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]
   [call : ir.CompilerIrInstr]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     ir.CompilerIrParamList.Nil
     (ast.AstType.I64)
     3
@@ -2856,7 +2878,7 @@
 (define (smoke-inline-phi-callee
   [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
-    (struct-get symbols inline-branch)
+    symbols.inline-branch
     (smoke-inline-phi-params)
     (ast.AstType.I64)
     5
@@ -2883,13 +2905,13 @@
     [values : (__tl_dyn-array ir.CompilerIrValue)
       (array.make-array ir.CompilerIrValue 4)]
     (begin
-      (array-set! values 0 (ir.CompilerIrValue.I64 1))
-      (array-set! values 1 (ir.CompilerIrValue.I64 2))
-      (array-set! values 2 (ir.CompilerIrValue.I64 3))
-      (array-set! values 3 (ir.CompilerIrValue.I64 4))
+      (set! (array-ref values 0) (ir.CompilerIrValue.I64 1))
+      (set! (array-ref values 1) (ir.CompilerIrValue.I64 2))
+      (set! (array-ref values 2) (ir.CompilerIrValue.I64 3))
+      (set! (array-ref values 3) (ir.CompilerIrValue.I64 4))
       (ir.CompilerIrInstr.Call
         0
-        (struct-get symbols inline-branch)
+        symbols.inline-branch
         (ir.CompilerIrCallArgs.Array values)
         (ast.AstType.I64)))))
 
@@ -3062,7 +3084,7 @@
         symbols
         (ir.CompilerIrInstr.Call
           0
-          (struct-get symbols inline-nonleaf)
+          symbols.inline-nonleaf
           ir.CompilerIrCallArgs.Nil
           (ast.AstType.I64)))]
     [optimized : ir.CompilerIrFunctionList
@@ -3219,7 +3241,7 @@
       (match (ir.compiler-ir-instr-seq-ref instrs index)
         [(ir.CompilerIrInstr.Select payload-box)
           (let
-            [lanes (struct-get (box-get payload-box) lanes)]
+            [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
             (if (= lanes 0)
               1
               0))]
@@ -3236,7 +3258,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (smoke-c27-count-scalar-selects-instrs instrs 0)
-            (smoke-c27-count-scalar-selects (box-get rest)))])]))
+            (smoke-c27-count-scalar-selects (__tl-box-place rest)))])]))
 
 (define (smoke-c27-count-binop-instrs
   [instrs : ir.CompilerIrInstrSeq]
@@ -3265,7 +3287,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (+
             (smoke-c27-count-binop-instrs instrs 0 wanted)
-            (smoke-c27-count-binop (box-get rest) wanted))])]))
+            (smoke-c27-count-binop (__tl-box-place rest) wanted))])]))
 
 (define (smoke-c27-compare-function [extra-use? : bool]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -3445,6 +3467,18 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-switch-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-second-exit-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-fuse-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-fuse-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-second-exit-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-negative-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
       42)
@@ -3507,6 +3541,26 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-c27-if-convert-compare-self-test"
       (smoke-c27-if-convert-compare-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bit-test-equality-self-test"
+      (compiler_optimize_tests.compiler-optimize-bit-test-equality-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bit-test-range-self-test"
+      (compiler_optimize_tests.compiler-optimize-bit-test-range-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bit-test-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-bit-test-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bit-test-runtime-self-test"
+      (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-exit-split-label-freshness-self-test"
+      (compiler_optimize_tests.compiler-optimize-exit-split-label-freshness-self-test)
       42)
     42))
 
@@ -3764,6 +3818,27 @@
     "multi-block versioning remaps total-switch case and trap edges"))
 
 (test
+  bce-version-multiblock-second-exit
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-self-test)
+    42
+    "multi-block versioning admits a second exiting branch on the guard chain"))
+
+(test
+  bce-version-multiblock-second-exit-boundaries
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
+    42
+    "guard-chain admission keeps chain checks and refuses diamonds and unproven far uses"))
+
+(test
+  bce-version-cross-array-fusion
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-fuse-self-test)
+    42
+    "cross-array fusion removes dominated checks, covered stores included"))
+
+(test
   bce-version-multiblock-rejections
   (test.assert-i64-eq
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
@@ -3888,3 +3963,38 @@
     (smoke-cfg-index-block-lookup-self-test)
     42
     "CFG block lookup is dense, first-match, missing-safe, and stale-index-safe"))
+
+(test
+  bit-test-equality-chain
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bit-test-equality-self-test)
+    42
+    "A six-way equality classifier chain becomes one windowed mask test"))
+
+(test
+  bit-test-range-chain
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bit-test-range-self-test)
+    42
+    "Closed ranges and equalities share one mask over a subtracted base"))
+
+(test
+  bit-test-refusals
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bit-test-refusal-self-test)
+    42
+    "Mixed values, impure links, wide windows, short chains and unsigned compares are refused"))
+
+(test
+  bit-test-runtime-boundaries
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
+    42
+    "The source-level classifier preserves hits, gaps, window edges and out-of-window values"))
+
+(test
+  exit-split-sink-label-freshness
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-exit-split-label-freshness-self-test)
+    42
+    "Sunk exit checks keep the legacy name when free, step generation when taken, and emit one block per predecessor"))

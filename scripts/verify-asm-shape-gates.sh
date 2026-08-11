@@ -377,13 +377,24 @@ check_group_pair_phi_home() {
     _asm=$(compile_gate group_pair_phi_home tests/integration/group_pair_phi_home.tl)
     _body=$(function_body "$_asm" _tl_group_pair_phi_home_probe)
     assert_contains "$_body" 'call _tl_group_pair_phi_home_mk' group-pair-phi-home
-    # The call result uses a caller-saved pair, while the loop Phi itself is
-    # carried in a CSR pair across the next call. The old phi exclusion kept
-    # both words in frame slots and reloaded them into rax:rdx every iteration.
+    # The call result lands directly in the loop Phi's register pair, and the
+    # loop body reads both words back out of it. The old phi exclusion kept both
+    # words in frame slots and reloaded them into rax:rdx every iteration.
     assert_matches "$_body" '^[[:space:]]+movq %rax, %(r8|r9)$' group-pair-phi-home
     assert_matches "$_body" '^[[:space:]]+movq %rdx, %(r8|r9)$' group-pair-phi-home
-    assert_matches "$_body" '^[[:space:]]+movq %rax, %r(12|13|14|15|bx)$' group-pair-phi-home
-    assert_matches "$_body" '^[[:space:]]+movq %rdx, %r(12|13|14|15|bx)$' group-pair-phi-home
+    assert_regex_count_at_least "$_body" '^[[:space:]]+movq %(r8|r9), %rax$' 2 group-pair-phi-home
+    # The pair used to be copied on into a CALLEE-SAVED pair after every call,
+    # because its coarse interval hull spans the loop's own `call mk` even
+    # though the value is dead there: the phi is read at the top of the body and
+    # REDEFINED by that call at the bottom, so no iteration carries it across
+    # one. The segment-precise clobber-span test
+    # (compiler-reg-greedy-var-spans-clobber?) sees the hole and leaves the pair
+    # in its caller-saved home, retiring two prologue pushes, two epilogue pops
+    # and four copies per iteration. The checksum fixture
+    # (tests/integration/group_pair_phi_home.tl, exit 42) proves the carry. The
+    # two former `movq %rax|%rdx, %r12-%r15/%rbx` assertions pinned that copy and
+    # are retired with it; the pair-home and no-reload assertions above still
+    # fail if the phi falls back to frame slots.
     assert_not_matches "$_body" '^[[:space:]]+movq [0-9]+\(%rsp\), %r(ax|dx)$' group-pair-phi-home
 }
 

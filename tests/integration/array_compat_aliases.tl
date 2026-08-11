@@ -7,7 +7,7 @@
   (let
     [items : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
-      (array-set! items 0 40)
+      (set! (array-ref items 0) 40)
       (array-push! items 2)
       (if (= (array-length items) 2)
         (+ (array-ref items 0) (array-ref items 1))

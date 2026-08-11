@@ -117,7 +117,8 @@
     "        [n : i64 -42]\n"
     "        [ptr : (Ptr Point) (ptr-null)]\n"
     "    (when false (return (+ n 1)))\n"
-    "    (if (not flag) (box-get (box n)) (custom-call Point text))\n"
+    "    (if (not flag) (deref (box n)) (custom-call Point text))
+"
     "    (unsafe (ptr-read (& ptr)))))\n"
     "(defstruct Point (x i64))\n"
     "(defenum Shape (Circle i64))\n"))

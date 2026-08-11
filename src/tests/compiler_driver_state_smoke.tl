@@ -174,7 +174,7 @@
     [(spec.ResultSpecProgramWithPaths.Ok program _)
       (match program
         [(ast.AstProgram.Program decls-box)
-          (ast.ast-decl-list-len (& (box-get decls-box)))])]
+          (ast.ast-decl-list-len (& (__tl-box-place decls-box)))])]
     [(spec.ResultSpecProgramWithPaths.Err _) -1]))
 
 (define (driver-state-specialize-result-diagnostic
@@ -182,7 +182,7 @@
   (match result
     [(spec.ResultSpecProgramWithPaths.Ok _ _) ""]
     [(spec.ResultSpecProgramWithPaths.Err diag)
-      (cdiag.compiler-diagnostic-message (box-get diag))]))
+      (cdiag.compiler-diagnostic-message (__tl-box-place diag))]))
 
 (define (driver-state-specialize-ab-case-ok? [incompatible? : bool]) : bool
   (let

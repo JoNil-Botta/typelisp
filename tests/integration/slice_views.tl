@@ -14,22 +14,22 @@
 
 (define (slice-view-write [s : (&mut s (Slice i64))] [value : i64]) : i64
   (begin
-    (array-set! s 0 value)
+    (set! (array-ref s 0) value)
     (array-ref s 0)))
 
 (define (slice-view-triple-sum [s : (& s (Slice SliceViewTriple))]) : i64
   (let
     [value : SliceViewTriple (array-ref s 0)]
-    (+ (struct-get value a) (+ (struct-get value b) (struct-get value c)))))
+    (+ value.a (+ value.b value.c))))
 
 (define (slice-view-triple-write
   [s : (&mut s (Slice SliceViewTriple))]
   [value : SliceViewTriple]) : i64
   (begin
-    (array-set! s 0 value)
+    (set! (array-ref s 0) value)
     (let
       [stored : SliceViewTriple (array-ref s 0)]
-      (+ (struct-get stored a) (+ (struct-get stored b) (struct-get stored c))))))
+      (+ stored.a (+ stored.b stored.c)))))
 
 (define slice-view-source-calls : i64
   0)
@@ -85,10 +85,10 @@
       (slice-view-write (slice-mut-view (&mut fixed) 0 1) 88)]
     [dynamic : (__tl_dyn-array i64) (array.make-array i64 4)]
     (begin
-      (array-set! dynamic 0 3)
-      (array-set! dynamic 1 6)
-      (array-set! dynamic 2 9)
-      (array-set! dynamic 3 12)
+      (set! (array-ref dynamic 0) 3)
+      (set! (array-ref dynamic 1) 6)
+      (set! (array-ref dynamic 2) 9)
+      (set! (array-ref dynamic 3) 12)
       (let
         [dynamic-score : i64 (slice-view-sum (slice-view dynamic 1 2))]
         [dynamic-ref-score : i64 (slice-view-sum (slice-view (& dynamic) 0 2))]

@@ -49,9 +49,9 @@
       0)
       [(lint_core.LintMaybeFinding.Some finding)
         (if (and
-          (= (struct-get finding depth) 0)
+          (= finding.depth 0)
           (string.eq
-            (struct-get finding rule-id)
+            finding.rule-id
             (lint_core.lint-rule-deprecated-string-concat-id)))
           unit
           (io.panic "lint: string-concat finding should carry default metadata"))]
@@ -79,7 +79,7 @@
         (lint_core.lint-findings-empty))
       1)
       [(lint_core.LintMaybeFinding.Some finding)
-        (if (= (struct-get finding depth) 1)
+        (if (= finding.depth 1)
           unit
           (io.panic "lint: nested string append should carry chain depth"))]
       [(lint_core.LintMaybeFinding.No)
@@ -90,7 +90,7 @@
         (lint_core.lint-findings-empty))
       0)
       [(lint_core.LintMaybeFinding.Some finding)
-        (if (= (struct-get finding depth) 2)
+        (if (= finding.depth 2)
           unit
           (io.panic "lint: loop string append should carry loop depth"))]
       [(lint_core.LintMaybeFinding.No)
@@ -135,13 +135,13 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (let
-            [span : ast.AstSourceSpan (struct-get finding span)]
+            [span : ast.AstSourceSpan finding.span]
             (if (and
               (string.eq
-                (struct-get finding rule-id)
+                finding.rule-id
                 (lint_core.lint-rule-nested-str-cat-id))
               (string.eq
-                (struct-get finding message)
+                finding.message
                 "nested str-cat: prefer one flat str-cat call")
               (= (ast.ast-source-span-start-line span) 23))
               unit

@@ -182,7 +182,7 @@ if "$COMPILER" check "$ROOT/tests/safety/spmd_unmasked_scatter_index_reject.tl" 
     echo "perfbench_gathers: ordinary scatter unexpectedly typechecked" >&2
     exit 1
 fi
-grep -F -- "foreach does not support non-contiguous array-set! destination indexes" \
+grep -F -- "foreach does not support non-contiguous array element destination indexes" \
     "$scatter_stderr" >/dev/null || {
     echo "perfbench_gathers: ordinary scatter rejection diagnostic changed" >&2
     sed 's/^/  /' "$scatter_stderr" >&2 || true

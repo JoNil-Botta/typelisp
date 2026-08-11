@@ -28,14 +28,14 @@
     (let
       [entry : diagnostic.CompilerDiagnosticLabel
         (diagnostic.compiler-diagnostic-label-list-get labels index)]
-      [span : diagnostic.CompilerDiagnosticSpan (struct-get entry span)]
+      [span : diagnostic.CompilerDiagnosticSpan entry.span]
       [needle : String
         (str_cat.str-cat "in expansion of macro `" macro-name "` invoked here")]
       (and
         (string.eq (diagnostic.compiler-diagnostic-span-path (& span)) path)
         (= (diagnostic.compiler-diagnostic-span-start-line (& span)) line)
         (= (diagnostic.compiler-diagnostic-span-start-col (& span)) col)
-        (match (struct-get entry label)
+        (match entry.label
           [(CompilerDiagnosticSomeString text) (string.eq text needle)]
           [CompilerDiagnosticNoString false])))))
 
@@ -54,7 +54,8 @@
     [(tc_core.ResultCompilerTypecheck.Err diagnostics)
       (let
         [diag : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first (box-get diagnostics))]
+          (diagnostic.compiler-diagnostic-list-first
+            (__tl-box-place diagnostics))]
         [labels : diagnostic.CompilerDiagnosticLabelList
           (diagnostic.compiler-diagnostic-secondary-spans diag)]
         (and
@@ -217,7 +218,8 @@
         [(tc_core.ResultCompilerTypecheck.Err diagnostics)
           (let
             [diag : diagnostic.CompilerDiagnostic
-              (diagnostic.compiler-diagnostic-list-first (box-get diagnostics))]
+              (diagnostic.compiler-diagnostic-list-first
+                (__tl-box-place diagnostics))]
             [labels : diagnostic.CompilerDiagnosticLabelList
               (diagnostic.compiler-diagnostic-secondary-spans diag)]
             [ok : bool

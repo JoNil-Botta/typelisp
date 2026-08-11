@@ -199,7 +199,7 @@
   [home : Address]
   [zip : i64]
   [city : String]) : bool
-  (and (= (struct-get home zip) zip) (string.eq (struct-get home city) city)))
+  (and (= home.zip zip) (string.eq home.city city)))
 
 (define (serialize-json-address-ok? [home : Address]) : bool
   (serialize-json-address-eq? home 12345 "London"))
@@ -235,16 +235,16 @@
 
 (define (serialize-json-person-ok? [person : Person]) : bool
   (and
-    (string.eq (struct-get person name) "Ada\nLovelace")
-    (= (struct-get person age) (cast 36 : i32))
-    (struct-get person active)
-    (= (struct-get person score) 9.5)
-    (= (struct-get person ratio) (cast 1.25 : f32))
-    (serialize-json-address-ok? (struct-get person home))
-    (serialize-json-scores-ok? (struct-get person scores))
-    (serialize-json-previous-ok? (struct-get person previous))
-    (serialize-json-samples-ok? (struct-get person samples))
-    (serialize-json-combo-ok? (struct-get person combo))))
+    (string.eq person.name "Ada\nLovelace")
+    (= person.age (cast 36 : i32))
+    person.active
+    (= person.score 9.5)
+    (= person.ratio (cast 1.25 : f32))
+    (serialize-json-address-ok? person.home)
+    (serialize-json-scores-ok? person.scores)
+    (serialize-json-previous-ok? person.previous)
+    (serialize-json-samples-ok? person.samples)
+    (serialize-json-combo-ok? person.combo)))
 
 (define (serialize-json-make-samples) : (__tl_dyn-array i64)
   (make-array 7 8))

@@ -28,6 +28,9 @@
 (define (text-buf-family-string-stride) : i64
   (comptime (size-of (type String))))
 
+;; The remaining `box-get` spellings in this file occur only inside checked-in
+;; quasiquoted AST templates. The published seed must be able to parse those
+;; templates during the one-epoch bootstrap; rebuilt public source uses `deref`.
 ;: Write one typed owned String slot.  This expression macro keeps the hot
 ;: commit path on a direct unsafe array write without introducing a generated
 ;: runtime helper.
@@ -39,7 +42,7 @@
     (ptr-write!
       (ptr-offset
         (ptr-cast
-          (array-data (struct-get (box-get ,store) slots))
+          (array-data ,(comptime.expr-struct-get `(box-get ,store) "slots"))
           : (MutPtr String))
         ,index)
       ,entry)))
@@ -57,18 +60,23 @@
     [current-head : i64 (tls-current-arena)]
     [prefix-available? : bool
       (and
-        (= ,visible-count (struct-get (box-get ,store) len))
+        (= ,visible-count ,(comptime.expr-struct-get `(box-get ,store) "len"))
         (< ,visible-count capacity))]
     (if (and
       prefix-available?
       (not (= current-head 0))
-      (= current-head (struct-get (box-get ,store) owner-head)))
+      (=
+        current-head
+        ,(comptime.expr-struct-get `(box-get ,store) "owner-head")))
       (begin
         (stdlib.text_buf_family.text-buf-owned-store-write!
           ,store
           ,visible-count
           ,entry)
-        (set! (struct-get (box-get ,store) len) (+ ,visible-count 1))
+        ,(comptime.expr-struct-set
+          `(box-get ,store)
+          "len"
+          `(+ ,visible-count 1))
         ,store)
       (stdlib.text_buf.text-buf-store-commit-slow
         ,store
@@ -105,11 +113,17 @@
         [current-owner-root : i64
           (stdlib.text_buf_family.text-buf-family-arena-owner-root current-head)]
         (begin
-          (set! (struct-get (box-get store) owner-root) current-owner-root)
-          (set! (struct-get (box-get store) owner-head) current-head)
+          ,(comptime.expr-struct-set
+            `(box-get store)
+            "owner-root"
+            `current-owner-root)
+          ,(comptime.expr-struct-set
+            `(box-get store)
+            "owner-head"
+            `current-head)
           store)))
     (define (text-buf-store-capacity [store : (& store TextBufStringStore)]) : i64
-      (array-length (struct-get store slots)))
+      (array-length store.slots))
     (define (text-buf-store-entry-at
       [store : (& store TextBufStringStore)]
       [index : i64]) : String
@@ -117,7 +131,7 @@
         (ptr-read
           (ptr-cast
             (ptr-offset
-              (ptr-cast (array-data (struct-get store slots)) : (Ptr String))
+              (ptr-cast (array-data store.slots) : (Ptr String))
               index)
             : (Ptr String)))))
     ;: Allocation, growth, and prefix memcpy are cold.  The same-head commit
@@ -155,10 +169,12 @@
           (unsafe
             (stdlib.text_buf_family.text-buf-family-copy-bytes!
               (ptr-cast
-                (array-data (struct-get (box-get new-store) slots))
+                (array-data
+                  ,(comptime.expr-struct-get `(box-get new-store) "slots"))
                 : (MutPtr u8))
               (ptr-cast
-                (array-data (struct-get (box-get store) slots))
+                (array-data
+                  ,(comptime.expr-struct-get `(box-get store) "slots"))
                 : (Ptr u8))
               (* visible-count (stdlib.text_buf.text-buf-store-string-stride))))
           (stdlib.text_buf_family.text-buf-owned-store-write!
@@ -182,14 +198,22 @@
           prefix-available?
           (not (= current-head 0))
           (not (= current-owner-root 0))
-          (= current-owner-root (struct-get (box-get store) owner-root)))
+          (=
+            current-owner-root
+            ,(comptime.expr-struct-get `(box-get store) "owner-root")))
           (begin
-            (set! (struct-get (box-get store) owner-head) current-head)
+            ,(comptime.expr-struct-set
+              `(box-get store)
+              "owner-head"
+              `current-head)
             (stdlib.text_buf_family.text-buf-owned-store-write!
               store
               visible-count
               entry)
-            (set! (struct-get (box-get store) len) (+ visible-count 1))
+            ,(comptime.expr-struct-set
+              `(box-get store)
+              "len"
+              `(+ visible-count 1))
             store)
           (stdlib.text_buf.text-buf-store-copy-and-commit
             store
@@ -203,9 +227,9 @@
     (define (empty) : TextBuf
       (TextBuf (stdlib.text_buf.text-buf-empty-chunks) 0))
     (define (empty? [buf : TextBuf]) : bool
-      (= (struct-get buf len) 0))
+      (= buf.len 0))
     (define (length [buf : TextBuf]) : i64
-      (struct-get buf len))
+      buf.len)
     (define (chunk-cons [chunk : String] [rest : TextBufChunkList]) : TextBufChunkList
       (match rest
         [(TextBufChunkNil) (TextBufChunkInline chunk)]
@@ -234,8 +258,8 @@
         (if (= chunk-len 0)
           buf
           (TextBuf
-            (stdlib.text_buf.chunk-cons chunk (struct-get buf chunks))
-            (+ (struct-get buf len) chunk-len)))))
+            (stdlib.text_buf.chunk-cons chunk buf.chunks)
+            (+ buf.len chunk-len)))))
     (define (char-string [c : char]) : String
       (let
         [code : i64 (cast c : i64)]
@@ -271,16 +295,14 @@
           result)))
     (define (append-buffer [left : TextBuf] [right : TextBuf]) : TextBuf
       (let
-        [left-len : i64 (struct-get left len)]
-        [right-len : i64 (struct-get right len)]
+        [left-len : i64 left.len]
+        [right-len : i64 right.len]
         (if (= right-len 0)
           left
           (if (= left-len 0)
             right
             (TextBuf
-              (stdlib.text_buf.chunk-list-concat
-                (struct-get right chunks)
-                (struct-get left chunks))
+              (stdlib.text_buf.chunk-list-concat right.chunks left.chunks)
               (+ left-len right-len))))))
     (define (chunk-count [chunks : TextBufChunkList] [count : i64]) : i64
       (match chunks
@@ -295,7 +317,7 @@
         [(TextBufChunkNil) unit]
         [(TextBufChunkInline chunk)
           (if (>= index 0)
-            (array-set! items index chunk)
+            (set! (array-ref items index) chunk)
             unit)]
         [(TextBufChunkDense store visible-count)
           (let
@@ -308,7 +330,7 @@
                     (& (box-get store))
                     cursor)]
                 (begin
-                  (array-set! items out-index chunk)
+                  (set! (array-ref items out-index) chunk)
                   (set! out-index (- out-index 1))
                   (set! cursor (- cursor 1))))))]))
     (define (copy-chunk-into
@@ -456,9 +478,7 @@
             (unsafe
               (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
     (define (render [buf : TextBuf]) : String
-      (stdlib.text_buf.render-chunks
-        (struct-get buf chunks)
-        (struct-get buf len)))
+      (stdlib.text_buf.render-chunks buf.chunks buf.len))
     (define (write-chunks-rev
       [raw : i64]
       [write-chunks-list : TextBufChunkList]) : i64
@@ -543,15 +563,15 @@
           (let
             [handle : io.FileHandle
               (io.result-file-value-or open-result (io.FileHandle -1))]
-            [chunks : TextBufChunkList (struct-get buf chunks)]
+            [chunks : TextBufChunkList buf.chunks]
             [status : i64
-              (if (>
-                (struct-get buf len)
-                (stdlib.text_buf.batched-write-threshold))
+              (if (> buf.len (stdlib.text_buf.batched-write-threshold))
                 (stdlib.text_buf.write-chunks-batched
-                  (struct-get handle id)
+                  ,(comptime.expr-struct-get `handle "id")
                   chunks)
-                (stdlib.text_buf.write-chunks-rev (struct-get handle id) chunks))]
+                (stdlib.text_buf.write-chunks-rev
+                  ,(comptime.expr-struct-get `handle "id")
+                  chunks))]
             [close-result : io.ResultIoUnit (io.file-close handle)]
             (if (io.result-unit-ok? close-result)
               status
@@ -559,8 +579,8 @@
           1)))
     (define (clear-ref! [buf : (&mut buf TextBuf)]) : unit
       (begin
-        (set! (struct-get buf chunks) (TextBufChunkNil))
-        (set! (struct-get buf len) 0)))
+        (set! buf.chunks (TextBufChunkNil))
+        (set! buf.len 0)))
     (define (clear [_buf : TextBuf]) : TextBuf
       (stdlib.text_buf.empty))
     (define (reset [buf : TextBuf]) : TextBuf
@@ -605,7 +625,7 @@
         (unsafe
           (string-from-bytes data len))))
     (define (text-buf-borrowed-empty-owned-chunks) : text_buf.TextBufChunkList
-      (struct-get (text_buf.empty) chunks))
+      ,(comptime.expr-struct-get `(text_buf.empty) "chunks"))
     (define (text-buf-borrowed-empty-chunks [_text : (& text str)]) : (TextBufBorrowedChunkList
         text)
       (TextBufBorrowedChunkNil _text))
@@ -640,7 +660,7 @@
             anchor
             (text_buf.chunk-cons
               old-tail-text
-              (struct-get (text_buf.empty) chunks))
+              ,(comptime.expr-struct-get `(text_buf.empty) "chunks"))
             1
             new-tail-text
             new-tail-borrowed?)]

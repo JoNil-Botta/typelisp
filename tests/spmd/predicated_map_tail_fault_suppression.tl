@@ -38,7 +38,7 @@
     [n : i64]) : unit
     (foreach
       ([i : i64 0 n])
-      (array-set! destination i (+ (array-ref source i) 1)))))
+      (set! (array-ref destination i) (+ (array-ref source i) 1)))))
 
 (cfg
   linux

@@ -65,7 +65,7 @@
   [items : (&mut items i64vec.Vec)]
   [index : i64]
   [value : i64]) : unit
-  (array-set! (i64vec.slots-mut items) index value))
+  (set! (array-ref (i64vec.slots-mut items) index) value))
 
 (defmacro (cfg-ref [items : Expr] [index : Expr]) : Expr
   `(cfg-vec-ref (& ,items) ,index))
@@ -211,8 +211,8 @@
         (begin
           (while (< i count)
             (begin
-              (array-set! succ-fill i 0)
-              (array-set! pred-fill i 0)
+              (set! (array-ref succ-fill i) 0)
+              (set! (array-ref pred-fill i) 0)
               (set! i (+ i 1))))
           (set! edge 0)
           (while (< edge cfg-edges)
@@ -220,8 +220,8 @@
               [src : i64 (array-ref tokens (+ cfg-edge-base (* edge 2)))]
               [dst : i64 (array-ref tokens (+ (+ cfg-edge-base (* edge 2)) 1))]
               (begin
-                (array-set! succ-fill src (+ (array-ref succ-fill src) 1))
-                (array-set! pred-fill dst (+ (array-ref pred-fill dst) 1))
+                (set! (array-ref succ-fill src) (+ (array-ref succ-fill src) 1))
+                (set! (array-ref pred-fill dst) (+ (array-ref pred-fill dst) 1))
                 (set! edge (+ edge 1)))))
           0))
       (let
@@ -233,15 +233,15 @@
           (set! i 0)
           (while (< i count)
             (begin
-              (array-set! succ-off i succ-total)
+              (set! (array-ref succ-off i) succ-total)
               (set! succ-total (+ succ-total (array-ref succ-fill i)))
-              (array-set! succ-fill i (array-ref succ-off i))
-              (array-set! pred-off i pred-total)
+              (set! (array-ref succ-fill i) (array-ref succ-off i))
+              (set! (array-ref pred-off i) pred-total)
               (set! pred-total (+ pred-total (array-ref pred-fill i)))
-              (array-set! pred-fill i (array-ref pred-off i))
+              (set! (array-ref pred-fill i) (array-ref pred-off i))
               (set! i (+ i 1))))
-          (array-set! succ-off count succ-total)
-          (array-set! pred-off count pred-total)
+          (set! (array-ref succ-off count) succ-total)
+          (set! (array-ref pred-off count) pred-total)
           0))
       (let
         [tokens (i64vec.slots tokens-vec)]
@@ -256,10 +256,10 @@
               [src : i64 (array-ref tokens (+ cfg-edge-base (* edge 2)))]
               [dst : i64 (array-ref tokens (+ (+ cfg-edge-base (* edge 2)) 1))]
               (begin
-                (array-set! succ-edge (array-ref succ-fill src) dst)
-                (array-set! succ-fill src (+ (array-ref succ-fill src) 1))
-                (array-set! pred-edge (array-ref pred-fill dst) src)
-                (array-set! pred-fill dst (+ (array-ref pred-fill dst) 1))
+                (set! (array-ref succ-edge (array-ref succ-fill src)) dst)
+                (set! (array-ref succ-fill src) (+ (array-ref succ-fill src) 1))
+                (set! (array-ref pred-edge (array-ref pred-fill dst)) src)
+                (set! (array-ref pred-fill dst) (+ (array-ref pred-fill dst) 1))
                 (set! edge (+ edge 1)))))
           0))
       unit)))
@@ -291,17 +291,17 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! reachable i 0)
-          (array-set! postorder i -1)
-          (array-set! rpo i -1)
-          (array-set! rpo-num i -1)
+          (set! (array-ref reachable i) 0)
+          (set! (array-ref postorder i) -1)
+          (set! (array-ref rpo i) -1)
+          (set! (array-ref rpo-num i) -1)
           (set! i (+ i 1))))
       (when
         (> count 0)
         (begin
-          (array-set! reachable 0 1)
-          (array-set! stack-node 0 0)
-          (array-set! stack-edge 0 (array-ref succ-off 0))
+          (set! (array-ref reachable 0) 1)
+          (set! (array-ref stack-node 0) 0)
+          (set! (array-ref stack-edge 0) (array-ref succ-off 0))
           (set! sp 0)
           (while (>= sp 0)
             (let
@@ -311,28 +311,30 @@
                 (let
                   [next : i64 (array-ref succ-edge cursor)]
                   (begin
-                    (array-set! stack-edge sp (+ cursor 1))
+                    (set! (array-ref stack-edge sp) (+ cursor 1))
                     (when
                       (= (array-ref reachable next) 0)
                       (begin
-                        (array-set! reachable next 1)
+                        (set! (array-ref reachable next) 1)
                         (set! sp (+ sp 1))
-                        (array-set! stack-node sp next)
-                        (array-set! stack-edge sp (array-ref succ-off next))))))
+                        (set! (array-ref stack-node sp) next)
+                        (set!
+                          (array-ref stack-edge sp)
+                          (array-ref succ-off next))))))
                 (begin
-                  (array-set! postorder post node)
+                  (set! (array-ref postorder post) node)
                   (set! post (+ post 1))
                   (set! sp (- sp 1))))))))
       (set! cfg-reach-count post)
       (set! i 0)
       (while (< i post)
         (begin
-          (array-set! rpo i (array-ref postorder (- (- post 1) i)))
+          (set! (array-ref rpo i) (array-ref postorder (- (- post 1) i)))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i post)
         (begin
-          (array-set! rpo-num (array-ref rpo i) i)
+          (set! (array-ref rpo-num (array-ref rpo i)) i)
           (set! i (+ i 1)))))))
 
 (define (cfg-idom-iterate
@@ -392,7 +394,7 @@
                 (>= candidate 0)
                 (not (= (array-ref idom id) candidate)))
               (begin
-                (array-set! idom id candidate)
+                (set! (array-ref idom id) candidate)
                 (set! changed true)))
             (set! slot (+ slot 1)))))
       changed)))
@@ -421,9 +423,9 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! tin i -1)
-          (array-set! tout i -1)
-          (array-set! child-fill i 0)
+          (set! (array-ref tin i) -1)
+          (set! (array-ref tout i) -1)
+          (set! (array-ref child-fill i) 0)
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i count)
@@ -435,16 +437,18 @@
                 (= (array-ref reachable i) 1)
                 (>= parent 0)
                 (not (= parent i)))
-              (array-set! child-fill parent (+ (array-ref child-fill parent) 1)))
+              (set!
+                (array-ref child-fill parent)
+                (+ (array-ref child-fill parent) 1)))
             (set! i (+ i 1)))))
       (set! i 0)
       (while (< i count)
         (begin
-          (array-set! child-off i total)
+          (set! (array-ref child-off i) total)
           (set! total (+ total (array-ref child-fill i)))
-          (array-set! child-fill i (array-ref child-off i))
+          (set! (array-ref child-fill i) (array-ref child-off i))
           (set! i (+ i 1))))
-      (array-set! child-off count total)
+      (set! (array-ref child-off count) total)
       (set! i 0)
       (while (< i count)
         (let
@@ -456,10 +460,9 @@
                 (>= parent 0)
                 (not (= parent i)))
               (begin
-                (array-set! child-edge (array-ref child-fill parent) i)
-                (array-set!
-                  child-fill
-                  parent
+                (set! (array-ref child-edge (array-ref child-fill parent)) i)
+                (set!
+                  (array-ref child-fill parent)
                   (+ (array-ref child-fill parent) 1))))
             (set! i (+ i 1)))))
       unit)))
@@ -488,9 +491,9 @@
       (when
         (and (> count 0) (= (array-ref reachable entry) 1))
         (begin
-          (array-set! stack-node 0 entry)
-          (array-set! stack-edge 0 (array-ref child-off entry))
-          (array-set! tin entry 0)
+          (set! (array-ref stack-node 0) entry)
+          (set! (array-ref stack-edge 0) (array-ref child-off entry))
+          (set! (array-ref tin entry) 0)
           (set! time 1)
           (set! sp 0)
           (while (>= sp 0)
@@ -501,14 +504,14 @@
                 (let
                   [child : i64 (array-ref child-edge cursor)]
                   (begin
-                    (array-set! stack-edge sp (+ cursor 1))
-                    (array-set! tin child time)
+                    (set! (array-ref stack-edge sp) (+ cursor 1))
+                    (set! (array-ref tin child) time)
                     (set! time (+ time 1))
                     (set! sp (+ sp 1))
-                    (array-set! stack-node sp child)
-                    (array-set! stack-edge sp (array-ref child-off child))))
+                    (set! (array-ref stack-node sp) child)
+                    (set! (array-ref stack-edge sp) (array-ref child-off child))))
                 (begin
-                  (array-set! tout node time)
+                  (set! (array-ref tout node) time)
                   (set! sp (- sp 1))))))))
       unit)))
 
@@ -557,16 +560,16 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! marks i 0)
+          (set! (array-ref marks i) 0)
           (set! i (+ i 1))))
-      (array-set! marks header 1)
-      (array-set! marks latch 1)
+      (set! (array-ref marks header) 1)
+      (set! (array-ref marks latch) 1)
       (set! size 1)
       (when
         (not (= header latch))
         (begin
           (set! size 2)
-          (array-set! worklist 0 latch)
+          (set! (array-ref worklist 0) latch)
           (set! pending 1)))
       (while (> pending 0)
         (let
@@ -586,9 +589,9 @@
                       (= (array-ref reachable pred) 1)
                       (= (array-ref marks pred) 0))
                     (begin
-                      (array-set! marks pred 1)
+                      (set! (array-ref marks pred) 1)
                       (set! size (+ size 1))
-                      (array-set! worklist pending pred)
+                      (set! (array-ref worklist pending) pred)
                       (set! pending (+ pending 1))))
                   (set! edge (+ edge 1))))))))
       size)))

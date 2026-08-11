@@ -781,7 +781,9 @@
   (match instrs
     [(compiler_ir_types.CompilerIrInstrList.Nil) 0]
     [(compiler_ir_types.CompilerIrInstrList.Cons instr rest)
-      (+ (opt-arith-instr-count instr) (opt-count-arith-instrs (box-get rest)))]))
+      (+
+        (opt-arith-instr-count instr)
+        (opt-count-arith-instrs (__tl-box-place rest)))]))
 
 (define (opt-arith-instr-count [instr : compiler_ir_types.CompilerIrInstr]) : i64
   (match instr
@@ -804,11 +806,7 @@
 
 (define (opt-count-arith-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-arith-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-arith-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-cpuid-instr-count [instr : compiler_ir_types.CompilerIrInstr]) : i64
   (match instr
@@ -825,7 +823,9 @@
   (match instrs
     [(compiler_ir_types.CompilerIrInstrList.Nil) 0]
     [(compiler_ir_types.CompilerIrInstrList.Cons instr rest)
-      (+ (opt-cpuid-instr-count instr) (opt-count-cpuid-instrs (box-get rest)))]))
+      (+
+        (opt-cpuid-instr-count instr)
+        (opt-count-cpuid-instrs (__tl-box-place rest)))]))
 
 (define (opt-count-xgetbv-instrs
   [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
@@ -834,7 +834,7 @@
     [(compiler_ir_types.CompilerIrInstrList.Cons instr rest)
       (+
         (opt-xgetbv-instr-count instr)
-        (opt-count-xgetbv-instrs (box-get rest)))]))
+        (opt-count-xgetbv-instrs (__tl-box-place rest)))]))
 
 (define (opt-count-cpuid-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -851,11 +851,7 @@
 
 (define (opt-count-cpuid-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-cpuid-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-cpuid-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-count-xgetbv-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -872,11 +868,7 @@
 
 (define (opt-count-xgetbv-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-xgetbv-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-xgetbv-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-count-cpuid-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
@@ -887,7 +879,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-cpuid-instr-seq instrs)
-            (opt-count-cpuid-blocks (box-get rest)))])]
+            (opt-count-cpuid-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-cpuid-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -901,7 +893,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-xgetbv-instr-seq instrs)
-            (opt-count-xgetbv-blocks (box-get rest)))])]
+            (opt-count-xgetbv-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-xgetbv-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -939,7 +931,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-exact-instr-seq instrs needle)
-            (opt-count-exact-instr-blocks (box-get rest) needle))])]
+            (opt-count-exact-instr-blocks (__tl-box-place rest) needle))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-exact-instr-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -955,7 +947,7 @@
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
           (+
             (opt-count-exact-instr-blocks blocks needle)
-            (opt-count-exact-instr-functions (box-get rest) needle))])]
+            (opt-count-exact-instr-functions (__tl-box-place rest) needle))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (opt-count-exact-instr-functions
         (compiler_ir_types.compiler-ir-function-seq-to-list seq)
@@ -972,7 +964,7 @@
   (match instrs
     [(compiler_ir_types.CompilerIrInstrList.Nil) 0]
     [(compiler_ir_types.CompilerIrInstrList.Cons instr rest)
-      (+ (opt-mov-i64-value instr) (opt-sum-mov-i64 (box-get rest)))]))
+      (+ (opt-mov-i64-value instr) (opt-sum-mov-i64 (__tl-box-place rest)))]))
 
 (define (opt-mov-i64-value [instr : compiler_ir_types.CompilerIrInstr]) : i64
   (match instr
@@ -999,7 +991,7 @@
               1
               0)]
           [_ 0])
-        (opt-count-mov-i64-value (box-get rest) needle))]))
+        (opt-count-mov-i64-value (__tl-box-place rest) needle))]))
 
 (define (opt-count-mov-i64-value-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -1029,12 +1021,7 @@
 (define (opt-count-mov-i64-value-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [needle : i64]) : i64
-  (opt-count-mov-i64-value-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    needle
-    0))
+  (opt-count-mov-i64-value-instr-seq-from instrs.slots 0 instrs.len needle 0))
 
 (define (opt-count-mov-bool-value
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -1056,7 +1043,7 @@
                 0
                 1))]
           [_ 0])
-        (opt-count-mov-bool-value (box-get rest) needle))]))
+        (opt-count-mov-bool-value (__tl-box-place rest) needle))]))
 
 (define (opt-sum-mov-var-src [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
   (match instrs
@@ -1070,7 +1057,7 @@
               _)
             id]
           [_ 0])
-        (opt-sum-mov-var-src (box-get rest)))]))
+        (opt-sum-mov-var-src (__tl-box-place rest)))]))
 
 (define (opt-mov-dst-type-tag
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -1082,8 +1069,8 @@
         [(compiler_ir_types.CompilerIrInstr.Mov d _ ty)
           (if (= d dst)
             (compiler_ast_types.ast-type-tag ty)
-            (opt-mov-dst-type-tag (box-get rest) dst))]
-        [_ (opt-mov-dst-type-tag (box-get rest) dst)])]))
+            (opt-mov-dst-type-tag (__tl-box-place rest) dst))]
+        [_ (opt-mov-dst-type-tag (__tl-box-place rest) dst)])]))
 
 (define (opt-mov-dst-i64-value
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -1099,8 +1086,8 @@
             _)
           (if (= d dst)
             n
-            (opt-mov-dst-i64-value (box-get rest) dst fallback))]
-        [_ (opt-mov-dst-i64-value (box-get rest) dst fallback)])]))
+            (opt-mov-dst-i64-value (__tl-box-place rest) dst fallback))]
+        [_ (opt-mov-dst-i64-value (__tl-box-place rest) dst fallback)])]))
 
 (define (opt-mov-dst-i64-value-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -1135,12 +1122,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [dst : i64]
   [fallback : i64]) : i64
-  (opt-mov-dst-i64-value-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    dst
-    fallback))
+  (opt-mov-dst-i64-value-instr-seq-from instrs.slots 0 instrs.len dst fallback))
 
 (define (opt-mov-dst-bool-value?
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -1158,8 +1140,8 @@
             (if needle
               b
               (not b))
-            (opt-mov-dst-bool-value? (box-get rest) dst needle))]
-        [_ (opt-mov-dst-bool-value? (box-get rest) dst needle)])]))
+            (opt-mov-dst-bool-value? (__tl-box-place rest) dst needle))]
+        [_ (opt-mov-dst-bool-value? (__tl-box-place rest) dst needle)])]))
 
 (define (opt-mov-dst-char-code
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -1175,8 +1157,8 @@
             _)
           (if (= d dst)
             (cast c : i64)
-            (opt-mov-dst-char-code (box-get rest) dst fallback))]
-        [_ (opt-mov-dst-char-code (box-get rest) dst fallback)])]))
+            (opt-mov-dst-char-code (__tl-box-place rest) dst fallback))]
+        [_ (opt-mov-dst-char-code (__tl-box-place rest) dst fallback)])]))
 
 (define (opt-test-f64-bits [text : String]) : u64
   (match (compiler_float.compiler-float-parse-f64-bits text)
@@ -1202,8 +1184,8 @@
             _)
           (if (= d dst)
             (= bits want)
-            (opt-mov-dst-f64-bits? (box-get rest) dst want))]
-        [_ (opt-mov-dst-f64-bits? (box-get rest) dst want)])]))
+            (opt-mov-dst-f64-bits? (__tl-box-place rest) dst want))]
+        [_ (opt-mov-dst-f64-bits? (__tl-box-place rest) dst want)])]))
 
 (define (opt-test-span [line : i64] [col : i64]) : compiler_ast_types.AstSourceSpan
   (compiler_ast_types.ast-source-span line col line col))
@@ -1625,14 +1607,14 @@
 (define (opt-inline-span-callee-call [symbols : OptInlineSpanTestSymbols]) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.Call
     1
-    (struct-get symbols opaque)
+    symbols.opaque
     (compiler_ir_types.CompilerIrCallArgs.One
       (compiler_ir_types.CompilerIrValue.Var 0))
     (compiler_ast_types.AstType.I64)))
 
 (define (opt-inline-span-callee [symbols : OptInlineSpanTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-span)
+    symbols.inline-span
     (compiler_ir_types.compiler-ir-param-cons
       (compiler_ir_types.CompilerIrParam.Param
         "value"
@@ -1656,14 +1638,14 @@
 (define (opt-inline-span-caller-call [symbols : OptInlineSpanTestSymbols]) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.Call
     0
-    (struct-get symbols inline-span)
+    symbols.inline-span
     (compiler_ir_types.CompilerIrCallArgs.One
       (compiler_ir_types.CompilerIrValue.I64 7))
     (compiler_ast_types.AstType.I64)))
 
 (define (opt-inline-span-caller [symbols : OptInlineSpanTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     1
@@ -1707,7 +1689,7 @@
     [cloned-call : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.CompilerIrInstr.Call
         1
-        (struct-get symbols opaque)
+        symbols.opaque
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.I64 7))
         (compiler_ast_types.AstType.I64))]
@@ -1752,7 +1734,7 @@
     [cloned-call : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.CompilerIrInstr.Call
         1
-        (struct-get symbols opaque)
+        symbols.opaque
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.I64 7))
         (compiler_ast_types.AstType.I64))]
@@ -2566,7 +2548,7 @@
               1
               0)]
           [_ 0])
-        (opt-count-tl-alloc-calls (box-get rest)))]))
+        (opt-count-tl-alloc-calls (__tl-box-place rest)))]))
 
 (define (opt-count-ir-alloc-instrs
   [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
@@ -2577,7 +2559,7 @@
         (match instr
           [(compiler_ir_types.CompilerIrInstr.Alloc _ _) 1]
           [_ 0])
-        (opt-count-ir-alloc-instrs (box-get rest)))]))
+        (opt-count-ir-alloc-instrs (__tl-box-place rest)))]))
 
 (define (opt-count-addr-of-instrs
   [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
@@ -2588,7 +2570,7 @@
         (match instr
           [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) 1]
           [_ 0])
-        (opt-count-addr-of-instrs (box-get rest)))]))
+        (opt-count-addr-of-instrs (__tl-box-place rest)))]))
 
 (define (opt-aggregate-promote-shape-ok?
   [instrs : compiler_ir_types.CompilerIrInstrList]) : bool
@@ -2598,11 +2580,11 @@
       [(compiler_ir_types.CompilerIrInstrList.Cons
           (compiler_ir_types.CompilerIrInstr.Alloc first-dst first-ty)
           rest)
-        (match (box-get rest)
+        (match (__tl-box-place rest)
           [(compiler_ir_types.CompilerIrInstrList.Cons
               (compiler_ir_types.CompilerIrInstr.Alloc second-dst second-ty)
               rest2)
-            (match (box-get rest2)
+            (match (__tl-box-place rest2)
               [(compiler_ir_types.CompilerIrInstrList.Cons
                   (compiler_ir_types.CompilerIrInstr.AddrOf base storage)
                   _)
@@ -3021,7 +3003,7 @@
               1
               0)]
           [_ 0])
-        (opt-count-load-dst-instrs (box-get rest) dst))]))
+        (opt-count-load-dst-instrs (__tl-box-place rest) dst))]))
 
 (define (opt-count-load-dst-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -3048,12 +3030,7 @@
 (define (opt-count-load-dst-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [dst : i64]) : i64
-  (opt-count-load-dst-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    dst
-    0))
+  (opt-count-load-dst-instr-seq-from instrs.slots 0 instrs.len dst 0))
 
 (define (opt-count-load-dst-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -3065,7 +3042,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-load-dst-instr-seq instrs dst)
-            (opt-count-load-dst-blocks (box-get rest) dst))])]
+            (opt-count-load-dst-blocks (__tl-box-place rest) dst))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-load-dst-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -3081,7 +3058,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-mov-i64-value-instr-seq instrs needle)
-            (opt-count-mov-i64-value-blocks (box-get rest) needle))])]
+            (opt-count-mov-i64-value-blocks (__tl-box-place rest) needle))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-mov-i64-value-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -3182,7 +3159,7 @@
         (match instr
           [(compiler_ir_types.CompilerIrInstr.Cast _ _ _ _) 1]
           [_ 0])
-        (opt-count-cast-instrs (box-get rest)))]))
+        (opt-count-cast-instrs (__tl-box-place rest)))]))
 
 (define (opt-count-cast-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -3203,11 +3180,7 @@
 
 (define (opt-count-cast-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-cast-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-cast-instr-seq-from instrs.slots 0 instrs.len 0))
 
 ;; Builds `[Mov v0=20, Mov v1=22, BinOp v2 = v0 + v1]` (one arithmetic instr).
 (define (opt-self-test-instrs) : compiler_ir_types.CompilerIrInstrList
@@ -3473,7 +3446,7 @@
         (match instr
           [(compiler_ir_types.CompilerIrInstr.VectorBinOp _) 1]
           [_ 0])
-        (opt-count-vector-binop-instrs (box-get rest)))]))
+        (opt-count-vector-binop-instrs (__tl-box-place rest)))]))
 
 (define (opt-count-vector-reduce-instrs
   [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
@@ -3484,7 +3457,7 @@
         (match instr
           [(compiler_ir_types.CompilerIrInstr.VectorReduce _ _ _ _ _) 1]
           [_ 0])
-        (opt-count-vector-reduce-instrs (box-get rest)))]))
+        (opt-count-vector-reduce-instrs (__tl-box-place rest)))]))
 
 (define (opt-vector-binop-lhs-var
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -3495,14 +3468,14 @@
       (match instr
         [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
           (let
-            [d (struct-get (box-get payload-box) dst)]
-            [lhs (struct-get (box-get payload-box) lhs)]
+            [d (__tl-project-field (__tl-box-place payload-box) dst)]
+            [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
             (if (= d dst)
               (match lhs
                 [(compiler_ir_types.CompilerIrValue.Var id) id]
                 [_ (- 0 1)])
-              (opt-vector-binop-lhs-var (box-get rest) dst)))]
-        [_ (opt-vector-binop-lhs-var (box-get rest) dst)])]))
+              (opt-vector-binop-lhs-var (__tl-box-place rest) dst)))]
+        [_ (opt-vector-binop-lhs-var (__tl-box-place rest) dst)])]))
 
 (define (opt-mask-binop-lhs-var
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -3516,8 +3489,8 @@
             (match lhs
               [(compiler_ir_types.CompilerIrValue.Var id) id]
               [_ (- 0 1)])
-            (opt-mask-binop-lhs-var (box-get rest) dst))]
-        [_ (opt-mask-binop-lhs-var (box-get rest) dst)])]))
+            (opt-mask-binop-lhs-var (__tl-box-place rest) dst))]
+        [_ (opt-mask-binop-lhs-var (__tl-box-place rest) dst)])]))
 
 (define (opt-mask-reduce-src-var
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -3531,8 +3504,8 @@
             (match src
               [(compiler_ir_types.CompilerIrValue.Var id) id]
               [_ (- 0 1)])
-            (opt-mask-reduce-src-var (box-get rest) dst))]
-        [_ (opt-mask-reduce-src-var (box-get rest) dst)])]))
+            (opt-mask-reduce-src-var (__tl-box-place rest) dst))]
+        [_ (opt-mask-reduce-src-var (__tl-box-place rest) dst)])]))
 
 (define (opt-mask-not-src-var
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -3546,8 +3519,8 @@
             (match src
               [(compiler_ir_types.CompilerIrValue.Var id) id]
               [_ (- 0 1)])
-            (opt-mask-not-src-var (box-get rest) dst))]
-        [_ (opt-mask-not-src-var (box-get rest) dst)])]))
+            (opt-mask-not-src-var (__tl-box-place rest) dst))]
+        [_ (opt-mask-not-src-var (__tl-box-place rest) dst)])]))
 
 (define (compiler-optimize-vector-mask-self-test) : i64
   (let
@@ -3709,6 +3682,100 @@
           1)]
       [(compiler_optimize.ResultCompilerOptimizeVerify.Ok) 2])))
 
+(define (opt-indirect-call-def-is?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [want : i64]) : bool
+  (match (compiler_optimize.opt-instr-def-var instr)
+    [(option_i64.Some found) (= found want)]
+    [(option_i64.None) false]))
+
+(define (opt-indirect-call-nondef? [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match (compiler_optimize.opt-instr-def-var instr)
+    [(option_i64.Some _) false]
+    [(option_i64.None) true]))
+
+(define (opt-indirect-call-def-function
+  [name : i64]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    (+ dst 1)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          instr
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var dst)))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; Value-returning indirect calls define their first payload field. Aggregate
+;; C-ABI store-result calls only write through an existing base, and an indirect
+;; tail call transfers control, so neither of those forms defines an SSA value.
+(define (compiler-optimize-indirect-call-def-self-test) : i64
+  (let
+    [indirect : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.CallIndirect
+        7
+        (compiler_ir_types.CompilerIrValue.Function (opt-test-symbol "callee"))
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))]
+    [indirect-c : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.CallIndirectC
+        8
+        (compiler_ir_types.CompilerIrValue.Function
+          (opt-test-symbol "extern_callee"))
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))]
+    [direct-store : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.ir-instr-call-cabi-store-result
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (opt-test-symbol "aggregate_callee")
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil)]
+    [indirect-store : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.ir-instr-call-indirect-cabi-store-result
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.CompilerIrValue.Function
+          (opt-test-symbol "aggregate_indirect_callee"))
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil)]
+    [tail : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.TailCallIndirect
+        (compiler_ir_types.CompilerIrValue.Function
+          (opt-test-symbol "tail_callee"))
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))]
+    (cond
+      [(not (opt-indirect-call-def-is? indirect 7)) 1]
+      [(not (opt-indirect-call-def-is? indirect-c 8)) 2]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-indirect-call-def-function
+                (opt-test-symbol "indirect_def")
+                indirect
+                7))))
+        3]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-indirect-call-def-function
+                (opt-test-symbol "indirect_c_def")
+                indirect-c
+                8))))
+        4]
+      [(not (opt-indirect-call-nondef? direct-store)) 5]
+      [(not (opt-indirect-call-nondef? indirect-store)) 6]
+      [(not (opt-indirect-call-nondef? tail)) 7]
+      [else 42])))
+
 (define (opt-loop-bce-argc-summary-test-function [has-entry : bool]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (if has-entry
@@ -3831,6 +3898,10 @@
           (compiler-optimize-self-test-require-i64!
             "vector/mask folding and copy propagation"
             (compiler-optimize-vector-mask-self-test)
+            42)
+          (compiler-optimize-self-test-require-i64!
+            "indirect call definition bookkeeping"
+            (compiler-optimize-indirect-call-def-self-test)
             42)
           (compiler-optimize-self-test-require!
             "loop-BCE argc summary prescan"
@@ -4802,7 +4873,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-binop-op-instr-seq instrs op)
-            (opt-count-binop-op-blocks (box-get rest) op))])]
+            (opt-count-binop-op-blocks (__tl-box-place rest) op))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-binop-op-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -5393,7 +5464,9 @@
   (match instrs
     [(compiler_ir_types.CompilerIrInstrList.Nil) 0]
     [(compiler_ir_types.CompilerIrInstrList.Cons instr rest)
-      (+ (opt-shift-binop-count instr) (opt-count-shift-binops (box-get rest)))]))
+      (+
+        (opt-shift-binop-count instr)
+        (opt-count-shift-binops (__tl-box-place rest)))]))
 
 (define (opt-cse-sqrt-instrs) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
@@ -5541,32 +5614,32 @@
 (define (opt-const-divisor-test-globals [symbols : OptConstDivisorTestSymbols]) : compiler_ir_types.CompilerIrGlobalList
   (compiler_ir_types.compiler-ir-global-cons
     (compiler_ir_types.CompilerIrGlobal.Global
-      (struct-get symbols konst)
+      symbols.konst
       (compiler_ast_types.AstType.I64)
       (compiler_ir_types.CompilerIrValue.I64 1000000007))
     (compiler_ir_types.compiler-ir-global-cons
       (compiler_ir_types.CompilerIrGlobal.Global
-        (struct-get symbols mutable)
+        symbols.mutable
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrValue.I64 7))
       (compiler_ir_types.compiler-ir-global-cons
         (compiler_ir_types.CompilerIrGlobal.Global
-          (struct-get symbols uninit)
+          symbols.uninit
           (compiler_ast_types.AstType.I64)
           (compiler_ir_types.CompilerIrValue.Unit))
         (compiler_ir_types.compiler-ir-global-cons
           (compiler_ir_types.CompilerIrGlobal.Global
-            (struct-get symbols borrowed)
+            symbols.borrowed
             (compiler_ast_types.AstType.I64)
             (compiler_ir_types.CompilerIrValue.I64 99))
           (compiler_ir_types.compiler-ir-global-cons
             (compiler_ir_types.CompilerIrGlobal.Global
-              (struct-get symbols zero)
+              symbols.zero
               (compiler_ast_types.AstType.I64)
               (compiler_ir_types.CompilerIrValue.I64 0))
             (compiler_ir_types.compiler-ir-global-cons
               (compiler_ir_types.CompilerIrGlobal.Global
-                (struct-get symbols big)
+                symbols.big
                 (compiler_ast_types.AstType.I64)
                 (compiler_ir_types.CompilerIrValue.I64 4294967295))
               compiler_ir_types.CompilerIrGlobalList.Nil)))))))
@@ -5581,7 +5654,7 @@
           10
           (compiler_ir_types.CompilerIrBinOp.Mod)
           (compiler_ir_types.CompilerIrValue.Var 0)
-          (compiler_ir_types.CompilerIrValue.Global (struct-get symbols konst))
+          (compiler_ir_types.CompilerIrValue.Global symbols.konst)
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.compiler-ir-instr-cons
           ;; mod by a written global -> must NOT be rewritten
@@ -5589,8 +5662,7 @@
             11
             (compiler_ir_types.CompilerIrBinOp.Mod)
             (compiler_ir_types.CompilerIrValue.Var 0)
-            (compiler_ir_types.CompilerIrValue.Global
-              (struct-get symbols mutable))
+            (compiler_ir_types.CompilerIrValue.Global symbols.mutable)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
             ;; div by a non-literal (init-function) global -> must NOT be rewritten
@@ -5598,8 +5670,7 @@
               12
               (compiler_ir_types.CompilerIrBinOp.Div)
               (compiler_ir_types.CompilerIrValue.Var 0)
-              (compiler_ir_types.CompilerIrValue.Global
-                (struct-get symbols uninit))
+              (compiler_ir_types.CompilerIrValue.Global symbols.uninit)
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.compiler-ir-instr-cons
               ;; ordinary operand use of the constant global -> rewritten (general)
@@ -5607,8 +5678,7 @@
                 13
                 (compiler_ir_types.CompilerIrBinOp.Add)
                 (compiler_ir_types.CompilerIrValue.Var 0)
-                (compiler_ir_types.CompilerIrValue.Global
-                  (struct-get symbols konst))
+                (compiler_ir_types.CompilerIrValue.Global symbols.konst)
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.compiler-ir-instr-cons
                 ;; use of an address-taken global -> must NOT be rewritten
@@ -5616,8 +5686,7 @@
                   14
                   (compiler_ir_types.CompilerIrBinOp.BitAnd)
                   (compiler_ir_types.CompilerIrValue.Var 0)
-                  (compiler_ir_types.CompilerIrValue.Global
-                    (struct-get symbols borrowed))
+                  (compiler_ir_types.CompilerIrValue.Global symbols.borrowed)
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.compiler-ir-instr-cons
                   ;; use of a zero-valued global -> must NOT be rewritten
@@ -5625,8 +5694,7 @@
                     15
                     (compiler_ir_types.CompilerIrBinOp.BitAnd)
                     (compiler_ir_types.CompilerIrValue.Var 0)
-                    (compiler_ir_types.CompilerIrValue.Global
-                      (struct-get symbols zero))
+                    (compiler_ir_types.CompilerIrValue.Global symbols.zero)
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.compiler-ir-instr-cons
                     ;; use of a >imm32 global -> must NOT be rewritten
@@ -5634,16 +5702,14 @@
                       16
                       (compiler_ir_types.CompilerIrBinOp.BitAnd)
                       (compiler_ir_types.CompilerIrValue.Var 0)
-                      (compiler_ir_types.CompilerIrValue.Global
-                        (struct-get symbols big))
+                      (compiler_ir_types.CompilerIrValue.Global symbols.big)
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.compiler-ir-instr-cons
                       ;; A proven constant Move feeding arithmetic is rewritten
                       ;; after BCE so the next fold can simplify the chain.
                       (compiler_ir_types.CompilerIrInstr.Mov
                         17
-                        (compiler_ir_types.CompilerIrValue.Global
-                          (struct-get symbols konst))
+                        (compiler_ir_types.CompilerIrValue.Global symbols.konst)
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.compiler-ir-instr-cons
                         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -5658,7 +5724,7 @@
                           (compiler_ir_types.CompilerIrInstr.Mov
                             19
                             (compiler_ir_types.CompilerIrValue.Global
-                              (struct-get symbols konst))
+                              symbols.konst)
                             (compiler_ast_types.AstType.I64))
                           (compiler_ir_types.compiler-ir-instr-cons
                             (compiler_ir_types.CompilerIrInstr.BinOp
@@ -5672,12 +5738,12 @@
                               (compiler_ir_types.CompilerIrInstr.Mov
                                 20
                                 (compiler_ir_types.CompilerIrValue.GlobalAddr
-                                  (struct-get symbols borrowed))
+                                  symbols.borrowed)
                                 (compiler_ast_types.AstType.U64))
                               (compiler_ir_types.compiler-ir-instr-cons
                                 ;; the store disqualifies "mut"
                                 (compiler_ir_types.CompilerIrInstr.Store
-                                  (struct-get symbols mutable)
+                                  symbols.mutable
                                   (compiler_ir_types.CompilerIrValue.I64 9)
                                   (compiler_ast_types.AstType.I64))
                                 (compiler_ir_types.compiler-ir-instr-cons
@@ -5796,16 +5862,16 @@
           blocks)
         blocks)]
     (cond
-      [(not (opt_i64_i64_map.contains? (& table) (struct-get symbols konst))) 1]
+      [(not (opt_i64_i64_map.contains? (& table) symbols.konst)) 1]
       [(not
-          (match (opt_i64_i64_map.get (& table) (struct-get symbols konst))
+          (match (opt_i64_i64_map.get (& table) symbols.konst)
             [(opt_i64_i64_map.LookupFound n) (= n 1000000007)]
             [(opt_i64_i64_map.LookupMissing) false]))
         2]
-      [(opt_i64_i64_map.contains? (& table) (struct-get symbols mutable)) 3]
-      [(opt_i64_i64_map.contains? (& table) (struct-get symbols uninit)) 4]
-      [(opt_i64_i64_map.contains? (& table) (struct-get symbols borrowed)) 5]
-      [(opt_i64_i64_map.contains? (& table) (struct-get symbols zero)) 6]
+      [(opt_i64_i64_map.contains? (& table) symbols.mutable) 3]
+      [(opt_i64_i64_map.contains? (& table) symbols.uninit) 4]
+      [(opt_i64_i64_map.contains? (& table) symbols.borrowed) 5]
+      [(opt_i64_i64_map.contains? (& table) symbols.zero) 6]
       [(not
           (opt-const-divisor-test-is-i64?
             (opt-const-divisor-test-rhs rewritten 10)
@@ -5838,7 +5904,7 @@
         12]
       [(opt_i64_i64_map.contains?
           (& table)
-          (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols big)))
+          (compiler_ir_types.compiler-ir-symbol-id symbols.big))
         13]
       [(not
           (opt-const-divisor-test-is-global?
@@ -5932,7 +5998,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-arith-instr-seq instrs)
-            (opt-gvn-count-binops-blocks (box-get rest)))])]
+            (opt-gvn-count-binops-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-gvn-count-binops-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -6303,11 +6369,7 @@
 
 (define (opt-count-word-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-word-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-word-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-count-words-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
@@ -6318,7 +6380,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-word-instr-seq instrs)
-            (opt-count-words-blocks (box-get rest)))])]
+            (opt-count-words-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-words-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -6343,11 +6405,7 @@
 
 (define (opt-count-pack-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-pack-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-pack-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-count-packs-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
@@ -6358,7 +6416,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-pack-instr-seq instrs)
-            (opt-count-packs-blocks (box-get rest)))])]
+            (opt-count-packs-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-packs-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -7257,7 +7315,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block label instrs)
           (if (opt-successor-sink-instr-seq-defines? instrs 0 dst)
             label
-            (opt-successor-sink-def-label (box-get rest) dst fallback))])]
+            (opt-successor-sink-def-label (__tl-box-place rest) dst fallback))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-successor-sink-def-label
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -7313,7 +7371,7 @@
       (opt-successor-sink-induction-remat-blocks)]
     [induction-cell : (__tl_dyn-array i64)
       (compiler_optimize.opt-used-array-new 1)]
-    [_induction-cell-init : unit (array-set! induction-cell 0 16)]
+    [_induction-cell-init : unit (set! (array-ref induction-cell 0) 16)]
     [induction-direct : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-successor-sink-blocks
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -7592,8 +7650,8 @@
             (match l
               [(compiler_ir_types.CompilerIrValue.Var id) id]
               [_ (- 0 1)])
-            (opt-copy-binop-lhs-var (box-get rest) dst))]
-        [_ (opt-copy-binop-lhs-var (box-get rest) dst)])]))
+            (opt-copy-binop-lhs-var (__tl-box-place rest) dst))]
+        [_ (opt-copy-binop-lhs-var (__tl-box-place rest) dst)])]))
 
 (define (opt-copy-binop-lhs-var-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -7614,11 +7672,7 @@
 (define (opt-copy-binop-lhs-var-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [dst : i64]) : i64
-  (opt-copy-binop-lhs-var-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    dst))
+  (opt-copy-binop-lhs-var-instr-seq-from instrs.slots 0 instrs.len dst))
 
 ;; `[Mov v1 = v0, BinOp v2 = v1 + 1]`: copy propagation rewrites the binop lhs
 ;; from v1 to v0.
@@ -7838,8 +7892,8 @@
             (match src
               [(compiler_ir_types.CompilerIrValue.Var id) id]
               [_ fallback])
-            (opt-copy-mov-src-var (box-get rest) dst fallback))]
-        [_ (opt-copy-mov-src-var (box-get rest) dst fallback)])]))
+            (opt-copy-mov-src-var (__tl-box-place rest) dst fallback))]
+        [_ (opt-copy-mov-src-var (__tl-box-place rest) dst fallback)])]))
 
 (define (opt-copy-word-src-var
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -7854,8 +7908,8 @@
             (match src
               [(compiler_ir_types.CompilerIrValue.Var id) id]
               [_ fallback])
-            (opt-copy-word-src-var (box-get rest) dst fallback))]
-        [_ (opt-copy-word-src-var (box-get rest) dst fallback)])]))
+            (opt-copy-word-src-var (__tl-box-place rest) dst fallback))]
+        [_ (opt-copy-word-src-var (__tl-box-place rest) dst fallback)])]))
 
 (define (opt-phi-first-input-var
   [inputs : compiler_ir_types.CompilerIrPhiInputList]
@@ -7882,8 +7936,8 @@
         [(compiler_ir_types.CompilerIrInstr.Phi found inputs _)
           (if (= found dst)
             (opt-phi-first-input-var inputs fallback)
-            (opt-phi-dst-first-input-var (box-get rest) dst fallback))]
-        [_ (opt-phi-dst-first-input-var (box-get rest) dst fallback)])]))
+            (opt-phi-dst-first-input-var (__tl-box-place rest) dst fallback))]
+        [_ (opt-phi-dst-first-input-var (__tl-box-place rest) dst fallback)])]))
 
 ;; Returns 42 when block-local copy propagation: rewrites a var copy into a later
 ;; use (pos: lhs v1 -> v0); does not propagate after the source (src-redef) or
@@ -7963,7 +8017,7 @@
         (match instr
           [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _) 1]
           [_ 0])
-        (opt-count-bounds-instrs (box-get rest)))]))
+        (opt-count-bounds-instrs (__tl-box-place rest)))]))
 
 (define (opt-bounds-duplicate-instrs) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
@@ -8257,8 +8311,7 @@
           (begin
             (opt_i64_i64_map.insert-ref!
               (&mut map)
-              (compiler_ir_types.compiler-ir-symbol-id
-                (struct-get symbols touch))
+              (compiler_ir_types.compiler-ir-symbol-id symbols.touch)
               1)
             map))
         (opt_i64_i64_map.with-capacity 8))]
@@ -8269,8 +8322,7 @@
           (begin
             (opt_i64_i64_map.insert-ref!
               (&mut map)
-              (compiler_ir_types.compiler-ir-symbol-id
-                (struct-get symbols argc))
+              (compiler_ir_types.compiler-ir-symbol-id symbols.argc)
               1)
             map))
         (opt_i64_i64_map.with-capacity 8))]
@@ -8306,7 +8358,7 @@
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Call
           20
-          (struct-get symbols touch)
+          symbols.touch
           (compiler_ir_types.CompilerIrCallArgs.One
             (compiler_ir_types.CompilerIrValue.Var 2))
           (compiler_ast_types.AstType.Unit))
@@ -8350,13 +8402,13 @@
     (compiler_ir_types.compiler-ir-instr-cons
       (compiler_ir_types.CompilerIrInstr.Call
         10
-        (struct-get symbols argc)
+        symbols.argc
         (compiler_ir_types.CompilerIrCallArgs.Nil)
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Load
           11
-          (compiler_ir_types.CompilerIrValue.Global (struct-get symbols base))
+          (compiler_ir_types.CompilerIrValue.Global symbols.base)
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.BinOp
@@ -8372,14 +8424,13 @@
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Call
                 12
-                (struct-get symbols argc)
+                symbols.argc
                 (compiler_ir_types.CompilerIrCallArgs.Nil)
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.compiler-ir-instr-cons
                 (compiler_ir_types.CompilerIrInstr.Load
                   13
-                  (compiler_ir_types.CompilerIrValue.Global
-                    (struct-get symbols base))
+                  (compiler_ir_types.CompilerIrValue.Global symbols.base)
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.compiler-ir-instr-cons
                   (compiler_ir_types.CompilerIrInstr.BinOp
@@ -8556,7 +8607,7 @@
     (compiler_ir_types.compiler-ir-instr-cons
       (compiler_ir_types.CompilerIrInstr.Call
         20
-        (struct-get symbols touch)
+        symbols.touch
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.Var 2))
         (compiler_ast_types.AstType.Unit))
@@ -8620,7 +8671,7 @@
     (compiler_ir_types.compiler-ir-instr-cons
       (compiler_ir_types.CompilerIrInstr.Call
         10
-        (struct-get symbols argc)
+        symbols.argc
         (compiler_ir_types.CompilerIrCallArgs.Nil)
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.compiler-ir-instr-cons
@@ -9040,7 +9091,7 @@
     (compiler_ir_types.compiler-ir-instr-cons
       (compiler_ir_types.CompilerIrInstr.Call
         21
-        (struct-get symbols touch)
+        symbols.touch
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.Var object-var))
         (compiler_ast_types.AstType.Unit))
@@ -9371,6 +9422,603 @@
         3]
       [(not (compiler_optimize.opt-cfg-successor-targets-known? after-blocks))
         4]
+      [else 42])))
+
+;; --- rule (a): a dominating fact decides a dominated compare -----------------
+;;
+;; The probes below drive `opt-dom-cmp-lookup` with a single fact in scope and
+;; read its verdict as 0 unknown / 1 true / 2 false, which is exactly the
+;; implication algebra without any CFG plumbing around it. The fixture after
+;; them covers the two properties the algebra cannot see on its own: a fact is
+;; only recorded for an operand the function defines once, and a bounds check an
+;; equal-or-stronger dominating check subsumes is deleted.
+(define (opt-rule-a-fact
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [value : bool]) : compiler_optimize.OptDomCmpFacts
+  (compiler_optimize.OptDomCmpFacts.Cons
+    (compiler_optimize.OptDomCmpFact.Fact op lhs rhs ty value 0)
+    (box (compiler_optimize.OptDomCmpFacts.Nil))))
+
+(define (opt-rule-a-probe
+  [fact-op : compiler_ir_types.CompilerIrBinOp]
+  [fact-lhs : compiler_ir_types.CompilerIrValue]
+  [fact-rhs : compiler_ir_types.CompilerIrValue]
+  [fact-ty : compiler_ast_types.AstType]
+  [fact-value : bool]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]) : i64
+  (match (compiler_optimize.opt-dom-cmp-lookup
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-rule-a-fact fact-op fact-lhs fact-rhs fact-ty fact-value)
+    op
+    lhs
+    rhs
+    ty)
+    [(compiler_optimize.OptDomCmpLookup.No) 0]
+    [(compiler_optimize.OptDomCmpLookup.Some decided)
+      (if decided
+        1
+        2)]))
+
+(define (opt-rule-a-var) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var 1))
+
+(define (opt-rule-a-other) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var 2))
+
+(define (opt-rule-a-lit [value : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.I64 value))
+
+;; Operator and type shorthands: the qualified constructors are what make a
+;; probe list unreadable, and every probe below needs several.
+(define (opt-rule-a-lt) : compiler_ir_types.CompilerIrBinOp
+  (compiler_ir_types.CompilerIrBinOp.Lt))
+
+(define (opt-rule-a-le) : compiler_ir_types.CompilerIrBinOp
+  (compiler_ir_types.CompilerIrBinOp.Le))
+
+(define (opt-rule-a-gt) : compiler_ir_types.CompilerIrBinOp
+  (compiler_ir_types.CompilerIrBinOp.Gt))
+
+(define (opt-rule-a-ge) : compiler_ir_types.CompilerIrBinOp
+  (compiler_ir_types.CompilerIrBinOp.Ge))
+
+(define (opt-rule-a-ne) : compiler_ir_types.CompilerIrBinOp
+  (compiler_ir_types.CompilerIrBinOp.Ne))
+
+(define (opt-rule-a-i64) : compiler_ast_types.AstType
+  (compiler_ast_types.AstType.I64))
+
+;; `v <fact-op> fact-k` decides `v <op> k`, both compares read in `ty`.
+(define (opt-rule-a-typed-probe
+  [fact-op : compiler_ir_types.CompilerIrBinOp]
+  [fact-k : i64]
+  [fact-value : bool]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [k : i64]
+  [ty : compiler_ast_types.AstType]) : i64
+  (opt-rule-a-probe
+    fact-op
+    (opt-rule-a-var)
+    (opt-rule-a-lit fact-k)
+    ty
+    fact-value
+    op
+    (opt-rule-a-var)
+    (opt-rule-a-lit k)
+    ty))
+
+(define (opt-rule-a-lit-probe
+  [fact-op : compiler_ir_types.CompilerIrBinOp]
+  [fact-k : i64]
+  [fact-value : bool]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [k : i64]) : i64
+  (opt-rule-a-typed-probe fact-op fact-k fact-value op k (opt-rule-a-i64)))
+
+;; The first failing case wins: once `previous` is non-zero it is carried
+;; through unchanged, so the returned code names the EARLIEST mismatch.
+(define (opt-rule-a-step [previous : i64] [code : i64] [got : i64] [want : i64]) : i64
+  (if (!= previous 0)
+    previous
+    (if (= got want)
+      0
+      code)))
+
+(define (compiler-optimize-dom-cmp-rule-a-self-test) : i64
+  (let
+    [fail : i64 0]
+    (begin
+      ;; (a) the identical compare, and its exact negation, still decide.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          1
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-lt) 3)
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          2
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 false (opt-rule-a-lt) 3)
+          2))
+      ;; same operands, weaker operator: `i < 3` gives `i <= 3` and `i != 3`,
+      ;; and refutes `i >= 3`.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          3
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-le) 3)
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          4
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-ne) 3)
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          5
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-ge) 3)
+          2))
+      ;; `i > 0` decides `i >= 0`; `i >= 0` does NOT decide `i > 0`.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          6
+          (opt-rule-a-lit-probe (opt-rule-a-gt) 0 true (opt-rule-a-ge) 0)
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          7
+          (opt-rule-a-lit-probe (opt-rule-a-ge) 0 true (opt-rule-a-gt) 0)
+          0))
+      ;; (b) a weaker literal: `i < 3` decides `i < 5`, and decides `i <= 2`
+      ;; through the immediate-successor step.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          8
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-lt) 5)
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          9
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 true (opt-rule-a-le) 2)
+          1))
+      ;; `i > 0` decides `i >= 1` (the successor step the other way round).
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          10
+          (opt-rule-a-lit-probe (opt-rule-a-gt) 0 true (opt-rule-a-ge) 1)
+          1))
+      ;; `i >= 3` refutes `i < 2` and decides nothing about `i < 4`.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          11
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 false (opt-rule-a-lt) 2)
+          2))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          12
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 3 false (opt-rule-a-lt) 4)
+          0))
+      ;; (d) the weaker literal only travels one way: `i < 5` says nothing
+      ;; about `i < 3`, and a fact about another var never matches.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          13
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 5 true (opt-rule-a-lt) 3)
+          0))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          14
+          (opt-rule-a-probe
+            (opt-rule-a-lt)
+            (opt-rule-a-var)
+            (opt-rule-a-lit 3)
+            (opt-rule-a-i64)
+            true
+            (opt-rule-a-lt)
+            (opt-rule-a-other)
+            (opt-rule-a-lit 5)
+            (opt-rule-a-i64))
+          0))
+      ;; two non-literal operands still decide through operand identity, in
+      ;; either order: `i < n` refutes `n <= i`.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          15
+          (opt-rule-a-probe
+            (opt-rule-a-lt)
+            (opt-rule-a-var)
+            (opt-rule-a-other)
+            (opt-rule-a-i64)
+            true
+            (opt-rule-a-le)
+            (opt-rule-a-other)
+            (opt-rule-a-var)
+            (opt-rule-a-i64))
+          2))
+      ;; (f) the literals are ordered in the FACT'S OWN type. Unsigned `i < 5`
+      ;; decides `i < 0xffffffffffffffff`; the signed reading of the same two
+      ;; literals puts `-1` BELOW `5`, where `i < 5` decides nothing.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          16
+          (opt-rule-a-typed-probe
+            (opt-rule-a-lt)
+            5
+            true
+            (opt-rule-a-lt)
+            (- 0 1)
+            (compiler_ast_types.AstType.U64))
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          17
+          (opt-rule-a-lit-probe (opt-rule-a-lt) 5 true (opt-rule-a-lt) (- 0 1))
+          0))
+      ;; (f) a fact in one type never decides a compare in another.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          18
+          (opt-rule-a-probe
+            (opt-rule-a-lt)
+            (opt-rule-a-var)
+            (opt-rule-a-lit 3)
+            (compiler_ast_types.AstType.U64)
+            true
+            (opt-rule-a-lt)
+            (opt-rule-a-var)
+            (opt-rule-a-lit 3)
+            (opt-rule-a-i64))
+          0))
+      ;; (f) the successor step refuses at the type's maximum, where `k + 1`
+      ;; would wrap; the plain order still decides this one.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          19
+          (opt-rule-a-typed-probe
+            (opt-rule-a-gt)
+            127
+            true
+            (opt-rule-a-gt)
+            (- 0 128)
+            (compiler_ast_types.AstType.I8))
+          1))
+      ;; The transitive step: `i < n` and `n <= len` decide `i < len`, which
+      ;; neither fact names both operands of.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          20
+          (opt-rule-a-chain-probe (opt-rule-a-le) (opt-rule-a-lt))
+          1))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          21
+          (opt-rule-a-chain-probe (opt-rule-a-le) (opt-rule-a-le))
+          1))
+      ;; Two non-strict steps give only `i <= len`.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          22
+          (opt-rule-a-chain-probe-op
+            (opt-rule-a-le)
+            (opt-rule-a-le)
+            (opt-rule-a-lt))
+          0))
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          23
+          (opt-rule-a-chain-probe-op
+            (opt-rule-a-le)
+            (opt-rule-a-le)
+            (opt-rule-a-le))
+          1))
+      ;; A step in the WRONG direction chains nothing: `n >= len` leaves
+      ;; `i < len` open.
+      (set!
+        fail
+        (opt-rule-a-step
+          fail
+          24
+          (opt-rule-a-chain-probe (opt-rule-a-ge) (opt-rule-a-lt))
+          0))
+      (if (= fail 0)
+        42
+        fail))))
+
+;; `i <head-op> n` from one fact and `n <mid-op> len` from another, queried as
+;; `i <op> len` -- the shape a versioned loop leaves behind, where the header
+;; bounds the counter and the entry guard bounds the bound. Var 1 is `i`,
+;; var 2 is `n`, var 3 is `len`.
+(define (opt-rule-a-chain-probe-op
+  [head-op : compiler_ir_types.CompilerIrBinOp]
+  [mid-op : compiler_ir_types.CompilerIrBinOp]
+  [op : compiler_ir_types.CompilerIrBinOp]) : i64
+  (match (compiler_optimize.opt-dom-cmp-lookup-chained
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.OptDomCmpFacts.Cons
+      (compiler_optimize.OptDomCmpFact.Fact
+        head-op
+        (opt-rule-a-var)
+        (opt-rule-a-other)
+        (opt-rule-a-i64)
+        true
+        0)
+      (box (opt-rule-a-chain-tail-facts mid-op)))
+    op
+    (opt-rule-a-var)
+    (compiler_ir_types.CompilerIrValue.Var 3)
+    (opt-rule-a-i64))
+    [(compiler_optimize.OptDomCmpLookup.No) 0]
+    [(compiler_optimize.OptDomCmpLookup.Some decided)
+      (if decided
+        1
+        2)]))
+
+(define (opt-rule-a-chain-tail-facts
+  [mid-op : compiler_ir_types.CompilerIrBinOp]) : compiler_optimize.OptDomCmpFacts
+  (compiler_optimize.OptDomCmpFacts.Cons
+    (compiler_optimize.OptDomCmpFact.Fact
+      mid-op
+      (opt-rule-a-other)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (opt-rule-a-i64)
+      true
+      0)
+    (box (compiler_optimize.OptDomCmpFacts.Nil))))
+
+;; `i < n` chained through `n <mid-op> len`, queried as `i <op> len`.
+(define (opt-rule-a-chain-probe
+  [mid-op : compiler_ir_types.CompilerIrBinOp]
+  [op : compiler_ir_types.CompilerIrBinOp]) : i64
+  (opt-rule-a-chain-probe-op (opt-rule-a-lt) mid-op op))
+
+;; Rule (a) at CFG scope. `entry` branches on `idx < 3`; the true arm re-tests
+;; the weaker `idx < 5` (folded) and checks `(idx, 8)`, which the dominating
+;; `(idx, 4)` check subsumes -- 4 <= 8 and the passed check proves the index
+;; nonnegative -- while `(idx, 2)` is not subsumed and stays. The false arm's
+;; `idx >= 3` decides nothing about `idx < 5`, so that copy survives.
+(define (opt-rule-a-cfg-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "idx"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.CompilerIrParamList.Nil)))
+
+(define (opt-rule-a-cfg-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          1
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "hit")
+            (compiler_ir_types.compiler-ir-label "miss"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "hit")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            2
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 5)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 4)
+              (compiler_ir_types.compiler-ir-label "h_ok"))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 8)
+                (compiler_ir_types.compiler-ir-label "h2_ok"))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.CompilerIrValue.I64 2)
+                  (compiler_ir_types.compiler-ir-label "h3_ok"))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "join"))
+                  (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "miss")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              3
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "join"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "join")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 0)))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; (c) The same shape with the compared operand REDEFINED. `n` is written in
+;; two places, so it is not a single-source var and the guard's fact about it
+;; is never recorded -- the dominated re-test must survive untouched.
+(define (opt-rule-a-redef-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          1
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            2
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (compiler_ir_types.compiler-ir-label "join"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "hit")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            1
+            (compiler_ir_types.CompilerIrValue.I64 9)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              3
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.I64 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "join"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "join")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 1)))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-rule-a-count-compares-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-rule-a-count-compares-seq
+      instrs
+      (+ index 1)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ _ _) (+ acc 1)]
+        [_ acc]))))
+
+(define (opt-rule-a-count-compares
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-rule-a-count-compares-seq instrs 0 0)
+            (opt-rule-a-count-compares (deref rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-rule-a-count-compares
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-rule-a-run
+  [params : compiler_ir_types.CompilerIrParamList]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-bounds-dom-blocks-with-context
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-cfg-context-build blocks)
+    params
+    8
+    blocks))
+
+(define (compiler-optimize-dom-cmp-rule-a-cfg-self-test) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList (opt-rule-a-cfg-blocks)]
+    [after-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-rule-a-run (opt-rule-a-cfg-params) blocks)]
+    [redef : compiler_ir_types.CompilerIrBlockList (opt-rule-a-redef-blocks)]
+    [after-redef : compiler_ir_types.CompilerIrBlockList
+      (opt-rule-a-run (compiler_ir_types.CompilerIrParamList.Nil) redef)]
+    (cond
+      [(not (= (compiler_optimize.opt-count-bounds-blocks blocks) 3)) 1]
+      [(not (= (opt-rule-a-count-compares blocks) 3)) 2]
+      ;; (e) kept: the dominating `(idx, 4)` check and the unsubsumed
+      ;; `(idx, 2)`. dropped: `(idx, 8)`, which `(idx, 4)` subsumes.
+      [(not (= (compiler_optimize.opt-count-bounds-blocks after-blocks) 2)) 3]
+      ;; (b) folded: `idx < 5` on the true arm. kept: the branch's own compare
+      ;; and the false arm's copy, which `idx >= 3` does not decide.
+      [(not (= (opt-rule-a-count-compares after-blocks) 2)) 4]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count after-blocks) 4))
+        5]
+      [(not (compiler_optimize.opt-cfg-successor-targets-known? after-blocks))
+        6]
+      ;; (c) nothing folds when the compared operand is redefined between.
+      [(not (= (opt-rule-a-count-compares redef) 2)) 7]
+      [(not (= (opt-rule-a-count-compares after-redef) 2)) 8]
       [else 42])))
 
 (define (compiler-optimize-bounds-self-test) : i64
@@ -9718,7 +10366,7 @@
             (compiler_ir_types.compiler-ir-symbol-text global-name)
             name)
             true
-            (opt-global-list-defines? (box-get rest) name))])]
+            (opt-global-list-defines? (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrGlobalList.Array seq)
       (opt-global-seq-defines? seq name 0)]))
 
@@ -9903,18 +10551,17 @@
   (compiler_ir_types.compiler-ir-instr-cons
     (compiler_ir_types.CompilerIrInstr.Mov
       3
-      (compiler_ir_types.CompilerIrValue.Global
-        (struct-get symbols used-global))
+      (compiler_ir_types.CompilerIrValue.Global symbols.used-global)
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.compiler-ir-instr-cons
       (compiler_ir_types.CompilerIrInstr.Store
-        (struct-get symbols stored-global)
+        symbols.stored-global
         (compiler_ir_types.CompilerIrValue.I64 99)
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Call
           1
-          (struct-get symbols helper)
+          symbols.helper
           (compiler_ir_types.CompilerIrCallArgs.Nil)
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.compiler-ir-instr-cons
@@ -9976,44 +10623,43 @@
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-cons
       (compiler_ir_types.CompilerIrGlobal.Global
-        (struct-get symbols callback)
+        symbols.callback
         (compiler_ast_types.AstType.I64)
-        (compiler_ir_types.CompilerIrValue.Global
-          (struct-get symbols callback-target)))
+        (compiler_ir_types.CompilerIrValue.Global symbols.callback-target))
       (compiler_ir_types.compiler-ir-global-cons
         (compiler_ir_types.CompilerIrGlobal.Global
-          (struct-get symbols used-global)
+          symbols.used-global
           (compiler_ast_types.AstType.I64)
           (compiler_ir_types.CompilerIrValue.I64 3))
         (compiler_ir_types.compiler-ir-global-cons
           (compiler_ir_types.CompilerIrGlobal.Global
-            (struct-get symbols stored-global)
+            symbols.stored-global
             (compiler_ast_types.AstType.I64)
             (compiler_ir_types.CompilerIrValue.I64 0))
           (compiler_ir_types.compiler-ir-global-cons
             (compiler_ir_types.CompilerIrGlobal.Global
-              (struct-get symbols runtime-global)
+              symbols.runtime-global
               (compiler_ast_types.AstType.I64)
               (compiler_ir_types.CompilerIrValue.Unit))
             (compiler_ir_types.compiler-ir-global-cons
               (compiler_ir_types.CompilerIrGlobal.Global
-                (struct-get symbols dead-global)
+                symbols.dead-global
                 (compiler_ast_types.AstType.I64)
                 (compiler_ir_types.CompilerIrValue.I64 5))
               (compiler_ir_types.CompilerIrGlobalList.Nil))))))
     (compiler_ir_types.compiler-ir-function-cons
       (opt-test-function-symbol
-        (struct-get symbols main)
+        symbols.main
         (opt-global-dce-main-instrs symbols))
       (compiler_ir_types.compiler-ir-function-cons
-        (opt-global-dce-large-callee (struct-get symbols helper) 7)
+        (opt-global-dce-large-callee symbols.helper 7)
         (compiler_ir_types.compiler-ir-function-cons
           (opt-test-function-symbol
-            (struct-get symbols dead)
+            symbols.dead
             (opt-global-dce-return-instrs 9))
           (compiler_ir_types.compiler-ir-function-cons
             (opt-test-function-symbol
-              (struct-get symbols callback-target)
+              symbols.callback-target
               (opt-global-dce-return-instrs 11))
             (compiler_ir_types.compiler-ir-function-cons
               (opt-test-function-named
@@ -10150,30 +10796,29 @@
   (compiler_ir_types.compiler-ir-instr-cons
     (compiler_ir_types.CompilerIrInstr.Call
       0
-      (struct-get symbols a)
+      symbols.a
       compiler_ir_types.CompilerIrCallArgs.Nil
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.compiler-ir-instr-cons
       (compiler_ir_types.CompilerIrInstr.Call
         1
-        (struct-get symbols external)
+        symbols.external
         compiler_ir_types.CompilerIrCallArgs.Nil
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.CallIndirect
           2
-          (compiler_ir_types.CompilerIrValue.Function (struct-get symbols c))
+          (compiler_ir_types.CompilerIrValue.Function symbols.c)
           compiler_ir_types.CompilerIrCallArgs.Nil
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Mov
             3
-            (compiler_ir_types.CompilerIrValue.Global
-              (struct-get symbols address-taken))
+            (compiler_ir_types.CompilerIrValue.Global symbols.address-taken)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.TailCall
-              (struct-get symbols b)
+              symbols.b
               compiler_ir_types.CompilerIrCallArgs.Nil
               (compiler_ast_types.AstType.I64))
             compiler_ir_types.CompilerIrInstrList.Nil))))))
@@ -10208,24 +10853,18 @@
 
 (define (opt-callgraph-acyclic-functions [symbols : OptCallgraphTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
   (compiler_ir_types.compiler-ir-function-cons
-    (opt-test-function-symbol
-      (struct-get symbols main)
-      (opt-callgraph-main-instrs symbols))
+    (opt-test-function-symbol symbols.main (opt-callgraph-main-instrs symbols))
     (compiler_ir_types.compiler-ir-function-cons
-      (opt-test-function-symbol
-        (struct-get symbols a)
-        (opt-callgraph-call-instrs (struct-get symbols c)))
+      (opt-test-function-symbol symbols.a (opt-callgraph-call-instrs symbols.c))
       (compiler_ir_types.compiler-ir-function-cons
-        (opt-test-function-symbol
-          (struct-get symbols b)
-          (opt-callgraph-return-instrs))
+        (opt-test-function-symbol symbols.b (opt-callgraph-return-instrs))
         (compiler_ir_types.compiler-ir-function-cons
           (opt-test-function-symbol
-            (struct-get symbols c)
-            (opt-callgraph-tail-instrs (struct-get symbols b)))
+            symbols.c
+            (opt-callgraph-tail-instrs symbols.b))
           (compiler_ir_types.compiler-ir-function-cons
             (opt-test-function-symbol
-              (struct-get symbols address-taken)
+              symbols.address-taken
               (opt-callgraph-return-instrs))
             compiler_ir_types.CompilerIrFunctionList.Nil))))))
 
@@ -10233,13 +10872,13 @@
   (compiler_ir_types.compiler-ir-instr-cons
     (compiler_ir_types.CompilerIrInstr.Call
       0
-      (struct-get symbols rec-odd)
+      symbols.rec-odd
       compiler_ir_types.CompilerIrCallArgs.Nil
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.compiler-ir-instr-cons
       (compiler_ir_types.CompilerIrInstr.Call
         1
-        (struct-get symbols rec-odd)
+        symbols.rec-odd
         compiler_ir_types.CompilerIrCallArgs.Nil
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.compiler-ir-instr-cons
@@ -10251,16 +10890,14 @@
 (define (opt-callgraph-recursive-functions [symbols : OptCallgraphTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
   (compiler_ir_types.compiler-ir-function-cons
     (opt-test-function-symbol
-      (struct-get symbols rec-even)
+      symbols.rec-even
       (opt-callgraph-rec-even-instrs symbols))
     (compiler_ir_types.compiler-ir-function-cons
       (opt-test-function-symbol
-        (struct-get symbols rec-odd)
-        (opt-callgraph-tail-instrs (struct-get symbols rec-even)))
+        symbols.rec-odd
+        (opt-callgraph-tail-instrs symbols.rec-even))
       (compiler_ir_types.compiler-ir-function-cons
-        (opt-test-function-symbol
-          (struct-get symbols lonely)
-          (opt-callgraph-return-instrs))
+        (opt-test-function-symbol symbols.lonely (opt-callgraph-return-instrs))
         compiler_ir_types.CompilerIrFunctionList.Nil))))
 
 (define (compiler-optimize-callgraph-acyclic-ok?) : bool
@@ -10273,76 +10910,24 @@
     [graph : compiler_optimize.OptCallGraph
       (compiler_optimize.opt-callgraph-build index)]
     (cond
-      [(not (= (struct-get graph count) 5)) false]
+      [(not (= graph.count 5)) false]
+      [(not (= (opt-callgraph-test-edge-count index graph symbols.main) 2))
+        false]
+      [(not (opt-callgraph-test-edge? index graph symbols.main symbols.a))
+        false]
+      [(not (opt-callgraph-test-edge? index graph symbols.main symbols.b))
+        false]
+      [(opt-callgraph-test-edge? index graph symbols.main symbols.c) false]
+      [(opt-callgraph-test-edge? index graph symbols.main symbols.address-taken)
+        false]
+      [(not (= (opt-callgraph-test-edge-count index graph symbols.a) 1)) false]
+      [(not (opt-callgraph-test-edge? index graph symbols.a symbols.c)) false]
+      [(not (= (opt-callgraph-test-edge-count index graph symbols.b) 0)) false]
+      [(not (= (opt-callgraph-test-edge-count index graph symbols.c) 1)) false]
+      [(not (opt-callgraph-test-edge? index graph symbols.c symbols.b)) false]
       [(not
           (=
-            (opt-callgraph-test-edge-count
-              index
-              graph
-              (struct-get symbols main))
-            2))
-        false]
-      [(not
-          (opt-callgraph-test-edge?
-            index
-            graph
-            (struct-get symbols main)
-            (struct-get symbols a)))
-        false]
-      [(not
-          (opt-callgraph-test-edge?
-            index
-            graph
-            (struct-get symbols main)
-            (struct-get symbols b)))
-        false]
-      [(opt-callgraph-test-edge?
-          index
-          graph
-          (struct-get symbols main)
-          (struct-get symbols c))
-        false]
-      [(opt-callgraph-test-edge?
-          index
-          graph
-          (struct-get symbols main)
-          (struct-get symbols address-taken))
-        false]
-      [(not
-          (=
-            (opt-callgraph-test-edge-count index graph (struct-get symbols a))
-            1))
-        false]
-      [(not
-          (opt-callgraph-test-edge?
-            index
-            graph
-            (struct-get symbols a)
-            (struct-get symbols c)))
-        false]
-      [(not
-          (=
-            (opt-callgraph-test-edge-count index graph (struct-get symbols b))
-            0))
-        false]
-      [(not
-          (=
-            (opt-callgraph-test-edge-count index graph (struct-get symbols c))
-            1))
-        false]
-      [(not
-          (opt-callgraph-test-edge?
-            index
-            graph
-            (struct-get symbols c)
-            (struct-get symbols b)))
-        false]
-      [(not
-          (=
-            (opt-callgraph-test-edge-count
-              index
-              graph
-              (struct-get symbols address-taken))
+            (opt-callgraph-test-edge-count index graph symbols.address-taken)
             0))
         false]
       [else true])))
@@ -10357,63 +10942,41 @@
     [graph : compiler_optimize.OptCallGraph
       (compiler_optimize.opt-callgraph-build index)]
     (cond
-      [(not (= (struct-get graph count) 3)) false]
-      [(not
-          (=
-            (opt-callgraph-test-edge-count
-              index
-              graph
-              (struct-get symbols rec-even))
-            1))
+      [(not (= graph.count 3)) false]
+      [(not (= (opt-callgraph-test-edge-count index graph symbols.rec-even) 1))
         false]
       [(not
           (opt-callgraph-test-edge?
             index
             graph
-            (struct-get symbols rec-even)
-            (struct-get symbols rec-odd)))
+            symbols.rec-even
+            symbols.rec-odd))
         false]
-      [(opt-callgraph-test-edge?
-          index
-          graph
-          (struct-get symbols rec-even)
-          (struct-get symbols rec-even))
+      [(opt-callgraph-test-edge? index graph symbols.rec-even symbols.rec-even)
         false]
-      [(not
-          (=
-            (opt-callgraph-test-edge-count
-              index
-              graph
-              (struct-get symbols rec-odd))
-            1))
+      [(not (= (opt-callgraph-test-edge-count index graph symbols.rec-odd) 1))
         false]
       [(not
           (opt-callgraph-test-edge?
             index
             graph
-            (struct-get symbols rec-odd)
-            (struct-get symbols rec-even)))
+            symbols.rec-odd
+            symbols.rec-even))
         false]
-      [(not
-          (=
-            (opt-callgraph-test-edge-count
-              index
-              graph
-              (struct-get symbols lonely))
-            0))
+      [(not (= (opt-callgraph-test-edge-count index graph symbols.lonely) 0))
         false]
       [else true])))
 
 (define (opt-scc-result-component
   [result : compiler_optimize.OptSccResult]
   [slot : i64]) : i64
-  (array-ref (struct-get result scc-of) slot))
+  (array-ref result.scc-of slot))
 
 (define (opt-scc-component-size
   [result : compiler_optimize.OptSccResult]
   [scc-id : i64]) : i64
   (let
-    [scc-of : (__tl_dyn-array i64) (struct-get result scc-of)]
+    [scc-of : (__tl_dyn-array i64) result.scc-of]
     [count : i64 (array-length scc-of)]
     [slot : i64 0]
     [size : i64 0]
@@ -10430,7 +10993,7 @@
   [result : compiler_optimize.OptSccResult]
   [scc-id : i64]) : i64
   (let
-    [order : (__tl_dyn-array i64) (struct-get result order)]
+    [order : (__tl_dyn-array i64) result.order]
     [count : i64 (array-length order)]
     [index : i64 0]
     [position : i64 (- 0 1)]
@@ -10455,12 +11018,10 @@
 (define (opt-scc-self-recursive-functions [symbols : OptCallgraphTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
   (compiler_ir_types.compiler-ir-function-cons
     (opt-test-function-symbol
-      (struct-get symbols self)
-      (opt-callgraph-tail-instrs (struct-get symbols self)))
+      symbols.self
+      (opt-callgraph-tail-instrs symbols.self))
     (compiler_ir_types.compiler-ir-function-cons
-      (opt-test-function-symbol
-        (struct-get symbols leaf)
-        (opt-callgraph-return-instrs))
+      (opt-test-function-symbol symbols.leaf (opt-callgraph-return-instrs))
       compiler_ir_types.CompilerIrFunctionList.Nil)))
 
 (define (compiler-optimize-scc-self-recursive-ok?) : bool
@@ -10474,8 +11035,8 @@
       (compiler_optimize.opt-callgraph-build index)]
     [result : compiler_optimize.OptSccResult
       (compiler_optimize.opt-scc-compute graph)]
-    [self-slot : i64 (opt-callgraph-test-slot index (struct-get symbols self))]
-    [leaf-slot : i64 (opt-callgraph-test-slot index (struct-get symbols leaf))]
+    [self-slot : i64 (opt-callgraph-test-slot index symbols.self)]
+    [leaf-slot : i64 (opt-callgraph-test-slot index symbols.leaf)]
     [self-scc : i64 (opt-scc-result-component result self-slot)]
     [leaf-scc : i64 (opt-scc-result-component result leaf-slot)]
     (cond
@@ -10500,12 +11061,9 @@
       (compiler_optimize.opt-callgraph-build index)]
     [result : compiler_optimize.OptSccResult
       (compiler_optimize.opt-scc-compute graph)]
-    [even-slot : i64
-      (opt-callgraph-test-slot index (struct-get symbols rec-even))]
-    [odd-slot : i64
-      (opt-callgraph-test-slot index (struct-get symbols rec-odd))]
-    [lonely-slot : i64
-      (opt-callgraph-test-slot index (struct-get symbols lonely))]
+    [even-slot : i64 (opt-callgraph-test-slot index symbols.rec-even)]
+    [odd-slot : i64 (opt-callgraph-test-slot index symbols.rec-odd)]
+    [lonely-slot : i64 (opt-callgraph-test-slot index symbols.lonely)]
     [even-scc : i64 (opt-scc-result-component result even-slot)]
     [odd-scc : i64 (opt-scc-result-component result odd-slot)]
     [lonely-scc : i64 (opt-scc-result-component result lonely-slot)]
@@ -10528,27 +11086,27 @@
       (compiler_optimize.opt-callgraph-build index)]
     [result : compiler_optimize.OptSccResult
       (compiler_optimize.opt-scc-compute graph)]
-    [order : (__tl_dyn-array i64) (struct-get result order)]
+    [order : (__tl_dyn-array i64) result.order]
     [main-scc : i64
       (opt-scc-result-component
         result
-        (opt-callgraph-test-slot index (struct-get symbols main)))]
+        (opt-callgraph-test-slot index symbols.main))]
     [a-scc : i64
       (opt-scc-result-component
         result
-        (opt-callgraph-test-slot index (struct-get symbols a)))]
+        (opt-callgraph-test-slot index symbols.a))]
     [b-scc : i64
       (opt-scc-result-component
         result
-        (opt-callgraph-test-slot index (struct-get symbols b)))]
+        (opt-callgraph-test-slot index symbols.b))]
     [c-scc : i64
       (opt-scc-result-component
         result
-        (opt-callgraph-test-slot index (struct-get symbols c)))]
+        (opt-callgraph-test-slot index symbols.c))]
     [address-scc : i64
       (opt-scc-result-component
         result
-        (opt-callgraph-test-slot index (struct-get symbols address-taken)))]
+        (opt-callgraph-test-slot index symbols.address-taken))]
     (cond
       [(not (= (array-length order) 5)) false]
       [(not (= (array-ref order 0) b-scc)) false]
@@ -10604,7 +11162,7 @@
 
 (define (opt-inline-frame-callee [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-add)
+    symbols.inline-add
     (opt-inline-frame-params)
     (compiler_ast_types.AstType.I64)
     3
@@ -10627,7 +11185,7 @@
 
 (define (opt-inline-frame-caller [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     3
@@ -10647,7 +11205,7 @@
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Call
                 2
-                (struct-get symbols inline-add)
+                symbols.inline-add
                 (compiler_ir_types.CompilerIrCallArgs.Two
                   (compiler_ir_types.CompilerIrValue.Var 0)
                   (compiler_ir_types.CompilerIrValue.Var 1))
@@ -10668,7 +11226,7 @@
 
 (define (opt-inline-known-indirect-caller [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     3
@@ -10688,8 +11246,7 @@
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.CallIndirect
                 2
-                (compiler_ir_types.CompilerIrValue.Function
-                  (struct-get symbols inline-add))
+                (compiler_ir_types.CompilerIrValue.Function symbols.inline-add)
                 (compiler_ir_types.CompilerIrCallArgs.Two
                   (compiler_ir_types.CompilerIrValue.Var 0)
                   (compiler_ir_types.CompilerIrValue.Var 1))
@@ -10711,7 +11268,7 @@
 
 (define (opt-inline-pack-word-callee [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-group-word)
+    symbols.inline-group-word
     (opt-inline-frame-params)
     (compiler_ast_types.AstType.I64)
     4
@@ -10747,7 +11304,7 @@
 ;; cloned Pack/Word through its catch-all without remapping).
 (define (opt-inline-pack-word-caller [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     4
@@ -10772,7 +11329,7 @@
               (compiler_ir_types.compiler-ir-instr-cons
                 (compiler_ir_types.CompilerIrInstr.Call
                   3
-                  (struct-get symbols inline-group-word)
+                  symbols.inline-group-word
                   (compiler_ir_types.CompilerIrCallArgs.Two
                     (compiler_ir_types.CompilerIrValue.Var 1)
                     (compiler_ir_types.CompilerIrValue.Var 2))
@@ -10854,7 +11411,7 @@
 
 (define (opt-inline-large-callee [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols too-large)
+    symbols.too-large
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     (+ (compiler_optimize.opt-inline-max-body) 2)
@@ -10866,7 +11423,7 @@
 
 (define (opt-inline-bounds-callee [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols bounds-inline)
+    symbols.bounds-inline
     (compiler_ir_types.compiler-ir-param-cons
       (compiler_ir_types.CompilerIrParam.Param
         "idx"
@@ -10910,19 +11467,19 @@
 
 (define (opt-inline-call-large [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     1
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.compiler-ir-block
         (compiler_ir_types.compiler-ir-label "entry")
-        (opt-inline-call-one 0 (struct-get symbols too-large)))
+        (opt-inline-call-one 0 symbols.too-large))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
 (define (opt-inline-call-bounds [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     3
@@ -10932,7 +11489,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             2
-            (struct-get symbols bounds-inline)
+            symbols.bounds-inline
             (compiler_ir_types.CompilerIrCallArgs.Two
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.CompilerIrValue.I64 4))
@@ -10946,7 +11503,7 @@
 
 (define (opt-inline-call-bounds-twice [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     4
@@ -10956,7 +11513,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             2
-            (struct-get symbols bounds-inline)
+            symbols.bounds-inline
             (compiler_ir_types.CompilerIrCallArgs.Two
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.CompilerIrValue.I64 4))
@@ -10964,7 +11521,7 @@
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Call
               3
-              (struct-get symbols bounds-inline)
+              symbols.bounds-inline
               (compiler_ir_types.CompilerIrCallArgs.Two
                 (compiler_ir_types.CompilerIrValue.I64 1)
                 (compiler_ir_types.CompilerIrValue.I64 4))
@@ -10979,7 +11536,7 @@
 (define (opt-inline-duplicate-bounds-label-function
   [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     0
@@ -11048,7 +11605,7 @@
   [body : i64]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.compiler-ir-function-compact-blocks
     (compiler_ir_types.CompilerIrFunction.Function
-      (struct-get symbols bounds-leaf-inline)
+      symbols.bounds-leaf-inline
       (compiler_ir_types.compiler-ir-param-cons
         (compiler_ir_types.CompilerIrParam.Param
           "idx"
@@ -11070,7 +11627,7 @@
 
 (define (opt-inline-call-bounds-leaf [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     3
@@ -11090,7 +11647,7 @@
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Call
                 2
-                (struct-get symbols bounds-leaf-inline)
+                symbols.bounds-leaf-inline
                 (compiler_ir_types.CompilerIrCallArgs.Two
                   (compiler_ir_types.CompilerIrValue.Var 0)
                   (compiler_ir_types.CompilerIrValue.Var 1))
@@ -11117,7 +11674,7 @@
 (define (opt-inline-call-bounds-leaf-twice
   [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     4
@@ -11137,7 +11694,7 @@
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Call
                 2
-                (struct-get symbols bounds-leaf-inline)
+                symbols.bounds-leaf-inline
                 (compiler_ir_types.CompilerIrCallArgs.Two
                   (compiler_ir_types.CompilerIrValue.Var 0)
                   (compiler_ir_types.CompilerIrValue.Var 1))
@@ -11145,7 +11702,7 @@
               (compiler_ir_types.compiler-ir-instr-cons
                 (compiler_ir_types.CompilerIrInstr.Call
                   3
-                  (struct-get symbols bounds-leaf-inline)
+                  symbols.bounds-leaf-inline
                   (compiler_ir_types.CompilerIrCallArgs.Two
                     (compiler_ir_types.CompilerIrValue.Var 1)
                     (compiler_ir_types.CompilerIrValue.Var 0))
@@ -11216,7 +11773,7 @@
 (define (opt-inline-call-bounds-leaf-call-twice
   [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     4
@@ -11319,7 +11876,7 @@
   [callee : i64]
   [ret : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     4
@@ -11500,7 +12057,7 @@
 
 (define (opt-inline-multi-call-caller [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     6
@@ -11520,7 +12077,7 @@
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Call
                 2
-                (struct-get symbols inline-add)
+                symbols.inline-add
                 (compiler_ir_types.CompilerIrCallArgs.Two
                   (compiler_ir_types.CompilerIrValue.Var 0)
                   (compiler_ir_types.CompilerIrValue.Var 1))
@@ -11528,7 +12085,7 @@
               (compiler_ir_types.compiler-ir-instr-cons
                 (compiler_ir_types.CompilerIrInstr.Call
                   3
-                  (struct-get symbols inline-add)
+                  symbols.inline-add
                   (compiler_ir_types.CompilerIrCallArgs.Two
                     (compiler_ir_types.CompilerIrValue.Var 1)
                     (compiler_ir_types.CompilerIrValue.Var 2))
@@ -11549,7 +12106,7 @@
 
 (define (opt-inline-cascade-mid [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-mid)
+    symbols.inline-mid
     (opt-inline-frame-params)
     (compiler_ast_types.AstType.I64)
     3
@@ -11559,7 +12116,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             2
-            (struct-get symbols inline-add)
+            symbols.inline-add
             (compiler_ir_types.CompilerIrCallArgs.Two
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.Var 1))
@@ -11573,7 +12130,7 @@
 
 (define (opt-inline-cascade-main [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     3
@@ -11593,7 +12150,7 @@
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Call
                 2
-                (struct-get symbols inline-mid)
+                symbols.inline-mid
                 (compiler_ir_types.CompilerIrCallArgs.Two
                   (compiler_ir_types.CompilerIrValue.Var 0)
                   (compiler_ir_types.CompilerIrValue.Var 1))
@@ -11764,7 +12321,7 @@
               1
               0)]
           [_ 0])
-        (opt-inline-count-binop-dst (box-get rest) dst))]))
+        (opt-inline-count-binop-dst (__tl-box-place rest) dst))]))
 
 (define (opt-count-direct-call-name
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -11781,7 +12338,7 @@
               1
               0)]
           [_ 0])
-        (opt-count-direct-call-name (box-get rest) name))]))
+        (opt-count-direct-call-name (__tl-box-place rest) name))]))
 
 (define (opt-count-direct-call-name-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -11810,12 +12367,7 @@
 (define (opt-count-direct-call-name-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [name : String]) : i64
-  (opt-count-direct-call-name-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    name
-    0))
+  (opt-count-direct-call-name-instr-seq-from instrs.slots 0 instrs.len name 0))
 
 (define (opt-count-direct-call-name-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -11827,7 +12379,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-direct-call-name-instr-seq instrs name)
-            (opt-count-direct-call-name-blocks (box-get rest) name))])]
+            (opt-count-direct-call-name-blocks (__tl-box-place rest) name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-direct-call-name-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -11854,7 +12406,7 @@
           [(compiler_ir_types.CompilerIrInstr.CallIndirect _ _ _ _) 1]
           [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ _ _ _) 1]
           [_ 0])
-        (opt-count-indirect-call-instrs (box-get rest)))]))
+        (opt-count-indirect-call-instrs (__tl-box-place rest)))]))
 
 (define (opt-inline-mov-dst-src?
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -11870,8 +12422,8 @@
             _)
           (if (and (= d dst) (= s src))
             true
-            (opt-inline-mov-dst-src? (box-get rest) dst src))]
-        [_ (opt-inline-mov-dst-src? (box-get rest) dst src)])]))
+            (opt-inline-mov-dst-src? (__tl-box-place rest) dst src))]
+        [_ (opt-inline-mov-dst-src? (__tl-box-place rest) dst src)])]))
 
 (define (opt-inline-function-instrs
   [functions : compiler_ir_types.CompilerIrFunctionList]
@@ -11980,9 +12532,9 @@
               (compiler_ir_types.CompilerIrValue.I64 first-length)
               first-label)
             rest)
-          (match (box-get rest)
+          (match (__tl-box-place rest)
             [(compiler_ir_types.CompilerIrInstrList.Cons _ rest2)
-              (match (box-get rest2)
+              (match (__tl-box-place rest2)
                 [(compiler_ir_types.CompilerIrInstrList.Cons
                     (compiler_ir_types.CompilerIrInstr.BoundsCheck
                       (compiler_ir_types.CompilerIrValue.I64 second-index)
@@ -12248,11 +12800,11 @@
     [(compiler_ir_types.CompilerIrValueList.Cons a arest)
       (match a
         [(compiler_ir_types.CompilerIrValue.Var av)
-          (match (box-get arest)
+          (match (__tl-box-place arest)
             [(compiler_ir_types.CompilerIrValueList.Cons b brest)
               (match b
                 [(compiler_ir_types.CompilerIrValue.Var bv)
-                  (match (box-get brest)
+                  (match (__tl-box-place brest)
                     [(compiler_ir_types.CompilerIrValueList.Nil)
                       (and (= av 1) (= bv 2))]
                     [_ false])]
@@ -12275,13 +12827,13 @@
       (match instr
         [(compiler_ir_types.CompilerIrInstr.Pack dst words _)
           (opt-inline-pack-word-remap-ok-scan
-            (box-get rest)
+            (__tl-box-place rest)
             dst
             (opt-inline-pack-words-are-vars-1-2? words)
             word-ok)]
         [(compiler_ir_types.CompilerIrInstr.Word _ src _ _)
           (opt-inline-pack-word-remap-ok-scan
-            (box-get rest)
+            (__tl-box-place rest)
             pack-dst
             pack-ok
             (match src
@@ -12289,7 +12841,7 @@
               [_ false]))]
         [_
           (opt-inline-pack-word-remap-ok-scan
-            (box-get rest)
+            (__tl-box-place rest)
             pack-dst
             pack-ok
             word-ok)])]))
@@ -12362,7 +12914,7 @@
 
 (define (opt-inline-branch-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-branch)
+    symbols.inline-branch
     (opt-inline-branch-params)
     (compiler_ast_types.AstType.I64)
     2
@@ -12398,14 +12950,14 @@
 (define (opt-inline-branch-caller-call [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.Call
     0
-    (struct-get symbols inline-branch)
+    symbols.inline-branch
     (compiler_ir_types.CompilerIrCallArgs.One
       (compiler_ir_types.CompilerIrValue.Bool true))
     (compiler_ast_types.AstType.I64)))
 
 (define (opt-inline-branch-caller [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     1
@@ -12431,7 +12983,7 @@
 (define (opt-inline-repeated-predicate-callee
   [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-tiny-predicate)
+    symbols.inline-tiny-predicate
     (compiler_ir_types.compiler-ir-param-cons
       (compiler_ir_types.CompilerIrParam.Param
         "value"
@@ -12477,7 +13029,7 @@
 (define (opt-inline-repeated-predicate-caller
   [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.Bool)
     2
@@ -12487,7 +13039,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             0
-            (struct-get symbols inline-tiny-predicate)
+            symbols.inline-tiny-predicate
             (compiler_ir_types.CompilerIrCallArgs.One
               (compiler_ir_types.CompilerIrValue.I64 7))
             (compiler_ast_types.AstType.Bool))
@@ -12503,7 +13055,7 @@
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Call
               1
-              (struct-get symbols inline-tiny-predicate)
+              symbols.inline-tiny-predicate
               (compiler_ir_types.CompilerIrCallArgs.One
                 (compiler_ir_types.CompilerIrValue.I64 12))
               (compiler_ast_types.AstType.Bool))
@@ -12597,7 +13149,7 @@
 
 (define (opt-inline-loop-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-loop)
+    symbols.inline-loop
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     1
@@ -12629,7 +13181,7 @@
 
 (define (opt-inline-loop-caller [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     1
@@ -12639,7 +13191,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             0
-            (struct-get symbols inline-loop)
+            symbols.inline-loop
             compiler_ir_types.CompilerIrCallArgs.Nil
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
@@ -12682,7 +13234,7 @@
 ;; freshened by the site prefix so the caller's labels stay unique.
 (define (opt-inline-mb-bounds-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols mb-bounds)
+    symbols.mb-bounds
     (compiler_ir_types.compiler-ir-param-cons
       (compiler_ir_types.CompilerIrParam.Param
         "idx"
@@ -12730,7 +13282,7 @@
 
 (define (opt-inline-mb-bounds-caller [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     (compiler_ir_types.compiler-ir-param-cons
       (compiler_ir_types.CompilerIrParam.Param
         "a"
@@ -12750,7 +13302,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             2
-            (struct-get symbols mb-bounds)
+            symbols.mb-bounds
             (compiler_ir_types.CompilerIrCallArgs.Two
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.Var 1))
@@ -12888,13 +13440,13 @@
               compiler_ir_types.CompilerIrBlockList.Nil)))))))
 
 (define (opt-inline-switch-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
-  (opt-inline-switch-callee-named (struct-get symbols inline-switch)))
+  (opt-inline-switch-callee-named symbols.inline-switch))
 
 ;; The acyclic counterpart exercises Switch admission and label remapping. Its
 ;; join phi makes stale, unprefixed case/default predecessor labels observable.
 (define (opt-inline-acyclic-switch-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-switch)
+    symbols.inline-switch
     (opt-inline-switch-params)
     (compiler_ast_types.AstType.I64)
     4
@@ -12967,9 +13519,9 @@
     (begin
       ;; Swap the first two arguments so the Switch scrutinee and BoundsCheck
       ;; index must both be remapped rather than retaining their callee ids.
-      (array-set! args 0 (compiler_ir_types.CompilerIrValue.Var 1))
-      (array-set! args 1 (compiler_ir_types.CompilerIrValue.Var 0))
-      (array-set! args 2 (compiler_ir_types.CompilerIrValue.Var 2))
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
       (compiler_ir_types.CompilerIrInstr.Call
         3
         callee-name
@@ -12980,7 +13532,7 @@
   [symbols : OptInlineMultiTestSymbols]
   [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     (opt-inline-switch-params)
     (compiler_ast_types.AstType.I64)
     4
@@ -12997,7 +13549,7 @@
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
 (define (opt-inline-switch-caller [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
-  (opt-inline-switch-caller-named symbols (struct-get symbols inline-switch)))
+  (opt-inline-switch-caller-named symbols symbols.inline-switch))
 
 (define (opt-inline-cloned-switch-terminator-ok?
   [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
@@ -13191,9 +13743,9 @@
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
       (array.make-array compiler_ir_types.CompilerIrValue 3)]
     (begin
-      (array-set! args 0 (compiler_ir_types.CompilerIrValue.Var 1))
-      (array-set! args 1 (compiler_ir_types.CompilerIrValue.Var 0))
-      (array-set! args 2 (compiler_ir_types.CompilerIrValue.Var 2))
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
       (compiler_ir_types.CompilerIrInstr.Call
         dst
         callee-name
@@ -13296,13 +13848,13 @@
 (define (compiler-optimize-inline-bounds-loop-in-loop-site-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_ir_types.compiler-ir-function-cons
           (opt-inline-loop-site-function
-            (struct-get symbols main)
+            symbols.main
             callee-name
             (opt-inline-loop-site-entry-instrs))
           (compiler_ir_types.compiler-ir-function-cons
@@ -13325,7 +13877,7 @@
 (define (compiler-optimize-inline-bounds-loop-cold-site-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -13350,8 +13902,8 @@
   [symbols : OptInlineMultiTestSymbols]
   [mid-entry : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrFunctionList
   (let
-    [mid-name : i64 (struct-get symbols inline-nonleaf)]
-    [leaf-name : i64 (struct-get symbols inline-switch)]
+    [mid-name : i64 symbols.inline-nonleaf]
+    [leaf-name : i64 symbols.inline-switch]
     (compiler_ir_types.compiler-ir-function-cons
       (opt-inline-switch-caller-named symbols mid-name)
       (compiler_ir_types.compiler-ir-function-cons
@@ -13467,7 +14019,7 @@
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
       (array.make-array compiler_ir_types.CompilerIrValue 1)]
     (begin
-      (array-set! args 0 (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Call
           4
@@ -13504,20 +14056,20 @@
           name
           callee-name
           (opt-inline-loop-site-entry-instrs))
-        (opt-inline-dup-caller-chain (box-get rest) callee-name tail))]))
+        (opt-inline-dup-caller-chain (__tl-box-place rest) callee-name tail))]))
 
 (define (opt-inline-dup-two-caller-names [symbols : OptInlineMultiTestSymbols]) : compiler_optimize.OptSlotList
   (compiler_optimize.OptSlotList.Cons
-    (struct-get symbols main)
+    symbols.main
     (box
       (compiler_optimize.OptSlotList.Cons
-        (struct-get symbols inline-nonleaf)
+        symbols.inline-nonleaf
         (box (compiler_optimize.OptSlotList.Nil))))))
 
 (define (opt-inline-dup-three-caller-names
   [symbols : OptInlineMultiTestSymbols]) : compiler_optimize.OptSlotList
   (compiler_optimize.OptSlotList.Cons
-    (struct-get symbols inline-loop)
+    symbols.inline-loop
     (box (opt-inline-dup-two-caller-names symbols))))
 
 (define (opt-inline-dup-optimized
@@ -13541,7 +14093,7 @@
 (define (compiler-optimize-inline-dup-two-site-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [two : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-dup-optimized
         (opt-inline-dup-two-caller-names symbols)
@@ -13566,8 +14118,8 @@
 (define (compiler-optimize-inline-dup-cascade-per-caller-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
-    [mid-name : i64 (struct-get symbols inline-nonleaf)]
+    [callee-name : i64 symbols.inline-switch]
+    [mid-name : i64 symbols.inline-nonleaf]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -13580,7 +14132,7 @@
               (opt-inline-loop-site-entry-instrs))
             (compiler_ir_types.compiler-ir-function-cons
               (opt-inline-loop-site-function
-                (struct-get symbols inline-loop)
+                symbols.inline-loop
                 callee-name
                 (opt-inline-loop-site-entry-instrs))
               (compiler_ir_types.compiler-ir-function-cons
@@ -13608,14 +14160,12 @@
 (define (compiler-optimize-inline-dup-call-bearing-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-dup-optimized
         (opt-inline-dup-two-caller-names symbols)
         callee-name
-        (opt-inline-dup-leaf-calling
-          callee-name
-          (struct-get symbols external-helper)))]
+        (opt-inline-dup-leaf-calling callee-name symbols.external-helper))]
     (and
       (=
         (opt-count-direct-call-name-function-list
@@ -13848,7 +14398,10 @@
                       (compiler_ir_types.CompilerIrValue.Var 3)))
                   compiler_ir_types.CompilerIrInstrList.Nil)))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        (opt-inline-shared-flat-caller-chain (box-get rest) callee-name tail))]))
+        (opt-inline-shared-flat-caller-chain
+          (__tl-box-place rest)
+          callee-name
+          tail))]))
 
 (define (opt-inline-shared-caller-names
   [symbols : OptInlineMultiTestSymbols]
@@ -13858,11 +14411,11 @@
     [acc : compiler_optimize.OptSlotList (compiler_optimize.OptSlotList.Nil)]
     [i : i64 0]
     (begin
-      (array-set! all 0 (struct-get symbols main))
-      (array-set! all 1 (struct-get symbols inline-nonleaf))
-      (array-set! all 2 (struct-get symbols inline-loop))
-      (array-set! all 3 (struct-get symbols mb-bounds))
-      (array-set! all 4 (struct-get symbols inline-branch))
+      (set! (array-ref all 0) symbols.main)
+      (set! (array-ref all 1) symbols.inline-nonleaf)
+      (set! (array-ref all 2) symbols.inline-loop)
+      (set! (array-ref all 3) symbols.mb-bounds)
+      (set! (array-ref all 4) symbols.inline-branch)
       (while (< i count)
         (begin
           (set!
@@ -13880,11 +14433,11 @@
     [total : i64 0]
     [i : i64 0]
     (begin
-      (array-set! names 0 "main")
-      (array-set! names 1 "inline_nonleaf")
-      (array-set! names 2 "inline_loop")
-      (array-set! names 3 "mb_bounds")
-      (array-set! names 4 "inline_branch")
+      (set! (array-ref names 0) "main")
+      (set! (array-ref names 1) "inline_nonleaf")
+      (set! (array-ref names 2) "inline_loop")
+      (set! (array-ref names 3) "mb_bounds")
+      (set! (array-ref names 4) "inline_branch")
       (while (< i count)
         (begin
           (set!
@@ -13904,7 +14457,7 @@
   [in-loop? : bool]
   [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
   (let
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [names : compiler_optimize.OptSlotList
       (opt-inline-shared-caller-names symbols count)]
     [tail : compiler_ir_types.CompilerIrFunctionList
@@ -13923,7 +14476,7 @@
 (define (compiler-optimize-inline-shared-accessor-floor-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [admitted : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-shared-accessor-optimized
         symbols
@@ -13946,7 +14499,7 @@
 (define (compiler-optimize-inline-shared-accessor-call-free-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [refused : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-shared-accessor-optimized
         symbols
@@ -13954,7 +14507,7 @@
         true
         (opt-inline-shared-accessor-calling-leaf
           callee-name
-          (struct-get symbols external-helper)))]
+          symbols.external-helper))]
     (= (opt-inline-shared-remaining-calls refused 5) 5)))
 
 ;; A cyclic CALL-BEARING body at the same five in-loop sites stays refused:
@@ -13966,7 +14519,7 @@
 (define (compiler-optimize-inline-shared-accessor-acyclic-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [refused : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-shared-accessor-optimized
         symbols
@@ -13974,7 +14527,7 @@
         true
         (opt-inline-shared-cyclic-calling-leaf
           callee-name
-          (struct-get symbols external-helper)))]
+          symbols.external-helper))]
     (= (opt-inline-shared-remaining-calls refused 5) 5)))
 
 ;; The identical leaf at five STRAIGHT-LINE sites stays refused: a boundary that
@@ -13982,7 +14535,7 @@
 (define (compiler-optimize-inline-shared-accessor-in-loop-site-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [refused : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-shared-accessor-optimized
         symbols
@@ -14039,7 +14592,7 @@
 (define (compiler-optimize-inline-shared-accessor-dominant-floor-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [admitted : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-dominant-optimized callee-name 64)]
     [refused : compiler_ir_types.CompilerIrFunctionList
@@ -14054,7 +14607,7 @@
 (define (compiler-optimize-inline-shared-accessor-dominant-call-free-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [refused : compiler_ir_types.CompilerIrFunctionList
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -14064,7 +14617,7 @@
           (compiler_ir_types.compiler-ir-function-cons
             (opt-inline-shared-accessor-calling-leaf
               callee-name
-              (struct-get symbols external-helper))
+              symbols.external-helper)
             compiler_ir_types.CompilerIrFunctionList.Nil))
         2)]
     (= (opt-inline-dominant-remaining-calls refused 0 64) 64)))
@@ -14331,7 +14884,11 @@
             name
             callee-name
             (opt-inline-loop-site-entry-instrs)))
-        (opt-inline-depth-caller-chain (box-get rest) callee-name nested? tail))]))
+        (opt-inline-depth-caller-chain
+          (__tl-box-place rest)
+          callee-name
+          nested?
+          tail))]))
 
 (define (opt-inline-depth-optimized
   [callee-name : i64]
@@ -14355,7 +14912,7 @@
 (define (compiler-optimize-inline-accessor-depth-weight-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [admitted : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-depth-optimized
         callee-name
@@ -14376,7 +14933,7 @@
 (define (compiler-optimize-inline-accessor-depth-oversize-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [refused : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-depth-optimized
         callee-name
@@ -14390,7 +14947,7 @@
 (define (compiler-optimize-inline-accessor-depth-bounds-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [refused : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-depth-optimized
         callee-name
@@ -14587,7 +15144,7 @@
 (define (compiler-optimize-inline-branch-chain-site-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-dup-optimized
         (opt-inline-dup-two-caller-names symbols)
@@ -14602,7 +15159,7 @@
 (define (compiler-optimize-inline-branch-chain-merge-web-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-dup-optimized
         (opt-inline-dup-two-caller-names symbols)
@@ -14621,7 +15178,7 @@
 (define (compiler-optimize-inline-hot-loop-leaf-three-site-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-dup-optimized
         (opt-inline-dup-three-caller-names symbols)
@@ -14654,14 +15211,12 @@
 (define (compiler-optimize-inline-hot-loop-leaf-call-bearing-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-dup-optimized
         (opt-inline-dup-three-caller-names symbols)
         callee-name
-        (opt-inline-dup-leaf-calling
-          callee-name
-          (struct-get symbols external-helper)))]
+        (opt-inline-dup-leaf-calling callee-name symbols.external-helper))]
     (and
       (=
         (opt-count-direct-call-name-function-list
@@ -14719,7 +15274,7 @@
 (define (compiler-optimize-inline-hot-loop-leaf-too-big-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-dup-optimized
         (opt-inline-dup-three-caller-names symbols)
@@ -14767,7 +15322,7 @@
 (define (compiler-optimize-inline-hot-loop-leaf-in-loop-small-caller-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-dup-optimized
         (opt-inline-dup-three-caller-names symbols)
@@ -14896,7 +15451,10 @@
     [(compiler_optimize.OptSlotList.Cons name rest)
       (compiler_ir_types.compiler-ir-function-cons
         (opt-inline-hot-loop-big-caller-function name callee-name)
-        (opt-inline-hot-loop-big-caller-chain (box-get rest) callee-name tail))]))
+        (opt-inline-hot-loop-big-caller-chain
+          (__tl-box-place rest)
+          callee-name
+          tail))]))
 
 ;; The same big-tier leaf at the same in-loop sites inside 17-block callers:
 ;; above the caller-size cap the import would tax the caller loop's
@@ -14904,7 +15462,7 @@
 (define (compiler-optimize-inline-hot-loop-leaf-in-loop-big-caller-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -14941,7 +15499,7 @@
 (define (compiler-optimize-inline-hot-loop-leaf-loop-free-site-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-shared-accessor-optimized
         symbols
@@ -15026,12 +15584,15 @@
     [(compiler_optimize.OptSlotList.Cons name rest)
       (compiler_ir_types.compiler-ir-function-cons
         (opt-inline-hot-loop-cold-site-caller name callee-name)
-        (opt-inline-hot-loop-cold-site-chain (box-get rest) callee-name tail))]))
+        (opt-inline-hot-loop-cold-site-chain
+          (__tl-box-place rest)
+          callee-name
+          tail))]))
 
 (define (compiler-optimize-inline-hot-loop-leaf-cold-site-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -15099,13 +15660,13 @@
 (define (compiler-optimize-inline-hot-loop-leaf-budget-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [callee-name : i64 (struct-get symbols inline-switch)]
+    [callee-name : i64 symbols.inline-switch]
     [optimized : compiler_ir_types.CompilerIrFunctionList
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_ir_types.compiler-ir-function-cons
           (compiler_ir_types.CompilerIrFunction.Function
-            (struct-get symbols main)
+            symbols.main
             (opt-inline-switch-params)
             (compiler_ast_types.AstType.I64)
             9
@@ -15166,7 +15727,7 @@
               line
               col)
             (opt-inline-phi-span-ok-blocks?
-              (box-get rest)
+              (__tl-box-place rest)
               spans
               caller-name
               line
@@ -15185,7 +15746,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 (opt-test-symbol callee-text)]
-    [caller-name : i64 (struct-get symbols main)]
+    [caller-name : i64 symbols.main]
     [callee-phi : compiler_ir_types.CompilerIrInstr
       (opt-inline-switch-loop-phi-instr)]
     [caller-call : compiler_ir_types.CompilerIrInstr
@@ -15270,7 +15831,7 @@
 ;; of its two sites. Switch admission must not bypass that cost decision.
 (define (opt-inline-costly-switch-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-switch-costly)
+    symbols.inline-switch-costly
     (opt-inline-costly-switch-params)
     (compiler_ast_types.AstType.I64)
     2
@@ -15333,7 +15894,7 @@
 
 (define (opt-inline-costly-switch-caller [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     3
@@ -15343,14 +15904,14 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             0
-            (struct-get symbols inline-switch-costly)
+            symbols.inline-switch-costly
             (compiler_ir_types.CompilerIrCallArgs.One
               (compiler_ir_types.CompilerIrValue.I64 0))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Call
               1
-              (struct-get symbols inline-switch-costly)
+              symbols.inline-switch-costly
               (compiler_ir_types.CompilerIrCallArgs.One
                 (compiler_ir_types.CompilerIrValue.I64 1))
               (compiler_ast_types.AstType.I64))
@@ -15402,7 +15963,7 @@
 
 (define (opt-inline-mut-param-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-mut-param-loop)
+    symbols.inline-mut-param-loop
     (opt-inline-mut-param-params)
     (compiler_ast_types.AstType.I64)
     1
@@ -15441,7 +16002,7 @@
 
 (define (opt-inline-mut-param-caller [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     1
@@ -15451,7 +16012,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             0
-            (struct-get symbols inline-mut-param-loop)
+            symbols.inline-mut-param-loop
             (compiler_ir_types.CompilerIrCallArgs.One
               (compiler_ir_types.CompilerIrValue.I64 4))
             (compiler_ast_types.AstType.I64))
@@ -15494,7 +16055,7 @@
 (define (opt-inline-caller-phi-loop-caller
   [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     2
@@ -15504,7 +16065,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             0
-            (struct-get symbols inline-loop)
+            symbols.inline-loop
             compiler_ir_types.CompilerIrCallArgs.Nil
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
@@ -15578,7 +16139,7 @@
 
 (define (opt-inline-nonleaf-callee [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-nonleaf)
+    symbols.inline-nonleaf
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     1
@@ -15597,7 +16158,7 @@
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Call
               0
-              (struct-get symbols external-helper)
+              symbols.external-helper
               compiler_ir_types.CompilerIrCallArgs.Nil
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.compiler-ir-instr-cons
@@ -15617,7 +16178,7 @@
 
 (define (opt-inline-nonleaf-caller [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     1
@@ -15627,7 +16188,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             0
-            (struct-get symbols inline-nonleaf)
+            symbols.inline-nonleaf
             compiler_ir_types.CompilerIrCallArgs.Nil
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
@@ -15667,7 +16228,7 @@
 (define (opt-inline-repeated-nonleaf-predicate-callee
   [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols inline-tiny-nonleaf-predicate)
+    symbols.inline-tiny-nonleaf-predicate
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.Bool)
     2
@@ -15686,7 +16247,7 @@
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Call
               1
-              (struct-get symbols external-predicate)
+              symbols.external-predicate
               compiler_ir_types.CompilerIrCallArgs.Nil
               (compiler_ast_types.AstType.Bool))
             (compiler_ir_types.compiler-ir-instr-cons
@@ -15707,7 +16268,7 @@
 (define (opt-inline-repeated-nonleaf-predicate-caller
   [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols main)
+    symbols.main
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.Bool)
     2
@@ -15717,7 +16278,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Call
             0
-            (struct-get symbols inline-tiny-nonleaf-predicate)
+            symbols.inline-tiny-nonleaf-predicate
             compiler_ir_types.CompilerIrCallArgs.Nil
             (compiler_ast_types.AstType.Bool))
           (compiler_ir_types.compiler-ir-instr-cons
@@ -15732,7 +16293,7 @@
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Call
               1
-              (struct-get symbols inline-tiny-nonleaf-predicate)
+              symbols.inline-tiny-nonleaf-predicate
               compiler_ir_types.CompilerIrCallArgs.Nil
               (compiler_ast_types.AstType.Bool))
             (compiler_ir_types.compiler-ir-instr-cons
@@ -15794,18 +16355,18 @@
         (compiler_optimize.opt-inline-census-refcount
           index
           census
-          (struct-get symbols inline-add))
+          symbols.inline-add)
         1)
       (not
         (compiler_optimize.opt-inline-census-address-taken?
           index
           census
-          (struct-get symbols inline-add)))
+          symbols.inline-add))
       (compiler_optimize.opt-inline-census-absorbable?
         index
         census
-        (struct-get symbols main)
-        (struct-get symbols inline-add)))))
+        symbols.main
+        symbols.inline-add))))
 
 (define (compiler-optimize-inline-census-address-ok?) : bool
   (let
@@ -15820,13 +16381,13 @@
       (compiler_optimize.opt-inline-census-address-taken?
         index
         census
-        (struct-get symbols inline-add))
+        symbols.inline-add)
       (not
         (compiler_optimize.opt-inline-census-absorbable?
           index
           census
-          (struct-get symbols main)
-          (struct-get symbols inline-add))))))
+          symbols.main
+          symbols.inline-add)))))
 
 (define (compiler-optimize-inline-cost-model-ok?) : bool
   (and
@@ -15912,7 +16473,7 @@
             (compiler_ir_types.CompilerIrValue.I64 first-value)
             _)
           rest)
-        (match (box-get rest)
+        (match (__tl-box-place rest)
           [(compiler_ir_types.CompilerIrInstrList.Cons
               (compiler_ir_types.CompilerIrInstr.BinOp
                 second-dst
@@ -15921,7 +16482,7 @@
                 (compiler_ir_types.CompilerIrValue.I64 second-right)
                 _)
               rest2)
-            (match (box-get rest2)
+            (match (__tl-box-place rest2)
               [(compiler_ir_types.CompilerIrInstrList.Cons
                   (compiler_ir_types.CompilerIrInstr.Mov
                     final-dst
@@ -15936,7 +16497,7 @@
                   (= second-right 5)
                   (= final-dst 99)
                   (= final-source 11)
-                  (match (box-get rest3)
+                  (match (__tl-box-place rest3)
                     [(compiler_ir_types.CompilerIrInstrList.Nil) true]
                     [_ false]))]
               [_ false])]
@@ -16524,7 +17085,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block block-label _)
           (if (= block-label label)
             true
-            (opt-block-list-has-label? (box-get rest) label))])]
+            (opt-block-list-has-label? (__tl-box-place rest) label))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-block-list-has-label?
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -16541,7 +17102,7 @@
         (match block
           [(compiler_ir_types.CompilerIrBlock.Block block-label _)
             (= block-label label)])
-        (opt-block-list-label-at? (box-get rest) (- index 1) label))]
+        (opt-block-list-label-at? (__tl-box-place rest) (- index 1) label))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-block-list-label-at?
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -16567,11 +17128,7 @@
 
 (define (opt-count-branches-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-branches-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-branches-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-count-branches-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
@@ -16582,7 +17139,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-branches-instr-seq instrs)
-            (opt-count-branches-blocks (box-get rest)))])]
+            (opt-count-branches-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-branches-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -16612,12 +17169,7 @@
 (define (opt-count-jump-to-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [target : i64]) : i64
-  (opt-count-jump-to-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    target
-    0))
+  (opt-count-jump-to-instr-seq-from instrs.slots 0 instrs.len target 0))
 
 (define (opt-count-jump-to-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -16629,7 +17181,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-jump-to-instr-seq instrs target)
-            (opt-count-jump-to-blocks (box-get rest) target))])]
+            (opt-count-jump-to-blocks (__tl-box-place rest) target))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-jump-to-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -16654,11 +17206,7 @@
 
 (define (opt-count-tail-call-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-tail-call-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-tail-call-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-count-tail-call-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
@@ -16669,7 +17217,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-tail-call-instr-seq instrs)
-            (opt-count-tail-call-blocks (box-get rest)))])]
+            (opt-count-tail-call-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-tail-call-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -16872,11 +17420,7 @@
 
 (define (opt-count-phi-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-phi-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-phi-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-count-phi-blocks [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
   (match blocks
@@ -16886,7 +17430,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-phi-instr-seq instrs)
-            (opt-count-phi-blocks (box-get rest)))])]
+            (opt-count-phi-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-phi-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -16904,7 +17448,7 @@
               1
               0)]
           [_ 0])
-        (opt-count-mov-dst-instrs (box-get rest) dst))]))
+        (opt-count-mov-dst-instrs (__tl-box-place rest) dst))]))
 
 (define (opt-count-mov-dst-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -16931,12 +17475,7 @@
 (define (opt-count-mov-dst-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [dst : i64]) : i64
-  (opt-count-mov-dst-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    dst
-    0))
+  (opt-count-mov-dst-instr-seq-from instrs.slots 0 instrs.len dst 0))
 
 (define (opt-count-mov-dst-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -16948,7 +17487,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-mov-dst-instr-seq instrs dst)
-            (opt-count-mov-dst-blocks (box-get rest) dst))])]
+            (opt-count-mov-dst-blocks (__tl-box-place rest) dst))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-mov-dst-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -16963,7 +17502,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-arith-instr-seq instrs)
-            (opt-count-arith-blocks (box-get rest)))])]
+            (opt-count-arith-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-arith-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -16978,7 +17517,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
           (if (= block-label label)
             (opt-count-arith-instr-seq instrs)
-            (opt-count-arith-label-blocks (box-get rest) label))])]
+            (opt-count-arith-label-blocks (__tl-box-place rest) label))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-arith-label-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -17006,11 +17545,7 @@
 
 (define (opt-count-mul-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-mul-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-mul-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-count-mul-label-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -17022,7 +17557,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
           (if (= block-label label)
             (opt-count-mul-instr-seq instrs)
-            (opt-count-mul-label-blocks (box-get rest) label))])]
+            (opt-count-mul-label-blocks (__tl-box-place rest) label))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-mul-label-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -17040,7 +17575,7 @@
           (let
             [value : i64 (opt-mov-dst-i64-value-instr-seq instrs dst fallback)]
             (if (= value fallback)
-              (opt-blocks-mov-dst-i64-value (box-get rest) dst fallback)
+              (opt-blocks-mov-dst-i64-value (__tl-box-place rest) dst fallback)
               value))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-blocks-mov-dst-i64-value
@@ -17056,7 +17591,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-cast-instr-seq instrs)
-            (opt-count-cast-blocks (box-get rest)))])]
+            (opt-count-cast-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-cast-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -17080,11 +17615,7 @@
 
 (define (opt-count-gep-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-gep-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-gep-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-count-gep-blocks [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
   (match blocks
@@ -17094,7 +17625,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-gep-instr-seq instrs)
-            (opt-count-gep-blocks (box-get rest)))])]
+            (opt-count-gep-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-gep-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -17109,7 +17640,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
           (if (= block-label label)
             (opt-count-gep-instr-seq instrs)
-            (opt-count-gep-label-blocks (box-get rest) label))])]
+            (opt-count-gep-label-blocks (__tl-box-place rest) label))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-gep-label-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -17123,7 +17654,7 @@
         (match instr
           [(compiler_ir_types.CompilerIrInstr.Load _ _ _) 1]
           [_ 0])
-        (opt-count-load-instrs (box-get rest)))]))
+        (opt-count-load-instrs (__tl-box-place rest)))]))
 
 (define (opt-count-load-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -17144,11 +17675,7 @@
 
 (define (opt-count-load-instr-seq
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (opt-count-load-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (opt-count-load-instr-seq-from instrs.slots 0 instrs.len 0))
 
 (define (opt-count-load-blocks [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
   (match blocks
@@ -17158,7 +17685,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-count-load-instr-seq instrs)
-            (opt-count-load-blocks (box-get rest)))])]
+            (opt-count-load-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-load-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -17173,7 +17700,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
           (if (= block-label label)
             (opt-count-load-instr-seq instrs)
-            (opt-count-load-label-blocks (box-get rest) label))])]
+            (opt-count-load-label-blocks (__tl-box-place rest) label))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-load-label-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -17191,7 +17718,7 @@
           (let
             [value : i64 (opt-copy-binop-lhs-var-instr-seq instrs dst)]
             (if (= value (- 0 1))
-              (opt-blocks-binop-lhs-var (box-get rest) dst fallback)
+              (opt-blocks-binop-lhs-var (__tl-box-place rest) dst fallback)
               value))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-blocks-binop-lhs-var
@@ -17211,7 +17738,7 @@
           (let
             [value : i64 (opt-mov-src-var-instr-seq instrs dst fallback)]
             (if (= value fallback)
-              (opt-blocks-mov-src-var (box-get rest) dst fallback)
+              (opt-blocks-mov-src-var (__tl-box-place rest) dst fallback)
               value))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-blocks-mov-src-var
@@ -17233,8 +17760,8 @@
             _)
           (if (= mov-dst dst)
             src
-            (opt-mov-src-var (box-get rest) dst fallback))]
-        [_ (opt-mov-src-var (box-get rest) dst fallback)])]))
+            (opt-mov-src-var (__tl-box-place rest) dst fallback))]
+        [_ (opt-mov-src-var (__tl-box-place rest) dst fallback)])]))
 
 (define (opt-mov-src-var-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -17258,12 +17785,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [dst : i64]
   [fallback : i64]) : i64
-  (opt-mov-src-var-instr-seq-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    dst
-    fallback))
+  (opt-mov-src-var-instr-seq-from instrs.slots 0 instrs.len dst fallback))
 
 (define (opt-cfg-test-function [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -17975,9 +18497,8 @@
             (compiler_ir_types.CompilerIrInstrList.Nil))
           (compiler_ir_types.CompilerIrBlockList.Nil)))]
     (begin
-      (array-set!
-        buckets
-        0
+      (set!
+        (array-ref buckets 0)
         (compiler_optimize.opt-global-expr-facts-prepend
           (compiler_optimize.opt-global-expr-facts-new)
           (compiler_optimize.OptGlobalExprFact.Fact key 7 0 1)))
@@ -18024,7 +18545,7 @@
       (array.make-array compiler_optimize.OptGvnBucket 1)]
     [table : compiler_optimize.OptGvnMap (compiler_optimize.OptGvnMap buckets)]
     (begin
-      (array-set! buckets 0 (compiler_optimize.OptGvnBucket.Nil))
+      (set! (array-ref buckets 0) (compiler_optimize.OptGvnBucket.Nil))
       (compiler_optimize.opt-gvn-table-insert!
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         table
@@ -20621,7 +21142,7 @@
               [(option_i64.Some id) (= id position)]
               [(option_i64.None) false])
             (opt-cfg-index-walk-order-ids-ok?
-              (box-get rest)
+              (__tl-box-place rest)
               index
               (+ position 1)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -21493,6 +22014,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       (opt_i64_i64_map.with-capacity 1)
+      (compiler_optimize.opt-global-cell-summary-empty)
       true
       func)
       [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
@@ -21540,6 +22062,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       (opt_i64_i64_map.with-capacity 1)
+      (compiler_optimize.opt-global-cell-summary-empty)
       true
       func)
       [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
@@ -22471,7 +22994,7 @@
                 (compiler_ir_types.compiler-ir-instr-cons
                   (compiler_ir_types.CompilerIrInstr.Call
                     12
-                    (struct-get symbols touch)
+                    symbols.touch
                     (compiler_ir_types.CompilerIrCallArgs.Nil)
                     (compiler_ast_types.AstType.I64))
                   (opt-licm-loop-finish-instrs))))))))
@@ -22593,7 +23116,7 @@
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Call
                 12
-                (struct-get symbols touch)
+                symbols.touch
                 (compiler_ir_types.CompilerIrCallArgs.Nil)
                 (compiler_ast_types.AstType.I64))
               (opt-licm-loop-finish-instrs))]
@@ -22612,11 +23135,11 @@
   [symbols : OptLicmTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
   (compiler_ir_types.compiler-ir-function-cons
     (opt-test-function-symbol
-      (struct-get symbols probe)
+      symbols.probe
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Call
           90
-          (struct-get symbols probe)
+          symbols.probe
           (compiler_ir_types.CompilerIrCallArgs.Nil)
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.compiler-ir-instr-cons
@@ -22626,7 +23149,7 @@
           (compiler_ir_types.CompilerIrInstrList.Nil))))
     (compiler_ir_types.compiler-ir-function-cons
       (opt-test-function-symbol
-        (struct-get symbols writer)
+        symbols.writer
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.StorePtr
             (compiler_ir_types.CompilerIrValue.Var 1)
@@ -22639,7 +23162,7 @@
             (compiler_ir_types.CompilerIrInstrList.Nil))))
       (compiler_ir_types.compiler-ir-function-cons
         (opt-test-function-symbol
-          (struct-get symbols leaf)
+          symbols.leaf
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Return
               (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -23553,7 +24076,7 @@
         (begin
           (opt_i64_i64_map.insert-ref!
             (&mut map)
-            (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols touch))
+            (compiler_ir_types.compiler-ir-symbol-id symbols.touch)
             1)
           map))]
     [header-clean-call-func : compiler_ir_types.CompilerIrFunction
@@ -23620,7 +24143,7 @@
       (opt-licm-summary-for-instr
         (compiler_ir_types.CompilerIrInstr.Call
           81
-          (struct-get symbols touch)
+          symbols.touch
           (compiler_ir_types.CompilerIrCallArgs.Nil)
           (compiler_ast_types.AstType.I64)))]
     [element-summary : compiler_optimize.OptLicmStoreSummary
@@ -23947,17 +24470,16 @@
           (compiler_optimize.opt-direct-call-noreturn?
             cbi.compiler-builtin-id-tl-abort-label))
         149]
-      [(compiler_optimize.opt-direct-call-noreturn? (struct-get symbols touch))
-        150]
+      [(compiler_optimize.opt-direct-call-noreturn? symbols.touch) 150]
       [(not (compiler_optimize.opt-licm-store-summary-clean? clean-summary)) 27]
       [(compiler_optimize.opt-licm-store-summary-clean? store-summary) 28]
-      [(not (struct-get store-summary header-or-unknown-store?)) 29]
-      [(struct-get store-summary call-or-unknown?) 30]
+      [(not store-summary.header-or-unknown-store?) 29]
+      [store-summary.call-or-unknown? 30]
       [(compiler_optimize.opt-licm-store-summary-clean? call-summary) 31]
-      [(not (struct-get call-summary call-or-unknown?)) 32]
-      [(struct-get call-summary header-or-unknown-store?) 33]
+      [(not call-summary.call-or-unknown?) 32]
+      [call-summary.header-or-unknown-store? 33]
       [(compiler_optimize.opt-licm-store-summary-clean? element-summary) 34]
-      [(not (struct-get element-summary element-only-store?)) 35]
+      [(not element-summary.element-only-store?) 35]
       [(not
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function header-element-func)))
@@ -24112,15 +24634,15 @@
       [(not
           (opt_i64_i64_map.contains?
             (& direct-clean-built)
-            (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols probe))))
+            (compiler_ir_types.compiler-ir-symbol-id symbols.probe)))
         62]
       [(opt_i64_i64_map.contains?
           (& direct-clean-built)
-          (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols writer)))
+          (compiler_ir_types.compiler-ir-symbol-id symbols.writer))
         63]
       [(opt_i64_i64_map.contains?
           (& direct-clean-built)
-          (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols leaf)))
+          (compiler_ir_types.compiler-ir-symbol-id symbols.leaf))
         64]
       ;; A descriptor load crosses the two-Gep data-buffer store chain.
       [(not
@@ -24217,15 +24739,15 @@
       [(not
           (opt_i64_i64_map.contains?
             (& direct-clean-union)
-            (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols leaf))))
+            (compiler_ir_types.compiler-ir-symbol-id symbols.leaf)))
         82]
       [(opt_i64_i64_map.contains?
           (& direct-clean-union)
-          (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols writer)))
+          (compiler_ir_types.compiler-ir-symbol-id symbols.writer))
         83]
       [(opt_i64_i64_map.contains?
           (& direct-clean-union)
-          (compiler_ir_types.compiler-ir-symbol-id (struct-get symbols probe)))
+          (compiler_ir_types.compiler-ir-symbol-id symbols.probe))
         84]
       [else 42])))
 
@@ -25934,7 +26456,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-lftr-def-count-seq instrs 0 var)
-            (opt-lftr-def-count-blocks (box-get rest) var))])]
+            (opt-lftr-def-count-blocks (__tl-box-place rest) var))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-lftr-def-count-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -25973,7 +26495,7 @@
             [found : i64 (opt-lftr-binop-operand-seq instrs 0 dst side)]
             (if (>= found 0)
               found
-              (opt-lftr-binop-operand-blocks (box-get rest) dst side)))])]
+              (opt-lftr-binop-operand-blocks (__tl-box-place rest) dst side)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-lftr-binop-operand-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -27955,7 +28477,7 @@
     [(compiler_ir_types.CompilerIrBlockList.Nil) acc]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (opt-bce-version-test-prefix-checks
-        (box-get rest)
+        (__tl-box-place rest)
         prefix
         (match block
           [(compiler_ir_types.CompilerIrBlock.Block label instrs)
@@ -29251,7 +29773,7 @@
               first-label
               (compiler_ir_types.compiler-ir-label "else__bce_fast"))
             (match (compiler_ir_types.compiler-ir-switch-case-list-force-cons
-              (box-get first-rest))
+              (__tl-box-place first-rest))
               [(compiler_ir_types.CompilerIrSwitchCaseList.Cons
                   second
                   second-rest)
@@ -29265,7 +29787,7 @@
                         second-label
                         (compiler_ir_types.compiler-ir-label "then__bce_fast"))
                       (match (compiler_ir_types.compiler-ir-switch-case-list-force-cons
-                        (box-get second-rest))
+                        (__tl-box-place second-rest))
                         [(compiler_ir_types.CompilerIrSwitchCaseList.Nil) true]
                         [_ false]))])]
               [_ false]))])]
@@ -29345,6 +29867,807 @@
           marked-out
           (compiler_ir_types.compiler-ir-label "body__bce_fast"))
         7]
+      [else 42])))
+
+;; --- second-exit (entry guard chain) fixture -----------------------------------
+;;
+;; The counter compare is NOT the header's own branch: the header tests a
+;; monotone flag first and only its continuing arm reaches the block that
+;; compares the counter. This is what `(while (if done false (< i n)) ...)`
+;; lowers to, and what `liveness_storage/recompute!` spends its scan on. Both
+;; branches leave the loop, so the shape is the pass's "second exiting branch"
+;; case.
+;;
+;;   entry -> header(counter phi, flag phi; branch flag -> flagexit, gate)
+;;            gate(c = i < n; branch c -> body, gateexit)
+;;            body(bounds_check i, len; jump merge)
+;;            merge(i+1; jump header)
+;;   flagexit/gateexit -> exit, which READS the flag directly.
+;;
+;; Variants:
+;;   0 the shape above;
+;;   1 adds a FAR direct use of the flag in a block the exit dominates;
+;;   2 makes that far use read the COUNTER instead -- a var the exit block
+;;     itself does not read, which the far repair refuses;
+;;   3 puts a bounds check in `gate`, on the guard chain: the compare does not
+;;     cover it, so the clone must KEEP it;
+;;   4 pulls `flagexit` into the loop, so the header branch is an ordinary
+;;     diamond with two in-loop successors and the chain walk stops;
+;;   5 gives the LATCH a second exit as well (`branch f, lexit, header`).
+(define opt-bce-mb2-test-frame : i64
+  20)
+
+(define (opt-bce-mb2-test-far-variant? [variant : i64]) : bool
+  (or (= variant 1) (= variant 2)))
+
+(define (opt-bce-mb2-test-entry-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "header"))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bce-mb2-test-header-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "header")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        3
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.compiler-ir-label "merge")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Phi
+          4
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Bool false)
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.compiler-ir-label "merge")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.compiler-ir-label "flagexit")
+            (compiler_ir_types.compiler-ir-label "gate"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-mb2-test-flagexit-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "flagexit")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (if (= variant 4)
+          ;; back inside the loop: the header branch is now a diamond
+          (compiler_ir_types.compiler-ir-label "merge")
+          (compiler_ir_types.compiler-ir-label "exit")))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bce-mb2-test-gate-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "gate")
+    (let
+      [tail : compiler_ir_types.CompilerIrInstrList
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "gateexit"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))]
+      (if (= variant 3)
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "mb2_gate_ok"))
+          tail)
+        tail))))
+
+(define (opt-bce-mb2-test-gateexit-block) : compiler_ir_types.CompilerIrBlock
+  (opt-bce-mb-test-jump-block
+    (compiler_ir_types.compiler-ir-label "gateexit")
+    (compiler_ir_types.compiler-ir-label "exit")))
+
+(define (opt-bce-mb2-test-body-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "body")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "mb2_ok0"))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          6
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "merge"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-mb2-test-merge-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "merge")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        8
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          9
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (if (= variant 5)
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.compiler-ir-label "lexit")
+              (compiler_ir_types.compiler-ir-label "header"))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "header")))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-mb2-test-exit-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "exit")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (if (opt-bce-mb2-test-far-variant? variant)
+          (compiler_ir_types.compiler-ir-label "fara")
+          (compiler_ir_types.compiler-ir-label "ret1"))
+        (if (opt-bce-mb2-test-far-variant? variant)
+          (compiler_ir_types.compiler-ir-label "farb")
+          (compiler_ir_types.compiler-ir-label "ret0")))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bce-mb2-test-farjoin-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "farjoin")
+    (if (= variant 2)
+      ;; reads the COUNTER, which the wire point does not read
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          13
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 13)
+            (compiler_ir_types.compiler-ir-label "ret1")
+            (compiler_ir_types.compiler-ir-label "ret0"))
+          (compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.compiler-ir-label "ret1")
+          (compiler_ir_types.compiler-ir-label "ret0"))
+        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-bce-mb2-test-return-block [label : String] [value : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label label)
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.I64 value)))
+      (compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (opt-bce-mb2-test-tail-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [returns : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb2-test-return-block "ret1" 1)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-mb2-test-return-block "ret0" 0)
+          (if (= variant 5)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bce-mb2-test-return-block "lexit" 2)
+              compiler_ir_types.CompilerIrBlockList.Nil)
+            compiler_ir_types.CompilerIrBlockList.Nil)))]
+    (if (opt-bce-mb2-test-far-variant? variant)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb-test-jump-block
+          (compiler_ir_types.compiler-ir-label "fara")
+          (compiler_ir_types.compiler-ir-label "farjoin"))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-mb-test-jump-block
+            (compiler_ir_types.compiler-ir-label "farb")
+            (compiler_ir_types.compiler-ir-label "farjoin"))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bce-mb2-test-farjoin-block variant)
+            returns)))
+      returns)))
+
+(define (opt-bce-mb2-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bce-mb2-test-entry-block)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bce-mb2-test-header-block)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-mb2-test-flagexit-block variant)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-mb2-test-gate-block variant)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bce-mb2-test-gateexit-block)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bce-mb2-test-body-block)
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-bce-mb2-test-merge-block variant)
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-bce-mb2-test-exit-block variant)
+                  (opt-bce-mb2-test-tail-blocks variant))))))))))
+
+(define (opt-bce-mb2-test-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_mb2_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    opt-bce-mb2-test-frame
+    blocks))
+
+(define (opt-bce-mb2-test-versioned-fn [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-bce-version-function
+    (opt-bce-mb2-test-function (opt-bce-mb2-test-blocks variant))))
+
+(define (opt-bce-mb2-test-versioned [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (opt-bce-mb2-test-versioned-fn variant)))
+
+;; The versioner grows the frame, so the verify must see the function it
+;; returned, not a rebuild around the fixture's original frame.
+(define (opt-bce-mb2-test-verify-ok? [variant : i64]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function
+      (opt-bce-mb2-test-versioned-fn variant))))
+
+(define (opt-bce-mb2-test-versioned?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (opt-block-list-has-label?
+    blocks
+    (compiler_ir_types.compiler-ir-label "header__bce_fast")))
+
+;; Phis in one block.
+(define (opt-bce-mb2-test-block-phis
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (compiler_optimize.opt-unroll-phi-prefix-count instrs 0)])]))
+
+;; The var a block's terminating Branch tests, or -1.
+(define (opt-bce-mb2-test-branch-var
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            (if (< count 1)
+              (- 0 1)
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                instrs
+                (- count 1))
+                [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
+                  (match cond
+                    [(compiler_ir_types.CompilerIrValue.Var id) id]
+                    [_ (- 0 1)])]
+                [_ (- 0 1)])))])]))
+
+;; A loop whose entry test short-circuits through a SECOND exiting branch
+;; versions: the guard chain walk finds the counter compare one block below the
+;; header, the whole loop plus its two exit stubs clone, and the exit block's
+;; direct read of the flag becomes one merge phi carrying the slow value on the
+;; slow edges and the clone's value on the fast ones.
+(define (compiler-optimize-bce-version-mb-second-exit-self-test) : i64
+  (let
+    [plain : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 0)]
+    [far : compiler_ir_types.CompilerIrBlockList (opt-bce-mb2-test-versioned 1)]
+    (cond
+      [(not (opt-bce-mb2-test-verify-ok? 0)) 1]
+      [(not (opt-bce-mb2-test-versioned? plain)) 2]
+      ;; every loop block and both exit stubs cloned
+      [(not
+          (opt-block-list-has-label?
+            plain
+            (compiler_ir_types.compiler-ir-label "gate__bce_fast")))
+        3]
+      [(not
+          (opt-block-list-has-label?
+            plain
+            (compiler_ir_types.compiler-ir-label "flagexit__bce_fast")))
+        4]
+      [(not
+          (opt-block-list-has-label?
+            plain
+            (compiler_ir_types.compiler-ir-label "gateexit__bce_fast")))
+        5]
+      ;; the guard block sits on the preheader edge
+      [(not
+          (opt-block-list-has-label?
+            plain
+            (compiler_ir_types.compiler-ir-label "header__bce_guard")))
+        6]
+      ;; the body check is gone from the clone and kept in the original
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              plain
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        7]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              plain
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        8]
+      ;; the flag's direct outside read is wired through exactly one merge phi
+      [(not
+          (=
+            (opt-bce-mb2-test-block-phis
+              plain
+              (compiler_ir_types.compiler-ir-label "exit"))
+            1))
+        9]
+      [(<
+          (opt-bce-mb2-test-branch-var
+            plain
+            (compiler_ir_types.compiler-ir-label "exit"))
+          opt-bce-mb2-test-frame)
+        10]
+      ;; a FAR use in a block the exit dominates reuses that same merge phi
+      [(not (opt-bce-mb2-test-verify-ok? 1)) 11]
+      [(not (opt-bce-mb2-test-versioned? far)) 12]
+      [(not
+          (=
+            (opt-bce-mb2-test-block-phis
+              far
+              (compiler_ir_types.compiler-ir-label "exit"))
+            1))
+        13]
+      [(not
+          (=
+            (opt-bce-mb2-test-branch-var
+              far
+              (compiler_ir_types.compiler-ir-label "farjoin"))
+            (opt-bce-mb2-test-branch-var
+              far
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        14]
+      [else 42])))
+
+;; The boundaries of the same admission.
+(define (compiler-optimize-bce-version-mb-second-exit-refusal-self-test) : i64
+  (let
+    [far-other : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 2)]
+    [chain-check : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 3)]
+    [diamond : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 4)]
+    [latch-exit : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 5)]
+    (cond
+      ;; a far use of a var the wire point itself does not read has no proof
+      ;; that the def dominates the wire point's predecessor edges: refused
+      [(not (opt-bce-mb2-test-verify-ok? 2)) 1]
+      [(opt-bce-mb2-test-versioned? far-other) 2]
+      ;; a check ON the guard chain runs one time more than the body does, so
+      ;; the compare does not cover it and the clone KEEPS it
+      [(not (opt-bce-mb2-test-verify-ok? 3)) 3]
+      [(not (opt-bce-mb2-test-versioned? chain-check)) 4]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              chain-check
+              (compiler_ir_types.compiler-ir-label "gate__bce_fast"))
+            1))
+        5]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              chain-check
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        6]
+      ;; two in-loop successors ahead of the compare is an ordinary diamond,
+      ;; not a guard chain: the walk stops and the loop is refused
+      [(not (opt-bce-mb2-test-verify-ok? 4)) 7]
+      [(opt-bce-mb2-test-versioned? diamond) 8]
+      ;; the latch may carry a second exit of its own
+      [(not (opt-bce-mb2-test-verify-ok? 5)) 9]
+      [(not (opt-bce-mb2-test-versioned? latch-exit)) 10]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              latch-exit
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            0))
+        11]
+      [else 42])))
+
+;; --- cross-array check-domain fusion ------------------------------------------
+;;
+;; A counted multi-block loop walking THREE arrays through one opaque index.
+;; `body` (the header) loads `v = mem[i]` under the counter check and an
+;; ANCHOR check `v < lenA`; the dominated arm `then` uses the same `v` against
+;; `lenB` and `lenC`. Only the anchor bounds `v` -- it is a loaded value, so no
+;; trip-range derivation reaches it -- and the two dominated checks derive from
+;; it under the guard conjuncts `lenA <=u lenB` and `lenA <=u lenC`, which is
+;; exactly the fusion rule.
+;;
+;; Variants:
+;;   0 the arm READS through the covered index;
+;;   1 the arm indexes an ESCAPING value instead -- a second load nothing has
+;;     bounded -- so its checks have no anchor and must be kept;
+;;   2 the arm STORES through the covered index (the covered-store case: a
+;;     store's check constrains its INDEX, so it fuses exactly like a read).
+;;
+;; Vars: 0-4 params (n, lenA, lenB, lenC, mem), 5 the counter phi, 6-10 the
+;; header, 11-16 the arm, 17-18 the latch.
+(define opt-bce-fuse-test-frame : i64
+  20)
+
+(define (opt-bce-fuse-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "n"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "lena"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "lenb"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "lenc"
+            (compiler_ast_types.AstType.I64)
+            3)
+          (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.CompilerIrParam.Param
+              "mem"
+              (compiler_ast_types.AstType.U64)
+              4)
+            (compiler_ir_types.CompilerIrParamList.Nil)))))))
+
+(define (opt-bce-fuse-test-body-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "body")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        5
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 17)
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.compiler-ir-label "fuse_ok0"))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            6
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              7
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 7)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "fuse_ok1"))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  8
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.Var 7)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Load
+                    9
+                    (compiler_ir_types.CompilerIrValue.Var 8)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.BinOp
+                      10
+                      (compiler_ir_types.CompilerIrBinOp.Lt)
+                      (compiler_ir_types.CompilerIrValue.Var 9)
+                      (compiler_ir_types.CompilerIrValue.Var 0)
+                      (compiler_ast_types.AstType.Bool))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Branch
+                        (compiler_ir_types.CompilerIrValue.Var 10)
+                        (compiler_ir_types.compiler-ir-label "then")
+                        (compiler_ir_types.compiler-ir-label "latch"))
+                      (compiler_ir_types.CompilerIrInstrList.Nil))))))))))))
+
+;; The index each arm check uses. Variant 1 gives them two different ESCAPING
+;; loads -- values no check has bounded and no anchor dominates -- so neither
+;; may be admitted; every other variant uses the covered `v`.
+(define (opt-bce-fuse-test-arm-index [variant : i64]) : i64
+  (if (= variant 1)
+    12
+    7))
+
+(define (opt-bce-fuse-test-arm-index2 [variant : i64]) : i64
+  (if (= variant 1)
+    14
+    7))
+
+(define (opt-bce-fuse-test-then-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "then")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        11
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          12
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var
+              (opt-bce-fuse-test-arm-index variant))
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "fuse_ok2"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Gep
+              13
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.Var
+                (opt-bce-fuse-test-arm-index variant))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Load
+                14
+                (compiler_ir_types.CompilerIrValue.Var 13)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var
+                    (opt-bce-fuse-test-arm-index2 variant))
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.compiler-ir-label "fuse_ok3"))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Gep
+                    15
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ir_types.CompilerIrValue.Var
+                      (opt-bce-fuse-test-arm-index2 variant))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (if (= variant 2)
+                      (compiler_ir_types.CompilerIrInstr.StorePtr
+                        (compiler_ir_types.CompilerIrValue.Var 15)
+                        (compiler_ir_types.CompilerIrValue.Var 14)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.CompilerIrInstr.Load
+                        16
+                        (compiler_ir_types.CompilerIrValue.Var 15)
+                        (compiler_ast_types.AstType.I64)))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Jump
+                        (compiler_ir_types.compiler-ir-label "latch"))
+                      (compiler_ir_types.CompilerIrInstrList.Nil))))))))))))
+
+(define (opt-bce-fuse-test-latch-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "latch")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        17
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          18
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 17)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 18)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-fuse-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bce-mb-test-jump-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-label "body"))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bce-fuse-test-body-block)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-fuse-test-then-block variant)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-fuse-test-latch-block)
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 0)))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-bce-fuse-test-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_fuse_fixture")
+    (opt-bce-fuse-test-params)
+    (compiler_ast_types.AstType.I64)
+    opt-bce-fuse-test-frame
+    blocks))
+
+(define (opt-bce-fuse-test-versioned [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-bce-version-function
+    (opt-bce-fuse-test-function (opt-bce-fuse-test-blocks variant))))
+
+(define (opt-bce-fuse-test-has-block?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [name : String]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label name))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some _) true]))
+
+(define (opt-bce-fuse-test-verify-ok?
+  [func : compiler_ir_types.CompilerIrFunction]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function func)))
+
+;; (a) three arrays, ONE region guard, a fast clone whose only surviving check
+;;     is the anchor the other two derive from;
+;; (b) the covered STORE reaches the same shape;
+;; (c) an escaping index refuses fusion and keeps both dominated checks;
+;; (d) the slow region is byte-for-byte the original, so a guard-failing or
+;;     zero-trip run still reaches every check at its own abort site;
+;; (f) re-running the pass on the rewrite changes nothing.
+(define (compiler-optimize-bce-fuse-self-test) : i64
+  (let
+    [read-only-fn : compiler_ir_types.CompilerIrFunction
+      (opt-bce-fuse-test-versioned 0)]
+    [read-only : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks read-only-fn)]
+    [escaping-fn : compiler_ir_types.CompilerIrFunction
+      (opt-bce-fuse-test-versioned 1)]
+    [escaping : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks escaping-fn)]
+    [stored-fn : compiler_ir_types.CompilerIrFunction
+      (opt-bce-fuse-test-versioned 2)]
+    [stored : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks stored-fn)]
+    [again-fn : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function read-only-fn)]
+    [again : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks again-fn)]
+    (cond
+      [(not (opt-bce-fuse-test-verify-ok? read-only-fn)) 1]
+      ;; (a) one guard for the whole region, on the loop entry edge
+      [(not (opt-bce-fuse-test-has-block? read-only "body__bce_guard")) 2]
+      [(opt-bce-fuse-test-has-block? read-only "then__bce_guard") 3]
+      [(opt-bce-fuse-test-has-block? read-only "latch__bce_guard") 4]
+      ;; the counter check derives from the trip range and the two dominated
+      ;; checks derive from the anchor, which itself stays: nothing bounds an
+      ;; opaque load
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              read-only
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            1))
+        5]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              read-only
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            0))
+        6]
+      ;; (d) the slow region keeps every check at its original site
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              read-only
+              (compiler_ir_types.compiler-ir-label "body"))
+            2))
+        7]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              read-only
+              (compiler_ir_types.compiler-ir-label "then"))
+            2))
+        8]
+      ;; (b) the covered store derives exactly like the covered read
+      [(not (opt-bce-fuse-test-verify-ok? stored-fn)) 9]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              stored
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            0))
+        10]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              stored
+              (compiler_ir_types.compiler-ir-label "then"))
+            2))
+        11]
+      ;; (c) an escaping index has no anchor: both dominated checks stay in the
+      ;; clone, exactly as any underivable index does
+      [(not (opt-bce-fuse-test-verify-ok? escaping-fn)) 12]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              escaping
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            2))
+        13]
+      ;; (f) idempotence: a converted region is not offered a second time
+      [(not (opt-bce-fuse-test-verify-ok? again-fn)) 14]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count again)
+            (compiler_ir_types.compiler-ir-block-list-count read-only)))
+        15]
       [else 42])))
 
 (define (opt-bce-mb-pair-test-guard-has-len-fact-from?
@@ -31787,7 +33110,7 @@
                   label)
                   1
                   0)))])
-        (opt-flag-exit-test-pred-count-from (box-get rest) label))]
+        (opt-flag-exit-test-pred-count-from (__tl-box-place rest) label))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-flag-exit-test-pred-count-from
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -32264,7 +33587,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-gep-split-test-gep-count-from instrs 0 0)
-            (opt-gep-split-test-gep-count (box-get rest)))])]
+            (opt-gep-split-test-gep-count (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-gep-split-test-gep-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -32663,7 +33986,7 @@
     [(compiler_ir_types.CompilerIrBlockList.Nil) acc]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (opt-bce-mb-test-matching-blocks
-        (box-get rest)
+        (__tl-box-place rest)
         needle
         (match block
           [(compiler_ir_types.CompilerIrBlock.Block label _)
@@ -32685,7 +34008,7 @@
     [(compiler_ir_types.CompilerIrBlockList.Nil) acc]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (opt-bce-mb-test-matching-checks
-        (box-get rest)
+        (__tl-box-place rest)
         needle
         (match block
           [(compiler_ir_types.CompilerIrBlock.Block label instrs)
@@ -33220,7 +34543,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! out i (cast (+ seed i) : u8))
+          (set! (array-ref out i) (cast (+ seed i) : u8))
           (set! i (+ i 1))))
       out)))
 
@@ -33255,7 +34578,7 @@
     [buf : (Array u8) (opt-bce-mb-eq-runtime-make 16 0)]
     [other : (Array u8) (opt-bce-mb-eq-runtime-make 16 0)]
     (begin
-      (array-set! other 15 255)
+      (set! (array-ref other 15) 255)
       (test.assert-bool-eq
         (opt-bce-mb-eq-runtime-slice-eq? buf 8 buf 8 8)
         true
@@ -33300,7 +34623,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! out i (* i step))
+          (set! (array-ref out i) (* i step))
           (set! i (+ i 1))))
       out)))
 
@@ -33343,7 +34666,7 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! out (+ base (* i 2)) value)
+          (set! (array-ref out (+ base (* i 2))) value)
           (set! i (+ i 1))))
       unit)))
 
@@ -33357,7 +34680,7 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! out (+ base (* i 8)) value)
+          (set! (array-ref out (+ base (* i 8))) value)
           (set! i (+ i 1))))
       unit)))
 
@@ -33375,7 +34698,7 @@
         (let
           [src : i64 (array-ref tokens (+ base (* i 2)))]
           (begin
-            (array-set! fill src (+ (array-ref fill src) 1))
+            (set! (array-ref fill src) (+ (array-ref fill src) 1))
             (set! i (+ i 1)))))
       unit)))
 
@@ -33481,14 +34804,14 @@
     [tokens : (Array i64) (opt-bce-sb-runtime-make 16 0)]
     [fill : (Array i64) (opt-bce-sb-runtime-make 8 0)]
     (begin
-      (array-set! tokens 0 7)
-      (array-set! tokens 2 3)
-      (array-set! tokens 4 7)
-      (array-set! tokens 6 1)
-      (array-set! tokens 8 3)
-      (array-set! tokens 10 7)
-      (array-set! tokens 12 2)
-      (array-set! tokens 14 5)
+      (set! (array-ref tokens 0) 7)
+      (set! (array-ref tokens 2) 3)
+      (set! (array-ref tokens 4) 7)
+      (set! (array-ref tokens 6) 1)
+      (set! (array-ref tokens 8) 3)
+      (set! (array-ref tokens 10) 7)
+      (set! (array-ref tokens 12) 2)
+      (set! (array-ref tokens 14) 5)
       ;; base + 2*(count-1) == 14: the last token read is in bounds; the
       ;; fill checks ride along in the fast clone.
       (opt-bce-sb-runtime-hist2 tokens fill 0 8)
@@ -33564,9 +34887,9 @@
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
       (array.make-array compiler_ir_types.CompilerIrValue 3)]
     (begin
-      (array-set! args 0 (compiler_ir_types.CompilerIrValue.Var 0))
-      (array-set! args 1 (compiler_ir_types.CompilerIrValue.Var 1))
-      (array-set! args 2 (compiler_ir_types.CompilerIrValue.Var 2))
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
       (compiler_ir_types.CompilerIrCallArgs.Array args))))
 
 (define (opt-merged-loop-test-tail-args [rounds : i64]) : compiler_ir_types.CompilerIrCallArgs
@@ -33576,10 +34899,10 @@
     (begin
       ;; The first three arguments are unchanged. Tail-recursion conversion
       ;; must not materialize identity writes for them.
-      (array-set! args 0 (compiler_ir_types.CompilerIrValue.Var 0))
-      (array-set! args 1 (compiler_ir_types.CompilerIrValue.Var 1))
-      (array-set! args 2 (compiler_ir_types.CompilerIrValue.Var 2))
-      (array-set! args 3 (compiler_ir_types.CompilerIrValue.Var rounds))
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
+      (set! (array-ref args 3) (compiler_ir_types.CompilerIrValue.Var rounds))
       (compiler_ir_types.CompilerIrCallArgs.Array args))))
 
 (define (opt-merged-loop-test-callee-blocks) : compiler_ir_types.CompilerIrBlockList
@@ -33879,7 +35202,7 @@
       [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
         (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
           [(compiler_ir_types.CompilerIrPhiInputList.Cons a _ rest)
-            (match (box-get rest)
+            (match (__tl-box-place rest)
               [(compiler_ir_types.CompilerIrPhiInputList.Cons b _ _)
                 (compiler_ir_types.compiler-ir-value-cons
                   a
@@ -33929,7 +35252,7 @@
           (opt-ssa-preexisting-test-phi-inputs
             (compiler_optimize.opt-function-blocks constructed)))
           [(compiler_ir_types.CompilerIrValueList.Cons a rest)
-            (match (box-get rest)
+            (match (__tl-box-place rest)
               [(compiler_ir_types.CompilerIrValueList.Cons b _)
                 (match a
                   [(compiler_ir_types.CompilerIrValue.Var av)
@@ -34524,6 +35847,7 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       (opt_i64_i64_map.with-capacity 1)
+      (compiler_optimize.opt-global-cell-summary-empty)
       true
       func)
       [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
@@ -34684,7 +36008,7 @@
     (begin
       (while (and (< i n) ok)
         (begin
-          (array-set! arr i (+ (array-ref arr i) 1))
+          (set! (array-ref arr i) (+ (array-ref arr i) 1))
           (set! acc (+ acc (array-ref arr (- (- n 1) i))))
           (if (< (array-ref arr (- (- n 1) i)) 0)
             (set! ok false)
@@ -34698,14 +36022,14 @@
     [arr : (Array i64) (array.make-array i64 8)]
     [work : (Array i64) (array.make-array i64 5)]
     (begin
-      (array-set! arr 0 3)
-      (array-set! arr 1 1)
-      (array-set! arr 2 4)
-      (array-set! arr 3 1)
-      (array-set! arr 4 5)
-      (array-set! arr 5 9)
-      (array-set! arr 6 2)
-      (array-set! arr 7 6)
+      (set! (array-ref arr 0) 3)
+      (set! (array-ref arr 1) 1)
+      (set! (array-ref arr 2) 4)
+      (set! (array-ref arr 3) 1)
+      (set! (array-ref arr 4) 5)
+      (set! (array-ref arr 5) 9)
+      (set! (array-ref arr 6) 2)
+      (set! (array-ref arr 7) 6)
       (test.assert-i64-eq
         (opt-licm-dh-runtime-sum arr 8 100)
         31
@@ -34714,10 +36038,10 @@
         (opt-licm-dh-runtime-sum arr 8 4)
         8
         "the early flag exit keeps the partial sum")
-      (array-set! work 1 1)
-      (array-set! work 2 2)
-      (array-set! work 3 3)
-      (array-set! work 4 4)
+      (set! (array-ref work 1) 1)
+      (set! (array-ref work 2) 2)
+      (set! (array-ref work 3) 3)
+      (set! (array-ref work 4) 4)
       (test.assert-i64-eq
         (opt-licm-dh-runtime-alias-store work 5)
         13
@@ -36354,6 +37678,382 @@
         blocks))
       [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
 
+;; The `it-slice-eq?` class, in the shape `flag_exit` leaves behind: a
+;; single-test header, and a body that can leave the loop through its OWN exit
+;; block -- never through the header's exit arm, which is the break shape
+;; `opt-rotate-ssa-body-avoids-exit?` still refuses. Both exits meet again in
+;; `done`.
+;;
+;; With `live-out` the counter is also read past the loop, on BOTH exit edges,
+;; and that is the one thing the rewrite cannot express: the fresh exit phi
+;; lands in the header's exit block, which does not dominate the body's exit,
+;; so the substitution breaks SSA and the verifier gate hands the loop back
+;; unrotated. Without it there is nothing to merge and the loop rotates.
+(define (opt-rotate-ssa-test-second-exit-blocks [live-out : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-flag-exit-test-jump-block "entry" "header")
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            1
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              3
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              (compiler_ir_types.CompilerIrInstrList.Nil)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              4
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "cont")
+                (compiler_ir_types.compiler-ir-label "escape"))
+              (compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "cont")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                2
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "latch"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-flag-exit-test-jump-block "latch" "header")
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-flag-exit-test-jump-block "escape" "done")
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-flag-exit-test-jump-block "exit" "done")
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.compiler-ir-block
+                    (compiler_ir_types.compiler-ir-label "done")
+                    (if live-out
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Phi
+                          5
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.Var 1)
+                            (compiler_ir_types.compiler-ir-label "exit")
+                            (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.CompilerIrValue.Var 1)
+                              (compiler_ir_types.compiler-ir-label "escape")
+                              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ast_types.AstType.I64))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Return
+                            (compiler_ir_types.CompilerIrMaybeValue.Some
+                              (compiler_ir_types.CompilerIrValue.Var 5)))
+                          (compiler_ir_types.CompilerIrInstrList.Nil)))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Return
+                          (compiler_ir_types.CompilerIrMaybeValue.Some
+                            (compiler_ir_types.CompilerIrValue.I64 0)))
+                        (compiler_ir_types.CompilerIrInstrList.Nil))))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+(define (opt-rotate-ssa-test-second-exit-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "rotate_ssa_second_exit")
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "n"
+        (compiler_ast_types.AstType.I64)
+        0)
+      (compiler_ir_types.CompilerIrParamList.Nil))
+    (compiler_ast_types.AstType.I64)
+    6
+    blocks))
+
+(define (opt-rotate-ssa-test-second-exit-run [live-out : bool]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-rotate-ssa-test-second-exit-blocks live-out)]
+    (match (compiler_optimize.opt-rotate-ssa-function-with-context-result
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      (opt-rotate-ssa-test-second-exit-function blocks))
+      [(compiler_optimize.OptFunctionCtxResult.Result next _) next])))
+
+;; A rotated loop tests its own exit condition on the back edge, so its latch
+;; ends in a Branch; a top-tested one jumps back unconditionally.
+(define (opt-rotate-ssa-test-ends-with-branch?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+            (if (<= count 0)
+              false
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                instrs
+                (- count 1))
+                [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) true]
+                [_ false])))])]))
+
+(define (opt-rotate-ssa-test-latches-branch?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [loops : compiler_optimize.OptNaturalLoopList]) : bool
+  (match loops
+    [(compiler_optimize.OptNaturalLoopList.Nil) true]
+    [(compiler_optimize.OptNaturalLoopList.Cons loop rest)
+      (and
+        (opt-rotate-ssa-test-ends-with-branch?
+          blocks
+          (compiler_optimize.opt-natural-loop-latch loop))
+        (opt-rotate-ssa-test-latches-branch? blocks (__tl-box-place rest)))]))
+
+;; `it-slice-eq?` as SSA construction hands it to the loop passes: the counter
+;; and the monotone flag ride the header together, the gate re-tests the flag,
+;; the mismatch arm clears it, and the flag is read past the loop on BOTH exit
+;; edges. That last reader is what refuses the rotation up top -- the exit phi
+;; would have to reach `escape`, which the header's exit block does not
+;; dominate. `flag_exit` retires exactly that reader (it folds both edges to
+;; literals) and leaves the loop rotatable, but it runs six passes BELOW the
+;; rotation stage and needs a pipeline iteration of its own to fire, so the
+;; rotatable shape only exists after the last upstream chance to rotate it.
+(define (opt-rotate-ssa-test-flag-loop-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-flag-exit-test-jump-block "entry" "header")
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            1
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              3
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                5
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "gate")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "gate")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "cont")
+              (compiler_ir_types.compiler-ir-label "escape"))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "cont")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                6
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 7)
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "match")
+                  (compiler_ir_types.compiler-ir-label "mismatch"))
+                (compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-flag-exit-test-jump-block "match" "latch")
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-flag-exit-test-jump-block "mismatch" "latch")
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.compiler-ir-block
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      4
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Bool false)
+                        (compiler_ir_types.compiler-ir-label "mismatch")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Var 3)
+                          (compiler_ir_types.compiler-ir-label "match")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.Bool))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.BinOp
+                        2
+                        (compiler_ir_types.CompilerIrBinOp.Add)
+                        (compiler_ir_types.CompilerIrValue.Var 1)
+                        (compiler_ir_types.CompilerIrValue.I64 1)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Jump
+                          (compiler_ir_types.compiler-ir-label "header"))
+                        (compiler_ir_types.CompilerIrInstrList.Nil)))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-flag-exit-test-jump-block "escape" "done")
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-flag-exit-test-jump-block "exit" "done")
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.compiler-ir-block
+                        (compiler_ir_types.compiler-ir-label "done")
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.Phi
+                            7
+                            (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.CompilerIrValue.Var 3)
+                              (compiler_ir_types.compiler-ir-label "exit")
+                              (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.CompilerIrValue.Var 3)
+                                (compiler_ir_types.compiler-ir-label "escape")
+                                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                            (compiler_ast_types.AstType.Bool))
+                          (compiler_ir_types.compiler-ir-instr-cons
+                            (compiler_ir_types.CompilerIrInstr.Return
+                              (compiler_ir_types.CompilerIrMaybeValue.Some
+                                (compiler_ir_types.CompilerIrValue.Var 7)))
+                            (compiler_ir_types.CompilerIrInstrList.Nil))))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))
+
+(define (opt-rotate-ssa-test-flag-loop-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "rotate_ssa_flag_loop")
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "n"
+        (compiler_ast_types.AstType.I64)
+        0)
+      (compiler_ir_types.CompilerIrParamList.Nil))
+    (compiler_ast_types.AstType.Bool)
+    10
+    (opt-rotate-ssa-test-flag-loop-blocks)))
+
+;; End to end: whatever order the loop passes settle in, no loop of this class
+;; may reach the backend jumping back unconditionally to a header that re-tests
+;; its own counter. Note this fixture is clean enough that `flag_exit` converts
+;; it on pipeline iteration 1, so the rotation stage ABOVE it can still win the
+;; race here -- the assertion is the invariant, not the round that establishes
+;; it. What forced the second round is the extra iteration a genuinely lowered
+;; `while` spends before the conversion fires; `benchmarks/intern_table`'s
+;; `it-slice-eq?` is the measured case and stayed top-tested without it.
+(define (opt-rotate-ssa-test-pipeline-bottom-tested?) : bool
+  (let
+    [optimized : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.optimize-function
+        (compiler_ast_types.ast-node-pool-reader-context-current)
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-rotate-ssa-test-flag-loop-function))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks optimized)]
+    [loops : compiler_optimize.OptNaturalLoopList
+      (compiler_optimize.opt-cfg-natural-loops blocks)]
+    (and
+      (> (compiler_optimize.opt-natural-loop-list-count loops) 0)
+      (opt-rotate-ssa-test-latches-branch? blocks loops))))
+
+;; The exit phi has to carry the zero-trip value on the preheader edge and the
+;; last iteration's value on the latch edge -- the whole point of minting it.
+(define (opt-rotate-ssa-test-exit-phi-inputs-ok?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label "exit"))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (if (<= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 0)
+            false
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+              [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+                (and
+                  (= (opt-rotate-ssa-test-phi-input-value inputs "entry") 0)
+                  (= (opt-rotate-ssa-test-phi-input-value inputs "latch") 2))]
+              [_ false]))])]))
+
+;; 0 for the literal `0` the preheader edge carries, the var id for a Var input,
+;; -1 when the edge is missing or carries anything else.
+(define (opt-rotate-ssa-test-phi-input-value
+  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [label : String]) : i64
+  (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
+    [(compiler_ir_types.CompilerIrPhiInputList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrPhiInputList.Array seq)
+      (opt-rotate-ssa-test-phi-input-value
+        (compiler_ir_types.compiler-ir-phi-input-seq-to-list seq)
+        label)]
+    [(compiler_ir_types.CompilerIrPhiInputList.Cons value input-label rest)
+      (if (= input-label (compiler_ir_types.compiler-ir-label label))
+        (match value
+          [(compiler_ir_types.CompilerIrValue.Var var) var]
+          [(compiler_ir_types.CompilerIrValue.I64 literal) literal]
+          [_ (- 0 1)])
+        (opt-rotate-ssa-test-phi-input-value (__tl-box-place rest) label))]))
+
+;; Fixpoint discipline: the rotated latch ends in the cloned guard branch, not a
+;; jump, so `opt-loop-rotation-edge-compatible?` refuses it and a second run
+;; changes nothing.
+(define (opt-rotate-ssa-test-rerun
+  [once : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunction
+  (match (compiler_optimize.opt-rotate-ssa-function-with-context-result
+    (compiler_optimize.opt-cfg-context-build
+      (compiler_optimize.opt-function-blocks once))
+    false
+    once)
+    [(compiler_optimize.OptFunctionCtxResult.Result next _) next]))
+
 (define (compiler-optimize-rotate-ssa-self-test) : i64
   (let
     [rotated : compiler_ir_types.CompilerIrFunction
@@ -36364,6 +38064,12 @@
       (opt-rotate-ssa-test-run true)]
     [side-exit-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks side-exit)]
+    [second-exit-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-rotate-ssa-test-second-exit-run false))]
+    [second-exit-live-out-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-rotate-ssa-test-second-exit-run true))]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -36437,6 +38143,65 @@
             (opt-rotate-ssa-test-siblings-run))
           (compiler_ir_types.compiler-ir-label "h2"))
         15]
+      ;; the `it-slice-eq?` class: a body that leaves the loop by its own exit
+      ;; block rotates, and the rotated latch carries the test
+      [(opt-block-list-has-label?
+          second-exit-blocks
+          (compiler_ir_types.compiler-ir-label "header"))
+        16]
+      [(not
+          (opt-block-list-has-label?
+            second-exit-blocks
+            (compiler_ir_types.compiler-ir-label "header__rotate_land")))
+        17]
+      [(not
+          (opt-rotate-ssa-test-starts-with-phi?
+            second-exit-blocks
+            (compiler_ir_types.compiler-ir-label "body")))
+        18]
+      [(not
+          (opt-rotate-ssa-test-ends-with-branch?
+            second-exit-blocks
+            (compiler_ir_types.compiler-ir-label "latch")))
+        19]
+      [(not
+          (opt-rotate-ssa-test-ends-with-branch?
+            second-exit-blocks
+            (compiler_ir_types.compiler-ir-label "entry")))
+        20]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-rotate-ssa-test-second-exit-run false))))
+        21]
+      ;; ... and is refused, unchanged, once a loop-carried value is read past
+      ;; BOTH exits: the exit phi cannot reach the body's own exit block
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            second-exit-live-out-blocks
+            (opt-rotate-ssa-test-second-exit-blocks true)))
+        22]
+      ;; the exit phi merges the preheader's zero-trip value and the latch's
+      [(not (opt-rotate-ssa-test-exit-phi-inputs-ok? rotated-blocks)) 23]
+      ;; rotating a rotated loop is a no-op, in both fixtures
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-rerun rotated))
+            rotated-blocks))
+        24]
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (compiler_optimize.opt-function-blocks
+              (opt-rotate-ssa-test-rerun
+                (opt-rotate-ssa-test-second-exit-run false)))
+            second-exit-blocks))
+        25]
+      ;; and the whole pipeline settles the class bottom-tested
+      [(not (opt-rotate-ssa-test-pipeline-bottom-tested?)) 26]
       [else 42])))
 
 (define (opt-label-set-persistent-branch-self-test) : bool
@@ -36597,7 +38362,7 @@
               diamond-blocks
               (compiler_ir_types.compiler-ir-label "entry"))))
         5]
-      [(not (= (struct-get unreachable-index reach-count) 1)) 6]
+      [(not (= unreachable-index.reach-count 1)) 6]
       [(not
           (compiler_optimize.opt-cfg-index-reachable?
             unreachable-index
@@ -37865,7 +39630,7 @@
             (compiler_optimize.opt-natural-loop-body-blocks loop))
           1
           32)
-        (opt-scratch-loop-list-has-candidate? (box-get rest)))]))
+        (opt-scratch-loop-list-has-candidate? (__tl-box-place rest)))]))
 
 (define (opt-scratch-reset-test-function
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
@@ -38761,7 +40526,7 @@
                 [_ 0])
               0)]
           [_ 0])
-        (opt-count-mov-dst-i64-src (box-get rest) dst src))]))
+        (opt-count-mov-dst-i64-src (__tl-box-place rest) dst src))]))
 
 (define (opt-count-mov-dst-var-src
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -38788,7 +40553,7 @@
                 [_ 0])
               0)]
           [_ 0])
-        (opt-count-mov-dst-var-src (box-get rest) dst src ty))]))
+        (opt-count-mov-dst-var-src (__tl-box-place rest) dst src ty))]))
 
 (define (opt-count-mov-dst-bool-src
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -38814,7 +40579,7 @@
                 [_ 0])
               0)]
           [_ 0])
-        (opt-count-mov-dst-bool-src (box-get rest) dst src))]))
+        (opt-count-mov-dst-bool-src (__tl-box-place rest) dst src))]))
 
 (define (opt-count-storeptr-instrs
   [instrs : compiler_ir_types.CompilerIrInstrList]) : i64
@@ -38825,7 +40590,7 @@
         (match instr
           [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) 1]
           [_ 0])
-        (opt-count-storeptr-instrs (box-get rest)))]))
+        (opt-count-storeptr-instrs (__tl-box-place rest)))]))
 
 (define (opt-count-storeptr-i64-value
   [instrs : compiler_ir_types.CompilerIrInstrList]
@@ -38848,7 +40613,7 @@
                 [_ 0])
               0)]
           [_ 0])
-        (opt-count-storeptr-i64-value (box-get rest) want))]))
+        (opt-count-storeptr-i64-value (__tl-box-place rest) want))]))
 
 (define (opt-dead-store-overwritten-instrs) : compiler_ir_types.CompilerIrInstrList
   (compiler_ir_types.compiler-ir-instr-cons
@@ -40171,28 +41936,28 @@
       (compiler_optimize.opt-load-global-bases-drop-var left2 1)]
     (and
       ;; Mutating the cloned left branch did not alter the retained seed.
-      (= (struct-get seed len) 1)
+      (= seed.len 1)
       (opt-load-global-base-test-eq?
         (compiler_optimize.opt-load-global-bases-lookup seed 1)
         10
         8
         true)
       ;; Exact bindings from both branches survive a join.
-      (= (struct-get joined len) 2)
+      (= joined.len 2)
       (opt-load-global-base-test-eq?
         (compiler_optimize.opt-load-global-bases-lookup joined 2)
         20
         16
         false)
       ;; A conflicting offset is dropped while the common binding remains.
-      (= (struct-get narrowed len) 1)
+      (= narrowed.len 1)
       (opt-load-global-base-test-eq?
         (compiler_optimize.opt-load-global-bases-lookup narrowed 1)
         10
         8
         true)
       ;; In-place compaction removes only the selected binding.
-      (= (struct-get dropped len) 1)
+      (= dropped.len 1)
       (match (compiler_optimize.opt-load-global-bases-lookup dropped 1)
         [(compiler_optimize.OptMaybeGlobalBase.No) true]
         [_ false])
@@ -41596,7 +43361,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-lc-test-count-seq instrs 0 kind 0)
-            (opt-lc-test-count-blocks (box-get rest) kind))])]
+            (opt-lc-test-count-blocks (__tl-box-place rest) kind))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-lc-test-count-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -41655,7 +43420,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (opt-lc-test-def-dst-count-seq instrs 0 dst 0)
-            (opt-lc-test-def-dst-count-blocks (box-get rest) dst))])]
+            (opt-lc-test-def-dst-count-blocks (__tl-box-place rest) dst))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-lc-test-def-dst-count-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -41690,7 +43455,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (if (opt-lc-test-has-add-lit-seq instrs 0 lit)
             true
-            (opt-lc-test-has-add-lit-blocks (box-get rest) lit))])]
+            (opt-lc-test-has-add-lit-blocks (__tl-box-place rest) lit))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-lc-test-has-add-lit-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -41775,7 +43540,7 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (if (opt-lc-test-has-shl-lit-seq instrs 0 lit)
             true
-            (opt-lc-test-has-shl-lit-blocks (box-get rest) lit))])]
+            (opt-lc-test-has-shl-lit-blocks (__tl-box-place rest) lit))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-lc-test-has-shl-lit-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -41808,7 +43573,7 @@
             [found : i64 (opt-lc-test-wide-load-src-seq instrs 0)]
             (if (>= found 0)
               found
-              (opt-lc-test-wide-load-src-blocks (box-get rest))))])]
+              (opt-lc-test-wide-load-src-blocks (__tl-box-place rest))))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-lc-test-wide-load-src-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -42405,7 +44170,7 @@
   (if (>= j 8)
     unit
     (begin
-      (array-set! data (+ at j) (cast (+ j 1) : u8))
+      (set! (array-ref data (+ at j)) (cast (+ j 1) : u8))
       (opt-lc-runtime-fill! data at (+ j 1)))))
 
 (define (opt-lc-runtime-word [src : (Array u8)] [at : i64]) : i64
@@ -42597,47 +44362,43 @@
         ;; Mov source -> rewritten
         (compiler_ir_types.CompilerIrInstr.Mov
           11
-          (compiler_ir_types.CompilerIrValue.Global (struct-get symbols konst))
+          (compiler_ir_types.CompilerIrValue.Global symbols.konst)
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.compiler-ir-instr-cons
           ;; UnOp source -> rewritten
           (compiler_ir_types.CompilerIrInstr.UnOp
             12
             (compiler_ir_types.CompilerIrUnOp.Neg)
-            (compiler_ir_types.CompilerIrValue.Global
-              (struct-get symbols konst))
+            (compiler_ir_types.CompilerIrValue.Global symbols.konst)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
             ;; Cast source -> rewritten
             (compiler_ir_types.CompilerIrInstr.Cast
               13
-              (compiler_ir_types.CompilerIrValue.Global
-                (struct-get symbols konst))
+              (compiler_ir_types.CompilerIrValue.Global symbols.konst)
               (compiler_ast_types.AstType.I64)
               (compiler_ast_types.AstType.U64))
             (compiler_ir_types.compiler-ir-instr-cons
               ;; stored global (disqualifier: direct set!) -> NOT rewritten
               (compiler_ir_types.CompilerIrInstr.Mov
                 14
-                (compiler_ir_types.CompilerIrValue.Global
-                  (struct-get symbols mutable))
+                (compiler_ir_types.CompilerIrValue.Global symbols.mutable)
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.compiler-ir-instr-cons
                 ;; address-taken global (disqualifier: &) -> NOT rewritten
                 (compiler_ir_types.CompilerIrInstr.Mov
                   15
-                  (compiler_ir_types.CompilerIrValue.Global
-                    (struct-get symbols borrowed))
+                  (compiler_ir_types.CompilerIrValue.Global symbols.borrowed)
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.compiler-ir-instr-cons
                   (compiler_ir_types.CompilerIrInstr.Mov
                     16
                     (compiler_ir_types.CompilerIrValue.GlobalAddr
-                      (struct-get symbols borrowed))
+                      symbols.borrowed)
                     (compiler_ast_types.AstType.U64))
                   (compiler_ir_types.compiler-ir-instr-cons
                     (compiler_ir_types.CompilerIrInstr.Store
-                      (struct-get symbols mutable)
+                      symbols.mutable
                       (compiler_ir_types.CompilerIrValue.I64 9)
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.compiler-ir-instr-cons
@@ -42646,8 +44407,7 @@
                         10
                         (compiler_ir_types.CompilerIrBinOp.Lt)
                         (compiler_ir_types.CompilerIrValue.Var 0)
-                        (compiler_ir_types.CompilerIrValue.Global
-                          (struct-get symbols konst))
+                        (compiler_ir_types.CompilerIrValue.Global symbols.konst)
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.compiler-ir-instr-cons
                         (compiler_ir_types.CompilerIrInstr.Branch
@@ -42749,20 +44509,20 @@
 (define (opt-gc-test-globals [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrGlobalList
   (compiler_ir_types.compiler-ir-global-cons
     (compiler_ir_types.CompilerIrGlobal.Global
-      (struct-get symbols arr)
+      symbols.arr
       (compiler_ast_types.AstType.DynArray 0)
       (compiler_ir_types.CompilerIrValue.Unit))
     (compiler_ir_types.compiler-ir-global-cons
       (compiler_ir_types.CompilerIrGlobal.Global
-        (struct-get symbols k)
+        symbols.k
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrValue.I64 5))
       (compiler_ir_types.compiler-ir-global-cons
         ;; non-word-cell global: register-resident aggregates are never
         ;; hoisted (the entry Mov would load only the cell's first word)
         (compiler_ir_types.CompilerIrGlobal.Global
-          (struct-get symbols agg)
-          (compiler_ast_types.AstType.Struct (struct-get symbols agg))
+          symbols.agg
+          (compiler_ast_types.AstType.Struct symbols.agg)
           (compiler_ir_types.CompilerIrValue.Unit))
         compiler_ir_types.CompilerIrGlobalList.Nil))))
 
@@ -42776,8 +44536,8 @@
   (compiler_ir_types.compiler-ir-instr-cons
     (compiler_ir_types.CompilerIrInstr.Mov
       6
-      (compiler_ir_types.CompilerIrValue.Global (struct-get symbols agg))
-      (compiler_ast_types.AstType.Struct (struct-get symbols agg)))
+      (compiler_ir_types.CompilerIrValue.Global symbols.agg)
+      (compiler_ast_types.AstType.Struct symbols.agg))
     (cond
       [(> call-mode 0)
         (compiler_ir_types.compiler-ir-instr-cons
@@ -42785,7 +44545,7 @@
             9
             (if (= call-mode 2)
               cbi.compiler-builtin-id-tl-oob-abort
-              (struct-get symbols callee))
+              symbols.callee)
             (compiler_ir_types.CompilerIrCallArgs.One
               (compiler_ir_types.CompilerIrValue.Var 3))
             (compiler_ast_types.AstType.I64))
@@ -42797,7 +44557,7 @@
       [store-k?
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Store
-            (struct-get symbols k)
+            symbols.k
             (compiler_ir_types.CompilerIrValue.Var 5)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
@@ -42831,7 +44591,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Gep
             1
-            (compiler_ir_types.CompilerIrValue.Global (struct-get symbols arr))
+            (compiler_ir_types.CompilerIrValue.Global symbols.arr)
             (compiler_ir_types.CompilerIrValue.I64 1)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
@@ -42844,14 +44604,12 @@
                 3
                 (compiler_ir_types.CompilerIrBinOp.Add)
                 (compiler_ir_types.CompilerIrValue.Var 2)
-                (compiler_ir_types.CompilerIrValue.Global
-                  (struct-get symbols k))
+                (compiler_ir_types.CompilerIrValue.Global symbols.k)
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.compiler-ir-instr-cons
                 (compiler_ir_types.CompilerIrInstr.Mov
                   4
-                  (compiler_ir_types.CompilerIrValue.Global
-                    (struct-get symbols k))
+                  (compiler_ir_types.CompilerIrValue.Global symbols.k)
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.compiler-ir-instr-cons
                   (compiler_ir_types.CompilerIrInstr.BinOp
@@ -42868,7 +44626,7 @@
   [store-k? : bool]
   [call-mode : i64]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols reader)
+    symbols.reader
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     (if (> call-mode 0)
@@ -42879,7 +44637,7 @@
 ;; takes the address of gc_arr (disqualifies it program-wide, mechanism (b))
 (define (opt-gc-test-other-function [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols other)
+    symbols.other
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.U64)
     1
@@ -42889,8 +44647,7 @@
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Mov
             0
-            (compiler_ir_types.CompilerIrValue.GlobalAddr
-              (struct-get symbols arr))
+            (compiler_ir_types.CompilerIrValue.GlobalAddr symbols.arr)
             (compiler_ast_types.AstType.U64))
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Return
@@ -42904,7 +44661,7 @@
 ;; reader activation)
 (define (opt-gc-test-writer-function [symbols : OptGcTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols writer)
+    symbols.writer
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     1
@@ -42913,7 +44670,7 @@
         (compiler_ir_types.compiler-ir-label "entry")
         (compiler_ir_types.compiler-ir-instr-cons
           (compiler_ir_types.CompilerIrInstr.Store
-            (struct-get symbols k)
+            symbols.k
             (compiler_ir_types.CompilerIrValue.I64 1)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-cons
@@ -42959,7 +44716,7 @@
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (if (= index 0)
         block
-        (opt-gc-test-block-at (box-get rest) (- index 1)))]
+        (opt-gc-test-block-at (__tl-box-place rest) (- index 1)))]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (if (or
         (< index 0)
@@ -43051,7 +44808,7 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (opt-gc-test-stray-blocks
-            (box-get rest)
+            (__tl-box-place rest)
             false
             (if skip-first?
               acc
@@ -43100,7 +44857,7 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (opt-gc-test-global-mov-blocks
-            (box-get rest)
+            (__tl-box-place rest)
             (opt-gc-test-global-mov-seq instrs 0 acc))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-gc-test-global-mov-blocks
@@ -43266,36 +45023,26 @@
       (compiler_optimize.opt-global-cell-function summaries-a out-a)]
     [blocks-f : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks out-f)]
-    [cell-a : compiler_optimize.OptGlobalCellSummary
-      (struct-get summaries-a global-cell)]
-    [cell-d : compiler_optimize.OptGlobalCellSummary
-      (struct-get summaries-d global-cell)]
+    [cell-a : compiler_optimize.OptGlobalCellSummary summaries-a.global-cell]
+    [cell-d : compiler_optimize.OptGlobalCellSummary summaries-d.global-cell]
     (cond
       ;; summary-level checks: declared types resolve, the word-cell count
       ;; excludes the aggregate global and (for D) the address-taken array
-      [(match (compiler_optimize.opt-global-cell-type-lookup
-          cell-a
-          (struct-get symbols k))
+      [(match (compiler_optimize.opt-global-cell-type-lookup cell-a symbols.k)
           [(compiler_optimize.OptMaybeAstType.Some
               (compiler_ast_types.AstType.I64))
             false]
           [_ true])
         10]
-      [(match (compiler_optimize.opt-global-cell-type-lookup
-          cell-a
-          (struct-get symbols arr))
+      [(match (compiler_optimize.opt-global-cell-type-lookup cell-a symbols.arr)
           [(compiler_optimize.OptMaybeAstType.Some
               (compiler_ast_types.AstType.DynArray _))
             false]
           [_ true])
         11]
-      [(not (= (struct-get cell-a word-cell) 2)) 12]
-      [(not (= (struct-get cell-d word-cell) 1)) 13]
-      [(not
-          (opt_i64_i64_map.contains?
-            (& (struct-get cell-d addr-taken))
-            (struct-get symbols arr)))
-        14]
+      [(not (= cell-a.word-cell 2)) 12]
+      [(not (= cell-d.word-cell 1)) 13]
+      [(not (opt_i64_i64_map.contains? (& cell-d.addr-taken) symbols.arr)) 14]
       [(not (= (opt-gc-test-plain-hoist-ok? out-a) 42)) 15]
       ;; fixture B: the function's only `Store gc_k` is the last instruction of
       ;; a returning block, so NO read can observe it -- condition (a) is per
@@ -43865,7 +45612,7 @@
         1
         (compiler_ir_types.CompilerIrBinOp.Lt)
         (compiler_ir_types.CompilerIrValue.Var 0)
-        (compiler_ir_types.CompilerIrValue.Global (struct-get symbols k))
+        (compiler_ir_types.CompilerIrValue.Global symbols.k)
         (compiler_ast_types.AstType.Bool))
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Branch
@@ -43883,7 +45630,7 @@
     (if in-loop-store?
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Store
-          (struct-get symbols k)
+          symbols.k
           (compiler_ir_types.CompilerIrValue.I64 5)
           (compiler_ast_types.AstType.I64))
         (opt-gc-obs-body-tail))
@@ -43924,7 +45671,7 @@
         compiler_ir_types.CompilerIrInstrList.Nil)
       (compiler_ir_types.compiler-ir-instr-cons
         (compiler_ir_types.CompilerIrInstr.Store
-          (struct-get symbols k)
+          symbols.k
           (compiler_ir_types.CompilerIrValue.I64 5)
           (compiler_ast_types.AstType.I64))
         (cond
@@ -43932,8 +45679,7 @@
             (compiler_ir_types.compiler-ir-instr-cons
               (compiler_ir_types.CompilerIrInstr.Mov
                 3
-                (compiler_ir_types.CompilerIrValue.Global
-                  (struct-get symbols k))
+                (compiler_ir_types.CompilerIrValue.Global symbols.k)
                 (compiler_ast_types.AstType.I64))
               (opt-gc-obs-read-k-return))]
           [(= mode 2)
@@ -43954,7 +45700,7 @@
     (compiler_ir_types.compiler-ir-instr-cons
       (compiler_ir_types.CompilerIrInstr.Mov
         3
-        (compiler_ir_types.CompilerIrValue.Global (struct-get symbols k))
+        (compiler_ir_types.CompilerIrValue.Global symbols.k)
         (compiler_ast_types.AstType.I64))
       (opt-gc-obs-read-k-return))))
 
@@ -43977,7 +45723,7 @@
 
 (define (opt-gc-obs-function [symbols : OptGcTestSymbols] [mode : i64]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
-    (struct-get symbols reader)
+    symbols.reader
     compiler_ir_types.CompilerIrParamList.Nil
     (compiler_ast_types.AstType.I64)
     4
@@ -44120,8 +45866,7 @@
           (compiler_ir_types.compiler-ir-instr-cons
             (compiler_ir_types.CompilerIrInstr.Gep
               11
-              (compiler_ir_types.CompilerIrValue.Global
-                (struct-get symbols arr))
+              (compiler_ir_types.CompilerIrValue.Global symbols.arr)
               (compiler_ir_types.CompilerIrValue.I64 1)
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.compiler-ir-instr-cons
@@ -44137,8 +45882,7 @@
                 (compiler_ir_types.compiler-ir-instr-cons
                   (compiler_ir_types.CompilerIrInstr.Gep
                     13
-                    (compiler_ir_types.CompilerIrValue.Global
-                      (struct-get symbols arr))
+                    (compiler_ir_types.CompilerIrValue.Global symbols.arr)
                     (compiler_ir_types.CompilerIrValue.I64 0)
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.compiler-ir-instr-cons
@@ -44280,6 +46024,658 @@
       [(not (= (opt-gc-test-global-mov-blocks control-blocks 0) 0)) 7]
       [else 42])))
 
+;; --- loop-scope global operand promotion (LICM) ------------------------------
+;;
+;; `lp_g1`/`lp_g2` are i64 cells the `lp_writer` function stores, which keeps
+;; them out of the proven-constant global table (so they stay symbolic operands)
+;; while leaving them out of the address-taken set. `lp_agg` is a
+;; register-resident aggregate: never promoted, because the promoted Mov's
+;; declared type drives the backend's load width.
+(defstruct OptLpTestSymbols
+  (g1 i64)
+  (g2 i64)
+  (agg i64)
+  (writer i64)
+  (callee i64))
+
+(define (opt-lp-test-symbols) : OptLpTestSymbols
+  (OptLpTestSymbols
+    (opt-test-symbol "lp_g1")
+    (opt-test-symbol "lp_g2")
+    (opt-test-symbol "lp_agg")
+    (opt-test-symbol "lp_writer")
+    (opt-test-symbol "lp_callee")))
+
+(define (opt-lp-test-globals [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrGlobalList
+  (compiler_ir_types.compiler-ir-global-cons
+    (compiler_ir_types.CompilerIrGlobal.Global
+      symbols.g1
+      (compiler_ast_types.AstType.I64)
+      (compiler_ir_types.CompilerIrValue.I64 7))
+    (compiler_ir_types.compiler-ir-global-cons
+      (compiler_ir_types.CompilerIrGlobal.Global
+        symbols.g2
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 9))
+      (compiler_ir_types.compiler-ir-global-cons
+        (compiler_ir_types.CompilerIrGlobal.Global
+          symbols.agg
+          (compiler_ast_types.AstType.Struct symbols.agg)
+          (compiler_ir_types.CompilerIrValue.Unit))
+        compiler_ir_types.CompilerIrGlobalList.Nil))))
+
+(define (opt-lp-test-cells [symbols : OptLpTestSymbols]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-global-cell-summary-build
+    (opt-lp-test-globals symbols)
+    compiler_ir_types.CompilerIrFunctionList.Nil))
+
+;; A second program function whose `set!`s disqualify both cells from the
+;; proven-constant substitution the level-2 pipeline would otherwise apply.
+(define (opt-lp-test-writer-function [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.writer
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    4
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Store
+            symbols.g1
+            (compiler_ir_types.CompilerIrValue.I64 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Store
+              symbols.g2
+              (compiler_ir_types.CompilerIrValue.I64 4)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))
+              compiler_ir_types.CompilerIrInstrList.Nil))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-lp-value-global? [v : compiler_ir_types.CompilerIrValue]) : bool
+  (match v
+    [(compiler_ir_types.CompilerIrValue.Global _) true]
+    [_ false]))
+
+;; Global operands in the instruction shapes these fixtures use.
+(define (opt-lp-instr-global-operands
+  [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
+      (if (opt-lp-value-global? src)
+        1
+        0)]
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (+
+        (if (opt-lp-value-global? lhs)
+          1
+          0)
+        (if (opt-lp-value-global? rhs)
+          1
+          0))]
+    [(compiler_ir_types.CompilerIrInstr.Store _ value _)
+      (if (opt-lp-value-global? value)
+        1
+        0)]
+    [_ 0]))
+
+(define (opt-lp-count-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [movs? : bool]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-lp-count-seq
+      instrs
+      movs?
+      (+ index 1)
+      (+
+        acc
+        (let
+          [instr : compiler_ir_types.CompilerIrInstr
+            (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+          (if movs?
+            (match instr
+              [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
+                (if (opt-lp-value-global? src)
+                  1
+                  0)]
+              [_ 0])
+            (opt-lp-instr-global-operands instr)))))))
+
+;; `movs?` counts `Mov dst @g` cell loads; otherwise every Global OPERAND.
+(define (opt-lp-count-label
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [movs? : bool]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
+          (if (= block-label label)
+            (opt-lp-count-seq instrs movs? 0 0)
+            (opt-lp-count-label (__tl-box-place rest) label movs?))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-lp-count-label
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        label
+        movs?)]))
+
+(define (opt-lp-binop-rhs-var-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [dst : i64]
+  [index : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    -1
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.BinOp instr-dst _ _ rhs _)
+        (if (= instr-dst dst)
+          (match rhs
+            [(compiler_ir_types.CompilerIrValue.Var v) v]
+            [_ -1])
+          (opt-lp-binop-rhs-var-seq instrs dst (+ index 1)))]
+      [_ (opt-lp-binop-rhs-var-seq instrs dst (+ index 1))])))
+
+(define (opt-lp-binop-rhs-var
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dst : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) -1]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [found : i64 (opt-lp-binop-rhs-var-seq instrs dst 0)]
+            (if (= found -1)
+              (opt-lp-binop-rhs-var (__tl-box-place rest) dst)
+              found))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-lp-binop-rhs-var
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        dst)]))
+
+;; Loop body carrying two inline Global BinOp operands plus a non-word cell
+;; read. `store?` adds a `set!` of the first cell, which closes the loop-wide
+;; globals-clean gate.
+(define (opt-lp-test-blocks [symbols : OptLpTestSymbols] [store? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        8
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Global symbols.g1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          9
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 8)
+          (compiler_ir_types.CompilerIrValue.Global symbols.g2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            10
+            (compiler_ir_types.CompilerIrValue.Global symbols.agg)
+            (compiler_ast_types.AstType.Struct symbols.agg))
+          (if store?
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Store
+                symbols.g1
+                (compiler_ir_types.CompilerIrValue.I64 104)
+                (compiler_ast_types.AstType.I64))
+              (opt-licm-loop-finish-instrs))
+            (opt-licm-loop-finish-instrs)))))
+    9))
+
+;; A loop the guard can skip entirely. The preheader cell load still runs, which
+;; is safe because a global cell is statically allocated: the load reads valid
+;; memory and the value is discarded.
+(define (opt-lp-test-zero-trip-blocks [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "pre")
+            (compiler_ir_types.compiler-ir-label "exit"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "pre")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "pre")
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                8
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.CompilerIrValue.Global symbols.g1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                5
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "loop"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 1)))
+                compiler_ir_types.CompilerIrInstrList.Nil))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; A RETURNING call in the entry block: the function-scope global_cell pass
+;; refuses this function outright (its condition (c)), because a callee could
+;; `set!` the cell between the entry load and a later use. The LOOP still
+;; qualifies -- the call is not in its body -- so the loop-scope promotion is
+;; the only thing that can turn `@lp_g1` into a value here.
+(define (opt-lp-test-call-blocks [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Call
+            11
+            symbols.callee
+            (compiler_ir_types.CompilerIrCallArgs.Nil)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))
+            compiler_ir_types.CompilerIrInstrList.Nil))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "body")
+                compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              8
+              (compiler_ir_types.CompilerIrBinOp.Mul)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.Global symbols.g1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))
+              compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "loop"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 8)))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-lp-test-call-function [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "lp_call_fixture")
+    (opt-licm-params)
+    (compiler_ast_types.AstType.I64)
+    16
+    (opt-lp-test-call-blocks symbols)))
+
+(define (opt-lp-version-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "arr"
+      (compiler_ast_types.AstType.DynArray 0)
+      0)
+    compiler_ir_types.CompilerIrParamList.Nil))
+
+;; A counted loop over a PARAMETER array whose only non-invariant guard operand
+;; is the global bound. The versioner accepts literals and vars defined outside
+;; the loop and rejects a `Global` operand outright, so the fast clone appears
+;; exactly when the bound has been promoted to a preheader value.
+(define (opt-lp-test-version-blocks [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Mov
+            4
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Call
+              15
+              symbols.callee
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))
+              compiler_ir_types.CompilerIrInstrList.Nil)))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Global symbols.g1)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Gep
+              11
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Load
+                12
+                (compiler_ir_types.CompilerIrValue.Var 11)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.Var 12)
+                  (compiler_ir_types.compiler-ir-label "lp_while_ok"))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Gep
+                    13
+                    (compiler_ir_types.CompilerIrValue.Var 0)
+                    (compiler_ir_types.CompilerIrValue.I64 0)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Load
+                      14
+                      (compiler_ir_types.CompilerIrValue.Var 13)
+                      (compiler_ast_types.AstType.U64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Gep
+                        6
+                        (compiler_ir_types.CompilerIrValue.Var 14)
+                        (compiler_ir_types.CompilerIrValue.Var 4)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.compiler-ir-instr-cons
+                        (compiler_ir_types.CompilerIrInstr.Load
+                          7
+                          (compiler_ir_types.CompilerIrValue.Var 6)
+                          (compiler_ast_types.AstType.I64))
+                        (compiler_ir_types.compiler-ir-instr-cons
+                          (compiler_ir_types.CompilerIrInstr.BinOp
+                            8
+                            (compiler_ir_types.CompilerIrBinOp.Add)
+                            (compiler_ir_types.CompilerIrValue.Var 3)
+                            (compiler_ir_types.CompilerIrValue.Var 7)
+                            (compiler_ast_types.AstType.I64))
+                          (compiler_ir_types.compiler-ir-instr-cons
+                            (compiler_ir_types.CompilerIrInstr.Mov
+                              3
+                              (compiler_ir_types.CompilerIrValue.Var 8)
+                              (compiler_ast_types.AstType.I64))
+                            (compiler_ir_types.compiler-ir-instr-cons
+                              (compiler_ir_types.CompilerIrInstr.BinOp
+                                9
+                                (compiler_ir_types.CompilerIrBinOp.Add)
+                                (compiler_ir_types.CompilerIrValue.Var 4)
+                                (compiler_ir_types.CompilerIrValue.I64 1)
+                                (compiler_ast_types.AstType.I64))
+                              (compiler_ir_types.compiler-ir-instr-cons
+                                (compiler_ir_types.CompilerIrInstr.Mov
+                                  4
+                                  (compiler_ir_types.CompilerIrValue.Var 9)
+                                  (compiler_ast_types.AstType.I64))
+                                (compiler_ir_types.compiler-ir-instr-cons
+                                  (compiler_ir_types.CompilerIrInstr.Jump
+                                    (compiler_ir_types.compiler-ir-label
+                                      "header"))
+                                  compiler_ir_types.CompilerIrInstrList.Nil)))))))))))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))
+              compiler_ir_types.CompilerIrInstrList.Nil))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-lp-test-version-function [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "lp_version_fixture")
+    (opt-lp-version-params)
+    (compiler_ast_types.AstType.I64)
+    20
+    (opt-lp-test-version-blocks symbols)))
+
+(define (opt-lp-promoted-blocks
+  [symbols : OptLpTestSymbols]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-licm-function-with-global-cells
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-lp-test-cells symbols)
+    false
+    (opt-licm-test-function blocks)))
+
+(define (opt-lp-has-block?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some _) true]))
+
+(define (compiler-optimize-licm-global-promote-self-test) : i64
+  (let
+    [symbols : OptLpTestSymbols (opt-lp-test-symbols)]
+    [type-segment-bases : i64
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [entry-label : i64 (compiler_ir_types.compiler-ir-label "entry")]
+    [loop-label : i64 (compiler_ir_types.compiler-ir-label "loop")]
+    [pre-label : i64 (compiler_ir_types.compiler-ir-label "pre")]
+    ;; (a) two inline Global BinOp operands promote; the aggregate cell does not
+    [plain-func : compiler_ir_types.CompilerIrFunction
+      (opt-lp-promoted-blocks symbols (opt-lp-test-blocks symbols false))]
+    [plain : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks plain-func)]
+    ;; (b) a `set!` of one cell closes the loop-wide gate: nothing promotes
+    [store-func : compiler_ir_types.CompilerIrFunction
+      (opt-lp-promoted-blocks symbols (opt-lp-test-blocks symbols true))]
+    [store-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks store-func)]
+    ;; (c) a loop the guard can skip entirely still promotes
+    [zero-trip-func : compiler_ir_types.CompilerIrFunction
+      (opt-lp-promoted-blocks symbols (opt-lp-test-zero-trip-blocks symbols))]
+    [zero-trip : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks zero-trip-func)]
+    ;; (e) the function-scope pass still refuses a function with a returning
+    ;; call, while the loop-scope promotion fires on the same function
+    [call-fixture : compiler_ir_types.CompilerIrFunction
+      (opt-lp-test-call-function symbols)]
+    [call-functions : compiler_ir_types.CompilerIrFunctionList
+      (opt-gc-test-functions2
+        call-fixture
+        (opt-lp-test-writer-function symbols))]
+    [call-summaries : compiler_optimize.OptLoopBceSummaries
+      (compiler_optimize.opt-loop-bce-summaries-set-global-cell
+        (compiler_optimize.opt-loop-bce-empty-summaries)
+        (compiler_optimize.opt-global-cell-summary-build
+          (opt-lp-test-globals symbols)
+          call-functions))]
+    [call-entry-hoisted : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-global-cell-function call-summaries call-fixture))]
+    [call-promoted : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-licm-function-with-global-cells
+          type-segment-bases
+          (compiler_optimize.opt-global-cell-summary-build
+            (opt-lp-test-globals symbols)
+            call-functions)
+          false
+          call-fixture))]
+    ;; (d) the versioning unlock: the promoted bound is an invariant Var, which
+    ;; is what `opt-bce-version-invariant-operand` accepts
+    [version-fixture : compiler_ir_types.CompilerIrFunction
+      (opt-lp-test-version-function symbols)]
+    [version-functions : compiler_ir_types.CompilerIrFunctionList
+      (opt-gc-test-functions2
+        version-fixture
+        (opt-lp-test-writer-function symbols))]
+    [version-summaries : compiler_optimize.OptLoopBceSummaries
+      (compiler_optimize.opt-build-program-summaries
+        type-segment-bases
+        (opt-lp-test-globals symbols)
+        version-functions
+        2)]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-reader-context-current)]
+    [versioned : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.optimize-function-with-level-and-summaries
+          pools
+          type-segment-bases
+          version-fixture
+          2
+          version-summaries))]
+    ;; control: the same pipeline with the cell facts removed, so no promotion
+    ;; happens and the bound stays a `Global` operand the versioner rejects
+    [version-control : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.optimize-function-with-level-and-summaries
+          pools
+          type-segment-bases
+          version-fixture
+          2
+          (compiler_optimize.opt-loop-bce-summaries-set-global-cell
+            version-summaries
+            (compiler_optimize.opt-global-cell-summary-empty))))]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function plain-func)))
+        1]
+      ;; both word cells load once in the preheader, in ref-list order
+      [(not (= (opt-lp-count-label plain entry-label true) 2)) 2]
+      ;; the only Global operand left in the body is the aggregate read
+      [(not (= (opt-lp-count-label plain loop-label false) 1)) 3]
+      ;; `%8 = mul %4, @lp_g1` -> the second fresh var, `%9 = add %8, @lp_g2`
+      ;; -> the first: the plan allocates in ref-list order (g2 then g1)
+      [(not (= (opt-lp-binop-rhs-var plain 8) 17)) 4]
+      [(not (= (opt-lp-binop-rhs-var plain 9) 16)) 5]
+      [(not (= (compiler_optimize.opt-function-frame plain-func) 18)) 6]
+      ;; (b) the store closes the gate for the whole loop
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function store-func)))
+        7]
+      [(not (= (opt-lp-count-label store-blocks entry-label true) 0)) 8]
+      [(not (= (opt-lp-count-label store-blocks loop-label false) 3)) 9]
+      [(not (= (compiler_optimize.opt-function-frame store-func) 16)) 10]
+      ;; (c) zero-trip-capable loop still promotes into its preheader
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function zero-trip-func)))
+        11]
+      [(not (= (opt-lp-count-label zero-trip pre-label true) 1)) 12]
+      [(not (= (opt-lp-count-label zero-trip loop-label false) 0)) 13]
+      [(not (= (opt-lp-binop-rhs-var zero-trip 8) 16)) 14]
+      ;; (e) function scope stays refused; loop scope still fires
+      [(not (= (opt-lp-count-label call-entry-hoisted entry-label true) 0)) 15]
+      [(not (= (opt-lp-count-label call-promoted entry-label true) 1)) 16]
+      [(not (= (opt-lp-count-label call-promoted loop-label false) 0)) 17]
+      ;; (d) the promoted bound lets the multi-block versioner fire
+      [(not (opt-lp-has-block? versioned "body__bce_fast")) 18]
+      [(opt-lp-has-block? version-control "body__bce_fast") 19]
+      [else 42])))
+
 ;; --- dense LICM/induction insertion order witnesses -------------------------
 ;; These fixtures use the destination as a compact position marker.  A Jump is
 ;; encoded as -1, so the expected vectors pin both the inserted order and the
@@ -44357,16 +46753,16 @@
     [expected-inserted : (Array i64) (array.make-array i64 6)]
     [expected-appended : (Array i64) (array.make-array i64 4)]
     (begin
-      (array-set! expected-inserted 0 10)
-      (array-set! expected-inserted 1 11)
-      (array-set! expected-inserted 2 20)
-      (array-set! expected-inserted 3 21)
-      (array-set! expected-inserted 4 -1)
-      (array-set! expected-inserted 5 12)
-      (array-set! expected-appended 0 30)
-      (array-set! expected-appended 1 31)
-      (array-set! expected-appended 2 40)
-      (array-set! expected-appended 3 41)
+      (set! (array-ref expected-inserted 0) 10)
+      (set! (array-ref expected-inserted 1) 11)
+      (set! (array-ref expected-inserted 2) 20)
+      (set! (array-ref expected-inserted 3) 21)
+      (set! (array-ref expected-inserted 4) -1)
+      (set! (array-ref expected-inserted 5) 12)
+      (set! (array-ref expected-appended 0) 30)
+      (set! (array-ref expected-appended 1) 31)
+      (set! (array-ref expected-appended 2) 40)
+      (set! (array-ref expected-appended 3) 41)
       (cond
         [(not (= (compiler_ir_types.compiler-ir-instr-seq-count inserted) 6)) 1]
         [(not (= (compiler_ir_types.compiler-ir-instr-seq-count appended) 4)) 2]
@@ -44404,7 +46800,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Cons preheader rest)
-      (match (box-get rest)
+      (match (__tl-box-place rest)
         [(compiler_ir_types.CompilerIrBlockList.Cons header _)
           (and
             (= (opt-block-instr-count preheader) 3)
@@ -44553,6 +46949,13 @@
     "global-array loop versions once the descriptor loads become invariant SSA values"))
 
 (test
+  licm-global-operand-promotion
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-promote-self-test)
+    42
+    "loop-scope promotion loads both word cells in the preheader and rewrites the body operands; an in-loop set! refuses, a zero-trip-capable loop still promotes, the function-scope pass stays refused across a returning call, and the promoted bound unlocks bounds-check versioning"))
+
+(test
   dense-licm-insertion-order
   (test.assert-i64-eq
     (opt-dense-insertion-test-licm-order-self-test)
@@ -44569,10 +46972,10 @@
 (test
   global-cell-runtime-loader
   (begin
-    (array-set! opt-gc-runtime-table 0 1)
-    (array-set! opt-gc-runtime-table 1 2)
-    (array-set! opt-gc-runtime-table 2 3)
-    (array-set! opt-gc-runtime-table 3 4)
+    (set! (array-ref opt-gc-runtime-table 0) 1)
+    (set! (array-ref opt-gc-runtime-table 1) 2)
+    (set! (array-ref opt-gc-runtime-table 2) 3)
+    (set! (array-ref opt-gc-runtime-table 3) 4)
     (opt-gc-runtime-load! 5)
     (test.assert-i64-eq
       (opt-gc-runtime-read-loop 4)
@@ -44604,22 +47007,22 @@
 (test
   bit-test-expand-runtime
   (begin
-    (array-set! opt-bt-expand-witness-arr 3 0)
+    (set! (array-ref opt-bt-expand-witness-arr 3) 0)
     (test.assert-i64-eq
       (opt-bt-expand-witness-run 1)
       101
       "(0 & 2) == 0 is true, not (0 == 2)")
-    (array-set! opt-bt-expand-witness-arr 3 1)
+    (set! (array-ref opt-bt-expand-witness-arr 3) 1)
     (test.assert-i64-eq
       (opt-bt-expand-witness-run 10)
       110
       "(1 & 2) == 0 is true, not (1 == 2)")
-    (array-set! opt-bt-expand-witness-arr 3 3)
+    (set! (array-ref opt-bt-expand-witness-arr 3) 3)
     (test.assert-i64-eq
       (opt-bt-expand-witness-run 100)
       300
       "(3 & 2) == 0 is false, matching (3 == 2) only by accident")
-    (array-set! opt-bt-expand-witness-arr 3 2)
+    (set! (array-ref opt-bt-expand-witness-arr 3) 2)
     (test.assert-i64-eq
       (opt-bt-expand-witness-run 1000)
       1200
@@ -45347,7 +47750,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! opt-loop-budget-runtime-table i (+ i 1))
+          (set! (array-ref opt-loop-budget-runtime-table i) (+ i 1))
           (set! a (+ a (array-ref opt-loop-budget-runtime-table i)))
           (set! i (+ i 1))))
       (set! i 0)
@@ -45373,3 +47776,809 @@
       (opt-loop-budget-runtime-run 1)
       4
       "single-element trip counts stay exact")))
+
+;; Source-level runtime witness for the whole classifier path: lowering must
+;; form the compare chain, bit_test must rewrite it, and the backend must fuse
+;; the shift/test/branch without changing any boundary result. The inputs live
+;; in an array so the opt2 smoke cannot constant-fold the calls away. The
+;; predicate feeds the validation branch directly: after inlining, that is the
+;; hot lexer shape whose branch targets need no phi copies and admit `btq`.
+(define (opt-bit-test-runtime-classifier? [c : i64]) : bool
+  (cond
+    [(and (>= c 48) (<= c 57)) true]
+    [(= c 33) true]
+    [(and (>= c 37) (<= c 38)) true]
+    [(= c 42) true]
+    [(= c 43) true]
+    [(= c 45) true]
+    [(= c 46) true]
+    [(= c 47) true]
+    [(= c 58) true]
+    [(and (>= c 60) (<= c 63)) true]
+    [(= c 95) true]
+    [else false]))
+
+(define (compiler-optimize-bit-test-runtime-self-test) : i64
+  (let
+    [values : (Array i64)
+      (make-array
+        -100
+        32
+        33
+        34
+        36
+        37
+        38
+        39
+        41
+        42
+        43
+        44
+        45
+        46
+        47
+        48
+        53
+        57
+        58
+        59
+        60
+        61
+        62
+        63
+        64
+        94
+        95
+        96
+        1000)]
+    [expected : (Array i64)
+      (make-array 0 0 1 0 0 1 1 0 0 1 1 0 1 1 1 1 1 1 1 0 1 1 1 1 0 0 1 0 0)]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length values))
+        (let
+          [expected-value : i64 (array-ref expected index)]
+          (begin
+            (if (opt-bit-test-runtime-classifier? (array-ref values index))
+              (when (!= expected-value 1) (return (+ index 1)))
+              (when (!= expected-value 0) (return (+ index 1))))
+            (set! index (+ index 1)))))
+      42)))
+
+;; --- bit_test: classifier compare chain -> one bitmask test ------------------
+;;
+;; Fixtures are spelled the way lowering leaves a `cond`/`or` classifier: one
+;; compare-and-branch block per test, every true edge on the shared arm, every
+;; false edge continuing the chain.
+(define (opt-bit-test-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "c"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "other"
+        (compiler_ast_types.AstType.I64)
+        1)
+      compiler_ir_types.CompilerIrParamList.Nil)))
+
+(define (opt-bit-test-test-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bit_test")
+    (opt-bit-test-test-params)
+    (compiler_ast_types.AstType.I64)
+    16
+    blocks))
+
+(define (opt-bit-test-link-block
+  [label : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [value-var : i64]
+  [bound : i64]
+  [dst : i64]
+  [ty : compiler_ast_types.AstType]
+  [true-label : i64]
+  [next-label : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        dst
+        op
+        (compiler_ir_types.CompilerIrValue.Var value-var)
+        (compiler_ir_types.CompilerIrValue.I64 bound)
+        ty)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var dst)
+          true-label
+          next-label)
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; Same link, with one extra instruction the rewrite would have to drop.
+(define (opt-bit-test-impure-link-block
+  [label : i64]
+  [bound : i64]
+  [dst : i64]
+  [true-label : i64]
+  [next-label : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          dst
+          compiler_ir_types.CompilerIrBinOp.Eq
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 bound)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var dst)
+            true-label
+            next-label)
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+(define (opt-bit-test-return-block [label : i64] [value : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.I64 value)))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-bit-test-arms) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bit-test-return-block (compiler_ir_types.compiler-ir-label "hit") 1)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bit-test-return-block (compiler_ir_types.compiler-ir-label "miss") 0)
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-bit-test-chain-label [index : i64]) : i64
+  (compiler_ir_types.compiler-ir-label
+    (str_cat.str-cat "l" (string.int->string index))))
+
+;; `bounds[i]` tested for equality at link i; the last link's false edge is the
+;; miss arm. `ty` is the compare operand type, `value-var` the tested var.
+(define (opt-bit-test-equality-chain-from
+  [bounds : (__tl_dyn-array i64)]
+  [index : i64]
+  [value-var : i64]
+  [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrBlockList
+  (if (>= index (array-length bounds))
+    (opt-bit-test-arms)
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bit-test-link-block
+        (if (= index 0)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-bit-test-chain-label index))
+        compiler_ir_types.CompilerIrBinOp.Eq
+        value-var
+        (array-ref bounds index)
+        (+ index 2)
+        ty
+        (compiler_ir_types.compiler-ir-label "hit")
+        (if (= (+ index 1) (array-length bounds))
+          (compiler_ir_types.compiler-ir-label "miss")
+          (opt-bit-test-chain-label (+ index 1))))
+      (opt-bit-test-equality-chain-from bounds (+ index 1) value-var ty))))
+
+(define (opt-bit-test-equality-chain [bounds : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerIrBlockList
+  (opt-bit-test-equality-chain-from bounds 0 0 (compiler_ast_types.AstType.I64)))
+
+;; Space-shaped, but six wide: tab, newline, vertical tab, form feed, carriage
+;; return and space, whose codes span [9, 32].
+(define (opt-bit-test-space-bounds) : (__tl_dyn-array i64)
+  (make-array 32 9 10 13 11 12))
+
+(define (opt-bit-test-space-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-bit-test-equality-chain (opt-bit-test-space-bounds)))
+
+;; The digit-and-letter shape: two closed ranges lowered as bound pairs, then
+;; four punctuation equalities. Union [33, 95], so the window fits only after
+;; subtracting the base.
+(define (opt-bit-test-symbol-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bit-test-link-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      compiler_ir_types.CompilerIrBinOp.Ge
+      0
+      48
+      2
+      (compiler_ast_types.AstType.I64)
+      (compiler_ir_types.compiler-ir-label "l0b")
+      (opt-bit-test-chain-label 1))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bit-test-link-block
+        (compiler_ir_types.compiler-ir-label "l0b")
+        compiler_ir_types.CompilerIrBinOp.Le
+        0
+        57
+        3
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.compiler-ir-label "hit")
+        (opt-bit-test-chain-label 1))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bit-test-link-block
+          (opt-bit-test-chain-label 1)
+          compiler_ir_types.CompilerIrBinOp.Ge
+          0
+          65
+          4
+          (compiler_ast_types.AstType.I64)
+          (compiler_ir_types.compiler-ir-label "l1b")
+          (opt-bit-test-chain-label 2))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bit-test-link-block
+            (compiler_ir_types.compiler-ir-label "l1b")
+            compiler_ir_types.CompilerIrBinOp.Le
+            0
+            70
+            5
+            (compiler_ast_types.AstType.I64)
+            (compiler_ir_types.compiler-ir-label "hit")
+            (opt-bit-test-chain-label 2))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bit-test-link-block
+              (opt-bit-test-chain-label 2)
+              compiler_ir_types.CompilerIrBinOp.Eq
+              0
+              45
+              6
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (opt-bit-test-chain-label 3))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bit-test-link-block
+                (opt-bit-test-chain-label 3)
+                compiler_ir_types.CompilerIrBinOp.Eq
+                0
+                95
+                7
+                (compiler_ast_types.AstType.I64)
+                (compiler_ir_types.compiler-ir-label "hit")
+                (opt-bit-test-chain-label 4))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-bit-test-link-block
+                  (opt-bit-test-chain-label 4)
+                  compiler_ir_types.CompilerIrBinOp.Eq
+                  0
+                  33
+                  8
+                  (compiler_ast_types.AstType.I64)
+                  (compiler_ir_types.compiler-ir-label "hit")
+                  (opt-bit-test-chain-label 5))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-bit-test-link-block
+                    (opt-bit-test-chain-label 5)
+                    compiler_ir_types.CompilerIrBinOp.Eq
+                    0
+                    43
+                    9
+                    (compiler_ast_types.AstType.I64)
+                    (compiler_ir_types.compiler-ir-label "hit")
+                    (compiler_ir_types.compiler-ir-label "miss"))
+                  (opt-bit-test-arms))))))))))
+
+;; A link testing a second parameter breaks the chain at that point, leaving
+;; too few links ahead of it and none behind.
+(define (opt-bit-test-mixed-value-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bit-test-link-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      compiler_ir_types.CompilerIrBinOp.Eq
+      0
+      32
+      2
+      (compiler_ast_types.AstType.I64)
+      (compiler_ir_types.compiler-ir-label "hit")
+      (opt-bit-test-chain-label 1))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bit-test-link-block
+        (opt-bit-test-chain-label 1)
+        compiler_ir_types.CompilerIrBinOp.Eq
+        0
+        9
+        3
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.compiler-ir-label "hit")
+        (opt-bit-test-chain-label 2))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bit-test-link-block
+          (opt-bit-test-chain-label 2)
+          compiler_ir_types.CompilerIrBinOp.Eq
+          1
+          10
+          4
+          (compiler_ast_types.AstType.I64)
+          (compiler_ir_types.compiler-ir-label "hit")
+          (opt-bit-test-chain-label 3))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bit-test-link-block
+            (opt-bit-test-chain-label 3)
+            compiler_ir_types.CompilerIrBinOp.Eq
+            0
+            13
+            5
+            (compiler_ast_types.AstType.I64)
+            (compiler_ir_types.compiler-ir-label "hit")
+            (opt-bit-test-chain-label 4))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bit-test-link-block
+              (opt-bit-test-chain-label 4)
+              compiler_ir_types.CompilerIrBinOp.Eq
+              0
+              11
+              6
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (opt-bit-test-chain-label 5))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bit-test-link-block
+                (opt-bit-test-chain-label 5)
+                compiler_ir_types.CompilerIrBinOp.Eq
+                0
+                12
+                7
+                (compiler_ast_types.AstType.I64)
+                (compiler_ir_types.compiler-ir-label "hit")
+                (compiler_ir_types.compiler-ir-label "miss"))
+              (opt-bit-test-arms))))))))
+
+;; Same six links, but the third one also stores: the path the rewrite would
+;; replace is no longer side-effect free.
+(define (opt-bit-test-impure-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bit-test-link-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      compiler_ir_types.CompilerIrBinOp.Eq
+      0
+      32
+      2
+      (compiler_ast_types.AstType.I64)
+      (compiler_ir_types.compiler-ir-label "hit")
+      (opt-bit-test-chain-label 1))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bit-test-link-block
+        (opt-bit-test-chain-label 1)
+        compiler_ir_types.CompilerIrBinOp.Eq
+        0
+        9
+        3
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.compiler-ir-label "hit")
+        (opt-bit-test-chain-label 2))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bit-test-impure-link-block
+          (opt-bit-test-chain-label 2)
+          10
+          4
+          (compiler_ir_types.compiler-ir-label "hit")
+          (opt-bit-test-chain-label 3))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bit-test-link-block
+            (opt-bit-test-chain-label 3)
+            compiler_ir_types.CompilerIrBinOp.Eq
+            0
+            13
+            5
+            (compiler_ast_types.AstType.I64)
+            (compiler_ir_types.compiler-ir-label "hit")
+            (opt-bit-test-chain-label 4))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bit-test-link-block
+              (opt-bit-test-chain-label 4)
+              compiler_ir_types.CompilerIrBinOp.Eq
+              0
+              11
+              6
+              (compiler_ast_types.AstType.I64)
+              (compiler_ir_types.compiler-ir-label "hit")
+              (opt-bit-test-chain-label 5))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bit-test-link-block
+                (opt-bit-test-chain-label 5)
+                compiler_ir_types.CompilerIrBinOp.Eq
+                0
+                12
+                7
+                (compiler_ast_types.AstType.I64)
+                (compiler_ir_types.compiler-ir-label "hit")
+                (compiler_ir_types.compiler-ir-label "miss"))
+              (opt-bit-test-arms))))))))
+
+;; Six links whose union spans 100: no six of them share a 64-wide window.
+(define (opt-bit-test-wide-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-bit-test-equality-chain (make-array 0 10 20 30 40 100)))
+
+;; Two links: shorter than the profitability floor.
+(define (opt-bit-test-short-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-bit-test-equality-chain (make-array 32 9)))
+
+;; Six links compared as u64: the window guard reads `v - base` unsigned, which
+;; only agrees with the chain when the chain itself compared signed 64-bit.
+(define (opt-bit-test-unsigned-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-bit-test-equality-chain-from
+    (opt-bit-test-space-bounds)
+    0
+    0
+    (compiler_ast_types.AstType.U64)))
+
+(define (opt-bit-test-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_optimize.OptFunctionPassResult
+  (compiler_optimize.opt-bit-test-function-pass
+    (opt-bit-test-test-function blocks)))
+
+(define (opt-bit-test-changed? [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (opt-bit-test-run blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
+
+(define (opt-bit-test-result-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (match (opt-bit-test-run blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result next _)
+      (match next
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ out) out])]))
+
+(define (opt-bit-test-result-verified?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (opt-bit-test-run blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result next _)
+      (compiler_optimize.opt-verify-ok?
+        (compiler_optimize.opt-verify-function next))]))
+
+(define (opt-bit-test-block-at
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : compiler_ir_types.CompilerIrBlock
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.Some block) block]
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.compiler-ir-block
+        label
+        compiler_ir_types.CompilerIrInstrList.Nil)]))
+
+(define (opt-bit-test-binop-matches?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        instr-dst
+        instr-op
+        instr-lhs
+        instr-rhs
+        instr-ty)
+      (and
+        (= instr-dst dst)
+        (compiler_optimize.opt-binop-eq instr-op op)
+        (compiler_optimize.opt-value-eq instr-lhs lhs)
+        (compiler_optimize.opt-value-eq instr-rhs rhs)
+        (match instr-ty
+          [(compiler_ast_types.AstType.U64) true]
+          [_ false]))]
+    [_ false]))
+
+(define (opt-bit-test-mov-matches?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]
+  [value : i64]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov instr-dst instr-value instr-ty)
+      (and
+        (= instr-dst dst)
+        (compiler_optimize.opt-value-eq
+          instr-value
+          (compiler_ir_types.CompilerIrValue.I64 value))
+        (match instr-ty
+          [(compiler_ast_types.AstType.U64) true]
+          [_ false]))]
+    [_ false]))
+
+(define (opt-bit-test-branch-matches?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [cond-var : i64]
+  [true-label : i64]
+  [false-label : i64]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Branch cond yes no)
+      (and
+        (compiler_optimize.opt-value-eq
+          cond
+          (compiler_ir_types.CompilerIrValue.Var cond-var))
+        (= yes true-label)
+        (= no false-label))]
+    [_ false]))
+
+;; Head and mask block shape after a conversion whose head label is `entry`:
+;; the head keeps whatever it computed, then materializes the mask, subtracts
+;; the base, guards the window and branches into the mask block; the mask block
+;; shifts, tests bit zero and branches to the shared arm or the miss arm.
+(define (opt-bit-test-shape-ok?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [base : i64]
+  [width : i64]
+  [mask : i64]) : bool
+  (let
+    [head : compiler_ir_types.CompilerIrBlock
+      (opt-bit-test-block-at
+        blocks
+        (compiler_ir_types.compiler-ir-label "entry"))]
+    [mask-label : i64 (compiler_ir_types.compiler-ir-label "entry__bit_test")]
+    [mask-block : compiler_ir_types.CompilerIrBlock
+      (opt-bit-test-block-at blocks mask-label)]
+    [head-count : i64 (opt-block-instr-count head)]
+    (and
+      (= (opt-block-instr-count mask-block) 3)
+      (>= head-count 4)
+      (opt-bit-test-mov-matches?
+        (opt-block-instr-at head (- head-count 4))
+        16
+        mask)
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at head (- head-count 3))
+        17
+        compiler_ir_types.CompilerIrBinOp.Sub
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 base))
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at head (- head-count 2))
+        18
+        compiler_ir_types.CompilerIrBinOp.Le
+        (compiler_ir_types.CompilerIrValue.Var 17)
+        (compiler_ir_types.CompilerIrValue.I64 width))
+      (opt-bit-test-branch-matches?
+        (opt-block-instr-at head (- head-count 1))
+        18
+        mask-label
+        (compiler_ir_types.compiler-ir-label "miss"))
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at mask-block 0)
+        19
+        (compiler_ir_types.CompilerIrBinOp.Shr (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrValue.Var 16)
+        (compiler_ir_types.CompilerIrValue.Var 17))
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at mask-block 1)
+        20
+        compiler_ir_types.CompilerIrBinOp.BitTestNe
+        (compiler_ir_types.CompilerIrValue.Var 19)
+        (compiler_ir_types.CompilerIrValue.I64 1))
+      (opt-bit-test-branch-matches?
+        (opt-block-instr-at mask-block 2)
+        20
+        (compiler_ir_types.compiler-ir-label "hit")
+        (compiler_ir_types.compiler-ir-label "miss")))))
+
+;; Returns 42 only when a six-way equality chain collapses to one masked test
+;; over the window [9, 32] and the rewritten function still verifies.
+(define (compiler-optimize-bit-test-equality-self-test) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-bit-test-result-blocks (opt-bit-test-space-blocks))]
+    (begin
+      (unless (opt-bit-test-changed? (opt-bit-test-space-blocks)) (return 1))
+      (unless
+        (opt-bit-test-result-verified? (opt-bit-test-space-blocks))
+        (return 2))
+      (unless (opt-bit-test-shape-ok? blocks 9 23 8388639) (return 3))
+      (when
+        (opt-block-list-has-label? blocks (opt-bit-test-chain-label 3))
+        (return 4))
+      42)))
+
+;; Returns 42 only when two closed ranges and four punctuation equalities
+;; collapse to one masked test whose base is the smallest constant in the chain.
+(define (compiler-optimize-bit-test-range-self-test) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-bit-test-result-blocks (opt-bit-test-symbol-blocks))]
+    (begin
+      (unless (opt-bit-test-changed? (opt-bit-test-symbol-blocks)) (return 1))
+      (unless
+        (opt-bit-test-result-verified? (opt-bit-test-symbol-blocks))
+        (return 2))
+      (unless
+        (opt-bit-test-shape-ok? blocks 33 62 4611686289043854337)
+        (return 3))
+      (when
+        (opt-block-list-has-label?
+          blocks
+          (compiler_ir_types.compiler-ir-label "l0b"))
+        (return 4))
+      42)))
+
+;; Returns 42 only when every refused shape is left exactly as it was.
+(define (compiler-optimize-bit-test-refusal-self-test) : i64
+  (begin
+    (when (opt-bit-test-changed? (opt-bit-test-mixed-value-blocks)) (return 1))
+    (when (opt-bit-test-changed? (opt-bit-test-impure-blocks)) (return 2))
+    (when (opt-bit-test-changed? (opt-bit-test-wide-blocks)) (return 3))
+    (when (opt-bit-test-changed? (opt-bit-test-short-blocks)) (return 4))
+    (when (opt-bit-test-changed? (opt-bit-test-unsigned-blocks)) (return 5))
+    42))
+
+;; --------------------------------------------------------------------------
+;; Exit-split sink label freshness
+;; --------------------------------------------------------------------------
+;; The BCE multi-block sink names each check block by concatenating the exit
+;; label, a separator, and the predecessor label. Concatenation is not
+;; injective and the same predecessor can hold two edges into one exit, so the
+;; sink has to prove its whole name set is unused before it commits to it.
+;; These fixtures pin both halves: the generation search that steps off an
+;; occupied name, and the one-block-per-predecessor rule.
+(define (opt-xchk-jump-block [label : i64] [target : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    label
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Jump target)
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+(define (opt-xchk-exit-label) : i64
+  (compiler_ir_types.compiler-ir-label "exit"))
+
+(define (opt-xchk-pred-label) : i64
+  (compiler_ir_types.compiler-ir-label "pa"))
+
+(define (opt-xchk-other-pred-label) : i64
+  (compiler_ir_types.compiler-ir-label "pb"))
+
+;; `pa -> exit`, plus an optional already-taken block so a fixture can occupy
+;; the name the sink would otherwise pick.
+(define (opt-xchk-blocks [taken : i64] [occupied? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-xchk-jump-block (opt-xchk-pred-label) (opt-xchk-exit-label))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-xchk-jump-block (opt-xchk-other-pred-label) (opt-xchk-exit-label))
+      (if occupied?
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-xchk-jump-block taken (opt-xchk-exit-label))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-xchk-jump-block (opt-xchk-exit-label) (opt-xchk-exit-label))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-xchk-jump-block (opt-xchk-exit-label) (opt-xchk-exit-label))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-xchk-inputs-single) : compiler_ir_types.CompilerIrPhiInputList
+  (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (opt-xchk-pred-label)
+    compiler_ir_types.CompilerIrPhiInputList.Nil))
+
+;; One predecessor, two edges: a branch whose arms both land on the exit gives
+;; the exit phi two inputs under the same label.
+(define (opt-xchk-inputs-duplicate) : compiler_ir_types.CompilerIrPhiInputList
+  (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (opt-xchk-pred-label)
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (opt-xchk-pred-label)
+      compiler_ir_types.CompilerIrPhiInputList.Nil)))
+
+(define (opt-xchk-inputs-distinct) : compiler_ir_types.CompilerIrPhiInputList
+  (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (opt-xchk-pred-label)
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (opt-xchk-other-pred-label)
+      compiler_ir_types.CompilerIrPhiInputList.Nil)))
+
+(define (opt-xchk-block-count [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons _ rest)
+      (+ 1 (opt-xchk-block-count (__tl-box-place rest)))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-xchk-block-count
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-xchk-gen-for
+  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [taken : i64]
+  [occupied? : bool]) : i64
+  (compiler_optimize.opt-bce-mb-sink-fresh-gen
+    (opt-xchk-blocks taken occupied?)
+    inputs
+    compiler_optimize.OptLabelSet.Nil
+    (opt-xchk-exit-label)
+    0))
+
+(define (opt-xchk-check-blocks
+  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [gen : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    (begin
+      (set! (array-ref cell 0) 900)
+      (compiler_optimize.opt-bce-mb-sink-check-blocks-from
+        inputs
+        compiler_optimize.OptLabelSet.Nil
+        (opt-xchk-exit-label)
+        (compiler_ir_types.CompilerIrValue.I64 8)
+        compiler_ir_types.CompilerIrBlockList.Nil
+        cell
+        gen
+        compiler_optimize.OptLabelSet.Nil))))
+
+;; Returns 42 only when the sink keeps its historical generation-0 spelling on
+;; a clear function, steps to a fresh generation when either the check block's
+;; own name or its in-range continuation is already taken, and emits exactly
+;; one check block per distinct predecessor.
+(define (compiler-optimize-exit-split-label-freshness-self-test) : i64
+  (let
+    [gen0 : i64
+      (compiler_optimize.opt-bce-mb-sink-check-label
+        (opt-xchk-exit-label)
+        (opt-xchk-pred-label)
+        0)]
+    [gen1 : i64
+      (compiler_optimize.opt-bce-mb-sink-check-label
+        (opt-xchk-exit-label)
+        (opt-xchk-pred-label)
+        1)]
+    (begin
+      (unless
+        (= gen0 (compiler_ir_types.compiler-ir-label "exit__xchk_pa"))
+        (return 1))
+      (when (= gen1 gen0) (return 2))
+      (unless
+        (=
+          (compiler_optimize.opt-bce-mb-sink-check-ok-label gen0)
+          (compiler_ir_types.compiler-ir-label "exit__xchk_pa.0"))
+        (return 3))
+      ;; Nothing in the way: generation 0, byte-for-byte the legacy name.
+      (unless
+        (= (opt-xchk-gen-for (opt-xchk-inputs-single) gen0 false) 0)
+        (return 4))
+      ;; The check block's own name is taken.
+      (unless
+        (= (opt-xchk-gen-for (opt-xchk-inputs-single) gen0 true) 1)
+        (return 5))
+      ;; The in-range continuation's name is taken.
+      (unless
+        (=
+          (opt-xchk-gen-for
+            (opt-xchk-inputs-single)
+            (compiler_optimize.opt-bce-mb-sink-check-ok-label gen0)
+            true)
+          1)
+        (return 6))
+      ;; Generation 1 clears the occupied function.
+      (unless
+        (= (opt-xchk-gen-for (opt-xchk-inputs-single) gen1 false) 0)
+        (return 7))
+      ;; Two edges from one predecessor share one check block.
+      (unless
+        (=
+          (opt-xchk-block-count
+            (opt-xchk-check-blocks (opt-xchk-inputs-duplicate) 0))
+          1)
+        (return 8))
+      ;; Two predecessors still get one block each.
+      (unless
+        (=
+          (opt-xchk-block-count
+            (opt-xchk-check-blocks (opt-xchk-inputs-distinct) 0))
+          2)
+        (return 9))
+      (unless
+        (opt-block-list-has-label?
+          (opt-xchk-check-blocks (opt-xchk-inputs-duplicate) 0)
+          gen0)
+        (return 10))
+      (unless
+        (opt-block-list-has-label?
+          (opt-xchk-check-blocks (opt-xchk-inputs-single) 1)
+          gen1)
+        (return 11))
+      42)))

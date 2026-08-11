@@ -47,7 +47,7 @@
       (while (< i n)
         (begin
           (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
-          (array-set! out i (% state 16777216))
+          (set! (array-ref out i) (% state 16777216))
           (set! i (+ i 1))))
       state)))
 

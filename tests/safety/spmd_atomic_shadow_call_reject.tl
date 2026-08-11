@@ -5,7 +5,7 @@
   [out : (__tl_dyn-array i64)]
   [index : i64]
   [value : i64]) : unit
-  (array-set! out index (+ (array-ref out index) value)))
+  (set! (array-ref out index) (+ (array-ref out index) value)))
 
 (define (main
   [ix : (__tl_dyn-array i64)]

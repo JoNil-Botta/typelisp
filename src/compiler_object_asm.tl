@@ -369,12 +369,8 @@
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 65536)]
     (begin
-      (compiler-object-asm-render-symbols!
-        (&mut out)
-        (struct-get image symbols))
-      (if (compiler-object-asm-render-sections!
-        (&mut out)
-        (struct-get image sections))
+      (compiler-object-asm-render-symbols! (&mut out) image.symbols)
+      (if (compiler-object-asm-render-sections! (&mut out) image.sections)
         (ResultCompilerObjectAsm.Ok
           (byte_buf_core.byte-buf-builder-finish-string (& out)))
         (ResultCompilerObjectAsm.Err

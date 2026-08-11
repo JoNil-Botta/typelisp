@@ -53,14 +53,10 @@
     [(i64vec.IterNext.Item _) 1]))
 
 (define (shared-counter-value [counter : (& source VectorApiCounter)]) : i64
-  (struct-get counter value))
+  counter.value)
 
 (define (shared-ball-score [ball : (& source VectorApiBall)]) : i64
-  (+
-    (+
-      (struct-get (struct-get ball center) x)
-      (struct-get (struct-get ball center) y))
-    (struct-get ball radius)))
+  (+ (+ ball.center.x ball.center.y) ball.radius))
 
 (define (main) : i64
   (let
@@ -152,12 +148,12 @@
               word-first-alpha
               word-first-alpha-shared
               (=
-                (struct-get
+                (__tl-project-field
                   (countervec.get (& counters) 0 (VectorApiCounter 0))
                   value)
                 16)
               (=
-                (struct-get
+                (__tl-project-field
                   (countervec.get (& counters) 1 (VectorApiCounter 0))
                   value)
                 26)

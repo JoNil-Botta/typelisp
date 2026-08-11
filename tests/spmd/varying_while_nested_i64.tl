@@ -13,11 +13,11 @@
       (begin
         (while (> (array-ref inner i) 0)
           (begin
-            (array-set! out i (+ (array-ref out i) 1))
-            (array-set! inner i (+ (array-ref inner i) -1))))
-        (array-set! out i (+ (array-ref out i) 10))
-        (array-set! outer i (+ (array-ref outer i) -1))
-        (array-set! inner i (+ (% i 2) 1))))))
+            (set! (array-ref out i) (+ (array-ref out i) 1))
+            (set! (array-ref inner i) (+ (array-ref inner i) -1))))
+        (set! (array-ref out i) (+ (array-ref out i) 10))
+        (set! (array-ref outer i) (+ (array-ref outer i) -1))
+        (set! (array-ref inner i) (+ (% i 2) 1))))))
 
 (define (fill-scalar
   [outer : (__tl_dyn-array i64)]
@@ -32,11 +32,11 @@
           (begin
             (while (> (array-ref inner i) 0)
               (begin
-                (array-set! out i (+ (array-ref out i) 1))
-                (array-set! inner i (+ (array-ref inner i) -1))))
-            (array-set! out i (+ (array-ref out i) 10))
-            (array-set! outer i (+ (array-ref outer i) -1))
-            (array-set! inner i (+ (% i 2) 1))))
+                (set! (array-ref out i) (+ (array-ref out i) 1))
+                (set! (array-ref inner i) (+ (array-ref inner i) -1))))
+            (set! (array-ref out i) (+ (array-ref out i) 10))
+            (set! (array-ref outer i) (+ (array-ref outer i) -1))
+            (set! (array-ref inner i) (+ (% i 2) 1))))
         (set! i (+ i 1))))))
 
 (define (run-case [n : i64]) : bool
@@ -55,10 +55,10 @@
           [outer-count : i64 (% i 4)]
           [inner-count : i64 (+ (% i 2) 1)]
           (begin
-            (array-set! outer i outer-count)
-            (array-set! outer-ref i outer-count)
-            (array-set! inner i inner-count)
-            (array-set! inner-ref i inner-count)
+            (set! (array-ref outer i) outer-count)
+            (set! (array-ref outer-ref i) outer-count)
+            (set! (array-ref inner i) inner-count)
+            (set! (array-ref inner-ref i) inner-count)
             (set! i (+ i 1)))))
       (fill-nested outer inner got n)
       (fill-scalar outer-ref inner-ref want n)

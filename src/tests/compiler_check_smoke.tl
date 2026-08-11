@@ -84,14 +84,13 @@
       [(compiler_check_core.ResultCompilerCheck.Err diag-box)
         (let
           [diag : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first (box-get diag-box))]
+            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag-box))]
           [fixes : cdiag.CompilerDiagnosticFixSeq
             (cdiag.compiler-diagnostic-fixes diag)]
           (and
-            (= (struct-get fixes len) 1)
+            (= fixes.len 1)
             (let
-              [fix : cdiag.CompilerDiagnosticFix
-                (array-ref (struct-get fixes slots) 0)]
+              [fix : cdiag.CompilerDiagnosticFix (array-ref fixes.slots 0)]
               [edits : cdiag.CompilerDiagnosticTextEditSeq
                 (cdiag.compiler-diagnostic-fix-edits fix)]
               (and
@@ -101,10 +100,10 @@
                 (match (cdiag.compiler-diagnostic-fix-applicability fix)
                   [cdiag.CompilerDiagnosticMachineApplicable true]
                   [_ false])
-                (= (struct-get edits len) 1)
+                (= edits.len 1)
                 (let
                   [edit : cdiag.CompilerDiagnosticTextEdit
-                    (array-ref (struct-get edits slots) 0)]
+                    (array-ref edits.slots 0)]
                   [span : cdiag.CompilerDiagnosticSpan
                     (cdiag.compiler-diagnostic-text-edit-span edit)]
                   (and
@@ -134,9 +133,9 @@
     [(compiler_check_core.ResultCompilerCheck.Ok _) false]
     [(compiler_check_core.ResultCompilerCheck.Err diag)
       (=
-        (struct-get
+        (__tl-project-field
           (cdiag.compiler-diagnostic-fixes
-            (cdiag.compiler-diagnostic-list-first (box-get diag)))
+            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))
           len)
         0)]))
 
@@ -152,7 +151,8 @@
     [(check_core.ResultCompilerCheck.Ok _) false]
     [(check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
-        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (__tl-box-place diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
@@ -237,7 +237,8 @@
     [(tc_core.ResultCompilerTypecheck.Ok _) false]
     [(tc_core.ResultCompilerTypecheck.Err diagnostics-box)
       (let
-        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (__tl-box-place diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first diagnostics)]
         [fixes : cdiag.CompilerDiagnosticFixSeq
@@ -247,20 +248,19 @@
           (string.eq
             (cdiag.compiler-diagnostic-message diagnostic)
             "typecheck: unbound name io.prnit")
-          (= (struct-get fixes len) 1)
+          (= fixes.len 1)
           (let
-            [fix : cdiag.CompilerDiagnosticFix
-              (array-ref (struct-get fixes slots) 0)]
+            [fix : cdiag.CompilerDiagnosticFix (array-ref fixes.slots 0)]
             [edits : cdiag.CompilerDiagnosticTextEditSeq
               (cdiag.compiler-diagnostic-fix-edits fix)]
             (and
               (string.eq
                 (cdiag.compiler-diagnostic-fix-title fix)
                 "Replace misspelled name")
-              (= (struct-get edits len) 1)
+              (= edits.len 1)
               (string.eq
                 (cdiag.compiler-diagnostic-text-edit-replacement
-                  (array-ref (struct-get edits slots) 0))
+                  (array-ref edits.slots 0))
                 "io.print")))))]))
 
 (define (compiler-check-qualified-unbound-display-ok?) : bool
@@ -276,7 +276,8 @@
     [(tc_core.ResultCompilerTypecheck.Ok _) false]
     [(tc_core.ResultCompilerTypecheck.Err diagnostics-box)
       (let
-        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (__tl-box-place diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
@@ -284,7 +285,11 @@
           (string.eq
             (cdiag.compiler-diagnostic-message diagnostic)
             "typecheck: unbound name io.missing")
-          (= (struct-get (cdiag.compiler-diagnostic-fixes diagnostic) len) 0)))]))
+          (=
+            (__tl-project-field
+              (cdiag.compiler-diagnostic-fixes diagnostic)
+              len)
+            0)))]))
 
 (define (compiler-check-duplicate-type-location-ok?) : bool
   (let
@@ -298,7 +303,7 @@
       [(compiler_check_core.ResultCompilerCheck.Err diag-box)
         (let
           [diag : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first (box-get diag-box))]
+            (cdiag.compiler-diagnostic-list-first (__tl-box-place diag-box))]
           (and
             (string.eq
               (cdiag.compiler-diagnostic-message diag)
@@ -317,7 +322,8 @@
     [(compiler_check_core.ResultCompilerCheck.Ok _) false]
     [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
-        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (__tl-box-place diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-get diagnostics 0)]
         [second : cdiag.CompilerDiagnostic
@@ -345,7 +351,8 @@
     [(compiler_check_core.ResultCompilerCheck.Ok _) false]
     [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
-        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (__tl-box-place diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-get diagnostics 0)]
         [second : cdiag.CompilerDiagnostic
@@ -401,7 +408,8 @@
     [(compiler_check_core.ResultCompilerCheck.Ok _) false]
     [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
       (let
-        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (__tl-box-place diagnostics-box)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq

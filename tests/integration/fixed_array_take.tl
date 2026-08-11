@@ -17,7 +17,7 @@
     0))
 
 (define (triple-score [value : Triple]) : i64
-  (+ (struct-get value a) (+ (struct-get value b) (struct-get value c))))
+  (+ value.a (+ value.b value.c)))
 
 (define (take-triple [items : (&mut items (Array Triple 2))] [index : i64]) : Triple
   (array-take! items index))

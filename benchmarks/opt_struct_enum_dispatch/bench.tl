@@ -12,9 +12,9 @@
 
 (define (apply-op [op : Op] [pair : Pair]) : i64
   (match op
-    [(Add) (+ (struct-get pair left) (struct-get pair right))]
-    [(Mul) (% (* (struct-get pair left) (struct-get pair right)) 1000000007)]
-    [(Sub) (- (struct-get pair left) (struct-get pair right))]))
+    [(Add) (+ pair.left pair.right)]
+    [(Mul) (% (* pair.left pair.right) 1000000007)]
+    [(Sub) (- pair.left pair.right)]))
 
 (define (choose [i : i64]) : Op
   (if (= (% i 3) 0)

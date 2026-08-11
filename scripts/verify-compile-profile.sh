@@ -673,7 +673,6 @@ if ! "$COMPILER" compile src/main.tl \
     --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route \
     --cfg tlci-native-route-stress \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
@@ -797,7 +796,6 @@ set +e
     --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
 status=$?
 set -e
@@ -848,7 +846,6 @@ set +e
     --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
 status=$?
 set -e
@@ -1333,14 +1330,30 @@ fi
 # brings the combined tree back to 31 segments: the authoritative Windows probe
 # measured 2,008,157 used nodes, 2,031,616 capacity, and 65,011,712 physical
 # payload bytes.
+# #6277's function-owned backend scratch context crossed that boundary from 31
+# to 32 segments: the authoritative Windows CI probe measured 2,031,667 used
+# nodes, 2,097,152 capacity, and 67,108,864 physical payload bytes.
+# #6240's public dotted CTFE projection and native BoxTake template callback
+# crossed the macro-expand Expr boundary from 52 to 53 segments: the
+# authoritative Windows probe measured 3,469,666 used nodes, 3,473,408
+# capacity, and 111,149,056 physical payload bytes. The typecheck Expr pool
+# remains at 32 segments.
+# Reconciled with main through #5493's splice-cache compaction, #6277's backend
+# state ownership, and the dense IR sequence changes, the combined source graph
+# crosses the next macro-expand Expr boundary from 53 to 54 segments: the
+# authoritative Windows CI probe measured 3,487,386 used nodes, 3,538,944
+# capacity, and 113,246,208 physical payload bytes.
 # #6424's dead-phi retirement pass, rotation rounds, and flag-exit separation
 # clause crossed ast_expr_pool.typecheck from 31 to 32 segments: the
 # authoritative Windows probe measured 2,032,112 used nodes, 2,097,152
 # capacity, and 67,108,864 physical payload bytes.
-# #6277's function-owned backend scratch context crossed the expr typecheck
-# boundary from 31 to 32 segments: the authoritative Windows CI probe measured
-# 2,031,667 used nodes, 2,097,152 capacity, and 67,108,864 physical payload
-# bytes.
+# #5460's default trusted TLCI route changes where the byte-identical selfhost
+# graph is retained: native commits put macro_expand at 46 segments (2,989,325
+# used nodes, 3,014,656 capacity, 96,468,992 payload bytes) and reduce typecheck
+# to 32 segments (2,045,446 used nodes, 2,097,152 capacity, 67,108,864 payload
+# bytes). The controlled route-off/default-route outputs had identical
+# 66,255,493-byte assembly; default routing reduced total time by 2.57%, while
+# peak live allocation increased by 1.29% without changing its budget.
 # #5493's removal of the splice-tail rebuild plans and filtered-environment
 # walkers brings ast_type_pool.macro_expand back from 24 to 23 segments: the
 # authoritative Windows probe measured 22,788 used nodes, 23,552 capacity, and
@@ -1479,13 +1492,15 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, and the native Vec slice-copy loop contributes
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
+    # The public-place migration removes the expanded legacy accessor calls;
+    # the merged path-sensitive checker remains one segment above main alone.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # Path-sensitive scalar-loop ownership joins (#6227) put the checked
-    # selfhost expression graph just past the former 32-segment boundary.
+    # Native result commit leaves the checked expression graph within the
+    # 32-segment boundary; macro_expand owns the corresponding exact increase.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 33 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 32 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 23 1024 24 \
@@ -1737,30 +1752,12 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_mar
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_calls|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_alloc_kb|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_live_kb|"
-# The repo's own stdlib is content-identical to the embedded payload, so
-# the catalog dispatches here too; shell entries keep the counted
-# interpreted fallback (and their per-identity profile rows above). On
-# Windows the route is gated off until #5460 closes, so the stand-down
-# shape is asserted instead.
-if [ "$NL_HOST_OS" = windows ]; then
-    assert_profile_counter_eq_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_tlci_catalog_hits" \
-        0 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-    assert_profile_counter_at_least_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_source_interpreted" \
-        1 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-else
-    # #5634: the macro-detail fixture's last interpreted shells are going
-    # native (#5596's zero-shell end state), so a non-zero fallback count can
-    # no longer be required here. Assert the catalog route is live and exact
-    # instead (same shape as the routing fixture below); the row-exists
-    # assertion above keeps the fallback counter's plumbing covered.
+# The repo's own stdlib is content-identical to the embedded payload, so the
+# catalog dispatches on both hosts. #5634 is moving the macro-detail fixture's
+# last interpreted shells native (#5596's zero-shell end state), so a non-zero
+# fallback count can no longer be required here. Assert the catalog route is
+# live and exact instead; the row-exists assertion above keeps fallback
+# counter plumbing covered.
     assert_profile_counter_at_least_in \
         "$CHECK_STDERR" \
         "typecheck.macro.stdlib_tlci_catalog_hits" \
@@ -1813,7 +1810,6 @@ else
         0 \
         "$CHECK_STDOUT" \
         "$CHECK_STDERR"
-fi
 # The multi-pass fixed-point loop and its follow-up worklist are deleted: macro
 # expansion is a single demand-driven pass, so the fixed_point_* counters no
 # longer exist.
@@ -1825,9 +1821,6 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_f
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.misses|"
 
-if [ "$NL_HOST_OS" = windows ]; then
-    echo "[compile-profile] skip routing differential on windows (route gated, #5460)"
-else
 echo "[compile-profile] verify embedded stdlib tlci routing and differential output"
 mkdir -p "$STDLIB_TLCI_DIR"
 if ! (
@@ -2263,8 +2256,8 @@ if [ "$SCOPED_CAT_STATUS" -ne 42 ]; then
 fi
 
 # The same native-vs-interpreted comparison over the template node kinds the
-# json/serialize/text_buf/math hooks use (#5605): `return`, `box`/`box-get`,
-# `(set! (struct-get ...) ...)`, and float literals inside quasiquotes. The
+# json/serialize/text_buf/math hooks use (#5605): `return`, `box`/`deref`,
+# dotted `set!` places, and float literals inside quasiquotes. The
 # array fixture above exercises none of them, so a reconstruction divergence
 # in those node kinds would otherwise reach the bootstrap unchecked.
 echo "[compile-profile] verify template node kind routing differential (#5605)"
@@ -2678,7 +2671,6 @@ for FMT_DIAG_CASE in unmatched-open too-few-arguments too-many-arguments \
         fail "format scanner diagnostics differ by route for $FMT_DIAG_CASE"
     fi
 done
-fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_core.tl \

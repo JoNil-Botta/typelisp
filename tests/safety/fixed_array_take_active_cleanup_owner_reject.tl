@@ -9,4 +9,4 @@
 (define (main) : i64
   (with
     ([holder (CleanupHolder (array 7)) cleanup-holder])
-    (array-take! (struct-get holder items) 0)))
+    (array-take! holder.items 0)))

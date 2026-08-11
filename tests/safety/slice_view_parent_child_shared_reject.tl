@@ -6,5 +6,5 @@
     [parent : (&mut items (Slice i64)) (slice-mut-view items 0 4)]
     [child : (& items (Slice i64)) (slice-view parent 1 2)]
     (begin
-      (array-set! parent 0 99)
+      (set! (array-ref parent 0) 99)
       (array-ref child 0))))

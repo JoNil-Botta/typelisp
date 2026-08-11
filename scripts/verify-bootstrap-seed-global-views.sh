@@ -41,7 +41,7 @@ fail() {
 assert_contains() {
     _file=$1
     _needle=$2
-    grep -F "$_needle" "$_file" > /dev/null ||
+    grep -F -- "$_needle" "$_file" > /dev/null ||
         fail "expected '$_needle' in $_file"
 }
 
@@ -78,6 +78,10 @@ assert_contains "$STDOUT" "seed supports explicit global shared views"
 if [ -s "$STDERR" ]; then
     fail "the success path wrote diagnostics"
 fi
+modern_cfg=$(bootstrap_legacy_global_view_cfg_args) ||
+    fail "the modern cfg selector failed"
+[ -z "$modern_cfg" ] ||
+    fail "the modern seed received cfg arguments: '$modern_cfg'"
 
 # The probe must ask about the modern spelling; a probe that lost its
 # ptr-addr-of would report every seed as modern.
@@ -99,6 +103,39 @@ bootstrap_resolve_seed_global_views "$LEGACY_STUB" "$LEGACY_DIR" \
 [ "$SEED_REQUIRES_LEGACY_GLOBAL_VIEWS" = 1 ] ||
     fail "a legacy seed did not ask for the cfg: '$SEED_REQUIRES_LEGACY_GLOBAL_VIEWS'"
 assert_contains "$STDOUT" "seed requires legacy global shared views"
+legacy_cfg=$(bootstrap_legacy_global_view_cfg_args) ||
+    fail "the legacy cfg selector failed"
+[ "$legacy_cfg" = "--cfg
+stage0-seed-bootstrap" ] ||
+    fail "the legacy seed received the wrong cfg arguments: '$legacy_cfg'"
+
+# The bridge resolver must probe against the same last prepared source mirror
+# that publication will compile. The comptime bridge follows the dotted bridge
+# and therefore has precedence when both are required.
+BRIDGE_DIR="$WORKDIR/bridge-root-selection"
+DOTTED_ROOT="$WORKDIR/dotted-root"
+COMPTIME_ROOT="$WORKDIR/comptime-root"
+mkdir -p "$BRIDGE_DIR" "$DOTTED_ROOT" "$COMPTIME_ROOT"
+SEED_REQUIRES_LEGACY_GLOBAL_VIEWS=unset
+bootstrap_resolve_seed_global_views_for_bridges \
+    "$ROOT" "$MODERN_STUB" "$BRIDGE_DIR" \
+    "$DOTTED_ROOT" "$COMPTIME_ROOT" \
+    > "$STDOUT" 2> "$STDERR" ||
+    fail "the prepared bridge-root probe failed"
+assert_contains "$MODERN_STUB.argv" "--stdlib-root $COMPTIME_ROOT/stdlib"
+assert_contains "$MODERN_STUB.argv" "--stdlib-root $COMPTIME_ROOT/src"
+if grep -qF -- "--stdlib-root $DOTTED_ROOT/stdlib" "$MODERN_STUB.argv"; then
+    fail "the dotted bridge root overrode the later comptime bridge root"
+fi
+
+# An unset/invalid capability must never quietly select the modern path.
+SEED_REQUIRES_LEGACY_GLOBAL_VIEWS=unset
+set +e
+bootstrap_legacy_global_view_cfg_args > "$STDOUT" 2> "$STDERR"
+status=$?
+set -e
+[ "$status" -ne 0 ] || fail "an unresolved cfg selection succeeded"
+assert_contains "$STDERR" "global shared-view capability is unresolved"
 
 # Any other failure is fail-closed. Guessing a capability here is what shipped
 # a broken publication flow, so the helper must abort and print both captured
@@ -120,5 +157,27 @@ set -e
 assert_contains "$STDERR" "global shared-view capability probe failed unexpectedly"
 assert_contains "$STDERR" "  probe stdout noise"
 assert_contains "$STDERR" "  error[E0200]: typecheck: cannot move out of global"
+
+# Publication must resolve the original seed before entering either bridge and
+# route all bridge/stage1 cfg selection through the tested helper. This guards
+# the build-stage0 integration that the helper-only regression previously
+# missed.
+BUILD_STAGE0="$ROOT/scripts/build-stage0.sh"
+if grep -qF -- '--cfg stage0-seed-bootstrap' "$BUILD_STAGE0"; then
+    fail "build-stage0 still hardcodes the legacy global-view cfg"
+fi
+selector_calls=$(grep -cF 'bootstrap_legacy_global_view_cfg_args' "$BUILD_STAGE0")
+[ "$selector_calls" -eq 4 ] ||
+    fail "build-stage0 has $selector_calls global-view cfg selector calls, expected 4"
+resolver_line=$(grep -nF 'bootstrap_resolve_seed_global_views_for_bridges \' \
+    "$BUILD_STAGE0" | head -n 1 | cut -d: -f1)
+first_bridge_line=$(grep -nF 'if [ -n "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" ]; then' \
+    "$BUILD_STAGE0" | head -n 1 | cut -d: -f1)
+[ -n "$resolver_line" ] && [ -n "$first_bridge_line" ] ||
+    fail "could not locate publication resolver/bridge ordering"
+[ "$resolver_line" -lt "$first_bridge_line" ] ||
+    fail "build-stage0 resolves the seed after bridge execution begins"
+assert_contains "$BUILD_STAGE0" \
+    'bootstrap_resolve_seed_global_views "$PREV" "$WORKDIR" "$ROOT"'
 
 echo "bootstrap seed global shared-view probe self-tests passed"

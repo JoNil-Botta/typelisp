@@ -59,8 +59,8 @@
   [timespec : (__tl_dyn-array i64)]
   [milliseconds : i64]) : unit
   (begin
-    (array-set! timespec 0 (/ milliseconds 1000))
-    (array-set! timespec 1 (* (% milliseconds 1000) 1000000))))
+    (set! (array-ref timespec 0) (/ milliseconds 1000))
+    (set! (array-ref timespec 1) (* (% milliseconds 1000) 1000000))))
 
 ;: Return the raw data address of private `i64` storage for Linux syscalls.
 (cfg
@@ -113,8 +113,8 @@
                 (set! done true))
               (if (stdlib.time.linux-sleep-interrupted? status)
                 (begin
-                  (array-set! request 0 (array-ref remaining 0))
-                  (array-set! request 1 (array-ref remaining 1)))
+                  (set! (array-ref request 0) (array-ref remaining 0))
+                  (set! (array-ref request 1) (array-ref remaining 1)))
                 (set! done true)))))
         (if ok
           (OkTimeUnit)

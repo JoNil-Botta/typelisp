@@ -1,6 +1,6 @@
-;; #2610: dotted field access is struct-get sugar when the leading segment is a
-;; local binding. Reads, writes, nested fields, and borrows share the existing
-;; struct-get/place machinery.
+;; #2610: dotted field access resolves as projection when the leading segment
+;; is a local binding. Reads, writes, nested fields, and borrows share the same
+;; normalized place machinery.
 (defstruct Pair
   (x i64)
   (y i64))

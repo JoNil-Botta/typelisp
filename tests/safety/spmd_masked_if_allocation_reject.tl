@@ -10,5 +10,5 @@
     (if (> (array-ref xs i) 0)
       (let
         [tmp : (__tl_dyn-array i64) (array.make-array i64 1)]
-        (array-set! out i (array-ref xs i)))
-      (array-set! out i 0))))
+        (set! (array-ref out i) (array-ref xs i)))
+      (set! (array-ref out i) 0))))

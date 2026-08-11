@@ -10,5 +10,5 @@
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs i) 0)
-      (array-set! out i (spmd-broadcast (array-ref xs i) 0))
-      (array-set! out i (array-ref xs i)))))
+      (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0))
+      (set! (array-ref out i) (array-ref xs i)))))

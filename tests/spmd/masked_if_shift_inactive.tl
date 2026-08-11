@@ -13,10 +13,9 @@
     (begin
       (while (< i total)
         (begin
-          (array-set! xs i (cast (+ i 1) : i32))
-          (array-set!
-            counts
-            i
+          (set! (array-ref xs i) (cast (+ i 1) : i32))
+          (set!
+            (array-ref counts i)
             (if (= (% i 2) 0)
               (cast (% i 4) : i32)
               32))
@@ -26,9 +25,8 @@
         (let
           [x : i32 (array-ref xs j)]
           [count : i32 (array-ref counts j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 1)
               (shl x count)
               x))))

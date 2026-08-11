@@ -133,7 +133,7 @@
   (CompilerIrSymbolId symbol))
 
 (define (compiler-ir-symbol-id-value [symbol : CompilerIrSymbolId]) : i64
-  (struct-get symbol value))
+  symbol.value)
 
 (define (compiler-ir-symbol-id-eq?
   [left : CompilerIrSymbolId]
@@ -200,7 +200,9 @@
     (begin
       (while (< index old-len)
         (begin
-          (array-set! next index (array-ref compiler-ir-label-slots index))
+          (set!
+            (array-ref next index)
+            (array-ref compiler-ir-label-slots index))
           (set! index (+ index 1))))
       (set! compiler-ir-label-slots next))))
 
@@ -253,7 +255,7 @@
             (let
               [owned : String (string.copy (& name))]
               (begin
-                (array-set! compiler-ir-label-slots id owned)
+                (set! (array-ref compiler-ir-label-slots id) owned)
                 (ir_label_map.insert-ref!
                   (&mut compiler-ir-label-ids)
                   (string.copy (& (array-ref compiler-ir-label-slots id)))
@@ -332,7 +334,9 @@
     (begin
       (while (< index old-len)
         (begin
-          (array-set! next index (array-ref compiler-ir-symbol-slots index))
+          (set!
+            (array-ref next index)
+            (array-ref compiler-ir-symbol-slots index))
           (set! index (+ index 1))))
       (set! compiler-ir-symbol-slots next))))
 
@@ -406,7 +410,7 @@
       (let
         [owned : String (string.copy (& name))]
         (begin
-          (array-set! compiler-ir-symbol-slots index owned)
+          (set! (array-ref compiler-ir-symbol-slots index) owned)
           (ir_label_map.insert-ref!
             (&mut compiler-ir-symbol-ids)
             (string.copy (& (array-ref compiler-ir-symbol-slots index)))
@@ -1007,7 +1011,7 @@
     [slots : (__tl_dyn-array CompilerIrValue)
       (array.make-array CompilerIrValue count)]
     (begin
-      (array-set! slots 0 value)
+      (set! (array-ref slots 0) value)
       (compiler-ir-value-list-fill-array rest slots 1)
       (CompilerIrValueList.Array (CompilerIrValueSeq slots count)))))
 
@@ -1034,8 +1038,8 @@
 
 (define (compiler-ir-value-seq-to-list [seq : CompilerIrValueSeq]) : CompilerIrValueList
   (compiler-ir-value-seq-to-list-rev
-    (struct-get seq slots)
-    (- (struct-get seq len) 1)
+    seq.slots
+    (- seq.len 1)
     CompilerIrValueList.Nil))
 
 (define (compiler-ir-value-list-force-cons [values : CompilerIrValueList]) : CompilerIrValueList
@@ -1056,7 +1060,7 @@
     [slots : (__tl_dyn-array CompilerIrCAbiReturnSlot)
       (array.make-array CompilerIrCAbiReturnSlot count)]
     (begin
-      (array-set! slots 0 slot)
+      (set! (array-ref slots 0) slot)
       (compiler-ir-c-abi-return-slot-list-fill-array rest slots 1)
       (CompilerIrCAbiReturnSlotList.Array
         (CompilerIrCAbiReturnSlotSeq slots count)))))
@@ -1066,8 +1070,8 @@
   (match slots
     [(CompilerIrCAbiReturnSlotList.Nil) 0]
     [(CompilerIrCAbiReturnSlotList.Cons _ rest)
-      (+ 1 (compiler-ir-c-abi-return-slot-list-count (box-get rest)))]
-    [(CompilerIrCAbiReturnSlotList.Array seq) (struct-get seq len)]))
+      (+ 1 (compiler-ir-c-abi-return-slot-list-count (__tl-box-place rest)))]
+    [(CompilerIrCAbiReturnSlotList.Array seq) seq.len]))
 
 (define (compiler-ir-c-abi-return-slot-list-fill-array
   [items : CompilerIrCAbiReturnSlotList]
@@ -1077,20 +1081,19 @@
     [(CompilerIrCAbiReturnSlotList.Nil) unit]
     [(CompilerIrCAbiReturnSlotList.Cons slot rest)
       (begin
-        (array-set! slots index slot)
+        (set! (array-ref slots index) slot)
         (compiler-ir-c-abi-return-slot-list-fill-array
-          (box-get rest)
+          (__tl-box-place rest)
           slots
           (+ index 1)))]
     [(CompilerIrCAbiReturnSlotList.Array seq)
       (let
         [read : i64 0]
-        [count : i64 (struct-get seq len)]
-        [source : (__tl_dyn-array CompilerIrCAbiReturnSlot)
-          (struct-get seq slots)]
+        [count : i64 seq.len]
+        [source : (__tl_dyn-array CompilerIrCAbiReturnSlot) seq.slots]
         (while (< read count)
           (begin
-            (array-set! slots (+ index read) (array-ref source read))
+            (set! (array-ref slots (+ index read)) (array-ref source read))
             (set! read (+ read 1)))))]))
 
 (define (compiler-ir-c-abi-return-slot-seq-to-list-rev
@@ -1114,8 +1117,8 @@
 (define (compiler-ir-c-abi-return-slot-seq-to-list
   [seq : CompilerIrCAbiReturnSlotSeq]) : CompilerIrCAbiReturnSlotList
   (compiler-ir-c-abi-return-slot-seq-to-list-rev
-    (struct-get seq slots)
-    (- (struct-get seq len) 1)
+    seq.slots
+    (- seq.len 1)
     CompilerIrCAbiReturnSlotList.Nil))
 
 (define (compiler-ir-phi-input-cons-linked
@@ -1133,7 +1136,7 @@
     [slots : (__tl_dyn-array CompilerIrPhiInput)
       (array.make-array CompilerIrPhiInput count)]
     (begin
-      (array-set! slots 0 (CompilerIrPhiInput value label))
+      (set! (array-ref slots 0) (CompilerIrPhiInput value label))
       (compiler-ir-phi-input-list-fill-array rest slots 1)
       (CompilerIrPhiInputList.Array (CompilerIrPhiInputSeq slots count)))))
 
@@ -1141,8 +1144,8 @@
   (match inputs
     [(CompilerIrPhiInputList.Nil) 0]
     [(CompilerIrPhiInputList.Cons _ _ rest)
-      (+ 1 (compiler-ir-phi-input-list-count (box-get rest)))]
-    [(CompilerIrPhiInputList.Array seq) (struct-get seq len)]))
+      (+ 1 (compiler-ir-phi-input-list-count (__tl-box-place rest)))]
+    [(CompilerIrPhiInputList.Array seq) seq.len]))
 
 (define (compiler-ir-phi-input-list-fill-array
   [inputs : CompilerIrPhiInputList]
@@ -1152,16 +1155,19 @@
     [(CompilerIrPhiInputList.Nil) unit]
     [(CompilerIrPhiInputList.Cons value label rest)
       (begin
-        (array-set! slots index (CompilerIrPhiInput value label))
-        (compiler-ir-phi-input-list-fill-array (box-get rest) slots (+ index 1)))]
+        (set! (array-ref slots index) (CompilerIrPhiInput value label))
+        (compiler-ir-phi-input-list-fill-array
+          (__tl-box-place rest)
+          slots
+          (+ index 1)))]
     [(CompilerIrPhiInputList.Array seq)
       (let
         [read : i64 0]
-        [count : i64 (struct-get seq len)]
-        [source : (__tl_dyn-array CompilerIrPhiInput) (struct-get seq slots)]
+        [count : i64 seq.len]
+        [source : (__tl_dyn-array CompilerIrPhiInput) seq.slots]
         (while (< read count)
           (begin
-            (array-set! slots (+ index read) (array-ref source read))
+            (set! (array-ref slots (+ index read)) (array-ref source read))
             (set! read (+ read 1)))))]))
 
 (define (compiler-ir-phi-input-seq-from-list [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputSeq
@@ -1187,17 +1193,14 @@
           (begin
             (set!
               out
-              (compiler-ir-phi-input-cons-linked
-                (struct-get input value)
-                (struct-get input label)
-                out))
+              (compiler-ir-phi-input-cons-linked input.value input.label out))
             (set! cursor (- cursor 1)))))
       out)))
 
 (define (compiler-ir-phi-input-seq-to-list [seq : CompilerIrPhiInputSeq]) : CompilerIrPhiInputList
   (compiler-ir-phi-input-seq-to-list-rev
-    (struct-get seq slots)
-    (- (struct-get seq len) 1)
+    seq.slots
+    (- seq.len 1)
     CompilerIrPhiInputList.Nil))
 
 (define (compiler-ir-phi-input-list-force-cons
@@ -1230,7 +1233,7 @@
     [slots : (__tl_dyn-array CompilerIrSwitchCase)
       (array.make-array CompilerIrSwitchCase count)]
     (begin
-      (array-set! slots 0 (CompilerIrSwitchCase.Case tag label))
+      (set! (array-ref slots 0) (CompilerIrSwitchCase.Case tag label))
       (compiler-ir-switch-case-list-fill-array rest slots 1)
       (CompilerIrSwitchCaseList.Array (CompilerIrSwitchCaseSeq slots count)))))
 
@@ -1238,8 +1241,8 @@
   (match cases
     [(CompilerIrSwitchCaseList.Nil) 0]
     [(CompilerIrSwitchCaseList.Cons _ rest)
-      (+ 1 (compiler-ir-switch-case-list-count (box-get rest)))]
-    [(CompilerIrSwitchCaseList.Array seq) (struct-get seq len)]))
+      (+ 1 (compiler-ir-switch-case-list-count (__tl-box-place rest)))]
+    [(CompilerIrSwitchCaseList.Array seq) seq.len]))
 
 (define (compiler-ir-switch-case-list-fill-array
   [cases : CompilerIrSwitchCaseList]
@@ -1249,19 +1252,19 @@
     [(CompilerIrSwitchCaseList.Nil) unit]
     [(CompilerIrSwitchCaseList.Cons case rest)
       (begin
-        (array-set! slots index case)
+        (set! (array-ref slots index) case)
         (compiler-ir-switch-case-list-fill-array
-          (box-get rest)
+          (__tl-box-place rest)
           slots
           (+ index 1)))]
     [(CompilerIrSwitchCaseList.Array seq)
       (let
         [read : i64 0]
-        [count : i64 (struct-get seq len)]
-        [source : (__tl_dyn-array CompilerIrSwitchCase) (struct-get seq slots)]
+        [count : i64 seq.len]
+        [source : (__tl_dyn-array CompilerIrSwitchCase) seq.slots]
         (while (< read count)
           (begin
-            (array-set! slots (+ index read) (array-ref source read))
+            (set! (array-ref slots (+ index read)) (array-ref source read))
             (set! read (+ read 1)))))]))
 
 (define (compiler-ir-switch-case-list-fill-array-reversed
@@ -1272,20 +1275,20 @@
     [(CompilerIrSwitchCaseList.Nil) unit]
     [(CompilerIrSwitchCaseList.Cons case rest)
       (begin
-        (array-set! slots index case)
+        (set! (array-ref slots index) case)
         (compiler-ir-switch-case-list-fill-array-reversed
-          (box-get rest)
+          (__tl-box-place rest)
           slots
           (- index 1)))]
     [(CompilerIrSwitchCaseList.Array seq)
       (let
         [read : i64 0]
-        [count : i64 (struct-get seq len)]
+        [count : i64 seq.len]
         [write : i64 index]
-        [source : (__tl_dyn-array CompilerIrSwitchCase) (struct-get seq slots)]
+        [source : (__tl_dyn-array CompilerIrSwitchCase) seq.slots]
         (while (< read count)
           (begin
-            (array-set! slots write (array-ref source read))
+            (set! (array-ref slots write) (array-ref source read))
             (set! write (- write 1))
             (set! read (+ read 1)))))]))
 
@@ -1327,8 +1330,8 @@
 
 (define (compiler-ir-switch-case-seq-to-list [seq : CompilerIrSwitchCaseSeq]) : CompilerIrSwitchCaseList
   (compiler-ir-switch-case-seq-to-list-rev
-    (struct-get seq slots)
-    (- (struct-get seq len) 1)
+    seq.slots
+    (- seq.len 1)
     CompilerIrSwitchCaseList.Nil))
 
 (define (compiler-ir-switch-case-list-force-cons
@@ -1360,7 +1363,7 @@
   (match instrs
     [(CompilerIrInstrList.Nil) 0]
     [(CompilerIrInstrList.Cons _ rest)
-      (+ 1 (compiler-ir-instr-list-count (box-get rest)))]))
+      (+ 1 (compiler-ir-instr-list-count (__tl-box-place rest)))]))
 
 (define (compiler-ir-instr-list-fill-array
   [instrs : CompilerIrInstrList]
@@ -1370,8 +1373,11 @@
     [(CompilerIrInstrList.Nil) unit]
     [(CompilerIrInstrList.Cons instr rest)
       (begin
-        (array-set! slots index instr)
-        (compiler-ir-instr-list-fill-array (box-get rest) slots (+ index 1)))]))
+        (set! (array-ref slots index) instr)
+        (compiler-ir-instr-list-fill-array
+          (__tl-box-place rest)
+          slots
+          (+ index 1)))]))
 
 (define (compiler-ir-instr-seq-from-list [instrs : CompilerIrInstrList]) : CompilerIrInstrSeq
   (let
@@ -1390,7 +1396,7 @@
     [slots : (__tl_dyn-array CompilerIrInstr)
       (array.make-array CompilerIrInstr 1)]
     (begin
-      (array-set! slots 0 first)
+      (set! (array-ref slots 0) first)
       (CompilerIrInstrSeq slots 1))))
 
 (define (compiler-ir-instr-seq2
@@ -1400,8 +1406,8 @@
     [slots : (__tl_dyn-array CompilerIrInstr)
       (array.make-array CompilerIrInstr 2)]
     (begin
-      (array-set! slots 0 first)
-      (array-set! slots 1 second)
+      (set! (array-ref slots 0) first)
+      (set! (array-ref slots 1) second)
       (CompilerIrInstrSeq slots 2))))
 
 (define (compiler-ir-instr-seq3
@@ -1412,9 +1418,9 @@
     [slots : (__tl_dyn-array CompilerIrInstr)
       (array.make-array CompilerIrInstr 3)]
     (begin
-      (array-set! slots 0 first)
-      (array-set! slots 1 second)
-      (array-set! slots 2 third)
+      (set! (array-ref slots 0) first)
+      (set! (array-ref slots 1) second)
+      (set! (array-ref slots 2) third)
       (CompilerIrInstrSeq slots 3))))
 
 (define (compiler-ir-instr-seq4
@@ -1426,10 +1432,10 @@
     [slots : (__tl_dyn-array CompilerIrInstr)
       (array.make-array CompilerIrInstr 4)]
     (begin
-      (array-set! slots 0 first)
-      (array-set! slots 1 second)
-      (array-set! slots 2 third)
-      (array-set! slots 3 fourth)
+      (set! (array-ref slots 0) first)
+      (set! (array-ref slots 1) second)
+      (set! (array-ref slots 2) third)
+      (set! (array-ref slots 3) fourth)
       (CompilerIrInstrSeq slots 4))))
 
 (define (compiler-ir-instr-seq-to-list-rev
@@ -1450,15 +1456,15 @@
 
 (define (compiler-ir-instr-seq-to-list [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (compiler-ir-instr-seq-to-list-rev
-    (struct-get instrs slots)
-    (- (struct-get instrs len) 1)
+    instrs.slots
+    (- instrs.len 1)
     CompilerIrInstrList.Nil))
 
 (define (compiler-ir-instr-seq-count [instrs : CompilerIrInstrSeq]) : i64
-  (struct-get instrs len))
+  instrs.len)
 
 (define (compiler-ir-instr-seq-empty? [instrs : CompilerIrInstrSeq]) : bool
-  (= (struct-get instrs len) 0))
+  (= instrs.len 0))
 
 ;; MUST stay on the checked array-ref path. `CompilerIrInstr` is an inline-by-value enum,
 ;; so the raw `(ptr-read (ptr-offset (ptr-cast (array-data ...) :
@@ -1467,7 +1473,7 @@
 (defmacro (compiler-ir-instr-seq-ref
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : CompilerIrInstr
-  `(array-ref (struct-get ,instrs slots) ,index))
+  `(array-ref (__tl-project-field-name ,instrs "slots") ,index))
 
 (define (compiler-ir-instr-loop-dst-or
   [instr : CompilerIrInstr]
@@ -1510,19 +1516,19 @@
 (define (compiler-ir-instr-seq-return?
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : bool
-  (match (& (array-ref (struct-get instrs slots) index))
+  (match (& (array-ref instrs.slots index))
     [(CompilerIrInstr.Return _) true]
     [_ false]))
 
 (define (compiler-ir-instr-seq-phi? [instrs : CompilerIrInstrSeq] [index : i64]) : bool
-  (match (& (array-ref (struct-get instrs slots) index))
+  (match (& (array-ref instrs.slots index))
     [(CompilerIrInstr.Phi _ _ _) true]
     [_ false]))
 
 (define (compiler-ir-instr-seq-bounds-check?
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : bool
-  (match (& (array-ref (struct-get instrs slots) index))
+  (match (& (array-ref instrs.slots index))
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ false]))
 
@@ -1550,14 +1556,14 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [instr : CompilerIrInstr]) : unit
-  (array-set! (struct-get instrs slots) index instr))
+  (set! (array-ref instrs.slots index) instr))
 
 (define (compiler-ir-instr-seq-rewrite!
   [instrs : CompilerIrInstrSeq]
   [rewrite : (-> CompilerIrInstr CompilerIrInstr)]) : unit
   (let
     [index : i64 0]
-    [count : i64 (struct-get instrs len)]
+    [count : i64 instrs.len]
     (while (< index count)
       (begin
         (compiler-ir-instr-seq-set!
@@ -1572,22 +1578,21 @@
   (let
     [read : i64 0]
     [write : i64 0]
-    [count : i64 (struct-get instrs len)]
+    [count : i64 instrs.len]
     (begin
       (while (< read count)
         (begin
-          (if (keep? (clone (array-ref (struct-get instrs slots) read)))
+          (if (keep? (clone (array-ref instrs.slots read)))
             (begin
               (if (not (= write read))
-                (array-set!
-                  (struct-get instrs slots)
-                  write
-                  (clone (array-ref (struct-get instrs slots) read)))
+                (set!
+                  (array-ref instrs.slots write)
+                  (clone (array-ref instrs.slots read)))
                 unit)
               (set! write (+ write 1)))
             unit)
           (set! read (+ read 1))))
-      (set! (struct-get instrs len) write))))
+      (set! instrs.len write))))
 
 (define (compiler-ir-block [label : i64] [instrs : CompilerIrInstrList]) : CompilerIrBlock
   (CompilerIrBlock.Block label (compiler-ir-instr-seq-from-list instrs)))
@@ -1601,8 +1606,8 @@
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons _ rest)
-      (+ 1 (compiler-ir-block-list-count-cons (box-get rest)))]
-    [(CompilerIrBlockList.Array seq) (struct-get seq len)]))
+      (+ 1 (compiler-ir-block-list-count-cons (__tl-box-place rest)))]
+    [(CompilerIrBlockList.Array seq) seq.len]))
 
 (define (compiler-ir-block-list-fill-array
   [blocks : CompilerIrBlockList]
@@ -1612,15 +1617,18 @@
     [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Cons block rest)
       (begin
-        (array-set! slots index block)
-        (compiler-ir-block-list-fill-array (box-get rest) slots (+ index 1)))]
+        (set! (array-ref slots index) block)
+        (compiler-ir-block-list-fill-array
+          (__tl-box-place rest)
+          slots
+          (+ index 1)))]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
-        [n : i64 (struct-get seq len)]
+        [n : i64 seq.len]
         (while (< i n)
           (begin
-            (array-set! slots (+ index i) (array-ref (struct-get seq slots) i))
+            (set! (array-ref slots (+ index i)) (array-ref seq.slots i))
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-block-list-fill-array-reversed
@@ -1631,20 +1639,20 @@
     [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Cons block rest)
       (begin
-        (array-set! slots index block)
+        (set! (array-ref slots index) block)
         (compiler-ir-block-list-fill-array-reversed
-          (box-get rest)
+          (__tl-box-place rest)
           slots
           (- index 1)))]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
-        [n : i64 (struct-get seq len)]
+        [n : i64 seq.len]
         [write : i64 index]
-        [src : (__tl_dyn-array CompilerIrBlock) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrBlock) seq.slots]
         (while (< i n)
           (begin
-            (array-set! slots write (array-ref src i))
+            (set! (array-ref slots write) (array-ref src i))
             (set! write (- write 1))
             (set! i (+ i 1)))))]))
 
@@ -1683,16 +1691,16 @@
 
 (define (compiler-ir-block-seq-to-list [blocks : CompilerIrBlockSeq]) : CompilerIrBlockList
   (compiler-ir-block-seq-to-list-rev
-    (struct-get blocks slots)
-    (- (struct-get blocks len) 1)
+    blocks.slots
+    (- blocks.len 1)
     CompilerIrBlockList.Nil))
 
 (define (compiler-ir-block-seq-count [blocks : CompilerIrBlockSeq]) : i64
-  (struct-get blocks len))
+  blocks.len)
 
 ;; MUST stay on the checked array-ref path (see compiler-ir-instr-seq-ref above).
 (define (compiler-ir-block-seq-ref [blocks : CompilerIrBlockSeq] [index : i64]) : CompilerIrBlock
-  (array-ref (struct-get blocks slots) index))
+  (array-ref blocks.slots index))
 
 (define (compiler-ir-block-list-force-cons [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -1730,7 +1738,7 @@
     [slots : (__tl_dyn-array CompilerIrParam)
       (array.make-array CompilerIrParam count)]
     (begin
-      (array-set! slots 0 param)
+      (set! (array-ref slots 0) param)
       (compiler-ir-param-list-fill-array rest slots 1)
       (CompilerIrParamList.Array (CompilerIrParamSeq slots count)))))
 
@@ -1738,8 +1746,8 @@
   (match params
     [(CompilerIrParamList.Nil) 0]
     [(CompilerIrParamList.Cons _ rest)
-      (+ 1 (compiler-ir-param-list-count (box-get rest)))]
-    [(CompilerIrParamList.Array seq) (struct-get seq len)]))
+      (+ 1 (compiler-ir-param-list-count (__tl-box-place rest)))]
+    [(CompilerIrParamList.Array seq) seq.len]))
 
 (define (compiler-ir-param-list-fill-array
   [params : CompilerIrParamList]
@@ -1749,16 +1757,19 @@
     [(CompilerIrParamList.Nil) unit]
     [(CompilerIrParamList.Cons param rest)
       (begin
-        (array-set! slots index param)
-        (compiler-ir-param-list-fill-array (box-get rest) slots (+ index 1)))]
+        (set! (array-ref slots index) param)
+        (compiler-ir-param-list-fill-array
+          (__tl-box-place rest)
+          slots
+          (+ index 1)))]
     [(CompilerIrParamList.Array seq)
       (let
         [read : i64 0]
-        [count : i64 (struct-get seq len)]
-        [source : (__tl_dyn-array CompilerIrParam) (struct-get seq slots)]
+        [count : i64 seq.len]
+        [source : (__tl_dyn-array CompilerIrParam) seq.slots]
         (while (< read count)
           (begin
-            (array-set! slots (+ index read) (array-ref source read))
+            (set! (array-ref slots (+ index read)) (array-ref source read))
             (set! read (+ read 1)))))]))
 
 (define (compiler-ir-param-seq-from-list [params : CompilerIrParamList]) : CompilerIrParamSeq
@@ -1788,15 +1799,15 @@
 
 (define (compiler-ir-param-seq-to-list [params : CompilerIrParamSeq]) : CompilerIrParamList
   (compiler-ir-param-seq-to-list-rev
-    (struct-get params slots)
-    (- (struct-get params len) 1)
+    params.slots
+    (- params.len 1)
     CompilerIrParamList.Nil))
 
 (define (compiler-ir-param-seq-count [params : CompilerIrParamSeq]) : i64
-  (struct-get params len))
+  params.len)
 
 (define (compiler-ir-param-seq-ref [params : CompilerIrParamSeq] [index : i64]) : CompilerIrParam
-  (array-ref (struct-get params slots) index))
+  (array-ref params.slots index))
 
 (define (compiler-ir-param-list-force-cons [params : CompilerIrParamList]) : CompilerIrParamList
   (match params
@@ -1818,8 +1829,8 @@
   (match functions
     [(CompilerIrFunctionList.Nil) 0]
     [(CompilerIrFunctionList.Cons _ rest)
-      (+ 1 (compiler-ir-function-list-count-cons (box-get rest)))]
-    [(CompilerIrFunctionList.Array seq) (struct-get seq len)]))
+      (+ 1 (compiler-ir-function-list-count-cons (__tl-box-place rest)))]
+    [(CompilerIrFunctionList.Array seq) seq.len]))
 
 (define (compiler-ir-function-list-fill-array
   [functions : CompilerIrFunctionList]
@@ -1829,16 +1840,19 @@
     [(CompilerIrFunctionList.Nil) unit]
     [(CompilerIrFunctionList.Cons func rest)
       (begin
-        (array-set! slots index func)
-        (compiler-ir-function-list-fill-array (box-get rest) slots (+ index 1)))]
+        (set! (array-ref slots index) func)
+        (compiler-ir-function-list-fill-array
+          (__tl-box-place rest)
+          slots
+          (+ index 1)))]
     [(CompilerIrFunctionList.Array seq)
       (let
         [i : i64 0]
-        [n : i64 (struct-get seq len)]
-        [src : (__tl_dyn-array CompilerIrFunction) (struct-get seq slots)]
+        [n : i64 seq.len]
+        [src : (__tl_dyn-array CompilerIrFunction) seq.slots]
         (while (< i n)
           (begin
-            (array-set! slots (+ index i) (array-ref src i))
+            (set! (array-ref slots (+ index i)) (array-ref src i))
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-function-list-fill-array-reversed
@@ -1849,20 +1863,20 @@
     [(CompilerIrFunctionList.Nil) unit]
     [(CompilerIrFunctionList.Cons func rest)
       (begin
-        (array-set! slots index func)
+        (set! (array-ref slots index) func)
         (compiler-ir-function-list-fill-array-reversed
-          (box-get rest)
+          (__tl-box-place rest)
           slots
           (- index 1)))]
     [(CompilerIrFunctionList.Array seq)
       (let
         [i : i64 0]
-        [n : i64 (struct-get seq len)]
+        [n : i64 seq.len]
         [write : i64 index]
-        [src : (__tl_dyn-array CompilerIrFunction) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrFunction) seq.slots]
         (while (< i n)
           (begin
-            (array-set! slots write (array-ref src i))
+            (set! (array-ref slots write) (array-ref src i))
             (set! write (- write 1))
             (set! i (+ i 1)))))]))
 
@@ -1905,19 +1919,19 @@
 
 (define (compiler-ir-function-seq-to-list [functions : CompilerIrFunctionSeq]) : CompilerIrFunctionList
   (compiler-ir-function-seq-to-list-rev
-    (struct-get functions slots)
-    (- (struct-get functions len) 1)
+    functions.slots
+    (- functions.len 1)
     CompilerIrFunctionList.Nil))
 
 (define (compiler-ir-function-seq-count [functions : CompilerIrFunctionSeq]) : i64
-  (struct-get functions len))
+  functions.len)
 
 ;; Keep the checked array-ref path; aggregate enum array elements need the array macro,
 ;; as with instruction and block sequences.
 (define (compiler-ir-function-seq-ref
   [functions : CompilerIrFunctionSeq]
   [index : i64]) : CompilerIrFunction
-  (array-ref (struct-get functions slots) index))
+  (array-ref functions.slots index))
 
 (define (compiler-ir-function-list-force-cons
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
@@ -1975,13 +1989,13 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-ir-instr-builder-grow!
   [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
   (let
-    [old-cap : i64 (array-length (struct-get builder slots))]
+    [old-cap : i64 (array-length builder.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -1991,22 +2005,22 @@
     (begin
       (compiler-ir-instr-builder-copy-range!
         (&mut bigger)
-        (& (struct-get builder slots))
-        (struct-get builder len))
-      (set! (struct-get builder slots) bigger))))
+        (& builder.slots)
+        builder.len)
+      (set! builder.slots bigger))))
 
 (define (compiler-ir-instr-builder-push!
   [builder : (&mut builder CompilerIrInstrBuilder)]
   [instr : CompilerIrInstr]) : unit
   (begin
-    (if (< (struct-get builder len) (array-length (struct-get builder slots)))
+    (if (< builder.len (array-length builder.slots))
       unit
       (compiler-ir-instr-builder-grow! builder))
     (let
-      [index : i64 (struct-get builder len)]
+      [index : i64 builder.len]
       (begin
-        (array-set! (struct-get builder slots) index instr)
-        (set! (struct-get builder len) (+ index 1))))))
+        (set! (array-ref builder.slots index) instr)
+        (set! builder.len (+ index 1))))))
 
 (define (compiler-ir-instr-builder-append-seq-range!
   [builder : (&mut builder CompilerIrInstrBuilder)]
@@ -2023,7 +2037,7 @@
         (set! index (+ index 1))))))
 
 (define (compiler-ir-instr-builder-to-seq [builder : CompilerIrInstrBuilder]) : CompilerIrInstrSeq
-  (CompilerIrInstrSeq (struct-get builder slots) (struct-get builder len)))
+  (CompilerIrInstrSeq builder.slots builder.len))
 
 (define (compiler-ir-block-builder-with-capacity [capacity : i64]) : CompilerIrBlockBuilder
   (let
@@ -2045,13 +2059,13 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-ir-block-builder-grow!
   [builder : (&mut builder CompilerIrBlockBuilder)]) : unit
   (let
-    [old-cap : i64 (array-length (struct-get builder slots))]
+    [old-cap : i64 (array-length builder.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -2061,22 +2075,22 @@
     (begin
       (compiler-ir-block-builder-copy-range!
         (&mut bigger)
-        (& (struct-get builder slots))
-        (struct-get builder len))
-      (set! (struct-get builder slots) bigger))))
+        (& builder.slots)
+        builder.len)
+      (set! builder.slots bigger))))
 
 (define (compiler-ir-block-builder-push!
   [builder : (&mut builder CompilerIrBlockBuilder)]
   [block : CompilerIrBlock]) : unit
   (begin
-    (if (< (struct-get builder len) (array-length (struct-get builder slots)))
+    (if (< builder.len (array-length builder.slots))
       unit
       (compiler-ir-block-builder-grow! builder))
     (let
-      [index : i64 (struct-get builder len)]
+      [index : i64 builder.len]
       (begin
-        (array-set! (struct-get builder slots) index block)
-        (set! (struct-get builder len) (+ index 1))))))
+        (set! (array-ref builder.slots index) block)
+        (set! builder.len (+ index 1))))))
 
 (define (compiler-ir-block-builder-append-list!
   [builder : (&mut builder CompilerIrBlockBuilder)]
@@ -2086,20 +2100,19 @@
     [(CompilerIrBlockList.Cons block rest)
       (begin
         (compiler-ir-block-builder-push! builder block)
-        (compiler-ir-block-builder-append-list! builder (box-get rest)))]
+        (compiler-ir-block-builder-append-list! builder (__tl-box-place rest)))]
     [(CompilerIrBlockList.Array seq)
       (let
         [index : i64 0]
-        [count : i64 (struct-get seq len)]
-        [src : (__tl_dyn-array CompilerIrBlock) (struct-get seq slots)]
+        [count : i64 seq.len]
+        [src : (__tl_dyn-array CompilerIrBlock) seq.slots]
         (while (< index count)
           (begin
             (compiler-ir-block-builder-push! builder (array-ref src index))
             (set! index (+ index 1)))))]))
 
 (define (compiler-ir-block-builder-to-list [builder : CompilerIrBlockBuilder]) : CompilerIrBlockList
-  (CompilerIrBlockList.Array
-    (CompilerIrBlockSeq (struct-get builder slots) (struct-get builder len))))
+  (CompilerIrBlockList.Array (CompilerIrBlockSeq builder.slots builder.len)))
 
 (define (compiler-ir-function-builder-with-capacity [capacity : i64]) : CompilerIrFunctionBuilder
   (let
@@ -2117,13 +2130,13 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (compiler-ir-function-builder-grow!
   [builder : (&mut builder CompilerIrFunctionBuilder)]) : unit
   (let
-    [old-cap : i64 (array-length (struct-get builder slots))]
+    [old-cap : i64 (array-length builder.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -2133,22 +2146,22 @@
     (begin
       (compiler-ir-function-builder-copy-range!
         (&mut bigger)
-        (& (struct-get builder slots))
-        (struct-get builder len))
-      (set! (struct-get builder slots) bigger))))
+        (& builder.slots)
+        builder.len)
+      (set! builder.slots bigger))))
 
 (define (compiler-ir-function-builder-push!
   [builder : (&mut builder CompilerIrFunctionBuilder)]
   [func : CompilerIrFunction]) : unit
   (begin
-    (if (< (struct-get builder len) (array-length (struct-get builder slots)))
+    (if (< builder.len (array-length builder.slots))
       unit
       (compiler-ir-function-builder-grow! builder))
     (let
-      [index : i64 (struct-get builder len)]
+      [index : i64 builder.len]
       (begin
-        (array-set! (struct-get builder slots) index func)
-        (set! (struct-get builder len) (+ index 1))))))
+        (set! (array-ref builder.slots index) func)
+        (set! builder.len (+ index 1))))))
 
 (define (compiler-ir-function-builder-append-list!
   [builder : (&mut builder CompilerIrFunctionBuilder)]
@@ -2158,12 +2171,14 @@
     [(CompilerIrFunctionList.Cons func rest)
       (begin
         (compiler-ir-function-builder-push! builder func)
-        (compiler-ir-function-builder-append-list! builder (box-get rest)))]
+        (compiler-ir-function-builder-append-list!
+          builder
+          (__tl-box-place rest)))]
     [(CompilerIrFunctionList.Array seq)
       (let
         [index : i64 0]
-        [count : i64 (struct-get seq len)]
-        [src : (__tl_dyn-array CompilerIrFunction) (struct-get seq slots)]
+        [count : i64 seq.len]
+        [src : (__tl_dyn-array CompilerIrFunction) seq.slots]
         (while (< index count)
           (begin
             (compiler-ir-function-builder-push! builder (array-ref src index))
@@ -2182,18 +2197,18 @@
 (define (compiler-ir-function-builder-to-list
   [builder : CompilerIrFunctionBuilder]) : CompilerIrFunctionList
   (CompilerIrFunctionList.Array
-    (CompilerIrFunctionSeq (struct-get builder slots) (struct-get builder len))))
+    (CompilerIrFunctionSeq builder.slots builder.len)))
 
 (define (compiler-ir-function-builder-snapshot-list
   [builder : (& builder CompilerIrFunctionBuilder)]) : CompilerIrFunctionList
   (let
-    [count : i64 (struct-get builder len)]
+    [count : i64 builder.len]
     [slots : (__tl_dyn-array CompilerIrFunction)
       (make-array CompilerIrFunction count)]
     (begin
       (compiler-ir-function-builder-copy-range!
         (&mut slots)
-        (& (struct-get builder slots))
+        (& builder.slots)
         count)
       (CompilerIrFunctionList.Array (CompilerIrFunctionSeq slots count)))))
 
@@ -2223,27 +2238,27 @@
     [(CompilerIrGlobalList.Nil) unit]
     [(CompilerIrGlobalList.Cons global rest)
       (begin
-        (array-set! slots index global)
+        (set! (array-ref slots index) global)
         (compiler-ir-global-list-fill-array-reversed
-          (box-get rest)
+          (__tl-box-place rest)
           slots
           (- index 1)))]
     [(CompilerIrGlobalList.Array seq)
       (let
         [i : i64 0]
-        [n : i64 (struct-get seq len)]
+        [n : i64 seq.len]
         [write : i64 index]
-        [src : (__tl_dyn-array CompilerIrGlobal) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrGlobal) seq.slots]
         (while (< i n)
           (begin
-            (array-set! slots write (array-ref src i))
+            (set! (array-ref slots write) (array-ref src i))
             (set! write (- write 1))
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-global-seq-to-list [globals : CompilerIrGlobalSeq]) : CompilerIrGlobalList
   (let
-    [slots : (__tl_dyn-array CompilerIrGlobal) (struct-get globals slots)]
-    [cursor : i64 (- (struct-get globals len) 1)]
+    [slots : (__tl_dyn-array CompilerIrGlobal) globals.slots]
+    [cursor : i64 (- globals.len 1)]
     [out : CompilerIrGlobalList CompilerIrGlobalList.Nil]
     (begin
       (while (>= cursor 0)
@@ -2253,12 +2268,12 @@
       out)))
 
 (define (compiler-ir-global-seq-count [globals : CompilerIrGlobalSeq]) : i64
-  (struct-get globals len))
+  globals.len)
 
 (define (compiler-ir-global-seq-ref
   [globals : CompilerIrGlobalSeq]
   [index : i64]) : CompilerIrGlobal
-  (array-ref (struct-get globals slots) index))
+  (array-ref globals.slots index))
 
 (define (compiler-ir-global-list-compact-reversed
   [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
@@ -2278,27 +2293,27 @@
     [(CompilerIrExternList.Nil) unit]
     [(CompilerIrExternList.Cons extern rest)
       (begin
-        (array-set! slots index extern)
+        (set! (array-ref slots index) extern)
         (compiler-ir-extern-list-fill-array-reversed
-          (box-get rest)
+          (__tl-box-place rest)
           slots
           (- index 1)))]
     [(CompilerIrExternList.Array seq)
       (let
         [i : i64 0]
-        [n : i64 (struct-get seq len)]
+        [n : i64 seq.len]
         [write : i64 index]
-        [src : (__tl_dyn-array CompilerIrExtern) (struct-get seq slots)]
+        [src : (__tl_dyn-array CompilerIrExtern) seq.slots]
         (while (< i n)
           (begin
-            (array-set! slots write (array-ref src i))
+            (set! (array-ref slots write) (array-ref src i))
             (set! write (- write 1))
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-extern-seq-to-list [externs : CompilerIrExternSeq]) : CompilerIrExternList
   (let
-    [slots : (__tl_dyn-array CompilerIrExtern) (struct-get externs slots)]
-    [cursor : i64 (- (struct-get externs len) 1)]
+    [slots : (__tl_dyn-array CompilerIrExtern) externs.slots]
+    [cursor : i64 (- externs.len 1)]
     [out : CompilerIrExternList CompilerIrExternList.Nil]
     (begin
       (while (>= cursor 0)
@@ -2308,12 +2323,12 @@
       out)))
 
 (define (compiler-ir-extern-seq-count [externs : CompilerIrExternSeq]) : i64
-  (struct-get externs len))
+  externs.len)
 
 (define (compiler-ir-extern-seq-ref
   [externs : CompilerIrExternSeq]
   [index : i64]) : CompilerIrExtern
-  (array-ref (struct-get externs slots) index))
+  (array-ref externs.slots index))
 
 (define (compiler-ir-extern-list-compact-reversed
   [externs : CompilerIrExternList]) : CompilerIrExternList
@@ -2373,7 +2388,7 @@
       (compiler-ir-clone-value-list-acc (compiler-ir-value-seq-to-list seq) acc)]
     [(CompilerIrValueList.Cons value rest)
       (compiler-ir-clone-value-list-acc
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-value-cons (compiler-ir-clone-value value) acc))]))
 
 (define (compiler-ir-value-list-reverse-onto
@@ -2393,7 +2408,7 @@
         acc)]
     [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-list-reverse-onto-acc
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-value-cons value acc))]))
 
 (define (compiler-ir-clone-value-list [values : CompilerIrValueList]) : CompilerIrValueList
@@ -2444,9 +2459,8 @@
   (if (>= index count)
     unit
     (begin
-      (array-set!
-        dst
-        index
+      (set!
+        (array-ref dst index)
         (compiler-ir-clone-spmd-call-arg pools (array-ref src index)))
       (compiler-ir-clone-spmd-call-arg-seq-fill pools src dst (+ index 1) count))))
 
@@ -2454,8 +2468,8 @@
   [pools : ast.AstNodePoolContext]
   [seq : CompilerIrSpmdCallArgSeq]) : CompilerIrSpmdCallArgSeq
   (let
-    [count : i64 (struct-get seq len)]
-    [src : (__tl_dyn-array CompilerIrSpmdCallArg) (struct-get seq slots)]
+    [count : i64 seq.len]
+    [src : (__tl_dyn-array CompilerIrSpmdCallArg) seq.slots]
     [dst : (__tl_dyn-array CompilerIrSpmdCallArg)
       (array.make-array CompilerIrSpmdCallArg count)]
     (begin
@@ -2470,7 +2484,7 @@
     [(CompilerIrSpmdCallArgList.Cons arg rest)
       (CompilerIrSpmdCallArgList.Cons
         (compiler-ir-clone-spmd-call-arg pools arg)
-        (box (compiler-ir-clone-spmd-call-args pools (box-get rest))))]
+        (box (compiler-ir-clone-spmd-call-args pools (__tl-box-place rest))))]
     [(CompilerIrSpmdCallArgList.Array seq)
       (CompilerIrSpmdCallArgList.Array
         (compiler-ir-clone-spmd-call-arg-seq pools seq))]))
@@ -2502,9 +2516,8 @@
   (if (>= index count)
     unit
     (begin
-      (array-set!
-        dst
-        index
+      (set!
+        (array-ref dst index)
         (compiler-ir-clone-c-abi-return-slot pools (array-ref src index)))
       (compiler-ir-clone-c-abi-return-slot-seq-fill
         pools
@@ -2517,8 +2530,8 @@
   [pools : ast.AstNodePoolContext]
   [seq : CompilerIrCAbiReturnSlotSeq]) : CompilerIrCAbiReturnSlotSeq
   (let
-    [count : i64 (struct-get seq len)]
-    [src : (__tl_dyn-array CompilerIrCAbiReturnSlot) (struct-get seq slots)]
+    [count : i64 seq.len]
+    [src : (__tl_dyn-array CompilerIrCAbiReturnSlot) seq.slots]
     [dst : (__tl_dyn-array CompilerIrCAbiReturnSlot)
       (array.make-array CompilerIrCAbiReturnSlot count)]
     (begin
@@ -2533,7 +2546,7 @@
     [(CompilerIrCAbiReturnSlotList.Cons slot rest)
       (compiler-ir-c-abi-return-slot-cons
         (compiler-ir-clone-c-abi-return-slot pools slot)
-        (compiler-ir-clone-c-abi-return-slots pools (box-get rest)))]
+        (compiler-ir-clone-c-abi-return-slots pools (__tl-box-place rest)))]
     [(CompilerIrCAbiReturnSlotList.Array seq)
       (CompilerIrCAbiReturnSlotList.Array
         (compiler-ir-clone-c-abi-return-slot-seq pools seq))]))
@@ -2549,7 +2562,7 @@
         acc)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (compiler-ir-clone-phi-input-list-acc
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-phi-input-cons
           (compiler-ir-clone-value value)
           (clone label)
@@ -2566,7 +2579,7 @@
         acc)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (compiler-ir-phi-input-list-reverse-onto-acc
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-phi-input-cons value label acc))]))
 
 (define (compiler-ir-phi-input-list-reverse-onto
@@ -2592,7 +2605,7 @@
     [(CompilerIrSwitchCaseList.Nil) acc]
     [(CompilerIrSwitchCaseList.Cons case rest)
       (compiler-ir-clone-switch-case-list-acc
-        (box-get rest)
+        (__tl-box-place rest)
         (match (compiler-ir-clone-switch-case case)
           [(CompilerIrSwitchCase.Case tag label)
             (compiler-ir-switch-case-cons-linked tag label acc)]))]
@@ -2608,7 +2621,7 @@
     [(CompilerIrSwitchCaseList.Nil) acc]
     [(CompilerIrSwitchCaseList.Cons case rest)
       (compiler-ir-switch-case-list-reverse-onto-acc
-        (box-get rest)
+        (__tl-box-place rest)
         (match case
           [(CompilerIrSwitchCase.Case tag label)
             (compiler-ir-switch-case-cons-linked tag label acc)]))]
@@ -2643,7 +2656,7 @@
   (match ty
     [(ast.AstType.Func args ret)
       (ast.AstType.Func
-        (box (compiler-ir-clone-type-list pools (box-get args)))
+        (box (compiler-ir-clone-type-list pools (__tl-box-place args)))
         (ast.ast-node-pool-context-type-push
           pools
           (compiler-ir-clone-type
@@ -2651,7 +2664,7 @@
             (ast.ast-node-pool-context-type-get pools ret))))]
     [(ast.AstType.Tuple elems)
       (ast.AstType.Tuple
-        (box (compiler-ir-clone-type-list pools (box-get elems))))]
+        (box (compiler-ir-clone-type-list pools (__tl-box-place elems))))]
     [(ast.AstType.Array elem len)
       (ast.AstType.Array
         (ast.ast-node-pool-context-type-push
@@ -2823,12 +2836,12 @@
         (compiler-ir-clone-type pools ty))]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir-instr-vector-bin-op
           dst
           op
@@ -2838,12 +2851,12 @@
           (compiler-ir-clone-type pools ty)))]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [src (struct-get (box-get payload-box) src)]
-        [carry (struct-get (box-get payload-box) carry)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir-instr-vector-prefix
           dst
           op
@@ -2860,12 +2873,12 @@
         (compiler-ir-clone-type pools ty))]
     [(CompilerIrInstr.VectorCompare payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir-instr-vector-compare
           dst
           op
@@ -2886,12 +2899,12 @@
       (CompilerIrInstr.MaskReduce dst op (compiler-ir-clone-value src) lanes)]
     [(CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [cond (struct-get (box-get payload-box) mask)]
-        [then-value (struct-get (box-get payload-box) on-true)]
-        [else-value (struct-get (box-get payload-box) on-false)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [cond (__tl-project-field (__tl-box-place payload-box) mask)]
+        [then-value (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [else-value (__tl-project-field (__tl-box-place payload-box) on-false)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir-instr-select
           dst
           (compiler-ir-clone-value cond)
@@ -2908,11 +2921,11 @@
         (compiler-ir-clone-type pools ty))]
     [(CompilerIrInstr.VectorStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir-instr-vector-store
           (compiler-ir-clone-value base)
           (compiler-ir-clone-value index)
@@ -2921,12 +2934,12 @@
           (compiler-ir-clone-type pools ty)))]
     [(CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir-instr-predicated-store
           (compiler-ir-clone-value base)
           (compiler-ir-clone-value index)
@@ -2936,12 +2949,12 @@
           (compiler-ir-clone-type pools ty)))]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir-instr-predicated-load
           dst
           (compiler-ir-clone-value base)
@@ -2951,13 +2964,15 @@
           (compiler-ir-clone-type pools ty)))]
     [(CompilerIrInstr.GatherLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [base (struct-get (box-get payload-box) base)]
-        [index-base (struct-get (box-get payload-box) index-base)]
-        [index (struct-get (box-get payload-box) index)]
-        [lane-offset (struct-get (box-get payload-box) lane-offset)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index-base
+          (__tl-project-field (__tl-box-place payload-box) index-base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [lane-offset
+          (__tl-project-field (__tl-box-place payload-box) lane-offset)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir-instr-gather-load
           dst
           (compiler-ir-clone-value base)
@@ -2968,13 +2983,16 @@
           (compiler-ir-clone-type pools ty)))]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [source (struct-get (box-get payload-box) source)]
-        [selector-low (struct-get (box-get payload-box) selector-low)]
-        [selector-high (struct-get (box-get payload-box) selector-high)]
-        [active-lanes (struct-get (box-get payload-box) active-lanes)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [source (__tl-project-field (__tl-box-place payload-box) source)]
+        [selector-low
+          (__tl-project-field (__tl-box-place payload-box) selector-low)]
+        [selector-high
+          (__tl-project-field (__tl-box-place payload-box) selector-high)]
+        [active-lanes
+          (__tl-project-field (__tl-box-place payload-box) active-lanes)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (ir-instr-vector-shuffle
           dst
           (compiler-ir-clone-value source)
@@ -3022,10 +3040,10 @@
         (compiler-ir-clone-type pools ty))]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [name (struct-get (box-get payload-box) name)]
-        [args (struct-get (box-get payload-box) args)]
-        [slots (struct-get (box-get payload-box) slots)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [name (__tl-project-field (__tl-box-place payload-box) name)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [slots (__tl-project-field (__tl-box-place payload-box) slots)]
         (ir-instr-call-cabi-store-result
           (compiler-ir-clone-value base)
           (compiler-ir-symbol-clone name)
@@ -3033,10 +3051,10 @@
           (compiler-ir-clone-c-abi-return-slots pools slots)))]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [callee (struct-get (box-get payload-box) callee)]
-        [args (struct-get (box-get payload-box) args)]
-        [slots (struct-get (box-get payload-box) slots)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [callee (__tl-project-field (__tl-box-place payload-box) callee)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [slots (__tl-project-field (__tl-box-place payload-box) slots)]
         (ir-instr-call-indirect-cabi-store-result
           (compiler-ir-clone-value base)
           (compiler-ir-clone-value callee)
@@ -3044,12 +3062,13 @@
           (compiler-ir-clone-c-abi-return-slots pools slots)))]
     [(CompilerIrInstr.SpmdCall payload-box)
       (let
-        [callee (struct-get (box-get payload-box) callee)]
-        [backend (struct-get (box-get payload-box) backend)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [active-mask (struct-get (box-get payload-box) active-mask)]
-        [args (struct-get (box-get payload-box) args)]
-        [result (struct-get (box-get payload-box) result)]
+        [callee (__tl-project-field (__tl-box-place payload-box) callee)]
+        [backend (__tl-project-field (__tl-box-place payload-box) backend)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [active-mask
+          (__tl-project-field (__tl-box-place payload-box) active-mask)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [result (__tl-project-field (__tl-box-place payload-box) result)]
         (ir-instr-spmd-call
           (compiler-ir-symbol-clone callee)
           (compiler-ir-clone-spmd-backend backend)
@@ -3126,7 +3145,7 @@
     [(CompilerIrInstrList.Cons instr rest)
       (compiler-ir-clone-instr-list-acc
         pools
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-instr-cons (compiler-ir-clone-instr pools instr) acc))]))
 
 (define (compiler-ir-instr-list-reverse-onto
@@ -3136,7 +3155,7 @@
     [(CompilerIrInstrList.Nil) acc]
     [(CompilerIrInstrList.Cons instr rest)
       (compiler-ir-instr-list-reverse-onto
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-instr-cons instr acc))]))
 
 (define (compiler-ir-clone-instr-list
@@ -3157,9 +3176,8 @@
     (begin
       (while (< cursor count)
         (begin
-          (array-set!
-            dst
-            cursor
+          (set!
+            (array-ref dst cursor)
             (compiler-ir-clone-instr pools (array-ref src cursor)))
           (set! cursor (+ cursor 1))))
       unit)))
@@ -3168,8 +3186,8 @@
   [pools : ast.AstNodePoolContext]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
-    [count : i64 (struct-get instrs len)]
-    [src : (__tl_dyn-array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 instrs.len]
+    [src : (__tl_dyn-array CompilerIrInstr) instrs.slots]
     [dst : (__tl_dyn-array CompilerIrInstr)
       (array.make-array CompilerIrInstr count)]
     (begin
@@ -3192,7 +3210,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-clone-block-list-acc
         pools
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-block-cons (compiler-ir-clone-block pools block) acc))]
     ;; Same forward order the cons walk used, so the accumulated (reversed)
     ;; result is unchanged (refs #5729).
@@ -3221,7 +3239,7 @@
     [(CompilerIrBlockList.Nil) acc]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-block-list-reverse-onto
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-block-cons block acc))]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-block-list-reverse-onto
@@ -3256,7 +3274,7 @@
     [(CompilerIrParamList.Cons param rest)
       (compiler-ir-clone-param-list-acc
         pools
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-param-cons-linked
           (compiler-ir-clone-param pools param)
           acc))]))
@@ -3278,7 +3296,7 @@
         acc)]
     [(CompilerIrParamList.Cons param rest)
       (compiler-ir-param-list-reverse-onto-acc
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-param-cons-linked param acc))]))
 
 (define (compiler-ir-clone-param-list
@@ -3310,7 +3328,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-clone-function-list-acc
         pools
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-function-cons (compiler-ir-clone-function pools func) acc))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-clone-function-list-acc
@@ -3325,7 +3343,7 @@
     [(CompilerIrFunctionList.Nil) acc]
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-function-list-reverse-onto
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-function-cons func acc))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-list-reverse-onto
@@ -3362,7 +3380,7 @@
     [(CompilerIrGlobalList.Cons global rest)
       (compiler-ir-clone-global-list-acc
         pools
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-global-cons (compiler-ir-clone-global pools global) acc))]
     [(CompilerIrGlobalList.Array seq)
       (compiler-ir-clone-global-list-acc
@@ -3377,7 +3395,7 @@
     [(CompilerIrGlobalList.Nil) acc]
     [(CompilerIrGlobalList.Cons global rest)
       (compiler-ir-global-list-reverse-onto
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-global-cons global acc))]
     [(CompilerIrGlobalList.Array seq)
       (compiler-ir-global-list-reverse-onto
@@ -3423,7 +3441,7 @@
     [(CompilerIrExternList.Cons extern rest)
       (compiler-ir-clone-extern-list-acc
         pools
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-extern-cons (compiler-ir-clone-extern pools extern) acc))]
     [(CompilerIrExternList.Array seq)
       (compiler-ir-clone-extern-list-acc
@@ -3438,7 +3456,7 @@
     [(CompilerIrExternList.Nil) acc]
     [(CompilerIrExternList.Cons extern rest)
       (compiler-ir-extern-list-reverse-onto
-        (box-get rest)
+        (__tl-box-place rest)
         (compiler-ir-extern-cons extern acc))]
     [(CompilerIrExternList.Array seq)
       (compiler-ir-extern-list-reverse-onto
@@ -3457,15 +3475,15 @@
 ;; valid until the optimizer's normal post-clone release.
 (define (compiler-ir-clone-function-seq-shell [seq : CompilerIrFunctionSeq]) : CompilerIrFunctionSeq
   (let
-    [count : i64 (struct-get seq len)]
-    [source : (__tl_dyn-array CompilerIrFunction) (struct-get seq slots)]
+    [count : i64 seq.len]
+    [source : (__tl_dyn-array CompilerIrFunction) seq.slots]
     [dest : (__tl_dyn-array CompilerIrFunction)
       (array.make-array CompilerIrFunction count)]
     [i : i64 0]
     (begin
       (while (< i count)
         (begin
-          (array-set! dest i (array-ref source i))
+          (set! (array-ref dest i) (array-ref source i))
           (set! i (+ i 1))))
       (CompilerIrFunctionSeq dest count))))
 
@@ -3574,7 +3592,7 @@
     [(ast.AstType.Func args ret)
       (str_cat.str-cat
         "(-> "
-        (compiler-ir-type-list-render type-segment-bases (box-get args))
+        (compiler-ir-type-list-render type-segment-bases (__tl-box-place args))
         " "
         (compiler-ir-type-render
           type-segment-bases
@@ -3583,7 +3601,7 @@
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple "
-        (compiler-ir-type-list-render type-segment-bases (box-get elems))
+        (compiler-ir-type-list-render type-segment-bases (__tl-box-place elems))
         ")")]
     [(ast.AstType.Array elem count)
       (str_cat.str-cat
@@ -3646,17 +3664,17 @@
     [(ast.AstType.EnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (ast.ast-nominal-name-id-display name)
-        (box-get lifetimes))]
+        (__tl-box-place lifetimes))]
     [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (ast.ast-nominal-name-id-display name)
-        (box-get lifetimes))]
+        (__tl-box-place lifetimes))]
     [(ast.AstType.Var name) (ci.intern-str name)]
     [(ast.AstType.VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (ci.intern-str name)
-        (box-get lifetimes))]
+        (__tl-box-place lifetimes))]
     [(ast.AstType.Ptr elem)
       (str_cat.str-cat
         "(Ptr "
@@ -3714,7 +3732,7 @@
     [(CompilerIrValueList.Cons value rest)
       (str_cat.str-cat
         (compiler-ir-value-render value)
-        (match (compiler-ir-value-list-force-cons (box-get rest))
+        (match (compiler-ir-value-list-force-cons (__tl-box-place rest))
           [(CompilerIrValueList.Nil) ""]
           [(CompilerIrValueList.Array seq)
             (str_cat.str-cat
@@ -3724,7 +3742,7 @@
           [_
             (str_cat.str-cat
               ", "
-              (compiler-ir-value-list-render (box-get rest)))]))]))
+              (compiler-ir-value-list-render (__tl-box-place rest)))]))]))
 
 (define (compiler-ir-switch-case-render [case : CompilerIrSwitchCase]) : String
   (match case
@@ -3739,7 +3757,7 @@
   (match cases
     [(CompilerIrSwitchCaseList.Nil) ""]
     [(CompilerIrSwitchCaseList.Array seq)
-      (if (= (struct-get seq len) 0)
+      (if (= seq.len 0)
         ""
         (str_cat.str-cat ", " (compiler-ir-switch-case-list-render cases)))]
     [_ (str_cat.str-cat ", " (compiler-ir-switch-case-list-render cases))]))
@@ -3750,7 +3768,7 @@
     [(CompilerIrSwitchCaseList.Cons case rest)
       (str_cat.str-cat
         (compiler-ir-switch-case-render case)
-        (compiler-ir-switch-case-list-render-tail (box-get rest)))]
+        (compiler-ir-switch-case-list-render-tail (__tl-box-place rest)))]
     [(CompilerIrSwitchCaseList.Array seq)
       (compiler-ir-switch-case-list-render
         (compiler-ir-switch-case-seq-to-list seq))]))
@@ -3759,8 +3777,8 @@
   (match values
     [(CompilerIrValueList.Nil) 0]
     [(CompilerIrValueList.Cons _ rest)
-      (+ 1 (compiler-ir-value-list-count (box-get rest)))]
-    [(CompilerIrValueList.Array seq) (struct-get seq len)]))
+      (+ 1 (compiler-ir-value-list-count (__tl-box-place rest)))]
+    [(CompilerIrValueList.Array seq) seq.len]))
 
 (define (compiler-ir-value-list-fill-array
   [values : CompilerIrValueList]
@@ -3770,16 +3788,19 @@
     [(CompilerIrValueList.Nil) unit]
     [(CompilerIrValueList.Cons value rest)
       (begin
-        (array-set! out index value)
-        (compiler-ir-value-list-fill-array (box-get rest) out (+ index 1)))]
+        (set! (array-ref out index) value)
+        (compiler-ir-value-list-fill-array
+          (__tl-box-place rest)
+          out
+          (+ index 1)))]
     [(CompilerIrValueList.Array seq)
       (let
         [read : i64 0]
-        [count : i64 (struct-get seq len)]
-        [source : (__tl_dyn-array CompilerIrValue) (struct-get seq slots)]
+        [count : i64 seq.len]
+        [source : (__tl_dyn-array CompilerIrValue) seq.slots]
         (while (< read count)
           (begin
-            (array-set! out (+ index read) (array-ref source read))
+            (set! (array-ref out (+ index read)) (array-ref source read))
             (set! read (+ read 1)))))]))
 
 (define (compiler-ir-value-seq-from-list [values : CompilerIrValueList]) : CompilerIrValueSeq
@@ -3806,7 +3827,7 @@
     [(CompilerIrValueList.Array seq)
       (compiler-ir-call-args-from-list (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons a rest)
-      (match (compiler-ir-value-list-force-cons (box-get rest))
+      (match (compiler-ir-value-list-force-cons (__tl-box-place rest))
         [(CompilerIrValueList.Nil) (CompilerIrCallArgs.One a)]
         [(CompilerIrValueList.Array seq)
           (compiler-ir-call-args-from-list
@@ -3814,7 +3835,7 @@
               a
               (compiler-ir-value-seq-to-list seq)))]
         [(CompilerIrValueList.Cons b tail)
-          (match (compiler-ir-value-list-force-cons (box-get tail))
+          (match (compiler-ir-value-list-force-cons (__tl-box-place tail))
             [(CompilerIrValueList.Nil) (CompilerIrCallArgs.Two a b)]
             [(CompilerIrValueList.Array _) (compiler-ir-call-args-array values)]
             [_ (compiler-ir-call-args-array values)])])]))
@@ -3880,8 +3901,8 @@
   [seq : CompilerIrSpmdCallArgSeq]
   [index : i64]) : String
   (let
-    [count : i64 (struct-get seq len)]
-    [slots : (__tl_dyn-array CompilerIrSpmdCallArg) (struct-get seq slots)]
+    [count : i64 seq.len]
+    [slots : (__tl_dyn-array CompilerIrSpmdCallArg) seq.slots]
     (if (>= index count)
       ""
       (str_cat.str-cat
@@ -3903,7 +3924,7 @@
   (match args
     [(CompilerIrSpmdCallArgList.Nil) ""]
     [(CompilerIrSpmdCallArgList.Cons arg rest)
-      (match (box-get rest)
+      (match (__tl-box-place rest)
         [(CompilerIrSpmdCallArgList.Nil)
           (compiler-ir-spmd-call-arg-render type-segment-bases arg)]
         [_
@@ -3912,7 +3933,7 @@
             ", "
             (compiler-ir-spmd-call-args-render
               type-segment-bases
-              (box-get rest)))])]
+              (__tl-box-place rest)))])]
     [(CompilerIrSpmdCallArgList.Array seq)
       (compiler-ir-spmd-call-arg-seq-render-from type-segment-bases seq 0)]))
 
@@ -3920,8 +3941,8 @@
   (match args
     [(CompilerIrSpmdCallArgList.Nil) 0]
     [(CompilerIrSpmdCallArgList.Cons _ rest)
-      (+ 1 (compiler-ir-spmd-call-arg-count (box-get rest)))]
-    [(CompilerIrSpmdCallArgList.Array seq) (struct-get seq len)]))
+      (+ 1 (compiler-ir-spmd-call-arg-count (__tl-box-place rest)))]
+    [(CompilerIrSpmdCallArgList.Array seq) seq.len]))
 
 (define (compiler-ir-spmd-call-arg-list-fill-array
   [args : CompilerIrSpmdCallArgList]
@@ -3931,9 +3952,9 @@
     [(CompilerIrSpmdCallArgList.Nil) unit]
     [(CompilerIrSpmdCallArgList.Cons arg rest)
       (begin
-        (array-set! slots index arg)
+        (set! (array-ref slots index) arg)
         (compiler-ir-spmd-call-arg-list-fill-array
-          (box-get rest)
+          (__tl-box-place rest)
           slots
           (+ index 1)))]
     [(CompilerIrSpmdCallArgList.Array seq)
@@ -3944,13 +3965,12 @@
   [slots : (__tl_dyn-array CompilerIrSpmdCallArg)]
   [src-index : i64]
   [dst-index : i64]) : unit
-  (if (>= src-index (struct-get seq len))
+  (if (>= src-index seq.len)
     unit
     (begin
-      (array-set!
-        slots
-        (+ dst-index src-index)
-        (array-ref (struct-get seq slots) src-index))
+      (set!
+        (array-ref slots (+ dst-index src-index))
+        (array-ref seq.slots src-index))
       (compiler-ir-spmd-call-arg-seq-fill-array
         seq
         slots
@@ -4098,12 +4118,12 @@
         ", "
         (compiler-ir-label-text label)
         "]"
-        (match (compiler-ir-phi-input-list-force-cons (box-get rest))
+        (match (compiler-ir-phi-input-list-force-cons (__tl-box-place rest))
           [(CompilerIrPhiInputList.Nil) ""]
           [_
             (str_cat.str-cat
               ", "
-              (compiler-ir-phi-input-list-render (box-get rest)))]))]))
+              (compiler-ir-phi-input-list-render (__tl-box-place rest)))]))]))
 
 (define (compiler-ir-c-abi-return-slot-list-render
   [type-segment-bases : i64]
@@ -4121,14 +4141,14 @@
             (compiler-ir-type-render type-segment-bases ty)
             "@"
             (string.int->string offset)
-            (match (box-get rest)
+            (match (__tl-box-place rest)
               [(CompilerIrCAbiReturnSlotList.Nil) ""]
               [_
                 (str_cat.str-cat
                   ", "
                   (compiler-ir-c-abi-return-slot-list-render
                     type-segment-bases
-                    (box-get rest)))]))])]))
+                    (__tl-box-place rest)))]))])]))
 
 (define (compiler-ir-instr-render
   [type-segment-bases : i64]
@@ -4234,12 +4254,12 @@
         (compiler-ir-type-render type-segment-bases ty))]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
           "vector_"
@@ -4254,12 +4274,12 @@
           (compiler-ir-type-render type-segment-bases ty)))]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [src (struct-get (box-get payload-box) src)]
-        [carry (struct-get (box-get payload-box) carry)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
           "vector_prefix_"
@@ -4285,12 +4305,12 @@
         (compiler-ir-type-render type-segment-bases ty))]
     [(CompilerIrInstr.VectorCompare payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
           "vector_compare_"
@@ -4332,12 +4352,12 @@
         (string.int->string lanes))]
     [(CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [on-true (struct-get (box-get payload-box) on-true)]
-        [on-false (struct-get (box-get payload-box) on-false)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [on-true (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [on-false (__tl-project-field (__tl-box-place payload-box) on-false)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
           "select "
@@ -4363,11 +4383,11 @@
         (compiler-ir-type-render type-segment-bases ty))]
     [(CompilerIrInstr.VectorStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  vector_store "
           (compiler-ir-value-render base)
@@ -4381,12 +4401,12 @@
           (compiler-ir-type-render type-segment-bases ty)))]
     [(CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  predicated_store "
           (compiler-ir-value-render base)
@@ -4402,12 +4422,12 @@
           (compiler-ir-type-render type-segment-bases ty)))]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
           "predicated_load "
@@ -4422,13 +4442,15 @@
           (compiler-ir-type-render type-segment-bases ty)))]
     [(CompilerIrInstr.GatherLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [base (struct-get (box-get payload-box) base)]
-        [index-base (struct-get (box-get payload-box) index-base)]
-        [index (struct-get (box-get payload-box) index)]
-        [lane-offset (struct-get (box-get payload-box) lane-offset)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index-base
+          (__tl-project-field (__tl-box-place payload-box) index-base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [lane-offset
+          (__tl-project-field (__tl-box-place payload-box) lane-offset)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
           "gather_load "
@@ -4447,13 +4469,16 @@
           (compiler-ir-type-render type-segment-bases ty)))]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [source (struct-get (box-get payload-box) source)]
-        [selector-low (struct-get (box-get payload-box) selector-low)]
-        [selector-high (struct-get (box-get payload-box) selector-high)]
-        [active-lanes (struct-get (box-get payload-box) active-lanes)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [source (__tl-project-field (__tl-box-place payload-box) source)]
+        [selector-low
+          (__tl-project-field (__tl-box-place payload-box) selector-low)]
+        [selector-high
+          (__tl-project-field (__tl-box-place payload-box) selector-high)]
+        [active-lanes
+          (__tl-project-field (__tl-box-place payload-box) active-lanes)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
           "vector_shuffle "
@@ -4532,10 +4557,10 @@
         (compiler-ir-type-render type-segment-bases ty))]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [name (struct-get (box-get payload-box) name)]
-        [args (struct-get (box-get payload-box) args)]
-        [slots (struct-get (box-get payload-box) slots)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [name (__tl-project-field (__tl-box-place payload-box) name)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [slots (__tl-project-field (__tl-box-place payload-box) slots)]
         (str_cat.str-cat
           "  call_c_store "
           (compiler-ir-symbol-text name)
@@ -4548,10 +4573,10 @@
           "]"))]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [callee (struct-get (box-get payload-box) callee)]
-        [args (struct-get (box-get payload-box) args)]
-        [slots (struct-get (box-get payload-box) slots)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [callee (__tl-project-field (__tl-box-place payload-box) callee)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [slots (__tl-project-field (__tl-box-place payload-box) slots)]
         (str_cat.str-cat
           "  call_c_store* "
           (compiler-ir-value-render callee)
@@ -4568,12 +4593,13 @@
       (compiler-ir-tail-call-indirect-render type-segment-bases callee args ty)]
     [(CompilerIrInstr.SpmdCall payload-box)
       (let
-        [callee (struct-get (box-get payload-box) callee)]
-        [backend (struct-get (box-get payload-box) backend)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [active-mask (struct-get (box-get payload-box) active-mask)]
-        [args (struct-get (box-get payload-box) args)]
-        [result (struct-get (box-get payload-box) result)]
+        [callee (__tl-project-field (__tl-box-place payload-box) callee)]
+        [backend (__tl-project-field (__tl-box-place payload-box) backend)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [active-mask
+          (__tl-project-field (__tl-box-place payload-box) active-mask)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [result (__tl-project-field (__tl-box-place payload-box) result)]
         (compiler-ir-spmd-call-render
           type-segment-bases
           callee
@@ -4711,7 +4737,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-block-list-render-into
         type-segment-bases
-        (match (compiler-ir-block-list-force-cons (box-get rest))
+        (match (compiler-ir-block-list-force-cons (__tl-box-place rest))
           [(CompilerIrBlockList.Nil)
             (text_buf.append
               buf
@@ -4722,7 +4748,7 @@
                 buf
                 (compiler-ir-block-render type-segment-bases block))
               "\n")])
-        (box-get rest))]))
+        (__tl-box-place rest))]))
 
 (define (compiler-ir-block-list-render
   [type-segment-bases : i64]
@@ -4757,12 +4783,14 @@
     [(CompilerIrParamList.Cons param rest)
       (str_cat.str-cat
         (compiler-ir-param-render type-segment-bases param)
-        (match (compiler-ir-param-list-force-cons (box-get rest))
+        (match (compiler-ir-param-list-force-cons (__tl-box-place rest))
           [(CompilerIrParamList.Nil) ""]
           [_
             (str_cat.str-cat
               ", "
-              (compiler-ir-param-list-render type-segment-bases (box-get rest)))]))]))
+              (compiler-ir-param-list-render
+                type-segment-bases
+                (__tl-box-place rest)))]))]))
 
 (define (compiler-ir-function-render
   [type-segment-bases : i64]
@@ -4796,7 +4824,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-function-list-render-into
         type-segment-bases
-        (match (compiler-ir-function-list-force-cons (box-get rest))
+        (match (compiler-ir-function-list-force-cons (__tl-box-place rest))
           [(CompilerIrFunctionList.Nil)
             (text_buf.append
               buf
@@ -4807,7 +4835,7 @@
                 buf
                 (compiler-ir-function-render type-segment-bases func))
               "\n")])
-        (box-get rest))]))
+        (__tl-box-place rest))]))
 
 (define (compiler-ir-global-render
   [type-segment-bases : i64]
@@ -4840,7 +4868,7 @@
         (text_buf.append
           buf
           (compiler-ir-global-render type-segment-bases global))
-        (box-get rest))]))
+        (__tl-box-place rest))]))
 
 (define (compiler-ir-extern-abi-render
   [type-segment-bases : i64]
@@ -4889,7 +4917,7 @@
         (text_buf.append
           buf
           (compiler-ir-extern-render type-segment-bases extern))
-        (box-get rest))]))
+        (__tl-box-place rest))]))
 
 (define (compiler-ir-program-render
   [type-segment-bases : i64]
@@ -5146,7 +5174,7 @@
   (match location
     [(CompilerMaybeSourceLocation.No) (CompilerMaybeSourceSpan.No)]
     [(CompilerMaybeSourceLocation.Some found)
-      (CompilerMaybeSourceSpan.Some (struct-get found span))]))
+      (CompilerMaybeSourceSpan.Some found.span)]))
 
 (define (compiler-source-spans-entry-list-empty) : CompilerSourceSpansEntryList
   (CompilerSourceSpansEntryList (make-array CompilerSourceSpansEntry 0) 0))
@@ -5172,7 +5200,7 @@
 
 (define (compiler-source-spans-entry-list-count
   [entries : CompilerSourceSpansEntryList]) : i64
-  (struct-get entries len))
+  entries.len)
 
 (define (compiler-source-spans-entry-list-copy-array-range!
   [dst : (&mut dst (__tl_dyn-array CompilerSourceSpansEntry))]
@@ -5183,7 +5211,7 @@
     [i : i64 index]
     (while (< i count)
       (begin
-        (array-set! dst i (array-ref src i))
+        (set! (array-ref dst i) (array-ref src i))
         (set! i (+ i 1))))))
 
 (define (compiler-source-spans-entry-list-capacity-for [count : i64]) : i64
@@ -5202,13 +5230,12 @@
   [entries : CompilerSourceSpansEntryList]
   [entry : CompilerSourceSpansEntry]) : CompilerSourceSpansEntryList
   (let
-    [slots : (__tl_dyn-array CompilerSourceSpansEntry)
-      (struct-get entries slots)]
-    [len : i64 (struct-get entries len)]
+    [slots : (__tl_dyn-array CompilerSourceSpansEntry) entries.slots]
+    [len : i64 entries.len]
     [cap : i64 (array-length slots)]
     (if (< len cap)
       (begin
-        (array-set! slots len entry)
+        (set! (array-ref slots len) entry)
         (CompilerSourceSpansEntryList slots (+ len 1)))
       (let
         [new-cap : i64
@@ -5221,7 +5248,7 @@
             (& slots)
             0
             len)
-          (array-set! bigger len entry)
+          (set! (array-ref bigger len) entry)
           (CompilerSourceSpansEntryList bigger (+ len 1)))))))
 
 (define (compiler-source-spans-instr-key-eq?
@@ -5253,20 +5280,19 @@
     [i : i64 index]
     (while (< i count)
       (begin
-        (array-set! dst i (array-ref src i))
+        (set! (array-ref dst i) (array-ref src i))
         (set! i (+ i 1))))))
 
 (define (compiler-source-spans-instr-entry-list-append
   [entries : CompilerSourceSpansInstrEntryList]
   [entry : CompilerSourceSpansInstrEntry]) : CompilerSourceSpansInstrEntryList
   (let
-    [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)
-      (struct-get entries slots)]
-    [len : i64 (struct-get entries len)]
+    [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry) entries.slots]
+    [len : i64 entries.len]
     [cap : i64 (array-length slots)]
     (if (< len cap)
       (begin
-        (array-set! slots len entry)
+        (set! (array-ref slots len) entry)
         (CompilerSourceSpansInstrEntryList slots (+ len 1)))
       (let
         [new-cap : i64
@@ -5279,7 +5305,7 @@
             (& slots)
             0
             len)
-          (array-set! bigger len entry)
+          (set! (array-ref bigger len) entry)
           (CompilerSourceSpansInstrEntryList bigger (+ len 1)))))))
 
 ;; --- spans escape -----------------------------------------------------------
@@ -5295,9 +5321,8 @@
 (define (compiler-source-spans-entry-list-escape
   [entries : CompilerSourceSpansEntryList]) : CompilerSourceSpansEntryList
   (let
-    [slots : (__tl_dyn-array CompilerSourceSpansEntry)
-      (struct-get entries slots)]
-    [len : i64 (struct-get entries len)]
+    [slots : (__tl_dyn-array CompilerSourceSpansEntry) entries.slots]
+    [len : i64 entries.len]
     [copy : (__tl_dyn-array CompilerSourceSpansEntry)
       (make-array CompilerSourceSpansEntry len)]
     (begin
@@ -5311,9 +5336,8 @@
 (define (compiler-source-spans-instr-entry-list-escape
   [entries : CompilerSourceSpansInstrEntryList]) : CompilerSourceSpansInstrEntryList
   (let
-    [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)
-      (struct-get entries slots)]
-    [len : i64 (struct-get entries len)]
+    [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry) entries.slots]
+    [len : i64 entries.len]
     [copy : (__tl_dyn-array CompilerSourceSpansInstrEntry)
       (make-array CompilerSourceSpansInstrEntry len)]
     (begin
@@ -5364,16 +5388,16 @@
   [entries : CompilerSourceSpansInstrEntryList]
   [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceLocation
   (compiler-source-spans-instr-entry-array-lookup-location
-    (struct-get entries slots)
-    (- (struct-get entries len) 1)
+    entries.slots
+    (- entries.len 1)
     key))
 
 (define (compiler-source-spans-instr-entry-list-lookup-span
   [entries : CompilerSourceSpansInstrEntryList]
   [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceSpan
   (compiler-source-spans-instr-entry-array-lookup
-    (struct-get entries slots)
-    (- (struct-get entries len) 1)
+    entries.slots
+    (- entries.len 1)
     key))
 
 ;; Record `name -> span`. Function names are unique in lowered programs. The
@@ -5438,8 +5462,8 @@
   [entries : CompilerSourceSpansEntryList]
   [name : CompilerIrSymbolId]) : CompilerMaybeSourceSpan
   (compiler-source-spans-entry-array-lookup
-    (struct-get entries slots)
-    (- (struct-get entries len) 1)
+    entries.slots
+    (- entries.len 1)
     name))
 
 (define (compiler-source-spans-lookup-location
@@ -5448,8 +5472,8 @@
   (match spans
     [(CompilerSourceSpans.Spans entries _ _)
       (compiler-source-spans-entry-array-lookup-location
-        (struct-get entries slots)
-        (- (struct-get entries len) 1)
+        entries.slots
+        (- entries.len 1)
         name)]))
 
 (define (compiler-source-spans-lookup
@@ -5556,14 +5580,14 @@
         span)]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (compiler-source-spans-insert-instr-entry
           spans
           (CompilerSourceSpansInstrKey.Value function dst)
           span))]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (compiler-source-spans-insert-instr-entry
           spans
           (CompilerSourceSpansInstrKey.Value function dst)
@@ -5575,7 +5599,7 @@
         span)]
     [(CompilerIrInstr.VectorCompare payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (compiler-source-spans-insert-instr-entry
           spans
           (CompilerSourceSpansInstrKey.Value function dst)
@@ -5597,7 +5621,7 @@
         span)]
     [(CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (compiler-source-spans-insert-instr-entry
           spans
           (CompilerSourceSpansInstrKey.Value function dst)
@@ -5609,21 +5633,21 @@
         span)]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (compiler-source-spans-insert-instr-entry
           spans
           (CompilerSourceSpansInstrKey.Value function dst)
           span))]
     [(CompilerIrInstr.GatherLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (compiler-source-spans-insert-instr-entry
           spans
           (CompilerSourceSpansInstrKey.Value function dst)
           span))]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (compiler-source-spans-insert-instr-entry
           spans
           (CompilerSourceSpansInstrKey.Value function dst)
@@ -5687,7 +5711,7 @@
     [(CompilerIrInstr.CallIndirectCAbiStoreResult _) spans]
     [(CompilerIrInstr.SpmdCall payload-box)
       (let
-        [result (struct-get (box-get payload-box) result)]
+        [result (__tl-project-field (__tl-box-place payload-box) result)]
         (match result
           [(CompilerIrSpmdCallResult.Unit) spans]
           [(CompilerIrSpmdCallResult.Value dst _ _)
@@ -5732,14 +5756,11 @@
     (if (> (compiler-source-spans-instr-count inserted) before)
       (match inserted
         [(CompilerSourceSpans.Spans _ instr-entries _)
-          (match (array-ref
-            (struct-get instr-entries slots)
-            (- (struct-get instr-entries len) 1))
+          (match (array-ref instr-entries.slots (- instr-entries.len 1))
             [(CompilerSourceSpansInstrEntry.Entry key _ _)
               (begin
-                (array-set!
-                  (struct-get instr-entries slots)
-                  (- (struct-get instr-entries len) 1)
+                (set!
+                  (array-ref instr-entries.slots (- instr-entries.len 1))
                   (CompilerSourceSpansInstrEntry.Entry key path-id span))
                 inserted)])])
       inserted)))
@@ -5797,13 +5818,13 @@
             (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.VectorBinOp payload-box)
           (let
-            [dst (struct-get (box-get payload-box) dst)]
+            [dst (__tl-project-field (__tl-box-place payload-box) dst)]
             (compiler-source-spans-instr-entry-list-lookup
               instr-entries
               (CompilerSourceSpansInstrKey.Value function dst)))]
         [(CompilerIrInstr.VectorPrefix payload-box)
           (let
-            [dst (struct-get (box-get payload-box) dst)]
+            [dst (__tl-project-field (__tl-box-place payload-box) dst)]
             (compiler-source-spans-instr-entry-list-lookup
               instr-entries
               (CompilerSourceSpansInstrKey.Value function dst)))]
@@ -5813,7 +5834,7 @@
             (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.VectorCompare payload-box)
           (let
-            [dst (struct-get (box-get payload-box) dst)]
+            [dst (__tl-project-field (__tl-box-place payload-box) dst)]
             (compiler-source-spans-instr-entry-list-lookup
               instr-entries
               (CompilerSourceSpansInstrKey.Value function dst)))]
@@ -5831,7 +5852,7 @@
             (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Select payload-box)
           (let
-            [dst (struct-get (box-get payload-box) dst)]
+            [dst (__tl-project-field (__tl-box-place payload-box) dst)]
             (compiler-source-spans-instr-entry-list-lookup
               instr-entries
               (CompilerSourceSpansInstrKey.Value function dst)))]
@@ -5841,19 +5862,19 @@
             (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.PredicatedLoad payload-box)
           (let
-            [dst (struct-get (box-get payload-box) dst)]
+            [dst (__tl-project-field (__tl-box-place payload-box) dst)]
             (compiler-source-spans-instr-entry-list-lookup
               instr-entries
               (CompilerSourceSpansInstrKey.Value function dst)))]
         [(CompilerIrInstr.GatherLoad payload-box)
           (let
-            [dst (struct-get (box-get payload-box) dst)]
+            [dst (__tl-project-field (__tl-box-place payload-box) dst)]
             (compiler-source-spans-instr-entry-list-lookup
               instr-entries
               (CompilerSourceSpansInstrKey.Value function dst)))]
         [(CompilerIrInstr.VectorShuffle payload-box)
           (let
-            [dst (struct-get (box-get payload-box) dst)]
+            [dst (__tl-project-field (__tl-box-place payload-box) dst)]
             (compiler-source-spans-instr-entry-list-lookup
               instr-entries
               (CompilerSourceSpansInstrKey.Value function dst)))]
@@ -5907,7 +5928,7 @@
           (CompilerMaybeSourceLocation.No)]
         [(CompilerIrInstr.SpmdCall payload-box)
           (let
-            [result (struct-get (box-get payload-box) result)]
+            [result (__tl-project-field (__tl-box-place payload-box) result)]
             (match result
               [(CompilerIrSpmdCallResult.Unit) (CompilerMaybeSourceLocation.No)]
               [(CompilerIrSpmdCallResult.Value dst _ _)
@@ -5965,16 +5986,16 @@
       (match complete
         [(CompilerSourceSpans.Spans complete-entries complete-instr-entries _)
           (let
-            [entry-index : i64 (struct-get base-entries len)]
-            [instr-index : i64 (struct-get base-instr-entries len)]
+            [entry-index : i64 base-entries.len]
+            [instr-index : i64 base-instr-entries.len]
             [out : CompilerSourceSpans base]
             [complete-entry-slots : (__tl_dyn-array CompilerSourceSpansEntry)
-              (struct-get complete-entries slots)]
+              complete-entries.slots]
             [complete-instr-slots : (__tl_dyn-array
               CompilerSourceSpansInstrEntry)
-              (struct-get complete-instr-entries slots)]
+              complete-instr-entries.slots]
             (begin
-              (while (< entry-index (struct-get complete-entries len))
+              (while (< entry-index complete-entries.len)
                 (match (array-ref complete-entry-slots entry-index)
                   [(CompilerSourceSpansEntry.Entry name path-id span)
                     (begin
@@ -5988,7 +6009,7 @@
                             span)
                           (compiler-source-spans-insert out name span)))
                       (set! entry-index (+ entry-index 1)))]))
-              (while (< instr-index (struct-get complete-instr-entries len))
+              (while (< instr-index complete-instr-entries.len)
                 (match (array-ref complete-instr-slots instr-index)
                   [(CompilerSourceSpansInstrEntry.Entry key path-id span)
                     (begin
@@ -6086,14 +6107,14 @@
   (match globals
     [(CompilerIrGlobalList.Nil) 0]
     [(CompilerIrGlobalList.Cons _ rest)
-      (+ 1 (compiler-ir-global-list-count (box-get rest)))]
+      (+ 1 (compiler-ir-global-list-count (__tl-box-place rest)))]
     [(CompilerIrGlobalList.Array seq) (compiler-ir-global-seq-count seq)]))
 
 (define (compiler-ir-extern-list-count [externs : CompilerIrExternList]) : i64
   (match externs
     [(CompilerIrExternList.Nil) 0]
     [(CompilerIrExternList.Cons _ rest)
-      (+ 1 (compiler-ir-extern-list-count (box-get rest)))]
+      (+ 1 (compiler-ir-extern-list-count (__tl-box-place rest)))]
     [(CompilerIrExternList.Array seq) (compiler-ir-extern-seq-count seq)]))
 
 (define (compiler-ir-max-i64 [a : i64] [b : i64]) : i64
@@ -6110,15 +6131,15 @@
       (compiler-ir-call-args-count args)]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [args (struct-get (box-get payload-box) args)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-ir-call-args-count args))]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [args (struct-get (box-get payload-box) args)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-ir-call-args-count args))]
     [(CompilerIrInstr.SpmdCall payload-box)
       (let
-        [args (struct-get (box-get payload-box) args)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-ir-spmd-call-arg-count args))]
     [(CompilerIrInstr.TailCall _ args _) (compiler-ir-call-args-count args)]
     [(CompilerIrInstr.TailCallIndirect _ args _)
@@ -6144,11 +6165,7 @@
       (+ acc (compiler-ir-instr-call-arg-count (array-ref slots index))))))
 
 (define (compiler-ir-instr-seq-call-arg-count [instrs : CompilerIrInstrSeq]) : i64
-  (compiler-ir-instr-seq-call-arg-count-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (compiler-ir-instr-seq-call-arg-count-from instrs.slots 0 instrs.len 0))
 
 (define (compiler-ir-instr-seq-phi-input-count-from
   [slots : (__tl_dyn-array CompilerIrInstr)]
@@ -6164,18 +6181,14 @@
       (+ acc (compiler-ir-instr-phi-input-count (array-ref slots index))))))
 
 (define (compiler-ir-instr-seq-phi-input-count [instrs : CompilerIrInstrSeq]) : i64
-  (compiler-ir-instr-seq-phi-input-count-from
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)
-    0))
+  (compiler-ir-instr-seq-phi-input-count-from instrs.slots 0 instrs.len 0))
 
 (define (compiler-ir-block-list-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons _ rest)
-      (+ 1 (compiler-ir-block-list-count (box-get rest)))]
-    [(CompilerIrBlockList.Array seq) (struct-get seq len)]))
+      (+ 1 (compiler-ir-block-list-count (__tl-box-place rest)))]
+    [(CompilerIrBlockList.Array seq) seq.len]))
 
 (define (compiler-ir-block-list-empty-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -6187,7 +6200,7 @@
             (if (= (compiler-ir-instr-seq-count instrs) 0)
               1
               0)
-            (compiler-ir-block-list-empty-count (box-get rest)))])]
+            (compiler-ir-block-list-empty-count (__tl-box-place rest)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-block-list-empty-count (compiler-ir-block-seq-to-list seq))]))
 
@@ -6200,7 +6213,7 @@
         [(CompilerIrBlock.Block _ instrs)
           (compiler-ir-max-i64
             (compiler-ir-instr-seq-count instrs)
-            (compiler-ir-block-list-max-instruction-count (box-get rest)))])]
+            (compiler-ir-block-list-max-instruction-count (__tl-box-place rest)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-block-list-max-instruction-count
         (compiler-ir-block-seq-to-list seq))]))
@@ -6213,7 +6226,7 @@
         [(CompilerIrBlock.Block _ instrs)
           (+
             (compiler-ir-instr-seq-call-arg-count instrs)
-            (compiler-ir-block-list-call-arg-count (box-get rest)))])]
+            (compiler-ir-block-list-call-arg-count (__tl-box-place rest)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-block-list-call-arg-count
         (compiler-ir-block-seq-to-list seq))]))
@@ -6226,7 +6239,7 @@
         [(CompilerIrBlock.Block _ instrs)
           (+
             (compiler-ir-instr-seq-phi-input-count instrs)
-            (compiler-ir-block-list-phi-input-count (box-get rest)))])]
+            (compiler-ir-block-list-phi-input-count (__tl-box-place rest)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-ir-block-list-phi-input-count
         (compiler-ir-block-seq-to-list seq))]))
@@ -6240,7 +6253,7 @@
         [(CompilerIrBlock.Block _ instrs)
           (+
             (compiler-ir-instr-seq-count instrs)
-            (compiler-ir-block-list-instruction-count (box-get rest)))])]
+            (compiler-ir-block-list-instruction-count (__tl-box-place rest)))])]
     ;; Read-only: scan the sequence instead of materialising a block cons
     ;; chain to walk once (refs #5729).
     [(CompilerIrBlockList.Array seq)
@@ -6300,8 +6313,8 @@
 (define (compiler-ir-function-seq-block-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
-    [count : i64 (struct-get functions len)]
+    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
+    [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -6316,8 +6329,8 @@
 (define (compiler-ir-function-seq-instruction-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
-    [count : i64 (struct-get functions len)]
+    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
+    [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -6334,8 +6347,8 @@
 (define (compiler-ir-function-seq-empty-block-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
-    [count : i64 (struct-get functions len)]
+    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
+    [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -6352,8 +6365,8 @@
 (define (compiler-ir-function-seq-max-instruction-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
-    [count : i64 (struct-get functions len)]
+    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
+    [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -6371,8 +6384,8 @@
 (define (compiler-ir-function-seq-max-block-instruction-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
-    [count : i64 (struct-get functions len)]
+    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
+    [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -6390,8 +6403,8 @@
 (define (compiler-ir-function-seq-call-arg-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
-    [count : i64 (struct-get functions len)]
+    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
+    [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -6408,8 +6421,8 @@
 (define (compiler-ir-function-seq-phi-input-count
   [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
-    [count : i64 (struct-get functions len)]
+    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
+    [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -6425,8 +6438,8 @@
 
 (define (compiler-ir-function-seq-var-count [functions : CompilerIrFunctionSeq]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) (struct-get functions slots)]
-    [count : i64 (struct-get functions len)]
+    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
+    [count : i64 functions.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -6442,7 +6455,7 @@
   (match functions
     [(CompilerIrFunctionList.Nil) 0]
     [(CompilerIrFunctionList.Cons _ rest)
-      (+ 1 (compiler-ir-function-list-count (box-get rest)))]
+      (+ 1 (compiler-ir-function-list-count (__tl-box-place rest)))]
     [(CompilerIrFunctionList.Array seq) (compiler-ir-function-seq-count seq)]))
 
 (define (compiler-ir-function-list-block-count
@@ -6452,7 +6465,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (+
         (compiler-ir-function-block-count func)
-        (compiler-ir-function-list-block-count (box-get rest)))]
+        (compiler-ir-function-list-block-count (__tl-box-place rest)))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-seq-block-count seq)]))
 
@@ -6463,7 +6476,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (+
         (compiler-ir-function-instruction-count func)
-        (compiler-ir-function-list-instruction-count (box-get rest)))]
+        (compiler-ir-function-list-instruction-count (__tl-box-place rest)))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-seq-instruction-count seq)]))
 
@@ -6474,7 +6487,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (+
         (compiler-ir-function-empty-block-count func)
-        (compiler-ir-function-list-empty-block-count (box-get rest)))]
+        (compiler-ir-function-list-empty-block-count (__tl-box-place rest)))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-seq-empty-block-count seq)]))
 
@@ -6485,7 +6498,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-max-i64
         (compiler-ir-function-max-instruction-count func)
-        (compiler-ir-function-list-max-instruction-count (box-get rest)))]
+        (compiler-ir-function-list-max-instruction-count (__tl-box-place rest)))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-seq-max-instruction-count seq)]))
 
@@ -6496,7 +6509,8 @@
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-max-i64
         (compiler-ir-function-max-block-instruction-count func)
-        (compiler-ir-function-list-max-block-instruction-count (box-get rest)))]
+        (compiler-ir-function-list-max-block-instruction-count
+          (__tl-box-place rest)))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-seq-max-block-instruction-count seq)]))
 
@@ -6507,7 +6521,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (+
         (compiler-ir-function-call-arg-count func)
-        (compiler-ir-function-list-call-arg-count (box-get rest)))]
+        (compiler-ir-function-list-call-arg-count (__tl-box-place rest)))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-seq-call-arg-count seq)]))
 
@@ -6518,7 +6532,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (+
         (compiler-ir-function-phi-input-count func)
-        (compiler-ir-function-list-phi-input-count (box-get rest)))]
+        (compiler-ir-function-list-phi-input-count (__tl-box-place rest)))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-seq-phi-input-count seq)]))
 
@@ -6529,7 +6543,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (+
         (compiler-ir-function-var-count func)
-        (compiler-ir-function-list-var-count (box-get rest)))]
+        (compiler-ir-function-list-var-count (__tl-box-place rest)))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-seq-var-count seq)]))
 
@@ -6593,7 +6607,7 @@
     [(ast.AstType.Func args ret)
       (str_cat.str-cat
         "(->"
-        (compiler-ir-type-list-name type-segment-bases (box-get args))
+        (compiler-ir-type-list-name type-segment-bases (__tl-box-place args))
         " "
         (compiler-ir-type-name
           type-segment-bases
@@ -6602,7 +6616,7 @@
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple"
-        (compiler-ir-type-list-name type-segment-bases (box-get elems))
+        (compiler-ir-type-list-name type-segment-bases (__tl-box-place elems))
         ")")]
     [(ast.AstType.Array elem count)
       (str_cat.str-cat
@@ -6665,17 +6679,17 @@
     [(ast.AstType.EnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (ast.ast-nominal-name-id-display name)
-        (box-get lifetimes))]
+        (__tl-box-place lifetimes))]
     [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (ast.ast-nominal-name-id-display name)
-        (box-get lifetimes))]
+        (__tl-box-place lifetimes))]
     [(ast.AstType.Var name) (str_cat.str-cat "'" (ci.intern-str name) "'")]
     [(ast.AstType.VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (ci.intern-str name)
-        (box-get lifetimes))]
+        (__tl-box-place lifetimes))]
     [(ast.AstType.Ptr elem)
       (str_cat.str-cat
         "(Ptr "
@@ -6742,7 +6756,7 @@
     [(CompilerIrValueList.Array seq)
       (compiler-ir-value-list-describe (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons head tail)
-      (match (compiler-ir-value-list-force-cons (box-get tail))
+      (match (compiler-ir-value-list-force-cons (__tl-box-place tail))
         [(CompilerIrValueList.Nil) (compiler-ir-value-describe head)]
         [(CompilerIrValueList.Array seq)
           (str_cat.str-cat
@@ -6754,7 +6768,7 @@
           (str_cat.str-cat
             (compiler-ir-value-describe head)
             ", "
-            (compiler-ir-value-list-describe (box-get tail)))])]))
+            (compiler-ir-value-list-describe (__tl-box-place tail)))])]))
 
 (define (compiler-ir-spmd-call-arg-describe
   [type-segment-bases : i64]
@@ -6773,8 +6787,8 @@
   [seq : CompilerIrSpmdCallArgSeq]
   [index : i64]) : String
   (let
-    [count : i64 (struct-get seq len)]
-    [slots : (__tl_dyn-array CompilerIrSpmdCallArg) (struct-get seq slots)]
+    [count : i64 seq.len]
+    [slots : (__tl_dyn-array CompilerIrSpmdCallArg) seq.slots]
     (if (>= index count)
       ""
       (str_cat.str-cat
@@ -6796,7 +6810,7 @@
   (match args
     [(CompilerIrSpmdCallArgList.Nil) ""]
     [(CompilerIrSpmdCallArgList.Cons arg rest)
-      (match (box-get rest)
+      (match (__tl-box-place rest)
         [(CompilerIrSpmdCallArgList.Nil)
           (compiler-ir-spmd-call-arg-describe type-segment-bases arg)]
         [_
@@ -6805,7 +6819,7 @@
             ", "
             (compiler-ir-spmd-call-args-describe
               type-segment-bases
-              (box-get rest)))])]
+              (__tl-box-place rest)))])]
     [(CompilerIrSpmdCallArgList.Array seq)
       (compiler-ir-spmd-call-arg-seq-describe-from type-segment-bases seq 0)]))
 
@@ -6910,12 +6924,12 @@
         "")]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  "
           (compiler-ir-value-describe (CompilerIrValue.Var dst))
@@ -6928,12 +6942,12 @@
           (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [src (struct-get (box-get payload-box) src)]
-        [carry (struct-get (box-get payload-box) carry)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  "
           (compiler-ir-value-describe (CompilerIrValue.Var dst))
@@ -6955,12 +6969,12 @@
         (compiler-ir-vector-suffix type-segment-bases lanes elem-ty))]
     [(CompilerIrInstr.VectorCompare payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [op (struct-get (box-get payload-box) op)]
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  "
           (compiler-ir-value-describe (CompilerIrValue.Var dst))
@@ -7003,12 +7017,12 @@
         (string.int->string lanes))]
     [(CompilerIrInstr.Select payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [on-true (struct-get (box-get payload-box) on-true)]
-        [on-false (struct-get (box-get payload-box) on-false)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [on-true (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [on-false (__tl-project-field (__tl-box-place payload-box) on-false)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  "
           (compiler-ir-value-describe (CompilerIrValue.Var dst))
@@ -7030,11 +7044,11 @@
         (compiler-ir-vector-suffix type-segment-bases lanes elem-ty))]
     [(CompilerIrInstr.VectorStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  vector_store "
           (compiler-ir-value-describe base)
@@ -7045,12 +7059,12 @@
           (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
     [(CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  predicated_store "
           (compiler-ir-value-describe base)
@@ -7063,12 +7077,12 @@
           (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [mask (struct-get (box-get payload-box) mask)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  "
           (compiler-ir-value-describe (CompilerIrValue.Var dst))
@@ -7081,13 +7095,15 @@
           (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
     [(CompilerIrInstr.GatherLoad payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [base (struct-get (box-get payload-box) base)]
-        [index-base (struct-get (box-get payload-box) index-base)]
-        [index (struct-get (box-get payload-box) index)]
-        [lane-offset (struct-get (box-get payload-box) lane-offset)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index-base
+          (__tl-project-field (__tl-box-place payload-box) index-base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [lane-offset
+          (__tl-project-field (__tl-box-place payload-box) lane-offset)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  "
           (compiler-ir-value-describe (CompilerIrValue.Var dst))
@@ -7103,13 +7119,16 @@
           (compiler-ir-vector-suffix type-segment-bases lanes elem-ty)))]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [dst (struct-get (box-get payload-box) dst)]
-        [source (struct-get (box-get payload-box) source)]
-        [selector-low (struct-get (box-get payload-box) selector-low)]
-        [selector-high (struct-get (box-get payload-box) selector-high)]
-        [active-lanes (struct-get (box-get payload-box) active-lanes)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [elem-ty (struct-get (box-get payload-box) ty)]
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [source (__tl-project-field (__tl-box-place payload-box) source)]
+        [selector-low
+          (__tl-project-field (__tl-box-place payload-box) selector-low)]
+        [selector-high
+          (__tl-project-field (__tl-box-place payload-box) selector-high)]
+        [active-lanes
+          (__tl-project-field (__tl-box-place payload-box) active-lanes)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
         (str_cat.str-cat
           "  "
           (compiler-ir-value-describe (CompilerIrValue.Var dst))
@@ -7134,12 +7153,13 @@
         (string.int->string lanes))]
     [(CompilerIrInstr.SpmdCall payload-box)
       (let
-        [callee (struct-get (box-get payload-box) callee)]
-        [backend (struct-get (box-get payload-box) backend)]
-        [lanes (struct-get (box-get payload-box) lanes)]
-        [active-mask (struct-get (box-get payload-box) active-mask)]
-        [args (struct-get (box-get payload-box) args)]
-        [result (struct-get (box-get payload-box) result)]
+        [callee (__tl-project-field (__tl-box-place payload-box) callee)]
+        [backend (__tl-project-field (__tl-box-place payload-box) backend)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [active-mask
+          (__tl-project-field (__tl-box-place payload-box) active-mask)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
+        [result (__tl-project-field (__tl-box-place payload-box) result)]
         (str_cat.str-cat
           "  spmd_call "
           (compiler-ir-symbol-text callee)
@@ -7659,12 +7679,12 @@
       (match cloned
         [(CompilerIrInstr.VectorPrefix payload-box)
           (let
-            [dst (struct-get (box-get payload-box) dst)]
-            [op (struct-get (box-get payload-box) op)]
-            [src (struct-get (box-get payload-box) src)]
-            [carry (struct-get (box-get payload-box) carry)]
-            [lanes (struct-get (box-get payload-box) lanes)]
-            [ty (struct-get (box-get payload-box) ty)]
+            [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+            [op (__tl-project-field (__tl-box-place payload-box) op)]
+            [src (__tl-project-field (__tl-box-place payload-box) src)]
+            [carry (__tl-project-field (__tl-box-place payload-box) carry)]
+            [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+            [ty (__tl-project-field (__tl-box-place payload-box) ty)]
             (and
               (= dst 42)
               (match op
@@ -7841,13 +7861,13 @@
         (= (compiler-source-spans-entry-list-count entries) 2)
         (= (compiler-source-spans-count spans) 2)
         (= (compiler-source-spans-entry-list-count grown-entries) 6)
-        (= (array-length (struct-get grown-entries slots)) 8)
+        (= (array-length grown-entries.slots) 8)
         (match grown-instr-spans
           [(CompilerSourceSpans.Spans _ grown-instr-entries grown-instr-count)
             (and
               (= grown-instr-count 6)
-              (= (struct-get grown-instr-entries len) 6)
-              (= (array-length (struct-get grown-instr-entries slots)) 8))])
+              (= grown-instr-entries.len 6)
+              (= (array-length grown-instr-entries.slots) 8))])
         (match (compiler-source-spans-entry-list-lookup entries second)
           [(CompilerMaybeSourceSpan.Some found)
             (and
@@ -7992,7 +8012,10 @@
         (match block
           [(CompilerIrBlock.Block label _)
             (string.eq (compiler-ir-label-text label) want)])
-        (compiler-ir-block-list-label-at-cons? (box-get rest) (- index 1) want))]
+        (compiler-ir-block-list-label-at-cons?
+          (__tl-box-place rest)
+          (- index 1)
+          want))]
     [(CompilerIrBlockList.Array _) false]))
 
 (define (compiler-ir-block-list-label-at?
@@ -8016,7 +8039,7 @@
           [(CompilerIrFunction.Function name _ _ _ _)
             (string.eq (compiler-ir-symbol-text name) want)])
         (compiler-ir-function-list-name-at-cons?
-          (box-get rest)
+          (__tl-box-place rest)
           (- index 1)
           want))]
     [(CompilerIrFunctionList.Array _) false]))
@@ -8106,9 +8129,9 @@
   [index : i64]
   [want-name : String]
   [want-var : i64]) : bool
-  (if (or (< index 0) (>= index (struct-get seq len)))
+  (if (or (< index 0) (>= index seq.len))
     false
-    (match (array-ref (struct-get seq slots) index)
+    (match (array-ref seq.slots index)
       [(CompilerIrParam.Param name ty var)
         (and
           (string.eq name want-name)
@@ -8122,9 +8145,9 @@
   [index : i64]
   [want-name : String]
   [want-var : i64]) : bool
-  (if (or (< index 0) (>= index (struct-get seq len)))
+  (if (or (< index 0) (>= index seq.len))
     false
-    (match (array-ref (struct-get seq slots) index)
+    (match (array-ref seq.slots index)
       [(CompilerIrParam.Param name ty var)
         (and
           (string.eq name want-name)
@@ -8190,9 +8213,9 @@
   [seq : CompilerIrCAbiReturnSlotSeq]
   [index : i64]
   [want-offset : i64]) : bool
-  (if (or (< index 0) (>= index (struct-get seq len)))
+  (if (or (< index 0) (>= index seq.len))
     false
-    (match (array-ref (struct-get seq slots) index)
+    (match (array-ref seq.slots index)
       [(CompilerIrCAbiReturnSlot.Slot ty offset)
         (and
           (= offset want-offset)
@@ -8204,9 +8227,9 @@
   [seq : CompilerIrCAbiReturnSlotSeq]
   [index : i64]
   [want-offset : i64]) : bool
-  (if (or (< index 0) (>= index (struct-get seq len)))
+  (if (or (< index 0) (>= index seq.len))
     false
-    (match (array-ref (struct-get seq slots) index)
+    (match (array-ref seq.slots index)
       [(CompilerIrCAbiReturnSlot.Slot ty offset)
         (and
           (= offset want-offset)
@@ -8230,14 +8253,14 @@
       (match slots
         [(CompilerIrCAbiReturnSlotList.Array seq)
           (and
-            (= (struct-get seq len) 2)
+            (= seq.len 2)
             (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? seq 0 0)
             (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? seq 1 8))]
         [_ false])
       (match cloned
         [(CompilerIrCAbiReturnSlotList.Array seq)
           (and
-            (= (struct-get seq len) 2)
+            (= seq.len 2)
             (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? seq 0 0)
             (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? seq 1 8))]
         [_ false]))))
@@ -8246,9 +8269,9 @@
   [seq : CompilerIrValueSeq]
   [index : i64]
   [want : i64]) : bool
-  (if (or (< index 0) (>= index (struct-get seq len)))
+  (if (or (< index 0) (>= index seq.len))
     false
-    (match (array-ref (struct-get seq slots) index)
+    (match (array-ref seq.slots index)
       [(CompilerIrValue.Var id) (= id want)]
       [_ false])))
 
@@ -8269,7 +8292,7 @@
           (match packed
             [(CompilerIrValueList.Array seq)
               (and
-                (= (struct-get seq len) 2)
+                (= seq.len 2)
                 (compiler-ir-value-seq-entry-var? seq 0 10)
                 (compiler-ir-value-seq-entry-var? seq 1 20))]
             [_ false])]
@@ -8277,7 +8300,7 @@
       (match cloned
         [(CompilerIrValueList.Array seq)
           (and
-            (= (struct-get seq len) 2)
+            (= seq.len 2)
             (compiler-ir-value-seq-entry-var? seq 0 10)
             (compiler-ir-value-seq-entry-var? seq 1 20))]
         [_ false])
@@ -8336,7 +8359,7 @@
             (match words
               [(CompilerIrValueList.Array seq)
                 (and
-                  (= (struct-get seq len) 2)
+                  (= seq.len 2)
                   (compiler-ir-value-seq-entry-var? seq 0 10)
                   (compiler-ir-value-seq-entry-var? seq 1 20))]
               [_ false]))]
@@ -8367,13 +8390,13 @@
   [index : i64]
   [want-var : i64]
   [want-label : String]) : bool
-  (if (or (< index 0) (>= index (struct-get seq len)))
+  (if (or (< index 0) (>= index seq.len))
     false
     (let
-      [input : CompilerIrPhiInput (array-ref (struct-get seq slots) index)]
+      [input : CompilerIrPhiInput (array-ref seq.slots index)]
       (and
-        (string.eq (compiler-ir-label-text (struct-get input label)) want-label)
-        (match (struct-get input value)
+        (string.eq (compiler-ir-label-text input.label) want-label)
+        (match input.value
           [(CompilerIrValue.Var id) (= id want-var)]
           [_ false])))))
 
@@ -8398,21 +8421,21 @@
       (match inputs
         [(CompilerIrPhiInputList.Array seq)
           (and
-            (= (struct-get seq len) 2)
+            (= seq.len 2)
             (compiler-ir-phi-input-seq-entry-var-label? seq 0 10 "entry")
             (compiler-ir-phi-input-seq-entry-var-label? seq 1 20 "loop"))]
         [_ false])
       (match cloned
         [(CompilerIrPhiInputList.Array seq)
           (and
-            (= (struct-get seq len) 2)
+            (= seq.len 2)
             (compiler-ir-phi-input-seq-entry-var-label? seq 0 10 "entry")
             (compiler-ir-phi-input-seq-entry-var-label? seq 1 20 "loop"))]
         [_ false])
       (match reversed
         [(CompilerIrPhiInputList.Array seq)
           (and
-            (= (struct-get seq len) 2)
+            (= seq.len 2)
             (compiler-ir-phi-input-seq-entry-var-label? seq 0 20 "loop")
             (compiler-ir-phi-input-seq-entry-var-label? seq 1 10 "entry"))]
         [_ false]))))
@@ -8422,9 +8445,9 @@
   [index : i64]
   [want-tag : i64]
   [want-label : String]) : bool
-  (if (or (< index 0) (>= index (struct-get seq len)))
+  (if (or (< index 0) (>= index seq.len))
     false
-    (match (array-ref (struct-get seq slots) index)
+    (match (array-ref seq.slots index)
       [(CompilerIrSwitchCase.Case tag label)
         (and
           (= tag want-tag)
@@ -8453,21 +8476,21 @@
       (match cases
         [(CompilerIrSwitchCaseList.Array seq)
           (and
-            (= (struct-get seq len) 2)
+            (= seq.len 2)
             (compiler-ir-switch-case-seq-entry-tag-label? seq 0 4 "four")
             (compiler-ir-switch-case-seq-entry-tag-label? seq 1 5 "five"))]
         [_ false])
       (match cloned
         [(CompilerIrSwitchCaseList.Array seq)
           (and
-            (= (struct-get seq len) 2)
+            (= seq.len 2)
             (compiler-ir-switch-case-seq-entry-tag-label? seq 0 4 "four")
             (compiler-ir-switch-case-seq-entry-tag-label? seq 1 5 "five"))]
         [_ false])
       (match reversed
         [(CompilerIrSwitchCaseList.Array seq)
           (and
-            (= (struct-get seq len) 2)
+            (= seq.len 2)
             (compiler-ir-switch-case-seq-entry-tag-label? seq 0 5 "five")
             (compiler-ir-switch-case-seq-entry-tag-label? seq 1 4 "four"))]
         [_ false]))))

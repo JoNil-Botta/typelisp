@@ -12,7 +12,7 @@
 
 (define (choice-score [choice : SafeThreadChoice]) : i64
   (match choice
-    [(SafeThreadSome pair) (struct-get pair right)]
+    [(SafeThreadSome pair) pair.right]
     [(SafeThreadNone) 0]))
 
 (define (main) : i64
@@ -24,7 +24,7 @@
     (match (thread_i64.spawn
       (lambda () : i64
         (+
-          (struct-get pair left)
+          pair.left
           (+
             (array-ref items 0)
             (+

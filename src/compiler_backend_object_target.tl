@@ -32,89 +32,79 @@
   [parts : CompilerBackendObjectTargetParts]
   [instr : cobj.CompilerObjectX64Instr]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
-    (cobj.compiler-object-instr-builder-push (struct-get parts text) instr)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
+    (cobj.compiler-object-instr-builder-push parts.text instr)
+    parts.data
+    parts.rodata
+    parts.bss
+    parts.pdata
+    parts.xdata
+    parts.symbols
+    parts.relocations))
 
 (define (compiler-backend-object-add-data
   [parts : CompilerBackendObjectTargetParts]
   [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
-    (struct-get parts text)
-    (cobj.compiler-object-data-record-builder-push
-      (struct-get parts data)
-      record)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
+    parts.text
+    (cobj.compiler-object-data-record-builder-push parts.data record)
+    parts.rodata
+    parts.bss
+    parts.pdata
+    parts.xdata
+    parts.symbols
+    parts.relocations))
 
 (define (compiler-backend-object-add-rodata
   [parts : CompilerBackendObjectTargetParts]
   [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (cobj.compiler-object-data-record-builder-push
-      (struct-get parts rodata)
-      record)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
+    parts.text
+    parts.data
+    (cobj.compiler-object-data-record-builder-push parts.rodata record)
+    parts.bss
+    parts.pdata
+    parts.xdata
+    parts.symbols
+    parts.relocations))
 
 (define (compiler-backend-object-add-bss
   [parts : CompilerBackendObjectTargetParts]
   [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (cobj.compiler-object-data-record-builder-push
-      (struct-get parts bss)
-      record)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
+    parts.text
+    parts.data
+    parts.rodata
+    (cobj.compiler-object-data-record-builder-push parts.bss record)
+    parts.pdata
+    parts.xdata
+    parts.symbols
+    parts.relocations))
 
 (define (compiler-backend-object-add-pdata
   [parts : CompilerBackendObjectTargetParts]
   [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (cobj.compiler-object-data-record-builder-push
-      (struct-get parts pdata)
-      record)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
+    parts.text
+    parts.data
+    parts.rodata
+    parts.bss
+    (cobj.compiler-object-data-record-builder-push parts.pdata record)
+    parts.xdata
+    parts.symbols
+    parts.relocations))
 
 (define (compiler-backend-object-add-xdata
   [parts : CompilerBackendObjectTargetParts]
   [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (cobj.compiler-object-data-record-builder-push
-      (struct-get parts xdata)
-      record)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
+    parts.text
+    parts.data
+    parts.rodata
+    parts.bss
+    parts.pdata
+    (cobj.compiler-object-data-record-builder-push parts.xdata record)
+    parts.symbols
+    parts.relocations))
 
 (define (compiler-backend-object-add-symbol
   [parts : CompilerBackendObjectTargetParts]
@@ -123,16 +113,16 @@
   [kind : cobj.CompilerObjectSymbolKind]
   [section : cobj.CompilerObjectMaybeSection]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
+    parts.text
+    parts.data
+    parts.rodata
+    parts.bss
+    parts.pdata
+    parts.xdata
     (cobj.compiler-object-symbol-builder-push
-      (struct-get parts symbols)
+      parts.symbols
       (cobj.CompilerObjectSymbol.Symbol name binding kind section))
-    (struct-get parts relocations)))
+    parts.relocations))
 
 (define (compiler-backend-object-add-relocation
   [parts : CompilerBackendObjectTargetParts]
@@ -141,15 +131,15 @@
   [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
+    parts.text
+    parts.data
+    parts.rodata
+    parts.bss
+    parts.pdata
+    parts.xdata
+    parts.symbols
     (cobj.compiler-object-relocation-builder-push
-      (struct-get parts relocations)
+      parts.relocations
       (cobj.CompilerObjectRelocation.Relocation section site kind target))))
 
 (define (compiler-backend-object-symbol-local-section
@@ -192,7 +182,7 @@
   [name : String]
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
   (if (cobj.compiler-object-symbol-builder-contains?
-    (struct-get parts symbols)
+    parts.symbols
     name
     (cobj.CompilerObjectSymbolBinding.Extern)
     kind)
@@ -346,35 +336,32 @@
         (cobj.CompilerObjectSection.Section
           (cobj.CompilerObjectSectionKind.Text)
           empty-data
-          (cobj.compiler-object-instr-builder-finish (struct-get parts text))))]
+          (cobj.compiler-object-instr-builder-finish parts.text)))]
     [sections2 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections1
         (cobj.CompilerObjectSection.Section
           (cobj.CompilerObjectSectionKind.Data)
-          (cobj.compiler-object-data-record-builder-finish
-            (struct-get parts data))
+          (cobj.compiler-object-data-record-builder-finish parts.data)
           empty-instrs))]
     [sections3 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections2
         (cobj.CompilerObjectSection.Section
           (cobj.CompilerObjectSectionKind.Rodata)
-          (cobj.compiler-object-data-record-builder-finish
-            (struct-get parts rodata))
+          (cobj.compiler-object-data-record-builder-finish parts.rodata)
           empty-instrs))]
     (cobj.compiler-object-section-builder-push
       sections3
       (cobj.CompilerObjectSection.Section
         (cobj.CompilerObjectSectionKind.Bss)
-        (cobj.compiler-object-data-record-builder-finish (struct-get parts bss))
+        (cobj.compiler-object-data-record-builder-finish parts.bss)
         empty-instrs))))
 
 (define (compiler-backend-object-base-symbols
   [parts : CompilerBackendObjectTargetParts]) : cobj.CompilerObjectSymbolList
-  (cobj.compiler-object-symbol-builder-finish (struct-get parts symbols)))
+  (cobj.compiler-object-symbol-builder-finish parts.symbols))
 
 (define (compiler-backend-object-base-relocations
   [parts : CompilerBackendObjectTargetParts]) : cobj.CompilerObjectRelocationList
-  (cobj.compiler-object-relocation-builder-finish
-    (struct-get parts relocations)))
+  (cobj.compiler-object-relocation-builder-finish parts.relocations))

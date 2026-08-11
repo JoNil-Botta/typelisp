@@ -18,7 +18,7 @@ cd "$ROOT"
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/verify-integration.sh [--self-test-batch-observability | --self-test-empty-compile-diagnostic | --self-test-signal-notice-capture | --validate-manifest-only]
+usage: scripts/verify-integration.sh [--self-test-batch-observability | --self-test-empty-compile-diagnostic | --self-test-signal-notice-capture | --self-test-path-normalization | --validate-manifest-only]
 
 Runs manifest-driven native integration tests.
 --self-test-batch-observability exercises the batch sentinel selection and
@@ -27,6 +27,8 @@ per-chunk timing row without invoking a compiler or native toolchain.
 helper without invoking a compiler or native toolchain.
 --self-test-signal-notice-capture exercises Linux signal exit and shell-notice
 capture without invoking a compiler or native toolchain.
+--self-test-path-normalization exercises Windows diagnostic checkout-prefix and
+CRLF normalization without invoking a compiler or native toolchain.
 --validate-manifest-only validates the host manifest and exits before builds.
 EOF
 }
@@ -34,6 +36,7 @@ EOF
 SELF_TEST_BATCH_OBSERVABILITY=0
 SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=0
 SELF_TEST_SIGNAL_NOTICE_CAPTURE=0
+SELF_TEST_PATH_NORMALIZATION=0
 SELF_TEST_WITHOUT_COMPILER=0
 VALIDATE_MANIFEST_ONLY=0
 case "${1:-}" in
@@ -51,6 +54,11 @@ case "${1:-}" in
         ;;
     --self-test-signal-notice-capture)
         SELF_TEST_SIGNAL_NOTICE_CAPTURE=1
+        SELF_TEST_WITHOUT_COMPILER=1
+        shift
+        ;;
+    --self-test-path-normalization)
+        SELF_TEST_PATH_NORMALIZATION=1
         SELF_TEST_WITHOUT_COMPILER=1
         shift
         ;;
@@ -261,6 +269,7 @@ WINDOWS_LEGACY_RUNNER_WIN=
 WINDOWS_LINKER_WIN=
 WINDOWS_LLD_LINK_WIN=
 WINDOWS_WORKDIR_WIN=
+WINDOWS_CHECKOUT_ROOT_NATIVE=
 WINDOWS_LINK_REQUEST=
 WINDOWS_LINK_REQUEST_WIN=
 WINDOWS_LINK_RESULTS=
@@ -343,6 +352,7 @@ if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     WINDOWS_LINKER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-linker.ps1")
     WINDOWS_LLD_LINK_WIN=$(cygpath -aw "$(command -v lld-link)")
     WINDOWS_WORKDIR_WIN=$(cygpath -aw "$WORKDIR")
+    WINDOWS_CHECKOUT_ROOT_NATIVE=$(cygpath -am "$ROOT")
     WINDOWS_LINK_REQUEST="$WORKDIR/windows-integration-links.requests"
     WINDOWS_LINK_REQUEST_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration-links.requests"
     WINDOWS_LINK_RESULTS="$WORKDIR/windows-integration-links.results"
@@ -862,11 +872,53 @@ write_expected_stream() {
     esac
 }
 
+integration_escape_sed_bre() {
+    printf '%s' "$1" | sed 's/[][\\.^$*]/\\&/g; s/#/\\#/g'
+}
+
+normalize_windows_stream() {
+    _in=$1
+    _out=$2
+    _root_native=$3
+    _root_forward=$(printf '%s' "$_root_native" | tr '\\' '/')
+    case "$_root_forward" in
+        [A-Za-z]:/*) ;;
+        *)
+            echo "invalid native Windows checkout root: $_root_native" >&2
+            return 1
+            ;;
+    esac
+    case "$_root_forward" in
+        */) _root_forward=${_root_forward%/} ;;
+    esac
+
+    _drive=$(printf '%.1s' "$_root_forward")
+    _drive_lower=$(printf '%s' "$_drive" | tr '[:upper:]' '[:lower:]')
+    _drive_upper=$(printf '%s' "$_drive" | tr '[:lower:]' '[:upper:]')
+    _forward_tail=${_root_forward#?}
+    _root_backward=$(printf '%s' "$_root_forward" | tr '/' '\\')
+    _backward_tail=${_root_backward#?}
+    _forward_pattern=$(integration_escape_sed_bre "$_forward_tail")
+    _backward_pattern=$(integration_escape_sed_bre "$_backward_tail")
+
+    # Runtime source diagnostics begin with `tl: <path>`. Match only that path
+    # position and require a separator after the literal checkout root, so a
+    # message mentioning the checkout, an external absolute path, or a sibling
+    # such as `TypeLisp-other` remains byte-for-byte unchanged. The suffix is
+    # deliberately not rewritten: only the runner-owned absolute prefix is
+    # normalized away.
+    tr -d '\r' < "$_in" |
+        sed \
+            -e "s#^tl: [${_drive_lower}${_drive_upper}]${_forward_pattern}[/\\\\]#tl: #" \
+            -e "s#^tl: [${_drive_lower}${_drive_upper}]${_backward_pattern}[/\\\\]#tl: #" \
+            > "$_out"
+}
+
 normalized_stream() {
     _in=$1
     _out=$2
     if [ "$HOST_OS" = windows ]; then
-        tr -d '\r' < "$_in" > "$_out"
+        normalize_windows_stream "$_in" "$_out" "$WINDOWS_CHECKOUT_ROOT_NATIVE"
     else
         cp "$_in" "$_out"
     fi
@@ -1435,6 +1487,51 @@ EOF
     printf '%s\n' "verify-integration signal notice capture self-test passed"
 }
 
+run_path_normalization_self_test() {
+    _dir="$WORKDIR/path-normalization-self-test"
+    rm -rf "$_dir"
+    mkdir -p "$_dir"
+    _input="$_dir/input.txt"
+    _actual="$_dir/actual.txt"
+    _expected="$_dir/expected.txt"
+    _linux_actual="$_dir/linux-actual.txt"
+
+    printf '%s\r\n' \
+        'tl: C:/Work [Tree]^$/Type.Lisp#1/target/case.tl:4:4: panic: boom' \
+        'tl: c:\Work [Tree]^$\Type.Lisp#1\target\case.tl:5:6: panic: slash' \
+        'tl: D:/external/case.tl:1:2: panic: external' \
+        'note: C:/Work [Tree]^$/Type.Lisp#1/target/message.txt' \
+        'tl: C:/Work [Tree]^$/Type.Lisp#1-other/target/case.tl:7:8: panic: boundary' \
+        > "$_input"
+    printf '%s' 'tail: C:/Work [Tree]^$/Type.Lisp#1/target/no-newline.tl' >> "$_input"
+    printf '%s\n' \
+        'tl: target/case.tl:4:4: panic: boom' \
+        'tl: target\case.tl:5:6: panic: slash' \
+        'tl: D:/external/case.tl:1:2: panic: external' \
+        'note: C:/Work [Tree]^$/Type.Lisp#1/target/message.txt' \
+        'tl: C:/Work [Tree]^$/Type.Lisp#1-other/target/case.tl:7:8: panic: boundary' \
+        > "$_expected"
+    printf '%s' 'tail: C:/Work [Tree]^$/Type.Lisp#1/target/no-newline.tl' >> "$_expected"
+
+    HOST_OS=windows
+    WINDOWS_CHECKOUT_ROOT_NATIVE='C:/Work [Tree]^$/Type.Lisp#1'
+    normalized_stream "$_input" "$_actual"
+    if ! cmp -s "$_expected" "$_actual"; then
+        echo "FAIL: Windows integration path normalization changed the wrong bytes" >&2
+        diff -u "$_expected" "$_actual" >&2 || true
+        exit 1
+    fi
+    HOST_OS=linux
+    normalized_stream "$_input" "$_linux_actual"
+    if ! cmp -s "$_input" "$_linux_actual"; then
+        echo "FAIL: Linux integration stream normalization changed bytes" >&2
+        diff -u "$_input" "$_linux_actual" >&2 || true
+        exit 1
+    fi
+
+    printf '%s\n' "verify-integration path normalization self-test passed"
+}
+
 run_batch_observability_self_test() {
     _dir="$WORKDIR/batch-observability-self-test"
     rm -rf "$_dir"
@@ -1503,6 +1600,10 @@ if [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 1 ]; then
 fi
 if [ "$SELF_TEST_SIGNAL_NOTICE_CAPTURE" -eq 1 ]; then
     run_signal_notice_capture_self_test
+    exit 0
+fi
+if [ "$SELF_TEST_PATH_NORMALIZATION" -eq 1 ]; then
+    run_path_normalization_self_test
     exit 0
 fi
 

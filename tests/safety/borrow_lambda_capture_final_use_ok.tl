@@ -14,7 +14,7 @@
     [exclusive : (&mut values (Array i64 1)) (&mut values)]
     (begin
       ((lambda () : unit
-          (array-set! exclusive 0 (+ (array-ref exclusive 0) 1))))
+          (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1))))
       (array-ref values 0))))
 
 (define (generated-capture) : i64
@@ -22,7 +22,8 @@
     [values : (Array i64 1) (array 40)]
     [exclusive : (&mut values (Array i64 1)) (&mut values)]
     (begin
-      (call-captured (array-set! exclusive 0 (+ (array-ref exclusive 0) 1)))
+      (call-captured
+        (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1)))
       (array-ref values 0))))
 
 (define (main) : i64

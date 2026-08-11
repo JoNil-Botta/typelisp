@@ -11,10 +11,9 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (- i 7))
-          (array-set!
-            counts
-            i
+          (set! (array-ref xs i) (- i 7))
+          (set!
+            (array-ref counts i)
             (if (= i 5)
               -1
               1))
@@ -23,9 +22,8 @@
         ([j : i64 0 n])
         (let
           [x : i64 (array-ref xs j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (< x 0)
               (shr x (array-ref counts j))
               x))))

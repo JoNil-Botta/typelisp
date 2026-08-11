@@ -482,17 +482,20 @@
     [(Expr.If _ _ else-expr) else-expr]
     [_ value]))
 
+;; This module defines the AST constructors used by the implicit dotted-place
+;; macros. Keep its own projections on the private parser bridge so compiling
+;; stdlib.comptime cannot recursively depend on those macros.
 ;: Return the number of items in an expression list.
 (define (expr-list-length [items : ExprList]) : i64
-  (struct-get items len))
+  (__tl_struct-get items len))
 
 ;: Return an expression list item by index.
 (define (expr-list-nth [items : ExprList] [index : i64]) : Expr
   (if (< index 0)
     (comptime-error "expr-list-nth index out of range")
-    (if (>= index (struct-get items len))
+    (if (>= index (__tl_struct-get items len))
       (comptime-error "expr-list-nth index out of range")
-      (__tl_array-ref (struct-get items items) index))))
+      (__tl_array-ref (__tl_struct-get items items) index))))
 
 ;: Resolve a captured type-literal expression list item as a type operand.
 (define (expr-list-type-nth [items : ExprList] [index : i64]) : Expr
@@ -510,15 +513,15 @@
 
 ;: Return the number of clauses in a clause list.
 (define (expr-clause-list-length [items : ExprClauseList]) : i64
-  (struct-get items len))
+  (__tl_struct-get items len))
 
 ;: Return a clause list item by index.
 (define (expr-clause-list-nth [items : ExprClauseList] [index : i64]) : ExprClause
   (if (< index 0)
     (comptime-error "expr-clause-list-nth index out of range")
-    (if (>= index (struct-get items len))
+    (if (>= index (__tl_struct-get items len))
       (comptime-error "expr-clause-list-nth index out of range")
-      (__tl_array-ref (struct-get items items) index))))
+      (__tl_array-ref (__tl_struct-get items items) index))))
 
 ;: Convert clause first expressions into an expression list.
 ;: This remains intrinsic because conversion rebuilds bracket-clause syntax
@@ -528,23 +531,23 @@
 
 ;: Return the user-facing binding name from a binding clause.
 (define (expr-binding-clause-name [clause : ExprBindingClause]) : String
-  (struct-get clause name))
+  (__tl_struct-get clause name))
 
 ;: Return true when a binding clause includes an explicit type annotation.
 (define (expr-binding-clause-has-type? [clause : ExprBindingClause]) : bool
-  (struct-get clause has-type))
+  (__tl_struct-get clause has-type))
 
 ;: Return the explicit type annotation syntax from a typed binding clause.
 (define (expr-binding-clause-type [clause : ExprBindingClause]) : Expr
-  (struct-get clause ty))
+  (__tl_struct-get clause ty))
 
 ;: Return the initializer expression from a binding clause.
 (define (expr-binding-clause-init [clause : ExprBindingClause]) : Expr
-  (struct-get clause init))
+  (__tl_struct-get clause init))
 
 ;: Return the number of binding clauses in a binding-clause list.
 (define (expr-binding-clause-list-length [items : ExprBindingClauseList]) : i64
-  (struct-get items len))
+  (__tl_struct-get items len))
 
 ;: Return a binding-clause list item by index.
 (define (expr-binding-clause-list-nth
@@ -552,9 +555,9 @@
   [index : i64]) : ExprBindingClause
   (if (< index 0)
     (comptime-error "expr-binding-clause-list-nth index out of range")
-    (if (>= index (struct-get items len))
+    (if (>= index (__tl_struct-get items len))
       (comptime-error "expr-binding-clause-list-nth index out of range")
-      (__tl_array-ref (struct-get items items) index))))
+      (__tl_array-ref (__tl_struct-get items items) index))))
 
 ;: Convert binding clauses back into bracket-clause operand syntax.
 ;: This remains intrinsic because conversion rebuilds bracket-clause syntax

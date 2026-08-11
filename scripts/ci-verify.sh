@@ -240,6 +240,9 @@ run_gate \
     "stage0 release publication verifier self-tests" \
     scripts/verify-stage0-release.sh \
     --self-test
+run_gate \
+    "docs publication workflow policy" \
+    scripts/verify-docs-workflow-policy.sh
 if [ "$HOST_OS" = windows ]; then
     BOOTSTRAP_BENCH_POWERSHELL=powershell.exe
 else

@@ -53,36 +53,38 @@
                   (match (array-ref program pc)
                     [(PushInput)
                       (begin
-                        (array-set! stack sp input)
+                        (set! (array-ref stack sp) input)
                         (set! sp (+ sp 1)))]
                     [(PushConst value)
                       (begin
-                        (array-set! stack sp value)
+                        (set! (array-ref stack sp) value)
                         (set! sp (+ sp 1)))]
                     [(Dup)
                       (begin
-                        (array-set! stack sp (array-ref stack (- sp 1)))
+                        (set! (array-ref stack sp) (array-ref stack (- sp 1)))
                         (set! sp (+ sp 1)))]
                     [(AddOp)
                       (let
                         [b : i64 (array-ref stack (- sp 1))]
                         [a : i64 (array-ref stack (- sp 2))]
                         (begin
-                          (array-set! stack (- sp 2) (% (+ a b) vm-prime))
+                          (set! (array-ref stack (- sp 2)) (% (+ a b) vm-prime))
                           (set! sp (- sp 1))))]
                     [(MulOp)
                       (let
                         [b : i64 (array-ref stack (- sp 1))]
                         [a : i64 (array-ref stack (- sp 2))]
                         (begin
-                          (array-set! stack (- sp 2) (% (* a b) vm-prime))
+                          (set! (array-ref stack (- sp 2)) (% (* a b) vm-prime))
                           (set! sp (- sp 1))))]
                     [(XorOp)
                       (let
                         [b : i64 (array-ref stack (- sp 1))]
                         [a : i64 (array-ref stack (- sp 2))]
                         (begin
-                          (array-set! stack (- sp 2) (% (bit-xor a b) vm-prime))
+                          (set!
+                            (array-ref stack (- sp 2))
+                            (% (bit-xor a b) vm-prime))
                           (set! sp (- sp 1))))])
                   (set! pc (+ pc 1))))
               (set! acc (% (+ acc (array-ref stack 0)) vm-prime))))

@@ -659,34 +659,34 @@
             [(is-space c) (set! i (+ i 1))]
             [(= c '(')
               (begin
-                (array-set! starts count i)
-                (array-set! toks count token.Token.LParen)
+                (set! (array-ref starts count) i)
+                (set! (array-ref toks count) token.Token.LParen)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c '[')
               (begin
-                (array-set! starts count i)
-                (array-set! toks count token.Token.LBracket)
+                (set! (array-ref starts count) i)
+                (set! (array-ref toks count) token.Token.LBracket)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c ')')
               (begin
-                (array-set! starts count i)
-                (array-set! toks count token.Token.RParen)
+                (set! (array-ref starts count) i)
+                (set! (array-ref toks count) token.Token.RParen)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c ']')
               (begin
-                (array-set! starts count i)
-                (array-set! toks count token.Token.RBracket)
+                (set! (array-ref starts count) i)
+                (set! (array-ref toks count) token.Token.RBracket)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c '\'')
               (match (apostrophe-char-literal-result src i n)
                 [(ResultMaybeLexCharLiteral.Ok value end)
                   (begin
-                    (array-set! starts count i)
-                    (array-set! toks count (token.Token.Char value))
+                    (set! (array-ref starts count) i)
+                    (set! (array-ref toks count) (token.Token.Char value))
                     (set! count (+ count 1))
                     (set! i end))]
                 [(ResultMaybeLexCharLiteral.Err err)
@@ -696,29 +696,29 @@
                     (set! err-pos i))]
                 [(ResultMaybeLexCharLiteral.No)
                   (begin
-                    (array-set! starts count i)
-                    (array-set! toks count token.Token.Quote)
+                    (set! (array-ref starts count) i)
+                    (set! (array-ref toks count) token.Token.Quote)
                     (set! count (+ count 1))
                     (set! i (+ i 1)))])]
             [(= c '`')
               (begin
-                (array-set! starts count i)
-                (array-set! toks count token.Token.Backtick)
+                (set! (array-ref starts count) i)
+                (set! (array-ref toks count) token.Token.Backtick)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c ',')
               (begin
-                (array-set! starts count i)
+                (set! (array-ref starts count) i)
                 (if (< (+ i 1) n)
                   (if (= (__tl_string_ref src (+ i 1)) '@')
                     (begin
-                      (array-set! toks count token.Token.CommaAt)
+                      (set! (array-ref toks count) token.Token.CommaAt)
                       (set! i (+ i 2)))
                     (begin
-                      (array-set! toks count token.Token.Comma)
+                      (set! (array-ref toks count) token.Token.Comma)
                       (set! i (+ i 1))))
                   (begin
-                    (array-set! toks count token.Token.Comma)
+                    (set! (array-ref toks count) token.Token.Comma)
                     (set! i (+ i 1))))
                 (set! count (+ count 1)))]
             [(= c '"')
@@ -734,8 +734,10 @@
                           0
                           (string.string-length text))]
                       (begin
-                        (array-set! starts count i)
-                        (array-set! toks count (token.Token.Str string-id))
+                        (set! (array-ref starts count) i)
+                        (set!
+                          (array-ref toks count)
+                          (token.Token.Str string-id))
                         (set! count (+ count 1))
                         (set! i (+ end 1))))]
                   [(result_lex_i64.Err err)
@@ -748,15 +750,13 @@
               (match (scan-number-end-result src i n)
                 [(result_lex_i64.Ok end)
                   (begin
-                    (array-set! starts count i)
+                    (set! (array-ref starts count) i)
                     (if (number-float? src i end n)
-                      (array-set!
-                        toks
-                        count
+                      (set!
+                        (array-ref toks count)
                         (token.Token.Float (string.substring src i (- end i))))
-                      (array-set!
-                        toks
-                        count
+                      (set!
+                        (array-ref toks count)
                         (token.Token.Int
                           (number-int-value src i end n)
                           (number-int-source-text src i end n))))
@@ -772,19 +772,17 @@
                 [end : i64 (colon-token-end src i n)]
                 (if (> end (+ i 1))
                   (begin
-                    (array-set! starts count i)
-                    (array-set!
-                      toks
-                      count
+                    (set! (array-ref starts count) i)
+                    (set!
+                      (array-ref toks count)
                       (token.Token.Sym
                         (ci.intern-source-slice-id src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end))
                   (begin
-                    (array-set! starts count i)
-                    (array-set!
-                      toks
-                      count
+                    (set! (array-ref starts count) i)
+                    (set!
+                      (array-ref toks count)
                       (token.Token.Sym (colon-intern-id src i)))
                     (set! count (+ count 1))
                     (set! i (+ i 1)))))]
@@ -792,10 +790,9 @@
               (let
                 [end : i64 (scan-symbol-end src i n)]
                 (begin
-                  (array-set! starts count i)
-                  (array-set!
-                    toks
-                    count
+                  (set! (array-ref starts count) i)
+                  (set!
+                    (array-ref toks count)
                     (token.Token.Sym
                       (ci.intern-source-slice-id src i (- end i))))
                   (set! count (+ count 1))
@@ -807,8 +804,8 @@
                 (set! err-pos i))])))
       (if ok
         (begin
-          (array-set! starts count n)
-          (array-set! toks count token.Token.End)
+          (set! (array-ref starts count) n)
+          (set! (array-ref toks count) token.Token.End)
           (ResultLexIntoSpanned.Ok count))
         (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
 
@@ -874,36 +871,32 @@
                   (set! i (+ i 1)))]
               [(= c '(')
                 (begin
-                  (array-set!
-                    lex-spanned-token-buffer
-                    count
+                  (set!
+                    (array-ref lex-spanned-token-buffer count)
                     (token.spanned-token-new token.Token.LParen line col))
                   (set! count (+ count 1))
                   (set! i (+ i 1))
                   (set! col (+ col 1)))]
               [(= c '[')
                 (begin
-                  (array-set!
-                    lex-spanned-token-buffer
-                    count
+                  (set!
+                    (array-ref lex-spanned-token-buffer count)
                     (token.spanned-token-new token.Token.LBracket line col))
                   (set! count (+ count 1))
                   (set! i (+ i 1))
                   (set! col (+ col 1)))]
               [(= c ')')
                 (begin
-                  (array-set!
-                    lex-spanned-token-buffer
-                    count
+                  (set!
+                    (array-ref lex-spanned-token-buffer count)
                     (token.spanned-token-new token.Token.RParen line col))
                   (set! count (+ count 1))
                   (set! i (+ i 1))
                   (set! col (+ col 1)))]
               [(= c ']')
                 (begin
-                  (array-set!
-                    lex-spanned-token-buffer
-                    count
+                  (set!
+                    (array-ref lex-spanned-token-buffer count)
                     (token.spanned-token-new token.Token.RBracket line col))
                   (set! count (+ count 1))
                   (set! i (+ i 1))
@@ -915,9 +908,8 @@
                   (match (apostrophe-char-literal-result src i n)
                     [(ResultMaybeLexCharLiteral.Ok value end)
                       (begin
-                        (array-set!
-                          lex-spanned-token-buffer
-                          count
+                        (set!
+                          (array-ref lex-spanned-token-buffer count)
                           (token.spanned-token-new
                             (token.Token.Char value)
                             token-line
@@ -932,18 +924,16 @@
                         (set! err-pos i))]
                     [(ResultMaybeLexCharLiteral.No)
                       (begin
-                        (array-set!
-                          lex-spanned-token-buffer
-                          count
+                        (set!
+                          (array-ref lex-spanned-token-buffer count)
                           (token.spanned-token-new token.Token.Quote line col))
                         (set! count (+ count 1))
                         (set! i (+ i 1))
                         (set! col (+ col 1)))]))]
               [(= c '`')
                 (begin
-                  (array-set!
-                    lex-spanned-token-buffer
-                    count
+                  (set!
+                    (array-ref lex-spanned-token-buffer count)
                     (token.spanned-token-new token.Token.Backtick line col))
                   (set! count (+ count 1))
                   (set! i (+ i 1))
@@ -953,23 +943,20 @@
                   (if (< (+ i 1) n)
                     (if (= (__tl_string_ref src (+ i 1)) '@')
                       (begin
-                        (array-set!
-                          lex-spanned-token-buffer
-                          count
+                        (set!
+                          (array-ref lex-spanned-token-buffer count)
                           (token.spanned-token-new token.Token.CommaAt line col))
                         (set! i (+ i 2))
                         (set! col (+ col 2)))
                       (begin
-                        (array-set!
-                          lex-spanned-token-buffer
-                          count
+                        (set!
+                          (array-ref lex-spanned-token-buffer count)
                           (token.spanned-token-new token.Token.Comma line col))
                         (set! i (+ i 1))
                         (set! col (+ col 1))))
                     (begin
-                      (array-set!
-                        lex-spanned-token-buffer
-                        count
+                      (set!
+                        (array-ref lex-spanned-token-buffer count)
                         (token.spanned-token-new token.Token.Comma line col))
                       (set! i (+ i 1))
                       (set! col (+ col 1))))
@@ -989,9 +976,8 @@
                             0
                             (string.string-length text))]
                         (begin
-                          (array-set!
-                            lex-spanned-token-buffer
-                            count
+                          (set!
+                            (array-ref lex-spanned-token-buffer count)
                             (token.spanned-token-new
                               (token.Token.Str string-id)
                               token-line
@@ -1022,17 +1008,15 @@
                       [token-col : i64 col]
                       (begin
                         (if (number-float? src i end n)
-                          (array-set!
-                            lex-spanned-token-buffer
-                            count
+                          (set!
+                            (array-ref lex-spanned-token-buffer count)
                             (token.spanned-token-new
                               (token.Token.Float
                                 (string.substring src i (- end i)))
                               token-line
                               token-col))
-                          (array-set!
-                            lex-spanned-token-buffer
-                            count
+                          (set!
+                            (array-ref lex-spanned-token-buffer count)
                             (token.spanned-token-new
                               (token.Token.Int
                                 (number-int-value src i end n)
@@ -1052,9 +1036,8 @@
                   [end : i64 (colon-token-end src i n)]
                   (if (> end (+ i 1))
                     (begin
-                      (array-set!
-                        lex-spanned-token-buffer
-                        count
+                      (set!
+                        (array-ref lex-spanned-token-buffer count)
                         (token.spanned-token-new
                           (token.Token.Sym
                             (ci.intern-source-slice-id src i (- end i)))
@@ -1064,9 +1047,8 @@
                       (set! col (+ col (- end i)))
                       (set! i end))
                     (begin
-                      (array-set!
-                        lex-spanned-token-buffer
-                        count
+                      (set!
+                        (array-ref lex-spanned-token-buffer count)
                         (token.spanned-token-new
                           (token.Token.Sym (colon-intern-id src i))
                           line
@@ -1078,9 +1060,8 @@
                 (let
                   [end : i64 (scan-symbol-end src i n)]
                   (begin
-                    (array-set!
-                      lex-spanned-token-buffer
-                      count
+                    (set!
+                      (array-ref lex-spanned-token-buffer count)
                       (token.spanned-token-new
                         (token.Token.Sym
                           (ci.intern-source-slice-id src i (- end i)))
@@ -1101,9 +1082,8 @@
               (spanned-token-buffer-ensure! (+ count 1) count)
               unit)
             unit)
-          (array-set!
-            lex-spanned-token-buffer
-            count
+          (set!
+            (array-ref lex-spanned-token-buffer count)
             (token.spanned-token-new token.Token.End line col))
           (ResultLexIntoSpanned.Ok count))
         (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
@@ -1248,7 +1228,7 @@
             previous-arena)))
       (while (< j used)
         (begin
-          (array-set! new-buffer j (array-ref lex-spanned-token-buffer j))
+          (set! (array-ref new-buffer j) (array-ref lex-spanned-token-buffer j))
           (set! j (+ j 1))))
       (set! lex-spanned-token-buffer-arena new-storage-arena)
       (set! lex-spanned-token-buffer new-buffer))))
@@ -1352,7 +1332,7 @@
     (begin
       (unsafe
         (arena.set! scratch))
-      (array-set! lex-spanned-token-buffer 0 witness)
+      (set! (array-ref lex-spanned-token-buffer 0) witness)
       (spanned-token-buffer-grow-to! required 1)
       (unsafe
         (begin

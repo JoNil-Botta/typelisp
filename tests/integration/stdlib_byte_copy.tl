@@ -24,7 +24,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! items i (byte-copy-u8 (+ base i)))
+        (set! (array-ref items i) (byte-copy-u8 (+ base i)))
         (set! i (+ i 1))))))
 
 (define (byte-copy-fill-constant!
@@ -35,7 +35,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! items i (byte-copy-u8 value))
+        (set! (array-ref items i) (byte-copy-u8 value))
         (set! i (+ i 1))))))
 
 (define (byte-copy-assert-at

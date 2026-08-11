@@ -68,7 +68,7 @@
                 [score : i64 (frame-temp-score frame-index)]
                 [summary : String (frame-summary scratch frame-index score)]
                 (begin
-                  (array-set! frame-scores frame-index score)
+                  (set! (array-ref frame-scores frame-index) score)
                   (test.assert-i64-eq
                     (string.string-length (& summary))
                     15

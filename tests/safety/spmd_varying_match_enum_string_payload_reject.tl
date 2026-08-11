@@ -11,9 +11,8 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (match (array-ref items i)
         [(Named name) 1]
         [(Code value) value]))))

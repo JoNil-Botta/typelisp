@@ -133,16 +133,15 @@
 
 (define (package-cache-key-from-spec [spec : PackageCacheRemoteSpec]) : ResultPackageCacheKey
   (let
-    [kind : PackageCachePinKind (struct-get spec pin-kind)]
+    [kind : PackageCachePinKind spec.pin-kind]
     (match kind
       [(PackageCachePinKind.Rev)
         (let
-          [commit : String (struct-get spec pin-value)]
+          [commit : String spec.pin-value]
           (if (= (string.string-length commit) 0)
             (ResultPackageCacheKey.Err
               "package-cache: exact commit must not be empty")
-            (ResultPackageCacheKey.Ok
-              (PackageCacheKey (struct-get spec url) commit))))]
+            (ResultPackageCacheKey.Ok (PackageCacheKey spec.url commit))))]
       [_
         (ResultPackageCacheKey.Err
           (str_cat.str-cat
@@ -230,7 +229,7 @@
   [key : (& key PackageCacheKey)]) : String
   (let
     [git-dir : String (fs.path-join-owned-pair (string.copy root) "git")]
-    [url-dir : String (package-cache-escape-component (& (struct-get key url)))]
+    [url-dir : String (package-cache-escape-component (& key.url))]
     (fs.path-join-owned-pair git-dir url-dir)))
 
 (define (package-cache-entry-rev-dir
@@ -245,8 +244,7 @@
   [key : (& key PackageCacheKey)]) : String
   (let
     [rev-dir : String (package-cache-entry-rev-dir root key)]
-    [commit-dir : String
-      (package-cache-escape-component (& (struct-get key commit)))]
+    [commit-dir : String (package-cache-escape-component (& key.commit))]
     (fs.path-join-owned-pair rev-dir commit-dir)))
 
 (define (package-cache-staging-root [root : (& root str)]) : String
@@ -258,7 +256,7 @@
   (let
     [staging-root : String (package-cache-staging-root root)]
     [git-dir : String (fs.path-join-owned-pair staging-root "git")]
-    [url-dir : String (package-cache-escape-component (& (struct-get key url)))]
+    [url-dir : String (package-cache-escape-component (& key.url))]
     (fs.path-join-owned-pair git-dir url-dir)))
 
 (define (package-cache-staging-rev-dir
@@ -274,8 +272,7 @@
   [attempt : i64]) : String
   (let
     [rev-dir : String (package-cache-staging-rev-dir root key)]
-    [commit-dir : String
-      (package-cache-escape-component (& (struct-get key commit)))]
+    [commit-dir : String (package-cache-escape-component (& key.commit))]
     [staged-name : String
       (str_cat.str-cat commit-dir ".tmp." (string.int->string attempt))]
     (fs.path-join-owned-pair rev-dir staged-name)))
@@ -292,8 +289,8 @@
 
 (define (package-cache-metadata-content [key : (& key PackageCacheKey)]) : String
   (let
-    [url : String (string.copy (& (struct-get key url)))]
-    [commit : String (string.copy (& (struct-get key commit)))]
+    [url : String (string.copy (& key.url))]
+    [commit : String (string.copy (& key.commit))]
     (str_cat.str-cat
       "typelisp-package-cache-v1\nurl="
       url
@@ -440,9 +437,9 @@
     [(ResultPackageCacheRemoteSpec.Err _) false]
     [(ResultPackageCacheRemoteSpec.Ok spec)
       (and
-        (string.eq (struct-get spec url) expected-url)
-        (package-cache-pin-kind-eq? (struct-get spec pin-kind) expected-kind)
-        (string.eq (struct-get spec pin-value) expected-pin))]))
+        (string.eq spec.url expected-url)
+        (package-cache-pin-kind-eq? spec.pin-kind expected-kind)
+        (string.eq spec.pin-value expected-pin))]))
 
 (define (package-cache-parse-rejects? [dep : String]) : bool
   (match (package-cache-parse-normalized-remote dep)
@@ -452,8 +449,7 @@
 (define (package-cache-key-ok? [dep : String] [expected-commit : String]) : bool
   (match (package-cache-key-from-normalized-remote dep)
     [(ResultPackageCacheKey.Err _) false]
-    [(ResultPackageCacheKey.Ok key)
-      (string.eq (struct-get key commit) expected-commit)]))
+    [(ResultPackageCacheKey.Ok key) (string.eq key.commit expected-commit)]))
 
 (define (package-cache-key-rejects? [dep : String]) : bool
   (match (package-cache-key-from-normalized-remote dep)

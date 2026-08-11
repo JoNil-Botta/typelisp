@@ -4,26 +4,26 @@
 
 (define (init-xs [xs : (__tl_dyn-array i64)]) : unit
   (begin
-    (array-set! xs 0 99)
-    (array-set! xs 1 -3)
-    (array-set! xs 2 4)
-    (array-set! xs 3 -1)
-    (array-set! xs 4 0)
-    (array-set! xs 5 7)
-    (array-set! xs 6 -8)
-    (array-set! xs 7 2)
-    (array-set! xs 8 9)
-    (array-set! xs 9 -5)
-    (array-set! xs 10 1)
-    (array-set! xs 11 6)
-    (array-set! xs 12 -2)))
+    (set! (array-ref xs 0) 99)
+    (set! (array-ref xs 1) -3)
+    (set! (array-ref xs 2) 4)
+    (set! (array-ref xs 3) -1)
+    (set! (array-ref xs 4) 0)
+    (set! (array-ref xs 5) 7)
+    (set! (array-ref xs 6) -8)
+    (set! (array-ref xs 7) 2)
+    (set! (array-ref xs 8) 9)
+    (set! (array-ref xs 9) -5)
+    (set! (array-ref xs 10) 1)
+    (set! (array-ref xs 11) 6)
+    (set! (array-ref xs 12) -2)))
 
 (define (init-out [out : (__tl_dyn-array i64)] [len : i64]) : unit
   (let
     [i : i64 0]
     (while (< i len)
       (begin
-        (array-set! out i -99)
+        (set! (array-ref out i) -99)
         (set! i (+ i 1))))))
 
 (define (fill-masked
@@ -33,8 +33,8 @@
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs (+ i 1)) 0)
-      (array-set! out (+ i 1) 0)
-      (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))))
+      (set! (array-ref out (+ i 1)) 0)
+      (set! (array-ref out (+ i 1)) (+ (array-ref xs (+ i 1)) 1)))))
 
 (define (fill-scalar
   [xs : (__tl_dyn-array i64)]
@@ -45,8 +45,8 @@
     (while (< i n)
       (begin
         (if (< (array-ref xs (+ i 1)) 0)
-          (array-set! out (+ i 1) 0)
-          (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))
+          (set! (array-ref out (+ i 1)) 0)
+          (set! (array-ref out (+ i 1)) (+ (array-ref xs (+ i 1)) 1)))
         (set! i (+ i 1))))))
 
 (define (arrays-eq

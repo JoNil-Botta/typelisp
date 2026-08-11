@@ -1330,14 +1330,23 @@ fi
 # brings the combined tree back to 31 segments: the authoritative Windows probe
 # measured 2,008,157 used nodes, 2,031,616 capacity, and 65,011,712 physical
 # payload bytes.
+# #6277's function-owned backend scratch context crossed that boundary from 31
+# to 32 segments: the authoritative Windows CI probe measured 2,031,667 used
+# nodes, 2,097,152 capacity, and 67,108,864 physical payload bytes.
+# #6240's public dotted CTFE projection and native BoxTake template callback
+# crossed the macro-expand Expr boundary from 52 to 53 segments: the
+# authoritative Windows probe measured 3,469,666 used nodes, 3,473,408
+# capacity, and 111,149,056 physical payload bytes. The typecheck Expr pool
+# remains at 32 segments.
+# Reconciled with main through #5493's splice-cache compaction, #6277's backend
+# state ownership, and the dense IR sequence changes, the combined source graph
+# crosses the next macro-expand Expr boundary from 53 to 54 segments: the
+# authoritative Windows CI probe measured 3,487,386 used nodes, 3,538,944
+# capacity, and 113,246,208 physical payload bytes.
 # #6424's dead-phi retirement pass, rotation rounds, and flag-exit separation
 # clause crossed ast_expr_pool.typecheck from 31 to 32 segments: the
 # authoritative Windows probe measured 2,032,112 used nodes, 2,097,152
 # capacity, and 67,108,864 physical payload bytes.
-# #6277's function-owned backend scratch context crossed the expr typecheck
-# boundary from 31 to 32 segments: the authoritative Windows CI probe measured
-# 2,031,667 used nodes, 2,097,152 capacity, and 67,108,864 physical payload
-# bytes.
 # #5460's default trusted TLCI route changes where the byte-identical selfhost
 # graph is retained: native commits put macro_expand at 46 segments (2,989,325
 # used nodes, 3,014,656 capacity, 96,468,992 payload bytes) and reduce typecheck
@@ -1483,8 +1492,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, and the native Vec slice-copy loop contributes
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
+    # The public-place migration removes the expanded legacy accessor calls;
+    # the merged path-sensitive checker remains one segment above main alone.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 46 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Native result commit leaves the checked expression graph within the
     # 32-segment boundary; macro_expand owns the corresponding exact increase.
@@ -2245,8 +2256,8 @@ if [ "$SCOPED_CAT_STATUS" -ne 42 ]; then
 fi
 
 # The same native-vs-interpreted comparison over the template node kinds the
-# json/serialize/text_buf/math hooks use (#5605): `return`, `box`/`box-get`,
-# `(set! (struct-get ...) ...)`, and float literals inside quasiquotes. The
+# json/serialize/text_buf/math hooks use (#5605): `return`, `box`/`deref`,
+# dotted `set!` places, and float literals inside quasiquotes. The
 # array fixture above exercises none of them, so a reconstruction divergence
 # in those node kinds would otherwise reach the bootstrap unchecked.
 echo "[compile-profile] verify template node kind routing differential (#5605)"

@@ -27,8 +27,8 @@
     [slots (u64vec.slots-mut xs)]
     [tmp : u64 (array-ref slots i)]
     (begin
-      (array-set! slots i (array-ref slots j))
-      (array-set! slots j tmp))))
+      (set! (array-ref slots i) (array-ref slots j))
+      (set! (array-ref slots j) tmp))))
 
 (define (qs-partition [xs : (&mut xs u64vec.Vec)] [lo : i64] [hi : i64]) : i64
   (let
@@ -44,16 +44,16 @@
               (let
                 [tmp : u64 (array-ref slots store)]
                 (begin
-                  (array-set! slots store (array-ref slots scan))
-                  (array-set! slots scan tmp)))
+                  (set! (array-ref slots store) (array-ref slots scan))
+                  (set! (array-ref slots scan) tmp)))
               (set! store (+ store 1)))
             unit)
           (set! scan (+ scan 1))))
       (let
         [tmp : u64 (array-ref slots store)]
         (begin
-          (array-set! slots store (array-ref slots hi))
-          (array-set! slots hi tmp)))
+          (set! (array-ref slots store) (array-ref slots hi))
+          (set! (array-ref slots hi) tmp)))
       store)))
 
 (define (qs-sort [xs : (&mut xs u64vec.Vec)] [lo : i64] [hi : i64]) : unit
@@ -74,7 +74,7 @@
       (while (< i n)
         (begin
           (set! state (bit-and (+ (* state 1103515245) 12345) qs-mask))
-          (array-set! slots i state)
+          (set! (array-ref slots i) state)
           (set! i (+ i 1))))
       state)))
 

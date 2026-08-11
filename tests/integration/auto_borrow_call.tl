@@ -16,7 +16,7 @@
   (value (& owner Pair)))
 
 (define (sum-pair [p : (& p Pair)]) : i64
-  (+ (struct-get p left) (struct-get p right)))
+  (+ p.left p.right))
 
 (define (accept-tuple [_t : (& t (Tuple i64 i64))]) : i64
   5)
@@ -37,7 +37,7 @@
   (RefBox p))
 
 (define (box-sum [box : (RefBox owner)]) : i64
-  (sum-pair (struct-get box value)))
+  (sum-pair box.value))
 
 (define (scoped-use-after-auto-borrow [text : String]) : i64
   (begin
@@ -57,9 +57,9 @@
       (lambda ([arg : (& p Pair)]) : i64
         (sum-pair arg))]
     (begin
-      (array-set! items 0 17)
-      (array-set! items 1 19)
-      (array-set! items 2 23)
+      (set! (array-ref items 0) 17)
+      (set! (array-ref items 1) 19)
+      (set! (array-ref items 2) 23)
       (let
         [direct : i64 (sum-pair p)]
         [explicit : i64 (sum-pair (& p))]
@@ -75,7 +75,7 @@
         [text-value : i64 (text-len text)]
         [projection-value : i64
           (+
-            (ref-score (struct-get nums first))
+            (ref-score nums.first)
             (+ (ref-score (tuple-ref t 1)) (ref-score (array-ref items 2))))]
         [scoped-value : i64 (scoped-use-after-auto-borrow "scope")]
         (if (and

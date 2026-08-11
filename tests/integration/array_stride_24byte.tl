@@ -8,13 +8,13 @@
   (c i64))
 
 (define (triple-score [value : Triple]) : i64
-  (+ (struct-get value a) (+ (struct-get value b) (struct-get value c))))
+  (+ value.a (+ value.b value.c)))
 
 (define (main) : i64
   (let
     [items : (__tl_dyn-array Triple) (array.make-array Triple 1)]
     (begin
-      (array-set! items 0 (Triple 1 2 3))
+      (set! (array-ref items 0) (Triple 1 2 3))
       (array-push! items (Triple 5 7 11))
       (array-push! items (Triple 2 4 7))
       (+

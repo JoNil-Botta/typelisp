@@ -19,7 +19,7 @@
 ;: Store one String in a compiler-private pack and return the pack.
 (define (str-cat-pack-part [pack : StrCatPack] [index : i64] [value : String]) : StrCatPack
   (begin
-    (array-set! (struct-get pack parts) index value)
+    (set! (array-ref pack.parts index) value)
     pack))
 
 ;: Internal pack step used by `str-cat` expansion for six or more operands.
@@ -54,7 +54,7 @@
 ;: it across every long `str-cat` call site.
 (define (str-cat-concat-packed [pack : StrCatPack]) : String
   (let
-    [parts : (__tl_dyn-array String) (struct-get pack parts)]
+    [parts : (__tl_dyn-array String) pack.parts]
     (stdlib.string.concat-all (slice-view (& parts) 0 (array-length parts)))))
 
 ;: Concatenate any number of `String` operands into a fresh active-arena String.

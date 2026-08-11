@@ -34,7 +34,7 @@
 (define (eval-atom [a : SexprAtom]) : i64
   (match a
     [(SexprAtom.Int n) n]
-    [(SexprAtom.List nested) (eval-sexpr (box-get nested))]
+    [(SexprAtom.List nested) (eval-sexpr (__tl-box-place nested))]
     [_ (io.panic "eval: not an evaluable atom")]))
 
 ;; eval-sexpr: the tree-walking interpreter. The `Call` arm uses the nested

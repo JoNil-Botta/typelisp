@@ -23,7 +23,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (+ i 1))
+        (set! (array-ref a i) (+ i 1))
         (set! i (+ i 1))))))
 
 (define (main) : i64
@@ -41,7 +41,7 @@
             sum
             ([i : i64 0 array-len] [prefix : i64 r])
             (array-ref a i)
-            (array-set! out i prefix))
+            (set! (array-ref out i) prefix))
           (set! acc (+ acc (array-ref out (bit-and r (- array-len 1)))))
           (set! r (+ r 1))))
       (bit-and acc 255))))

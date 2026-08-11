@@ -32,7 +32,7 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (box-get decls-box)]
+            [decls : ast.AstDeclList (__tl-box-place decls-box)]
             [tail1 : ast.AstDeclList (ast.ast-decl-list-tail decls)]
             [tail2 : ast.AstDeclList (ast.ast-decl-list-tail tail1)]
             [replacement : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
@@ -139,7 +139,7 @@
     [(compiler_parse_core.ResultAstProgram.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
           [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
             (let
@@ -173,7 +173,7 @@
     [(compiler_parse_core.ResultAstProgram.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (and
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
             [(ast.AstDecl.Module name)
@@ -290,8 +290,8 @@
     [slots : (__tl_dyn-array diagnostic.CompilerDiagnosticTextEdit)
       (make-array diagnostic.CompilerDiagnosticTextEdit 2)]
     (begin
-      (array-set! slots 0 first)
-      (array-set! slots 1 second)
+      (set! (array-ref slots 0) first)
+      (set! (array-ref slots 1) second)
       (diagnostic.CompilerDiagnosticTextEditSeq slots 2))))
 
 (define (compiler-diagnostic-fix-model-ok?) : bool
@@ -320,11 +320,13 @@
     [fixes : diagnostic.CompilerDiagnosticFixSeq
       (diagnostic.compiler-diagnostic-fixes moved)]
     (and
-      (= (struct-get (diagnostic.compiler-diagnostic-fixes plain) len) 0)
-      (= (struct-get fixes len) 1)
+      (=
+        (__tl-project-field (diagnostic.compiler-diagnostic-fixes plain) len)
+        0)
+      (= fixes.len 1)
       (let
         [copied-fix : diagnostic.CompilerDiagnosticFix
-          (array-ref (struct-get fixes slots) 0)]
+          (array-ref fixes.slots 0)]
         [edits : diagnostic.CompilerDiagnosticTextEditSeq
           (diagnostic.compiler-diagnostic-fix-edits copied-fix)]
         (and
@@ -334,12 +336,12 @@
           (match (diagnostic.compiler-diagnostic-fix-applicability copied-fix)
             [CompilerDiagnosticMachineApplicable true]
             [_ false])
-          (= (struct-get edits len) 2)
+          (= edits.len 2)
           (let
             [first : diagnostic.CompilerDiagnosticTextEdit
-              (array-ref (struct-get edits slots) 0)]
+              (array-ref edits.slots 0)]
             [second : diagnostic.CompilerDiagnosticTextEdit
-              (array-ref (struct-get edits slots) 1)]
+              (array-ref edits.slots 1)]
             [first-span : diagnostic.CompilerDiagnosticSpan
               (diagnostic.compiler-diagnostic-text-edit-span first)]
             [second-span : diagnostic.CompilerDiagnosticSpan
@@ -388,8 +390,12 @@
               (diagnostic.CompilerDiagnosticSpan "" 1 4 1 7)
               "right"))))]
     (and
-      (= (struct-get (diagnostic.compiler-diagnostic-fixes unknown) len) 0)
-      (= (struct-get (diagnostic.compiler-diagnostic-fixes overlap) len) 0))))
+      (=
+        (__tl-project-field (diagnostic.compiler-diagnostic-fixes unknown) len)
+        0)
+      (=
+        (__tl-project-field (diagnostic.compiler-diagnostic-fixes overlap) len)
+        0))))
 
 (define (compiler-diagnostic-unicode-byte-edit-ok?) : bool
   (let

@@ -40,9 +40,9 @@
           (if (< (array.ref xs scan) pivot)
             (begin
               ;; real call in the loop body -> `store` (live across it) must be
-              ;; callee-saved or spill; plus a bounds-checked store (array-set!).
+              ;; callee-saved or spill; plus a bounds-checked array element store.
               (sink (bit-and scan 3))
-              (array-set! xs store (array.ref xs scan))
+              (set! (array-ref xs store) (array.ref xs scan))
               (set! store (+ store 1)))
             unit)
           (set! scan (+ scan 1))))
@@ -57,7 +57,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (+ i s))
+          (set! (array-ref xs i) (+ i s))
           (set! i (+ i 1))))
       ;; xs[scan] < pivot  <=>  scan + s < threshold + s  <=>  scan < threshold,
       ;; so count = threshold (clamped to n). Both calls leave xs unchanged.

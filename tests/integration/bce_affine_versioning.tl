@@ -33,11 +33,11 @@
   (let
     [items : (__tl_dyn-array i64) (make-array i64 10)]
     (begin
-      (array-set! items 0 10)
-      (array-set! items 1 20)
-      (array-set! items 2 12)
-      (array-set! items 3 20)
-      (array-set! items 6 12)
+      (set! (array-ref items 0) 10)
+      (set! (array-ref items 1) 20)
+      (set! (array-ref items 2) 12)
+      (set! (array-ref items 3) 20)
+      (set! (array-ref items 6) 12)
       (if (and (= (scaled-sum items 0 3) 42) (= (offset-sum items 2 5) 42))
         42
         1))))

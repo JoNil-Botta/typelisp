@@ -130,7 +130,7 @@ generate_success_source() {
     [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     [buf : text_buf.TextBuf (text_buf.empty)]
     (begin
-      (array-set! items 0 7)
+      (set! (array-ref items 0) 7)
       (text_buf.append! buf "x")
 FIXTURE
     index=0

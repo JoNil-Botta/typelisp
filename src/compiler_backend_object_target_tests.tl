@@ -20,10 +20,8 @@
         true
         true
         false)]
-    [linux-sections : cobj.CompilerObjectSectionList
-      (struct-get linux-image sections)]
-    [windows-sections : cobj.CompilerObjectSectionList
-      (struct-get windows-image sections)]
+    [linux-sections : cobj.CompilerObjectSectionList linux-image.sections]
+    [windows-sections : cobj.CompilerObjectSectionList windows-image.sections]
     (begin
       (test.assert-true
         (= (cobj.compiler-object-section-list-count linux-sections) 4)
@@ -45,7 +43,7 @@
         "Linux leaf owns the syscall exit tail")
       (test.assert-true
         (cobj.compiler-object-symbol-list-contains?
-          (struct-get linux-image symbols)
+          linux-image.symbols
           "_tl_start"
           (cobj.CompilerObjectSymbolBinding.Export)
           (cobj.CompilerObjectSymbolKind.Function))
@@ -83,7 +81,7 @@
         "Windows leaf emits the UTF-8 manifest resource")
       (test.assert-true
         (cobj.compiler-object-relocation-list-contains?
-          (struct-get windows-image relocations)
+          windows-image.relocations
           (cobj.CompilerObjectRelocationKind.Addr32Nb)
           (object_windows.compiler-backend-object-manifest-label-shared-view))
         "Windows leaf relocates the manifest resource"))))
@@ -107,7 +105,7 @@
       (test.assert-true
         (not
           (cobj.compiler-object-symbol-list-contains?
-            (struct-get linux-image symbols)
+            linux-image.symbols
             "_tl_start"
             (cobj.CompilerObjectSymbolBinding.Export)
             (cobj.CompilerObjectSymbolKind.Function)))
@@ -115,7 +113,7 @@
       (test.assert-true
         (not
           (cobj.compiler-object-symbol-list-contains?
-            (struct-get windows-image symbols)
+            windows-image.symbols
             "_tl_start"
             (cobj.CompilerObjectSymbolBinding.Export)
             (cobj.CompilerObjectSymbolKind.Function)))
@@ -123,7 +121,7 @@
       (test.assert-true
         (not
           (cobj.compiler-object-symbol-list-contains?
-            (struct-get windows-image symbols)
+            windows-image.symbols
             (object_windows.compiler-backend-object-manifest-label-shared-view)
             (cobj.CompilerObjectSymbolBinding.Local)
             (cobj.CompilerObjectSymbolKind.Data)))

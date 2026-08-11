@@ -14,7 +14,7 @@
   (Fallback))
 
 (define (wide-sum [w : Wide]) : i64
-  (+ (struct-get w a) (+ (struct-get w b) (struct-get w c))))
+  (+ w.a (+ w.b w.c)))
 
 (define (make-wide-stack-sret
   [a : i64]

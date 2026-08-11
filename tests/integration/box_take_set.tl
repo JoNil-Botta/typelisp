@@ -6,30 +6,34 @@
   (let
     [cell : (Box i64) (box 5)]
     (begin
-      (set! (box-get cell) 11)
-      (box-get cell))))
+      (set! (deref cell) 11)
+      (__tl-box-place cell))))
 
 (define (boxed-field-set-score) : i64
   (let
     [cell : (Box Pair) (box (Pair 1 2))]
     (begin
-      (set! (struct-get (box-get cell) x) 19)
-      (+ (struct-get (box-get cell) x) (struct-get (box-get cell) y)))))
+      (__tl-project-set-field (__tl-box-place cell) x 19)
+      (+
+        (__tl-project-field (__tl-box-place cell) x)
+        (__tl-project-field (__tl-box-place cell) y)))))
 
 (define (set-pair-x! [pair : (&mut pair Pair)] [value : i64]) : unit
-  (set! (struct-get pair x) value))
+  (set! pair.x value))
 
 (define (boxed-mut-borrow-score) : i64
   (let
     [cell : (Box Pair) (box (Pair 4 5))]
     (begin
-      (set-pair-x! (&mut (box-get cell)) 37)
-      (+ (struct-get (box-get cell) x) (struct-get (box-get cell) y)))))
+      (set-pair-x! (&mut (__tl-box-place cell)) 37)
+      (+
+        (__tl-project-field (__tl-box-place cell) x)
+        (__tl-project-field (__tl-box-place cell) y)))))
 
 (define (box-take-score) : i64
   (let
     [cell : (Box i64) (box 10)]
-    [value : i64 (box-take cell)]
+    [value : i64 (deref cell)]
     value))
 
 (define (main) : i64

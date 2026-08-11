@@ -72,19 +72,19 @@ Summary:
               (str_cat.str-cat
                 out
                 "    specialization: abi="
-                (struct-get item abi)
+                item.abi
                 " backend="
-                (struct-get item backend)
+                item.backend
                 " lanes="
-                (string.int->string (struct-get item lanes))
+                (string.int->string item.lanes)
                 " args="
-                (struct-get item args)
+                item.args
                 " result="
-                (struct-get item result)
+                item.result
                 " index-param="
-                (string.int->string (struct-get item index-param))
+                (string.int->string item.index-param)
                 " symbol="
-                (struct-get item symbol)
+                item.symbol
                 "\n"))
             (set! index (+ index 1)))))
       out)))
@@ -105,22 +105,19 @@ Summary:
               (str_cat.str-cat
                 out
                 "  helper: name="
-                (struct-get item name)
+                item.name
                 " signature="
-                (struct-get item signature)
+                item.signature
                 "\n"
-                (tlci-inspect-spmd-specializations
-                  (struct-get item specializations))))
+                (tlci-inspect-spmd-specializations item.specializations)))
             (set! index (+ index 1)))))
       out)))
 
 (define (tlci-inspect-spmd-section [metadata : tlci_core.TlciMetadata]) : String
-  (if (string.eq
-    (struct-get metadata version)
-    (tlci_core.tlci-metadata-version-v2-current))
+  (if (string.eq metadata.version (tlci_core.tlci-metadata-version-v2-current))
     (str_cat.str-cat
       "spmd-callables:\n"
-      (tlci-inspect-spmd-callables (struct-get metadata spmd-callables)))
+      (tlci-inspect-spmd-callables metadata.spmd-callables))
     ""))
 
 (define (tlci-inspect-source-binding [rodata : (__tl_dyn-array u8)]) : String
@@ -154,8 +151,8 @@ Summary:
   [bytes : (__tl_dyn-array u8)]
   [image : tlci_core.TlciImage]) : String
   (let
-    [metadata : tlci_core.TlciMetadata (struct-get image metadata)]
-    [host-arch : i64 (struct-get image host-arch)]
+    [metadata : tlci_core.TlciMetadata image.metadata]
+    [host-arch : i64 image.host-arch]
     (str_cat.str-cat
       "tlci image\n"
       "format-version: "
@@ -170,12 +167,12 @@ Summary:
       (string.int->string host-arch)
       ")\n"
       "callback-abi-version: "
-      (string.int->string (struct-get image callback-abi-version))
+      (string.int->string image.callback-abi-version)
       "\n"
       "producer-compiler-identity: "
-      (struct-get image compiler-build-hash)
+      image.compiler-build-hash
       "\n"
-      (tlci-inspect-source-binding (struct-get image rodata))
+      (tlci-inspect-source-binding image.rodata)
       "content-hash: "
       (string.int->string
         (tlci_core.tlci-read-u64 bytes tlci_core.tlci-hash-field-offset))
@@ -185,13 +182,13 @@ Summary:
         (tlci_core.tlci-read-u64 bytes tlci_core.tlci-file-size-field-offset))
       "\n"
       "metadata-version: "
-      (struct-get metadata version)
+      metadata.version
       "\n"
       "package-name: "
-      (struct-get metadata package-name)
+      metadata.package-name
       "\n"
       "package-version: "
-      (struct-get metadata package-version)
+      metadata.package-version
       "\n"
       (tlci-inspect-spmd-section metadata)
       "sections:\n"
@@ -231,7 +228,7 @@ Summary:
           bytes
           tlci_core.tlci-import-section-field-offset)
         (tlci_core.tlci-read-u64 bytes tlci_core.tlci-import-count-field-offset)
-        (array-length (struct-get image imports))))))
+        (array-length image.imports)))))
 
 (define (tlci-inspect-error [path : String] [message : String]) : String
   (str_cat.str-cat "inspect: " path ": " message "\n"))
@@ -308,9 +305,8 @@ Summary:
         "source-set-binding-schema: unsupported (2)\n"]
       [malformed-schema : String "source-set-binding-schema: malformed\n"]
       (begin
-        (array-set!
-          sections
-          0
+        (set!
+          (array-ref sections 0)
           (tlci_core.tlci-package-source-binding-section 12345))
         (match (tlci_core.tlci-aux-pack-rodata
           (tlci_core.tlci-empty-bytes)
@@ -318,9 +314,8 @@ Summary:
           [(tlci_core.ResultTlciAuxBytes.Ok packed)
             (set! bound (tlci-inspect-source-binding packed))]
           [_ unit])
-        (array-set!
-          sections
-          0
+        (set!
+          (array-ref sections 0)
           (tlci_core.TlciAuxSection
             tlci_core.tlci-aux-kind-package-source-binding
             2
@@ -331,9 +326,8 @@ Summary:
           [(tlci_core.ResultTlciAuxBytes.Ok packed)
             (set! unsupported (tlci-inspect-source-binding packed))]
           [_ unit])
-        (array-set!
-          sections
-          0
+        (set!
+          (array-ref sections 0)
           (tlci_core.TlciAuxSection
             tlci_core.tlci-aux-kind-package-source-binding
             tlci_core.tlci-package-source-binding-schema-version

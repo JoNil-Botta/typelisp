@@ -190,7 +190,7 @@
   (let
     [items : (__tl_dyn-array i64) (array.make-array i64 4)]
     (begin
-      (array-set! items 0 12)
+      (set! (array-ref items 0) 12)
       items)))
 
 (test

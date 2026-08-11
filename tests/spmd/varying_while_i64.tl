@@ -3,19 +3,19 @@
 
 (define (init-counts [xs : (__tl_dyn-array i64)]) : unit
   (begin
-    (array-set! xs 0 0)
-    (array-set! xs 1 3)
-    (array-set! xs 2 1)
-    (array-set! xs 3 6)
-    (array-set! xs 4 2)
-    (array-set! xs 5 0)
-    (array-set! xs 6 5)
-    (array-set! xs 7 4)
-    (array-set! xs 8 1)
-    (array-set! xs 9 7)
-    (array-set! xs 10 2)
-    (array-set! xs 11 0)
-    (array-set! xs 12 3)))
+    (set! (array-ref xs 0) 0)
+    (set! (array-ref xs 1) 3)
+    (set! (array-ref xs 2) 1)
+    (set! (array-ref xs 3) 6)
+    (set! (array-ref xs 4) 2)
+    (set! (array-ref xs 5) 0)
+    (set! (array-ref xs 6) 5)
+    (set! (array-ref xs 7) 4)
+    (set! (array-ref xs 8) 1)
+    (set! (array-ref xs 9) 7)
+    (set! (array-ref xs 10) 2)
+    (set! (array-ref xs 11) 0)
+    (set! (array-ref xs 12) 3)))
 
 (define (fill-vwhile
   [work : (__tl_dyn-array i64)]
@@ -25,8 +25,8 @@
     ([i : i64 0 n])
     (while (> (array-ref work i) 0)
       (begin
-        (array-set! out i (+ (array-ref out i) 1))
-        (array-set! work i (+ (array-ref work i) -1))))))
+        (set! (array-ref out i) (+ (array-ref out i) 1))
+        (set! (array-ref work i) (+ (array-ref work i) -1))))))
 
 (define (fill-scalar
   [work : (__tl_dyn-array i64)]
@@ -38,8 +38,8 @@
       (begin
         (while (> (array-ref work i) 0)
           (begin
-            (array-set! out i (+ (array-ref out i) 1))
-            (array-set! work i (+ (array-ref work i) -1))))
+            (set! (array-ref out i) (+ (array-ref out i) 1))
+            (set! (array-ref work i) (+ (array-ref work i) -1))))
         (set! i (+ i 1))))))
 
 (define (arrays-eq

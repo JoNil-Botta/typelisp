@@ -20,7 +20,7 @@
 (import (vector.vector VectorCoreRawHolder core) as compact_raw)
 
 (define (vector-core-point-score [point : VectorCorePoint]) : i64
-  (+ (* (struct-get point x) 10) (struct-get point y)))
+  (+ (* point.x 10) point.y))
 
 (define (vector-core-choice-value [choice : VectorCoreChoice]) : i64
   (match choice
@@ -109,17 +109,17 @@
         (VectorCoreRawHolder
           (unsafe
             (ptr-addr-of second))))
-      (test.assert-i64-eq
-        (unsafe
-          (ptr-read
-            (struct-get
-              (compact_raw.get
-                (& holders)
-                0
-                (VectorCoreRawHolder (ptr-null : (MutPtr i64))))
-              ptr)))
-        32
-        "core does not require clone support for raw-pointer aggregates")
+      (let
+        [selected : VectorCoreRawHolder
+          (compact_raw.get
+            (& holders)
+            0
+            (VectorCoreRawHolder (ptr-null : (MutPtr i64))))]
+        (test.assert-i64-eq
+          (unsafe
+            (ptr-read selected.ptr))
+          32
+          "core does not require clone support for raw-pointer aggregates"))
       (test.assert-i64-eq
         (compact_raw.len (& holders))
         2

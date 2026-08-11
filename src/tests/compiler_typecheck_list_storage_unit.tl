@@ -165,7 +165,8 @@
       (begin
         (io.print-error
           (diagnostic.compiler-diagnostic-message
-            (diagnostic.compiler-diagnostic-list-first (box-get diagnostics))))
+            (diagnostic.compiler-diagnostic-list-first
+              (__tl-box-place diagnostics))))
         false)]))
 
 (test

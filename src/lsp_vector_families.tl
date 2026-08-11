@@ -164,22 +164,22 @@
   (LspCallFrames (array.make-array LspCallFrame 0) 0))
 
 (define (lsp-call-frames-len [frames : (& frames LspCallFrames)]) : i64
-  (struct-get frames len))
+  frames.len)
 
 (define (lsp-call-frames-get
   [frames : (& frames LspCallFrames)]
   [index : i64]
   [fallback : LspCallFrame]) : LspCallFrame
-  (if (and (>= index 0) (< index (struct-get frames len)))
-    (array-ref (struct-get frames slots) index)
+  (if (and (>= index 0) (< index frames.len))
+    (array-ref frames.slots index)
     fallback))
 
 (define (lsp-call-frames-set!
   [frames : (&mut frames LspCallFrames)]
   [index : i64]
   [value : LspCallFrame]) : unit
-  (if (and (>= index 0) (< index (struct-get frames len)))
-    (array-set! (struct-get frames slots) index value)
+  (if (and (>= index 0) (< index frames.len))
+    (set! (array-ref frames.slots index) value)
     unit))
 
 (define (lsp-call-frames-copy-range!
@@ -190,12 +190,12 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! dst i (array-ref src i))
+        (set! (array-ref dst i) (array-ref src i))
         (set! i (+ i 1))))))
 
 (define (lsp-call-frames-grow! [frames : (&mut frames LspCallFrames)]) : unit
   (let
-    [old-cap : i64 (array-length (struct-get frames slots))]
+    [old-cap : i64 (array-length frames.slots)]
     [new-cap : i64
       (if (< old-cap 4)
         4
@@ -203,50 +203,47 @@
     [bigger : (__tl_dyn-array LspCallFrame)
       (array.make-array LspCallFrame new-cap)]
     (begin
-      (lsp-call-frames-copy-range!
-        (&mut bigger)
-        (& (struct-get frames slots))
-        (struct-get frames len))
-      (set! (struct-get frames slots) bigger))))
+      (lsp-call-frames-copy-range! (&mut bigger) (& frames.slots) frames.len)
+      (set! frames.slots bigger))))
 
 (define (lsp-call-frames-push!
   [frames : (&mut frames LspCallFrames)]
   [value : LspCallFrame]) : unit
   (begin
-    (if (>= (struct-get frames len) (array-length (struct-get frames slots)))
+    (if (>= frames.len (array-length frames.slots))
       (lsp-call-frames-grow! frames)
       unit)
-    (array-set! (struct-get frames slots) (struct-get frames len) value)
-    (set! (struct-get frames len) (+ (struct-get frames len) 1))))
+    (set! (array-ref frames.slots frames.len) value)
+    (set! frames.len (+ frames.len 1))))
 
 (define (lsp-call-frames-pop! [frames : (&mut frames LspCallFrames)]) : unit
-  (if (> (struct-get frames len) 0)
-    (set! (struct-get frames len) (- (struct-get frames len) 1))
+  (if (> frames.len 0)
+    (set! frames.len (- frames.len 1))
     unit))
 
 (define (lsp-call-frames-clear! [frames : (&mut frames LspCallFrames)]) : unit
-  (set! (struct-get frames len) 0))
+  (set! frames.len 0))
 
 (define (lsp-fold-ranges-new) : LspFoldRanges
   (LspFoldRanges (array.make-array LspFoldRange 0) 0))
 
 (define (lsp-fold-ranges-len [folds : (& folds LspFoldRanges)]) : i64
-  (struct-get folds len))
+  folds.len)
 
 (define (lsp-fold-ranges-get
   [folds : (& folds LspFoldRanges)]
   [index : i64]
   [fallback : LspFoldRange]) : LspFoldRange
-  (if (and (>= index 0) (< index (struct-get folds len)))
-    (array-ref (struct-get folds slots) index)
+  (if (and (>= index 0) (< index folds.len))
+    (array-ref folds.slots index)
     fallback))
 
 (define (lsp-fold-ranges-set!
   [folds : (&mut folds LspFoldRanges)]
   [index : i64]
   [value : LspFoldRange]) : unit
-  (if (and (>= index 0) (< index (struct-get folds len)))
-    (array-set! (struct-get folds slots) index value)
+  (if (and (>= index 0) (< index folds.len))
+    (set! (array-ref folds.slots index) value)
     unit))
 
 (define (lsp-fold-ranges-copy-range!
@@ -257,12 +254,12 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (lsp-fold-ranges-copy-range! dst src (+ index 1) count))))
 
 (define (lsp-fold-ranges-grow! [folds : (&mut folds LspFoldRanges)]) : unit
   (let
-    [old-cap : i64 (array-length (struct-get folds slots))]
+    [old-cap : i64 (array-length folds.slots)]
     [new-cap : i64
       (if (< old-cap 4)
         4
@@ -270,24 +267,20 @@
     [bigger : (__tl_dyn-array LspFoldRange)
       (array.make-array LspFoldRange new-cap)]
     (begin
-      (lsp-fold-ranges-copy-range!
-        (&mut bigger)
-        (& (struct-get folds slots))
-        0
-        (struct-get folds len))
-      (set! (struct-get folds slots) bigger))))
+      (lsp-fold-ranges-copy-range! (&mut bigger) (& folds.slots) 0 folds.len)
+      (set! folds.slots bigger))))
 
 (define (lsp-fold-ranges-push!
   [folds : (&mut folds LspFoldRanges)]
   [value : LspFoldRange]) : unit
   (begin
-    (if (>= (struct-get folds len) (array-length (struct-get folds slots)))
+    (if (>= folds.len (array-length folds.slots))
       (lsp-fold-ranges-grow! folds)
       unit)
-    (array-set! (struct-get folds slots) (struct-get folds len) value)
-    (set! (struct-get folds len) (+ (struct-get folds len) 1))))
+    (set! (array-ref folds.slots folds.len) value)
+    (set! folds.len (+ folds.len 1))))
 
 (define (lsp-documents-drop-last! [docs : (&mut docs lsp_document_vec.Vec)]) : unit
-  (if (> (struct-get docs len) 0)
-    (set! (struct-get docs len) (- (struct-get docs len) 1))
+  (if (> docs.len 0)
+    (set! docs.len (- docs.len 1))
     unit))

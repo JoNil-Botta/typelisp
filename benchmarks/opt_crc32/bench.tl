@@ -44,7 +44,7 @@
     (begin
       (while (< n 256)
         (begin
-          (array-set! slots n (crc-table-entry n))
+          (set! (array-ref slots n) (crc-table-entry n))
           (set! n (+ n 1))))
       table)))
 
@@ -74,7 +74,7 @@
     (begin
       (while (< i len)
         (begin
-          (array-set! slots i (cast (bit-and (+ (* i 167) 13) 255) : u8))
+          (set! (array-ref slots i) (cast (bit-and (+ (* i 167) 13) 255) : u8))
           (set! i (+ i 1))))
       unit)))
 

@@ -14,7 +14,7 @@
       ;; lint-allow: single-element-array-cell
       [items : (__tl_dyn-array i64) (array.make-array i64 1)]
       (begin
-        (array-set! items 0 (+ base 33))
+        (set! (array-ref items 0) (+ base 33))
         (unsafe
           (arena.rewind mark))
         (array-ref items 0)))))

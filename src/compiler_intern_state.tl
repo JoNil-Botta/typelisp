@@ -9,7 +9,7 @@
   (value i64))
 
 (defmacro (intern-state-structural-key-raw [key : Expr]) : i64
-  `(struct-get ,key value))
+  `(__tl-project-field-name ,key "value"))
 
 (defstruct InternState
   (compat ci.InternCompatState))
@@ -18,25 +18,25 @@
   (InternState (ci.intern-compat-state-new)))
 
 (define (intern-state-pool-len [state : InternState]) : i64
-  (ci.intern-compat-state-pool-len (struct-get state compat)))
+  (ci.intern-compat-state-pool-len state.compat))
 
 (define (intern-state-generation [state : InternState]) : i64
-  (ci.intern-compat-state-generation (struct-get state compat)))
+  (ci.intern-compat-state-generation state.compat))
 
 (define (intern-state-reset! [state : InternState]) : unit
-  (ci.intern-compat-state-reset! (struct-get state compat)))
+  (ci.intern-compat-state-reset! state.compat))
 
 (define (intern-state-reset-to! [state : InternState] [mark : i64]) : unit
-  (ci.intern-compat-state-reset-to! (struct-get state compat) mark))
+  (ci.intern-compat-state-reset-to! state.compat mark))
 
 (define (intern-state-intern [state : InternState] [name : String]) : i64
-  (ci.intern-compat-state-intern (struct-get state compat) name))
+  (ci.intern-compat-state-intern state.compat name))
 
 (define (intern-state-lookup [state : InternState] [name : String]) : ci.InternLookup
-  (ci.intern-compat-state-lookup (struct-get state compat) name))
+  (ci.intern-compat-state-lookup state.compat name))
 
 (define (intern-state-str [state : InternState] [id : i64]) : String
-  (ci.intern-compat-state-str (struct-get state compat) id))
+  (ci.intern-compat-state-str state.compat id))
 
 (define (intern-state-structural-key
   [state : InternState]
@@ -45,10 +45,10 @@
   [middle-id : i64]
   [right-id : i64]) : InternStructuralKey
   (let
-    [compat : ci.InternCompatState (struct-get state compat)]
+    [compat : ci.InternCompatState state.compat]
     [raw : i64
       (ci.intern-structural-table-intern
-        (struct-get compat structural-table-cell)
+        compat.structural-table-cell
         (ci.intern-compat-state-persistent-arena compat)
         kind
         left-id
@@ -58,8 +58,7 @@
       (if (=
         (ci.intern-active-table-id)
         (ci.intern-compat-state-table-id compat))
-        (ci.intern-active-structural-sync!
-          (struct-get compat structural-table-cell))
+        (ci.intern-active-structural-sync! compat.structural-table-cell)
         unit)
       (InternStructuralKey raw))))
 
@@ -91,7 +90,7 @@
   [key : InternStructuralKey]) : bool
   (let
     [table : ci.InternStructuralTable
-      (array-ref (struct-get (struct-get state compat) structural-table-cell) 0)]
+      (array-ref state.compat.structural-table-cell 0)]
     [raw : i64 (intern-state-structural-key-raw key)]
     [encoded-index : i64 (bit-and raw (ci.intern-structural-key-index-mask))]
     (and
@@ -101,8 +100,8 @@
         (/
           (- raw (ci.intern-structural-key-base))
           (ci.intern-structural-key-owner-stride))
-        (struct-get table owner))
-      (<= encoded-index (struct-get table len)))))
+        table.owner)
+      (<= encoded-index table.len))))
 
 (define (intern-state-structural-key-index [key : InternStructuralKey]) : i64
   (-
@@ -116,10 +115,8 @@
   [key : InternStructuralKey]) : i64
   (if (intern-state-structural-key-owned? state key)
     (array-ref
-      (struct-get
-        (array-ref
-          (struct-get (struct-get state compat) structural-table-cell)
-          0)
+      (__tl-project-field
+        (array-ref state.compat.structural-table-cell 0)
         lefts)
       (intern-state-structural-key-index key))
     (ci.tl_oob_abort)))
@@ -129,10 +126,8 @@
   [key : InternStructuralKey]) : i64
   (if (intern-state-structural-key-owned? state key)
     (array-ref
-      (struct-get
-        (array-ref
-          (struct-get (struct-get state compat) structural-table-cell)
-          0)
+      (__tl-project-field
+        (array-ref state.compat.structural-table-cell 0)
         middles)
       (intern-state-structural-key-index key))
     (ci.tl_oob_abort)))
@@ -142,40 +137,35 @@
   [key : InternStructuralKey]) : i64
   (if (intern-state-structural-key-owned? state key)
     (array-ref
-      (struct-get
-        (array-ref
-          (struct-get (struct-get state compat) structural-table-cell)
-          0)
+      (__tl-project-field
+        (array-ref state.compat.structural-table-cell 0)
         rights)
       (intern-state-structural-key-index key))
     (ci.tl_oob_abort)))
 
 (define (intern-state-structural-record-count [state : InternState]) : i64
-  (struct-get
-    (array-ref (struct-get (struct-get state compat) structural-table-cell) 0)
-    len))
+  (__tl-project-field (array-ref state.compat.structural-table-cell 0) len))
 
 (define (intern-state-structural-allocated-bytes [state : InternState]) : i64
   (let
     [table : ci.InternStructuralTable
-      (array-ref (struct-get (struct-get state compat) structural-table-cell) 0)]
-    [records : i64 (array-length (struct-get table kinds))]
-    [map-capacity : i64 (array-length (struct-get table map-slots))]
-    [cache-capacity : i64
-      (array-length (struct-get table structural-cache-raws))]
+      (array-ref state.compat.structural-table-cell 0)]
+    [records : i64 (array-length table.kinds)]
+    [map-capacity : i64 (array-length table.map-slots)]
+    [cache-capacity : i64 (array-length table.structural-cache-raws)]
     (+ (+ (* records 25) (* map-capacity 8)) (* cache-capacity 8))))
 
 (define (intern-state-qualified? [state : InternState] [id : i64]) : bool
-  (ci.intern-compat-state-qualified? (struct-get state compat) id))
+  (ci.intern-compat-state-qualified? state.compat id))
 
 (define (intern-state-qualified-last-slash [state : InternState] [id : i64]) : i64
-  (ci.intern-compat-state-qualified-last-slash (struct-get state compat) id))
+  (ci.intern-compat-state-qualified-last-slash state.compat id))
 
 (define (intern-state-qualified-module-id [state : InternState] [id : i64]) : i64
-  (ci.intern-compat-state-qualified-module-id (struct-get state compat) id))
+  (ci.intern-compat-state-qualified-module-id state.compat id))
 
 (define (intern-state-qualified-base-id [state : InternState] [id : i64]) : i64
-  (ci.intern-compat-state-qualified-base-id (struct-get state compat) id))
+  (ci.intern-compat-state-qualified-base-id state.compat id))
 
 (define (intern-state-qualified-module [state : InternState] [id : i64]) : String
   (let

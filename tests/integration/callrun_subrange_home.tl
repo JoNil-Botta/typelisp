@@ -62,9 +62,9 @@
     [ac : i64 (io.arg-count)]
     [p : (__tl_dyn-array i64) (make-array i64 3)]
     (begin
-      (array-set! p 0 (+ ac 10))
-      (array-set! p 1 (+ ac 12))
-      (array-set! p 2 (+ ac 20))
+      (set! (array-ref p 0) (+ ac 10))
+      (set! (array-ref p 1) (+ ac 12))
+      (set! (array-ref p 2) (+ ac 20))
       (let
         [b : i64 (+ ac 1)]
         [c : i64 (+ ac 2)]

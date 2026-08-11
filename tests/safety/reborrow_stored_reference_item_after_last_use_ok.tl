@@ -12,13 +12,12 @@
 (define (shared-next [iter : (&mut state (SharedReborrowAfterIter source))]) : (SharedReborrowAfterNext
     source)
   (let
-    [index : i64 (struct-get iter index)]
+    [index : i64 iter.index]
     (if (>= index 1)
       (SharedReborrowAfterNext.Done)
       (begin
-        (set! (struct-get iter index) (+ index 1))
-        (SharedReborrowAfterNext.Item
-          (& (array-ref (struct-get iter slots) index)))))))
+        (set! iter.index (+ index 1))
+        (SharedReborrowAfterNext.Item (& (array-ref iter.slots index)))))))
 
 (define (consume [value : (SharedReborrowAfterNext source)]) : unit
   (match value
@@ -36,4 +35,4 @@
           (shared-next (&mut iter)))]
       (begin
         (consume first)
-        (array-set! items 0 42)))))
+        (set! (array-ref items 0) 42)))))

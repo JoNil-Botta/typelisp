@@ -99,9 +99,8 @@
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
           (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
-          (array-set!
-            operands
-            0
+          (set!
+            (array-ref operands 0)
             (compiler_ctfe.CompilerCtfeValue.Expr
               operand-node
               (compiler_ast_types.AstType.Expr)))
@@ -123,7 +122,7 @@
                 [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
                 [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
                   (and
-                    (= (struct-get dispatch status) 0)
+                    (= dispatch.status 0)
                     (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
                     (embedded-verify-result-shape-ok? pools operand-node))])]
             (begin
@@ -152,9 +151,8 @@
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
           (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
-          (array-set!
-            operands
-            0
+          (set!
+            (array-ref operands 0)
             (compiler_ctfe.CompilerCtfeValue.Expr
               operand-node
               (compiler_ast_types.AstType.Expr)))
@@ -176,7 +174,7 @@
                 [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
                 [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
                   (and
-                    (= (struct-get dispatch status) expected-status)
+                    (= dispatch.status expected-status)
                     (not
                       (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)))])]
             (begin
@@ -195,7 +193,7 @@
         1)]
     [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Ok
         count)
-      (if (= count 102)
+      (if (= count 107)
         (if (and
           (embedded-verify-payload-exact-and-bounded?)
           (embedded-verify-native-array-length-ok?)
@@ -215,6 +213,6 @@
         (begin
           (io.print-error
             (str_cat.str-cat
-              "embedded stdlib tlci macro count mismatch: expected 102, got "
+              "embedded stdlib tlci macro count mismatch: expected 107, got "
               (string.int->string count)))
           2))]))

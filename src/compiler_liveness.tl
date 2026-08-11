@@ -40,12 +40,12 @@
       (let
         [items : (__tl_dyn-array i64) (make-array i64 4)]
         (begin
-          (array-set! items 0 value)
+          (set! (array-ref items 0) value)
           (CompilerLiveLabelSet.Dense items 1)))]
     [(CompilerLiveLabelSet.Dense items len)
       (if (< len (array-length items))
         (begin
-          (array-set! items len value)
+          (set! (array-ref items len) value)
           (CompilerLiveLabelSet.Dense items (+ len 1)))
         (let
           [capacity : i64
@@ -57,9 +57,9 @@
           (begin
             (while (< index len)
               (begin
-                (array-set! bigger index (array-ref items index))
+                (set! (array-ref bigger index) (array-ref items index))
                 (set! index (+ index 1))))
-            (array-set! bigger len value)
+            (set! (array-ref bigger len) value)
             (CompilerLiveLabelSet.Dense bigger (+ len 1)))))]))
 
 (defstruct CompilerLiveIndexVec
@@ -160,7 +160,7 @@
 
 (define (compiler-live-set-words [set : CompilerLiveI64Set]) : (__tl_dyn-array
     i64)
-  (struct-get set words))
+  set.words)
 
 ;; Every empty set is the same value: the word array has length zero, so no
 ;; index is in range and nothing can ever be written into it. Handing out one
@@ -403,7 +403,7 @@
           [out : (__tl_dyn-array i64)
             (compiler-live-set-copy-with-capacity set capacity)]
           (begin
-            (array-set! out word-index (bit-or old-bits mask))
+            (set! (array-ref out word-index) (bit-or old-bits mask))
             (CompilerLiveI64Set out)))))))
 
 (define (compiler-live-set-remove [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
@@ -423,7 +423,9 @@
               [out : (__tl_dyn-array i64)
                 (compiler-live-set-copy-with-capacity set capacity)]
               (begin
-                (array-set! out word-index (bit-and old-bits (bit-xor mask -1)))
+                (set!
+                  (array-ref out word-index)
+                  (bit-and old-bits (bit-xor mask -1)))
                 (compiler-live-set-from-words-trimmed out capacity)))))))))
 
 (define (compiler-live-set-union
@@ -556,9 +558,8 @@
                       (ptr-read (ptr-offset (array-data right-words) index)))
                     0)]
                 (begin
-                  (array-set!
-                    out
-                    index
+                  (set!
+                    (array-ref out index)
                     (bit-and left-bits (bit-xor right-bits -1)))
                   (set! index (+ index 1)))))
             (compiler-live-set-from-words-trimmed out count)))
@@ -716,9 +717,8 @@
           [word : i64 (compiler-live-set-word-index def-var)]
           (begin
             (set! count (compiler-live-set-max count (+ word 1)))
-            (array-set!
-              words
-              word
+            (set!
+              (array-ref words word)
               (bit-and
                 (array-ref words word)
                 (bit-xor (compiler-live-set-bit-mask def-var) -1))))))
@@ -728,9 +728,8 @@
           [word : i64 (compiler-live-set-word-index var)]
           (begin
             (set! count (compiler-live-set-max count (+ word 1)))
-            (array-set!
-              words
-              word
+            (set!
+              (array-ref words word)
               (bit-or (array-ref words word) (compiler-live-set-bit-mask var)))
             (set! index (+ index 1)))))
       (compiler-live-set-trim-length words count))))
@@ -922,9 +921,8 @@
     (let
       [word-index : i64 (compiler-live-set-word-index value)]
       [old-bits : i64 (array-ref words word-index)]
-      (array-set!
-        words
-        word-index
+      (set!
+        (array-ref words word-index)
         (bit-or old-bits (compiler-live-set-bit-mask value))))))
 
 (define (compiler-live-set-builder [max-value : i64]) : (__tl_dyn-array i64)
@@ -1036,7 +1034,7 @@
       (compiler-live-value-list-vars (ir.compiler-ir-value-seq-to-list seq))]
     [(ir.CompilerIrValueList.Cons value rest)
       (compiler-live-value-vars-into
-        (compiler-live-value-list-vars (box-get rest))
+        (compiler-live-value-list-vars (__tl-box-place rest))
         value)]))
 
 (define (compiler-live-call-args-array-vars
@@ -1059,9 +1057,9 @@
 (define (compiler-live-spmd-call-args-seq-vars
   [seq : ir.CompilerIrSpmdCallArgSeq]
   [index : i64]) : CompilerLiveI64Set
-  (if (>= index (struct-get seq len))
+  (if (>= index seq.len)
     (compiler-live-set-empty)
-    (match (array-ref (struct-get seq slots) index)
+    (match (array-ref seq.slots index)
       [(ir.CompilerIrSpmdCallArg.Arg _ value _)
         (compiler-live-value-vars-into
           (compiler-live-spmd-call-args-seq-vars seq (+ index 1))
@@ -1075,7 +1073,7 @@
       (match arg
         [(ir.CompilerIrSpmdCallArg.Arg _ value _)
           (compiler-live-value-vars-into
-            (compiler-live-spmd-call-args-vars (box-get rest))
+            (compiler-live-spmd-call-args-vars (__tl-box-place rest))
             value)])]
     [(ir.CompilerIrSpmdCallArgList.Array seq)
       (compiler-live-spmd-call-args-seq-vars seq 0)]))
@@ -1092,7 +1090,7 @@
       (compiler-live-phi-input-vars (ir.compiler-ir-phi-input-seq-to-list seq))]
     [(ir.CompilerIrPhiInputList.Cons value _ rest)
       (compiler-live-value-vars-into
-        (compiler-live-phi-input-vars (box-get rest))
+        (compiler-live-phi-input-vars (__tl-box-place rest))
         value)]))
 
 (define (compiler-live-switch-case-successors
@@ -1105,7 +1103,7 @@
         [(ir.CompilerIrSwitchCase.Case _ label)
           (compiler-live-switch-case-successors
             (compiler-live-label-set-insert set label)
-            (box-get rest))])]
+            (__tl-box-place rest))])]
     [(ir.CompilerIrSwitchCaseList.Array seq)
       (compiler-live-switch-case-successors
         set
@@ -1134,20 +1132,20 @@
     [(ir.CompilerIrInstr.Splat _ value _ _) (compiler-live-value-vars value)]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
         (compiler-live-values2-vars lhs rhs))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [src (struct-get (box-get payload-box) src)]
-        [carry (struct-get (box-get payload-box) carry)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
         (compiler-live-values2-vars src carry))]
     [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
       (compiler-live-value-vars src)]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [lhs (struct-get (box-get payload-box) lhs)]
-        [rhs (struct-get (box-get payload-box) rhs)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
         (compiler-live-values2-vars lhs rhs))]
     [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (compiler-live-values2-vars lhs rhs)]
@@ -1155,43 +1153,47 @@
     [(ir.CompilerIrInstr.MaskReduce _ _ src _) (compiler-live-value-vars src)]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [mask (struct-get (box-get payload-box) mask)]
-        [on-true (struct-get (box-get payload-box) on-true)]
-        [on-false (struct-get (box-get payload-box) on-false)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [on-true (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [on-false (__tl-project-field (__tl-box-place payload-box) on-false)]
         (compiler-live-values3-vars mask on-true on-false))]
     [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
       (compiler-live-values2-vars base index)]
     [(ir.CompilerIrInstr.VectorStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
         (compiler-live-values3-vars base index value))]
     [(ir.CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [value (struct-get (box-get payload-box) value)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (compiler-live-values4-vars base index value mask))]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index (struct-get (box-get payload-box) index)]
-        [mask (struct-get (box-get payload-box) mask)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
         (compiler-live-values3-vars base index mask))]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [index-base (struct-get (box-get payload-box) index-base)]
-        [index (struct-get (box-get payload-box) index)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index-base
+          (__tl-project-field (__tl-box-place payload-box) index-base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
         (compiler-live-values3-vars base index-base index))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [source (struct-get (box-get payload-box) source)]
-        [selector-low (struct-get (box-get payload-box) selector-low)]
-        [selector-high (struct-get (box-get payload-box) selector-high)]
-        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        [source (__tl-project-field (__tl-box-place payload-box) source)]
+        [selector-low
+          (__tl-project-field (__tl-box-place payload-box) selector-low)]
+        [selector-high
+          (__tl-project-field (__tl-box-place payload-box) selector-high)]
+        [active-lanes
+          (__tl-project-field (__tl-box-place payload-box) active-lanes)]
         (compiler-live-set-union
           (compiler-live-values3-vars source selector-low active-lanes)
           (compiler-live-maybe-value-vars selector-high)))]
@@ -1211,14 +1213,14 @@
       (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [args (struct-get (box-get payload-box) args)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-live-value-vars-into (compiler-live-call-args-vars args) base))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
-        [base (struct-get (box-get payload-box) base)]
-        [func (struct-get (box-get payload-box) callee)]
-        [args (struct-get (box-get payload-box) args)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [func (__tl-project-field (__tl-box-place payload-box) callee)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-live-value-vars-into
           (compiler-live-value-vars-into
             (compiler-live-call-args-vars args)
@@ -1226,8 +1228,9 @@
           func))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [active-mask (struct-get (box-get payload-box) active-mask)]
-        [args (struct-get (box-get payload-box) args)]
+        [active-mask
+          (__tl-project-field (__tl-box-place payload-box) active-mask)]
+        [args (__tl-project-field (__tl-box-place payload-box) args)]
         (compiler-live-value-vars-into
           (compiler-live-spmd-call-args-vars args)
           active-mask))]
@@ -1284,24 +1287,24 @@
     [(ir.CompilerIrInstr.LaneId dst _ _) dst]
     [(ir.CompilerIrInstr.Splat dst _ _ _) dst]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (struct-get (box-get payload-box) dst)]
+      (__tl-project-field (__tl-box-place payload-box) dst)]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (struct-get (box-get payload-box) dst)]
+      (__tl-project-field (__tl-box-place payload-box) dst)]
     [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (struct-get (box-get payload-box) dst)]
+      (__tl-project-field (__tl-box-place payload-box) dst)]
     [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
     [(ir.CompilerIrInstr.MaskNot dst _ _) dst]
     [(ir.CompilerIrInstr.MaskReduce dst _ _ _) dst]
     [(ir.CompilerIrInstr.Select payload-box)
-      (struct-get (box-get payload-box) dst)]
+      (__tl-project-field (__tl-box-place payload-box) dst)]
     [(ir.CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (struct-get (box-get payload-box) dst)]
+      (__tl-project-field (__tl-box-place payload-box) dst)]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (struct-get (box-get payload-box) dst)]
+      (__tl-project-field (__tl-box-place payload-box) dst)]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (struct-get (box-get payload-box) dst)]
+      (__tl-project-field (__tl-box-place payload-box) dst)]
     [(ir.CompilerIrInstr.TailMask dst _ _ _) dst]
     [(ir.CompilerIrInstr.EntryArgc dst) dst]
     [(ir.CompilerIrInstr.EntryArgv dst) dst]
@@ -1313,7 +1316,7 @@
     [(ir.CompilerIrInstr.CallIndirect dst _ _ _) dst]
     [(ir.CompilerIrInstr.CallIndirectC dst _ _ _) dst]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (match (struct-get (box-get payload-box) result)
+      (match (__tl-project-field (__tl-box-place payload-box) result)
         [(ir.CompilerIrSpmdCallResult.Unit) -1]
         [(ir.CompilerIrSpmdCallResult.Value dst _ _) dst])]
     [(ir.CompilerIrInstr.Phi dst _ _) dst]
@@ -1349,7 +1352,7 @@
             (if (>= n (array-length out))
               -1
               (begin
-                (array-set! out n id)
+                (set! (array-ref out n) id)
                 (+ n 1)))))))))
 
 (define (compiler-live-use-ids-add-value!
@@ -1407,14 +1410,11 @@
   [n : i64]
   [seq : ir.CompilerIrValueSeq]
   [index : i64]) : i64
-  (if (>= index (struct-get seq len))
+  (if (>= index seq.len)
     n
     (compiler-live-use-ids-add-value-seq!
       out
-      (compiler-live-use-ids-add-value!
-        out
-        n
-        (array-ref (struct-get seq slots) index))
+      (compiler-live-use-ids-add-value! out n (array-ref seq.slots index))
       seq
       (+ index 1))))
 
@@ -1430,21 +1430,21 @@
       (compiler-live-use-ids-add-value-list!
         out
         (compiler-live-use-ids-add-value! out n value)
-        (box-get rest))]))
+        (__tl-box-place rest))]))
 
 (define (compiler-live-use-ids-add-phi-input-seq!
   [out : (__tl_dyn-array i64)]
   [n : i64]
   [seq : ir.CompilerIrPhiInputSeq]
   [index : i64]) : i64
-  (if (>= index (struct-get seq len))
+  (if (>= index seq.len)
     n
     (compiler-live-use-ids-add-phi-input-seq!
       out
       (compiler-live-use-ids-add-value!
         out
         n
-        (struct-get (array-ref (struct-get seq slots) index) value))
+        (__tl-project-field (array-ref seq.slots index) value))
       seq
       (+ index 1))))
 
@@ -1460,18 +1460,18 @@
       (compiler-live-use-ids-add-phi-inputs!
         out
         (compiler-live-use-ids-add-value! out n value)
-        (box-get rest))]))
+        (__tl-box-place rest))]))
 
 (define (compiler-live-use-ids-add-spmd-args-seq!
   [out : (__tl_dyn-array i64)]
   [n : i64]
   [seq : ir.CompilerIrSpmdCallArgSeq]
   [index : i64]) : i64
-  (if (>= index (struct-get seq len))
+  (if (>= index seq.len)
     n
     (compiler-live-use-ids-add-spmd-args-seq!
       out
-      (match (array-ref (struct-get seq slots) index)
+      (match (array-ref seq.slots index)
         [(ir.CompilerIrSpmdCallArg.Arg _ value _)
           (compiler-live-use-ids-add-value! out n value)])
       seq
@@ -1491,7 +1491,7 @@
         (match arg
           [(ir.CompilerIrSpmdCallArg.Arg _ value _)
             (compiler-live-use-ids-add-value! out n value)])
-        (box-get rest))]))
+        (__tl-box-place rest))]))
 
 ;; Write the distinct used var ids of `instr` into `out`, returning the count,
 ;; or -1 when they do not fit (caller falls back to compiler-live-instr-uses).
@@ -1543,27 +1543,30 @@
       (compiler-live-use-ids-add-value! out 0 value)]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [payload : ir.CompilerIrInstrVectorBinOpPayload (box-get payload-box)]
+        [payload : ir.CompilerIrInstrVectorBinOpPayload
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
-          (compiler-live-use-ids-add-value! out 0 (struct-get payload lhs))
-          (struct-get payload rhs)))]
+          (compiler-live-use-ids-add-value! out 0 payload.lhs)
+          payload.rhs))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [payload : ir.CompilerIrInstrVectorPrefixPayload (box-get payload-box)]
+        [payload : ir.CompilerIrInstrVectorPrefixPayload
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
-          (compiler-live-use-ids-add-value! out 0 (struct-get payload src))
-          (struct-get payload carry)))]
+          (compiler-live-use-ids-add-value! out 0 payload.src)
+          payload.carry))]
     [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
       (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [payload : ir.CompilerIrInstrVectorComparePayload (box-get payload-box)]
+        [payload : ir.CompilerIrInstrVectorComparePayload
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
-          (compiler-live-use-ids-add-value! out 0 (struct-get payload lhs))
-          (struct-get payload rhs)))]
+          (compiler-live-use-ids-add-value! out 0 payload.lhs)
+          payload.rhs))]
     [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (compiler-live-use-ids-add-value!
         out
@@ -1575,14 +1578,14 @@
       (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [payload : ir.CompilerIrInstrSelectPayload (box-get payload-box)]
+        [payload : ir.CompilerIrInstrSelectPayload (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
           (compiler-live-use-ids-add-value!
             out
-            (compiler-live-use-ids-add-value! out 0 (struct-get payload mask))
-            (struct-get payload on-true))
-          (struct-get payload on-false)))]
+            (compiler-live-use-ids-add-value! out 0 payload.mask)
+            payload.on-true)
+          payload.on-false))]
     [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
       (compiler-live-use-ids-add-value!
         out
@@ -1590,65 +1593,65 @@
         index)]
     [(ir.CompilerIrInstr.VectorStore payload-box)
       (let
-        [payload : ir.CompilerIrInstrVectorStorePayload (box-get payload-box)]
+        [payload : ir.CompilerIrInstrVectorStorePayload
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
           (compiler-live-use-ids-add-value!
             out
-            (compiler-live-use-ids-add-value! out 0 (struct-get payload base))
-            (struct-get payload index))
-          (struct-get payload value)))]
+            (compiler-live-use-ids-add-value! out 0 payload.base)
+            payload.index)
+          payload.value))]
     [(ir.CompilerIrInstr.PredicatedStore payload-box)
       (let
         [payload : ir.CompilerIrInstrPredicatedStorePayload
-          (box-get payload-box)]
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
           (compiler-live-use-ids-add-value!
             out
             (compiler-live-use-ids-add-value!
               out
-              (compiler-live-use-ids-add-value! out 0 (struct-get payload base))
-              (struct-get payload index))
-            (struct-get payload value))
-          (struct-get payload mask)))]
+              (compiler-live-use-ids-add-value! out 0 payload.base)
+              payload.index)
+            payload.value)
+          payload.mask))]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
         [payload : ir.CompilerIrInstrPredicatedLoadPayload
-          (box-get payload-box)]
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
           (compiler-live-use-ids-add-value!
             out
-            (compiler-live-use-ids-add-value! out 0 (struct-get payload base))
-            (struct-get payload index))
-          (struct-get payload mask)))]
+            (compiler-live-use-ids-add-value! out 0 payload.base)
+            payload.index)
+          payload.mask))]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [payload : ir.CompilerIrInstrGatherLoadPayload (box-get payload-box)]
+        [payload : ir.CompilerIrInstrGatherLoadPayload
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
           (compiler-live-use-ids-add-value!
             out
-            (compiler-live-use-ids-add-value! out 0 (struct-get payload base))
-            (struct-get payload index-base))
-          (struct-get payload index)))]
+            (compiler-live-use-ids-add-value! out 0 payload.base)
+            payload.index-base)
+          payload.index))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [payload : ir.CompilerIrInstrVectorShufflePayload (box-get payload-box)]
+        [payload : ir.CompilerIrInstrVectorShufflePayload
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-maybe-value!
           out
           (compiler-live-use-ids-add-value!
             out
             (compiler-live-use-ids-add-value!
               out
-              (compiler-live-use-ids-add-value!
-                out
-                0
-                (struct-get payload source))
-              (struct-get payload selector-low))
-            (struct-get payload active-lanes))
-          (struct-get payload selector-high)))]
+              (compiler-live-use-ids-add-value! out 0 payload.source)
+              payload.selector-low)
+            payload.active-lanes)
+          payload.selector-high))]
     [(ir.CompilerIrInstr.TailMask _ index len _)
       (compiler-live-use-ids-add-value!
         out
@@ -1681,32 +1684,30 @@
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
         [payload : ir.CompilerIrInstrCallCAbiStoreResultPayload
-          (box-get payload-box)]
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
-          (compiler-live-use-ids-add-call-args! out 0 (struct-get payload args))
-          (struct-get payload base)))]
+          (compiler-live-use-ids-add-call-args! out 0 payload.args)
+          payload.base))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
         [payload : ir.CompilerIrInstrCallIndirectCAbiStoreResultPayload
-          (box-get payload-box)]
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
           (compiler-live-use-ids-add-value!
             out
-            (compiler-live-use-ids-add-call-args!
-              out
-              0
-              (struct-get payload args))
-            (struct-get payload base))
-          (struct-get payload callee)))]
+            (compiler-live-use-ids-add-call-args! out 0 payload.args)
+            payload.base)
+          payload.callee))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [payload : ir.CompilerIrInstrSpmdCallPayload (box-get payload-box)]
+        [payload : ir.CompilerIrInstrSpmdCallPayload
+          (__tl-box-place payload-box)]
         (compiler-live-use-ids-add-value!
           out
-          (compiler-live-use-ids-add-spmd-args! out 0 (struct-get payload args))
-          (struct-get payload active-mask)))]
+          (compiler-live-use-ids-add-spmd-args! out 0 payload.args)
+          payload.active-mask))]
     [(ir.CompilerIrInstr.TailCall _ args _)
       (compiler-live-use-ids-add-call-args! out 0 args)]
     [(ir.CompilerIrInstr.Store _ value _)
@@ -1867,16 +1868,15 @@
           [mask : i64 (compiler-live-set-bit-mask var)]
           (begin
             (if (= (bit-and (array-ref defs word) mask) 0)
-              (array-set! uses word (bit-or (array-ref uses word) mask))
+              (set! (array-ref uses word) (bit-or (array-ref uses word) mask))
               unit)
             (set! index (+ index 1)))))
       (if (< def-var 0)
         unit
         (let
           [word : i64 (compiler-live-set-word-index def-var)]
-          (array-set!
-            defs
-            word
+          (set!
+            (array-ref defs word)
             (bit-or (array-ref defs word) (compiler-live-set-bit-mask def-var))))))))
 
 (define (compiler-live-block-use-def-step!
@@ -2066,8 +2066,8 @@
     [(ir.CompilerIrBlock.Block label _)
       (CompilerLiveBlock
         label
-        (struct-get use-def uses)
-        (struct-get use-def defs)
+        use-def.uses
+        use-def.defs
         (compiler-live-set-empty)
         (compiler-live-set-empty)
         (compiler-live-block-successors block)
@@ -2091,7 +2091,7 @@
       (begin
         (while (< i count)
           (begin
-            (array-set! out i (array-ref items i))
+            (set! (array-ref out i) (array-ref items i))
             (set! i (+ i 1))))
         out))))
 
@@ -2108,7 +2108,7 @@
         [slot : i64 (compiler-live-label-id-map-get ids label)]
         (if (>= slot 0)
           (begin
-            (array-set! items index slot)
+            (set! (array-ref items index) slot)
             (compiler-live-label-set-fill-indexes!
               (compiler-live-label-set-tail labels)
               ids
@@ -2139,14 +2139,14 @@
     unit
     (let
       [items : (__tl_dyn-array i64)
-        (struct-get (array-ref successors source) items)]
+        (__tl-project-field (array-ref successors source) items)]
       [i : i64 0]
       (begin
         (while (< i (array-length items))
           (let
             [target : i64 (array-ref items i)]
             (begin
-              (array-set! counts target (+ (array-ref counts target) 1))
+              (set! (array-ref counts target) (+ (array-ref counts target) 1))
               (set! i (+ i 1)))))
         (compiler-live-predecessor-counts-add! successors counts (+ source 1))))))
 
@@ -2157,9 +2157,8 @@
   (if (>= index (array-length counts))
     unit
     (begin
-      (array-set!
-        out
-        index
+      (set!
+        (array-ref out index)
         (CompilerLiveIndexVec (make-array i64 (array-ref counts index))))
       (compiler-live-predecessor-items-make counts (+ index 1) out))))
 
@@ -2172,7 +2171,7 @@
     unit
     (let
       [items : (__tl_dyn-array i64)
-        (struct-get (array-ref successors source) items)]
+        (__tl-project-field (array-ref successors source) items)]
       [i : i64 0]
       (begin
         (while (< i (array-length items))
@@ -2180,10 +2179,10 @@
             [target : i64 (array-ref items i)]
             [slot : i64 (array-ref next target)]
             [target-items : (__tl_dyn-array i64)
-              (struct-get (array-ref predecessors target) items)]
+              (__tl-project-field (array-ref predecessors target) items)]
             (begin
-              (array-set! target-items slot source)
-              (array-set! next target (+ slot 1))
+              (set! (array-ref target-items slot) source)
+              (set! (array-ref next target) (+ slot 1))
               (set! i (+ i 1)))))
         (compiler-live-predecessor-fill!
           successors
@@ -2211,7 +2210,7 @@
   [graph : CompilerLiveBlockGraph]
   [words : (__tl_dyn-array i64)]) : i64
   (let
-    [items : (__tl_dyn-array i64) (struct-get successors items)]
+    [items : (__tl_dyn-array i64) successors.items]
     [active-count : i64 0]
     [index : i64 0]
     (begin
@@ -2219,14 +2218,14 @@
       (while (< index (array-length items))
         (let
           [successor : CompilerLiveBlock
-            (array-ref (struct-get graph blocks) (array-ref items index))]
+            (array-ref graph.blocks (array-ref items index))]
           (begin
             (set!
               active-count
               (compiler-live-scratch-union-set!
                 words
                 active-count
-                (struct-get successor live-in)))
+                successor.live-in))
             (set! index (+ index 1)))))
       active-count)))
 
@@ -2238,46 +2237,34 @@
   (let
     [live-out-count : i64
       (compiler-live-successor-live-out-graph-into!
-        (array-ref (struct-get graph successors) index)
+        (array-ref graph.successors index)
         graph
         words)]
     [live-out : CompilerLiveI64Set
-      (if (compiler-live-scratch-eq-set?
-        words
-        live-out-count
-        (struct-get block live-out))
-        (struct-get block live-out)
+      (if (compiler-live-scratch-eq-set? words live-out-count block.live-out)
+        block.live-out
         (compiler-live-scratch-freeze words live-out-count))]
     [live-in-count : i64
-      (compiler-live-scratch-step!
-        words
-        live-out-count
-        (struct-get block uses)
-        (struct-get block defs))]
+      (compiler-live-scratch-step! words live-out-count block.uses block.defs)]
     [live-in : CompilerLiveI64Set
-      (if (compiler-live-scratch-eq-set?
-        words
-        live-in-count
-        (struct-get block live-in))
-        (struct-get block live-in)
+      (if (compiler-live-scratch-eq-set? words live-in-count block.live-in)
+        block.live-in
         (compiler-live-scratch-freeze words live-in-count))]
     (CompilerLiveBlock
-      (struct-get block label)
-      (struct-get block uses)
-      (struct-get block defs)
+      block.label
+      block.uses
+      block.defs
       live-in
       live-out
-      (struct-get block successors)
-      (struct-get block instr-after))))
+      block.successors
+      block.instr-after)))
 
 (define (compiler-live-block-liveness-eq?
   [left : CompilerLiveBlock]
   [right : CompilerLiveBlock]) : bool
   (and
-    (compiler-live-set-eq? (struct-get left live-in) (struct-get right live-in))
-    (compiler-live-set-eq?
-      (struct-get left live-out)
-      (struct-get right live-out))))
+    (compiler-live-set-eq? left.live-in right.live-in)
+    (compiler-live-set-eq? left.live-out right.live-out)))
 
 (define (compiler-live-worklist-seed!
   [pending : (__tl_dyn-array bool)]
@@ -2285,7 +2272,7 @@
   (if (>= index (array-length pending))
     unit
     (begin
-      (array-set! pending index true)
+      (set! (array-ref pending index) true)
       (compiler-live-worklist-seed! pending (+ index 1)))))
 
 ;; Blocks are laid out in the lowering's deterministic reverse-postorder. For
@@ -2299,7 +2286,7 @@
       (while (and (>= index 0) (< picked 0))
         (if (array-ref pending index)
           (begin
-            (array-set! pending index false)
+            (set! (array-ref pending index) false)
             (set! picked index))
           unit)
         (set! index (- index 1)))
@@ -2311,11 +2298,11 @@
   [pending : (__tl_dyn-array bool)]) : unit
   (let
     [items : (__tl_dyn-array i64)
-      (struct-get (array-ref (struct-get graph predecessors) slot) items)]
+      (__tl-project-field (array-ref graph.predecessors slot) items)]
     [i : i64 0]
     (while (< i (array-length items))
       (begin
-        (array-set! pending (array-ref items i) true)
+        (set! (array-ref pending (array-ref items i)) true)
         (set! i (+ i 1))))))
 
 (define (compiler-live-instr-seq-fill-after!
@@ -2341,9 +2328,8 @@
         (begin
           ;; The final point is already a stored immutable set. Reuse it
           ;; rather than copying scratch once more at every block boundary.
-          (array-set!
-            out
-            index
+          (set!
+            (array-ref out index)
             (if at-live-out?
               live-out
               (compiler-live-scratch-freeze words active-count)))
@@ -2381,17 +2367,17 @@
         (begin
           (compiler-live-instr-seq-fill-after!
             instrs
-            (struct-get block live-out)
+            block.live-out
             items
             words
             edge-precise?)
           (CompilerLiveBlock
-            (struct-get block label)
-            (struct-get block uses)
-            (struct-get block defs)
-            (struct-get block live-in)
-            (struct-get block live-out)
-            (struct-get block successors)
+            block.label
+            block.uses
+            block.defs
+            block.live-in
+            block.live-out
+            block.successors
             (CompilerLiveInstrSetVec items))))]))
 
 (define (compiler-live-analyze-function [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
@@ -2406,16 +2392,14 @@
             seq
             (compiler-live-build-block-array seq vars))]
         [graph : CompilerLiveBlockGraph
-          (compiler-live-fixpoint (struct-get build graph) word-count)]
+          (compiler-live-fixpoint build.graph word-count)]
         (begin
           (compiler-live-fill-instr-after-graph-seq!
-            (struct-get build seq)
-            (struct-get graph blocks)
+            build.seq
+            graph.blocks
             word-count
             false)
-          (CompilerFunctionLiveness.Liveness
-            (struct-get graph ids)
-            (struct-get graph blocks))))]))
+          (CompilerFunctionLiveness.Liveness graph.ids graph.blocks)))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Edge-precise (SSA) phi liveness -- used by scalar opt2 allocation and its
@@ -2466,14 +2450,13 @@
               [slot : i64 (compiler-live-label-id-map-get ids label)]
               (if (>= slot 0)
                 (if (and (>= slot 0) (< slot (array-length phi-out)))
-                  (array-set!
-                    phi-out
-                    slot
+                  (set!
+                    (array-ref phi-out slot)
                     (compiler-live-set-insert (array-ref phi-out slot) v))
                   unit)
                 unit))]
           [_ unit])
-        (compiler-live-phi-out-add-inputs! (box-get rest) ids phi-out))]))
+        (compiler-live-phi-out-add-inputs! (__tl-box-place rest) ids phi-out))]))
 
 (define (compiler-live-phi-out-add-seq!
   [instrs : ir.CompilerIrInstrSeq]
@@ -2484,7 +2467,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (match (& (array-ref (struct-get instrs slots) i))
+        (match (& (array-ref instrs.slots i))
           [(ir.CompilerIrInstr.Phi _ _ _)
             (match (ir.compiler-ir-instr-seq-ref instrs i)
               [(ir.CompilerIrInstr.Phi _ inputs _)
@@ -2502,7 +2485,7 @@
   (let
     [live-out-count : i64
       (compiler-live-successor-live-out-graph-into!
-        (array-ref (struct-get graph successors) index)
+        (array-ref graph.successors index)
         graph
         words)]
     [_phi : unit
@@ -2515,42 +2498,32 @@
             (array-ref phi-out index)))
         unit)]
     [live-out : CompilerLiveI64Set
-      (if (compiler-live-scratch-eq-set?
-        words
-        live-out-count
-        (struct-get block live-out))
-        (struct-get block live-out)
+      (if (compiler-live-scratch-eq-set? words live-out-count block.live-out)
+        block.live-out
         (compiler-live-scratch-freeze words live-out-count))]
     [live-in-count : i64
-      (compiler-live-scratch-step!
-        words
-        live-out-count
-        (struct-get block uses)
-        (struct-get block defs))]
+      (compiler-live-scratch-step! words live-out-count block.uses block.defs)]
     [live-in : CompilerLiveI64Set
-      (if (compiler-live-scratch-eq-set?
-        words
-        live-in-count
-        (struct-get block live-in))
-        (struct-get block live-in)
+      (if (compiler-live-scratch-eq-set? words live-in-count block.live-in)
+        block.live-in
         (compiler-live-scratch-freeze words live-in-count))]
     (CompilerLiveBlock
-      (struct-get block label)
-      (struct-get block uses)
-      (struct-get block defs)
+      block.label
+      block.uses
+      block.defs
       live-in
       live-out
-      (struct-get block successors)
-      (struct-get block instr-after))))
+      block.successors
+      block.instr-after)))
 
 (define (compiler-live-fixpoint-ep
   [graph : CompilerLiveBlockGraph]
   [phi-out : (__tl_dyn-array CompilerLiveI64Set)]
   [word-count : i64]) : CompilerLiveBlockGraph
   (let
-    [blocks : (__tl_dyn-array CompilerLiveBlock) (struct-get graph blocks)]
+    [blocks : (__tl_dyn-array CompilerLiveBlock) graph.blocks]
     [pending : (__tl_dyn-array bool)
-      (make-array bool (array-length (struct-get graph blocks)))]
+      (make-array bool (array-length graph.blocks))]
     [words : (__tl_dyn-array i64) (make-array i64 word-count)]
     [done : bool false]
     (begin
@@ -2572,7 +2545,7 @@
               (if (compiler-live-block-liveness-eq? block updated)
                 unit
                 (begin
-                  (array-set! blocks index updated)
+                  (set! (array-ref blocks index) updated)
                   (compiler-live-worklist-enqueue-predecessors!
                     graph
                     index
@@ -2592,30 +2565,28 @@
       (compiler-live-function-graph-build
         seq
         (compiler-live-build-block-array-nophi seq vars))]
-    [graph0 : CompilerLiveBlockGraph (struct-get build graph)]
+    [graph0 : CompilerLiveBlockGraph build.graph]
     [phi-out : (__tl_dyn-array CompilerLiveI64Set)
-      (make-array CompilerLiveI64Set (array-length (struct-get graph0 blocks)))]
+      (make-array CompilerLiveI64Set (array-length graph0.blocks))]
     (begin
       (let
         [i : i64 0]
         [n : i64 (array-length phi-out)]
         (while (< i n)
           (begin
-            (array-set! phi-out i (compiler-live-set-empty))
+            (set! (array-ref phi-out i) (compiler-live-set-empty))
             (set! i (+ i 1)))))
-      (compiler-live-phi-out-build-seq! seq (& (struct-get graph0 ids)) phi-out)
+      (compiler-live-phi-out-build-seq! seq (& graph0.ids) phi-out)
       (let
         [graph : CompilerLiveBlockGraph
           (compiler-live-fixpoint-ep graph0 phi-out word-count)]
         (begin
           (compiler-live-fill-instr-after-graph-seq!
             seq
-            (struct-get graph blocks)
+            graph.blocks
             word-count
             true)
-          (CompilerFunctionLiveness.Liveness
-            (struct-get graph ids)
-            (struct-get graph blocks)))))))
+          (CompilerFunctionLiveness.Liveness graph.ids graph.blocks))))))
 
 (define (compiler-live-analyze-function-edge-precise
   [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
@@ -2642,28 +2613,28 @@
           CompilerLiveMaybeBlock.No))]))
 
 (define (compiler-live-block-uses [block : CompilerLiveBlock]) : CompilerLiveI64Set
-  (struct-get block uses))
+  block.uses)
 
 (define (compiler-live-block-defs [block : CompilerLiveBlock]) : CompilerLiveI64Set
-  (struct-get block defs))
+  block.defs)
 
 (define (compiler-live-block-live-in [block : CompilerLiveBlock]) : CompilerLiveI64Set
-  (struct-get block live-in))
+  block.live-in)
 
 (define (compiler-live-block-live-out [block : CompilerLiveBlock]) : CompilerLiveI64Set
-  (struct-get block live-out))
+  block.live-out)
 
 (define (compiler-live-block-successor-labels [block : CompilerLiveBlock]) : CompilerLiveLabelSet
-  (struct-get block successors))
+  block.successors)
 
 (define (compiler-live-block-instr-after [block : CompilerLiveBlock]) : CompilerLiveInstrSetVec
-  (struct-get block instr-after))
+  block.instr-after)
 
 (define (compiler-live-instr-set-vec-nth
   [sets : CompilerLiveInstrSetVec]
   [index : i64]) : CompilerLiveI64Set
   (let
-    [items : (__tl_dyn-array CompilerLiveI64Set) (struct-get sets items)]
+    [items : (__tl_dyn-array CompilerLiveI64Set) sets.items]
     (if (or (< index 0) (>= index (array-length items)))
       (compiler-live-set-empty)
       (array-ref items index))))
@@ -2705,9 +2676,8 @@
           (begin
             (match block
               [(ir.CompilerIrBlock.Block _ instrs)
-                (array-set!
-                  out
-                  i
+                (set!
+                  (array-ref out i)
                   (compiler-live-build-block-from-use-def
                     block
                     (compiler-live-block-use-def-seq-with-scratch
@@ -2752,12 +2722,9 @@
     (let
       [block : CompilerLiveBlock (array-ref blocks index)]
       (begin
-        (array-set!
-          successors
-          index
-          (compiler-live-label-set-to-index-vec
-            (struct-get block successors)
-            ids))
+        (set!
+          (array-ref successors index)
+          (compiler-live-label-set-to-index-vec block.successors ids))
         (compiler-live-block-graph-fill-successors-from-array!
           blocks
           ids
@@ -2777,10 +2744,7 @@
         (let
           [block : CompilerLiveBlock (array-ref blocks i)]
           [_inserted : bool
-            (live_label_map.insert-if-absent-ref!
-              (&mut ids)
-              (struct-get block label)
-              i)]
+            (live_label_map.insert-if-absent-ref! (&mut ids) block.label i)]
           unit)
         (set! i (+ i 1)))
       (compiler-live-block-graph-fill-successors-from-array!
@@ -2816,9 +2780,8 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set!
-          blocks
-          i
+        (set!
+          (array-ref blocks i)
           (compiler-live-fill-instr-after-block
             (ir.compiler-ir-block-seq-ref ir-blocks i)
             (array-ref blocks i)
@@ -2830,9 +2793,9 @@
   [graph : CompilerLiveBlockGraph]
   [word-count : i64]) : CompilerLiveBlockGraph
   (let
-    [blocks : (__tl_dyn-array CompilerLiveBlock) (struct-get graph blocks)]
+    [blocks : (__tl_dyn-array CompilerLiveBlock) graph.blocks]
     [pending : (__tl_dyn-array bool)
-      (make-array bool (array-length (struct-get graph blocks)))]
+      (make-array bool (array-length graph.blocks))]
     [words : (__tl_dyn-array i64) (make-array i64 word-count)]
     [done : bool false]
     (begin
@@ -2849,7 +2812,7 @@
               (if (compiler-live-block-liveness-eq? block updated)
                 unit
                 (begin
-                  (array-set! blocks index updated)
+                  (set! (array-ref blocks index) updated)
                   (compiler-live-worklist-enqueue-predecessors!
                     graph
                     index

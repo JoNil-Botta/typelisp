@@ -13,5 +13,5 @@
     (foreach
       ([i : i64 0 n])
       (if (> (array-ref xs i) 0)
-        (array-set! out i (f (array-ref xs i)))
-        (array-set! out i 0)))))
+        (set! (array-ref out i) (f (array-ref xs i)))
+        (set! (array-ref out i) 0)))))

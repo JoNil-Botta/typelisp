@@ -28,17 +28,15 @@
   (foreach
     ([i : i64 0 count])
     (begin
-      (array-set!
-        result-x
-        i
+      (set!
+        (array-ref result-x i)
         (+
           (-
             (* (* (array-ref points-x i) scale-x) cos-theta)
             (* (* (array-ref points-y i) scale-y) sin-theta))
           (* translate-x strength)))
-      (array-set!
-        result-y
-        i
+      (set!
+        (array-ref result-y i)
         (+
           (+
             (* (* (array-ref points-x i) scale-x) sin-theta)
@@ -67,8 +65,8 @@
         [x-rot : f32 (- (* x cos-theta) (* y sin-theta))]
         [y-rot : f32 (+ (* x sin-theta) (* y cos-theta))]
         (begin
-          (array-set! result-x i (+ x-rot (* translate-x strength)))
-          (array-set! result-y i (+ y-rot (* translate-y strength)))
+          (set! (array-ref result-x i) (+ x-rot (* translate-x strength)))
+          (set! (array-ref result-y i) (+ y-rot (* translate-y strength)))
           (set! i (+ i 1)))))))
 
 (define (point-transform-case-count [case-id : i64]) : i64
@@ -149,8 +147,8 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! points-x i (point-transform-input-x case-id i))
-        (array-set! points-y i (point-transform-input-y case-id i))
+        (set! (array-ref points-x i) (point-transform-input-x case-id i))
+        (set! (array-ref points-y i) (point-transform-input-y case-id i))
         (set! i (+ i 1))))))
 
 (define (point-transform-fill
@@ -161,7 +159,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! values i value)
+        (set! (array-ref values i) value)
         (set! i (+ i 1))))))
 
 (define (point-transform-ulp-distance [left : f32] [right : f32]) : i64

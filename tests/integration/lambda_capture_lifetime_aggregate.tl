@@ -27,9 +27,9 @@
     [(RefChoiceOwned value) (string.string-length value)]))
 
 (define (box-length [item : (RefBox text)]) : i64
-  (if (struct-get item is-owned)
-    (string.string-length (struct-get item owned))
-    (string.string-length (struct-get item borrowed))))
+  (if item.is-owned
+    (string.string-length item.owned)
+    (string.string-length item.borrowed)))
 
 ; A parameterized enum holding a borrowed reference, captured and read while
 ; the borrow source is still live.

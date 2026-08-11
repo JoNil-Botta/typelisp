@@ -72,10 +72,11 @@
       [items : (Array i64) (array.make-array i64 length)]
       [slot : i64 (arena-atomic-publication-slot worker iteration)]
       (begin
-        (array-set! items 0 (arena-atomic-first-sentinel worker iteration))
-        (array-set!
-          items
-          (- length 1)
+        (set!
+          (array-ref items 0)
+          (arena-atomic-first-sentinel worker iteration))
+        (set!
+          (array-ref items (- length 1))
           (arena-atomic-last-sentinel worker iteration))
         (arena-atomic-raw-write!
           addresses

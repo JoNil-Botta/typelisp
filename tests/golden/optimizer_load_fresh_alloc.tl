@@ -13,7 +13,7 @@
     [before : i64 (array-length values)]
     [scratch : (__tl_dyn-array i64) (array.make-array i64 4)]
     (begin
-      (array-set! scratch 0 before)
+      (set! (array-ref scratch 0) before)
       (+ before (array-length values)))))
 
 (define (main) : i64

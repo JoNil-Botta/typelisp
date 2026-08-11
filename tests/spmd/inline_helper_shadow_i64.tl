@@ -14,7 +14,7 @@
     ([i : i64 0 n])
     (let
       [lane : i64 (array-ref xs i)]
-      (array-set! out i (bump-with-shadow lane)))))
+      (set! (array-ref out i) (bump-with-shadow lane)))))
 
 (define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
@@ -36,7 +36,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (+ i 1))
+          (set! (array-ref xs i) (+ i 1))
           (set! i (+ i 1))))
       (fill-inline-shadow xs out n)
       (if (= (sum-array out n) 104)

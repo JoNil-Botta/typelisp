@@ -5,8 +5,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ i 1) : i8))
-        (array-set! b i (cast (+ i 2) : i8))
+        (set! (array-ref a i) (cast (+ i 1) : i8))
+        (set! (array-ref b i) (cast (+ i 2) : i8))
         (set! i (+ i 1))))))
 
 (define (fill
@@ -16,7 +16,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (* (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (* (array-ref a i) (array-ref b i)))))
 
 (define (sum [out : (__tl_dyn-array i8)] [n : i64]) : i64
   (let

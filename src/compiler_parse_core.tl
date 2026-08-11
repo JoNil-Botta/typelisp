@@ -37,9 +37,7 @@
 (define (compiler-parse-decl-list-storage-key
   [decls : (& decls ast.AstDeclList)]) : i64
   (unsafe
-    (cast
-      (ptr->int (ptr-cast (array-data (struct-get decls slots)) : (Ptr u8)))
-      : i64)))
+    (cast (ptr->int (ptr-cast (array-data decls.slots) : (Ptr u8))) : i64)))
 
 ;; Declaration origins are cold records in the transient spanned-node pool.
 ;; A run is marker(key), marker(start slot), then one Nil(span) per slot.
@@ -121,7 +119,7 @@
   [slot : i64]) : CompilerParseMaybeDeclSpan
   (compiler-parse-decl-origin-span-key-slot
     (compiler-parse-decl-list-storage-key decls)
-    (+ (struct-get decls offset) slot)))
+    (+ decls.offset slot)))
 
 (define (compiler-parse-decl-origin-register-key-maybe!
   [key : i64]
@@ -147,7 +145,7 @@
   [origin : CompilerParseMaybeDeclSpan]) : unit
   (compiler-parse-decl-origin-register-key-maybe!
     (compiler-parse-decl-list-storage-key decls)
-    (+ (struct-get decls offset) slot)
+    (+ decls.offset slot)
     origin))
 
 (define (compiler-parse-decl-origin-register-alias-record!
@@ -167,7 +165,7 @@
             "__tl_decl_origin_alias_repeat"
             "__tl_decl_origin_alias")
           (token.SourceSpan
-            (+ (struct-get decls offset) decl-slot)
+            (+ decls.offset decl-slot)
             count
             source-key
             source-slot)))
@@ -181,10 +179,10 @@
   [scan-end : i64]) : unit
   (let
     [source-key : i64 (compiler-parse-decl-list-storage-key (& source))]
-    [source-start : i64 (struct-get source offset)]
+    [source-start : i64 source.offset]
     [source-end : i64 (+ source-start (ast.ast-decl-list-len (& source)))]
     [dest-key : i64 (compiler-parse-decl-list-storage-key dest)]
-    [dest-start : i64 (+ (struct-get dest offset) dest-slot)]
+    [dest-start : i64 (+ dest.offset dest-slot)]
     [cursor : i64 scan-start]
     [limit : i64 scan-end]
     (while (< cursor limit)
@@ -233,7 +231,7 @@
     decl-slot
     (ast.ast-decl-list-len (& source))
     (compiler-parse-decl-list-storage-key (& source))
-    (struct-get source offset)
+    source.offset
     false))
 
 (defstruct CompilerParseDeclOriginAlias
@@ -259,9 +257,8 @@
 (define (compiler-parse-decl-origin-alias-vec-grow!
   [aliases : (&mut aliases CompilerParseDeclOriginAliasVec)]) : unit
   (let
-    [old-items : (__tl_dyn-array CompilerParseDeclOriginAlias)
-      (struct-get aliases items)]
-    [len : i64 (struct-get aliases len)]
+    [old-items : (__tl_dyn-array CompilerParseDeclOriginAlias) aliases.items]
+    [len : i64 aliases.len]
     [next-items : (__tl_dyn-array CompilerParseDeclOriginAlias)
       (make-array CompilerParseDeclOriginAlias (* (array-length old-items) 2))]
     [index : i64 0]
@@ -270,16 +267,15 @@
         (let
           [item : CompilerParseDeclOriginAlias (array-ref old-items index)]
           (begin
-            (array-set!
-              next-items
-              index
+            (set!
+              (array-ref next-items index)
               (CompilerParseDeclOriginAlias
-                (struct-get item target-start)
-                (struct-get item count)
-                (struct-get item source-key)
-                (struct-get item source-slot)))
+                item.target-start
+                item.count
+                item.source-key
+                item.source-slot))
             (set! index (+ index 1)))))
-      (set! (struct-get aliases items) next-items))))
+      (set! aliases.items next-items))))
 
 (define (compiler-parse-decl-origin-alias-vec-extend-last?
   [aliases : (&mut aliases CompilerParseDeclOriginAliasVec)]
@@ -288,30 +284,24 @@
   [source-key : i64]
   [source-slot : i64]
   [repeat : bool]) : bool
-  (if (or repeat (<= (struct-get aliases len) 0))
+  (if (or repeat (<= aliases.len 0))
     false
     (let
-      [index : i64 (- (struct-get aliases len) 1)]
-      [last : CompilerParseDeclOriginAlias
-        (array-ref (struct-get aliases items) index)]
+      [index : i64 (- aliases.len 1)]
+      [last : CompilerParseDeclOriginAlias (array-ref aliases.items index)]
       (if (and
-        (>= (struct-get last source-slot) 0)
-        (= (struct-get last source-key) source-key)
-        (=
-          (+ (struct-get last target-start) (struct-get last count))
-          target-start)
-        (=
-          (+ (struct-get last source-slot) (struct-get last count))
-          source-slot))
+        (>= last.source-slot 0)
+        (= last.source-key source-key)
+        (= (+ last.target-start last.count) target-start)
+        (= (+ last.source-slot last.count) source-slot))
         (begin
-          (array-set!
-            (struct-get aliases items)
-            index
+          (set!
+            (array-ref aliases.items index)
             (CompilerParseDeclOriginAlias
-              (struct-get last target-start)
-              (+ (struct-get last count) count)
-              (struct-get last source-key)
-              (struct-get last source-slot)))
+              last.target-start
+              (+ last.count count)
+              last.source-key
+              last.source-slot))
           true)
         false))))
 
@@ -333,17 +323,14 @@
       repeat)
       unit
       (begin
-        (if (>=
-          (struct-get aliases len)
-          (array-length (struct-get aliases items)))
+        (if (>= aliases.len (array-length aliases.items))
           (compiler-parse-decl-origin-alias-vec-grow! aliases)
           unit)
         (let
-          [index : i64 (struct-get aliases len)]
+          [index : i64 aliases.len]
           (begin
-            (array-set!
-              (struct-get aliases items)
-              index
+            (set!
+              (array-ref aliases.items index)
               (CompilerParseDeclOriginAlias
                 target-start
                 count
@@ -351,7 +338,7 @@
                 (if repeat
                   (- (- 0 source-slot) 1)
                   source-slot)))
-            (set! (struct-get aliases len) (+ index 1))))))
+            (set! aliases.len (+ index 1))))))
     unit))
 
 (define (compiler-parse-decl-origin-alias-vec-register!
@@ -359,20 +346,19 @@
   [aliases : (& aliases CompilerParseDeclOriginAliasVec)]) : unit
   (let
     [index : i64 0]
-    (while (< index (struct-get aliases len))
+    (while (< index aliases.len)
       (let
-        [alias : CompilerParseDeclOriginAlias
-          (array-ref (struct-get aliases items) index)]
+        [alias : CompilerParseDeclOriginAlias (array-ref aliases.items index)]
         (begin
           (compiler-parse-decl-origin-register-alias-record!
             decls
-            (struct-get alias target-start)
-            (struct-get alias count)
-            (struct-get alias source-key)
-            (if (< (struct-get alias source-slot) 0)
-              (- (- 0 (struct-get alias source-slot)) 1)
-              (struct-get alias source-slot))
-            (< (struct-get alias source-slot) 0))
+            alias.target-start
+            alias.count
+            alias.source-key
+            (if (< alias.source-slot 0)
+              (- (- 0 alias.source-slot) 1)
+              alias.source-slot)
+            (< alias.source-slot 0))
           (set! index (+ index 1)))))))
 
 ;; Aggregate member origins reuse the transient spanned-node pool instead of
@@ -428,9 +414,7 @@
   [fallback : ast.AstSourceSpan]) : ast.AstSourceSpan
   (compiler-parse-member-origin-span
     (unsafe
-      (cast
-        (ptr->int (ptr-cast (array-data (struct-get fields slots)) : (Ptr u8)))
-        : i64))
+      (cast (ptr->int (ptr-cast (array-data fields.slots) : (Ptr u8))) : i64))
     index
     fallback))
 
@@ -440,10 +424,7 @@
   [fallback : ast.AstSourceSpan]) : ast.AstSourceSpan
   (compiler-parse-member-origin-span
     (unsafe
-      (cast
-        (ptr->int
-          (ptr-cast (array-data (struct-get variants slots)) : (Ptr u8)))
-        : i64))
+      (cast (ptr->int (ptr-cast (array-data variants.slots) : (Ptr u8))) : i64))
     index
     fallback))
 
@@ -457,9 +438,8 @@
     (begin
       (while (< read-index end)
         (begin
-          (array-set!
-            reader.sp-node-pool-slots
-            write-index
+          (set!
+            (array-ref reader.sp-node-pool-slots write-index)
             (reader.sp-node-get read-index))
           (set! read-index (+ read-index 1))
           (set! write-index (+ write-index 1))))
@@ -852,29 +832,27 @@
     [cache-handle : (__tl_dyn-array (__tl_dyn-array sym_i64_env.SymI64Env))
       (__tl_make-array (__tl_dyn-array sym_i64_env.SymI64Env) 1)]
     (begin
-      (array-set! cache 0 (sym_i64_env.sym-i64-empty))
-      (array-set! cache-handle 0 cache)
-      (array-set!
-        control
-        compiler-parse-state-control-keys-addr
+      (set! (array-ref cache 0) (sym_i64_env.sym-i64-empty))
+      (set! (array-ref cache-handle 0) cache)
+      (set!
+        (array-ref control compiler-parse-state-control-keys-addr)
         (compiler-parse-array-data-addr-i64 keys))
-      (array-set!
-        control
-        compiler-parse-state-control-tags-addr
+      (set!
+        (array-ref control compiler-parse-state-control-tags-addr)
         (compiler-parse-array-data-addr-i64 tags))
-      (array-set!
-        control
-        compiler-parse-state-control-cache-addr
+      (set!
+        (array-ref control compiler-parse-state-control-cache-addr)
         (compiler-parse-dispatch-cache-handle-data-addr cache-handle))
-      (array-set!
-        control
-        compiler-parse-state-control-owner-addr
+      (set!
+        (array-ref control compiler-parse-state-control-owner-addr)
         (compiler-parse-intern-owner-data-addr owner))
-      (array-set! control compiler-parse-state-control-cache-generation -1)
-      (array-set! control compiler-parse-state-control-cache-table-id -1)
-      (array-set! control compiler-parse-state-control-marker-id -1)
-      (array-set! control compiler-parse-state-control-ready 0)
-      (array-set! control compiler-parse-state-control-reserved 0)
+      (set!
+        (array-ref control compiler-parse-state-control-cache-generation)
+        -1)
+      (set! (array-ref control compiler-parse-state-control-cache-table-id) -1)
+      (set! (array-ref control compiler-parse-state-control-marker-id) -1)
+      (set! (array-ref control compiler-parse-state-control-ready) 0)
+      (set! (array-ref control compiler-parse-state-control-reserved) 0)
       (CompilerParseState control keys tags cache cache-handle owner))))
 
 (define (compiler-parse-state-new) : CompilerParseState
@@ -887,11 +865,11 @@
     [owner : (__tl_dyn-array ci.InternCompatState)
       (array.make-array ci.InternCompatState 1)]
     (begin
-      (array-set! owner 0 intern-state)
+      (set! (array-ref owner 0) intern-state)
       (compiler-parse-state-new-from-owner owner))))
 
 (define (compiler-parse-state-control-addr [state : CompilerParseState]) : i64
-  (compiler-parse-array-data-addr-i64 (struct-get state control)))
+  (compiler-parse-array-data-addr-i64 state.control))
 
 (define (compiler-parse-raw-i64-ref [address : i64] [index : i64]) : i64
   (unsafe
@@ -1457,6 +1435,28 @@
 
 (define (compiler-parse-tag-expr-for-owned-step-typed) : i64
   308)
+
+;; Removed public place spellings retain parser tags solely to produce focused
+;; migration diagnostics. Private/internal aliases keep their existing tags.
+(define (compiler-parse-tag-expr-retired-struct-get) : i64
+  309)
+
+(define (compiler-parse-tag-expr-retired-array-set) : i64
+  310)
+
+(define (compiler-parse-tag-expr-retired-box-get) : i64
+  311)
+
+(define (compiler-parse-tag-expr-retired-box-take) : i64
+  312)
+
+(define (compiler-parse-tag-expr-retired-struct-set) : i64
+  313)
+
+;; Legacy nodes remain available while parsing quoted seed templates. They are
+;; not accepted as ordinary source expressions at depth zero.
+(define compiler-parse-quote-depth : i64
+  0)
 
 (define (compiler-parse-tag-expr-match) : i64
   244)
@@ -2162,7 +2162,7 @@
         (compiler-parse-dispatch-bind
           out
           "array-set!"
-          (compiler-parse-tag-expr-array-set)))
+          (compiler-parse-tag-expr-retired-array-set)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -2264,7 +2264,25 @@
         (compiler-parse-dispatch-bind
           out
           "struct-get"
+          (compiler-parse-tag-expr-retired-struct-get)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "__tl_struct-get"
           (compiler-parse-tag-expr-struct-get)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "struct-set"
+          (compiler-parse-tag-expr-retired-struct-set)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "struct-set!"
+          (compiler-parse-tag-expr-retired-struct-set)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -2388,12 +2406,24 @@
         (compiler-parse-dispatch-bind
           out
           "box-get"
+          (compiler-parse-tag-expr-retired-box-get)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "__tl_box-get"
           (compiler-parse-tag-expr-box-get)))
       (set!
         out
         (compiler-parse-dispatch-bind
           out
           "box-take"
+          (compiler-parse-tag-expr-retired-box-take)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "__tl_box-take"
           (compiler-parse-tag-expr-box-take)))
       (set!
         out
@@ -2603,7 +2633,7 @@
               control
               compiler-parse-state-control-cache-addr)
             : (Ptr (__tl_dyn-array sym_i64_env.SymI64Env)))))]
-    (array-set! cache 0 dispatch)))
+    (set! (array-ref cache 0) dispatch)))
 
 (define (compiler-parse-state-owner-floor-refresh! [control : i64]) : unit
   (if (=
@@ -4720,7 +4750,7 @@
       (match (parse-ast-expr-list dispatch pools s)
         [(ResultAstExprList.Ok exprs)
           (let
-            [n : i64 (struct-get (& exprs) len)]
+            [n : i64 exprs.len]
             (cond
               [(= n 0) (ResultAstExpr.Err missing-message)]
               [(= n 1) (ResultAstExpr.Ok (ast.ast-expr-list-get (& exprs) 0 0))]
@@ -5529,7 +5559,7 @@
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch pools rest)
     [(ResultAstExprList.Ok args)
-      (if (= (struct-get (& args) len) 4)
+      (if (= args.len 4)
         (ResultAstExpr.Ok
           (ast.ast-expr-for-owned-state-with-pools
             pools
@@ -5553,7 +5583,7 @@
           (if typed
             6
             5)]
-        (if (= (struct-get (& args) len) expected-count)
+        (if (= args.len expected-count)
           (ResultAstExpr.Ok
             (ast.ast-expr-for-owned-step-with-pools
               pools
@@ -6504,10 +6534,7 @@
   (match (parse-ast-two-exprs dispatch pools rest "string-from-bytes")
     [(ResultAstExprPair.Ok pair)
       (ResultAstExpr.Ok
-        (ast.ast-expr-string-from-bytes-with-pools
-          pools
-          (struct-get pair first)
-          (struct-get pair second)))]
+        (ast.ast-expr-string-from-bytes-with-pools pools pair.first pair.second))]
     [(ResultAstExprPair.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-array-data
@@ -6537,8 +6564,8 @@
   (match (parse-ast-two-exprs dispatch pools rest "cpuid")
     [(ResultAstExprPair.Ok pair)
       (let
-        [leaf : i64 (struct-get pair first)]
-        [subleaf : i64 (struct-get pair second)]
+        [leaf : i64 pair.first]
+        [subleaf : i64 pair.second]
         (cond
           [(= tag (compiler-parse-tag-expr-cpuid-eax))
             (ResultAstExpr.Ok
@@ -6564,7 +6591,7 @@
     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-syscall-count [args : ast.AstExprList]) : i64
-  (struct-get (& args) len))
+  args.len)
 
 ;; `(syscall number a0 .. a5)`: the syscall number followed by up to six
 ;; arguments (1 to 7 operands total). Typechecking requires an enclosing
@@ -7061,22 +7088,32 @@
     [(reader.SpannedSexprView.Cons expr end _)
       (match (reader.spanned-sexpr-view end)
         [(reader.SpannedSexprView.Nil _)
-          (match (parse-ast-expr-with-pools dispatch pools expr)
-            [(ResultAstExpr.Ok parsed)
-              (cond
-                [(= tag (compiler-parse-tag-expr-quote))
-                  (ResultAstExpr.Ok
-                    (ast.ast-expr-quote-with-pools pools parsed))]
-                [(= tag (compiler-parse-tag-expr-quasiquote))
-                  (ResultAstExpr.Ok
-                    (ast.ast-expr-quasiquote-with-pools pools parsed))]
-                [(= tag (compiler-parse-tag-expr-unquote))
-                  (ResultAstExpr.Ok
-                    (ast.ast-expr-unquote-with-pools pools parsed))]
-                [else
-                  (ResultAstExpr.Ok
-                    (ast.ast-expr-unquote-splicing-with-pools pools parsed))])]
-            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+          (let
+            [saved-depth : i64 compiler-parse-quote-depth]
+            [result : ResultAstExpr
+              (begin
+                (set! compiler-parse-quote-depth (+ saved-depth 1))
+                (match (parse-ast-expr-with-pools dispatch pools expr)
+                  [(ResultAstExpr.Ok parsed)
+                    (cond
+                      [(= tag (compiler-parse-tag-expr-quote))
+                        (ResultAstExpr.Ok
+                          (ast.ast-expr-quote-with-pools pools parsed))]
+                      [(= tag (compiler-parse-tag-expr-quasiquote))
+                        (ResultAstExpr.Ok
+                          (ast.ast-expr-quasiquote-with-pools pools parsed))]
+                      [(= tag (compiler-parse-tag-expr-unquote))
+                        (ResultAstExpr.Ok
+                          (ast.ast-expr-unquote-with-pools pools parsed))]
+                      [else
+                        (ResultAstExpr.Ok
+                          (ast.ast-expr-unquote-splicing-with-pools
+                            pools
+                            parsed))])]
+                  [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))]
+            (begin
+              (set! compiler-parse-quote-depth saved-depth)
+              result))]
         [_
           (ResultAstExpr.Err "parse: quote form expects exactly one expression")])]
     [_ (ResultAstExpr.Err "parse: quote form expects exactly one expression")]))
@@ -7149,6 +7186,27 @@
         rest
         "program-count"
         (ast.ast-expr-spmd-program-count-with-pools pools))]
+    [(= tag (compiler-parse-tag-expr-retired-struct-get))
+      (if (> compiler-parse-quote-depth 0)
+        (parse-ast-struct-get dispatch pools rest)
+        (ResultAstExpr.Err
+          "parse: struct-get was removed; use dotted field projection value.field"))]
+    [(= tag (compiler-parse-tag-expr-retired-array-set))
+      (if (> compiler-parse-quote-depth 0)
+        (parse-ast-array-set dispatch pools rest)
+        (ResultAstExpr.Err
+          "parse: array-set! was removed; use (set! (array-ref array index) value)"))]
+    [(= tag (compiler-parse-tag-expr-retired-box-get))
+      (if (> compiler-parse-quote-depth 0)
+        (parse-ast-box-like dispatch pools rest true false)
+        (ResultAstExpr.Err "parse: box-get was removed; use (deref box)"))]
+    [(= tag (compiler-parse-tag-expr-retired-box-take))
+      (if (> compiler-parse-quote-depth 0)
+        (parse-ast-box-like dispatch pools rest false true)
+        (ResultAstExpr.Err "parse: box-take was removed; use (deref box)"))]
+    [(= tag (compiler-parse-tag-expr-retired-struct-set))
+      (ResultAstExpr.Err
+        "parse: struct-set/struct-set! was removed; use (set! value.field replacement)")]
     [(= tag (compiler-parse-tag-expr-struct-get))
       (parse-ast-struct-get dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-comptime))
@@ -7538,7 +7596,7 @@
             [(reader.SexprView.Sym key)
               (cond
                 [(= key (cbi.compiler-builtin-ctfe-ref 247))
-                  (if (struct-get state seen-lanes)
+                  (if state.seen-lanes
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable lanes field")
                     (match (reader.sexpr-view value-tail)
@@ -7552,13 +7610,13 @@
                                     rest
                                     (AstSpmdSpecializationParseState
                                       lanes
-                                      (struct-get state args)
-                                      (struct-get state result)
-                                      (struct-get state index-param)
+                                      state.args
+                                      state.result
+                                      state.index-param
                                       true
-                                      (struct-get state seen-args)
-                                      (struct-get state seen-result)
-                                      (struct-get state seen-index-param)))
+                                      state.seen-args
+                                      state.seen-result
+                                      state.seen-index-param))
                                   (ResultAstSpmdSpecializationParseState.Err
                                     "parse: :spmd-callable lanes must be greater than one"))]
                               [_
@@ -7571,7 +7629,7 @@
                         (ResultAstSpmdSpecializationParseState.Err
                           "parse: :spmd-callable lanes expects one integer")]))]
                 [(= key (cbi.compiler-builtin-ctfe-ref 248))
-                  (if (struct-get state seen-args)
+                  (if state.seen-args
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable args field")
                     (match (parse-ast-spmd-param-classes
@@ -7583,16 +7641,16 @@
                         (parse-ast-spmd-specialization-fields
                           rest
                           (AstSpmdSpecializationParseState
-                            (struct-get state lanes)
+                            state.lanes
                             args
-                            (struct-get state result)
-                            (struct-get state index-param)
-                            (struct-get state seen-lanes)
+                            state.result
+                            state.index-param
+                            state.seen-lanes
                             true
-                            (struct-get state seen-result)
-                            (struct-get state seen-index-param)))]))]
+                            state.seen-result
+                            state.seen-index-param))]))]
                 [(= key (cbi.compiler-builtin-ctfe-ref 249))
-                  (if (struct-get state seen-result)
+                  (if state.seen-result
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable result field")
                     (match (parse-ast-spmd-result-class value-tail)
@@ -7602,16 +7660,16 @@
                         (parse-ast-spmd-specialization-fields
                           rest
                           (AstSpmdSpecializationParseState
-                            (struct-get state lanes)
-                            (struct-get state args)
+                            state.lanes
+                            state.args
                             result
-                            (struct-get state index-param)
-                            (struct-get state seen-lanes)
-                            (struct-get state seen-args)
+                            state.index-param
+                            state.seen-lanes
+                            state.seen-args
                             true
-                            (struct-get state seen-index-param)))]))]
+                            state.seen-index-param))]))]
                 [(= key (cbi.compiler-builtin-ctfe-ref 250))
-                  (if (struct-get state seen-index-param)
+                  (if state.seen-index-param
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable index-param field")
                     (match (parse-ast-spmd-index-param value-tail)
@@ -7621,13 +7679,13 @@
                         (parse-ast-spmd-specialization-fields
                           rest
                           (AstSpmdSpecializationParseState
-                            (struct-get state lanes)
-                            (struct-get state args)
-                            (struct-get state result)
+                            state.lanes
+                            state.args
+                            state.result
                             index-param
-                            (struct-get state seen-lanes)
-                            (struct-get state seen-args)
-                            (struct-get state seen-result)
+                            state.seen-lanes
+                            state.seen-args
+                            state.seen-result
                             true))]))]
                 [else
                   (ResultAstSpmdSpecializationParseState.Err
@@ -7662,34 +7720,32 @@
       (ResultAstSpmdSpecialization.Err message)]
     [(ResultAstSpmdSpecializationParseState.Ok state)
       (cond
-        [(not (struct-get state seen-lanes))
+        [(not state.seen-lanes)
           (ResultAstSpmdSpecialization.Err
             "parse: :spmd-callable specialization is missing lanes")]
-        [(not (struct-get state seen-args))
+        [(not state.seen-args)
           (ResultAstSpmdSpecialization.Err
             "parse: :spmd-callable specialization is missing args")]
-        [(not (struct-get state seen-result))
+        [(not state.seen-result)
           (ResultAstSpmdSpecialization.Err
             "parse: :spmd-callable specialization is missing result")]
-        [(not (struct-get state seen-index-param))
+        [(not state.seen-index-param)
           (ResultAstSpmdSpecialization.Err
             "parse: :spmd-callable specialization is missing index-param")]
         [(not
-            (=
-              (ast.ast-spmd-param-class-list-len (& (struct-get state args)))
-              param-count))
+            (= (ast.ast-spmd-param-class-list-len (& state.args)) param-count))
           (ResultAstSpmdSpecialization.Err
             "parse: :spmd-callable args must contain one class per ordinary parameter")]
-        [(>= (struct-get state index-param) param-count)
+        [(>= state.index-param param-count)
           (ResultAstSpmdSpecialization.Err
             "parse: :spmd-callable index-param is outside the parameter list")]
         [else
           (ResultAstSpmdSpecialization.Ok
             (ast.AstSpmdSpecialization
-              (struct-get state lanes)
-              (box (struct-get state args))
-              (struct-get state result)
-              (struct-get state index-param)))])]))
+              state.lanes
+              (box state.args)
+              state.result
+              state.index-param))])]))
 
 (define (parse-ast-spmd-param-classes-eq-at?
   [left : (& left ast.AstSpmdParamClassList)]
@@ -7726,12 +7782,12 @@
   [left : ast.AstSpmdSpecialization]
   [right : ast.AstSpmdSpecialization]) : bool
   (and
-    (= (struct-get left lanes) (struct-get right lanes))
-    (= (struct-get left result) (struct-get right result))
-    (= (struct-get left index-param) (struct-get right index-param))
+    (= left.lanes right.lanes)
+    (= left.result right.result)
+    (= left.index-param right.index-param)
     (parse-ast-spmd-param-classes-eq-at?
-      (& (box-get (struct-get left args)))
-      (& (box-get (struct-get right args)))
+      (& (__tl-box-place left.args))
+      (& (__tl-box-place right.args))
       0)))
 
 (define (parse-ast-spmd-specialization-present-at?
@@ -8855,16 +8911,14 @@
               false)
               [(ResultAstEnumDefParts.Ok lifetimes cleanup parsed-variants)
                 (begin
-                  (array-set!
-                    reader.sp-node-pool-slots
-                    member-marker
+                  (set!
+                    (array-ref reader.sp-node-pool-slots member-marker)
                     (reader.SpannedSexpr.Int
                       (unsafe
                         (cast
                           (ptr->int
                             (ptr-cast
-                              (array-data
-                                (struct-get (& parsed-variants) slots))
+                              (array-data parsed-variants.slots)
                               : (Ptr u8)))
                           : i64))
                       "__tl_member_origin"
@@ -8914,15 +8968,14 @@
               false)
               [(ResultAstStructDefParts.Ok lifetimes repr cleanup parsed-fields)
                 (begin
-                  (array-set!
-                    reader.sp-node-pool-slots
-                    member-marker
+                  (set!
+                    (array-ref reader.sp-node-pool-slots member-marker)
                     (reader.SpannedSexpr.Int
                       (unsafe
                         (cast
                           (ptr->int
                             (ptr-cast
-                              (array-data (struct-get (& parsed-fields) slots))
+                              (array-data parsed-fields.slots)
                               : (Ptr u8)))
                           : i64))
                       "__tl_member_origin"
@@ -9332,7 +9385,7 @@
 (define (parse-ast-test-body
   [pools : ast.AstNodePoolContext]
   [exprs : ast.AstExprList]) : i64
-  (if (= (struct-get (& exprs) len) 1)
+  (if (= exprs.len 1)
     (ast.ast-expr-list-get (& exprs) 0 0)
     (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin exprs))))
 
@@ -9578,14 +9631,14 @@
   (parse-ast-decl-vec-with-capacity 16))
 
 (define (parse-ast-decl-vec-len [v : (& v ParseAstDeclVec)]) : i64
-  (struct-get v len))
+  v.len)
 
 (define (parse-ast-decl-vec-get
   [v : (& v ParseAstDeclVec)]
   [index : i64]
   [fallback : ast.AstDecl]) : ast.AstDecl
   (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
-    (array-ref (struct-get v slots) index)
+    (array-ref v.slots index)
     fallback))
 
 (define (parse-ast-decl-vec-copy-range
@@ -9596,7 +9649,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (parse-ast-decl-vec-copy-range dst src (+ index 1) count))))
 
 (define (parse-ast-decl-vec-span-copy-range
@@ -9607,13 +9660,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (parse-ast-decl-vec-span-copy-range dst src (+ index 1) count))))
 
 (define (parse-ast-decl-vec-grow [v : (&mut v ParseAstDeclVec)]) : unit
   (let
-    [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [n : i64 v.len]
+    [old-cap : i64 (array-length v.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -9622,29 +9675,25 @@
     [bigger-spans : (__tl_dyn-array ast.AstSourceSpan)
       (make-array ast.AstSourceSpan new-cap)]
     (begin
-      (parse-ast-decl-vec-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
-      (parse-ast-decl-vec-span-copy-range
-        (&mut bigger-spans)
-        (& (struct-get v spans))
-        0
-        n)
-      (set! (struct-get v slots) bigger)
-      (set! (struct-get v spans) bigger-spans))))
+      (parse-ast-decl-vec-copy-range (&mut bigger) (& v.slots) 0 n)
+      (parse-ast-decl-vec-span-copy-range (&mut bigger-spans) (& v.spans) 0 n)
+      (set! v.slots bigger)
+      (set! v.spans bigger-spans))))
 
 (define (parse-ast-decl-vec-push-with-span
   [v : (&mut v ParseAstDeclVec)]
   [value : ast.AstDecl]
   [span : ast.AstSourceSpan]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< v.len (array-length v.slots))
       unit
       (parse-ast-decl-vec-grow v))
     (let
-      [index : i64 (struct-get v len)]
+      [index : i64 v.len]
       (begin
-        (array-set! (struct-get v slots) index value)
-        (array-set! (struct-get v spans) index span)
-        (set! (struct-get v len) (+ index 1))))))
+        (set! (array-ref v.slots index) value)
+        (set! (array-ref v.spans index) span)
+        (set! v.len (+ index 1))))))
 
 (define (parse-ast-decl-vec-push
   [v : (&mut v ParseAstDeclVec)]
@@ -9680,7 +9729,7 @@
     [(ast.AstDecl.DefMacro decl-meta _ _ _ _) false]
     [(ast.AstDecl.Test _ _ _) false]
     [(ast.AstDecl.Unsafe inner-box)
-      (compiler-parse-decl-origin-needs-record? (box-get inner-box))]
+      (compiler-parse-decl-origin-needs-record? (__tl-box-place inner-box))]
     [_ true]))
 
 (define (compiler-parse-decl-origin-register-selected!
@@ -9693,17 +9742,16 @@
         (if (compiler-parse-decl-origin-needs-record?
           (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
           (let
-            [span : ast.AstSourceSpan
-              (array-ref (struct-get items spans) index)]
+            [span : ast.AstSourceSpan (array-ref items.spans index)]
             (compiler-parse-decl-origin-register-maybe!
               out
               index
               (CompilerParseMaybeDeclSpan.Some
                 (ast.AstSourceSpan
-                  (struct-get span start-line)
-                  (struct-get span start-col)
-                  (struct-get span end-line)
-                  (struct-get span end-col)))))
+                  span.start-line
+                  span.start-col
+                  span.end-line
+                  span.end-col))))
           unit)
         (set! index (+ index 1))))))
 
@@ -9831,10 +9879,9 @@
         (compiler-parse-array-data-addr-i64 invocation))]
     (begin
       (reader.sexpr-node-pool-reset!)
-      (array-set! cur 0 0)
-      (array-set!
-        invocation
-        compiler-parse-invocation-control-slot
+      (set! (array-ref cur 0) 0)
+      (set!
+        (array-ref invocation compiler-parse-invocation-control-slot)
         (compiler-parse-env-marker-value
           base-dispatch
           compiler-parse-state-marker-id))
@@ -9918,7 +9965,7 @@
             [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
             [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
             (begin
-              (array-set! cur 0 0)
+              (set! (array-ref cur 0) 0)
               (if (= (reader.peek-spanned-tag toks cur) (token.tag-end))
                 (begin
                   (reader.sp-node-pool-truncate! mark)
@@ -10013,7 +10060,7 @@
         (cond
           [(= tag (token.tag-end))
             (begin
-              (array-set! cur 0 scan)
+              (set! (array-ref cur 0) scan)
               (set! done true))]
           [(or (= tag (token.tag-lparen)) (= tag (token.tag-lbracket)))
             (begin
@@ -10027,7 +10074,7 @@
                 unit)
               (if (= depth 0)
                 (begin
-                  (array-set! cur 0 scan)
+                  (set! (array-ref cur 0) scan)
                   (set! done true))
                 unit))]
           [(and (= depth 0) (parse-ast-recovery-prefix-tag? tag))
@@ -10037,7 +10084,7 @@
               (set! scan (+ scan 1))
               (if (= depth 0)
                 (begin
-                  (array-set! cur 0 scan)
+                  (set! (array-ref cur 0) scan)
                   (set! done true))
                 unit))])))))
 
@@ -10161,10 +10208,9 @@
     [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
     (begin
       (reader.sexpr-node-pool-reset!)
-      (array-set! cur 0 0)
-      (array-set!
-        invocation
-        compiler-parse-invocation-control-slot
+      (set! (array-ref cur 0) 0)
+      (set!
+        (array-ref invocation compiler-parse-invocation-control-slot)
         (compiler-parse-env-marker-value
           base-dispatch
           compiler-parse-state-marker-id))
@@ -10344,10 +10390,9 @@
         (compiler-parse-array-data-addr-i64 invocation))]
     (begin
       (reader.sexpr-node-pool-reset!)
-      (array-set! cur 0 0)
-      (array-set!
-        invocation
-        compiler-parse-invocation-control-slot
+      (set! (array-ref cur 0) 0)
+      (set!
+        (array-ref invocation compiler-parse-invocation-control-slot)
         (compiler-parse-env-marker-value
           base-dispatch
           compiler-parse-state-marker-id))
@@ -10400,7 +10445,7 @@
         (+ (ast.ast-decl-tag decl) (ast-decl-list-tag-sum rest)))]))
 
 (define (compiler-parse-expr-list-count [exprs : ast.AstExprList]) : i64
-  (struct-get (& exprs) len))
+  exprs.len)
 
 (define (compiler-parse-macro-call-node-ok?
   [call-expr : i64]
@@ -10475,7 +10520,7 @@
   (match (parse-ast-source "(module std.io)")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons (ast.AstDecl.Module name) rest)
             (let
@@ -10491,14 +10536,14 @@
   (match (parse-ast-source "(module local.helper (define value : i64 1))")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.ModuleBody name body-box)
               rest)
             (let
               [rest : ast.AstDeclList rest]
-              [body : ast.AstDeclList (box-get body-box)]
+              [body : ast.AstDeclList (__tl-box-place body-box)]
               (match (ast.ast-decl-list-step rest)
                 [(ast.AstDeclListStep.Nil)
                   (match (ast.ast-decl-list-step body)
@@ -10528,7 +10573,7 @@
   (match (parse-ast-source "(import stdlib.core_macros as io)")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
@@ -10556,7 +10601,7 @@
   (match (parse-ast-source "(import stdlib.core_macros as core)")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
@@ -10584,7 +10629,7 @@
   (match (parse-ast-source "(import stdlib.core_macros)")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
@@ -10617,7 +10662,7 @@
   (match (parse-ast-source "(point-vec i64)")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
@@ -10644,7 +10689,7 @@
   (match (parse-ast-source "(import (vector.vector i64) as svec)")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
@@ -10705,7 +10750,7 @@
   (match (parse-ast-source "(include-str payload \"data.txt\")")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (ast-first-include-str-ok? decls))]
     [(ResultAstProgram.Err _) false]))
 
@@ -10730,7 +10775,7 @@
 (define (compiler-parse-include-str-comptime-ok?) : bool
   (match (parse-ast-source "(include-str-comptime payload \"data.txt\")")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
-      (ast-first-include-str-comptime-ok? (box-get decls-box))]
+      (ast-first-include-str-comptime-ok? (__tl-box-place decls-box))]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-include-str-comptime-errors-ok?) : bool
@@ -10751,7 +10796,7 @@
 (define (compiler-parse-include-str-lzss-ok?) : bool
   (match (parse-ast-source "(include-str-lzss payload \"data.txt\")")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
-      (ast-first-include-str-lzss-ok? (box-get decls-box))]
+      (ast-first-include-str-lzss-ok? (__tl-box-place decls-box))]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-include-str-lzss-errors-ok?) : bool
@@ -10781,7 +10826,7 @@
   (match (parse-ast-source "(include-bin payload \"data.bin\")")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (ast-first-include-bin-ok? decls))]
     [(ResultAstProgram.Err _) false]))
 
@@ -10805,7 +10850,7 @@
 
 (define (compiler-parse-defdispatch-variants-ok?
   [variants : ast.AstDispatchVariantList]) : bool
-  (if (= (struct-get (& variants) len) 3)
+  (if (= variants.len 3)
     (match (ast.ast-dispatch-variant-list-get
       (& variants)
       0
@@ -10837,7 +10882,7 @@
     "(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefDispatch decl-meta name variants)
@@ -10857,7 +10902,7 @@
   (match (parse-ast-source "(defdispatch id (scalar id-scalar))")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefDispatch decl-meta name variants)
@@ -10868,7 +10913,7 @@
                 [(ast.AstDeclListStep.Nil)
                   (and
                     (= name (reader.stable-symbol-id "id"))
-                    (= (struct-get (& variants) len) 1)
+                    (= variants.len 1)
                     (match (ast.ast-dispatch-variant-list-get
                       (& variants)
                       0
@@ -10918,7 +10963,7 @@
   (match (parse-ast-source "(define (main) : i64 (+ 1 (* 2 3)))")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
@@ -10974,7 +11019,7 @@
           (let
             [cur : (__tl_dyn-array i64) (make-array i64 1)]
             (begin
-              (array-set! cur 0 0)
+              (set! (array-ref cur 0) 0)
               (match (reader.form-spanned-result toks cur)
                 [(reader.ResultSpannedSexpr.Ok form)
                   (let
@@ -10994,10 +11039,12 @@
   (match (parse-ast-source-diagnostic path src)
     [(ResultAstProgramDiagnostic.Err diag)
       (and
-        (string.eq (cdiag.compiler-diagnostic-path (box-get diag)) path)
-        (= (cdiag.compiler-diagnostic-line (box-get diag)) line)
-        (= (cdiag.compiler-diagnostic-col (box-get diag)) col)
-        (string.eq (cdiag.compiler-diagnostic-message (box-get diag)) want))]
+        (string.eq (cdiag.compiler-diagnostic-path (__tl-box-place diag)) path)
+        (= (cdiag.compiler-diagnostic-line (__tl-box-place diag)) line)
+        (= (cdiag.compiler-diagnostic-col (__tl-box-place diag)) col)
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          want))]
     [(ResultAstProgramDiagnostic.Ok _) false]))
 
 (define (compiler-parse-diagnostic-location-ok?
@@ -11009,10 +11056,12 @@
   (match (parse-ast-source-diagnostic path src)
     [(ResultAstProgramDiagnostic.Err diag)
       (and
-        (string.eq (cdiag.compiler-diagnostic-path (box-get diag)) path)
-        (= (cdiag.compiler-diagnostic-line (box-get diag)) line)
-        (= (cdiag.compiler-diagnostic-col (box-get diag)) col)
-        (string.eq (cdiag.compiler-diagnostic-message (box-get diag)) want))]
+        (string.eq (cdiag.compiler-diagnostic-path (__tl-box-place diag)) path)
+        (= (cdiag.compiler-diagnostic-line (__tl-box-place diag)) line)
+        (= (cdiag.compiler-diagnostic-col (__tl-box-place diag)) col)
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          want))]
     [(ResultAstProgramDiagnostic.Ok _) false]))
 
 (define (compiler-parse-nested-diagnostic-spans-ok?) : bool
@@ -11097,7 +11146,7 @@
   (match (parse-ast-source "(define (main) : f64 1.5)")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn _ name _ (ast.AstType.F64) body-box _)
@@ -11134,7 +11183,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (+
           (ast-decl-list-count decls)
           (+
@@ -11158,11 +11207,11 @@
     "parse-code.tl"
     (compiler-parse-malformed-binary-source))
     [(ResultAstProgramDiagnostic.Err diag)
-      (match (cdiag.compiler-diagnostic-code (box-get diag))
+      (match (cdiag.compiler-diagnostic-code (__tl-box-place diag))
         [(CompilerDiagnosticSomeString code)
           (and
             (string.eq code (cdiag.compiler-diagnostic-code-parse))
-            (match (cdiag.compiler-diagnostic-category (box-get diag))
+            (match (cdiag.compiler-diagnostic-category (__tl-box-place diag))
               [(CompilerDiagnosticSomeString category)
                 (string.eq category "parse")]
               [CompilerDiagnosticNoString false]))]
@@ -11183,7 +11232,8 @@
     (compiler-parse-malformed-if-source))
     [(ResultAstProgramDiagnostic.Err diag)
       (let
-        [rendered : String (cdiag.compiler-diagnostic-render (box-get diag))]
+        [rendered : String
+          (cdiag.compiler-diagnostic-render (__tl-box-place diag))]
         [message-needle : String "parse: if is missing its else branch"]
         [example-needle : String "example: (if condition then-expr else-expr)"]
         [when-needle : String "when condition body..."]
@@ -11232,7 +11282,7 @@
   (match (parse-ast-source (compiler-parse-arena-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn _ name _ (ast.AstType.I64) body-box _)
@@ -11340,7 +11390,7 @@
   (match (parse-ast-source (compiler-parse-raw-pointer-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Extern decl-meta name _ _ ty)
@@ -11354,7 +11404,7 @@
                     (match ty
                       [(ast.AstType.Func args ret)
                         (let
-                          [args-list : ast.AstTypeList (box-get args)]
+                          [args-list : ast.AstTypeList (__tl-box-place args)]
                           (and
                             (= (ast.ast-type-list-len (& args-list)) 1)
                             (compiler-parse-type-ptr-i64?
@@ -11398,7 +11448,7 @@
   (match (parse-ast-source (compiler-parse-extern-metadata-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Extern decl-meta name _ metadata ty)
@@ -11410,16 +11460,17 @@
                   (and
                     (= name (reader.stable-symbol-id "local-call"))
                     (string.eq
-                      (ast.ast-extern-metadata-symbol (box-get metadata))
+                      (ast.ast-extern-metadata-symbol (__tl-box-place metadata))
                       "foreign_exact")
                     (ast.ast-extern-abi-c?
-                      (ast.ast-extern-metadata-abi (box-get metadata)))
+                      (ast.ast-extern-metadata-abi (__tl-box-place metadata)))
                     (compiler-parse-extern-link-inputs-ok?
-                      (ast.ast-extern-metadata-link-inputs (box-get metadata)))
+                      (ast.ast-extern-metadata-link-inputs
+                        (__tl-box-place metadata)))
                     (match ty
                       [(ast.AstType.Func args ret)
                         (let
-                          [args-list : ast.AstTypeList (box-get args)]
+                          [args-list : ast.AstTypeList (__tl-box-place args)]
                           (and
                             (= (ast.ast-type-list-len (& args-list)) 1)
                             (match (ast.ty-node-get
@@ -11447,7 +11498,7 @@
     [(ast.AstDecl.Extern decl-meta name _ metadata ty)
       (and
         (= name (reader.stable-symbol-id "snprintf"))
-        (match (ast.ast-extern-metadata-abi (box-get metadata))
+        (match (ast.ast-extern-metadata-abi (__tl-box-place metadata))
           [(ast.AstExternAbi.CVarargsTyped tail-ty)
             (match tail-ty
               [(ast.AstType.F64) true]
@@ -11456,7 +11507,7 @@
         (match ty
           [(ast.AstType.Func args ret)
             (let
-              [args-list : ast.AstTypeList (box-get args)]
+              [args-list : ast.AstTypeList (__tl-box-place args)]
               (and
                 (= (compiler-parse-type-list-count args-list) 3)
                 (match (ast.ty-node-get ret)
@@ -11489,13 +11540,13 @@
     [(ast.AstDecl.Extern decl-meta name _ metadata ty)
       (and
         (= name (reader.stable-symbol-id "printf"))
-        (match (ast.ast-extern-metadata-abi (box-get metadata))
+        (match (ast.ast-extern-metadata-abi (__tl-box-place metadata))
           [(ast.AstExternAbi.CVarargsOpen) true]
           [_ false])
         (match ty
           [(ast.AstType.Func args ret)
             (let
-              [args-list : ast.AstTypeList (box-get args)]
+              [args-list : ast.AstTypeList (__tl-box-place args)]
               (and
                 (= (compiler-parse-type-list-count args-list) 1)
                 (match (ast.ty-node-get ret)
@@ -11531,21 +11582,21 @@
       (and
         (= name (reader.stable-symbol-id "local-add"))
         (string.eq
-          (ast.ast-extern-metadata-symbol (box-get metadata))
+          (ast.ast-extern-metadata-symbol (__tl-box-place metadata))
           "foreign_add_exact")
         (match ty
           [(ast.AstType.Func args ret)
             (and
-              (= (compiler-parse-type-list-count (box-get args)) 2)
+              (= (compiler-parse-type-list-count (__tl-box-place args)) 2)
               (compiler-parse-i64-type? (ast.ty-node-get ret))
-              (compiler-parse-two-i64-types? (box-get args)))]
+              (compiler-parse-two-i64-types? (__tl-box-place args)))]
           [_ false]))]
     [_ false]))
 
 (define (compiler-parse-extern-function-head-varargs-ok?) : bool
   (match (parse-ast-source (compiler-parse-extern-function-head-varargs-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
-      (match (ast.ast-decl-list-step (box-get decls-box))
+      (match (ast.ast-decl-list-step (__tl-box-place decls-box))
         [(ast.AstDeclListStep.Cons first rest0)
           (let
             [rest0 : ast.AstDeclList rest0]
@@ -11577,7 +11628,7 @@
 (define (compiler-parse-init-ok?) : bool
   (match (parse-ast-source "(define (main) : i64 (init : i64))")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
-      (match (ast.ast-decl-list-step (box-get decls-box))
+      (match (ast.ast-decl-list-step (__tl-box-place decls-box))
         [(ast.AstDeclListStep.Cons
             (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
             done-box)
@@ -11601,7 +11652,7 @@
   (match (parse-ast-source
     "(define (init) : i64 7) (define (main) : i64 (init))")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
-      (match (ast.ast-decl-list-step (box-get decls-box))
+      (match (ast.ast-decl-list-step (__tl-box-place decls-box))
         [(ast.AstDeclListStep.Cons _ rest)
           (match (ast.ast-decl-list-step rest)
             [(ast.AstDeclListStep.Cons
@@ -11631,9 +11682,9 @@
 (define (compiler-parse-box-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : (Box i64) (box 7))")
-    (compiler-parse-ok? "(define (main [b : (Box i64)]) : i64 (box-get b))")
+    (compiler-parse-ok? "(define (main [b : (Box i64)]) : i64 (deref b))")
     (compiler-parse-ok?
-      "(define (main) : i64 (with-arena r (let [b : (in r (Box i64)) (box 7)] (box-get b))))")))
+      "(define (main) : i64 (with-arena r (let [b : (in r (Box i64)) (box 7)] (deref b))))")))
 
 (define (compiler-parse-array-take-ok?) : bool
   (and
@@ -11655,7 +11706,7 @@
   (match (parse-ast-source (compiler-parse-reference-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn decl-meta _ params _ _ _)
@@ -11709,7 +11760,7 @@
   (match (parse-ast-source (compiler-parse-borrow-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
@@ -11721,7 +11772,7 @@
                 [(ast.AstDeclListStep.Nil)
                   (match (ast.ast-expr-unspan body)
                     [(ast.AstExpr.Begin exprs)
-                      (if (>= (struct-get (& exprs) len) 2)
+                      (if (>= exprs.len 2)
                         (let
                           [first : ast.AstExpr
                             (ast.ast-node-get
@@ -11780,7 +11831,7 @@
   (match (parse-ast-source (compiler-parse-try-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
@@ -11792,7 +11843,7 @@
                 [(ast.AstDeclListStep.Nil)
                   (match (ast.ast-expr-unspan body)
                     [(ast.AstExpr.Call _ args)
-                      (if (= (struct-get (& args) len) 1)
+                      (if (= args.len 1)
                         (let
                           [arg : ast.AstExpr
                             (ast.ast-node-get
@@ -11813,7 +11864,7 @@
   (match (parse-ast-source (compiler-parse-return-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
@@ -11846,7 +11897,7 @@
     [_ false]))
 
 (define (compiler-parse-guard-call-args-ok? [args : ast.AstExprList]) : bool
-  (if (= (struct-get (& args) len) 2)
+  (if (= args.len 2)
     (let
       [cond : ast.AstExpr
         (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))]
@@ -11858,7 +11909,7 @@
     false))
 
 (define (compiler-parse-call-arg-count [args : ast.AstExprList]) : i64
-  (struct-get (& args) len))
+  args.len)
 
 (define (compiler-parse-call-body-ok?
   [source : String]
@@ -11868,7 +11919,7 @@
   (match (parse-ast-source source)
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
@@ -11962,7 +12013,7 @@
   (match (parse-ast-source (compiler-parse-unsafe-decl-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons first tail)
             (let
@@ -11970,7 +12021,7 @@
               (match first
                 [(ast.AstDecl.Unsafe first-inner-box)
                   (let
-                    [first-inner : ast.AstDecl (box-get first-inner-box)]
+                    [first-inner : ast.AstDecl (__tl-box-place first-inner-box)]
                     (match first-inner
                       [(ast.AstDecl.DefFn
                           decl-meta
@@ -11989,7 +12040,7 @@
                                   [(ast.AstDecl.Unsafe second-inner-box)
                                     (let
                                       [second-inner : ast.AstDecl
-                                        (box-get second-inner-box)]
+                                        (__tl-box-place second-inner-box)]
                                       (match second-inner
                                         [(ast.AstDecl.Extern
                                             _
@@ -12020,7 +12071,7 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-field-count [fields : ast.AstFieldDefList]) : i64
-  (struct-get (& fields) len))
+  fields.len)
 
 (define (compiler-parse-field-cleanup-score [cleanup : ast.AstFieldCleanup]) : i64
   (match cleanup
@@ -12034,7 +12085,7 @@
 (define (compiler-parse-field-cleanup-list-score-at
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]) : i64
-  (if (>= index (struct-get fields len))
+  (if (>= index fields.len)
     0
     (match (ast.ast-field-def-list-get
       fields
@@ -12059,7 +12110,7 @@
 (define (compiler-parse-variant-payload-cleanup-list-score-at
   [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]
   [index : i64]) : i64
-  (if (>= index (struct-get cleanups len))
+  (if (>= index cleanups.len)
     0
     (+
       (compiler-parse-variant-payload-cleanup-score
@@ -12078,7 +12129,7 @@
 (define (compiler-parse-variant-list-cleanup-score-at
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : i64
-  (if (>= index (struct-get variants len))
+  (if (>= index variants.len)
     0
     (match (ast.ast-variant-def-list-get
       variants
@@ -12100,7 +12151,7 @@
   (match (parse-ast-source (compiler-parse-struct-cleanup-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefStruct _ name repr cleanup fields)
@@ -12135,7 +12186,7 @@
   (match (parse-ast-source (compiler-parse-enum-cleanup-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefEnum decl-meta name cleanup variants)
@@ -12170,7 +12221,7 @@
   (match (parse-ast-source (compiler-parse-repr-c-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefStruct decl-meta name repr _ fields)
@@ -12196,7 +12247,7 @@
   (match (parse-ast-source (compiler-parse-inline-test-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons (ast.AstDecl.Test name body-box span) tail)
             (let
@@ -12401,11 +12452,32 @@
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
-        "(define (main [b : (Box i64)]) : i64 (box-get b b))"
-        "parse: box-get expects exactly one expression")
+        "(define (main [b : (Box i64)]) : i64 (deref b b))"
+        "parse: deref expects exactly one expression")
         unit
         (set! ok false))
       ok)))
+
+(define (compiler-parse-place-migration-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(define (main [p : i64]) : i64 (struct-get p value))"
+      "parse: struct-get was removed; use dotted field projection value.field")
+    (compiler-parse-error-ok?
+      "(define (main [p : i64]) : unit (struct-set p value 1))"
+      "parse: struct-set/struct-set! was removed; use (set! value.field replacement)")
+    (compiler-parse-error-ok?
+      "(define (main [p : i64]) : unit (struct-set! p value 1))"
+      "parse: struct-set/struct-set! was removed; use (set! value.field replacement)")
+    (compiler-parse-error-ok?
+      "(define (main [xs : (Array i64 1)]) : unit (array-set! xs 0 1))"
+      "parse: array-set! was removed; use (set! (array-ref array index) value)")
+    (compiler-parse-error-ok?
+      "(define (main [b : (Box i64)]) : i64 (box-get b))"
+      "parse: box-get was removed; use (deref box)")
+    (compiler-parse-error-ok?
+      "(define (main [b : (Box i64)]) : i64 (box-take b))"
+      "parse: box-take was removed; use (deref box)")))
 
 (define (compiler-parse-extern-metadata-error-tests-ok?) : bool
   (let
@@ -12543,11 +12615,12 @@
         (ast.AstProgram.Program decls-box)
         diagnostics-box)
       (let
-        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (__tl-box-place diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
-          (= (ast.ast-decl-list-len (& (box-get decls-box))) 2)
+          (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 2)
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
             (cdiag.compiler-diagnostic-message first)
@@ -12566,13 +12639,14 @@
         (ast.AstProgram.Program decls-box)
         diagnostics-box)
       (let
-        [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (__tl-box-place diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-get diagnostics 0)]
         [second : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-get diagnostics 1)]
         (and
-          (= (ast.ast-decl-list-len (& (box-get decls-box))) 2)
+          (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 2)
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 2)
           (= (cdiag.compiler-diagnostic-line first) 1)
           (string.eq
@@ -12594,13 +12668,14 @@
           (ast.AstProgram.Program decls-box)
           diagnostics-box)
         (let
-          [diagnostics : cdiag.CompilerDiagnosticList (box-get diagnostics-box)]
+          [diagnostics : cdiag.CompilerDiagnosticList
+            (__tl-box-place diagnostics-box)]
           [message : String
             (cdiag.compiler-diagnostic-message
               (cdiag.compiler-diagnostic-list-first diagnostics))]
           [needle : String "reader: mismatched delimiter"]
           (and
-            (= (ast.ast-decl-list-len (& (box-get decls-box))) 1)
+            (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 1)
             (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
             (string.contains (& message) (& needle))))]
       [(ResultAstProgramRecovery.Fatal _) false])
@@ -12611,19 +12686,25 @@
           (ast.AstProgram.Program decls-box)
           diagnostics-box)
         (and
-          (= (ast.ast-decl-list-len (& (box-get decls-box))) 1)
-          (= (cdiag.compiler-diagnostic-list-count (box-get diagnostics-box)) 2))]
+          (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 1)
+          (=
+            (cdiag.compiler-diagnostic-list-count
+              (__tl-box-place diagnostics-box))
+            2))]
       [(ResultAstProgramRecovery.Fatal _) false])
     (match (parse-ast-source-recovery-diagnostic
       "tests/recovery-unterminated.tl"
       "(define
-(define (not-a-boundary) : i64 1)")
+(define (not-a-boundary) : i64 1))")
       [(ResultAstProgramRecovery.Parsed
           (ast.AstProgram.Program decls-box)
           diagnostics-box)
         (and
-          (= (ast.ast-decl-list-len (& (box-get decls-box))) 0)
-          (= (cdiag.compiler-diagnostic-list-count (box-get diagnostics-box)) 1))]
+          (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 0)
+          (=
+            (cdiag.compiler-diagnostic-list-count
+              (__tl-box-place diagnostics-box))
+            1))]
       [(ResultAstProgramRecovery.Fatal _) false])))
 
 (define (compiler-parse-recovery-tests-ok?) : bool
@@ -12686,7 +12767,7 @@
   (match (parse-ast-source-with-cfg src cfgs)
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (= (ast-decl-list-count decls) want))]
     [(ResultAstProgram.Err _) false]))
 
@@ -12781,7 +12862,7 @@
     (compiler-parse-error-ok? "(import)" "parse: malformed import")))
 
 ;; enum/struct expression coverage: defenum empty rejection,
-;; defstruct mixed field types, empty struct rejection, struct-get, and
+;; defstruct mixed field types, empty struct rejection, field projection, and
 ;; struct construction-as-call.
 (define (compiler-parse-enum-struct-tests-ok?) : bool
   (and
@@ -12793,13 +12874,12 @@
     (compiler-parse-error-ok?
       "(defstruct Empty)"
       "parse: defstruct needs at least one field")
-    (compiler-parse-ok? "(define (f [p : Point]) : i64 (struct-get p x))")
+    (compiler-parse-ok? "(define (f [p : Point]) : i64 p.x)")
     (compiler-parse-ok? "(define (f) : Point (Point 1 2))")
     (compiler-parse-ok? "(defstruct RefBox (:lifetimes a) (value (& a i64)))")
     (compiler-parse-ok?
       "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))")
-    (compiler-parse-ok?
-      "(define (f [box : (RefBox n)]) : (& n i64) (struct-get box value))")))
+    (compiler-parse-ok? "(define (f [box : (RefBox n)]) : (& n i64) box.value)")))
 
 ;
 ;; Let-binding parsing accepts only leading bracket bindings, including the
@@ -12828,11 +12908,11 @@
     (compiler-parse-ok?
       "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
     (compiler-parse-ok?
-      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-parse-ok?
-      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) i))) 0))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) i))) 0))")
     (compiler-parse-ok?
-      "(define (main [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (+ (program-index) (program-count)))) 0))")
+      "(define (main [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (+ (program-index) (program-count)))) 0))")
     ;; An empty range, a non-i64 index type, and expression
     ;; start/end bounds all parse (range semantics are checked later).
     (compiler-parse-ok?
@@ -13006,7 +13086,7 @@
   (match (parse-ast-source (compiler-parse-resource-with-source))
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
@@ -13018,7 +13098,7 @@
                 [(ast.AstDeclListStep.Nil)
                   (match (ast.ast-expr-unspan body)
                     [(ast.AstExpr.WithResource wr-box)
-                      (match (box-get wr-box)
+                      (match (__tl-box-place wr-box)
                         [(ast.AstWithResource.WithResource bindings body-exprs)
                           (if (and
                             (=
@@ -13031,7 +13111,7 @@
                                   (ast.ast-expr-list-get (& body-exprs) 1 0))]
                               (match (ast.ast-expr-unspan nested)
                                 [(ast.AstExpr.WithResource nested-wr-box)
-                                  (match (box-get nested-wr-box)
+                                  (match (__tl-box-place nested-wr-box)
                                     [(ast.AstWithResource.WithResource
                                         nested-bindings
                                         nested-body)
@@ -13089,7 +13169,7 @@
     "(define (mk [e : Expr]) : Expr `(if ,e true false))")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn decl-meta _ _ ret-ty body-box _)
@@ -13192,7 +13272,7 @@
   (match (parse-ast-source src)
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefFn decl-meta _ params _ _ _)
@@ -13216,7 +13296,7 @@
     "(defmacro (all [first : bool] [rest : bool ...]) : bool first)")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefMacro _ name params (ast.AstType.Bool) _)
@@ -13276,7 +13356,7 @@
   (match (parse-ast-source
     "(defmacro (catalog [T : type (:kind i64 struct type-var)]) : Module unit)")
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
-      (match (ast.ast-decl-list-step (box-get decls-box))
+      (match (ast.ast-decl-list-step (__tl-box-place decls-box))
         [(ast.AstDeclListStep.Cons
             (ast.AstDecl.DefMacro decl-meta name params _ _)
             rest)
@@ -13356,7 +13436,7 @@
   [verify-all : bool]) : bool
   (match (parse-ast-source source)
     [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
-      (match (ast.ast-decl-list-step (box-get decls-box))
+      (match (ast.ast-decl-list-step (__tl-box-place decls-box))
         [(ast.AstDeclListStep.Cons (ast.AstDecl.DefMacro _ _ params _ _) rest)
           (and
             (match (ast.ast-decl-list-step rest)
@@ -13556,7 +13636,7 @@
   (+ x scale))")
       [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
         (let
-          [decls : ast.AstDeclList (box-get decls-box)]
+          [decls : ast.AstDeclList (__tl-box-place decls-box)]
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
             [(ast.AstDecl.DefFn decl-meta _ _ _ _ metadata)
               (match (ast.ast-fn-metadata-spmd-callable metadata)
@@ -13574,15 +13654,15 @@
                         0
                         fallback)]
                     [args : ast.AstSpmdParamClassList
-                      (box-get (struct-get specialization args))]
+                      (__tl-box-place specialization.args)]
                     (and
                       (=
                         (ast.ast-spmd-specialization-list-len
                           (& specializations))
                         1)
-                      (= (struct-get specialization lanes) 8)
-                      (= (struct-get specialization index-param) 0)
-                      (match (struct-get specialization result)
+                      (= specialization.lanes 8)
+                      (= specialization.index-param 0)
+                      (match specialization.result
                         [(ast.AstSpmdResultClass.Varying) true]
                         [_ false])
                       (match (ast.ast-spmd-param-class-list-get
@@ -13693,6 +13773,7 @@
           (compiler-parse-defmacro-tests-ok?)
           (compiler-parse-resource-with-tests-ok?)
           (compiler-parse-quote-syntax-tests-ok?)
+          (compiler-parse-place-migration-error-tests-ok?)
           (compiler-parse-dotted-import-errors-ok?)
           (compiler-parse-cfg-tests-ok?))
           42

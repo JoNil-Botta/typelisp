@@ -31,9 +31,10 @@ use; conservative non-lexical last-use analysis then releases the borrow when
 no child remains.
 
 `(Box T)` is a safe, move-only, arena-owned indirection handle: `(box expr)`
-allocates in the active arena, `(box-get b)` projects the value, `(box-take
-b)` consumes the box, and `(set! (box-get b) value)` mutates boxed storage.
-A box allocated inside `(with-arena r ...)` cannot escape that scope.
+allocates in the active arena, `(deref b)` projects the value, moving a
+non-Copy projected value consumes the box, and `(set! (deref b) value)`
+mutates boxed storage. A box allocated inside `(with-arena r ...)` cannot
+escape that scope.
 
 ### Arenas
 

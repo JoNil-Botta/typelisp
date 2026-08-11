@@ -6,7 +6,7 @@
 (define (borrow-and-consume
   [_value : (&mut value i64)]
   [payload : Payload (:consume)]) : i64
-  (struct-get payload value))
+  payload.value)
 
 (define (main) : i64
   (let

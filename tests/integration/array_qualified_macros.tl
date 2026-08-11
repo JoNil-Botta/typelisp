@@ -12,7 +12,7 @@
   [items : (&mut items (__tl_dyn-array i64))]
   [index : i64]
   [value : i64]) : unit
-  (array-set! items index value))
+  (set! (array-ref items index) value))
 
 (define (push-mut! [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
   (array-push! items value))
@@ -21,8 +21,8 @@
   (let
     [items : (__tl_dyn-array i64) (array.make-array i64 2)]
     (begin
-      (array-set! items 0 10)
-      (array-set! items 1 20)
+      (set! (array-ref items 0) 10)
+      (set! (array-ref items 1) 20)
       (array-push! items 5)
       (put-mut! (&mut items) 2 12)
       (push-mut! (&mut items) 0)
@@ -36,7 +36,7 @@
   (let
     [items : (Array i64 3) (array 1 2 3)]
     (begin
-      (array-set! items 1 20)
+      (set! (array-ref items 1) 20)
       (+ (array-ref items 0) (+ (array-ref items 1) (array-ref items 2))))))
 
 (define (main) : i64

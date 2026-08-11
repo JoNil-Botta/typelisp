@@ -177,7 +177,7 @@
         (fixed i64)
         (payload ,T))
       (define (proof-reuse-fixed-field-access [value : Box]) : ,T
-        (struct-get value fixed)))))
+        value.fixed))))
 
 ;; `if` supplies an implicit bool condition expectation not represented in the
 ;; expression's own type syntax, so the u8 identity must be checked concretely.

@@ -9,5 +9,5 @@
     ([i : i64 0 n])
     (if (> (array-ref xs i) 0)
       (while (> n 0)
-        (array-set! out i 1))
-      (array-set! out i 0))))
+        (set! (array-ref out i) 1))
+      (set! (array-ref out i) 0))))

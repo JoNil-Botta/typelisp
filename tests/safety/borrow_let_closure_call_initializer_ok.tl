@@ -8,7 +8,7 @@
     [exclusive : (&mut values (Array i64 1)) (&mut values)]
     [bump : (-> unit)
       (lambda () : unit
-        (array-set! exclusive 0 42))]
+        (set! (array-ref exclusive 0) 42))]
     [ignored : unit (bump)]
     (if (= (array-ref values 0) 42)
       42

@@ -41,7 +41,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (* i 3))
+          (set! (array-ref xs i) (* i 3))
           (set! i (+ i 1))))
       (let
         [r : i64 (param-loop xs n)]

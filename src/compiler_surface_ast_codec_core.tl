@@ -36,18 +36,18 @@
     (let
       [valid : (__tl_dyn-array bool) (make-array bool 1)]
       (begin
-        (array-set! valid 0 true)
+        (set! (array-ref valid 0) true)
         (SurfaceAstWriteContext valid source-identity-count identity-count)))))
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest)
   (define (surface-ast-write-valid? [context : SurfaceAstWriteContext]) : bool
-    (array-ref (struct-get context valid) 0)))
+    (array-ref context.valid 0)))
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest)
   (define (surface-ast-write-fail! [context : SurfaceAstWriteContext]) : unit
-    (array-set! (struct-get context valid) 0 false)))
+    (set! (array-ref context.valid 0) false)))
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest)
@@ -86,8 +86,8 @@
       [portable : i64
         (identity.surface-identity-portable-id
           name
-          (struct-get context source-identity-count)
-          (struct-get context identity-count))]
+          context.source-identity-count
+          context.identity-count)]
       (begin
         (if (< portable 0)
           (surface-ast-write-fail! context)
@@ -113,33 +113,33 @@
     [valid : (__tl_dyn-array bool) (make-array bool 1)]
     [message : (__tl_dyn-array String) (make-array String 1)]
     (begin
-      (array-set! offset 0 0)
-      (array-set! valid 0 true)
-      (array-set! message 0 "")
+      (set! (array-ref offset 0) 0)
+      (set! (array-ref valid 0) true)
+      (set! (array-ref message 0) "")
       (SurfaceAstReader bytes offset valid message identity-remap))))
 
 (define (surface-ast-reader-valid? [reader : SurfaceAstReader]) : bool
-  (array-ref (struct-get reader valid) 0))
+  (array-ref reader.valid 0))
 
 (define (surface-ast-reader-message [reader : SurfaceAstReader]) : String
-  (array-ref (struct-get reader message) 0))
+  (array-ref reader.message 0))
 
 (define (surface-ast-reader-offset [reader : SurfaceAstReader]) : i64
-  (array-ref (struct-get reader offset) 0))
+  (array-ref reader.offset 0))
 
 (define (surface-ast-reader-fail!
   [reader : SurfaceAstReader]
   [message : String]) : unit
   (if (surface-ast-reader-valid? reader)
     (begin
-      (array-set! (struct-get reader valid) 0 false)
-      (array-set! (struct-get reader message) 0 message))
+      (set! (array-ref reader.valid 0) false)
+      (set! (array-ref reader.message 0) message))
     unit))
 
 (define (surface-ast-read-i64! [reader : SurfaceAstReader]) : i64
   (let
     [offset : i64 (surface-ast-reader-offset reader)]
-    [bytes : (__tl_dyn-array u8) (struct-get reader bytes)]
+    [bytes : (__tl_dyn-array u8) reader.bytes]
     (if (or
       (not (surface-ast-reader-valid? reader))
       (> offset (- (array-length bytes) 8)))
@@ -147,7 +147,7 @@
         (surface-ast-reader-fail! reader "surface ast: truncated integer")
         0)
       (begin
-        (array-set! (struct-get reader offset) 0 (+ offset 8))
+        (set! (array-ref reader.offset 0) (+ offset 8))
         (binary.surface-binary-read-u64 bytes offset)))))
 
 (define (surface-ast-read-bool! [reader : SurfaceAstReader]) : bool
@@ -179,7 +179,7 @@
   (let
     [len : i64 (surface-ast-read-count! reader)]
     [offset : i64 (surface-ast-reader-offset reader)]
-    [bytes : (__tl_dyn-array u8) (struct-get reader bytes)]
+    [bytes : (__tl_dyn-array u8) reader.bytes]
     (if (or
       (> offset (array-length bytes))
       (> len (- (array-length bytes) offset)))
@@ -189,7 +189,7 @@
       (let
         [text : String (binary.surface-binary-bytes->string bytes offset len)]
         (begin
-          (array-set! (struct-get reader offset) 0 (+ offset len))
+          (set! (array-ref reader.offset 0) (+ offset len))
           text)))))
 
 (define (surface-ast-read-name! [reader : SurfaceAstReader]) : i64
@@ -198,7 +198,7 @@
     [resolved : i64
       (identity.surface-identity-resolve-portable-id
         portable
-        (struct-get reader identity-remap))]
+        reader.identity-remap)]
     (if (< resolved 0)
       (begin
         (surface-ast-reader-fail!
@@ -236,11 +236,7 @@
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : SurfaceAstWriteContext]
     [lifetimes : ast.AstLifetimeList]) : unit
-    (surface-ast-write-name-list!
-      out
-      context
-      (struct-get lifetimes slots)
-      (struct-get lifetimes len))))
+    (surface-ast-write-name-list! out context lifetimes.slots lifetimes.len)))
 
 (define (surface-ast-read-lifetime-list! [reader : SurfaceAstReader]) : ast.AstLifetimeList
   (let
@@ -250,7 +246,7 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (surface-ast-read-name! reader))
+          (set! (array-ref slots index) (surface-ast-read-name! reader))
           (set! index (+ index 1))))
       (ast.AstLifetimeList slots count))))
 
@@ -261,14 +257,12 @@
     [types : ast.AstTypeList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get types len)]
+      [count : i64 types.len]
       (begin
         (surface-ast-write-i64! out count)
         (while (< index count)
           (begin
-            (surface-ast-write-i64!
-              out
-              (array-ref (struct-get types slots) index))
+            (surface-ast-write-i64! out (array-ref types.slots index))
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-type-list! [reader : SurfaceAstReader]) : ast.AstTypeList
@@ -279,7 +273,7 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (surface-ast-read-i64! reader))
+          (set! (array-ref slots index) (surface-ast-read-i64! reader))
           (set! index (+ index 1))))
       (ast.AstTypeList slots count))))
 
@@ -312,12 +306,12 @@
       [(ast.AstType.Func args ret)
         (begin
           (surface-ast-write-i64! out 19)
-          (surface-ast-write-type-list! out (box-get args))
+          (surface-ast-write-type-list! out (__tl-box-place args))
           (surface-ast-write-i64! out ret))]
       [(ast.AstType.Tuple items)
         (begin
           (surface-ast-write-i64! out 20)
-          (surface-ast-write-type-list! out (box-get items)))]
+          (surface-ast-write-type-list! out (__tl-box-place items)))]
       [(ast.AstType.Array elem count)
         (begin
           (surface-ast-write-i64! out 21)
@@ -354,7 +348,10 @@
         (begin
           (surface-ast-write-i64! out 28)
           (surface-ast-write-name! out context name)
-          (surface-ast-write-lifetime-list! out context (box-get lifetimes)))]
+          (surface-ast-write-lifetime-list!
+            out
+            context
+            (__tl-box-place lifetimes)))]
       [(ast.AstType.Struct name)
         (begin
           (surface-ast-write-i64! out 29)
@@ -363,7 +360,10 @@
         (begin
           (surface-ast-write-i64! out 30)
           (surface-ast-write-name! out context name)
-          (surface-ast-write-lifetime-list! out context (box-get lifetimes)))]
+          (surface-ast-write-lifetime-list!
+            out
+            context
+            (__tl-box-place lifetimes)))]
       [(ast.AstType.Var name)
         (begin
           (surface-ast-write-i64! out 31)
@@ -372,7 +372,10 @@
         (begin
           (surface-ast-write-i64! out 32)
           (surface-ast-write-name! out context name)
-          (surface-ast-write-lifetime-list! out context (box-get lifetimes)))]
+          (surface-ast-write-lifetime-list!
+            out
+            context
+            (__tl-box-place lifetimes)))]
       [(ast.AstType.Ptr elem)
         (begin
           (surface-ast-write-i64! out 33)

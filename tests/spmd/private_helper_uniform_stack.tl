@@ -16,7 +16,7 @@
 (define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (heavy-uniform-stack 1 2 3 4 5 6 7 i))))
+    (set! (array-ref out i) (heavy-uniform-stack 1 2 3 4 5 6 7 i))))
 
 (define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
   (let

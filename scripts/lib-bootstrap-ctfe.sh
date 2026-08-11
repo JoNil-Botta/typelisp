@@ -80,7 +80,8 @@ bootstrap_seed_comptime_short_variant_bridge_root() {
     if ! grep -qF 'expected variant ExprBool at index 0' "$stderr" && \
         ! grep -qF \
         'stdlib well-known type mismatch for stdlib.comptime.TypeInfo: unexpected extra variant' \
-        "$stderr"; then
+        "$stderr" && \
+        ! grep -qF 'typecheck: unbound name __tl_struct-get' "$stderr"; then
         echo "published-seed short comptime variant probe failed unexpectedly" >&2
         sed 's/^/  /' "$stdout" >&2 || true
         sed 's/^/  /' "$stderr" >&2 || true
@@ -88,14 +89,22 @@ bootstrap_seed_comptime_short_variant_bridge_root() {
     fi
 
     bridge_root="$workdir/comptime-short-variant-seed-bridge/source"
-    if grep -qF \
+    if grep -qF 'expected variant ExprBool at index 0' "$stderr"; then
+        COMPTIME_SHORT_VARIANT_SEED_BRIDGE_LEGACY=1 \
+            COMPTIME_SEED_BRIDGE_REMOVE_SLICE=1 \
+            "$root/scripts/prepare-comptime-short-variant-seed-bridge.sh" \
+            "$bridge_root" >&2
+    elif grep -qF \
         'stdlib well-known type mismatch for stdlib.comptime.TypeInfo: unexpected extra variant' \
         "$stderr"; then
         COMPTIME_SHORT_VARIANT_SEED_BRIDGE_LEGACY=0 \
+            COMPTIME_SEED_BRIDGE_REMOVE_SLICE=1 \
             "$root/scripts/prepare-comptime-short-variant-seed-bridge.sh" \
             "$bridge_root" >&2
     else
-        "$root/scripts/prepare-comptime-short-variant-seed-bridge.sh" \
+        COMPTIME_SHORT_VARIANT_SEED_BRIDGE_LEGACY=0 \
+            COMPTIME_SEED_BRIDGE_REMOVE_SLICE=0 \
+            "$root/scripts/prepare-comptime-short-variant-seed-bridge.sh" \
             "$bridge_root" >&2
     fi
     printf '%s\n' "$bridge_root"
@@ -153,6 +162,7 @@ bootstrap_seed_dotted_import_bridge_root() {
 bootstrap_resolve_seed_global_views() {
     compiler=$1
     workdir=$2
+    source_root=${3:-}
     probe="$workdir/seed-global-view-probe.tl"
     probe_stdout="$workdir/seed-global-view-probe.stdout"
     probe_stderr="$workdir/seed-global-view-probe.stderr"
@@ -166,9 +176,24 @@ bootstrap_resolve_seed_global_views() {
       0)))
 EOF
     SEED_REQUIRES_LEGACY_GLOBAL_VIEWS=0
-    if "$compiler" check "$probe" \
-        > "$probe_stdout" \
-        2> "$probe_stderr"; then
+    probe_cwd="$workdir/seed-global-view-probe-cwd"
+    mkdir -p "$probe_cwd"
+    if [ -n "$source_root" ]; then
+        probe_status=0
+        (
+            cd "$probe_cwd"
+            "$compiler" check "$probe" \
+                --stdlib-root "$source_root/stdlib" \
+                --stdlib-root "$source_root/src"
+        ) > "$probe_stdout" 2> "$probe_stderr" || probe_status=$?
+    else
+        probe_status=0
+        (
+            cd "$probe_cwd"
+            "$compiler" check "$probe"
+        ) > "$probe_stdout" 2> "$probe_stderr" || probe_status=$?
+    fi
+    if [ "$probe_status" -eq 0 ]; then
         echo "[bootstrap] seed supports explicit global shared views"
         return 0
     fi
@@ -183,6 +208,43 @@ EOF
     sed 's/^/  /' "$probe_stdout" >&2 || true
     sed 's/^/  /' "$probe_stderr" >&2 || true
     return 1
+}
+
+# Emit the legacy global-view cfg only after
+# bootstrap_resolve_seed_global_views has classified the compiler that will
+# consume it. Keep this fail-closed: silently omitting the cfg for an
+# unclassified legacy seed is as broken as handing it to a modern seed.
+bootstrap_legacy_global_view_cfg_args() {
+    case "${SEED_REQUIRES_LEGACY_GLOBAL_VIEWS:-}" in
+        0) ;;
+        1) printf '%s\n' --cfg stage0-seed-bootstrap ;;
+        *)
+            echo "bootstrap global shared-view capability is unresolved" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Resolve the original seed before any one-generation compatibility compiler
+# is built. A bridge source mirror can carry the only stdlib spelling that the
+# seed understands, so probe against the last prepared mirror in the same
+# precedence order used by the bridge build itself.
+bootstrap_resolve_seed_global_views_for_bridges() {
+    root=$1
+    compiler=$2
+    workdir=$3
+    dotted_bridge_root=${4:-}
+    comptime_bridge_root=${5:-}
+
+    seed_global_view_probe_root=$root
+    if [ -n "$dotted_bridge_root" ]; then
+        seed_global_view_probe_root=$dotted_bridge_root
+    fi
+    if [ -n "$comptime_bridge_root" ]; then
+        seed_global_view_probe_root=$comptime_bridge_root
+    fi
+    bootstrap_resolve_seed_global_views \
+        "$compiler" "$workdir" "$seed_global_view_probe_root"
 }
 
 # A seed compiler's backend runtime is baked into the seed binary. When source

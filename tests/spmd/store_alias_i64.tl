@@ -10,7 +10,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (+ (array-ref left i) (array-ref right i)) 3))))
+    (set! (array-ref out i) (+ (+ (array-ref left i) (array-ref right i)) 3))))
 
 (define (main) : i64
   (let
@@ -21,7 +21,7 @@
     (begin
       (while (< i 260)
         (begin
-          (array-set! values i (+ i 1))
+          (set! (array-ref values i) (+ i 1))
           (set! i (+ i 1))))
       (alias-map values values values n)
       (set! i 0)

@@ -8,5 +8,5 @@
   (foreach
     ([i : i64 0 n])
     (if (> i 0)
-      (array-set! out i (array-ref xs i))
-      (array-set! out i ""))))
+      (set! (array-ref out i) (array-ref xs i))
+      (set! (array-ref out i) ""))))

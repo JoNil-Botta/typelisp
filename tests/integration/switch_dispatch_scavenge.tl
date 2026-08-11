@@ -203,12 +203,12 @@
   (let
     [p : (__tl_dyn-array Op) (array.make-array Op 6)]
     (begin
-      (array-set! p 0 (Op0))
-      (array-set! p 1 (Op1))
-      (array-set! p 2 (Op2))
-      (array-set! p 3 (Op3))
-      (array-set! p 4 (Op4))
-      (array-set! p 5 (Op5))
+      (set! (array-ref p 0) (Op0))
+      (set! (array-ref p 1) (Op1))
+      (set! (array-ref p 2) (Op2))
+      (set! (array-ref p 3) (Op3))
+      (set! (array-ref p 4) (Op4))
+      (set! (array-ref p 5) (Op5))
       (let
         [n : i64 (+ (io.arg-count) 300)]
         [seed : i64 (+ (io.arg-count) 5)]

@@ -139,7 +139,7 @@
           entries
           index
           (package-lock-entry-list-fallback))]
-      (if (string.eq (struct-get entry alias) alias)
+      (if (string.eq entry.alias alias)
         (PackageLockMaybeEntry.Some entry)
         (package-lock-entry-list-lookup-from entries alias (+ index 1))))))
 
@@ -160,9 +160,9 @@
           entries
           index
           (package-lock-entry-list-fallback))]
-      (if (string.eq (struct-get head alias) alias)
+      (if (string.eq head.alias alias)
         -1
-        (if (package-lock-string-less? alias (struct-get head alias))
+        (if (package-lock-string-less? alias head.alias)
           index
           (package-lock-entry-list-insert-position entries alias (+ index 1)))))))
 
@@ -193,15 +193,12 @@
   (let
     [next : package_lock_entry_vec.Vec entries]
     [index : i64
-      (package-lock-entry-list-insert-position
-        (& next)
-        (struct-get entry alias)
-        0)]
+      (package-lock-entry-list-insert-position (& next) entry.alias 0)]
     (if (< index 0)
       (ResultPackageLockEntryList.Err
         (str_cat.str-cat
           "package-lock: duplicate dependency alias `"
-          (struct-get entry alias)
+          entry.alias
           "`"))
       (begin
         (package-lock-entry-list-insert-at! (&mut next) entry index)
@@ -395,8 +392,8 @@
                           has-alias
                           url
                           has-url
-                          (struct-get pin kind)
-                          (struct-get pin value)
+                          pin.kind
+                          pin.value
                           true
                           commit
                           has-commit)]))]
@@ -626,14 +623,13 @@
 (define (package-lock-emit-entry [entry : PackageLockEntry]) : String
   (let
     [kind-name : String
-      (package_cache_core.package-cache-pin-kind-name
-        (struct-get entry pin-kind))]
+      (package_cache_core.package-cache-pin-kind-name entry.pin-kind)]
     (str_cat.str-cat
       "    (dependency\n"
-      (package-lock-emit-string-field "alias" (struct-get entry alias))
-      (package-lock-emit-string-field "url" (struct-get entry url))
-      (package-lock-emit-pin-field kind-name (struct-get entry pin-value))
-      (package-lock-emit-final-string-field "commit" (struct-get entry commit)))))
+      (package-lock-emit-string-field "alias" entry.alias)
+      (package-lock-emit-string-field "url" entry.url)
+      (package-lock-emit-pin-field kind-name entry.pin-value)
+      (package-lock-emit-final-string-field "commit" entry.commit))))
 
 (define (package-lock-emit-entries-from
   [entries : (& entries package_lock_entry_vec.Vec)]
@@ -656,7 +652,7 @@
     "(typelisp-lock\n"
     "  (version \"v1\")\n"
     "  (dependencies\n"
-    (package-lock-emit-entries (struct-get lock entries))
+    (package-lock-emit-entries lock.entries)
     "  ))\n"))
 
 (define (package-lock-valid-source) : String
@@ -684,13 +680,11 @@
   [pin-value : String]
   [commit : String]) : bool
   (and
-    (string.eq (struct-get entry alias) alias)
-    (string.eq (struct-get entry url) url)
-    (package_cache_core.package-cache-pin-kind-eq?
-      (struct-get entry pin-kind)
-      kind)
-    (string.eq (struct-get entry pin-value) pin-value)
-    (string.eq (struct-get entry commit) commit)))
+    (string.eq entry.alias alias)
+    (string.eq entry.url url)
+    (package_cache_core.package-cache-pin-kind-eq? entry.pin-kind kind)
+    (string.eq entry.pin-value pin-value)
+    (string.eq entry.commit commit)))
 
 (define (package-lock-list-has-entry?
   [entries : package_lock_entry_vec.Vec]
@@ -709,9 +703,9 @@
     [(ResultPackageLockFile.Err _) false]
     [(ResultPackageLockFile.Ok lock)
       (let
-        [entries : package_lock_entry_vec.Vec (struct-get lock entries)]
+        [entries : package_lock_entry_vec.Vec lock.entries]
         (and
-          (string.eq (struct-get lock version) package-lock-version)
+          (string.eq lock.version package-lock-version)
           (= (package_lock_entry_vec.len (& entries)) 2)
           (package-lock-list-has-entry?
             entries
@@ -742,7 +736,7 @@
         [(ResultPackageLockFile.Err _) false]
         [(ResultPackageLockFile.Ok again)
           (let
-            [entries : package_lock_entry_vec.Vec (struct-get again entries)]
+            [entries : package_lock_entry_vec.Vec again.entries]
             (and
               (= (package_lock_entry_vec.len (& entries)) 2)
               (package-lock-list-has-entry?
@@ -767,7 +761,7 @@
     [index : i64]
     [alias : String]) : bool
     (string.eq
-      (struct-get
+      (__tl-project-field
         (package_lock_entry_vec.get
           entries
           index
@@ -795,11 +789,11 @@
     (match (package-lock-parse (package-lock-growth-source))
       [(ResultPackageLockFile.Err _) false]
       [(ResultPackageLockFile.Ok lock)
-        (if (package-lock-growth-entries-ok? (& (struct-get lock entries)))
+        (if (package-lock-growth-entries-ok? (& lock.entries))
           (match (package-lock-parse (package-lock-emit lock))
             [(ResultPackageLockFile.Err _) false]
             [(ResultPackageLockFile.Ok again)
-              (package-lock-growth-entries-ok? (& (struct-get again entries)))])
+              (package-lock-growth-entries-ok? (& again.entries))])
           false)])))
 
 (define (package-lock-parse-rejects? [source : String] [expected : String]) : bool

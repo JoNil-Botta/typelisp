@@ -10,7 +10,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! slots i (% (+ (* i 13) 5) 97))
+        (set! (array-ref slots i) (% (+ (* i 13) 5) 97))
         (set! i (+ i 1))))))
 
 (define (sum-array [xs : (& xs i64vec.Vec)] [n : i64]) : i64

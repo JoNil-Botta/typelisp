@@ -11,9 +11,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! keys i (cast (+ (* i 5) 1) : u32))
-        (array-set! left i (cast (+ i 10) : u32))
-        (array-set! right i (cast (+ i 100) : u32))
+        (set! (array-ref keys i) (cast (+ (* i 5) 1) : u32))
+        (set! (array-ref left i) (cast (+ i 10) : u32))
+        (set! (array-ref right i) (cast (+ i 100) : u32))
         (set! i (+ i 1))))))
 
 (define (fill-u32-foreach
@@ -25,9 +25,8 @@
   [pivot : u32]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (if (< (array-ref keys i) pivot)
         (array-ref left i)
         (array-ref right i)))))
@@ -43,9 +42,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out
-          i
+        (set!
+          (array-ref out i)
           (if (< (array-ref keys i) pivot)
             (array-ref left i)
             (array-ref right i)))
@@ -87,9 +85,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! keys i (cast (+ (* i 7) 2) : u64))
-        (array-set! left i (cast (+ i 20) : u64))
-        (array-set! right i (cast (+ i 200) : u64))
+        (set! (array-ref keys i) (cast (+ (* i 7) 2) : u64))
+        (set! (array-ref left i) (cast (+ i 20) : u64))
+        (set! (array-ref right i) (cast (+ i 200) : u64))
         (set! i (+ i 1))))))
 
 (define (fill-u64-foreach
@@ -101,9 +99,8 @@
   [pivot : u64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (if (< (array-ref keys i) pivot)
         (array-ref left i)
         (array-ref right i)))))
@@ -119,9 +116,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out
-          i
+        (set!
+          (array-ref out i)
           (if (< (array-ref keys i) pivot)
             (array-ref left i)
             (array-ref right i)))
@@ -163,9 +159,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! keys i (cast (+ i 1) : f32))
-        (array-set! left i (cast (+ i 30) : f32))
-        (array-set! right i (cast (+ i 300) : f32))
+        (set! (array-ref keys i) (cast (+ i 1) : f32))
+        (set! (array-ref left i) (cast (+ i 30) : f32))
+        (set! (array-ref right i) (cast (+ i 300) : f32))
         (set! i (+ i 1))))))
 
 (define (fill-f32-foreach
@@ -177,9 +173,8 @@
   [pivot : f32]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (if (< (array-ref keys i) pivot)
         (array-ref left i)
         (array-ref right i)))))
@@ -195,9 +190,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out
-          i
+        (set!
+          (array-ref out i)
           (if (< (array-ref keys i) pivot)
             (array-ref left i)
             (array-ref right i)))
@@ -239,9 +233,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! keys i (cast (+ i 1) : f64))
-        (array-set! left i (cast (+ i 40) : f64))
-        (array-set! right i (cast (+ i 400) : f64))
+        (set! (array-ref keys i) (cast (+ i 1) : f64))
+        (set! (array-ref left i) (cast (+ i 40) : f64))
+        (set! (array-ref right i) (cast (+ i 400) : f64))
         (set! i (+ i 1))))))
 
 (define (fill-f64-foreach
@@ -253,9 +247,8 @@
   [pivot : f64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (if (< (array-ref keys i) pivot)
         (array-ref left i)
         (array-ref right i)))))
@@ -271,9 +264,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out
-          i
+        (set!
+          (array-ref out i)
           (if (< (array-ref keys i) pivot)
             (array-ref left i)
             (array-ref right i)))
@@ -315,9 +307,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! keys i (< (% i 3) 2))
-        (array-set! left i (= (% i 2) 0))
-        (array-set! right i (= (% i 5) 0))
+        (set! (array-ref keys i) (< (% i 3) 2))
+        (set! (array-ref left i) (= (% i 2) 0))
+        (set! (array-ref right i) (= (% i 5) 0))
         (set! i (+ i 1))))))
 
 (define (fill-bool-foreach
@@ -328,9 +320,8 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (if (array-ref keys i)
         (array-ref left i)
         (array-ref right i)))))
@@ -345,9 +336,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out
-          i
+        (set!
+          (array-ref out i)
           (if (array-ref keys i)
             (array-ref left i)
             (array-ref right i)))

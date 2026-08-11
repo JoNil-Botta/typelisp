@@ -14,15 +14,14 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast (+ i 3) : i8))
+          (set! (array-ref xs i) (cast (+ i 3) : i8))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : i8 (array-ref xs j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 0)
               (bit-or 1 x)
               (if (= (bit-and x 3) 0)
@@ -55,15 +54,14 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast (+ i 3) : u8))
+          (set! (array-ref xs i) (cast (+ i 3) : u8))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : u8 (array-ref xs j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 0)
               (bit-or 1 x)
               (match (bit-and x 3)
@@ -96,15 +94,14 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast (+ i 3) : i16))
+          (set! (array-ref xs i) (cast (+ i 3) : i16))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : i16 (array-ref xs j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 0)
               (bit-or 1 x)
               (match (bit-and x 3)
@@ -137,15 +134,14 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast (+ i 3) : u16))
+          (set! (array-ref xs i) (cast (+ i 3) : u16))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : u16 (array-ref xs j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 0)
               (bit-or 1 x)
               (match (bit-and x 3)
@@ -178,15 +174,14 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast (+ i 3) : i32))
+          (set! (array-ref xs i) (cast (+ i 3) : i32))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : i32 (array-ref xs j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 0)
               (bit-or 1 x)
               (match (bit-and x 3)
@@ -219,15 +214,14 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast (+ i 3) : u32))
+          (set! (array-ref xs i) (cast (+ i 3) : u32))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : u32 (array-ref xs j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 0)
               (bit-or 1 x)
               (match (bit-and x 3)
@@ -260,15 +254,14 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (+ i 3))
+          (set! (array-ref xs i) (+ i 3))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : i64 (array-ref xs j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 0)
               (bit-or 1 x)
               (match (bit-and x 3)
@@ -301,15 +294,14 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! xs i (cast (+ i 3) : u64))
+          (set! (array-ref xs i) (cast (+ i 3) : u64))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (let
           [x : u64 (array-ref xs j)]
-          (array-set!
-            out
-            j
+          (set!
+            (array-ref out j)
             (if (= (bit-and x 1) 0)
               (bit-or 1 x)
               (match (bit-and x 3)

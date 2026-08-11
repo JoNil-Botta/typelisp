@@ -36,8 +36,8 @@
     [pair : Pair (make-pair 5 6)]
     [m : u64 (tl_region_mark)]
     (begin
-      (array-set! arr 0 20)
-      (array-set! arr 1 22)
+      (set! (array-ref arr 0) 20)
+      (set! (array-ref arr 1) 22)
       (string.append "temporary" (string.int->string 99))
       (tl_region_reset m)
       (cycle 1)
@@ -46,6 +46,4 @@
         (string-length s)
         (+
           (array-ref arr 0)
-          (+
-            (array-ref arr 1)
-            (+ (box-value box) (+ (struct-get pair x) (struct-get pair y)))))))))
+          (+ (array-ref arr 1) (+ (box-value box) (+ pair.x pair.y))))))))

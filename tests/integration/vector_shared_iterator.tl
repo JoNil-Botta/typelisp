@@ -17,11 +17,7 @@
   1)
 
 (define (ball-score [ball : (& source SharedIteratorBall)]) : i64
-  (+
-    (+
-      (struct-get (struct-get ball center) x)
-      (struct-get (struct-get ball center) y))
-    (struct-get ball radius)))
+  (+ (+ ball.center.x ball.center.y) ball.radius))
 
 (define (i64-step-score [result : (i64vec.IterNext source)]) : i64
   (match result

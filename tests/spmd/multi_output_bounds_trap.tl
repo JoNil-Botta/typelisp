@@ -9,6 +9,6 @@
       (foreach
         ([i : i64 0 8])
         (begin
-          (array-set! out-x i (+ (array-ref a i) 1))
-          (array-set! out-y i (+ (array-ref a i) 2))))
+          (set! (array-ref out-x i) (+ (array-ref a i) 1))
+          (set! (array-ref out-y i) (+ (array-ref a i) 2))))
       0)))

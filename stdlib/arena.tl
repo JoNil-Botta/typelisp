@@ -175,11 +175,11 @@
 
 ;: Return the raw runtime handle for low-level interop.
 (define (raw-handle [arena : Arena]) : i64
-  (struct-get arena handle))
+  arena.handle)
 
 ;: Return the raw runtime mark for low-level interop.
 (define (mark-raw-handle [mark : ArenaMark]) : i64
-  (struct-get mark handle))
+  mark.handle)
 
 ;: Compare two arena handles by their raw runtime identity.
 (define (eq? [left : Arena] [right : Arena]) : bool
@@ -227,8 +227,8 @@
     [home : Arena (current)]
     (unsafe
       (begin
-        (tl_arena_set (raw-handle (struct-get phase arena)))
-        (tl_region_reset (mark-raw-handle (struct-get phase mark)))
+        (tl_arena_set (raw-handle phase.arena))
+        (tl_region_reset (mark-raw-handle phase.mark))
         (tl_arena_set (raw-handle home))))))
 
 ;: Safely destroy a direct-local arena owner after its values are dead.

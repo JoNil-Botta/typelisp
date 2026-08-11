@@ -196,9 +196,8 @@
 (define (compiler-semantic-binding-vec-grow!
   [bindings : (&mut bindings CompilerSemanticBindingVec)]) : unit
   (let
-    [old-items : (__tl_dyn-array CompilerSemanticBinding)
-      (struct-get bindings items)]
-    [old-live : (__tl_dyn-array bool) (struct-get bindings live)]
+    [old-items : (__tl_dyn-array CompilerSemanticBinding) bindings.items]
+    [old-live : (__tl_dyn-array bool) bindings.live]
     [old-capacity : i64 (array-length old-items)]
     [new-capacity : i64
       (if (< old-capacity 1)
@@ -209,35 +208,33 @@
     [new-live : (__tl_dyn-array bool) (array.make-array bool new-capacity)]
     [index : i64 0]
     (begin
-      (while (< index (struct-get bindings len))
+      (while (< index bindings.len)
         (let
           [taken : (Tuple bool CompilerSemanticBinding)
             (__tl_array-take! old-items old-live index)]
           (begin
             (if (tuple-ref taken 0)
               (begin
-                (array-set! new-items index (tuple-ref taken 1))
-                (array-set! new-live index true))
+                (set! (array-ref new-items index) (tuple-ref taken 1))
+                (set! (array-ref new-live index) true))
               unit)
             (set! index (+ index 1)))))
-      (set! (struct-get bindings items) new-items)
-      (set! (struct-get bindings live) new-live))))
+      (set! bindings.items new-items)
+      (set! bindings.live new-live))))
 
 (define (compiler-semantic-binding-vec-push!
   [bindings : (&mut bindings CompilerSemanticBindingVec)]
   [binding : CompilerSemanticBinding]) : i64
   (begin
-    (if (>=
-      (struct-get bindings len)
-      (array-length (struct-get bindings items)))
+    (if (>= bindings.len (array-length bindings.items))
       (compiler-semantic-binding-vec-grow! bindings)
       unit)
     (let
-      [index : i64 (struct-get bindings len)]
+      [index : i64 bindings.len]
       (begin
-        (array-set! (struct-get bindings items) index binding)
-        (array-set! (struct-get bindings live) index true)
-        (set! (struct-get bindings len) (+ index 1))
+        (set! (array-ref bindings.items index) binding)
+        (set! (array-ref bindings.live index) true)
+        (set! bindings.len (+ index 1))
         index))))
 
 (define (compiler-semantic-record-vec-new [capacity : i64]) : CompilerSemanticRecordVec
@@ -257,9 +254,8 @@
 (define (compiler-semantic-record-vec-grow!
   [records : (&mut records CompilerSemanticRecordVec)]) : unit
   (let
-    [old-items : (__tl_dyn-array CompilerSemanticRecord)
-      (struct-get records items)]
-    [old-live : (__tl_dyn-array bool) (struct-get records live)]
+    [old-items : (__tl_dyn-array CompilerSemanticRecord) records.items]
+    [old-live : (__tl_dyn-array bool) records.live]
     [old-capacity : i64 (array-length old-items)]
     [new-capacity : i64
       (if (< old-capacity 1)
@@ -270,58 +266,58 @@
     [new-live : (__tl_dyn-array bool) (array.make-array bool new-capacity)]
     [index : i64 0]
     (begin
-      (while (< index (struct-get records len))
+      (while (< index records.len)
         (let
           [taken : (Tuple bool CompilerSemanticRecord)
             (__tl_array-take! old-items old-live index)]
           (begin
             (if (tuple-ref taken 0)
               (begin
-                (array-set! new-items index (tuple-ref taken 1))
-                (array-set! new-live index true))
+                (set! (array-ref new-items index) (tuple-ref taken 1))
+                (set! (array-ref new-live index) true))
               unit)
             (set! index (+ index 1)))))
-      (set! (struct-get records items) new-items)
-      (set! (struct-get records live) new-live))))
+      (set! records.items new-items)
+      (set! records.live new-live))))
 
 (define (compiler-semantic-record-vec-push!
   [records : (&mut records CompilerSemanticRecordVec)]
   [record : CompilerSemanticRecord]) : unit
   (begin
-    (if (>= (struct-get records len) (array-length (struct-get records items)))
+    (if (>= records.len (array-length records.items))
       (compiler-semantic-record-vec-grow! records)
       unit)
     (let
-      [index : i64 (struct-get records len)]
+      [index : i64 records.len]
       (begin
-        (array-set! (struct-get records items) index record)
-        (array-set! (struct-get records live) index true)
-        (set! (struct-get records len) (+ index 1))))))
+        (set! (array-ref records.items index) record)
+        (set! (array-ref records.live index) true)
+        (set! records.len (+ index 1))))))
 
 (define (compiler-semantic-source-index-len
   [index : (& index CompilerSemanticSourceIndex)]) : i64
-  (struct-get index len))
+  index.len)
 
 (define (compiler-semantic-source-index-get
   [index : (& index CompilerSemanticSourceIndex)]
   [record-index : i64]) : CompilerSemanticRecord
-  (if (and (>= record-index 0) (< record-index (struct-get index len)))
-    (array-ref (struct-get index records) record-index)
+  (if (and (>= record-index 0) (< record-index index.len))
+    (array-ref index.records record-index)
     (compiler-semantic-record-fallback)))
 
 (define (compiler-semantic-source-index-complete?
   [index : (& index CompilerSemanticSourceIndex)]) : bool
-  (struct-get index complete))
+  index.complete)
 
 (define (compiler-semantic-source-index-release!
   [index : (&mut index CompilerSemanticSourceIndex)]) : unit
   (let
-    [owner : i64 (struct-get index owner-arena)]
+    [owner : i64 index.owner-arena]
     (if (> owner 0)
       (begin
-        (set! (struct-get index owner-arena) 0)
-        (set! (struct-get index len) 0)
-        (set! (struct-get index complete) false)
+        (set! index.owner-arena 0)
+        (set! index.len 0)
+        (set! index.complete false)
         (set!
           compiler-semantic-source-index-live-owners
           (- compiler-semantic-source-index-live-owners 1))
@@ -354,7 +350,8 @@
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Struct)]
     [(ast.AstDecl.DefDispatch _ name _)
       (CompilerSemanticMaybeDecl.Some name CompilerSemanticSymbolKind.Function)]
-    [(ast.AstDecl.Unsafe inner) (compiler-semantic-decl-symbol (box-get inner))]
+    [(ast.AstDecl.Unsafe inner)
+      (compiler-semantic-decl-symbol (__tl-box-place inner))]
     [_ CompilerSemanticMaybeDecl.None]))
 
 (define (compiler-semantic-source-offset
@@ -693,7 +690,10 @@
             [(ast.AstDecl.DefMacro _ _ _ _ body)
               (tc.tc-expr-id-maybe-span body)]
             [(ast.AstDecl.Unsafe inner)
-              (match (compiler-semantic-decl-origin decls index (box-get inner))
+              (match (compiler-semantic-decl-origin
+                decls
+                index
+                (__tl-box-place inner))
                 [(parse_core.CompilerParseMaybeDeclSpan.Some span)
                   (tc.TcMaybeAstSourceSpan.Some span)]
                 [(parse_core.CompilerParseMaybeDeclSpan.None)
@@ -726,7 +726,7 @@
           (compiler-semantic-decl-type
             ctx
             env
-            (box-get inner)
+            (__tl-box-place inner)
             kind
             name-id
             name)]
@@ -1028,16 +1028,16 @@
   [scope : CompilerSemanticBindingSnapshot]
   [name-id : i64]) : CompilerSemanticMaybeBinding
   (let
-    [cursor : i64 (struct-get scope head)]
+    [cursor : i64 scope.head]
     [items : (__tl_dyn-array CompilerSemanticBinding)
-      (struct-get (box-get (struct-get state bindings)) items)]
+      (__tl-project-field (__tl-box-place state.bindings) items)]
     (begin
       (while (>= cursor 0)
         (let
           [binding : CompilerSemanticBinding (array-ref items cursor)]
-          (if (= (struct-get binding name-id) name-id)
+          (if (= binding.name-id name-id)
             (return (CompilerSemanticMaybeBinding.Some binding))
-            (set! cursor (struct-get binding parent)))))
+            (set! cursor binding.parent))))
       CompilerSemanticMaybeBinding.None)))
 
 (define (compiler-semantic-record-use-with-binding!
@@ -1045,28 +1045,26 @@
   [binding : CompilerSemanticBinding]
   [span : CompilerSemanticSpan]) : unit
   (compiler-semantic-record-vec-push!
-    (&mut (box-get (struct-get state records)))
+    (&mut (__tl-box-place state.records))
     (CompilerSemanticRecord
-      (struct-get binding symbol)
+      binding.symbol
       CompilerSemanticRecordRole.Use
-      (struct-get binding kind)
-      (string.copy (& (struct-get binding display-name)))
-      (string.copy (& (struct-get binding resolved-type)))
+      binding.kind
+      (string.copy (& binding.display-name))
+      (string.copy (& binding.resolved-type))
       ""
-      (struct-get (struct-get binding symbol) module-id)
+      binding.symbol.module-id
       span
-      (and
-        (not (struct-get state generated))
-        (>= (struct-get span start-byte) 0))
-      (struct-get state provenance))))
+      (and (not state.generated) (>= span.start-byte 0))
+      state.provenance)))
 
 (define (compiler-semantic-record-top-use!
   [state : CompilerSemanticWalkState]
   [name-id : i64]
   [span : CompilerSemanticSpan]) : unit
   (let
-    [ctx : tc.TcContext (struct-get state ctx)]
-    [env : tc.TcTypeEnv (struct-get state top-env)]
+    [ctx : tc.TcContext state.ctx]
+    [env : tc.TcTypeEnv state.top-env]
     [name : String (tc.tc-hygiene-name-text-id name-id)]
     (match (tc.tc-source-name-lookup-key-with-field-check-lookup
       ctx
@@ -1108,7 +1106,7 @@
                             decl-name-id
                             display-name)])]
                     (compiler-semantic-record-vec-push!
-                      (&mut (box-get (struct-get state records)))
+                      (&mut (__tl-box-place state.records))
                       (CompilerSemanticRecord
                         (CompilerSemanticSymbolId
                           module-id
@@ -1121,10 +1119,8 @@
                         ""
                         module-id
                         span
-                        (and
-                          (not (struct-get state generated))
-                          (>= (struct-get span start-byte) 0))
-                        (struct-get state provenance))))]
+                        (and (not state.generated) (>= span.start-byte 0))
+                        state.provenance)))]
                 [(CompilerSemanticMaybeDecl.None) unit]))]
           [(CompilerSemanticMaybeHandle.None) unit])]
       [(tc.TcNameLookup.Err _) unit])))
@@ -1147,12 +1143,12 @@
               -1
               -1)
             (compiler-semantic-use-span-from-origin
-              (struct-get state path)
-              (struct-get state source)
+              state.path
+              state.source
               origin))]
         [(CompilerSemanticMaybeSpan.None)
           (CompilerSemanticSpan
-            (string.copy (& (struct-get state path)))
+            (string.copy (& state.path))
             -1
             -1
             (ast.ast-source-span 1 1 1 1)
@@ -1194,26 +1190,24 @@
       (match maybe-ty
         [(ast.AstMaybeType.Some ty) (tc.tc-type-render ty)]
         [(ast.AstMaybeType.No) ""])]
-    [local-ordinal : i64 (box-get (struct-get state next-local-ordinal))]
+    [local-ordinal : i64 (__tl-box-place state.next-local-ordinal)]
     [symbol : CompilerSemanticSymbolId
       (CompilerSemanticSymbolId
-        (struct-get state module-id)
-        (struct-get state declaration-ordinal)
+        state.module-id
+        state.declaration-ordinal
         local-ordinal)]
     [span : CompilerSemanticSpan
-      (if (or
-        (struct-get state generated)
-        (string.eq (struct-get state source) ""))
+      (if (or state.generated (string.eq state.source ""))
         (CompilerSemanticSpan
-          (string.copy (& (struct-get state path)))
+          (string.copy (& state.path))
           -1
           -1
           (ast.ast-source-span 1 1 1 1)
           -1
           -1)
         (compiler-semantic-name-span-in-range
-          (struct-get state path)
-          (struct-get state source)
+          state.path
+          state.source
           name
           search-start
           search-limit))]
@@ -1224,11 +1218,11 @@
         kind
         (string.copy (& name))
         (string.copy (& type-text))
-        (struct-get scope head))]
+        scope.head)]
     (begin
-      (set! (box-get (struct-get state next-local-ordinal)) (+ local-ordinal 1))
+      (set! (deref state.next-local-ordinal) (+ local-ordinal 1))
       (compiler-semantic-record-vec-push!
-        (&mut (box-get (struct-get state records)))
+        (&mut (__tl-box-place state.records))
         (CompilerSemanticRecord
           symbol
           CompilerSemanticRecordRole.Definition
@@ -1236,22 +1230,20 @@
           (string.copy (& name))
           (string.copy (& type-text))
           ""
-          (struct-get state module-id)
+          state.module-id
           span
-          (and
-            (not (struct-get state generated))
-            (>= (struct-get span start-byte) 0))
-          (struct-get state provenance)))
+          (and (not state.generated) (>= span.start-byte 0))
+          state.provenance))
       (let
         [head : i64
           (compiler-semantic-binding-vec-push!
-            (&mut (box-get (struct-get state bindings)))
+            (&mut (__tl-box-place state.bindings))
             binding)]
         (CompilerSemanticBindResult
           (CompilerSemanticBindingSnapshot head)
           (tc.tc-bind-id env name-id binding-ty)
-          (if (>= (struct-get span end-byte) 0)
-            (struct-get span end-byte)
+          (if (>= span.end-byte 0)
+            span.end-byte
             search-start))))))
 
 (define (compiler-semantic-bind-checked-let!
@@ -1267,7 +1259,7 @@
   [search-start : i64]
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
-    [ctx : tc.TcContext (struct-get state ctx)]
+    [ctx : tc.TcContext state.ctx]
     [expr-bases : i64 (tc.tc-context-expr-bases ctx)]
     [init : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases init-id)]
     [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
@@ -1302,7 +1294,7 @@
               search-start
               search-limit)]
           (CompilerSemanticBindResult
-            (struct-get bound scope)
+            bound.scope
             ;; Reproduce the successful checker's special arena-owner,
             ;; arena-phase, and raw C function-pointer binding transition so a
             ;; later inferred binding sees the same exact lexical environment.
@@ -1312,7 +1304,7 @@
               name-id
               binding-ty
               init)
-            (struct-get bound next-search)))]
+            bound.next-search))]
       [(tc.ResultTcType.Err _)
         ;; A complete check reached this walk successfully, so this is only a
         ;; fail-closed fallback for facts the replay cannot reproduce.
@@ -1333,7 +1325,7 @@
   (match (tc.tc-expr-id-maybe-span expr-id)
     [(tc.TcMaybeAstSourceSpan.Some span)
       (compiler-semantic-source-offset
-        (struct-get state source)
+        state.source
         (ast.ast-source-span-start-line span)
         (ast.ast-source-span-start-col span))]
     [(tc.TcMaybeAstSourceSpan.No) fallback]))
@@ -1345,7 +1337,7 @@
   (match (tc.tc-expr-id-maybe-span expr-id)
     [(tc.TcMaybeAstSourceSpan.Some span)
       (compiler-semantic-source-offset
-        (struct-get state source)
+        state.source
         (ast.ast-source-span-end-line span)
         (ast.ast-source-span-end-col span))]
     [(tc.TcMaybeAstSourceSpan.No) fallback]))
@@ -1357,7 +1349,7 @@
   (match maybe-span
     [(CompilerSemanticMaybeSpan.Some span)
       (compiler-semantic-source-offset
-        (struct-get state source)
+        state.source
         (ast.ast-source-span-start-line span)
         (ast.ast-source-span-start-col span))]
     [(CompilerSemanticMaybeSpan.None) fallback]))
@@ -1390,18 +1382,17 @@
                     next-env
                     name
                     CompilerSemanticSymbolKind.Parameter
-                    (ast.AstMaybeType.Some
-                      (tc.tc-resolve-type (struct-get state ctx) ty))
+                    (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))
                     cursor
                     search-limit)]
                 (begin
-                  (set! next-scope (struct-get bound scope))
-                  (set! next-env (struct-get bound env))
+                  (set! next-scope bound.scope)
+                  (set! next-env bound.env)
                   (set!
                     cursor
                     (compiler-semantic-binding-clause-end
-                      (struct-get state source)
-                      (struct-get bound next-search)
+                      state.source
+                      bound.next-search
                       search-limit))))])
           (set! index (+ index 1))))
       (CompilerSemanticBindResult next-scope next-env cursor))))
@@ -1434,18 +1425,17 @@
                     next-env
                     name
                     CompilerSemanticSymbolKind.Parameter
-                    (ast.AstMaybeType.Some
-                      (tc.tc-resolve-type (struct-get state ctx) ty))
+                    (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))
                     cursor
                     search-limit)]
                 (begin
-                  (set! next-scope (struct-get bound scope))
-                  (set! next-env (struct-get bound env))
+                  (set! next-scope bound.scope)
+                  (set! next-env bound.env)
                   (set!
                     cursor
                     (compiler-semantic-binding-clause-end
-                      (struct-get state source)
-                      (struct-get bound next-search)
+                      state.source
+                      bound.next-search
                       search-limit))))])
           (set! index (+ index 1))))
       (CompilerSemanticBindResult next-scope next-env cursor))))
@@ -1567,7 +1557,7 @@
         (compiler-semantic-walk-quasiquote-node! state scope env then-expr)
         (compiler-semantic-walk-quasiquote-node! state scope env else-expr))]
     [(ast.AstExpr.Let payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstLet.Let bindings body)
           (begin
             (compiler-semantic-walk-quasiquote-let-bindings!
@@ -1577,7 +1567,7 @@
               bindings)
             (compiler-semantic-walk-quasiquote-node! state scope env body))])]
     [(ast.AstExpr.Lambda payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstLambda.Lambda _ _ body)
           (compiler-semantic-walk-quasiquote-node! state scope env body)])]
     [(ast.AstExpr.Tuple items)
@@ -1633,20 +1623,20 @@
     [(ast.AstExpr.Borrow _ _ inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
     [(ast.AstExpr.Match payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstMatch.Match scrutinee arms)
           (begin
             (compiler-semantic-walk-quasiquote-node! state scope env scrutinee)
             (compiler-semantic-walk-quasiquote-match-arms! state scope env arms))])]
     [(ast.AstExpr.Foreach payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstForeach.Foreach _ _ start end body)
           (begin
             (compiler-semantic-walk-quasiquote-node! state scope env start)
             (compiler-semantic-walk-quasiquote-node! state scope env end)
             (compiler-semantic-walk-quasiquote-node! state scope env body))])]
     [(ast.AstExpr.SpmdReduce payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstSpmdReduce.Reduce _ _ _ start end init value)
           (begin
             (compiler-semantic-walk-quasiquote-node! state scope env start)
@@ -1654,7 +1644,7 @@
             (compiler-semantic-walk-quasiquote-node! state scope env init)
             (compiler-semantic-walk-quasiquote-node! state scope env value))])]
     [(ast.AstExpr.SpmdScan payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstSpmdScan.Scan _ _ _ start end _ _ init value body)
           (begin
             (compiler-semantic-walk-quasiquote-node! state scope env start)
@@ -1689,7 +1679,7 @@
         (compiler-semantic-walk-quasiquote-node! state scope env arena)
         (compiler-semantic-walk-quasiquote-list! state scope env body))]
     [(ast.AstExpr.WithResource payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstWithResource.WithResource bindings body)
           (begin
             (compiler-semantic-walk-quasiquote-resource-bindings!
@@ -1779,13 +1769,12 @@
     [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : tc.TcTypeEnv env]
     [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
-    [cursor : i64
-      (compiler-semantic-form-head-end (struct-get state source) form-start)]
+    [cursor : i64 (compiler-semantic-form-head-end state.source form-start)]
     [body-start : i64
       (compiler-semantic-expr-start-offset
         state
         body-id
-        (string.string-length (struct-get state source)))]
+        (string.string-length state.source))]
     [index : i64 0]
     (begin
       (while (< index (ast.ast-let-binding-list-len (& bindings)))
@@ -1819,14 +1808,14 @@
                         cursor
                         init-start)]
                     (begin
-                      (set! next-scope (struct-get bound scope))
-                      (set! next-env (struct-get bound env))
+                      (set! next-scope bound.scope)
+                      (set! next-env bound.env)
                       (set!
                         cursor
                         (compiler-semantic-expr-end-offset
                           state
                           init-id
-                          (struct-get bound next-search)))))))])
+                          bound.next-search))))))])
           (set! index (+ index 1))))
       (compiler-semantic-walk-node! state next-scope next-env body-id))))
 
@@ -1843,20 +1832,16 @@
       (compiler-semantic-expr-start-offset
         state
         body-id
-        (string.string-length (struct-get state source)))]
+        (string.string-length state.source))]
     [bound : CompilerSemanticBindResult
       (compiler-semantic-bind-params!
         state
         scope
         env
         params
-        (compiler-semantic-form-head-end (struct-get state source) form-start)
+        (compiler-semantic-form-head-end state.source form-start)
         body-start)]
-    (compiler-semantic-walk-node!
-      state
-      (struct-get bound scope)
-      (struct-get bound env)
-      body-id)))
+    (compiler-semantic-walk-node! state bound.scope bound.env body-id)))
 
 (define (compiler-semantic-walk-foreach!
   [state : CompilerSemanticWalkState]
@@ -1880,7 +1865,7 @@
           (compiler-semantic-expr-start-offset
             state
             body-id
-            (string.string-length (struct-get state source))))]
+            (string.string-length state.source)))]
       [bound : CompilerSemanticBindResult
         (compiler-semantic-bind-local!
           state
@@ -1888,15 +1873,10 @@
           env
           name
           CompilerSemanticSymbolKind.Local
-          (ast.AstMaybeType.Some
-            (tc.tc-resolve-type (struct-get state ctx) index-ty))
-          (compiler-semantic-form-head-end (struct-get state source) form-start)
+          (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx index-ty))
+          (compiler-semantic-form-head-end state.source form-start)
           first-expr-start)]
-      (compiler-semantic-walk-node!
-        state
-        (struct-get bound scope)
-        (struct-get bound env)
-        body-id))))
+      (compiler-semantic-walk-node! state bound.scope bound.env body-id))))
 
 (define (compiler-semantic-walk-spmd-reduce!
   [state : CompilerSemanticWalkState]
@@ -1915,7 +1895,7 @@
       (compiler-semantic-expr-start-offset
         state
         start-id
-        (string.string-length (struct-get state source)))]
+        (string.string-length state.source))]
     [bound : CompilerSemanticBindResult
       (compiler-semantic-bind-local!
         state
@@ -1923,19 +1903,14 @@
         env
         index-name
         CompilerSemanticSymbolKind.Local
-        (ast.AstMaybeType.Some
-          (tc.tc-resolve-type (struct-get state ctx) index-ty))
-        (compiler-semantic-form-head-end (struct-get state source) form-start)
+        (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx index-ty))
+        (compiler-semantic-form-head-end state.source form-start)
         first-expr-start)]
     (begin
       (compiler-semantic-walk-node! state scope env start-id)
       (compiler-semantic-walk-node! state scope env end-id)
       (compiler-semantic-walk-node! state scope env init-id)
-      (compiler-semantic-walk-node!
-        state
-        (struct-get bound scope)
-        (struct-get bound env)
-        value-id))))
+      (compiler-semantic-walk-node! state bound.scope bound.env value-id))))
 
 (define (compiler-semantic-walk-spmd-scan!
   [state : CompilerSemanticWalkState]
@@ -1957,7 +1932,7 @@
       (compiler-semantic-expr-start-offset
         state
         start-id
-        (string.string-length (struct-get state source)))]
+        (string.string-length state.source))]
     [index-bound : CompilerSemanticBindResult
       (compiler-semantic-bind-local!
         state
@@ -1965,28 +1940,23 @@
         env
         index-name
         CompilerSemanticSymbolKind.Local
-        (ast.AstMaybeType.Some
-          (tc.tc-resolve-type (struct-get state ctx) index-ty))
-        (compiler-semantic-form-head-end (struct-get state source) form-start)
+        (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx index-ty))
+        (compiler-semantic-form-head-end state.source form-start)
         start-offset)]
     [init-offset : i64
       (compiler-semantic-expr-start-offset
         state
         init-id
-        (string.string-length (struct-get state source)))]
+        (string.string-length state.source))]
     [prefix-bound : CompilerSemanticBindResult
       (compiler-semantic-bind-local!
         state
-        (struct-get index-bound scope)
-        (struct-get index-bound env)
+        index-bound.scope
+        index-bound.env
         prefix-name
         CompilerSemanticSymbolKind.Local
-        (ast.AstMaybeType.Some
-          (tc.tc-resolve-type (struct-get state ctx) prefix-ty))
-        (compiler-semantic-expr-end-offset
-          state
-          end-id
-          (struct-get index-bound next-search))
+        (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx prefix-ty))
+        (compiler-semantic-expr-end-offset state end-id index-bound.next-search)
         init-offset)]
     (begin
       (compiler-semantic-walk-node! state scope env start-id)
@@ -1994,13 +1964,13 @@
       (compiler-semantic-walk-node! state scope env init-id)
       (compiler-semantic-walk-node!
         state
-        (struct-get index-bound scope)
-        (struct-get index-bound env)
+        index-bound.scope
+        index-bound.env
         value-id)
       (compiler-semantic-walk-node!
         state
-        (struct-get prefix-bound scope)
-        (struct-get prefix-bound env)
+        prefix-bound.scope
+        prefix-bound.env
         body-id))))
 
 (define (compiler-semantic-walk-set!
@@ -2016,14 +1986,14 @@
       (compiler-semantic-expr-start-offset
         state
         value-id
-        (string.string-length (struct-get state source)))]
+        (string.string-length state.source))]
     [name : String (tc.tc-env-key-name-text name-id)]
     [span : CompilerSemanticSpan
       (compiler-semantic-name-span-in-range
-        (struct-get state path)
-        (struct-get state source)
+        state.path
+        state.source
         name
-        (compiler-semantic-form-head-end (struct-get state source) form-start)
+        (compiler-semantic-form-head-end state.source form-start)
         value-start)]
     (begin
       (compiler-semantic-record-name-use-span! state scope name-id span)
@@ -2052,17 +2022,12 @@
             [(ast.AstMaybeType.Some ty)
               ;; Preserve the existing public annotation text while the arm
               ;; body uses the checker's exact fact environment.
-              (ast.AstMaybeType.Some
-                (tc.tc-resolve-type (struct-get state ctx) ty))]
+              (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))]
             [(ast.AstMaybeType.No)
               (if facts-available
-                (match (tc.tc-lookup-visible-id
-                  (struct-get state ctx)
-                  fact-env
-                  name)
+                (match (tc.tc-lookup-visible-id state.ctx fact-env name)
                   [(tc.ResultTcType.Ok ty)
-                    (ast.AstMaybeType.Some
-                      (tc.tc-resolve-type (struct-get state ctx) ty))]
+                    (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))]
                   [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
                 ast.AstMaybeType.No)])
           search-start
@@ -2077,13 +2042,9 @@
           name
           CompilerSemanticSymbolKind.Local
           (if facts-available
-            (match (tc.tc-lookup-visible-id
-              (struct-get state ctx)
-              fact-env
-              name)
+            (match (tc.tc-lookup-visible-id state.ctx fact-env name)
               [(tc.ResultTcType.Ok ty)
-                (ast.AstMaybeType.Some
-                  (tc.tc-resolve-type (struct-get state ctx) ty))]
+                (ast.AstMaybeType.Some (tc.tc-resolve-type state.ctx ty))]
               [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
             ast.AstMaybeType.No)
           search-start
@@ -2097,7 +2058,7 @@
         fact-env
         facts-available
         bound-names
-        (box-get items)
+        (__tl-box-place items)
         search-start
         search-limit)]
     [(ast.AstPattern.Array items)
@@ -2108,7 +2069,7 @@
         fact-env
         facts-available
         bound-names
-        (box-get items)
+        (__tl-box-place items)
         search-start
         search-limit)]
     [(ast.AstPattern.Variant _ items)
@@ -2119,7 +2080,7 @@
         fact-env
         facts-available
         bound-names
-        (box-get items)
+        (__tl-box-place items)
         search-start
         search-limit)]
     [_ (CompilerSemanticBindResult scope env search-start)]))
@@ -2157,9 +2118,9 @@
               cursor
               search-limit)]
           (begin
-            (set! next-scope (struct-get bound scope))
-            (set! next-env (struct-get bound env))
-            (set! cursor (struct-get bound next-search))
+            (set! next-scope bound.scope)
+            (set! next-env bound.env)
+            (set! cursor bound.next-search)
             (set! index (+ index 1)))))
       (CompilerSemanticBindResult next-scope next-env cursor))))
 
@@ -2204,17 +2165,13 @@
                 (compiler-semantic-expr-start-offset
                   state
                   (compiler-semantic-match-body-source-expr-id body)
-                  (string.string-length (struct-get state source)))]
+                  (string.string-length state.source))]
               [saved : tc.TcTypeEnvScopedRuntimeSave
                 (tc.tc-type-env-scoped-runtime-save)]
               (begin
                 (match scrutinee-ty
                   [(ast.AstMaybeType.Some ty)
-                    (match (tc.tc-bind-match-pattern
-                      (struct-get state ctx)
-                      env
-                      ty
-                      pattern)
+                    (match (tc.tc-bind-match-pattern state.ctx env ty pattern)
                       [(tc.ResultTcEnv.Ok fact-env)
                         (let
                           [bound : CompilerSemanticBindResult
@@ -2225,7 +2182,7 @@
                               fact-env
                               true
                               (compiler-semantic-pattern-bound-names
-                                (struct-get state ctx)
+                                state.ctx
                                 ty
                                 pattern)
                               pattern
@@ -2233,7 +2190,7 @@
                               body-start)]
                           (compiler-semantic-walk-node!
                             state
-                            (struct-get bound scope)
+                            bound.scope
                             fact-env
                             body))]
                       [(tc.ResultTcEnv.Err _)
@@ -2253,8 +2210,8 @@
                               body-start)]
                           (compiler-semantic-walk-node!
                             state
-                            (struct-get bound scope)
-                            (struct-get bound env)
+                            bound.scope
+                            bound.env
                             body))])]
                   [(ast.AstMaybeType.No)
                     (let
@@ -2273,8 +2230,8 @@
                           body-start)]
                       (compiler-semantic-walk-node!
                         state
-                        (struct-get bound scope)
-                        (struct-get bound env)
+                        bound.scope
+                        bound.env
                         body))])
                 (tc.tc-type-env-scoped-runtime-restore! saved)
                 (set!
@@ -2296,8 +2253,7 @@
     [next-scope : CompilerSemanticBindingSnapshot scope]
     [next-env : tc.TcTypeEnv env]
     [form-start : i64 (compiler-semantic-maybe-span-start state maybe-span 0)]
-    [cursor : i64
-      (compiler-semantic-form-head-end (struct-get state source) form-start)]
+    [cursor : i64 (compiler-semantic-form-head-end state.source form-start)]
     [index : i64 0]
     (begin
       (while (< index (ast.ast-resource-binding-list-len (& bindings)))
@@ -2312,7 +2268,7 @@
                   (compiler-semantic-expr-start-offset
                     state
                     init
-                    (string.string-length (struct-get state source)))]
+                    (string.string-length state.source))]
                 (begin
                   (compiler-semantic-walk-node!
                     state
@@ -2323,7 +2279,7 @@
                   (let
                     [bound : CompilerSemanticBindResult
                       (let
-                        [ctx : tc.TcContext (struct-get state ctx)]
+                        [ctx : tc.TcContext state.ctx]
                         [expr-bases : i64 (tc.tc-context-expr-bases ctx)]
                         [cleanup-expr : ast.AstExpr
                           (ast.ast-expr-segment-bases-get expr-bases cleanup)]
@@ -2353,7 +2309,7 @@
                                       cursor
                                       init-start)]
                                   (CompilerSemanticBindResult
-                                    (struct-get recorded scope)
+                                    recorded.scope
                                     (tc.tc-bind-id
                                       (tc.tc-bind-id
                                         next-env
@@ -2361,7 +2317,7 @@
                                         (ast.AstType.Var name))
                                       name
                                       binding-ty)
-                                    (struct-get recorded next-search)))]
+                                    recorded.next-search))]
                               [(tc.ResultTcType.Err _)
                                 (compiler-semantic-bind-local!
                                   state
@@ -2383,8 +2339,8 @@
                               cursor
                               init-start)]))]
                     (begin
-                      (set! next-scope (struct-get bound scope))
-                      (set! next-env (struct-get bound env))
+                      (set! next-scope bound.scope)
+                      (set! next-env bound.env)
                       (set!
                         cursor
                         (compiler-semantic-expr-end-offset
@@ -2393,7 +2349,7 @@
                           (compiler-semantic-expr-end-offset
                             state
                             init
-                            (struct-get bound next-search))))))))])
+                            bound.next-search)))))))])
           (set! index (+ index 1))))
       (compiler-semantic-walk-expr-list! state next-scope next-env body))))
 
@@ -2404,14 +2360,14 @@
   [node-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
-    [visited : (__tl_dyn-array i64) (struct-get state visited-expr-ids)]
+    [visited : (__tl_dyn-array i64) state.visited-expr-ids]
     (if (or
       (< node-id 0)
       (>= node-id (array-length visited))
       (!= (array-ref visited node-id) 0))
       unit
       (begin
-        (array-set! visited node-id 1)
+        (set! (array-ref visited node-id) 1)
         (let
           [expr : ast.AstExpr (ast.ast-node-get node-id)]
           (match expr
@@ -2482,11 +2438,11 @@
         (compiler-semantic-walk-node! state scope env then-expr)
         (compiler-semantic-walk-node! state scope env else-expr))]
     [(ast.AstExpr.Let payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstLet.Let bindings body)
           (compiler-semantic-walk-let! state scope env bindings body maybe-span)])]
     [(ast.AstExpr.Lambda payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstLambda.Lambda params _ body)
           (compiler-semantic-walk-lambda!
             state
@@ -2548,7 +2504,7 @@
     [(ast.AstExpr.Borrow _ _ inner)
       (compiler-semantic-walk-node! state scope env inner)]
     [(ast.AstExpr.Match payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstMatch.Match scrutinee arms)
           (begin
             (compiler-semantic-walk-node! state scope env scrutinee)
@@ -2556,7 +2512,7 @@
               state
               scope
               env
-              (match (tc.tc-expr-id (struct-get state ctx) env scrutinee)
+              (match (tc.tc-expr-id state.ctx env scrutinee)
                 [(tc.ResultTcType.Ok ty) (ast.AstMaybeType.Some ty)]
                 [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
               arms
@@ -2565,7 +2521,7 @@
                 scrutinee
                 (compiler-semantic-maybe-span-start state maybe-span 0))))])]
     [(ast.AstExpr.Foreach payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstForeach.Foreach name index-ty start end body)
           (compiler-semantic-walk-foreach!
             state
@@ -2578,7 +2534,7 @@
             body
             maybe-span)])]
     [(ast.AstExpr.SpmdReduce payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstSpmdReduce.Reduce _ index index-ty start end init value)
           (compiler-semantic-walk-spmd-reduce!
             state
@@ -2592,7 +2548,7 @@
             value
             maybe-span)])]
     [(ast.AstExpr.SpmdScan payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstSpmdScan.Scan
             _
             index
@@ -2645,7 +2601,7 @@
         (compiler-semantic-walk-node! state scope env arena)
         (compiler-semantic-walk-expr-list! state scope env body))]
     [(ast.AstExpr.WithResource payload)
-      (match (box-get payload)
+      (match (__tl-box-place payload)
         [(ast.AstWithResource.WithResource bindings body)
           (compiler-semantic-walk-with-resources!
             state
@@ -2738,21 +2694,21 @@
       (compiler-semantic-expr-start-offset
         state
         body-id
-        (string.string-length (struct-get state source)))]
+        (string.string-length state.source))]
     [form-start : i64
-      (if (>= (struct-get state form-start) 0)
-        (struct-get state form-start)
+      (if (>= state.form-start 0)
+        state.form-start
         0)]
     [name-span : CompilerSemanticSpan
       (compiler-semantic-name-span-in-range
-        (struct-get state path)
-        (struct-get state source)
+        state.path
+        state.source
         (tc.tc-env-key-name-text name-id)
-        (compiler-semantic-form-head-end (struct-get state source) form-start)
+        (compiler-semantic-form-head-end state.source form-start)
         body-start)]
-    (if (>= (struct-get name-span end-byte) 0)
-      (struct-get name-span end-byte)
-      (compiler-semantic-form-head-end (struct-get state source) form-start))))
+    (if (>= name-span.end-byte 0)
+      name-span.end-byte
+      (compiler-semantic-form-head-end state.source form-start))))
 
 (define (compiler-semantic-walk-decl!
   [state : CompilerSemanticWalkState]
@@ -2762,7 +2718,7 @@
       (compiler-semantic-walk-node!
         state
         (compiler-semantic-binding-snapshot-empty)
-        (struct-get state top-env)
+        state.top-env
         value)]
     [(ast.AstDecl.DefFn _ name params _ body _)
       (let
@@ -2770,48 +2726,40 @@
           (compiler-semantic-expr-start-offset
             state
             body
-            (string.string-length (struct-get state source)))]
+            (string.string-length state.source))]
         [bound : CompilerSemanticBindResult
           (compiler-semantic-bind-params!
             state
             (compiler-semantic-binding-snapshot-empty)
-            (struct-get state top-env)
+            state.top-env
             params
             (compiler-semantic-decl-param-search-start state name body)
             body-start)]
-        (compiler-semantic-walk-node!
-          state
-          (struct-get bound scope)
-          (struct-get bound env)
-          body))]
+        (compiler-semantic-walk-node! state bound.scope bound.env body))]
     [(ast.AstDecl.DefMacro _ name params _ body)
       (let
         [body-start : i64
           (compiler-semantic-expr-start-offset
             state
             body
-            (string.string-length (struct-get state source)))]
+            (string.string-length state.source))]
         [bound : CompilerSemanticBindResult
           (compiler-semantic-bind-macro-params!
             state
             (compiler-semantic-binding-snapshot-empty)
-            (struct-get state top-env)
+            state.top-env
             params
             (compiler-semantic-decl-param-search-start state name body)
             body-start)]
-        (compiler-semantic-walk-node!
-          state
-          (struct-get bound scope)
-          (struct-get bound env)
-          body))]
+        (compiler-semantic-walk-node! state bound.scope bound.env body))]
     [(ast.AstDecl.Test _ body _)
       (compiler-semantic-walk-node!
         state
         (compiler-semantic-binding-snapshot-empty)
-        (struct-get state top-env)
+        state.top-env
         body)]
     [(ast.AstDecl.Unsafe inner)
-      (compiler-semantic-walk-decl! state (box-get inner))]
+      (compiler-semantic-walk-decl! state (__tl-box-place inner))]
     [_ unit]))
 
 (define (compiler-semantic-source-for-path
@@ -2830,8 +2778,8 @@
   [site-index : i64]
   [source : String]) : unit
   (let
-    [ctx : tc.TcContext (struct-get state ctx)]
-    [env : tc.TcTypeEnv (struct-get state top-env)]
+    [ctx : tc.TcContext state.ctx]
+    [env : tc.TcTypeEnv state.top-env]
     [name-id : i64
       (tc.tc-macro-call-site-macro-name-id-for-state sites site-index)]
     [definition-module-id : i64
@@ -2890,7 +2838,7 @@
           (string.copy (& item))
           (string.copy (& key))))]
     (compiler-semantic-record-vec-push!
-      (&mut (box-get (struct-get state records)))
+      (&mut (__tl-box-place state.records))
       (CompilerSemanticRecord
         symbol
         CompilerSemanticRecordRole.Use
@@ -2898,7 +2846,7 @@
         (string.copy (& display-name))
         (string.copy (& resolved-type))
         ""
-        (struct-get symbol module-id)
+        symbol.module-id
         span
         editable
         provenance))))
@@ -2909,8 +2857,7 @@
   [entry-source : String]) : unit
   (let
     [sites : tc.TcMacroCallSiteState
-      (tc.tc-job-state-macro-call-sites
-        (tc.tc-context-job-state (struct-get state ctx)))]
+      (tc.tc-job-state-macro-call-sites (tc.tc-context-job-state state.ctx))]
     [count : i64 (tc.tc-macro-call-site-count-for-state sites)]
     [index : i64 0]
     [cached : bool false]
@@ -2959,7 +2906,7 @@
       (let
         [decls : ast.AstDeclList
           (match (tc.tc-context-program ctx)
-            [(ast.AstProgram.Program decls-box) (box-get decls-box)])]
+            [(ast.AstProgram.Program decls-box) (__tl-box-place decls-box)])]
         [walk-state : CompilerSemanticWalkState
           (CompilerSemanticWalkState
             ctx
@@ -3027,19 +2974,17 @@
                         [(and (not (string.eq path "")) (io.file-exists? path))
                           (byte_buf.to-string (io.read-file path))]
                         [else ""]))
-                    (set! (struct-get walk-state path) (string.copy (& path)))
-                    (set!
-                      (struct-get walk-state source)
-                      (string.copy (& cached-source))))
+                    (set! walk-state.path (string.copy (& path)))
+                    (set! walk-state.source (string.copy (& cached-source))))
                   unit)
-                (set! (struct-get walk-state ctx) decl-ctx)
-                (set! (struct-get walk-state top-env) env)
-                (set! (struct-get walk-state form-start) -1)
-                (set! (struct-get walk-state module-id) module-id)
-                (set! (struct-get walk-state declaration-ordinal) index)
-                (set! (struct-get walk-state generated) generated)
-                (set! (struct-get walk-state provenance) provenance)
-                (set! (box-get (struct-get walk-state next-local-ordinal)) 0)
+                (set! walk-state.ctx decl-ctx)
+                (set! walk-state.top-env env)
+                (set! walk-state.form-start -1)
+                (set! walk-state.module-id module-id)
+                (set! walk-state.declaration-ordinal index)
+                (set! walk-state.generated generated)
+                (set! walk-state.provenance provenance)
+                (set! (deref walk-state.next-local-ordinal) 0)
                 (match (compiler-semantic-decl-symbol decl)
                   [(CompilerSemanticMaybeDecl.Some name-id kind)
                     (let
@@ -3134,26 +3079,24 @@
                         (if (and
                           (not generated)
                           (not (string.eq cached-source ""))
-                          (>= (struct-get span start-byte) 0))
+                          (>= span.start-byte 0))
                           (compiler-semantic-documentation-above
                             cached-source
                             form-start)
                           "")]
                       (begin
-                        (set! (struct-get walk-state form-start) form-start)
+                        (set! walk-state.form-start form-start)
                         (if (>= form-start 0)
                           (set! form-search-start form-start)
                           unit)
                         ;; Local identities are anchored to the resolved
                         ;; declaration handle, not the flattened AST position.
+                        (set! walk-state.module-id symbol.module-id)
                         (set!
-                          (struct-get walk-state module-id)
-                          (struct-get symbol module-id))
-                        (set!
-                          (struct-get walk-state declaration-ordinal)
-                          (struct-get symbol declaration-ordinal))
+                          walk-state.declaration-ordinal
+                          symbol.declaration-ordinal)
                         (compiler-semantic-record-vec-push!
-                          (&mut (box-get (struct-get walk-state records)))
+                          (&mut (__tl-box-place walk-state.records))
                           (CompilerSemanticRecord
                             symbol
                             CompilerSemanticRecordRole.Definition
@@ -3161,12 +3104,12 @@
                             (string.copy (& name))
                             (string.copy (& type-text))
                             (string.copy (& documentation))
-                            (struct-get symbol module-id)
+                            symbol.module-id
                             span
                             (and
                               (not generated)
                               has-origin
-                              (>= (struct-get span start-byte) 0))
+                              (>= span.start-byte 0))
                             provenance))))]
                   [(CompilerSemanticMaybeDecl.None) unit])
                 (compiler-semantic-walk-decl! walk-state decl)
@@ -3179,8 +3122,8 @@
             [result : CompilerSemanticSourceIndex
               (CompilerSemanticSourceIndex
                 owner
-                (struct-get (box-get (struct-get walk-state records)) items)
-                (struct-get (box-get (struct-get walk-state records)) len)
+                (__tl-project-field (__tl-box-place walk-state.records) items)
+                (__tl-project-field (__tl-box-place walk-state.records) len)
                 true)]
             (begin
               (unsafe
@@ -3229,7 +3172,7 @@
             (ResultCompilerCheckWithSemanticIndex.Err
               (box
                 (check_core.compiler-check-diagnostics-with-fallback-path
-                  (box-get diag)
+                  (__tl-box-place diag)
                   path))))]))))
 
 (define (compiler-check-loaded-with-prelude-index-cache
@@ -3325,18 +3268,18 @@
     [record-index : i64 0]
     [found : i64 -1]
     (begin
-      (while (and (< found 0) (< record-index (struct-get index len)))
+      (while (and (< found 0) (< record-index index.len))
         (let
           [record : CompilerSemanticRecord
-            (array-ref (struct-get index records) record-index)]
+            (array-ref index.records record-index)]
           (begin
             (if (and
-              (match (struct-get record role)
+              (match record.role
                 [(CompilerSemanticRecordRole.Definition) true]
                 [_ false])
-              (struct-get record editable)
-              (string.eq (struct-get record display-name) name)
-              (string.eq (struct-get (struct-get record span) path) path))
+              record.editable
+              (string.eq record.display-name name)
+              (string.eq record.span.path path))
               (set! found record-index)
               unit)
             (set! record-index (+ record-index 1)))))
@@ -3351,18 +3294,18 @@
     [found : i64 -1]
     [found-width : i64 999999999]
     (begin
-      (while (< record-index (struct-get index len))
+      (while (< record-index index.len)
         (let
           [record : CompilerSemanticRecord
-            (array-ref (struct-get index records) record-index)]
-          [span : CompilerSemanticSpan (struct-get record span)]
-          [start : i64 (struct-get span start-byte)]
-          [end : i64 (struct-get span end-byte)]
+            (array-ref index.records record-index)]
+          [span : CompilerSemanticSpan record.span]
+          [start : i64 span.start-byte]
+          [end : i64 span.end-byte]
           [width : i64 (- end start)]
           (begin
             (if (and
-              (struct-get record editable)
-              (match (struct-get record provenance)
+              record.editable
+              (match record.provenance
                 [(CompilerSemanticProvenance.EditableSource) true]
                 [_ false])
               (>= byte-position start)
@@ -3382,42 +3325,40 @@
   [name : String]
   [kind : CompilerSemanticSymbolKind]) : bool
   (let
-    [span : CompilerSemanticSpan (struct-get record span)]
-    [start : i64 (struct-get span start-byte)]
-    [end : i64 (struct-get span end-byte)]
+    [span : CompilerSemanticSpan record.span]
+    [start : i64 span.start-byte]
+    [end : i64 span.end-byte]
     (and
-      (struct-get record editable)
-      (match (struct-get record provenance)
+      record.editable
+      (match record.provenance
         [(CompilerSemanticProvenance.EditableSource) true]
         [_ false])
       (match kind
         [(CompilerSemanticSymbolKind.Value)
-          (match (struct-get record kind)
+          (match record.kind
             [(CompilerSemanticSymbolKind.Value) true]
             [_ false])]
         [(CompilerSemanticSymbolKind.Function)
-          (match (struct-get record kind)
+          (match record.kind
             [(CompilerSemanticSymbolKind.Function) true]
             [_ false])]
         [(CompilerSemanticSymbolKind.Struct)
-          (match (struct-get record kind)
+          (match record.kind
             [(CompilerSemanticSymbolKind.Struct) true]
             [_ false])]
         [_ false])
       (>= start 0)
       (= (- end start) (string.string-length name))
       (string.eq (string.substring source start (- end start)) name)
-      (not (string.eq (struct-get record resolved-type) "")))))
+      (not (string.eq record.resolved-type "")))))
 
 (define (compiler-semantic-symbol-id-eq?
   [left : CompilerSemanticSymbolId]
   [right : CompilerSemanticSymbolId]) : bool
   (and
-    (= (struct-get left module-id) (struct-get right module-id))
-    (=
-      (struct-get left declaration-ordinal)
-      (struct-get right declaration-ordinal))
-    (= (struct-get left local-ordinal) (struct-get right local-ordinal))))
+    (= left.module-id right.module-id)
+    (= left.declaration-ordinal right.declaration-ordinal)
+    (= left.local-ordinal right.local-ordinal)))
 
 (define (compiler-semantic-source-index-find-record
   [index : (& index CompilerSemanticSourceIndex)]
@@ -3429,27 +3370,25 @@
     [record-index : i64 0]
     [found : i64 -1]
     (begin
-      (while (and (< found 0) (< record-index (struct-get index len)))
+      (while (and (< found 0) (< record-index index.len))
         (let
           [record : CompilerSemanticRecord
-            (array-ref (struct-get index records) record-index)]
-          [symbol : CompilerSemanticSymbolId (struct-get record symbol)]
+            (array-ref index.records record-index)]
+          [symbol : CompilerSemanticSymbolId record.symbol]
           (begin
             (if (and
-              (string.eq (struct-get record display-name) name)
+              (string.eq record.display-name name)
               (match role
                 [(CompilerSemanticRecordRole.Definition)
-                  (match (struct-get record role)
+                  (match record.role
                     [(CompilerSemanticRecordRole.Definition) true]
                     [_ false])]
                 [(CompilerSemanticRecordRole.Use)
-                  (match (struct-get record role)
+                  (match record.role
                     [(CompilerSemanticRecordRole.Use) true]
                     [_ false])])
-              (= (struct-get symbol local-ordinal) local-ordinal)
-              (or
-                (string.eq path "")
-                (string.eq (struct-get (struct-get record span) path) path)))
+              (= symbol.local-ordinal local-ordinal)
+              (or (string.eq path "") (string.eq record.span.path path)))
               (set! found record-index)
               unit)
             (set! record-index (+ record-index 1)))))
@@ -3466,25 +3405,23 @@
     [seen : i64 0]
     [found : i64 -1]
     (begin
-      (while (and (< found 0) (< record-index (struct-get index len)))
+      (while (and (< found 0) (< record-index index.len))
         (let
           [record : CompilerSemanticRecord
-            (array-ref (struct-get index records) record-index)]
+            (array-ref index.records record-index)]
           (begin
             (if (and
-              (string.eq (struct-get record display-name) name)
+              (string.eq record.display-name name)
               (match role
                 [(CompilerSemanticRecordRole.Definition)
-                  (match (struct-get record role)
+                  (match record.role
                     [(CompilerSemanticRecordRole.Definition) true]
                     [_ false])]
                 [(CompilerSemanticRecordRole.Use)
-                  (match (struct-get record role)
+                  (match record.role
                     [(CompilerSemanticRecordRole.Use) true]
                     [_ false])])
-              (or
-                (string.eq path "")
-                (string.eq (struct-get (struct-get record span) path) path)))
+              (or (string.eq path "") (string.eq record.span.path path)))
               (if (= seen occurrence)
                 (set! found record-index)
                 (set! seen (+ seen 1)))
@@ -3500,31 +3437,25 @@
     [record-index : i64 0]
     [found : i64 -1]
     (begin
-      (while (and (< found 0) (< record-index (struct-get index len)))
+      (while (and (< found 0) (< record-index index.len))
         (let
           [record : CompilerSemanticRecord
-            (array-ref (struct-get index records) record-index)]
-          [record-symbol : CompilerSemanticSymbolId (struct-get record symbol)]
+            (array-ref index.records record-index)]
+          [record-symbol : CompilerSemanticSymbolId record.symbol]
           (begin
             (if (and
               (match role
                 [(CompilerSemanticRecordRole.Definition)
-                  (match (struct-get record role)
+                  (match record.role
                     [(CompilerSemanticRecordRole.Definition) true]
                     [_ false])]
                 [(CompilerSemanticRecordRole.Use)
-                  (match (struct-get record role)
+                  (match record.role
                     [(CompilerSemanticRecordRole.Use) true]
                     [_ false])])
-              (=
-                (struct-get record-symbol module-id)
-                (struct-get symbol module-id))
-              (=
-                (struct-get record-symbol declaration-ordinal)
-                (struct-get symbol declaration-ordinal))
-              (=
-                (struct-get record-symbol local-ordinal)
-                (struct-get symbol local-ordinal)))
+              (= record-symbol.module-id symbol.module-id)
+              (= record-symbol.declaration-ordinal symbol.declaration-ordinal)
+              (= record-symbol.local-ordinal symbol.local-ordinal))
               (set! found record-index)
               unit)
             (set! record-index (+ record-index 1)))))
@@ -3555,19 +3486,21 @@
       (>= definition-index 0)
       (>= use-index 0)
       (compiler-semantic-symbol-id-eq?
-        (struct-get
+        (__tl-project-field
           (compiler-semantic-source-index-get index definition-index)
           symbol)
-        (struct-get (compiler-semantic-source-index-get index use-index) symbol)))))
+        (__tl-project-field
+          (compiler-semantic-source-index-get index use-index)
+          symbol)))))
 
 (define (compiler-semantic-record-span-text-eq?
   [source : String]
   [record : CompilerSemanticRecord]
   [expected : String]) : bool
   (let
-    [span : CompilerSemanticSpan (struct-get record span)]
-    [start : i64 (struct-get span start-byte)]
-    [end : i64 (struct-get span end-byte)]
+    [span : CompilerSemanticSpan record.span]
+    [start : i64 span.start-byte]
+    [end : i64 span.end-byte]
     (and
       (>= start 0)
       (>= end start)
@@ -3583,20 +3516,20 @@
     [seen : i64 0]
     [found : i64 -1]
     (begin
-      (while (and (< found 0) (< record-index (struct-get index len)))
+      (while (and (< found 0) (< record-index index.len))
         (let
           [record : CompilerSemanticRecord
-            (array-ref (struct-get index records) record-index)]
+            (array-ref index.records record-index)]
           (begin
             (if (and
-              (match (struct-get record role)
+              (match record.role
                 [(CompilerSemanticRecordRole.Use) true]
                 [_ false])
-              (match (struct-get record kind)
+              (match record.kind
                 [(CompilerSemanticSymbolKind.Macro) true]
                 [_ false])
-              (= (struct-get record editable) editable)
-              (string.eq (struct-get record display-name) name))
+              (= record.editable editable)
+              (string.eq record.display-name name))
               (if (= seen occurrence)
                 (set! found record-index)
                 (set! seen (+ seen 1)))
@@ -3612,20 +3545,20 @@
     [record-index : i64 0]
     [count : i64 0]
     (begin
-      (while (< record-index (struct-get index len))
+      (while (< record-index index.len)
         (let
           [record : CompilerSemanticRecord
-            (array-ref (struct-get index records) record-index)]
+            (array-ref index.records record-index)]
           (begin
             (if (and
-              (match (struct-get record role)
+              (match record.role
                 [(CompilerSemanticRecordRole.Use) true]
                 [_ false])
-              (match (struct-get record kind)
+              (match record.kind
                 [(CompilerSemanticSymbolKind.Macro) true]
                 [_ false])
-              (= (struct-get record editable) editable)
-              (string.eq (struct-get record display-name) name))
+              (= record.editable editable)
+              (string.eq record.display-name name))
               (set! count (+ count 1))
               unit)
             (set! record-index (+ record-index 1)))))
@@ -3645,11 +3578,11 @@
         (&mut records)
         (compiler-semantic-record-fallback))
       (and
-        (= (struct-get records len) 3)
-        (>= (array-length (struct-get records items)) 3)
-        (array-ref (struct-get records live) 0)
-        (array-ref (struct-get records live) 1)
-        (array-ref (struct-get records live) 2)))))
+        (= records.len 3)
+        (>= (array-length records.items) 3)
+        (array-ref records.live 0)
+        (array-ref records.live 1)
+        (array-ref records.live 2)))))
 
 (define (compiler-check-semantic-index-base-ok?) : bool
   (let
@@ -3668,7 +3601,7 @@
 ;# Additional answer detail.
   (define answer : i64 42)
 (defmacro (wrap [value : Expr]) : Expr
-  `(struct-get ,value left))
+  `(__tl-project-field-name ,value \"left\"))
 (define wrapped-answer : i64 (wrap (Pair 8)))
 (define (use
   ; answer appears in a comment before the parameter binder.
@@ -3876,10 +3809,8 @@
                   pattern-definition-index)]
               [pattern-use : CompilerSemanticRecord
                 (compiler-semantic-source-index-get (& first) pattern-use-index)]
-              [answer-symbol : CompilerSemanticSymbolId
-                (struct-get answer symbol)]
-              [answer-start : i64
-                (struct-get (struct-get answer span) start-byte)]
+              [answer-symbol : CompilerSemanticSymbolId answer.symbol]
+              [answer-start : i64 answer.span.start-byte]
               (match (compiler-check-source-index-with-roots
                 path
                 source
@@ -3907,7 +3838,7 @@
                         (& second)
                         second-param-index)]
                     [second-symbol : CompilerSemanticSymbolId
-                      (struct-get second-answer symbol)]
+                      second-answer.symbol]
                     [invalid-keeps-first : bool
                       (match (compiler-check-source-index-with-roots
                         path
@@ -3929,12 +3860,10 @@
                           "answer"
                           CompilerSemanticSymbolKind.Value)
                         (=
-                          (ast.ast-source-span-start-line
-                            (struct-get (struct-get answer span) source))
+                          (ast.ast-source-span-start-line answer.span.source)
                           12)
                         (=
-                          (ast.ast-source-span-start-col
-                            (struct-get (struct-get answer span) source))
+                          (ast.ast-source-span-start-col answer.span.source)
                           11)
                         (compiler-check-semantic-index-record-ok?
                           source
@@ -3947,52 +3876,42 @@
                           "Pair"
                           CompilerSemanticSymbolKind.Struct)
                         (string.eq
-                          (struct-get answer documentation)
+                          answer.documentation
                           "Top answer documentation.\nAdditional answer detail.")
                         (compiler-semantic-symbol-id-eq?
-                          (struct-get param-definition symbol)
-                          (struct-get param-use symbol))
+                          param-definition.symbol
+                          param-use.symbol)
                         (compiler-semantic-symbol-id-eq?
-                          (struct-get local-definition symbol)
-                          (struct-get local-use symbol))
+                          local-definition.symbol
+                          local-use.symbol)
                         (compiler-semantic-symbol-id-eq?
-                          (struct-get macro-param-definition symbol)
-                          (struct-get macro-param-use symbol))
+                          macro-param-definition.symbol
+                          macro-param-use.symbol)
                         (=
-                          (struct-get (struct-get use symbol) module-id)
-                          (struct-get
-                            (struct-get param-definition symbol)
-                            module-id))
+                          use.symbol.module-id
+                          param-definition.symbol.module-id)
                         (=
-                          (struct-get
-                            (struct-get use symbol)
-                            declaration-ordinal)
-                          (struct-get
-                            (struct-get param-definition symbol)
-                            declaration-ordinal))
+                          use.symbol.declaration-ordinal
+                          param-definition.symbol.declaration-ordinal)
                         (not
                           (compiler-semantic-symbol-id-eq?
-                            (struct-get answer symbol)
-                            (struct-get param-definition symbol)))
+                            answer.symbol
+                            param-definition.symbol))
                         (not
                           (compiler-semantic-symbol-id-eq?
-                            (struct-get param-definition symbol)
-                            (struct-get local-definition symbol)))
+                            param-definition.symbol
+                            local-definition.symbol))
                         (compiler-semantic-record-span-text-eq?
                           source
                           param-definition
                           "answer")
                         (=
                           (ast.ast-source-span-start-line
-                            (struct-get
-                              (struct-get param-definition span)
-                              source))
+                            param-definition.span.source)
                           18)
                         (=
                           (ast.ast-source-span-start-col
-                            (struct-get
-                              (struct-get param-definition span)
-                              source))
+                            param-definition.span.source)
                           4)
                         (compiler-semantic-record-span-text-eq?
                           source
@@ -4004,15 +3923,11 @@
                           "answer")
                         (=
                           (ast.ast-source-span-start-line
-                            (struct-get
-                              (struct-get local-definition span)
-                              source))
+                            local-definition.span.source)
                           21)
                         (=
                           (ast.ast-source-span-start-col
-                            (struct-get
-                              (struct-get local-definition span)
-                              source))
+                            local-definition.span.source)
                           6)
                         (compiler-semantic-record-span-text-eq?
                           source
@@ -4026,25 +3941,21 @@
                           source
                           macro-param-use
                           "value")
-                        (string.eq
-                          (struct-get param-definition resolved-type)
-                          "i64")
-                        (string.eq
-                          (struct-get local-definition resolved-type)
-                          "i64")
+                        (string.eq param-definition.resolved-type "i64")
+                        (string.eq local-definition.resolved-type "i64")
                         (compiler-semantic-record-span-text-eq?
                           source
                           import-use
                           "dep.imported-value")
                         (compiler-semantic-symbol-id-eq?
-                          (struct-get import-definition symbol)
-                          (struct-get import-use symbol))
+                          import-definition.symbol
+                          import-use.symbol)
                         (compiler-semantic-symbol-id-eq?
-                          (struct-get answer symbol)
-                          (struct-get answer-use symbol))
+                          answer.symbol
+                          answer-use.symbol)
                         (compiler-semantic-symbol-id-eq?
-                          (struct-get use symbol)
-                          (struct-get function-use symbol))
+                          use.symbol
+                          function-use.symbol)
                         (compiler-semantic-record-span-text-eq?
                           source
                           answer-use
@@ -4053,13 +3964,13 @@
                           source
                           function-use
                           "use")
-                        (not (struct-get generated editable))
-                        (match (struct-get generated provenance)
+                        (not generated.editable)
+                        (match generated.provenance
                           [(CompilerSemanticProvenance.Generated _ _ _) true]
                           [_ false])
                         (compiler-semantic-symbol-id-eq?
-                          (struct-get pattern-definition symbol)
-                          (struct-get pattern-use symbol))
+                          pattern-definition.symbol
+                          pattern-use.symbol)
                         (compiler-semantic-record-span-text-eq?
                           source
                           pattern-definition
@@ -4068,33 +3979,25 @@
                           source
                           pattern-use
                           "bound")
+                        (string.eq pattern-definition.resolved-type "i64")
                         (string.eq
-                          (struct-get pattern-definition resolved-type)
-                          "i64")
-                        (string.eq
-                          (struct-get import-definition documentation)
+                          import-definition.documentation
                           "Imported value documentation.\nAdditional import detail.")
-                        (> (struct-get answer module-id) 0)
+                        (> answer.module-id 0)
+                        (= answer-symbol.module-id second-symbol.module-id)
                         (=
-                          (struct-get answer-symbol module-id)
-                          (struct-get second-symbol module-id))
-                        (=
-                          (struct-get answer-symbol declaration-ordinal)
-                          (struct-get second-symbol declaration-ordinal))
+                          answer-symbol.declaration-ordinal
+                          second-symbol.declaration-ordinal)
                         (>= second-param-index 0)
                         (compiler-semantic-symbol-id-eq?
-                          (struct-get param-definition symbol)
-                          (struct-get second-param symbol))
-                        (=
-                          answer-start
-                          (struct-get
-                            (struct-get second-answer span)
-                            start-byte))
+                          param-definition.symbol
+                          second-param.symbol)
+                        (= answer-start second-answer.span.start-byte)
                         invalid-keeps-first
                         (=
                           (compiler-semantic-source-index-len (& first))
                           first-len)
-                        (string.eq (struct-get answer display-name) "answer"))]
+                        (string.eq answer.display-name "answer"))]
                     (begin
                       (compiler-semantic-source-index-release! (&mut second))
                       (compiler-semantic-source-index-release! (&mut first))
@@ -4269,45 +4172,37 @@
             (compiler-semantic-source-index-count-macro-uses index "plain" true)
             0)
           (compiler-semantic-symbol-id-eq?
-            (struct-get local-definition symbol)
-            (struct-get local-use-zero symbol))
+            local-definition.symbol
+            local-use-zero.symbol)
           (compiler-semantic-symbol-id-eq?
-            (struct-get local-definition symbol)
-            (struct-get local-use-one symbol))
+            local-definition.symbol
+            local-use-one.symbol)
           (compiler-semantic-symbol-id-eq?
-            (struct-get local-definition symbol)
-            (struct-get local-use-two symbol))
+            local-definition.symbol
+            local-use-two.symbol)
           (compiler-semantic-symbol-id-eq?
-            (struct-get local-definition symbol)
-            (struct-get generated-use symbol))
+            local-definition.symbol
+            generated-use.symbol)
           (compiler-semantic-symbol-id-eq?
-            (struct-get outer-definition symbol)
-            (struct-get outer-use symbol))
+            outer-definition.symbol
+            outer-use.symbol)
           (compiler-semantic-symbol-id-eq?
-            (struct-get import-definition symbol)
-            (struct-get import-use symbol))
+            import-definition.symbol
+            import-use.symbol)
           (compiler-semantic-symbol-id-eq?
-            (struct-get shadow-definition symbol)
-            (struct-get shadow-use symbol))
+            shadow-definition.symbol
+            shadow-use.symbol)
           (string.eq
-            (struct-get local-definition resolved-type)
-            (struct-get local-use-zero resolved-type))
-          (string.eq
-            (struct-get import-definition resolved-type)
-            (struct-get import-use resolved-type))
-          (string.eq
-            (struct-get shadow-definition resolved-type)
-            (struct-get shadow-use resolved-type))
-          (<
-            (struct-get (struct-get local-use-zero span) start-byte)
-            (struct-get (struct-get local-use-one span) start-byte))
-          (<
-            (struct-get (struct-get local-use-one span) start-byte)
-            (struct-get (struct-get local-use-two span) start-byte))
+            local-definition.resolved-type
+            local-use-zero.resolved-type)
+          (string.eq import-definition.resolved-type import-use.resolved-type)
+          (string.eq shadow-definition.resolved-type shadow-use.resolved-type)
+          (< local-use-zero.span.start-byte local-use-one.span.start-byte)
+          (< local-use-one.span.start-byte local-use-two.span.start-byte)
           (not
             (compiler-semantic-symbol-id-eq?
-              (struct-get import-definition symbol)
-              (struct-get shadow-use symbol)))
+              import-definition.symbol
+              shadow-use.symbol))
           (compiler-semantic-record-span-text-eq?
             source
             local-use-zero
@@ -4335,16 +4230,16 @@
             "make-module")
           (compiler-semantic-record-span-text-eq? source outer-use "outer-wrap")
           (string.eq
-            (struct-get local-definition documentation)
+            local-definition.documentation
             "Local macro documentation.")
           (string.eq
-            (struct-get import-definition documentation)
+            import-definition.documentation
             "Imported macro documentation.")
-          (not (string.eq (struct-get local-use-zero resolved-type) ""))
-          (not (string.eq (struct-get import-use resolved-type) ""))
-          (< (struct-get (struct-get generated-use span) start-byte) 0)
-          (not (struct-get generated-use editable))
-          (match (struct-get generated-use provenance)
+          (not (string.eq local-use-zero.resolved-type ""))
+          (not (string.eq import-use.resolved-type ""))
+          (< generated-use.span.start-byte 0)
+          (not generated-use.editable)
+          (match generated-use.provenance
             [(CompilerSemanticProvenance.Generated generator _ key)
               (and (not (string.eq generator "")) (not (string.eq key "")))]
             [_ false]))))))
@@ -4427,11 +4322,9 @@
                     (>= first-local-index 0)
                     (>= second-local-index 0)
                     (compiler-semantic-symbol-id-eq?
-                      (struct-get first-local symbol)
-                      (struct-get second-local symbol))
-                    (=
-                      (struct-get (struct-get first-local span) start-byte)
-                      (struct-get (struct-get second-local span) start-byte)))]
+                      first-local.symbol
+                      second-local.symbol)
+                    (= first-local.span.start-byte second-local.span.start-byte))]
                 (begin
                   (compiler-semantic-source-index-release! (&mut second))
                   (compiler-semantic-source-index-release! (&mut first))
@@ -4577,32 +4470,32 @@
               [closure-use-index : i64
                 (compiler-semantic-source-index-find-symbol-role
                   (& first)
-                  (struct-get closure-definition symbol)
+                  closure-definition.symbol
                   CompilerSemanticRecordRole.Use)]
               [alias-use-index : i64
                 (compiler-semantic-source-index-find-symbol-role
                   (& first)
-                  (struct-get alias-definition symbol)
+                  alias-definition.symbol
                   CompilerSemanticRecordRole.Use)]
               [outer-callback-use-index : i64
                 (compiler-semantic-source-index-find-symbol-role
                   (& first)
-                  (struct-get outer-callback-definition symbol)
+                  outer-callback-definition.symbol
                   CompilerSemanticRecordRole.Use)]
               [inner-callback-use-index : i64
                 (compiler-semantic-source-index-find-symbol-role
                   (& first)
-                  (struct-get inner-callback-definition symbol)
+                  inner-callback-definition.symbol
                   CompilerSemanticRecordRole.Use)]
               [resource-use-index : i64
                 (compiler-semantic-source-index-find-symbol-role
                   (& first)
-                  (struct-get resource-definition symbol)
+                  resource-definition.symbol
                   CompilerSemanticRecordRole.Use)]
               [enum-item-use-index : i64
                 (compiler-semantic-source-index-find-symbol-role
                   (& first)
-                  (struct-get enum-item-definition symbol)
+                  enum-item-definition.symbol
                   CompilerSemanticRecordRole.Use)]
               [closure-use : CompilerSemanticRecord
                 (compiler-semantic-source-index-get (& first) closure-use-index)]
@@ -4649,56 +4542,40 @@
                         (>= inner-callback-use-index 0)
                         (>= resource-use-index 0)
                         (>= enum-item-use-index 0)
+                        (string.eq scalar-definition.resolved-type "bool")
                         (string.eq
-                          (struct-get scalar-definition resolved-type)
-                          "bool")
-                        (string.eq
-                          (struct-get closure-definition resolved-type)
+                          closure-definition.resolved-type
                           "(-> i64 i64)")
                         (string.eq
-                          (struct-get alias-definition resolved-type)
+                          alias-definition.resolved-type
                           "(-> i64 i64)")
                         (string.eq
-                          (struct-get outer-callback-definition resolved-type)
+                          outer-callback-definition.resolved-type
                           "(-> i64 i64)")
                         (string.eq
-                          (struct-get inner-callback-definition resolved-type)
+                          inner-callback-definition.resolved-type
                           "(-> bool bool)")
+                        (string.eq resource-definition.resolved-type "i64")
+                        (string.eq enum-item-definition.resolved-type "i64")
+                        (string.eq closure-use.resolved-type "(-> i64 i64)")
+                        (string.eq alias-use.resolved-type "(-> i64 i64)")
                         (string.eq
-                          (struct-get resource-definition resolved-type)
-                          "i64")
-                        (string.eq
-                          (struct-get enum-item-definition resolved-type)
-                          "i64")
-                        (string.eq
-                          (struct-get closure-use resolved-type)
+                          outer-callback-use.resolved-type
                           "(-> i64 i64)")
                         (string.eq
-                          (struct-get alias-use resolved-type)
-                          "(-> i64 i64)")
-                        (string.eq
-                          (struct-get outer-callback-use resolved-type)
-                          "(-> i64 i64)")
-                        (string.eq
-                          (struct-get inner-callback-use resolved-type)
+                          inner-callback-use.resolved-type
                           "(-> bool bool)")
-                        (string.eq
-                          (struct-get resource-use resolved-type)
-                          "i64")
-                        (string.eq
-                          (struct-get enum-item-use resolved-type)
-                          "i64")
+                        (string.eq resource-use.resolved-type "i64")
+                        (string.eq enum-item-use.resolved-type "i64")
                         (not
                           (compiler-semantic-symbol-id-eq?
-                            (struct-get outer-callback-definition symbol)
-                            (struct-get inner-callback-definition symbol)))
-                        (string.eq
-                          (struct-get second-alias resolved-type)
-                          "(-> i64 i64)")
+                            outer-callback-definition.symbol
+                            inner-callback-definition.symbol))
+                        (string.eq second-alias.resolved-type "(-> i64 i64)")
                         ;; The second complete check resets compiler state; the
                         ;; first index must still own its rendered type text.
                         (string.eq
-                          (struct-get alias-definition resolved-type)
+                          alias-definition.resolved-type
                           "(-> i64 i64)"))]
                     (begin
                       (compiler-semantic-source-index-release! (&mut second))

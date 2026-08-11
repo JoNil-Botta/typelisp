@@ -11,11 +11,11 @@
   [d : (&mut d Pair)]
   [e : (&mut e Pair)]) : unit
   (begin
-    (set! (struct-get a x) 1)
-    (set! (struct-get b x) 2)
-    (set! (struct-get c x) 3)
-    (set! (struct-get d x) 4)
-    (set! (struct-get e x) 5)))
+    (set! a.x 1)
+    (set! b.x 2)
+    (set! c.x 3)
+    (set! d.x 4)
+    (set! e.x 5)))
 
 (define (main) : i64
   (let
@@ -27,15 +27,15 @@
     (begin
       (set-five! (&mut a) (&mut b) (&mut c) (&mut d) (&mut e))
       (if (and
-        (= (struct-get a x) 1)
-        (= (struct-get b x) 2)
-        (= (struct-get c x) 3)
-        (= (struct-get d x) 4)
-        (= (struct-get e x) 5)
-        (= (struct-get a y) 11)
-        (= (struct-get b y) 12)
-        (= (struct-get c y) 13)
-        (= (struct-get d y) 14)
-        (= (struct-get e y) 15))
+        (= a.x 1)
+        (= b.x 2)
+        (= c.x 3)
+        (= d.x 4)
+        (= e.x 5)
+        (= a.y 11)
+        (= b.y 12)
+        (= c.y 13)
+        (= d.y 14)
+        (= e.y 15))
         42
         1))))

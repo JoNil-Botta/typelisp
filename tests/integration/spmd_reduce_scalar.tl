@@ -129,18 +129,18 @@
 (define (fill-i64 [xs : (&mut xs i64v.Vec)] [n : i64]) : unit
   (let
     [xs-slots (i64v.slots-mut xs)]
-    (foreach ([i : i64 0 n]) (array-set! xs-slots i (+ i 1)))))
+    (foreach ([i : i64 0 n]) (set! (array-ref xs-slots i) (+ i 1)))))
 
 ; Float casts are not supported yet, so seed the f64 array with literals.
 (define (fill-f64 [fs : (&mut fs f64v.Vec)]) : unit
   (let
     [fs-slots (f64v.slots-mut fs)]
     (begin
-      (array-set! fs-slots 0 1.0)
-      (array-set! fs-slots 1 2.0)
-      (array-set! fs-slots 2 3.0)
-      (array-set! fs-slots 3 4.0)
-      (array-set! fs-slots 4 5.0))))
+      (set! (array-ref fs-slots 0) 1.0)
+      (set! (array-ref fs-slots 1) 2.0)
+      (set! (array-ref fs-slots 2) 3.0)
+      (set! (array-ref fs-slots 3) 4.0)
+      (set! (array-ref fs-slots 4) 5.0))))
 
 (define (fill-f32 [values : (&mut values f32v.Vec)] [n : i64]) : unit
   (let
@@ -149,11 +149,11 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! values-slots i (cast (+ i 1) : f32))
+          (set! (array-ref values-slots i) (cast (+ i 1) : f32))
           (set! i (+ i 1))))
       ; Include a negative lane while keeping every value and partial sum
       ; exactly representable in binary32.
-      (array-set! values-slots 1 (cast -2.0 : f32)))))
+      (set! (array-ref values-slots 1) (cast -2.0 : f32)))))
 
 (define (fill-f32-negative-zero [values : (&mut values f32v.Vec)] [n : i64]) : unit
   (let
@@ -161,7 +161,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! values-slots i (cast -0.0 : f32))
+        (set! (array-ref values-slots i) (cast -0.0 : f32))
         (set! i (+ i 1))))))
 
 (define (fill-f32-overflow [values : (&mut values f32v.Vec)] [n : i64]) : unit
@@ -172,45 +172,45 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! values-slots i (cast 0.0 : f32))
+          (set! (array-ref values-slots i) (cast 0.0 : f32))
           (set! i (+ i 1))))
-      (array-set! values-slots 0 max-finite)
-      (array-set! values-slots 1 max-finite))))
+      (set! (array-ref values-slots 0) max-finite)
+      (set! (array-ref values-slots 1) max-finite))))
 
 (define (fill-i32 [gs : (&mut gs i32v.Vec)] [n : i64]) : unit
   (let
     [gs-slots (i32v.slots-mut gs)]
-    (foreach ([i : i64 0 n]) (array-set! gs-slots i (cast (+ i 1) : i32)))))
+    (foreach ([i : i64 0 n]) (set! (array-ref gs-slots i) (cast (+ i 1) : i32)))))
 
 (define (fill-signed-i32 [hs : (&mut hs i32v.Vec)]) : unit
   (let
     [hs-slots (i32v.slots-mut hs)]
     (begin
-      (array-set! hs-slots 0 (cast 3 : i32))
-      (array-set! hs-slots 1 (cast (- 0 7) : i32))
-      (array-set! hs-slots 2 (cast 12 : i32))
-      (array-set! hs-slots 3 (cast (- 0 1) : i32))
-      (array-set! hs-slots 4 (cast 0 : i32))
-      (array-set! hs-slots 5 (cast 5 : i32))
-      (array-set! hs-slots 6 (cast (- 0 9) : i32))
-      (array-set! hs-slots 7 (cast 8 : i32))
-      (array-set! hs-slots 8 (cast (- 0 4) : i32))
-      (array-set! hs-slots 9 (cast 6 : i32))
-      (array-set! hs-slots 10 (cast (- 0 20) : i32)))))
+      (set! (array-ref hs-slots 0) (cast 3 : i32))
+      (set! (array-ref hs-slots 1) (cast (- 0 7) : i32))
+      (set! (array-ref hs-slots 2) (cast 12 : i32))
+      (set! (array-ref hs-slots 3) (cast (- 0 1) : i32))
+      (set! (array-ref hs-slots 4) (cast 0 : i32))
+      (set! (array-ref hs-slots 5) (cast 5 : i32))
+      (set! (array-ref hs-slots 6) (cast (- 0 9) : i32))
+      (set! (array-ref hs-slots 7) (cast 8 : i32))
+      (set! (array-ref hs-slots 8) (cast (- 0 4) : i32))
+      (set! (array-ref hs-slots 9) (cast 6 : i32))
+      (set! (array-ref hs-slots 10) (cast (- 0 20) : i32)))))
 
 (define (fill-signed-i64 [values : (&mut values i64v.Vec)]) : unit
   (let
     [values-slots (i64v.slots-mut values)]
     (begin
-      (array-set! values-slots 0 3)
-      (array-set! values-slots 1 -7)
-      (array-set! values-slots 2 12)
-      (array-set! values-slots 3 -1)
-      (array-set! values-slots 4 0)
-      (array-set! values-slots 5 40)
-      (array-set! values-slots 6 -20)
-      (array-set! values-slots 7 8)
-      (array-set! values-slots 8 -4))))
+      (set! (array-ref values-slots 0) 3)
+      (set! (array-ref values-slots 1) -7)
+      (set! (array-ref values-slots 2) 12)
+      (set! (array-ref values-slots 3) -1)
+      (set! (array-ref values-slots 4) 0)
+      (set! (array-ref values-slots 5) 40)
+      (set! (array-ref values-slots 6) -20)
+      (set! (array-ref values-slots 7) 8)
+      (set! (array-ref values-slots 8) -4))))
 
 (define (fill-bool [values : (&mut values boolv.Vec)] [n : i64] [value : bool]) : unit
   (let
@@ -218,7 +218,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! values-slots i value)
+        (set! (array-ref values-slots i) value)
         (set! i (+ i 1))))))
 
 (define (check-base-reductions) : i64

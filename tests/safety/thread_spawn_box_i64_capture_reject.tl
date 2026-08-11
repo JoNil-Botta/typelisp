@@ -9,5 +9,5 @@
       [(ThreadBoxI64SpawnErr _) 1]
       [(ThreadBoxI64SpawnOk worker)
         (match (thread.join-box-i64 worker)
-          [(ThreadBoxI64JoinOk joined) (box-get joined)]
+          [(ThreadBoxI64JoinOk joined) (__tl-box-place joined)]
           [(ThreadBoxI64JoinErr _) 2])])))

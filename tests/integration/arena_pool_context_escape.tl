@@ -45,7 +45,7 @@
     (let
       [cells : (__tl_dyn-array i64) (array.make-array i64 1)]
       (begin
-        (array-set! cells 0 value)
+        (set! (array-ref cells 0) value)
         (CellHolder cells)))
     ; GUARDED: cells come from the arena that outlives every scratch generation.
     (let
@@ -62,18 +62,18 @@
           (unsafe
             (arena.tl_arena_set prev)))]
       (begin
-        (array-set! cells 0 value)
+        (set! (array-ref cells 0) value)
         (CellHolder cells)))))
 
 (define (holder-install! [holder : CellHolder]) : unit
-  (set! (struct-get global-holder cells) (struct-get holder cells)))
+  (set! global-holder.cells holder.cells))
 
 ; Write THROUGH the global's cells, exactly as `capture-active!` does.
 (define (holder-capture! [value : i64]) : unit
-  (array-set! (struct-get global-holder cells) 0 value))
+  (set! (array-ref global-holder.cells 0) value))
 
 (define (holder-read) : i64
-  (array-ref (struct-get global-holder cells) 0))
+  (array-ref global-holder.cells 0))
 
 ; One "declaration generation": create it, publish a holder from inside it,
 ; return the generation handle so the caller can destroy it later.

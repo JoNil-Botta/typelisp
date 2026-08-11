@@ -19,7 +19,7 @@
       (let
         [member : json.JsonMember
           (mvec.get (& members) 0 (json.JsonMember "" json.JsonNull))]
-        (match (struct-get member value)
+        (match member.value
           [(json.JsonBool value)
             (test.assert-true value "generated json aggregate payload")]
           [_ (test.assert-true false "generated json aggregate wrong payload")])))))

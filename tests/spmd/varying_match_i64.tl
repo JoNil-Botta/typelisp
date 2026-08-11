@@ -6,9 +6,8 @@
 (define (fill-match [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (match (% i 4)
         [0 10]
         [1 (+ i 20)]
@@ -20,9 +19,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out
-          i
+        (set!
+          (array-ref out i)
           (match (% i 4)
             [0 10]
             [1 (+ i 20)]

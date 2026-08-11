@@ -98,7 +98,7 @@
   [count : i64]) : unit
   (begin
     (sync.channel-string-store-raw! channel ctx 0)
-    (array-set! ctx sync.channel-string-raw-field-count count)))
+    (set! (array-ref ctx sync.channel-string-raw-field-count) count)))
 
 (define (sync-string-integration-run [channel : sync.ChannelString]) : i64
   (let

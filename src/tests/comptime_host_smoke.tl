@@ -45,9 +45,8 @@
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     [callee-name : String "__tl_array-length"]
     (begin
-      (array-set!
-        operands
-        0
+      (set!
+        (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr
           operand-node
           (compiler_ast_types.AstType.Expr)))
@@ -146,9 +145,8 @@
     [i64-kind : String "i64"]
     [string-kind : String "string"]
     (begin
-      (array-set!
-        operands
-        0
+      (set!
+        (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Type (compiler_ast_types.AstType.I64)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         pools
@@ -464,27 +462,23 @@
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 5)]
     (begin
-      (array-set!
-        operands
-        0
+      (set!
+        (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr
           target-node
           (compiler_ast_types.AstType.Expr)))
-      (array-set!
-        operands
-        1
+      (set!
+        (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Name "name-field" name-id))
-      (array-set!
-        operands
-        2
+      (set!
+        (array-ref operands 2)
         (compiler_ctfe.CompilerCtfeValue.String "string-field" string-id))
-      (array-set!
-        operands
-        3
+      (set!
+        (array-ref operands 3)
         (compiler_ctfe.CompilerCtfeValue.Expr
           value-node
           (compiler_ast_types.AstType.Expr)))
-      (array-set! operands 4 (compiler_ctfe.CompilerCtfeValue.Bool false))
+      (set! (array-ref operands 4) (compiler_ctfe.CompilerCtfeValue.Bool false))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         pools
         operands
@@ -632,12 +626,12 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (match (compiler_ast_types.ast-node-pool-context-expr-get pools node)
         [(compiler_ast_types.AstExpr.Match match-box)
-          (match (box-get match-box)
+          (match (__tl-box-place match-box)
             [(compiler_ast_types.AstMatch.Match actual arms)
               (and
                 (= actual scrutinee)
-                (= (struct-get arms len) 1)
-                (match (array-ref (struct-get arms slots) 0)
+                (= arms.len 1)
+                (match (array-ref arms.slots 0)
                   [(compiler_ast_types.AstMatchArm.Arm pattern actual-body)
                     (and
                       (= actual-body body)
@@ -645,15 +639,15 @@
                         [(compiler_ast_types.AstPattern.Variant name args-box)
                           (let
                             [args : compiler_ast_types.AstPatternList
-                              (box-get args-box)]
+                              (__tl-box-place args-box)]
                             (and
                               (string.eq (ci.intern-str name) "Some")
-                              (= (struct-get (& args) len) 2)
-                              (match (array-ref (struct-get (& args) slots) 0)
+                              (= args.len 2)
+                              (match (array-ref args.slots 0)
                                 [(compiler_ast_types.AstPattern.Binding first)
                                   (string.eq (ci.intern-str first) "p0")]
                                 [_ false])
-                              (match (array-ref (struct-get (& args) slots) 1)
+                              (match (array-ref args.slots 1)
                                 [(compiler_ast_types.AstPattern.Binding second)
                                   (string.eq (ci.intern-str second) "p1")]
                                 [_ false])))]
@@ -694,30 +688,25 @@
         (compiler_ast_types.ast-node-pool-context-type-push
           pools
           (compiler_ast_types.AstType.Bool)))
-      (array-set!
-        operands
-        0
+      (set!
+        (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Type
           (compiler_ast_types.AstType.Struct pair-id)))
-      (array-set!
-        operands
-        1
+      (set!
+        (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Type
           (compiler_ast_types.AstType.Enum choice-id)))
-      (array-set!
-        operands
-        2
+      (set!
+        (array-ref operands 2)
         (compiler_ctfe.CompilerCtfeValue.Type
           (compiler_ast_types.AstType.Tuple (box tuple-items))))
-      (array-set!
-        operands
-        3
+      (set!
+        (array-ref operands 3)
         (compiler_ctfe.CompilerCtfeValue.Expr
           value-node
           (compiler_ast_types.AstType.Expr)))
-      (array-set!
-        operands
-        4
+      (set!
+        (array-ref operands 4)
         (compiler_ctfe.CompilerCtfeValue.Expr
           body-node
           (compiler_ast_types.AstType.Bool)))
@@ -1085,7 +1074,9 @@
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
-      (array-set! operands 0 (compiler_ctfe.CompilerCtfeValue.ExprList items))
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.ExprList items))
       (compiler_ctfe.ctfe-result-hygiene-free-reset!)
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         pools
@@ -1154,9 +1145,8 @@
       (compiler_ast_types.ast-expr-clause-list-push
         (&mut clauses)
         (compiler_ast_types.ast-expr-clause else-node result-node))
-      (array-set!
-        operands
-        0
+      (set!
+        (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.ExprClauseList clauses))
       (compiler_ctfe.ctfe-result-hygiene-free-reset!)
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
@@ -1253,7 +1243,7 @@
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
-      (array-set! operands 0 (compiler_ctfe.CompilerCtfeValue.Bool true))
+      (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         pools
         operands

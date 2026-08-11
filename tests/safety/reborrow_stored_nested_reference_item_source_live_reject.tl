@@ -17,13 +17,12 @@
 (define (nested-next [holder : (&mut state (NestedReborrowHolder source))]) : (NestedReborrowNext
     source)
   (let
-    [index : i64 (struct-get (struct-get holder iter) index)]
+    [index : i64 holder.iter.index]
     (if (>= index 1)
       (NestedReborrowNext.Done)
       (begin
-        (set! (struct-get (struct-get holder iter) index) (+ index 1))
-        (NestedReborrowNext.Item
-          (& (array-ref (struct-get (struct-get holder iter) slots) index)))))))
+        (set! holder.iter.index (+ index 1))
+        (NestedReborrowNext.Item (& (array-ref holder.iter.slots index)))))))
 
 (define (consume [value : (NestedReborrowNext source)]) : unit
   (match value
@@ -40,5 +39,5 @@
           [holder : (NestedReborrowHolder items) (NestedReborrowHolder iter)]
           (nested-next (&mut holder)))]
       (begin
-        (array-set! items 0 42)
+        (set! (array-ref items 0) 42)
         (consume first)))))

@@ -6,5 +6,5 @@
     [child : (& items (Slice i64)) (slice-view parent 1 2)]
     (begin
       (array-ref child 0)
-      (array-set! items 0 42)
+      (set! (array-ref items 0) 42)
       (array-ref items 0))))

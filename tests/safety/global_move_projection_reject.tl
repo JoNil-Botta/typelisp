@@ -7,5 +7,5 @@
 
 (define (main) : i64
   (let
-    [_text : String (struct-get global-owner text)]
+    [_text : String global-owner.text]
     42))

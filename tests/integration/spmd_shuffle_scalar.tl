@@ -13,7 +13,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! xs-slots i (+ (* i 3) 1))
+        (set! (array-ref xs-slots i) (+ (* i 3) 1))
         (set! i (+ i 1))))))
 
 (define (sum [xs : (& xs i64v.Vec)] [n : i64]) : i64
@@ -40,7 +40,9 @@
         [out-slots (i64v.slots-mut (&mut out))]
         (foreach
           ([i : i64 0 n])
-          (array-set! out-slots i (spmd-shuffle (array-ref xs-slots i) (- i i)))))
+          (set!
+            (array-ref out-slots i)
+            (spmd-shuffle (array-ref xs-slots i) (- i i)))))
       (if (= (sum (& out) n) 35)
         42
         1))))

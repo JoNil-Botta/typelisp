@@ -805,37 +805,37 @@
     [ctfe-ids : (__tl_dyn-array i64) (make-array i64 284)]
     [i : i64 0]
     (begin
-      (array-set! metadata 0 -1)
-      (array-set! metadata 1 -1)
-      (array-set! metadata 2 -1)
-      (array-set! metadata 3 0)
+      (set! (array-ref metadata 0) -1)
+      (set! (array-ref metadata 1) -1)
+      (set! (array-ref metadata 2) -1)
+      (set! (array-ref metadata 3) 0)
       (while (< i 317)
         (begin
-          (array-set! ids i -1)
+          (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i 284)
         (begin
-          (array-set! ctfe-ids i -1)
+          (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
       (CompilerBuiltinIdsState metadata ids ctfe-ids))))
 
 (define (state-generation [state : CompilerBuiltinIdsState]) : i64
-  (array-ref (struct-get state metadata) 0))
+  (array-ref state.metadata 0))
 
 (define (state-set-generation!
   [state : CompilerBuiltinIdsState]
   [generation : i64]) : unit
-  (array-set! (struct-get state metadata) 0 generation))
+  (set! (array-ref state.metadata 0) generation))
 
 (define (state-table-id [state : CompilerBuiltinIdsState]) : i64
-  (array-ref (struct-get state metadata) 1))
+  (array-ref state.metadata 1))
 
 (define (state-pool-len [state : CompilerBuiltinIdsState]) : i64
-  (array-ref (struct-get state metadata) 2))
+  (array-ref state.metadata 2))
 
 (define (state-parse-initialized? [state : CompilerBuiltinIdsState]) : bool
-  (= (array-ref (struct-get state metadata) 3) 1))
+  (= (array-ref state.metadata 3) 1))
 
 (define (state-set-metadata!
   [state : CompilerBuiltinIdsState]
@@ -843,23 +843,22 @@
   [pool-len : i64]
   [parse-initialized : bool]) : unit
   (begin
-    (array-set! (struct-get state metadata) 1 table-id)
-    (array-set! (struct-get state metadata) 2 pool-len)
-    (array-set!
-      (struct-get state metadata)
-      3
+    (set! (array-ref state.metadata 1) table-id)
+    (set! (array-ref state.metadata 2) pool-len)
+    (set!
+      (array-ref state.metadata 3)
       (if parse-initialized
         1
         0))))
 
 (define (state-ref [state : CompilerBuiltinIdsState] [index : i64]) : i64
-  (array-ref (struct-get state ids) index))
+  (array-ref state.ids index))
 
 ;; State-owned CTFE builtin lookup: reads the state's own snapshot instead of
 ;; the compatibility-global CTFE id array, so an uninstalled state's table can
 ;; be queried without installing it.
 (define (state-ctfe-ref [state : CompilerBuiltinIdsState] [index : i64]) : i64
-  (array-ref (struct-get state ctfe-ids) index))
+  (array-ref state.ctfe-ids index))
 
 ;; State-owned table validation: does this state's builtin table belong to the
 ;; given intern generation and table id? Mirrors
@@ -877,20 +876,20 @@
   [state : CompilerBuiltinIdsState]
   [index : i64]
   [value : i64]) : unit
-  (array-set! (struct-get state ids) index value))
+  (set! (array-ref state.ids index) value))
 
 (define (compiler-builtin-ctfe-ref [index : i64]) : i64
   (array-ref compiler-builtin-ctfe-ids index))
 
 (define (compiler-builtin-ctfe-set! [index : i64] [value : i64]) : unit
-  (array-set! compiler-builtin-ctfe-ids index value))
+  (set! (array-ref compiler-builtin-ctfe-ids index) value))
 
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
     (while (< i 284)
       (begin
-        (array-set! (struct-get state ctfe-ids) i (compiler-builtin-ctfe-ref i))
+        (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
 
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
@@ -898,7 +897,7 @@
     [i : i64 0]
     (while (< i 284)
       (begin
-        (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
+        (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
 
 ;; State-owned reset: the state's own metadata always clears so its next parse

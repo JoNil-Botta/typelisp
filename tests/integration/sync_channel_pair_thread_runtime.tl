@@ -44,7 +44,7 @@
     [(sync.ChannelI64PairRecvErr _) fallback]))
 
 (define (sync-pair-integration-message-sum [value : sync.ChannelI64Pair]) : i64
-  (+ (struct-get value left) (struct-get value right)))
+  (+ value.left value.right))
 
 (define (sync-pair-integration-sum [base : i64] [count : i64]) : i64
   (let
@@ -97,8 +97,8 @@
   [count : i64]) : unit
   (begin
     (sync.channel-i64-pair-store-raw! channel ctx 0)
-    (array-set! ctx sync.channel-i64-pair-raw-field-count base)
-    (array-set! ctx (+ sync.channel-i64-pair-raw-field-count 1) count)))
+    (set! (array-ref ctx sync.channel-i64-pair-raw-field-count) base)
+    (set! (array-ref ctx (+ sync.channel-i64-pair-raw-field-count 1)) count)))
 
 (define (sync-pair-integration-receive-sum
   [channel : sync.ChannelI64PairChannel]

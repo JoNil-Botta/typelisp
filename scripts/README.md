@@ -53,6 +53,7 @@ instead, which the sweep does not require to be reachable.
 | Run the complete local CI suite | `ci-verify.sh` |
 | Check TypeLisp formatting and lint | `check-tl-format.sh`, `check-tl-lint.sh` |
 | Check compiler-source coverage | `verify-selfhost-compile-manifest.sh`, `verify-inline-tests.sh` |
+| Check Linux resident-memory limiting | `verify-linux-memory-limit.sh` (covers `lib-linux-memory-limit.sh`) |
 | Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog) |
 | Check public CLI behavior | `verify-public-tools.sh`, `check-stage1-wrapper.sh` |
 | Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh`, `verify-native-link-windows.sh` |
@@ -65,6 +66,13 @@ instead, which the sweep does not require to be reachable.
 
 The complete and current invocation order remains in `ci-verify.sh`; this table
 is a map, not a second manifest.
+
+The focused inline profile-summary probe uses `lib-linux-memory-limit.sh` to
+enforce a 1 GiB resident-memory ceiling on Linux. A usable user-systemd manager
+provides a hard cgroup-v2 `MemoryMax` with swap disabled. Other Linux runners
+use a documented fallback that samples and terminates the isolated process
+group when aggregate RSS crosses the same ceiling; neither path uses
+`RLIMIT_AS` or treats virtual reservations as resident memory.
 
 On Windows, `verify-integration.sh` sends independent manifest links through
 `windows-integration-linker.ps1`. The measured default is four concurrent

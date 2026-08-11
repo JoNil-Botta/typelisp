@@ -8,6 +8,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-timing.sh"
+. "$ROOT/scripts/lib-linux-memory-limit.sh"
 
 # Each `typelisp` invocation runs exactly once: a crash is a real compiler bug,
 # not a flake — do not retry it (see the no-retry policy in scripts/ci-verify.sh).
@@ -104,32 +105,27 @@ discovered_file_count=$(wc -l < "$DISCOVERED" | tr -d ' ')
 # 5 GiB. Keep a focused Linux hard-cap probe ahead of the aggregate batch so the
 # regression fails deterministically without asking an uncapped runner to OOM.
 #
-# The cap is 3 GiB of ADDRESS SPACE, not RSS: `ulimit -v` counts reservations,
-# and the runtime's 64 MiB arena chunks are mmapped without MAP_NORESERVE, so a
-# compiler whose real usage is FLAT can still cross a tight cap when allocation
-# packing adds one chunk. Measured while the cap was 1 GiB: a tree 19.5 MB
-# lighter in arena use failed purely on one extra chunk reservation, and the
-# pass window is non-monotonic (the published seed passed at 1024 MiB, failed
-# from 1280-2024 MiB, passed at 2048+ — a ~1 GiB reservation can succeed early
-# and starve the rest, while failing early is cheap). 3 GiB sits above the dead
-# zone with headroom measured on both current compilers and still fails the
-# 5 GiB explosion class this probe exists to catch.
+# RLIMIT_AS is unsuitable here: the runtime reserves large virtual mappings,
+# so `ulimit -v` can fail while RSS remains below 200 MiB. Prefer a cgroup-v2
+# MemoryMax over the complete process tree. On Linux hosts without a usable
+# user systemd manager, the helper falls back to a process-group aggregate-RSS
+# watchdog with the same 1 GiB threshold.
 if [ "$HOST_OS" = linux ]; then
     profile_summary_stdout="$WORKDIR/profile-summary.stdout"
     profile_summary_stderr="$WORKDIR/profile-summary.stderr"
-    echo "[inline-tests] profile-summary memory cap (3 GiB address space)"
-    if (
-        ulimit -v 3145728
+    profile_summary_limit_bytes=1073741824
+    linux_memory_limit_select_backend
+    echo "[inline-tests] profile-summary memory cap (1 GiB resident/cgroup memory; $LINUX_MEMORY_LIMIT_BACKEND)"
+    if linux_memory_limit_run "$profile_summary_limit_bytes" \
         "$COMPILER" test "$ROOT/src/compiler_profile_summary.tl" \
             --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib" \
-            > "$profile_summary_stdout" 2> "$profile_summary_stderr"
-    ); then
+            > "$profile_summary_stdout" 2> "$profile_summary_stderr"; then
         profile_summary_status=0
     else
         profile_summary_status=$?
     fi
     if [ "$profile_summary_status" -ne 0 ]; then
-        echo "compiler_profile_summary inline test exceeded 3 GiB of address space or failed" >&2
+        echo "compiler_profile_summary inline test exceeded 1 GiB of resident/cgroup memory or failed" >&2
         show_streams "$profile_summary_stdout" "$profile_summary_stderr"
         exit 1
     fi

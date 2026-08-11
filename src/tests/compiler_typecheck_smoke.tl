@@ -5371,6 +5371,12 @@
     (proof_reuse_unit.compiler-typecheck-proof-reuse-unit-tests-ok?)
     (io.panic "typecheck: proof-reuse exact/walker unit tests failed")))
 
+(test
+  compiler-typecheck-unused-unsafe-state-isolation
+  (unless
+    (tc_core.tc-unused-unsafe-state-isolation-self-test)
+    (io.panic "typecheck: unused unsafe state isolation smoke failed")))
+
 (define (compiler-typecheck-smoke-body-state-diagnostic-reuse-ok?) : bool
   (let
     [failed : tc_core.ResultCompilerTypecheck
@@ -5813,6 +5819,9 @@
     (unless
       (tc_core.tc-scratch-arena-state-isolation-self-test)
       (io.panic "typecheck: scratch arena state isolation smoke failed"))
+    (unless
+      (tc_core.tc-unused-unsafe-state-isolation-self-test)
+      (io.panic "typecheck: unused unsafe state isolation smoke failed"))
     (unless
       (and
         (compiler-typecheck-smoke-registry-member-diagnostic-ok?

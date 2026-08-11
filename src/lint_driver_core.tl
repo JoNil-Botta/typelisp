@@ -1250,75 +1250,83 @@
     (lint_core.lint-unused-unsafe-classifier-enable!)))
 
 (define (selfhost-lint-unused-unsafe-findings-from
+  [state : tc.TcUnusedUnsafeState]
   [path : String]
   [index : i64]
   [out : lint_core.LintFindings]) : lint_core.LintFindings
-  (if (>= index (tc.tc-unused-unsafe-block-count))
+  (if (>= index (tc.tc-unused-unsafe-block-count state))
     out
     (let
       [next : lint_core.LintFindings
         (if (and
-          (not (tc.tc-unused-unsafe-block-used? index))
-          (string.eq (tc.tc-unused-unsafe-block-path index) path))
+          (not (tc.tc-unused-unsafe-block-used? state index))
+          (string.eq (tc.tc-unused-unsafe-block-path state index) path))
           (lint_core.lint-findings-add
             (lint_core.lint-unused-unsafe-finding
-              (tc.tc-unused-unsafe-block-span index))
+              (tc.tc-unused-unsafe-block-span state index))
             out)
           out)]
-      (selfhost-lint-unused-unsafe-findings-from path (+ index 1) next))))
+      (selfhost-lint-unused-unsafe-findings-from state path (+ index 1) next))))
 
 (define (selfhost-lint-typed-unused-unsafe-findings
   [path : String]
   [source : String]
   [stdlib-roots : lint_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : lint_core.LintFindings
-  (begin
-    (set! selfhost-lint-typed-unused-unsafe-error "")
-    (tc.tc-unused-unsafe-tracking-reset! path)
-    ;; File/package lint parses into a destroyable, explicitly installed pool.
-    ;; Run the nested check on process pools and reinstall the lint pool before
-    ;; its caller resumes the AST walk.
-    (match (if (ast.ast-node-pool-compat-context-active?)
-      (let
-        [lint-pools : ast.AstNodePoolContext
-          (ast.ast-node-pool-compat-context-current)]
-        (begin
-          (ast.ast-node-pool-compat-context-clear!)
-          (let
-            [checked : compiler_check_core.ResultCompilerCheck
-              (compiler_check_core.compiler-check-source-with-roots-and-cfg
-                path
-                source
-                stdlib-roots
-                cfgs)]
-            (begin
-              (ast.ast-node-pool-compat-context-use! lint-pools)
-              checked))))
-      (compiler_check_core.compiler-check-source-with-roots-and-cfg
-        path
-        source
-        stdlib-roots
-        cfgs))
-      [(compiler_check_core.ResultCompilerCheck.Ok _)
+  (let
+    [job-state : tc.TcJobState (tc.tc-job-state-new)]
+    [unused-unsafe : tc.TcUnusedUnsafeState
+      (tc.tc-job-state-unused-unsafe job-state)]
+    (begin
+      (set! selfhost-lint-typed-unused-unsafe-error "")
+      (tc.tc-unused-unsafe-tracking-reset! unused-unsafe path)
+      ;; File/package lint parses into a destroyable, explicitly installed pool.
+      ;; Run the nested check on process pools and reinstall the lint pool before
+      ;; its caller resumes the AST walk.
+      (match (if (ast.ast-node-pool-compat-context-active?)
         (let
-          [findings : lint_core.LintFindings
-            (selfhost-lint-filter-derived-origins
-              source
-              (selfhost-lint-unused-unsafe-findings-from
-                path
-                0
-                (lint_core.lint-findings-empty)))]
+          [lint-pools : ast.AstNodePoolContext
+            (ast.ast-node-pool-compat-context-current)]
           (begin
-            (tc.tc-unused-unsafe-tracking-disable!)
-            findings))]
-      [(compiler_check_core.ResultCompilerCheck.Err diag)
-        (begin
-          (set!
-            selfhost-lint-typed-unused-unsafe-error
-            (cdiag.compiler-diagnostic-render
-              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))
-          (tc.tc-unused-unsafe-tracking-disable!)
-          (lint_core.lint-findings-empty))])))
+            (ast.ast-node-pool-compat-context-clear!)
+            (let
+              [checked : compiler_check_core.ResultCompilerCheck
+                (compiler_check_core.compiler-check-source-with-roots-and-cfg-and-job-state
+                  path
+                  source
+                  stdlib-roots
+                  cfgs
+                  job-state)]
+              (begin
+                (ast.ast-node-pool-compat-context-use! lint-pools)
+                checked))))
+        (compiler_check_core.compiler-check-source-with-roots-and-cfg-and-job-state
+          path
+          source
+          stdlib-roots
+          cfgs
+          job-state))
+        [(compiler_check_core.ResultCompilerCheck.Ok _)
+          (let
+            [findings : lint_core.LintFindings
+              (selfhost-lint-filter-derived-origins
+                source
+                (selfhost-lint-unused-unsafe-findings-from
+                  unused-unsafe
+                  path
+                  0
+                  (lint_core.lint-findings-empty)))]
+            (begin
+              (tc.tc-unused-unsafe-tracking-disable! unused-unsafe)
+              findings))]
+        [(compiler_check_core.ResultCompilerCheck.Err diag)
+          (begin
+            (set!
+              selfhost-lint-typed-unused-unsafe-error
+              (cdiag.compiler-diagnostic-render
+                (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))
+            (tc.tc-unused-unsafe-tracking-disable! unused-unsafe)
+            (lint_core.lint-findings-empty))]))))
 
 (define (selfhost-lint-source-unused-unsafe-findings
   [path : String]
@@ -4188,7 +4196,6 @@
   (begin
     (set! selfhost-lint-typed-unused-unsafe-error "")
     (lint_core.lint-unused-unsafe-classifier-reset!)
-    (tc.tc-unused-unsafe-tracking-clear!)
     (tc.tc-prefix-snapshot-cache-clear!)
     (compiler_check_core.compiler-check-reset-pools!)
     (compiler_check_core.compiler-check-reset-interns!)

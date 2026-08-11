@@ -6949,7 +6949,8 @@
     ;; Idempotence: the copies are single-use, so a second round finds nothing.
     [again : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-cmp-dup-function shared)]
-    ;; Budget: two loose sites, room for one copy.
+    ;; Budget: two loose sites, room for only one copy. The family must refuse
+    ;; as a whole; a partial rewrite cannot retire the shared boolean.
     [capped : compiler_ir_types.CompilerIrFunction
       (opt-cmp-dup-run
         "cmp_dup_capped"
@@ -6989,7 +6990,7 @@
         (= (compiler_optimize.opt-function-frame global-operand) 16)
         (return 5))
       (unless (= (compiler_optimize.opt-function-frame again) 17) (return 6))
-      (unless (= (compiler_optimize.opt-function-frame capped) 17) (return 7))
+      (unless (= (compiler_optimize.opt-function-frame capped) 16) (return 7))
       (unless (= (compiler_optimize.opt-function-frame uncapped) 18) (return 8))
       ;; Operand admission, stated directly: literals and single-definition
       ;; variables are re-evaluable; the compare's own destination, a
@@ -47508,10 +47509,11 @@
           bits))
       map)))
 
-(define (opt-lp-promoted-with-clean-map
+(define (opt-lp-promoted-with-clean-map-and-cells
   [symbols : OptLpTestSymbols]
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [clean : opt_i64_i64_map.Map]) : compiler_ir_types.CompilerIrBlockList
+  [clean : opt_i64_i64_map.Map]
+  [cells : compiler_optimize.OptGlobalCellSummary]) : compiler_ir_types.CompilerIrBlockList
   (let
     [func : compiler_ir_types.CompilerIrFunction
       (opt-licm-test-function blocks)]
@@ -47520,11 +47522,21 @@
       (compiler_optimize.opt-cfg-context-build blocks)
       false
       clean
-      (opt-lp-test-cells symbols)
+      cells
       false
       func)
       [(compiler_optimize.OptFunctionCtxResult.Result next _)
         (compiler_optimize.opt-function-blocks next)])))
+
+(define (opt-lp-promoted-with-clean-map
+  [symbols : OptLpTestSymbols]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [clean : opt_i64_i64_map.Map]) : compiler_ir_types.CompilerIrBlockList
+  (opt-lp-promoted-with-clean-map-and-cells
+    symbols
+    blocks
+    clean
+    (opt-lp-test-cells symbols)))
 
 (define (opt-lp-promoted-with-clean
   [symbols : OptLpTestSymbols]
@@ -47570,12 +47582,19 @@
         symbols
         (opt-lp-test-call-body-blocks symbols plain-args)
         0)]
-    ;; (c) same proof, but the caller hands the callee a cell's address
+    [addr-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-lp-test-call-body-blocks symbols addr-args)]
+    ;; (c) same proof, but the program takes a cell's address. The gate is
+    ;; whole-program rather than operand-local: that address could reach this
+    ;; call through a copy, Phi, caller parameter, or returned reference.
     [addr-taken : compiler_ir_types.CompilerIrBlockList
-      (opt-lp-promoted-with-clean
+      (opt-lp-promoted-with-clean-map-and-cells
         symbols
-        (opt-lp-test-call-body-blocks symbols addr-args)
-        global-bit)]
+        addr-blocks
+        (opt-lp-test-clean-map symbols global-bit)
+        (compiler_optimize.opt-global-cell-summary-build
+          (opt-lp-test-globals symbols)
+          (opt-gc-test-functions1 (opt-licm-test-function addr-blocks))))]
     ;; (d) a memory-clean callee keeps the older verdict: the hoist/allocate
     ;; interlock measured that tier and it still loses (see
     ;; opt-licm-store-state-direct-call)
@@ -47597,18 +47616,20 @@
       [(not
           (compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
             (opt-lp-test-clean-map symbols global-bit)
-            symbols.callee
-            plain-args))
+            (opt-lp-test-cells symbols)
+            symbols.callee))
         9]
       [(compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
           (opt-lp-test-clean-map symbols global-bit)
-          symbols.callee
-          addr-args)
+          (compiler_optimize.opt-global-cell-summary-build
+            (opt-lp-test-globals symbols)
+            (opt-gc-test-functions1 (opt-licm-test-function addr-blocks)))
+          symbols.callee)
         10]
       [(compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
           (opt-lp-test-clean-map symbols 0)
-          symbols.callee
-          plain-args)
+          (opt-lp-test-cells symbols)
+          symbols.callee)
         11]
       ;; a callee whose summary sets the global-write bit earns neither bit
       [(not
@@ -47632,7 +47653,11 @@
       [(not
           (=
             (compiler_optimize.opt-loop-bce-direct-call-clean-bits 0)
-            (bit-or memory-bit global-bit)))
+            (bit-or
+              memory-bit
+              (bit-or
+                global-bit
+                (compiler_optimize.opt-direct-call-clean-unconditional-global-bit)))))
         15]
       [else 42])))
 
@@ -47837,6 +47862,8 @@
     [unknown-bit : i64 (compiler_optimize.opt-call-memory-unknown-bit)]
     [global-bit : i64 (compiler_optimize.opt-direct-call-clean-global-bit)]
     [memory-bit : i64 (compiler_optimize.opt-direct-call-clean-memory-bit)]
+    [unconditional-bit : i64
+      (compiler_optimize.opt-direct-call-clean-unconditional-global-bit)]
     [summaries : opt_i64_i64_map.Map
       (compiler_optimize.opt-call-memory-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -47892,7 +47919,7 @@
       [(not
           (=
             (compiler_optimize.opt-loop-bce-direct-call-clean-bits element-bit)
-            global-bit))
+            (bit-or global-bit unconditional-bit)))
         9]
       [(not
           (=
@@ -47925,17 +47952,23 @@
           (opt-cm-elem-clean-map lp-functions)
           lp.callee)
         17]
-      ;; (d) the GlobalAddr argument gate still refuses the same callee
+      ;; (d) element storage is disjoint from cells regardless of the args;
+      ;; even taking a cell address elsewhere cannot invalidate this tier.
       [(not
           (compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
             (opt-cm-elem-clean-map lp-functions)
-            lp.callee
-            plain-args))
+            (opt-lp-test-cells lp)
+            lp.callee))
         18]
-      [(compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
-          (opt-cm-elem-clean-map lp-functions)
-          lp.callee
-          addr-args)
+      [(not
+          (compiler_optimize.opt-licm-direct-call-keeps-globals-clean?
+            (opt-cm-elem-clean-map lp-functions)
+            (compiler_optimize.opt-global-cell-summary-build
+              (opt-lp-test-globals lp)
+              (opt-gc-test-functions1
+                (opt-licm-test-function
+                  (opt-lp-test-call-body-blocks lp addr-args))))
+            lp.callee))
         19]
       [(not (= memory-bit 1)) 20]
       [else 42])))
@@ -48348,14 +48381,14 @@
   (test.assert-i64-eq
     (compiler-optimize-licm-global-clean-call-self-test)
     42
-    "a callee the call-memory fixpoint proves writes no global storage stops blocking cell promotion; an unresolved callee, a GlobalAddr argument, and a memory-clean callee each still refuse"))
+    "a parameter-writing callee proven free of direct global writes permits cell promotion only when the whole program takes no cell addresses; unresolved and memory-clean callees still refuse"))
 
 (test
   call-memory-element-write-attribution
   (test.assert-i64-eq
     (compiler-optimize-call-memory-element-write-self-test)
     42
-    "a write through a vector slot accessor summarizes as an element write instead of unknown, composes to callers, and unlocks cell promotion across the call; a header-slot write, an arbitrary loaded pointer, a rebound accessor result, and a GlobalAddr argument each still refuse"))
+    "a vector slot write summarizes as cell-disjoint element storage, composes to callers, and unlocks promotion even in an address-taking program; header-slot, arbitrary loaded-pointer, and rebound-accessor writes still refuse"))
 
 (test
   inline-two-multiblock-candidates-per-block

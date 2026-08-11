@@ -18739,10 +18739,7 @@
     (opt-direct-call-clean-memory-bit)))
 
 ;; Writes no GLOBAL storage. Weaker than memory-clean and implied by it, so the
-;; test takes either bit. This is what a `Global` operand's invariance needs:
-;; a callee that writes only through the objects its parameters name cannot
-;; reach a cell -- unless the caller handed it a cell's ADDRESS, which is why
-;; the call site pairs this with opt-licm-call-args-global-addr-free?.
+;; test takes either bit. This is what a `Global` operand's invariance needs.
 (define (opt-direct-call-global-clean?
   [direct-call-clean : opt_i64_i64_map.Map]
   [name : i64]) : bool
@@ -18767,34 +18764,6 @@
       [(ir.CompilerIrEffect.MemoryWrite)
         (opt-licm-store-summary-header-or-unknown-store)]
       [_ (opt-licm-store-summary-call-or-unknown)])))
-
-;; A `GlobalAddr` argument hands the callee a cell's address, so its writes
-;; through that parameter reach the cell itself. No such argument, and a callee
-;; the summaries prove writes no global storage cannot touch any cell.
-(define (opt-licm-value-global-addr? [value : ir.CompilerIrValue]) : bool
-  (match value
-    [(ir.CompilerIrValue.GlobalAddr _) true]
-    [_ false]))
-
-(define (opt-licm-call-args-array-global-addr-free?
-  [values : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : bool
-  (if (>= index (array-length values))
-    true
-    (and
-      (not (opt-licm-value-global-addr? (array-ref values index)))
-      (opt-licm-call-args-array-global-addr-free? values (+ index 1)))))
-
-(define (opt-licm-call-args-global-addr-free? [args : ir.CompilerIrCallArgs]) : bool
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) true]
-    [(ir.CompilerIrCallArgs.One a) (not (opt-licm-value-global-addr? a))]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (and
-        (not (opt-licm-value-global-addr? a))
-        (not (opt-licm-value-global-addr? b)))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (opt-licm-call-args-array-global-addr-free? values 0)]))
 
 (define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
   (match env
@@ -19232,11 +19201,14 @@
 ;; The store summary and the global-cell flag part company here, and this is the
 ;; only place they do. A callee that writes through the objects its parameters
 ;; name is `call-or-unknown?` to every memory question -- it can invalidate a
-;; load of any of those objects -- while writing no global storage at all, which
-;; the call-memory fixpoint proves per callee. Given that proof, and given that
-;; no argument is a cell's own address, nothing this call does can change what a
-;; `Global` operand reads, so it leaves `global-write?` alone and the loop's
-;; cell operands stay invariant across it. Everything else about the call --
+;; load of any of those objects -- while the call-memory fixpoint proves it has
+;; no direct global write. That weaker proof is enough only when the whole
+;; program contains no `GlobalAddr`: a cell address can otherwise arrive through
+;; an SSA copy, Phi, caller parameter, or returned reference, so inspecting just
+;; the call's immediate operands is not a sound alias test. The program-wide
+;; address-taken set closes every such path. A summary whose writes are all to
+;; descriptor ELEMENT storage needs no such condition because that storage is
+;; disjoint from every global cell. Everything else about the call --
 ;; the `any-call?` boundary the register-pressure interlock prices, the store
 ;; summary the memory proofs read -- is unchanged.
 ;;
@@ -19254,18 +19226,23 @@
 ;; preheader. peephole_lines takes 15.2M from that tier on its own.
 (define (opt-licm-direct-call-keeps-globals-clean?
   [direct-call-clean : opt_i64_i64_map.Map]
-  [name : i64]
-  [args : ir.CompilerIrCallArgs]) : bool
+  [global-cells : OptGlobalCellSummary]
+  [name : i64]) : bool
   (and
     (opt-direct-call-global-clean? direct-call-clean name)
     (not (opt-direct-call-memory-clean? direct-call-clean name))
-    (opt-licm-call-args-global-addr-free? args)))
+    (or
+      (opt-direct-call-clean-has-bit?
+        direct-call-clean
+        name
+        (opt-direct-call-clean-unconditional-global-bit))
+      (= (opt_i64_i64_map.len (& global-cells.addr-taken)) 0))))
 
 (define (opt-licm-store-state-direct-call
   [state : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
-  [name : i64]
-  [args : ir.CompilerIrCallArgs]) : OptLicmStoreState
+  [global-cells : OptGlobalCellSummary]
+  [name : i64]) : OptLicmStoreState
   (if (opt-direct-call-noreturn? name)
     state
     (let
@@ -19274,8 +19251,8 @@
         (opt-licm-store-summary-for-direct-call direct-call-clean name)]
       (if (opt-licm-direct-call-keeps-globals-clean?
         direct-call-clean
-        name
-        args)
+        global-cells
+        name)
         (opt-licm-store-state-add-summary-keeping-globals called summary)
         ;; Unproven: the flag is set here rather than left to the summary,
         ;; because a memory-clean callee contributes the EMPTY summary and would
@@ -19378,6 +19355,7 @@
   [types : OptSsaVarTypes]
   [state : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [global-cells : OptGlobalCellSummary]
   [track-provenance? : bool]
   [instr : ir.CompilerIrInstr]) : OptLicmStoreState
   (let
@@ -19386,12 +19364,12 @@
         (opt-licm-provenance-state-instr type-segment-bases types state instr)
         state)]
     (match instr
-      [(ir.CompilerIrInstr.Call _ name args _)
+      [(ir.CompilerIrInstr.Call _ name _ _)
         (opt-licm-store-state-direct-call
           provenance
           direct-call-clean
-          name
-          args)]
+          global-cells
+          name)]
       [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
         (opt-licm-store-state-add-summary
           (opt-licm-store-state-mark-call provenance)
@@ -19412,12 +19390,12 @@
         (opt-licm-store-state-add-summary
           (opt-licm-store-state-mark-call provenance)
           (opt-licm-store-summary-call-or-unknown))]
-      [(ir.CompilerIrInstr.TailCall name args _)
+      [(ir.CompilerIrInstr.TailCall name _ _)
         (opt-licm-store-state-direct-call
           provenance
           direct-call-clean
-          name
-          args)]
+          global-cells
+          name)]
       [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
         (opt-licm-store-state-add-summary
           (opt-licm-store-state-mark-call provenance)
@@ -19497,6 +19475,7 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [global-cells : OptGlobalCellSummary]
   [track-provenance? : bool]
   [state : OptLicmStoreState]) : OptLicmStoreState
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
@@ -19507,12 +19486,14 @@
       instrs
       (+ index 1)
       direct-call-clean
+      global-cells
       track-provenance?
       (opt-licm-store-state-instr
         type-segment-bases
         types
         state
         direct-call-clean
+        global-cells
         track-provenance?
         (ir.compiler-ir-instr-seq-ref instrs index)))))
 
@@ -19521,6 +19502,7 @@
   [types : OptSsaVarTypes]
   [instrs : ir.CompilerIrInstrSeq]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [global-cells : OptGlobalCellSummary]
   [track-provenance? : bool]
   [state : OptLicmStoreState]) : OptLicmStoreState
   (opt-licm-store-state-instr-seq-from
@@ -19529,6 +19511,7 @@
     instrs
     0
     direct-call-clean
+    global-cells
     track-provenance?
     state))
 
@@ -19537,6 +19520,7 @@
   [types : OptSsaVarTypes]
   [blocks : ir.CompilerIrBlockList]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [global-cells : OptGlobalCellSummary]
   [track-provenance? : bool]
   [state : OptLicmStoreState]) : OptLicmStoreState
   (match blocks
@@ -19549,12 +19533,14 @@
             types
             (__tl-box-place rest)
             direct-call-clean
+            global-cells
             track-provenance?
             (opt-licm-store-state-instr-seq
               type-segment-bases
               types
               instrs
               direct-call-clean
+              global-cells
               track-provenance?
               state))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -19563,6 +19549,7 @@
         types
         (ir.compiler-ir-block-seq-to-list seq)
         direct-call-clean
+        global-cells
         track-provenance?
         state)]))
 
@@ -19646,6 +19633,7 @@
         (opt-ssa-var-types-new)
         blocks
         (opt_i64_i64_map.with-capacity 1)
+        (opt-global-cell-summary-empty)
         true
         (OptLicmStoreState
           summary
@@ -20786,6 +20774,7 @@
             types
             body-blocks
             direct-call-clean
+            global-cells
             false
             (opt-licm-store-state-with-provenance
               provenance.ptrs
@@ -62866,7 +62855,9 @@
     (opt-cmp-dup-operand-ok? (array-ref rhss v) v defs)))
 
 ;; Reduce `marks` to the final candidate set in place and report whether any
-;; survived.
+;; survived. Budget whole comparison families, never individual branch sites:
+;; a partial family leaves the original multi-use boolean materialized, so its
+;; copied sites merely trade `test` for `cmp` while extending operand liveness.
 (define (opt-cmp-dup-candidates!
   [uses : (__tl_dyn-array i64)]
   [branch-uses : (__tl_dyn-array i64)]
@@ -62874,10 +62865,12 @@
   [defs : (__tl_dyn-array i64)]
   [marks : (__tl_dyn-array i64)]
   [lhss : (__tl_dyn-array ir.CompilerIrValue)]
-  [rhss : (__tl_dyn-array ir.CompilerIrValue)]) : bool
+  [rhss : (__tl_dyn-array ir.CompilerIrValue)]
+  [copies : i64]) : bool
   (let
     [count : i64 (array-length marks)]
     [index : i64 0]
+    [remaining : i64 copies]
     [found : bool false]
     (begin
       (while (< index count)
@@ -62892,7 +62885,13 @@
               marks
               lhss
               rhss)
-              (set! found true)
+              (let
+                [needed : i64 (array-ref loose index)]
+                (if (<= needed remaining)
+                  (begin
+                    (set! remaining (- remaining needed))
+                    (set! found true))
+                  (set! (array-ref marks index) 0)))
               (set! (array-ref marks index) 0))
             unit)
           (set! index (+ index 1))))
@@ -63092,7 +63091,8 @@
               defs
               marks
               lhss
-              rhss)]
+              rhss
+              copies)]
           (if (not any?)
             func
             (let
@@ -78926,8 +78926,10 @@
 ;; `opt-licm-store-summary-call-or-unknown`.
 ;; The `direct-call-clean` map's value is a bit set, not a presence marker.
 ;;
-;;   bit 0 (opt-direct-call-clean-memory-bit)  writes no memory at all
-;;   bit 1 (opt-direct-call-clean-global-bit)  writes no GLOBAL storage
+;;   bit 0 (opt-direct-call-clean-memory-bit) writes no memory at all
+;;   bit 1 (opt-direct-call-clean-global-bit) writes no GLOBAL storage directly
+;;   bit 2 (opt-direct-call-clean-unconditional-global-bit) writes only memory
+;;         that is disjoint from every global cell (descriptor elements)
 ;;
 ;; Bit 0 is the older fact and implies bit 1. Bit 1 alone is the weaker,
 ;; strictly more common one: a callee that writes only through the objects its
@@ -78940,6 +78942,9 @@
 
 (define (opt-direct-call-clean-global-bit) : i64
   2)
+
+(define (opt-direct-call-clean-unconditional-global-bit) : i64
+  4)
 
 (define (opt-direct-call-clean-has-bit?
   [direct-call-clean : opt_i64_i64_map.Map]
@@ -78957,21 +78962,27 @@
 ;; absent is unresolved (recursive cycles, over-budget programs) and earns no
 ;; bit, so this can only ADD facts to the syntactic walk's verdict.
 ;;
-;; A summary carrying only the element bit lands in the second arm and earns
-;; bit 1 alone -- which is the point of that bit existing. The callee writes
-;; memory (so no bit 0), but every write it makes is into the storage a
-;; descriptor's data slot names, and a global cell is a symbol's own storage,
-;; never that. The argument holds for any argument list, so unlike the
-;; parameter-write bits it needs no help from the call site's GlobalAddr gate;
-;; that gate still guards the parameter-write case it was written for.
+;; A summary carrying no parameter-write bits earns the unconditional bit too:
+;; its only possible writes are to descriptor element storage, disjoint from
+;; every cell regardless of the arguments. A parameter-writing callee earns the
+;; ordinary global bit only; LICM may use that weaker fact only when the
+;; whole-program summary proves that no cell address exists anywhere.
 (define (opt-loop-bce-direct-call-clean-bits [summary : i64]) : i64
   (if (= summary 0)
-    (+ (opt-direct-call-clean-memory-bit) (opt-direct-call-clean-global-bit))
+    (bit-or
+      (opt-direct-call-clean-memory-bit)
+      (bit-or
+        (opt-direct-call-clean-global-bit)
+        (opt-direct-call-clean-unconditional-global-bit)))
     (if (or
       (opt-call-memory-summary-global? summary)
       (opt-call-memory-summary-unknown? summary))
       0
-      (opt-direct-call-clean-global-bit))))
+      (bit-or
+        (opt-direct-call-clean-global-bit)
+        (if (opt-call-memory-summary-has-param-writes? summary)
+          0
+          (opt-direct-call-clean-unconditional-global-bit))))))
 
 (define (opt-loop-bce-direct-call-clean-add-memory-clean
   [functions : ir.CompilerIrFunctionList]

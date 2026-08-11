@@ -50,6 +50,54 @@
 (define (slice-length [s : (& s (Slice i64))]) : i64
   (length s))
 
+;; A noncapturing function value enters through a closure adapter. Seven Slice
+;; references cross both the register/stack boundary and the adapter's hidden
+;; environment slot, so every data/length word must retain its own home.
+(define (slice-indirect-seven
+  [a : (&mut a (Slice i64))]
+  [b : (&mut b (Slice i64))]
+  [c : (&mut c (Slice i64))]
+  [d : (&mut d (Slice i64))]
+  [e : (&mut e (Slice i64))]
+  [f : (&mut f (Slice i64))]
+  [g : (&mut g (Slice i64))]) : i64
+  (begin
+    (set! (array-ref a 0) 1)
+    (set! (array-ref b 0) 2)
+    (set! (array-ref c 0) 3)
+    (set! (array-ref d 0) 4)
+    (set! (array-ref e 0) 5)
+    (set! (array-ref f 0) 6)
+    (set! (array-ref g 0) 7)
+    (+
+      (+ (array-ref a 0) (array-ref b 0))
+      (+
+        (+ (array-ref c 0) (array-ref d 0))
+        (+
+          (+ (array-ref e 0) (array-ref f 0))
+          (+ (array-ref g 0) (+ (length a) (length g))))))))
+
+(define (slice-indirect-seven-call
+  [a : (&mut a (Slice i64))]
+  [b : (&mut b (Slice i64))]
+  [c : (&mut c (Slice i64))]
+  [d : (&mut d (Slice i64))]
+  [e : (&mut e (Slice i64))]
+  [f : (&mut f (Slice i64))]
+  [g : (&mut g (Slice i64))]) : i64
+  (let
+    [fn : (->
+      (&mut a (Slice i64))
+      (&mut b (Slice i64))
+      (&mut c (Slice i64))
+      (&mut d (Slice i64))
+      (&mut e (Slice i64))
+      (&mut f (Slice i64))
+      (&mut g (Slice i64))
+      i64)
+      slice-indirect-seven]
+    (fn a b c d e f g)))
+
 (define (main) : i64
   (let
     [items : (Array i64 3) (array 10 20 30)]
@@ -57,6 +105,22 @@
       (array (SliceTriple 1 2 3) (SliceTriple 4 5 6))]
     [rows : (Array (Array i64 2) 2) (array (array 11 12) (array 13 14))]
     [empty : (Array i64 0) (array)]
+    [indirect-a : (Array i64 1) (array 0)]
+    [indirect-b : (Array i64 1) (array 0)]
+    [indirect-c : (Array i64 1) (array 0)]
+    [indirect-d : (Array i64 1) (array 0)]
+    [indirect-e : (Array i64 1) (array 0)]
+    [indirect-f : (Array i64 1) (array 0)]
+    [indirect-g : (Array i64 1) (array 0)]
+    [indirect-score : i64
+      (slice-indirect-seven-call
+        (&mut indirect-a)
+        (&mut indirect-b)
+        (&mut indirect-c)
+        (&mut indirect-d)
+        (&mut indirect-e)
+        (&mut indirect-f)
+        (&mut indirect-g))]
     [view-score : i64
       (let
         [view : (& items (Slice i64)) (slice-id (& items))]
@@ -67,16 +131,18 @@
     [triple-score : i64 (triple-sum (& triples))]
     [triple-mut-score : i64 (triple-mut (&mut triples))]
     [nested-score : i64 (nested-sum (& rows))]
-    (-
-      (+
-        view-score
+    (if (= indirect-score 30)
+      (-
         (+
-          slice-score
+          view-score
           (+
-            mut-score
+            slice-score
             (+
-              borrow-score
+              mut-score
               (+
-                triple-score
-                (+ triple-mut-score (+ nested-score (slice-length (& empty)))))))))
-      120)))
+                borrow-score
+                (+
+                  triple-score
+                  (+ triple-mut-score (+ nested-score (slice-length (& empty)))))))))
+        120)
+      1)))

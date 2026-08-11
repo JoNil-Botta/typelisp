@@ -72676,7 +72676,7 @@
 ;; below the raw one, so every callee that used to enter this tier still enters
 ;; it on the raw count alone and nothing that was admitted becomes refused.
 ;;
-;; Three clauses keep the new entrance inside the class it was measured on:
+;; Two clauses keep the new entrance inside the class it was measured on:
 ;;
 ;;   - the size ceilings above are untouched. This tier only ever admits a body
 ;;     of at most opt-inline-shared-accessor-max-body instructions in
@@ -72691,37 +72691,91 @@
 ;;     letting one deeply nested site claim a tier whose argument is "many sites
 ;;     are hot" would claim something false and would spend this tier's fuel on
 ;;     a case the absorb band already owns.
-;;   - the callee must carry NO bounds check. This is the clause the corpus
-;;     insisted on, and the reason is the difference between the two counts. A
-;;     raw reference count is a COUNTED FACT; a depth weight is an ESTIMATE, and
-;;     its error is unbounded in one direction -- a loop that runs once weighs
-;;     the same as a loop that runs a million times. So the weighted entrance is
-;;     granted only where a wrong estimate is cheap, and an imported bounds
-;;     check is the opposite of cheap: it adds a length load, a compare, a
-;;     branch and a trap edge inside the caller's hottest loop, and it lengthens
-;;     the live ranges there. Measured on the corpus, both accessors that reach
-;;     this tier on weight alone while carrying a bounds check regress their
-;;     rows even though every one of their sites is inside a loop --
-;;     `gvn-byte-at` (4 references, weight 200) costs gvn_table +1.329% and
-;;     `cfg-byte-at` (the identical shape) costs cfg_domloops +0.733%, because
-;;     the imported guard is CSE'd with the caller's own loop test and the
-;;     shared boolean stops fusing into either branch, while the length load
-;;     spills. `pl-byte-at` carries a bounds check too and wins -12.3%, but it
-;;     enters on 146 counted references, not on an estimate. Every other row in
-;;     both corpora is byte-identical either way.
+;;
+;; A THIRD CLAUSE STOOD HERE AND IS NOW GONE: the estimated entrance used to
+;; additionally require the callee to carry NO bounds check. The argument was
+;; the difference between the two counts. A raw reference count is a COUNTED
+;; FACT; a depth weight is an ESTIMATE, and its error is unbounded in one
+;; direction -- a loop that runs once weighs the same as a loop that runs a
+;; million times. So the estimated entrance was granted only where a wrong
+;; estimate is cheap, and an imported bounds check was the opposite of cheap:
+;; it adds a length load, a compare, a branch and a trap edge inside the
+;; caller's hottest loop, and it lengthens the live ranges there. That was not
+;; taste, it was measured (#6461): both accessors that reach this tier on
+;; weight alone while carrying a bounds check REGRESSED their rows even though
+;; every one of their sites is inside a loop -- `gvn-byte-at` (4 references,
+;; weight 200) cost gvn_table +1.329% and `cfg-byte-at` (the identical shape)
+;; cost cfg_domloops +0.733%. `pl-byte-at` carries a bounds check too and won
+;; -12.3% there, but it enters on 146 COUNTED references, not on an estimate,
+;; which is exactly why the clause was written against the estimate alone.
+;;
+;; That autopsy named three mechanisms, and every one of them has since been
+;; repaired by work with no connection to this gate:
+;;
+;;   1. THE IMPORTED GUARD DE-FUSED. The copy's bounds compare was CSE'd with
+;;      the caller's own loop test; the shared boolean then had two readers, and
+;;      a compare with two readers could not fold into either branch, so the
+;;      caller materialised a byte and tested it where it used to branch on
+;;      flags. The compare-duplication and flags-reuse branch-emission packets
+;;      rematerialise the compare at each branch and emit the branch off the
+;;      live flags (compiler-backend-emit-flags-reuse-branch-rest and the
+;;      window rule above it), so a second reader no longer costs the first one
+;;      its fusion.
+;;   2. THE IMPORTED CHECK SURVIVED. The copy landed among checks that already
+;;      proved its condition, but the eliminator could only retire a check
+;;      against a syntactically identical one. The guard-fact implication
+;;      algebra (#6480) folds a dominated compare whose true-set a dominating
+;;      fact narrows into, so an equal-or-stronger dominating check now retires
+;;      a dominated one; cross-array check-domain fusion (#6485, the section
+;;      below) then transfers one array's proven index fact to a second array
+;;      under a single loop-entry `Lj <=u Lk`, which is precisely the shape a
+;;      byte-at import produces inside a scan loop.
+;;   3. THE BASE AND LENGTH SPILLED. The live ranges the import opened across
+;;      the loop pushed the caller past its register budget -- cfg-scan-ints
+;;      went from six frame operations to twenty-three. The caller-saved rescue
+;;      now generalises to whole natural-loop regions (#6485) and the
+;;      loop-region eviction machinery extends it to loops whose pool is fully
+;;      held, so a loop-carried base or length is split and rescued instead of
+;;      left spilled; segment-precise live intervals keep the rescued homes
+;;      from being handed out under a hole that is not really dead.
+;;
+;; With all three repaired the sign flips, and the two callees that the clause
+;; was written to exclude are what pay it back. Re-measured on this tree,
+;; dropping the clause buys
+;;
+;;     gvn_table    1,204,946,707 -> 1,185,741,272  (-19,205,435, -1.594%)
+;;     cfg_domloops   812,522,536 ->   806,167,611  ( -6,354,925, -0.782%)
+;;
+;; with the other 20 rows of the corpus byte-identical. The admitted population
+;; is exactly the two callees the clause was written against and nothing else:
+;; `gvn-byte-at` and `cfg-byte-at`, four sites each, all four taken, and with
+;; the last reference gone both leaves are deleted outright. Their callers are
+;; the two scan loops the old autopsy indicted, and both now come out AHEAD on
+;; allocation -- `cfg-scan-ints` and `gvn-scan-ints` each go from six
+;; callee-saved push/pop pairs to five while absorbing four bounds checks, with
+;; no stack-slot traffic on either side of the change. No other benchmark in
+;; the corpus moves a single call site.
+;;
+;; Across a full opt2 self-compile the same tier claims four more leaves, all of
+;; them one guarded element read: `compiler-reg-remap-id` (20 of its 41 sites),
+;; `compiler-live-label-set-ref` (all 11), `ast-decl-list-module-id-at` (all 8)
+;; and `opt-scc-set-low-min!` (both). Three of the four lose their last
+;; reference and are deleted.
+;;
+;; The estimate is still an estimate; what changed is that being wrong about one
+;; no longer costs anything, because the three mechanisms that made a wrong
+;; estimate expensive are gone. The clauses that remain are the ones that bound
+;; what a WRONG estimate can drag in -- body size, block count, and genuine
+;; sharing -- and those are counted facts, not estimates.
 (define (opt-inline-shared-accessor-dominant-min-refs) : i64
   2)
 
 ;; The tier verdict, asked identically by the gate and by the caller's fuel
 ;; accounting so a site admitted here always spends the fuel this tier owns.
-(define (opt-inline-shared-accessor-dominant?
-  [refs : i64]
-  [hot-refs : i64]
-  [has-bounds? : bool]) : bool
+(define (opt-inline-shared-accessor-dominant? [refs : i64] [hot-refs : i64]) : bool
   (or
     (>= refs (opt-inline-shared-accessor-dominant-min-refcount))
     (and
-      (not has-bounds?)
       (>= refs (opt-inline-shared-accessor-dominant-min-refs))
       (>= hot-refs (opt-inline-shared-accessor-dominant-min-refcount)))))
 
@@ -72752,7 +72806,6 @@
 (define (opt-inline-shared-accessor-ok?
   [refs : i64]
   [hot-refs : i64]
-  [has-bounds? : bool]
   [callee-instrs : i64]
   [blocks : ir.CompilerIrBlockList]
   [added-blocks : i64]
@@ -72765,12 +72818,12 @@
     ;; be admitted is refused, because the weighted count is never smaller.
     (or
       (>= refs (opt-inline-shared-accessor-min-refcount))
-      (opt-inline-shared-accessor-dominant? refs hot-refs has-bounds?))
+      (opt-inline-shared-accessor-dominant? refs hot-refs))
     (<= callee-instrs (opt-inline-shared-accessor-max-body))
     (<=
       (ir.compiler-ir-block-list-count blocks)
       (opt-inline-shared-accessor-max-blocks))
-    (if (opt-inline-shared-accessor-dominant? refs hot-refs has-bounds?)
+    (if (opt-inline-shared-accessor-dominant? refs hot-refs)
       (and
         (not
           (opt-inline-cost-crosses-heavy-gate?
@@ -73556,7 +73609,6 @@
                   (opt-inline-shared-accessor-ok?
                     refs
                     hot-refs
-                    has-bounds?
                     callee-instrs
                     cblocks
                     added-blocks
@@ -73621,10 +73673,7 @@
                 [accessor-import? : bool
                   (and
                     shared-accessor?
-                    (opt-inline-shared-accessor-dominant?
-                      refs
-                      hot-refs
-                      has-bounds?)
+                    (opt-inline-shared-accessor-dominant? refs hot-refs)
                     (not budget-cost-ok?))]
                 ;; A bounds-free acyclic branch chain is admitted on its own
                 ;; terms: the census still claims it, but the cost model's
@@ -74342,7 +74391,6 @@
                   (opt-inline-shared-accessor-ok?
                     refs
                     hot-refs
-                    has-bounds?
                     callee-instrs
                     cblocks
                     added-blocks
@@ -74404,10 +74452,7 @@
                 [accessor-import? : bool
                   (and
                     shared-accessor?
-                    (opt-inline-shared-accessor-dominant?
-                      refs
-                      hot-refs
-                      has-bounds?)
+                    (opt-inline-shared-accessor-dominant? refs hot-refs)
                     (not budget-cost-ok?))]
                 ;; Same branch-chain decision as the non-span path.
                 [branch-chain? : bool

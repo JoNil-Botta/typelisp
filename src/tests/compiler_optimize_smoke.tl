@@ -3752,10 +3752,10 @@
     "a body past the accessor block ceiling stays out of line at the same nested-loop sites"))
 
 (test
-  inline-accessor-depth-bounds-refusal
+  inline-accessor-depth-bounds-admission
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-accessor-depth-bounds-refusal-ok?)
-    "a bounds-carrying body stays out of line at the same nested-loop sites: weighted evidence admits only the cheap class"))
+    (compiler_optimize_tests.compiler-optimize-inline-accessor-depth-bounds-admission-ok?)
+    "a bounds-carrying body is taken at two nested-loop sites and kept behind its call one loop shallower: the weight decides, not the bounds check"))
 
 (test
   inline-depth-multiple-latches

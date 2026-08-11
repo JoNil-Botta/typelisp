@@ -15439,8 +15439,9 @@
     (opt-inline-depth-leaf-switch-instrs)
     3))
 
-;; The identical leaf plus one bounds check: the clause that keeps the weighted
-;; entrance off the class where a wrong frequency estimate is expensive.
+;; The identical leaf plus one bounds check. The weighted entrance was once
+;; closed to this class and is now open to it; the leaf pins that the bounds
+;; check is not what decides the verdict -- the weight is.
 (define (opt-inline-depth-bounds-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
   (opt-inline-depth-leaf-named
     callee-name
@@ -15611,19 +15612,30 @@
         (opt-inline-depth-oversize-leaf callee-name))]
     (= (opt-inline-dominant-remaining-calls refused 0 2) 2)))
 
-;; The identical leaf carrying one bounds check stays out of line at the same
-;; two nested-loop sites: a weighted count is an estimate, and the tier accepts
-;; an estimate only where a wrong one is cheap.
-(define (compiler-optimize-inline-accessor-depth-bounds-refusal-ok?) : bool
+;; The identical leaf carrying one bounds check is admitted at the same two
+;; nested-loop sites, and refused one loop shallower. The weighted entrance used
+;; to demand a bounds-free callee, because an imported guard de-fused, its check
+;; survived, and the base and length spilled; all three are fixed, and dropping
+;; the clause is measured as gvn_table -19,205,435 and cfg_domloops -6,354,925.
+;; What still holds the line for this leaf is the floor itself: two sites one
+;; loop shallower weigh 16, not 128, and keep both calls.
+(define (compiler-optimize-inline-accessor-depth-bounds-admission-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [admitted : compiler_ir_types.CompilerIrFunctionList
       (opt-inline-depth-optimized
         callee-name
         true
         (opt-inline-depth-bounds-leaf callee-name))]
-    (= (opt-inline-dominant-remaining-calls refused 0 2) 2)))
+    [refused : compiler_ir_types.CompilerIrFunctionList
+      (opt-inline-depth-optimized
+        callee-name
+        false
+        (opt-inline-depth-bounds-leaf callee-name))]
+    (and
+      (= (opt-inline-dominant-remaining-calls admitted 0 2) 0)
+      (= (opt-inline-dominant-remaining-calls refused 0 2) 2))))
 
 ;; Multiple latches targeting one header are alternative backedges of the same
 ;; loop, not nested loops. The old difference marker added one level per edge,

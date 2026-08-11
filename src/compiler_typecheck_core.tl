@@ -22039,6 +22039,71 @@
   [alias-id : i64]) : TcMaybeNameId
   (tc-lazy-import-stub-target-indexed importer-module-id alias-id))
 
+;; Lazy loading retains macro bodies in surface summaries without flattening
+;; the defining module's import markers into the active program. Preserve that
+;; definition environment in the same alias-stub index used by materialized
+;; imports. The surface edge carries its lexical owner because one source can
+;; contain nested module bodies with independent alias environments.
+(define (tc-lazy-import-surface-import-stub-record-for-job!
+  [job-state : TcJobState]
+  [import-edge : cload.CompilerLoadSurfaceImport]) : unit
+  (match import-edge.kind
+    [(CompilerLoadSurfaceImportModule)
+      (match import-edge.module-name
+        [(CompilerLoadSurfaceSomeString target-module)
+          (match import-edge.alias
+            [(CompilerLoadSurfaceSomeString alias)
+              (let
+                [alias-id : i64 (ci.intern alias)]
+                [target-module-id : i64 (ci.intern target-module)]
+                (match (tc-lazy-import-stub-target-indexed
+                  import-edge.module
+                  alias-id)
+                  [(TcMaybeNameId.Some existing-target)
+                    (if (= existing-target target-module-id)
+                      unit
+                      (tc-lazy-import-stub-record-for-job!
+                        job-state
+                        import-edge.module
+                        alias-id
+                        target-module-id
+                        true))]
+                  [(TcMaybeNameId.No)
+                    (tc-lazy-import-stub-record-for-job!
+                      job-state
+                      import-edge.module
+                      alias-id
+                      target-module-id
+                      true)]))]
+            [(CompilerLoadSurfaceNoString) unit])]
+        [(CompilerLoadSurfaceNoString) unit])]
+    [_ unit]))
+
+(define (tc-lazy-import-surface-summary-stubs-record-for-job!
+  [job-state : TcJobState]
+  [summary : cload.CompilerLoadSurfaceSummary]) : unit
+  (let
+    [imports : cload.CompilerLoadSurfaceImportList summary.imports]
+    [index : i64 0]
+    (while (< index (cload.compiler-load-surface-import-list-count imports))
+      (begin
+        (tc-lazy-import-surface-import-stub-record-for-job!
+          job-state
+          (cload.compiler-load-surface-import-list-at imports index))
+        (set! index (+ index 1))))))
+
+(define (tc-lazy-import-surface-stubs-record-for-job! [job-state : TcJobState]) : unit
+  (let
+    [summaries : cload.CompilerLoadSurfaceSummaryList
+      (cload.compiler-load-surface-summaries)]
+    [index : i64 0]
+    (while (< index (cload.compiler-load-surface-summary-list-count summaries))
+      (begin
+        (tc-lazy-import-surface-summary-stubs-record-for-job!
+          job-state
+          (cload.compiler-load-surface-summary-list-at summaries index))
+        (set! index (+ index 1))))))
+
 ;; Generated declarations can be checked before their source module's marker is
 ;; reached in the expansion walk. Use an alias-wide target only when every
 ;; concrete recorded target that exports the requested type resolves to the
@@ -32255,6 +32320,8 @@
           [decls : ast.AstDeclList (__tl-box-place decls-box)]
           [body-state : TcBodyState (tc-context-body-state ctx)]
           [job-state : TcJobState body-state.job-state]
+          [_surface-import-stubs : unit
+            (tc-lazy-import-surface-stubs-record-for-job! job-state)]
           [membership-state : TcTopEnvMembershipState
             (tc-job-state-topenv-membership job-state)]
           [base-env : TcTypeEnv (tc-default-env-with-job-state job-state)]
@@ -89034,14 +89101,19 @@
       (* (ci.intern-capacity) (ci.intern-capacity)))))
 
 (define (macro-hygiene-global-module-id [name-id : i64]) : i64
-  (let
-    [stored : i64
-      (%
-        (/ (- name-id (macro-hygiene-structural-base)) (ci.intern-capacity))
-        (ci.intern-capacity))]
-    (if (= stored 0)
-      (csym.compiler-symbol-root-module-id)
-      (- stored 1))))
+  (begin
+    (when
+      (not (macro-hygiene-global-id? name-id))
+      (io.panic
+        "typecheck: expected hygienic global identity for module decode"))
+    (let
+      [stored : i64
+        (%
+          (/ (- name-id (macro-hygiene-structural-base)) (ci.intern-capacity))
+          (ci.intern-capacity))]
+      (if (= stored 0)
+        (csym.compiler-symbol-root-module-id)
+        (- stored 1)))))
 
 (define (macro-hygiene-local-base) : i64
   (let
@@ -107048,8 +107120,14 @@
     [(ResultCompilerTypecheckChecked.Err diag)
       (ResultCompilerTypecheck.Err diag)]))
 
-(define (compiler-typecheck-clear-macro-expanded-source-caches!) : unit
+(define (compiler-typecheck-clear-macro-expanded-source-caches-for-job!
+  [job-state : TcJobState]) : unit
   (begin
+    ;; Checked lowering can retire the load/source pools before its macro pass.
+    ;; Surface summaries are about to be destroyed, but lazy macro bodies may
+    ;; still need their definition-site import aliases. Distill those aliases
+    ;; into the id-only stub table while the summary strings are alive.
+    (tc-lazy-import-surface-stubs-record-for-job! job-state)
     (tc-unbound-suggestion-snapshot-reset!)
     (tc-clone-able-cache-reset!)
     (tc-macro-helper-env-cache-reset!)
@@ -107079,6 +107157,12 @@
     (set! ctfe-needs-metadata true)
     (macro-generated-module-memo-reset!)
     (macro-generated-decls-memo-reset!)))
+
+;; Serial/test compatibility adapter. Production lowering owns and supplies a
+;; job state so cache invalidation remains isolated between compiler requests.
+(define (compiler-typecheck-clear-macro-expanded-source-caches!) : unit
+  (compiler-typecheck-clear-macro-expanded-source-caches-for-job!
+    (tc-serial-job-state)))
 
 (define (compiler-typecheck-reset-file-state!) : unit
   (begin

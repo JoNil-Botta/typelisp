@@ -6,14 +6,11 @@
 ;; through the embedded (native) and the interpreted macro routes and requires
 ;; byte-identical assembly, so a divergence in the probe results, the arm
 ;; selection, or the reconstructed cast fails the build.
-;; `stdlib.format` must precede `stdlib.json` here: the reverse order makes
-;; `format.format`'s expansion fail to resolve `str_cat.str-cat` (#5648).
-(import stdlib.format)
-
 ;; Referenced only as the serialize strategy module in the generated import
 ;; below, which the unused-import rule does not count as a reference.
 ;; lint-allow: unused-import
 (import stdlib.json)
+(import stdlib.format)
 (import stdlib.math)
 (import stdlib.serialize)
 (import stdlib.string)

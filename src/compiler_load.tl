@@ -186,6 +186,10 @@
 
 (defstruct CompilerLoadSurfaceImport
   (kind CompilerLoadSurfaceImportKind)
+  ;; The lexical module that owns this import. Surface summaries can contain
+  ;; nested module bodies, so the source path alone is not enough to recover
+  ;; the definition environment of a retained macro body.
+  (module i64)
   (source-path String)
   (import-path String)
   (module-name CompilerLoadSurfaceMaybeString)
@@ -7083,6 +7087,7 @@
         build
         (CompilerLoadSurfaceImport
           (compiler-load-surface-import-kind kind)
+          module-id
           source-path
           import-path
           (compiler-load-surface-module-maybe module-name)
@@ -12017,6 +12022,12 @@
           (compiler-load-surface-import-list-at imports 0)
           import-path)
         "dep.mod")
+      (string.eq
+        (ci.intern-str
+          (__tl-project-field
+            (compiler-load-surface-import-list-at imports 0)
+            module))
+        "summary.mod")
       (string.eq
         (__tl-project-field
           (compiler-load-surface-import-list-at imports 1)

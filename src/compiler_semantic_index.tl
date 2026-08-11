@@ -87,12 +87,13 @@
   (owner-arena i64)
   (records (__tl_dyn-array CompilerSemanticRecord))
   (len i64)
-  ;; A failed check returns no replacement index. Callers keep their previous
-  ;; successful value until this flag can also represent partial checks.
+  ;; False identifies current-buffer records established by recovery. It never
+  ;; denotes a caller-owned last-good snapshot.
   (complete bool))
 
 (defenum ResultCompilerCheckWithSemanticIndex
   (Ok tc.CompilerTypecheckSummary CompilerSemanticSourceIndex)
+  (Partial (Box cdiag.CompilerDiagnosticList) CompilerSemanticSourceIndex)
   (Err (Box cdiag.CompilerDiagnosticList)))
 
 (defenum CompilerSemanticMaybeDecl
@@ -175,6 +176,28 @@
     (array.make-array CompilerSemanticRecord 0)
     0
     false))
+
+(define (compiler-semantic-source-index-empty-owned) : CompilerSemanticSourceIndex
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make)]
+    (begin
+      (set!
+        compiler-semantic-source-index-live-owners
+        (+ compiler-semantic-source-index-live-owners 1))
+      (unsafe
+        (arena.tl_arena_set owner))
+      (let
+        [result : CompilerSemanticSourceIndex
+          (CompilerSemanticSourceIndex
+            owner
+            (array.make-array CompilerSemanticRecord 0)
+            0
+            false)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set previous))
+          result)))))
 
 (define (compiler-semantic-binding-snapshot-empty) : CompilerSemanticBindingSnapshot
   (CompilerSemanticBindingSnapshot -1))
@@ -2893,7 +2916,8 @@
   [env : tc.TcTypeEnv]
   [paths : ast.AstDeclPathList]
   [entry-path : String]
-  [entry-source : String]) : CompilerSemanticSourceIndex
+  [entry-source : String]
+  [complete : bool]) : CompilerSemanticSourceIndex
   (let
     [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
@@ -3124,7 +3148,7 @@
                 owner
                 (__tl-project-field (__tl-box-place walk-state.records) items)
                 (__tl-project-field (__tl-box-place walk-state.records) len)
-                true)]
+                complete)]
             (begin
               (unsafe
                 (arena.tl_arena_set previous))
@@ -3156,13 +3180,35 @@
                 env
                 checked-paths
                 path
-                source)]
+                source
+                true)]
             (begin
               (cfg
                 compile-profile
                 (check_core.compiler-check-profile-finish "typecheck"))
               (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
               (ResultCompilerCheckWithSemanticIndex.Ok summary index)))]
+        [(tc.ResultCompilerTypecheckChecked.Partial diag ctx env checked-paths)
+          (let
+            [index : CompilerSemanticSourceIndex
+              (compiler-semantic-index-build-owned
+                ctx
+                env
+                checked-paths
+                path
+                source
+                false)]
+            (begin
+              (cfg
+                compile-profile
+                (check_core.compiler-check-profile-finish "typecheck"))
+              (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
+              (ResultCompilerCheckWithSemanticIndex.Partial
+                (box
+                  (check_core.compiler-check-diagnostics-with-fallback-path
+                    (deref diag)
+                    path))
+                index)))]
         [(tc.ResultCompilerTypecheckChecked.Err diag)
           (begin
             (cfg
@@ -3203,12 +3249,99 @@
     [(cload.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (check_core.compiler-check-profile-finish "load"))
-        (ResultCompilerCheckWithSemanticIndex.Err
-          (cdiag.compiler-diagnostic-list-box-single diag)))]))
+        (ResultCompilerCheckWithSemanticIndex.Partial
+          (cdiag.compiler-diagnostic-list-box-single diag)
+          (compiler-semantic-source-index-empty-owned)))]))
 
-;; Build a replacement index only after a complete semantic check. On error no
-;; index is returned, which makes the last-good contract explicit: IDE clients
-;; retain their previously owned index and diagnostic handling stays unchanged.
+(define (compiler-semantic-index-result-with-parse-diagnostics
+  [parse-diagnostics : cdiag.CompilerDiagnosticList]
+  [result : ResultCompilerCheckWithSemanticIndex]) : ResultCompilerCheckWithSemanticIndex
+  (if (= (cdiag.compiler-diagnostic-list-count parse-diagnostics) 0)
+    result
+    (let
+      [count : i64 (cdiag.compiler-diagnostic-list-count parse-diagnostics)]
+      [index : i64 0]
+      [owned-parse : cdiag.CompilerDiagnosticList
+        (cdiag.compiler-diagnostic-list-with-capacity count)]
+      (begin
+        (while (< index count)
+          (begin
+            (cdiag.compiler-diagnostic-list-push!
+              (&mut owned-parse)
+              (cdiag.compiler-diagnostic-list-get parse-diagnostics index))
+            (set! index (+ index 1))))
+        (match result
+          [(ResultCompilerCheckWithSemanticIndex.Ok _ source-index)
+            (ResultCompilerCheckWithSemanticIndex.Partial
+              (box owned-parse)
+              (CompilerSemanticSourceIndex
+                source-index.owner-arena
+                source-index.records
+                source-index.len
+                false))]
+          [(ResultCompilerCheckWithSemanticIndex.Partial
+              semantic-diagnostics
+              source-index)
+            (begin
+              (check_core.compiler-check-diagnostic-list-insert-all-source-order
+                (deref semantic-diagnostics)
+                (&mut owned-parse))
+              (ResultCompilerCheckWithSemanticIndex.Partial
+                (box owned-parse)
+                source-index))]
+          [(ResultCompilerCheckWithSemanticIndex.Err semantic-diagnostics)
+            (begin
+              (check_core.compiler-check-diagnostic-list-insert-all-source-order
+                (deref semantic-diagnostics)
+                (&mut owned-parse))
+              (ResultCompilerCheckWithSemanticIndex.Err (box owned-parse)))])))))
+
+(define (compiler-check-source-with-prelude-index-recovery
+  [path : String]
+  [source : String]
+  [prelude-decls : ast.AstDeclList]
+  [prelude-paths : ast.AstDeclPathList]
+  [prelude-seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
+  (match (parse_core.parse-ast-source-recovery-diagnostic-with-cfg
+    path
+    source
+    cfgs)
+    [(parse_core.ResultAstProgramRecovery.Fatal diagnostics)
+      (begin
+        (cfg compile-profile (check_core.compiler-check-profile-finish "load"))
+        (ResultCompilerCheckWithSemanticIndex.Err diagnostics))]
+    [(parse_core.ResultAstProgramRecovery.Parsed program diagnostics)
+      (let
+        [parse-identity : cload.CompilerLoadParseIdentity
+          (cload.compiler-load-parse-identity
+            path
+            (cload.compiler-load-canonical-module-id-from-path path)
+            ast.AstMaybeModuleName.No)]
+        [loaded : cload.ResultCompilerLoadWithPaths
+          (cload.compiler-load-program-with-paths-and-roots-expect-cfg
+            path
+            program
+            prelude-seen
+            stdlib-roots
+            ast.AstMaybeModuleName.No
+            cfgs
+            parse-identity)]
+        (compiler-semantic-index-result-with-parse-diagnostics
+          (deref diagnostics)
+          (compiler-check-loaded-with-prelude-index-cache
+            path
+            source
+            prelude-decls
+            prelude-paths
+            loaded
+            stdlib-roots
+            cache-scope)))]))
+
+;; Return current-buffer records whenever recovery establishes safe identities.
+;; Fatal prelude/lexing failures remain distinct from an owned partial index.
 (define (compiler-check-source-index-with-roots
   [path : String]
   [source : String]
@@ -3236,18 +3369,14 @@
           prelude-paths
           prelude-modules
           prelude-seen)
-        (compiler-check-loaded-with-prelude-index-cache
+        (compiler-check-source-with-prelude-index-recovery
           path
           source
           prelude-decls
           (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
-          (cload.compiler-load-source-with-paths-and-roots-cfg
-            path
-            source
-            prelude-seen
-            stdlib-roots
-            cfgs)
+          prelude-seen
           stdlib-roots
+          cfgs
           (tc_api.compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-semantic-index"
             stdlib-roots
@@ -3849,7 +3978,30 @@
                             (compiler-semantic-source-index-release!
                               (&mut replacement))
                             false)]
-                        [(ResultCompilerCheckWithSemanticIndex.Err _) true])]
+                        [(ResultCompilerCheckWithSemanticIndex.Partial
+                            diagnostics
+                            replacement)
+                          (let
+                            [ok : bool
+                              (and
+                                (=
+                                  (cdiag.compiler-diagnostic-list-count
+                                    (deref diagnostics))
+                                  1)
+                                (not
+                                  (compiler-semantic-source-index-complete?
+                                    (& replacement)))
+                                (>=
+                                  (compiler-semantic-source-index-find-definition
+                                    (& replacement)
+                                    path
+                                    "broken")
+                                  0))]
+                            (begin
+                              (compiler-semantic-source-index-release!
+                                (&mut replacement))
+                              ok))]
+                        [(ResultCompilerCheckWithSemanticIndex.Err _) false])]
                     [ok : bool
                       (and
                         (compiler-semantic-record-vec-growth-ok?)
@@ -4005,10 +4157,19 @@
                         ok
                         (= (compiler-semantic-source-index-len (& first)) 0)
                         (= (compiler-semantic-source-index-len (& second)) 0))))]
+                [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+                  (begin
+                    (compiler-semantic-source-index-release! (&mut partial))
+                    (compiler-semantic-source-index-release! (&mut first))
+                    false)]
                 [(ResultCompilerCheckWithSemanticIndex.Err _)
                   (begin
                     (compiler-semantic-source-index-release! (&mut first))
                     false)]))))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
 (define (compiler-check-semantic-index-macro-source) : String
@@ -4310,6 +4471,10 @@
                           (compiler-semantic-source-index-release!
                             (&mut replacement))
                           empty))]
+                    [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+                      (begin
+                        (compiler-semantic-source-index-release! (&mut partial))
+                        false)]
                     [(ResultCompilerCheckWithSemanticIndex.Err _) false])]
                 [ok : bool
                   (and
@@ -4337,10 +4502,19 @@
                       (tc.tc-macro-call-site-state-enabled?
                         (tc.tc-job-state-macro-call-sites
                           (tc.tc-serial-job-state)))))))]
+            [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+              (begin
+                (compiler-semantic-source-index-release! (&mut partial))
+                (compiler-semantic-source-index-release! (&mut first))
+                false)]
             [(ResultCompilerCheckWithSemanticIndex.Err _)
               (begin
                 (compiler-semantic-source-index-release! (&mut first))
                 false)]))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
 (define (compiler-check-semantic-index-inferred-locals-ok?) : bool
@@ -4584,10 +4758,19 @@
                         ok
                         (= (compiler-semantic-source-index-len (& first)) 0)
                         (= (compiler-semantic-source-index-len (& second)) 0))))]
+                [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+                  (begin
+                    (compiler-semantic-source-index-release! (&mut partial))
+                    (compiler-semantic-source-index-release! (&mut first))
+                    false)]
                 [(ResultCompilerCheckWithSemanticIndex.Err _)
                   (begin
                     (compiler-semantic-source-index-release! (&mut first))
                     false)]))))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
 (define (compiler-check-semantic-index-dense-scopes-ok?) : bool
@@ -4753,11 +4936,412 @@
               (begin
                 (compiler-semantic-source-index-release! (&mut index))
                 ok))))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-partial-type-error-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_partial_type_error.tl"]
+    [invalid-source : String
+      "(define good : i64 1)
+(define (broken [same : i64]) : i64
+  (let [same : i64 (+ same good)] (+ same true)))
+(define (later [same : i64]) : i64 (+ same good))"]
+    [valid-source : String
+      "(define good : i64 1)
+(define (broken [same : i64]) : i64
+  (let [same : i64 (+ same good)] (+ same 1)))
+(define (later [same : i64]) : i64 (+ same good))"]
+    [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
+    (match (compiler-check-source-index-with-roots
+      path
+      invalid-source
+      (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Partial diagnostics partial)
+        (let
+          [partial-good-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& partial)
+              path
+              "good")]
+          [partial-broken-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& partial)
+              path
+              "broken")]
+          [partial-later-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& partial)
+              path
+              "later")]
+          [partial-good : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& partial) partial-good-index)]
+          [partial-broken : CompilerSemanticRecord
+            (compiler-semantic-source-index-get
+              (& partial)
+              partial-broken-index)]
+          [partial-later : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& partial) partial-later-index)]
+          [partial-same-param-index : i64
+            (compiler-semantic-source-index-find-record
+              (& partial)
+              path
+              "same"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [partial-same-local-index : i64
+            (compiler-semantic-source-index-find-record
+              (& partial)
+              path
+              "same"
+              CompilerSemanticRecordRole.Definition
+              1)]
+          [partial-same-param : CompilerSemanticRecord
+            (compiler-semantic-source-index-get
+              (& partial)
+              partial-same-param-index)]
+          [partial-same-local : CompilerSemanticRecord
+            (compiler-semantic-source-index-get
+              (& partial)
+              partial-same-local-index)]
+          (match (compiler-check-source-index-with-roots
+            path
+            valid-source
+            (svec.new))
+            [(ResultCompilerCheckWithSemanticIndex.Ok _ complete)
+              (let
+                [complete-good-index : i64
+                  (compiler-semantic-source-index-find-definition
+                    (& complete)
+                    path
+                    "good")]
+                [complete-broken-index : i64
+                  (compiler-semantic-source-index-find-definition
+                    (& complete)
+                    path
+                    "broken")]
+                [complete-later-index : i64
+                  (compiler-semantic-source-index-find-definition
+                    (& complete)
+                    path
+                    "later")]
+                [complete-good : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& complete)
+                    complete-good-index)]
+                [complete-broken : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& complete)
+                    complete-broken-index)]
+                [complete-later : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& complete)
+                    complete-later-index)]
+                [ok : bool
+                  (and
+                    (=
+                      (cdiag.compiler-diagnostic-list-count (deref diagnostics))
+                      1)
+                    (not (compiler-semantic-source-index-complete? (& partial)))
+                    (compiler-semantic-source-index-complete? (& complete))
+                    (>= partial-good-index 0)
+                    (>= partial-broken-index 0)
+                    (>= partial-later-index 0)
+                    (>= partial-same-param-index 0)
+                    (>= partial-same-local-index 0)
+                    (compiler-semantic-record-span-text-eq?
+                      invalid-source
+                      partial-good
+                      "good")
+                    (compiler-semantic-record-span-text-eq?
+                      invalid-source
+                      partial-broken
+                      "broken")
+                    (compiler-semantic-record-span-text-eq?
+                      invalid-source
+                      partial-later
+                      "later")
+                    (not
+                      (compiler-semantic-symbol-id-eq?
+                        partial-same-param.symbol
+                        partial-same-local.symbol))
+                    (compiler-semantic-source-index-name-symbol-match?
+                      (& partial)
+                      path
+                      "same"
+                      0
+                      0)
+                    (compiler-semantic-source-index-name-symbol-match?
+                      (& partial)
+                      path
+                      "same"
+                      1
+                      1)
+                    (compiler-semantic-symbol-id-eq?
+                      partial-good.symbol
+                      complete-good.symbol)
+                    (compiler-semantic-symbol-id-eq?
+                      partial-broken.symbol
+                      complete-broken.symbol)
+                    (compiler-semantic-symbol-id-eq?
+                      partial-later.symbol
+                      complete-later.symbol))]
+                (begin
+                  (compiler-semantic-source-index-release! (&mut complete))
+                  (compiler-semantic-source-index-release! (&mut partial))
+                  (and
+                    ok
+                    (=
+                      owners-before
+                      (compiler-semantic-source-index-live-owner-count)))))]
+            [(ResultCompilerCheckWithSemanticIndex.Partial _ unexpected)
+              (begin
+                (compiler-semantic-source-index-release! (&mut unexpected))
+                (compiler-semantic-source-index-release! (&mut partial))
+                false)]
+            [(ResultCompilerCheckWithSemanticIndex.Err _)
+              (begin
+                (compiler-semantic-source-index-release! (&mut partial))
+                false)]))]
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ unexpected)
+        (begin
+          (compiler-semantic-source-index-release! (&mut unexpected))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-partial-syntax-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_partial_syntax.tl"]
+    [invalid-source : String
+      "(define partial-anchor : i64 1)
+(define (uses-anchor) : i64 (+ partial-anchor 1))
+(define unfinished : i64 (+ partial-anchor"]
+    [valid-source : String
+      "(define partial-anchor : i64 1)
+(define (uses-anchor) : i64 (+ partial-anchor 1))
+(define unfinished : i64 (+ partial-anchor 2))"]
+    (match (compiler-check-source-index-with-roots
+      path
+      invalid-source
+      (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Partial diagnostics partial)
+        (let
+          [partial-first-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& partial)
+              path
+              "partial-anchor")]
+          [partial-use-index : i64
+            (compiler-semantic-source-index-find-record
+              (& partial)
+              path
+              "partial-anchor"
+              CompilerSemanticRecordRole.Use
+              -1)]
+          [partial-unfinished-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& partial)
+              path
+              "unfinished")]
+          [partial-first : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& partial) partial-first-index)]
+          [partial-use : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& partial) partial-use-index)]
+          (match (compiler-check-source-index-with-roots
+            path
+            valid-source
+            (svec.new))
+            [(ResultCompilerCheckWithSemanticIndex.Ok _ complete)
+              (let
+                [complete-first-index : i64
+                  (compiler-semantic-source-index-find-definition
+                    (& complete)
+                    path
+                    "partial-anchor")]
+                [complete-first : CompilerSemanticRecord
+                  (compiler-semantic-source-index-get
+                    (& complete)
+                    complete-first-index)]
+                [ok : bool
+                  (and
+                    (=
+                      (cdiag.compiler-diagnostic-list-count (deref diagnostics))
+                      1)
+                    (not (compiler-semantic-source-index-complete? (& partial)))
+                    (>= partial-first-index 0)
+                    (>= partial-use-index 0)
+                    (< partial-unfinished-index 0)
+                    (compiler-semantic-record-span-text-eq?
+                      invalid-source
+                      partial-first
+                      "partial-anchor")
+                    (compiler-semantic-record-span-text-eq?
+                      invalid-source
+                      partial-use
+                      "partial-anchor")
+                    (compiler-semantic-symbol-id-eq?
+                      partial-first.symbol
+                      partial-use.symbol)
+                    (compiler-semantic-symbol-id-eq?
+                      partial-first.symbol
+                      complete-first.symbol))]
+                (begin
+                  (compiler-semantic-source-index-release! (&mut complete))
+                  (compiler-semantic-source-index-release! (&mut partial))
+                  ok))]
+            [(ResultCompilerCheckWithSemanticIndex.Partial _ unexpected)
+              (begin
+                (compiler-semantic-source-index-release! (&mut unexpected))
+                (compiler-semantic-source-index-release! (&mut partial))
+                false)]
+            [(ResultCompilerCheckWithSemanticIndex.Err _)
+              (begin
+                (compiler-semantic-source-index-release! (&mut partial))
+                false)]))]
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ unexpected)
+        (begin
+          (compiler-semantic-source-index-release! (&mut unexpected))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-partial-diagnostics-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_partial_diagnostics.tl"]
+    [source : String "(define)
+(define later : i64 missing-value)"]
+    (match (compiler-check-source-index-with-roots path source (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Partial diagnostics partial)
+        (let
+          [diagnostic-list : cdiag.CompilerDiagnosticList (deref diagnostics)]
+          [later-index : i64
+            (compiler-semantic-source-index-find-definition
+              (& partial)
+              path
+              "later")]
+          [missing-index : i64
+            (compiler-semantic-source-index-find-record
+              (& partial)
+              path
+              "missing-value"
+              CompilerSemanticRecordRole.Use
+              0)]
+          [later : CompilerSemanticRecord
+            (compiler-semantic-source-index-get (& partial) later-index)]
+          [ok : bool
+            (and
+              (= (cdiag.compiler-diagnostic-list-count diagnostic-list) 2)
+              (string.eq
+                (cdiag.compiler-diagnostic-message
+                  (cdiag.compiler-diagnostic-list-get diagnostic-list 0))
+                "parse: malformed define")
+              (string.eq
+                (cdiag.compiler-diagnostic-message
+                  (cdiag.compiler-diagnostic-list-get diagnostic-list 1))
+                "typecheck: unbound name missing-value")
+              (>= later-index 0)
+              (< missing-index 0)
+              (compiler-semantic-record-span-text-eq? source later "later"))]
+          (begin
+            (compiler-semantic-source-index-release! (&mut partial))
+            ok))]
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ unexpected)
+        (begin
+          (compiler-semantic-source-index-release! (&mut unexpected))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-partial-edge-result-ok?
+  [path : String]
+  [source : String]
+  [expected-name : String]
+  [expected-present : bool]) : bool
+  (match (compiler-check-source-index-with-roots path source (svec.new))
+    [(ResultCompilerCheckWithSemanticIndex.Partial diagnostics partial)
+      (let
+        [record-index : i64
+          (compiler-semantic-source-index-find-definition
+            (& partial)
+            path
+            expected-name)]
+        [ok : bool
+          (and
+            (> (cdiag.compiler-diagnostic-list-count (deref diagnostics)) 0)
+            (not (compiler-semantic-source-index-complete? (& partial)))
+            (if expected-present
+              (>= record-index 0)
+              (< record-index 0)))]
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          ok))]
+    [(ResultCompilerCheckWithSemanticIndex.Ok _ unexpected)
+      (begin
+        (compiler-semantic-source-index-release! (&mut unexpected))
+        false)]
+    [(ResultCompilerCheckWithSemanticIndex.Err _) false]))
+
+(define (compiler-check-semantic-index-partial-edge-cases-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_partial_edges.tl"]
+    [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
+    [before-first : bool
+      (compiler-check-semantic-index-partial-edge-result-ok?
+        path
+        ")\n(define later : i64 1)"
+        "later"
+        true)]
+    [bad-import : bool
+      (compiler-check-semantic-index-partial-edge-result-ok?
+        path
+        "(import semantic.index.definitely_missing as missing)\n(define local : i64 1)"
+        "local"
+        false)]
+    [iteration : i64 0]
+    [bounded : bool true]
+    (begin
+      (while (< iteration 8)
+        (begin
+          (if (compiler-check-semantic-index-partial-edge-result-ok?
+            path
+            "(define current : i64 true)"
+            "current"
+            true)
+            unit
+            (set! bounded false))
+          (set! iteration (+ iteration 1))))
+      (and
+        before-first
+        bad-import
+        bounded
+        (= owners-before (compiler-semantic-source-index-live-owner-count))
+        (match (compiler-check-source-index-with-roots
+          path
+          "\"unterminated"
+          (svec.new))
+          [(ResultCompilerCheckWithSemanticIndex.Err diagnostics)
+            (> (cdiag.compiler-diagnostic-list-count (deref diagnostics)) 0)]
+          [(ResultCompilerCheckWithSemanticIndex.Ok _ unexpected)
+            (begin
+              (compiler-semantic-source-index-release! (&mut unexpected))
+              false)]
+          [(ResultCompilerCheckWithSemanticIndex.Partial _ unexpected)
+            (begin
+              (compiler-semantic-source-index-release! (&mut unexpected))
+              false)])))))
+
+(define (compiler-check-semantic-index-partial-ok?) : bool
+  (and
+    (compiler-check-semantic-index-partial-type-error-ok?)
+    (compiler-check-semantic-index-partial-syntax-ok?)
+    (compiler-check-semantic-index-partial-diagnostics-ok?)
+    (compiler-check-semantic-index-partial-edge-cases-ok?)))
 
 (define (compiler-check-semantic-index-ok?) : bool
   (and
     (compiler-check-semantic-index-base-ok?)
     (compiler-check-semantic-index-macro-call-sites-ok?)
     (compiler-check-semantic-index-inferred-locals-ok?)
-    (compiler-check-semantic-index-dense-scopes-ok?)))
+    (compiler-check-semantic-index-dense-scopes-ok?)
+    (compiler-check-semantic-index-partial-ok?)))

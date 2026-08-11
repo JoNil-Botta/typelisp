@@ -184,6 +184,13 @@
         pools
         source-names)]
     (match checked
+      [(tc.ResultCompilerTypecheckChecked.Partial diag _ _ _)
+        (begin
+          (tc.tc-clone-root-collection-abort!)
+          (surface_facts.surface-typecheck-facts-recording-abort!)
+          (prelude-surface-facts-error
+            "prelude surface typecheck failed: "
+            (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
       [(tc.ResultCompilerTypecheckChecked.Err diag)
         (begin
           (tc.tc-clone-root-collection-abort!)

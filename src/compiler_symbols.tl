@@ -806,16 +806,7 @@
     [else (compiler-composite-pair-key-id module-id name-id)]))
 
 (define (compiler-symbol-name-id-key [name-id : i64]) : i64
-  (if (not (ci.intern-renderable-id? name-id))
-    name-id
-    (if (ci.intern-qualified? name-id)
-      (let
-        [module-id : i64 (ci.intern-qualified-module-id name-id)]
-        [base-id : i64 (ci.intern-qualified-base-id name-id)]
-        (if (compiler-symbol-root-module-id? module-id)
-          base-id
-          (compiler-composite-pair-key-id module-id base-id)))
-      name-id)))
+  (ast.ast-nominal-name-id-key name-id))
 
 (define (compiler-symbol-dotted-variant-key-id-in-module
   [name-id : i64]

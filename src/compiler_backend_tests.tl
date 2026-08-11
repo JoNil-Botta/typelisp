@@ -2,7 +2,7 @@
 (import stdlib.array)
 (import stdlib.io)
 (import stdlib.hashmap)
-(import (hashmap.hashmap String i64) as backend_test_string_i64_map)
+(import (hashmap.hashmap i64 i64) as backend_test_i64_i64_map)
 (import compiler_object as cobj)
 (import compiler_object_coff as coff)
 (import compiler_object_elf as elf)
@@ -6821,27 +6821,21 @@
           group2)
         2)
       (compiler_regalloc.compiler-reg-private-memory-type? bases memory24)
-      (string.eq
-        (compiler_regalloc.compiler-reg-aggregate-type-name-with-seg-bases
-          bases
-          group0)
-        group0-name)
-      (string.eq
-        (compiler_regalloc.compiler-reg-aggregate-type-name-with-seg-bases
-          bases
-          group2)
-        group2-name)
+      (match (compiler_ast_types.ast-aggregate-type-key bases group0)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key) (= key group0-id)]
+        [(compiler_ast_types.AstMaybeNominalKey.None) false])
+      (match (compiler_ast_types.ast-aggregate-type-key bases group2)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key) (= key group2-id)]
+        [(compiler_ast_types.AstMaybeNominalKey.None) false])
       (string.eq
         (compiler_backend.compiler-backend-aggregate-type-name bases ordinary)
         "Issue6219OrdinaryFallback")
       (string.eq
         (compiler_backend.compiler-backend-aggregate-type-name bases composite)
         "Issue6219CompositeLeft/Issue6219CompositeRight")
-      (string.eq
-        (compiler_regalloc.compiler-reg-aggregate-type-name-with-seg-bases
-          bases
-          composite)
-        "Issue6219CompositeLeft/Issue6219CompositeRight"))))
+      (match (compiler_ast_types.ast-aggregate-type-key bases composite)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key) (= key composite-id)]
+        [(compiler_ast_types.AstMaybeNominalKey.None) false]))))
 
 (define (compiler-backend-private-abi-signature-seeding-ok?) : bool
   (let
@@ -8670,24 +8664,72 @@
 
 (define (compiler-backend-ir-walker-group-metadata-array-ok?) : bool
   (let
-    [ty : compiler_ast_types.AstType
-      (compiler-backend-register-group-test-type)]
-    [name : String
-      (compiler_backend.compiler-backend-aggregate-type-name
-        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        ty)]
-    [words : compiler_ir_types.CompilerIrValueList
+    [plain-id : i64 (ci.intern "Issue5838Rooted")]
+    [root-qualified-id : i64 (ci.intern "/Issue5838Rooted")]
+    [qualified-id : i64 (ci.intern "issue5838/Collision")]
+    [opaque-id : i64 (ci.intern-generated-canonical-name "issue5838/Collision")]
+    [plain-key : i64 (compiler_ast_types.ast-nominal-name-id-key plain-id)]
+    [root-key : i64
+      (compiler_ast_types.ast-nominal-name-id-key root-qualified-id)]
+    [qualified-key : i64
+      (compiler_ast_types.ast-nominal-name-id-key qualified-id)]
+    [opaque-key : i64 (compiler_ast_types.ast-nominal-name-id-key opaque-id)]
+    [lifetimes : compiler_ast_types.AstLifetimeList
+      (compiler_ast_types.ast-lifetime-list-new)]
+    [struct-plain : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct plain-id)]
+    [struct-args-root : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.StructArgs root-qualified-id (box lifetimes))]
+    [enum-qualified : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Enum qualified-id)]
+    [enum-args-qualified : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.EnumArgs qualified-id (box lifetimes))]
+    [opaque-struct : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Struct opaque-id)]
+    [qualified-type-id : i64
+      (compiler_ast_types.ast-node-pool-reader-type-push enum-qualified)]
+    [region-qualified : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Region
+        (ci.intern "issue5838-region")
+        qualified-type-id)]
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [words-mask2 : compiler_ir_types.CompilerIrValueList
       (compiler_ir_types.compiler-ir-value-cons
         (compiler_ir_types.CompilerIrValue.I64 1)
         (compiler_ir_types.compiler-ir-value-cons
           (compiler_ir_types.CompilerIrValue.F64
             (compiler-backend-test-f64-bits "3.5"))
           compiler_ir_types.CompilerIrValueList.Nil))]
+    [words-opaque : compiler_ir_types.CompilerIrValueList
+      (compiler_ir_types.compiler-ir-value-cons
+        (compiler_ir_types.CompilerIrValue.F64
+          (compiler-backend-test-f64-bits "5.5"))
+        compiler_ir_types.CompilerIrValueList.Nil)]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (compiler_ir_types.compiler-ir-instr-seq-from-list
         (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Pack 0 words ty)
-          compiler_ir_types.CompilerIrInstrList.Nil))]
+          (compiler_ir_types.CompilerIrInstr.Pack 0 words-mask2 struct-plain)
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Pack
+              1
+              words-mask2
+              struct-args-root)
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Pack
+                2
+                words-mask2
+                enum-qualified)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Pack
+                  3
+                  words-mask2
+                  enum-args-qualified)
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Pack
+                    4
+                    words-opaque
+                    opaque-struct)
+                  compiler_ir_types.CompilerIrInstrList.Nil))))))]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.CompilerIrBlockList.Array
         (compiler_ir_types.compiler-ir-block-seq-from-list
@@ -8704,26 +8746,195 @@
               (ci.intern "main")
               compiler_ir_types.CompilerIrParamList.Nil
               (compiler_ast_types.AstType.I64)
-              1
+              5
               blocks)
             compiler_ir_types.CompilerIrFunctionList.Nil)))]
-    [counts : backend_test_string_i64_map.Map
+    [counts : backend_test_i64_i64_map.Map
       (compiler_backend.compiler-backend-collect-group-counts-functions
-        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (backend_test_string_i64_map.with-capacity 4)
+        bases
+        (backend_test_i64_i64_map.with-capacity 8)
         functions)]
-    [masks : backend_test_string_i64_map.Map
+    [masks : backend_test_i64_i64_map.Map
       (compiler_backend.compiler-backend-collect-group-class-masks-functions
-        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (backend_test_string_i64_map.with-capacity 4)
+        bases
+        (backend_test_i64_i64_map.with-capacity 8)
         functions)]
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        bases
+        functions
+        compiler_ir_types.CompilerIrExternList.Nil)]
+    [_install-counts : unit
+      (compiler_regalloc.compiler-reg-set-group-counts! index.group-word-counts)]
+    [_install-masks : unit
+      (compiler_regalloc.compiler-reg-set-group-class-masks!
+        index.group-word-class-masks)]
     (and
-      (match (backend_test_string_i64_map.get (& counts) name)
-        [(backend_test_string_i64_map.LookupFound count) (= count 2)]
-        [(backend_test_string_i64_map.LookupMissing) false])
-      (match (backend_test_string_i64_map.get (& masks) name)
-        [(backend_test_string_i64_map.LookupFound mask) (= mask 2)]
-        [(backend_test_string_i64_map.LookupMissing) false]))))
+      (= plain-key root-key)
+      (not (= qualified-key opaque-key))
+      (string.eq
+        (compiler_backend.compiler-backend-aggregate-type-name
+          bases
+          enum-qualified)
+        (compiler_backend.compiler-backend-aggregate-type-name
+          bases
+          opaque-struct))
+      (match (compiler_ast_types.ast-aggregate-type-key bases struct-plain)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key) (= key plain-key)]
+        [(compiler_ast_types.AstMaybeNominalKey.None) false])
+      (match (compiler_ast_types.ast-aggregate-type-key bases struct-args-root)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key) (= key plain-key)]
+        [(compiler_ast_types.AstMaybeNominalKey.None) false])
+      (match (compiler_ast_types.ast-aggregate-type-key bases enum-qualified)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key) (= key qualified-key)]
+        [(compiler_ast_types.AstMaybeNominalKey.None) false])
+      (match (compiler_ast_types.ast-aggregate-type-key
+        bases
+        enum-args-qualified)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key) (= key qualified-key)]
+        [(compiler_ast_types.AstMaybeNominalKey.None) false])
+      (match (compiler_ast_types.ast-aggregate-type-key bases region-qualified)
+        [(compiler_ast_types.AstMaybeNominalKey.Some key) (= key qualified-key)]
+        [(compiler_ast_types.AstMaybeNominalKey.None) false])
+      (match (compiler_ast_types.ast-aggregate-type-key
+        bases
+        (compiler_ast_types.AstType.I64))
+        [(compiler_ast_types.AstMaybeNominalKey.Some _) false]
+        [(compiler_ast_types.AstMaybeNominalKey.None) true])
+      (match (backend_test_i64_i64_map.get (& counts) plain-key)
+        [(backend_test_i64_i64_map.LookupFound count) (= count 2)]
+        [(backend_test_i64_i64_map.LookupMissing) false])
+      (match (backend_test_i64_i64_map.get (& counts) qualified-key)
+        [(backend_test_i64_i64_map.LookupFound count) (= count 2)]
+        [(backend_test_i64_i64_map.LookupMissing) false])
+      (match (backend_test_i64_i64_map.get (& counts) opaque-key)
+        [(backend_test_i64_i64_map.LookupFound count) (= count 1)]
+        [(backend_test_i64_i64_map.LookupMissing) false])
+      (match (backend_test_i64_i64_map.get (& masks) qualified-key)
+        [(backend_test_i64_i64_map.LookupFound mask) (= mask 2)]
+        [(backend_test_i64_i64_map.LookupMissing) false])
+      (match (backend_test_i64_i64_map.get (& masks) opaque-key)
+        [(backend_test_i64_i64_map.LookupFound mask) (= mask 1)]
+        [(backend_test_i64_i64_map.LookupMissing) false])
+      (=
+        (compiler_backend.compiler-backend-group-word-count
+          bases
+          index
+          struct-plain)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-count
+          bases
+          index
+          struct-args-root)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-count
+          bases
+          index
+          enum-qualified)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-count
+          bases
+          index
+          enum-args-qualified)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-count
+          bases
+          index
+          region-qualified)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-count
+          bases
+          index
+          opaque-struct)
+        1)
+      (=
+        (compiler_backend.compiler-backend-group-word-count
+          bases
+          index
+          (compiler_ast_types.AstType.I64))
+        1)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          struct-plain)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          struct-args-root)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          enum-qualified)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          enum-args-qualified)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          region-qualified)
+        2)
+      (=
+        (compiler_backend.compiler-backend-group-word-class-mask
+          bases
+          index
+          opaque-struct)
+        1)
+      (compiler_regalloc.compiler-reg-type-register-group? bases struct-plain)
+      (compiler_regalloc.compiler-reg-type-register-group?
+        bases
+        struct-args-root)
+      (compiler_regalloc.compiler-reg-type-register-group? bases enum-qualified)
+      (compiler_regalloc.compiler-reg-type-register-group?
+        bases
+        enum-args-qualified)
+      (compiler_regalloc.compiler-reg-type-register-group?
+        bases
+        region-qualified)
+      (not
+        (compiler_regalloc.compiler-reg-type-register-group?
+          bases
+          opaque-struct))
+      (compiler_regalloc.compiler-reg-type-register-group-word-sse?
+        bases
+        struct-plain
+        1)
+      (compiler_regalloc.compiler-reg-type-register-group-word-sse?
+        bases
+        struct-args-root
+        1)
+      (compiler_regalloc.compiler-reg-type-register-group-word-sse?
+        bases
+        enum-qualified
+        1)
+      (not
+        (compiler_regalloc.compiler-reg-type-register-group-word-sse?
+          bases
+          enum-qualified
+          0))
+      (compiler_regalloc.compiler-reg-type-register-group-word-sse?
+        bases
+        opaque-struct
+        0)
+      (not
+        (compiler_regalloc.compiler-reg-type-register-group-word-sse?
+          bases
+          opaque-struct
+          1)))))
 
 (define (compiler-backend-ir-walker-object-refs-with-plan
   [plan : compiler_backend.CompilerBackendRuntimePlan]) : bool

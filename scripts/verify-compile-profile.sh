@@ -1488,8 +1488,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, and the native Vec slice-copy loop contributes
     # its expanded loop types, so their macro-walk type footprint is part of
     # the intentional exact selfhost allocation boundary.
+    # The public-place migration removes the expanded legacy accessor calls;
+    # the merged path-sensitive checker remains one segment above main alone.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 55 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 43 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Path-sensitive scalar-loop ownership joins (#6227) put the checked
     # selfhost expression graph just past the former 32-segment boundary.

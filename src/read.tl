@@ -907,7 +907,7 @@
 ;; A grammar violation returns a recoverable `ErrSexpr String`; the public
 ;; `read` wrapper below still panics for callers that have not moved to
 ;; `result`.
-(define (form-spanned-result
+(define (form-spanned-primary-result
   [toks : (__tl_dyn-array token.SpannedToken)]
   [cur : (__tl_dyn-array i64)]) : ResultSpannedSexpr
   (let
@@ -973,6 +973,98 @@
       [else
         (ResultSpannedSexpr.Err
           (token.SourceError "reader: unexpected end of input" span))])))
+
+(define (spanned-sexpr-adjacent?
+  [left : SpannedSexpr]
+  [right-span : token.SourceSpan]) : bool
+  (let
+    [left-span : token.SourceSpan (spanned-sexpr-span left)]
+    (and
+      (= (token.span-end-line left-span) (token.span-start-line right-span))
+      (= (+ (token.span-end-col left-span) 1) (token.span-start-col right-span)))))
+
+(define (projection-suffix-symbol? [text : String]) : bool
+  (and (> (string.string-length text) 0) (= (string.string-ref text 0) '.')))
+
+(define (projection-suffix-next-dot
+  [text : String]
+  [index : i64]
+  [length : i64]) : i64
+  (let
+    [end : i64 index]
+    (begin
+      (while (and (< end length) (!= (string.string-ref text end) '.'))
+        (set! end (+ end 1)))
+      end)))
+
+(define (projection-suffix-error [message : String] [span : token.SourceSpan]) : ResultSpannedSexpr
+  (ResultSpannedSexpr.Err (token.SourceError message span)))
+
+(define (spanned-projection-suffix-at
+  [base : SpannedSexpr]
+  [text : String]
+  [suffix-span : token.SourceSpan]
+  [start : i64]) : ResultSpannedSexpr
+  (let
+    [length : i64 (string.string-length text)]
+    [end : i64 (projection-suffix-next-dot text start length)]
+    (cond
+      [(>= start end)
+        (projection-suffix-error
+          "reader: malformed dotted field access; field name cannot be empty"
+          suffix-span)]
+      [(and
+          (>= (string.string-ref text start) '0')
+          (<= (string.string-ref text start) '9'))
+        (projection-suffix-error
+          "reader: dotted field access cannot use numeric field segments; use tuple-ref or array-ref"
+          suffix-span)]
+      [else
+        (let
+          [span : token.SourceSpan
+            (token.merge-spans (spanned-sexpr-span base) suffix-span)]
+          [field : i64 (ci.intern-source-slice text start (- end start))]
+          [projected : SpannedSexpr
+            (spanned-sexpr-list3
+              (SpannedSexpr.Sym
+                (stable-symbol-id "__tl_struct-get")
+                suffix-span)
+              base
+              (SpannedSexpr.Sym field suffix-span)
+              span)]
+          (if (< end length)
+            (spanned-projection-suffix-at projected text suffix-span (+ end 1))
+            (ResultSpannedSexpr.Ok projected)))])))
+
+(define (form-spanned-suffix-result
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]
+  [base : SpannedSexpr]) : ResultSpannedSexpr
+  (let
+    [st : token.SpannedToken (peek-spanned-token toks cur)]
+    [tok : token.Token (token.spanned-token-token st)]
+    [span : token.SourceSpan (token.spanned-token-span st)]
+    (if (= (token.tag tok) (token.tag-sym))
+      (let
+        [text : String (ci.intern-str (token.sym-id tok))]
+        (if (and
+          (spanned-sexpr-adjacent? base span)
+          (projection-suffix-symbol? text))
+          (begin
+            (advance cur)
+            (match (spanned-projection-suffix-at base text span 1)
+              [(ResultSpannedSexpr.Ok projected)
+                (form-spanned-suffix-result toks cur projected)]
+              [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)]))
+          (ResultSpannedSexpr.Ok base)))
+      (ResultSpannedSexpr.Ok base))))
+
+(define (form-spanned-result
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]) : ResultSpannedSexpr
+  (match (form-spanned-primary-result toks cur)
+    [(ResultSpannedSexpr.Ok form) (form-spanned-suffix-result toks cur form)]
+    [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)]))
 
 (define (list-spanned-items-result
   [toks : (__tl_dyn-array token.SpannedToken)]
@@ -1248,6 +1340,37 @@
     [(SexprView.Sym name-id) (string.eq (symbol-text-for-id name-id) expected)]
     [_ false]))
 
+(define (reader-test-projection-suffix-cursor?
+  [source : String]
+  [expected-cursor : i64]) : bool
+  (match (lexer.spanned-result source)
+    [(lexer.ResultSpannedTokens.Err _) false]
+    [(lexer.ResultSpannedTokens.Ok toks)
+      (let
+        [cur : (__tl_dyn-array i64) (make-array i64 1)]
+        (begin
+          (sp-node-pool-reset!)
+          (set! (array-ref cur 0) 0)
+          (match (form-spanned-result toks cur)
+            [(ResultSpannedSexpr.Err _) false]
+            [(ResultSpannedSexpr.Ok _) (= (array-ref cur 0) expected-cursor)])))]))
+
+(define (reader-test-invalid-projection-suffix?) : bool
+  (match (lexer.spanned-result "(deref boxed).0")
+    [(lexer.ResultSpannedTokens.Err _) false]
+    [(lexer.ResultSpannedTokens.Ok toks)
+      (let
+        [cur : (__tl_dyn-array i64) (make-array i64 1)]
+        (begin
+          (sp-node-pool-reset!)
+          (set! (array-ref cur 0) 0)
+          (match (form-spanned-result toks cur)
+            [(ResultSpannedSexpr.Ok _) false]
+            [(ResultSpannedSexpr.Err err)
+              (string.eq
+                (token.source-error-message err)
+                "reader: dotted field access cannot use numeric field segments; use tuple-ref or array-ref")])))]))
+
 (define (reader-test-unspanned-dense-ranges?) : bool
   (match (result (lexer.lex "(alpha (beta gamma) [])"))
     [(ResultSexpr.Err _) false]
@@ -1424,3 +1547,14 @@
     (reader-test-error-rolls-back-ranges?))
     unit
     (io.panic "reader: dense child range self-test failed")))
+
+(test
+  reader-projection-suffixes
+  (if (and
+    ;; The suffix token is consumed only when no whitespace separates it from
+    ;; the closing delimiter. The final token in both streams is End.
+    (reader-test-projection-suffix-cursor? "(array-ref items 0).inner.value" 6)
+    (reader-test-projection-suffix-cursor? "(array-ref items 0) .value" 5)
+    (reader-test-invalid-projection-suffix?))
+    unit
+    (io.panic "reader: projection suffix self-test failed")))

@@ -250,6 +250,32 @@
         flat
         limit
         buf)]
+    [(cst.FormatCst.Projection child field)
+      (format-rules-layout-text
+        field
+        emit
+        width
+        indent
+        (format-rules-layout-text
+          "."
+          emit
+          width
+          indent
+          (format-rules-layout-cst
+            (__tl-box-place child)
+            emit
+            width
+            indent
+            col
+            flat
+            limit
+            buf)
+          flat
+          limit
+          buf)
+        flat
+        limit
+        buf)]
     [(cst.FormatCst.List items)
       (format-rules-layout-list
         (__tl-box-place items)
@@ -2569,6 +2595,16 @@
   "(defmacro (all [first : bool] [rest : bool ...]) : bool
   first)")
 
+(define (format-rules-projection-suffix-source) : String
+  "(define (main) : i64 (begin (array-ref items 0).value (tuple-ref items 0).value (deref item).inner.value))")
+
+(define (format-rules-projection-suffix-expected) : String
+  "(define (main) : i64
+  (begin
+    (array-ref items 0).value
+    (tuple-ref items 0).value
+    (deref item).inner.value))")
+
 (define (format-rules-offset-slice-preserved?) : bool
   (let
     [head : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "x"))]
@@ -2625,6 +2661,10 @@
       (format-rules-render-source-width (format-rules-spmd-callable-source) 80)]
     [variadic : String
       (format-rules-render-source-width (format-rules-variadic-macro-source) 80)]
+    [projection-suffix : String
+      (format-rules-render-source-width
+        (format-rules-projection-suffix-source)
+        80)]
     (begin
       (unless (string.eq decls (format-rules-decls-expected)) (return 1))
       (unless (string.eq flow (format-rules-flow-expected)) (return 2))
@@ -2648,5 +2688,8 @@
       (unless
         (string.eq variadic (format-rules-variadic-macro-expected))
         (return 9))
+      (unless
+        (string.eq projection-suffix (format-rules-projection-suffix-expected))
+        (return 14))
       (unless (format-rules-offset-slice-preserved?) (return 10))
       42)))

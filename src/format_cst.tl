@@ -11,6 +11,7 @@
   (Atom tokens.FormatToken)
   (Comment String)
   (Prefix tokens.FormatToken (Box FormatCst))
+  (Projection (Box FormatCst) String)
   (List (Box FormatCstList))
   (BracketList (Box FormatCstList))
   (Forms (Box FormatCstList)))
@@ -136,6 +137,8 @@
     [(FormatCst.Atom _) 1]
     [(FormatCst.Comment _) 1]
     [(FormatCst.Prefix _ child) (+ 1 (fmt-cst-count (__tl-box-place child)))]
+    [(FormatCst.Projection child _)
+      (+ 1 (fmt-cst-count (__tl-box-place child)))]
     [(FormatCst.List items) (+ 1 (fmt-cst-list-total (__tl-box-place items)))]
     [(FormatCst.BracketList items)
       (+ 1 (fmt-cst-list-total (__tl-box-place items)))]
@@ -152,6 +155,8 @@
     [(FormatCst.Atom _) 0]
     [(FormatCst.Comment _) 1]
     [(FormatCst.Prefix _ child) (fmt-cst-comment-count (__tl-box-place child))]
+    [(FormatCst.Projection child _)
+      (fmt-cst-comment-count (__tl-box-place child))]
     [(FormatCst.List items) (fmt-cst-list-comment-count (__tl-box-place items))]
     [(FormatCst.BracketList items)
       (fmt-cst-list-comment-count (__tl-box-place items))]
@@ -169,6 +174,8 @@
     [(FormatCst.Atom _) 0]
     [(FormatCst.Comment _) 0]
     [(FormatCst.Prefix _ child) (fmt-cst-bracket-count (__tl-box-place child))]
+    [(FormatCst.Projection child _)
+      (fmt-cst-bracket-count (__tl-box-place child))]
     [(FormatCst.List items) (fmt-cst-list-bracket-count (__tl-box-place items))]
     [(FormatCst.BracketList items)
       (+ 1 (fmt-cst-list-bracket-count (__tl-box-place items)))]
@@ -270,7 +277,9 @@
             [(ResultFormatParsedCst.Err err)
               (ResultFormatParsedCstList.Err err)]))])))
 
-(define (fmt-parse-one-result [stream : tokens.FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
+(define (fmt-parse-one-primary-result
+  [stream : tokens.FormatTokenStream]
+  [idx : i64]) : ResultFormatParsedCst
   (let
     [tok : tokens.FormatToken (tokens.format-token-at stream idx)]
     [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
@@ -321,6 +330,52 @@
       [else
         (ResultFormatParsedCst.Ok
           (FormatParsedCst.Parsed (FormatCst.Atom tok) (+ idx 1)))])))
+
+(define (fmt-token-end [stream : tokens.FormatTokenStream] [idx : i64]) : i64
+  (+
+    (tokens.format-token-start stream idx)
+    (string.string-length
+      (tokens.format-token-text (tokens.format-token-at stream idx)))))
+
+(define (fmt-tokens-adjacent?
+  [stream : tokens.FormatTokenStream]
+  [left : i64]
+  [right : i64]) : bool
+  (= (fmt-token-end stream left) (tokens.format-token-start stream right)))
+
+(define (fmt-parse-projection-suffix-result
+  [stream : tokens.FormatTokenStream]
+  [parsed : FormatParsedCst]) : ResultFormatParsedCst
+  (match parsed
+    [(FormatParsedCst.Parsed node next)
+      (let
+        [dot : tokens.FormatToken (tokens.format-token-at stream next)]
+        (if (and
+          (> next 0)
+          (= (tokens.format-token-tag dot) (tokens.fmt-tag-dot))
+          (fmt-tokens-adjacent? stream (- next 1) next))
+          (let
+            [field-index : i64 (+ next 1)]
+            [field : tokens.FormatToken
+              (tokens.format-token-at stream field-index)]
+            (if (and
+              (= (tokens.format-token-tag field) (tokens.fmt-tag-symbol))
+              (fmt-tokens-adjacent? stream next field-index))
+              (fmt-parse-projection-suffix-result
+                stream
+                (FormatParsedCst.Parsed
+                  (FormatCst.Projection
+                    (box node)
+                    (tokens.format-token-text field))
+                  (+ field-index 1)))
+              (ResultFormatParsedCst.Ok parsed)))
+          (ResultFormatParsedCst.Ok parsed)))]))
+
+(define (fmt-parse-one-result [stream : tokens.FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
+  (match (fmt-parse-one-primary-result stream idx)
+    [(ResultFormatParsedCst.Ok parsed)
+      (fmt-parse-projection-suffix-result stream parsed)]
+    [(ResultFormatParsedCst.Err err) (ResultFormatParsedCst.Err err)]))
 
 (define (parse-format-tokens-result [stream : tokens.FormatTokenStream]) : ResultFormatCst
   (match (fmt-parse-seq-result stream 0 0)

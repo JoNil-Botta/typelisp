@@ -573,6 +573,9 @@ Examples:
 - Constructor syntax: `(Point 10 20)` — a call-like expression.
 - Field access uses dotted projection: `p.x` generates a GEP+load at the
   field's byte offset, and chains such as `p.inner.x` nest the same access.
+  A parenthesized place may carry the same lexically adjacent suffix, so
+  `(array-ref items i).value`, `(tuple-ref pair 0).value`, and
+  `(deref boxed).value` compose without an internal accessor form.
   A leading local or global value segment selects projection; an existing
   module-qualified value keeps module-name precedence.
 - Field mutation uses `(set! place.x value)`, writes one field in place, and

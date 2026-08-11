@@ -507,6 +507,10 @@
       (fmt_doc.doc-append
         (fmt_doc.doc-text (tokens.format-token-text tok))
         (format-rules-cst-doc (__tl-box-place child)))]
+    [(cst.FormatCst.Projection child field)
+      (fmt_doc.doc-append
+        (format-rules-cst-doc (__tl-box-place child))
+        (fmt_doc.doc-text (str_cat.str-cat "." field)))]
     [(cst.FormatCst.List items) (format-rules-list-doc (__tl-box-place items))]
     [(cst.FormatCst.BracketList items)
       (format-rules-delimited-doc "[" (__tl-box-place items) "]")]
@@ -540,6 +544,9 @@
       48)
     (format-rules-streaming-matches-doc?
       (rules.format-rules-variadic-macro-source)
+      80)
+    (format-rules-streaming-matches-doc?
+      (rules.format-rules-projection-suffix-source)
       80)
     (format-rules-streaming-matches-doc? "(: 1 2) (foo a b c d e f g h)" 12)))
 

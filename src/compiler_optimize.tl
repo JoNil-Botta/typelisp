@@ -40640,122 +40640,126 @@
         n
         params)]))
 
-;; Copy each parameter's staged temp back into the parameter slot, then append
-;; `tail` (the back-edge jump). Run after all of the staging moves so the temps
-;; already hold the new argument values.
-(define (opt-tailrec-assign-movs
+;; Copy each parameter's staged temp back into the parameter slot. Run after
+;; all staging moves so the temps already hold the new argument values. The
+;; tail-recursion rewrite used to prepend these moves to a linked instruction
+;; tail; push them into the dense output in program order instead. refs #5726
+(define (opt-tailrec-push-assign-movs!
   [params : ir.CompilerIrParamList]
   [base : i64]
   [index : i64]
-  [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) tail]
+    [(ir.CompilerIrParamList.Nil) unit]
     [(ir.CompilerIrParamList.Array seq)
-      (opt-tailrec-assign-movs
+      (opt-tailrec-push-assign-movs!
         (ir.compiler-ir-param-seq-to-list seq)
         base
         index
-        tail)]
+        (&mut builder))]
     [(ir.CompilerIrParamList.Cons param prest)
       (match param
         [(ir.CompilerIrParam.Param _ ty var-id)
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Mov
-              var-id
-              (ir.CompilerIrValue.Var (+ base index))
-              ty)
-            (opt-tailrec-assign-movs
+          (begin
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.CompilerIrInstr.Mov
+                var-id
+                (ir.CompilerIrValue.Var (+ base index))
+                ty))
+            (opt-tailrec-push-assign-movs!
               (__tl-box-place prest)
               base
               (+ index 1)
-              tail))])]))
+              (&mut builder)))])]))
 
-(define (opt-tailrec-assign-movs-hybrid
+(define (opt-tailrec-push-assign-movs-hybrid!
   [params : ir.CompilerIrParamList]
   [args : ir.CompilerIrValueList]
   [base : i64]
   [index : i64]
-  [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) tail]
+    [(ir.CompilerIrParamList.Nil) unit]
     [(ir.CompilerIrParamList.Array seq)
-      (opt-tailrec-assign-movs-hybrid
+      (opt-tailrec-push-assign-movs-hybrid!
         (ir.compiler-ir-param-seq-to-list seq)
         args
         base
         index
-        tail)]
+        (&mut builder))]
     [(ir.CompilerIrParamList.Cons param prest)
       (match args
-        [(ir.CompilerIrValueList.Nil) tail]
+        [(ir.CompilerIrValueList.Nil) unit]
         [(ir.CompilerIrValueList.Array seq)
-          (opt-tailrec-assign-movs-hybrid
+          (opt-tailrec-push-assign-movs-hybrid!
             params
             (ir.compiler-ir-value-seq-to-list seq)
             base
             index
-            tail)]
+            (&mut builder))]
         [(ir.CompilerIrValueList.Cons arg arest)
           (match param
             [(ir.CompilerIrParam.Param _ ty var-id)
-              (let
-                [next : ir.CompilerIrInstrList
-                  (opt-tailrec-assign-movs-hybrid
-                    (__tl-box-place prest)
-                    (__tl-box-place arest)
-                    base
-                    (+ index 1)
-                    tail)]
+              (begin
                 (if (match arg
                   [(ir.CompilerIrValue.Var source) (= source var-id)]
                   [_ false])
-                  next
-                  (ir.compiler-ir-instr-cons
+                  unit
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
                     (ir.CompilerIrInstr.Mov
                       var-id
                       (ir.CompilerIrValue.Var (+ base index))
-                      ty)
-                    next)))])])]))
-
-;; Evaluate each argument into a fresh temp slot (`base + i`) before any
-;; parameter slot is overwritten, so argument aliasing on the parameters is
-;; preserved.
-(define (opt-tailrec-stage-movs
-  [params : ir.CompilerIrParamList]
-  [args : ir.CompilerIrValueList]
-  [base : i64]
-  [index : i64]
-  [tail : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) tail]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-tailrec-stage-movs
-        (ir.compiler-ir-param-seq-to-list seq)
-        args
-        base
-        index
-        tail)]
-    [(ir.CompilerIrParamList.Cons param prest)
-      (match args
-        [(ir.CompilerIrValueList.Nil) tail]
-        [(ir.CompilerIrValueList.Array seq)
-          (opt-tailrec-stage-movs
-            params
-            (ir.compiler-ir-value-seq-to-list seq)
-            base
-            index
-            tail)]
-        [(ir.CompilerIrValueList.Cons arg arest)
-          (match param
-            [(ir.CompilerIrParam.Param _ ty _)
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Mov (+ base index) arg ty)
-                (opt-tailrec-stage-movs
+                      ty)))
+                (opt-tailrec-push-assign-movs-hybrid!
                   (__tl-box-place prest)
                   (__tl-box-place arest)
                   base
                   (+ index 1)
-                  tail))])])]))
+                  (&mut builder)))])])]))
+
+;; Evaluate each argument into a fresh temp slot (`base + i`) before any
+;; parameter slot is overwritten, so argument aliasing on the parameters is
+;; preserved.
+(define (opt-tailrec-push-stage-movs!
+  [params : ir.CompilerIrParamList]
+  [args : ir.CompilerIrValueList]
+  [base : i64]
+  [index : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
+  (match (ir.compiler-ir-param-list-force-cons params)
+    [(ir.CompilerIrParamList.Nil) unit]
+    [(ir.CompilerIrParamList.Array seq)
+      (opt-tailrec-push-stage-movs!
+        (ir.compiler-ir-param-seq-to-list seq)
+        args
+        base
+        index
+        (&mut builder))]
+    [(ir.CompilerIrParamList.Cons param prest)
+      (match args
+        [(ir.CompilerIrValueList.Nil) unit]
+        [(ir.CompilerIrValueList.Array seq)
+          (opt-tailrec-push-stage-movs!
+            params
+            (ir.compiler-ir-value-seq-to-list seq)
+            base
+            index
+            (&mut builder))]
+        [(ir.CompilerIrValueList.Cons arg arest)
+          (match param
+            [(ir.CompilerIrParam.Param _ ty _)
+              (begin
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (ir.CompilerIrInstr.Mov (+ base index) arg ty))
+                (opt-tailrec-push-stage-movs!
+                  (__tl-box-place prest)
+                  (__tl-box-place arest)
+                  base
+                  (+ index 1)
+                  (&mut builder)))])])]))
 
 (define (opt-tailrec-self-call?
   [instr : ir.CompilerIrInstr]
@@ -40768,7 +40772,8 @@
         (= (ir.compiler-ir-call-args-count args) n))]
     [_ false]))
 
-(define (opt-tailrec-rewrite-instr-seq-from
+(define (opt-tailrec-rewrite-instr-seq-from!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [fname : i64]
@@ -40776,9 +40781,9 @@
   [n : i64]
   [base : i64]
   [hybrid? : bool]
-  [entry-label : i64]) : ir.CompilerIrInstrList
+  [entry-label : i64]) : unit
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    ir.CompilerIrInstrList.Nil
+    unit
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       (if (opt-tailrec-self-call? instr fname n)
@@ -40787,31 +40792,29 @@
             (let
               [arg-list : ir.CompilerIrValueList
                 (opt-tailrec-args-to-list args)]
-              (opt-tailrec-stage-movs
-                params
-                arg-list
-                base
-                0
+              (begin
+                (opt-tailrec-push-stage-movs!
+                  params
+                  arg-list
+                  base
+                  0
+                  (&mut builder))
                 (if hybrid?
-                  (opt-tailrec-assign-movs-hybrid
+                  (opt-tailrec-push-assign-movs-hybrid!
                     params
                     arg-list
                     base
                     0
-                    (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.Jump entry-label)
-                      ir.CompilerIrInstrList.Nil))
-                  (opt-tailrec-assign-movs
-                    params
-                    base
-                    0
-                    (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.Jump entry-label)
-                      ir.CompilerIrInstrList.Nil)))))]
-          [_ ir.CompilerIrInstrList.Nil])
-        (ir.compiler-ir-instr-cons
-          instr
-          (opt-tailrec-rewrite-instr-seq-from
+                    (&mut builder))
+                  (opt-tailrec-push-assign-movs! params base 0 (&mut builder)))
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (ir.CompilerIrInstr.Jump entry-label))))]
+          [_ unit])
+        (begin
+          (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+          (opt-tailrec-rewrite-instr-seq-from!
+            (&mut builder)
             instrs
             (+ index 1)
             fname
@@ -40828,16 +40831,23 @@
   [n : i64]
   [base : i64]
   [hybrid? : bool]
-  [entry-label : i64]) : ir.CompilerIrInstrList
-  (opt-tailrec-rewrite-instr-seq-from
-    instrs
-    0
-    fname
-    params
-    n
-    base
-    hybrid?
-    entry-label))
+  [entry-label : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (ir.compiler-ir-instr-seq-count instrs))]
+    (begin
+      (opt-tailrec-rewrite-instr-seq-from!
+        (&mut builder)
+        instrs
+        0
+        fname
+        params
+        n
+        base
+        hybrid?
+        entry-label)
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-tailrec-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -40853,7 +40863,7 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (ir.compiler-ir-block-cons
-            (ir.compiler-ir-block
+            (ir.CompilerIrBlock.Block
               label
               (opt-tailrec-rewrite-instr-seq
                 instrs

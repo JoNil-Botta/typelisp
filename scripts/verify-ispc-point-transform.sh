@@ -23,6 +23,46 @@ for required in bench.tl kernel.ispc driver.c case.tsv README.md LICENSE.BSD-3-C
     }
 done
 
+BENCH_SOURCE="$CASE_DIR/bench.tl"
+if grep -Eq '\(Array[[:space:]]+[A-Za-z_][A-Za-z0-9_.]*\)' "$BENCH_SOURCE"; then
+    echo "point_transform: public unsized Array compatibility form remains" >&2
+    exit 1
+fi
+if grep -Fq '__tl_dyn-array' "$BENCH_SOURCE"; then
+    echo "point_transform: caller-authored private dynamic array remains" >&2
+    exit 1
+fi
+if grep -Fq '(import stdlib.array)' "$BENCH_SOURCE" ||
+   grep -Fq '(array.make-array ' "$BENCH_SOURCE"; then
+    echo "point_transform: benchmark still owns compatibility array backing" >&2
+    exit 1
+fi
+for required_surface in \
+    '(import stdlib.vector)' \
+    '(import (vector.vector f32) as f32v)' \
+    '[points-x : (& points-x (Slice f32))]' \
+    '[result-x : (&mut result-x (Slice f32))]' \
+    '[points-x : (&mut points-x f32v.Vec)]' \
+    '[points-x : f32v.Vec (point-transform-buffer capacity)]'; do
+    grep -Fq "$required_surface" "$BENCH_SOURCE" || {
+        echo "point_transform: missing Vec/Slice surface: $required_surface" >&2
+        exit 1
+    }
+done
+view_count=$(grep -Ec '\(f32v\.view(-mut)?[[:space:]]' "$BENCH_SOURCE" || true)
+[ "$view_count" -eq 12 ] || {
+    echo "point_transform: expected 12 one-time Vec views, found $view_count" >&2
+    exit 1
+}
+awk '
+    /\(while \(< repetition 100\)/ { measured = 1 }
+    measured && /\(f32v\.view(-mut)?[[:space:]]/ { bad = 1 }
+    END { exit bad ? 1 : 0 }
+' "$BENCH_SOURCE" || {
+    echo "point_transform: Vec view construction entered the measured loop" >&2
+    exit 1
+}
+
 awk -F '\t' '
 BEGIN {
     header = "schema\tcase\tmode\ttypelisp_status\ttypelisp_diagnostic\tispc_status\tispc_diagnostic\tispc_target\tgang_width\tlane_type\ttypelisp_source\ttypelisp_symbol\tispc_source\tispc_symbol\tdriver\targuments\trepetitions\texpected_exit\tupstream_tag\tupstream_commit\tupstream_path\tupstream_function\tlicense"

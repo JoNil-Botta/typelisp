@@ -363,6 +363,61 @@
       (= label expected-label)]
     [_ false]))
 
+(define (opt-dense-test-ssa-var-block-index) : compiler_optimize.OptCfgIndex
+  (compiler_optimize.opt-cfg-index-build
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "dense_ssa_defs_a")
+        (compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "dense_ssa_defs_b")
+          (compiler_ir_types.CompilerIrInstrList.Nil))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-dense-test-ssa-var-blocks-fill
+  [index : compiler_optimize.OptCfgIndex]
+  [blocks : compiler_optimize.OptSsaVarBlocks (:consume)]
+  [label : i64]
+  [var : i64]) : compiler_optimize.OptSsaVarBlocks
+  (if (> var 9)
+    blocks
+    (opt-dense-test-ssa-var-blocks-fill
+      index
+      (if (or (= var 1) (= var 4) (= var 8))
+        blocks
+        (compiler_optimize.opt-ssa-var-blocks-add index blocks var label))
+      label
+      (+ var 1))))
+
+(define (opt-dense-test-ssa-var-blocks [index : compiler_optimize.OptCfgIndex]) : compiler_optimize.OptSsaVarBlocks
+  (let
+    [label-a : i64 (compiler_ir_types.compiler-ir-label "dense_ssa_defs_a")]
+    [label-b : i64 (compiler_ir_types.compiler-ir-label "dense_ssa_defs_b")]
+    [unknown : i64
+      (compiler_ir_types.compiler-ir-label "dense_ssa_defs_unknown")]
+    (opt-dense-test-ssa-var-blocks-fill
+      index
+      (compiler_optimize.opt-ssa-var-blocks-add
+        index
+        (compiler_optimize.opt-ssa-var-blocks-add
+          index
+          (compiler_optimize.opt-ssa-var-blocks-add
+            index
+            (compiler_optimize.opt-ssa-var-blocks-add
+              index
+              (compiler_optimize.opt-ssa-var-blocks-with-capacity 10 10)
+              8
+              label-b)
+            8
+            label-a)
+          8
+          label-b)
+        1
+        unknown)
+      label-b
+      0)))
+
 (define (compiler-optimize-dense-storage-self-test) : i64
   (let
     [type-segment-bases : i64
@@ -468,6 +523,16 @@
           (compiler_optimize.OptSsaRenameEnv.Nil)
           99
           123))]
+    [ssa-var-block-index : compiler_optimize.OptCfgIndex
+      (opt-dense-test-ssa-var-block-index)]
+    [ssa-var-blocks : compiler_optimize.OptSsaVarBlocks
+      (opt-dense-test-ssa-var-blocks ssa-var-block-index)]
+    [ssa-var-blocks-empty : compiler_optimize.OptSsaVarBlocks
+      (compiler_optimize.opt-ssa-var-blocks-with-capacity 0 0)]
+    [ssa-var-eight-labels : compiler_optimize.OptLabelSet
+      (compiler_optimize.opt-ssa-var-blocks-lookup ssa-var-blocks 8)]
+    [ssa-var-one-labels : compiler_optimize.OptLabelSet
+      (compiler_optimize.opt-ssa-var-blocks-lookup ssa-var-blocks 1)]
     [var-defs : (__tl_dyn-array compiler_optimize.OptMaybeVarDef)
       (compiler_optimize.opt-var-defs-index
         (compiler_ir_types.compiler-ir-param-cons
@@ -669,6 +734,45 @@
           [(option_i64.Some _) true]
           [(option_i64.None) false])
         51]
+      [(not (= (compiler_optimize.opt-label-count ssa-var-eight-labels) 2)) 52]
+      [(not
+          (=
+            (compiler_optimize.opt-label-ref ssa-var-eight-labels 0)
+            (compiler_ir_types.compiler-ir-label "dense_ssa_defs_a")))
+        53]
+      [(not
+          (=
+            (compiler_optimize.opt-label-ref ssa-var-eight-labels 1)
+            (compiler_ir_types.compiler-ir-label "dense_ssa_defs_b")))
+        54]
+      [(not (= (compiler_optimize.opt-label-count ssa-var-one-labels) 1)) 55]
+      [(not
+          (=
+            (compiler_optimize.opt-label-ref ssa-var-one-labels 0)
+            (compiler_ir_types.compiler-ir-label "dense_ssa_defs_unknown")))
+        56]
+      [(not
+          (=
+            (compiler_optimize.opt-label-count
+              (compiler_optimize.opt-ssa-var-blocks-lookup ssa-var-blocks 4))
+            0))
+        57]
+      [(not
+          (=
+            (compiler_optimize.opt-label-count
+              (compiler_optimize.opt-ssa-var-blocks-lookup
+                ssa-var-blocks-empty
+                8))
+            0))
+        58]
+      [(not
+          (=
+            (compiler_optimize.opt-label-count
+              (compiler_optimize.opt-ssa-var-blocks-lookup
+                ssa-var-blocks
+                (- 0 1)))
+            0))
+        59]
       [else 42])))
 
 ;; --- self-test ---------------------------------------------------------------
@@ -16586,65 +16690,78 @@
 (define (opt-tailrec-test-function) : compiler_ir_types.CompilerIrFunction
   (let
     [name : i64 (opt-test-symbol "tail_swap")]
-    (compiler_ir_types.CompilerIrFunction.Function
-      name
-      (opt-tailrec-test-params)
-      (compiler_ast_types.AstType.I64)
-      2
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.compiler-ir-block
-          (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-instr-cons
-            (compiler_ir_types.CompilerIrInstr.TailCall
-              name
-              (compiler_ir_types.CompilerIrCallArgs.Two
-                (compiler_ir_types.CompilerIrValue.Var 1)
-                (compiler_ir_types.CompilerIrValue.Var 0))
-              (compiler_ast_types.AstType.I64))
-            (compiler_ir_types.compiler-ir-instr-cons
-              (compiler_ir_types.CompilerIrInstr.Return
-                (compiler_ir_types.CompilerIrMaybeValue.Some
-                  (compiler_ir_types.CompilerIrValue.Var 0)))
-              (compiler_ir_types.CompilerIrInstrList.Nil))))
-        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+    [builder : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 2)]
+    (begin
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.TailCall
+          name
+          (compiler_ir_types.CompilerIrCallArgs.Two
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.Var 0))
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 0))))
+      (compiler_ir_types.CompilerIrFunction.Function
+        name
+        (opt-tailrec-test-params)
+        (compiler_ast_types.AstType.I64)
+        2
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
 
-(define (opt-tailrec-expected-instrs) : compiler_ir_types.CompilerIrInstrList
-  (compiler_ir_types.compiler-ir-instr-cons
-    (compiler_ir_types.CompilerIrInstr.Mov
-      2
-      (compiler_ir_types.CompilerIrValue.Var 1)
-      (compiler_ast_types.AstType.I64))
-    (compiler_ir_types.compiler-ir-instr-cons
-      (compiler_ir_types.CompilerIrInstr.Mov
-        3
-        (compiler_ir_types.CompilerIrValue.Var 0)
-        (compiler_ast_types.AstType.I64))
-      (compiler_ir_types.compiler-ir-instr-cons
+(define (opt-tailrec-expected-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 5)]
+    (begin
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          2
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
         (compiler_ir_types.CompilerIrInstr.Mov
           0
           (compiler_ir_types.CompilerIrValue.Var 2)
-          (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Mov
-            1
-            (compiler_ir_types.CompilerIrValue.Var 3)
-            (compiler_ast_types.AstType.I64))
-          (compiler_ir_types.compiler-ir-instr-cons
-            (compiler_ir_types.CompilerIrInstr.Jump
-              (compiler_ir_types.compiler-ir-label "entry"))
-            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          1
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "entry")))
+      (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-tailrec-entry-instrs
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrInstrList
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrInstrSeq
   (match (compiler_optimize.opt-cfg-find-block
     blocks
     (compiler_ir_types.compiler-ir-label "entry"))
     [(compiler_optimize.OptMaybeBlock.No)
-      (compiler_ir_types.CompilerIrInstrList.Nil)]
+      (compiler_ir_types.compiler-ir-instr-seq-empty)]
     [(compiler_optimize.OptMaybeBlock.Some block)
       (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (compiler_ir_types.compiler-ir-instr-seq-to-list instrs)])]))
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs) instrs])]))
 
 (define (opt-tailrec-entry-collision-function) : compiler_ir_types.CompilerIrFunction
   (match (opt-tailrec-test-function)
@@ -16662,13 +16779,12 @@
         (compiler_optimize.opt-inline-block-append
           blocks
           (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.compiler-ir-block
+            (compiler_ir_types.CompilerIrBlock.Block
               (compiler_ir_types.compiler-ir-label "entry__ssa_entry")
-              (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.compiler-ir-instr-seq1
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
-                    (compiler_ir_types.CompilerIrValue.I64 0)))
-                (compiler_ir_types.CompilerIrInstrList.Nil)))
+                    (compiler_ir_types.CompilerIrValue.I64 0)))))
             (compiler_ir_types.CompilerIrBlockList.Nil))))]))
 
 (define (compiler-optimize-tailrec-self-test) : i64
@@ -16684,7 +16800,7 @@
       (compiler_optimize.opt-function-blocks rewritten)]
     [once-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks once)]
-    [rewritten-instrs : compiler_ir_types.CompilerIrInstrList
+    [rewritten-instrs : compiler_ir_types.CompilerIrInstrSeq
       (opt-tailrec-entry-instrs rewritten-blocks)]
     [collision : compiler_ir_types.CompilerIrFunction
       (opt-tailrec-entry-collision-function)]
@@ -16693,7 +16809,7 @@
     (cond
       [(not (= (compiler_optimize.opt-function-frame rewritten) 4)) 1]
       [(not
-          (compiler_optimize.opt-instr-list-eq
+          (compiler_optimize.opt-instr-seq-eq
             (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             rewritten-instrs
             (opt-tailrec-expected-instrs)))

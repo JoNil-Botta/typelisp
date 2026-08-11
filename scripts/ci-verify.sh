@@ -176,6 +176,11 @@ run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh -
 # verification uses the branch-built compiler because compression is part of
 # the new loader surface.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
+if [ "$HOST_OS" = linux ]; then
+    run_gate \
+        "Linux resident memory limit helper self-tests" \
+        scripts/verify-linux-memory-limit.sh
+fi
 # The stage0, fixpoint, and embedded-image builds all stamp the HEAD commit into
 # their output. CI only ever runs the success path, so the diagnostic for a
 # checkout git cannot resolve has no other coverage.

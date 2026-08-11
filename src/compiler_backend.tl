@@ -55727,7 +55727,309 @@
 ;; `compiler-backend-emit-instrs-step`, extracted unchanged (refs #5177).
 ;; It owns the shared lookahead for RAX forwarding and compare consumers
 ;; (return, direct/total-enum branches, and comparison-plus-not branches).
+;; `((mask >>u d) & 1) != 0` over a literal mask, feeding a branch, is `bt` plus
+;; its jump. Lowered as a real shift it costs an order of magnitude more: x86
+;; pins a variable count to `%cl`, so whatever lives there spills and reloads
+;; around the shift, and the count still pays the shift-count guard. The
+;; optimizer's bit_test pass emits exactly this triple for a classifier chain,
+;; and any hand-written `(!= (bit-and (shr MASK d) 1) 0)` gets the same
+;; treatment.
+;;
+;; The guard stays: `bt` reads its offset modulo 64 where the language aborts,
+;; so dropping it would change what an out-of-range count does. Its compare and
+;; branch are the only cost that survives on the taken path.
+;; A literal mask still has to be materialized, so it needs a register the count
+;; does not occupy; a mask already in a var is only READ by `bt` and needs
+;; nothing beyond its own home. The optimizer emits the second form, and the
+;; first covers a mask a later fold pushed back into the shift operand.
+(defenum CompilerBackendBitTestMask
+  (No)
+  (Literal i64)
+  (Var i64))
+
+(defenum CompilerBackendMaybeBitTest
+  (No)
+  ;; mask, count var, true label, false label, index after the branch
+  (Some CompilerBackendBitTestMask i64 i64 i64 i64))
+
+(define (compiler-backend-bit-test-one?
+  [value : compiler_ir_types.CompilerIrValue]) : bool
+  (match value
+    [(compiler_ir_types.CompilerIrValue.I64 n) (= n 1)]
+    [_ false]))
+
+;; `bt`'s base operand has to be a register: with a memory base the processor
+;; reads the bit offset as an unbounded signed index instead of taking it modulo
+;; the operand size. The mask goes in the shift result's own home when that is a
+;; register the count does not also live in -- the allocator coalesces the two
+;; whenever the count dies here, which is the common case -- and otherwise in a
+;; planned scratch register, which the constrained allocation proves free at
+;; this emission point. Neither is available: keep the general lowering.
+;; A literal mask is materialized into the shift result's own home when the
+;; allocator did not coalesce that with the count -- it does whenever the count
+;; dies here, which is the common case -- and otherwise into a planned scratch
+;; register or, failing that, a scavenged one. Scavenging is a mutating query
+;; (it books the emergency save/restore), so it stays out of the match test.
+(define (compiler-backend-bit-test-mask-reg
+  [ctx : CompilerBackendEmissionContext]
+  [dst : i64]
+  [count-reg : String]) : String
+  (let
+    [dst-home : String
+      (compiler-backend-var-register-home ctx.backend-state ctx.assignments dst)]
+    [scratch0 : String
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        0
+        ctx.backend-state)]
+    [scratch1 : String
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        1
+        ctx.backend-state)]
+    (cond
+      [(and (not (string.eq dst-home "")) (not (string.eq dst-home count-reg)))
+        dst-home]
+      [(and (not (string.eq scratch0 "")) (not (string.eq scratch0 count-reg)))
+        scratch0]
+      [(and (not (string.eq scratch1 "")) (not (string.eq scratch1 count-reg)))
+        scratch1]
+      [else
+        (compiler-backend-scavenge-reg
+          dst
+          (make-array count-reg "" "" "" "")
+          1
+          (if (string.eq count-reg "%r11")
+            "%r10"
+            "%r11")
+          ctx.backend-state)])))
+
+(define (compiler-backend-bit-test-count-reg
+  [ctx : CompilerBackendEmissionContext]
+  [count : i64]) : String
+  (compiler-backend-var-register-home ctx.backend-state ctx.assignments count))
+
+(define (compiler-backend-bit-test-mask-known?
+  [mask : CompilerBackendBitTestMask]) : bool
+  (match mask
+    [(CompilerBackendBitTestMask.No) false]
+    [_ true]))
+
+;; Register the `bt` base operand ends up in: a var-homed mask keeps its own
+;; home (nothing is written to it), a literal mask is materialized into a
+;; register the count does not occupy. An empty answer keeps the general shift
+;; lowering.
+(define (compiler-backend-bit-test-base-reg
+  [ctx : CompilerBackendEmissionContext]
+  [mask : CompilerBackendBitTestMask]
+  [dst : i64]
+  [count-reg : String]) : String
+  (match mask
+    [(CompilerBackendBitTestMask.No) ""]
+    [(CompilerBackendBitTestMask.Var mask-var)
+      (compiler-backend-var-register-home
+        ctx.backend-state
+        ctx.assignments
+        mask-var)]
+    [(CompilerBackendBitTestMask.Literal _)
+      (compiler-backend-bit-test-mask-reg ctx dst count-reg)]))
+
+;; Match-time form: a literal mask can always be placed (the emitter falls back
+;; to a scavenged register), a var mask must already have a register home.
+(define (compiler-backend-bit-test-base-available?
+  [ctx : CompilerBackendEmissionContext]
+  [mask : CompilerBackendBitTestMask]) : bool
+  (match mask
+    [(CompilerBackendBitTestMask.No) false]
+    [(CompilerBackendBitTestMask.Literal _) true]
+    [(CompilerBackendBitTestMask.Var mask-var)
+      (not
+        (string.eq
+          (compiler-backend-var-register-home
+            ctx.backend-state
+            ctx.assignments
+            mask-var)
+          ""))]))
+
+(define (compiler-backend-bit-test-shr-mask
+  [lhs : compiler_ir_types.CompilerIrValue]) : CompilerBackendBitTestMask
+  (match lhs
+    [(compiler_ir_types.CompilerIrValue.I64 mask)
+      (CompilerBackendBitTestMask.Literal mask)]
+    [(compiler_ir_types.CompilerIrValue.Var mask-var)
+      (CompilerBackendBitTestMask.Var mask-var)]
+    [_ (CompilerBackendBitTestMask.No)]))
+
+(define (compiler-backend-bit-test-branch-tail
+  [ctx : CompilerBackendEmissionContext]
+  [dst : i64]
+  [mask : CompilerBackendBitTestMask]
+  [count : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendMaybeBitTest
+  (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+    [(compiler_ir_types.CompilerIrInstr.BinOp
+        test-dst
+        (compiler_ir_types.CompilerIrBinOp.BitTestNe)
+        test-lhs
+        test-rhs
+        _)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs (+ index 1))
+        [(compiler_ir_types.CompilerIrInstr.Branch cond true-label false-label)
+          (if (and
+            (compiler-backend-branch-uses-var? test-lhs dst)
+            (compiler-backend-bit-test-one? test-rhs)
+            (compiler-backend-var-single-use? ctx.use-counts test-dst)
+            (compiler-backend-branch-uses-var? cond test-dst)
+            (not (string.eq (compiler-backend-bit-test-count-reg ctx count) ""))
+            (compiler-backend-bit-test-base-available? ctx mask)
+            (not
+              (compiler-backend-branch-needs-phi-copies?
+                ctx.function-state
+                true-label
+                false-label)))
+            (CompilerBackendMaybeBitTest.Some
+              mask
+              count
+              true-label
+              false-label
+              (+ index 2))
+            (CompilerBackendMaybeBitTest.No))]
+        [_ (CompilerBackendMaybeBitTest.No)])]
+    [_ (CompilerBackendMaybeBitTest.No)]))
+
+(define (compiler-backend-bit-test-branch-match
+  [ctx : CompilerBackendEmissionContext]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendMaybeBitTest
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Shr _)
+      (match rhs
+        [(compiler_ir_types.CompilerIrValue.Var count)
+          (let
+            [mask : CompilerBackendBitTestMask
+              (compiler-backend-bit-test-shr-mask lhs)]
+            (if (and
+              (compiler-backend-bit-test-mask-known? mask)
+              (compiler-backend-var-single-use? ctx.use-counts dst)
+              (< (+ index 1) instrs.len))
+              (compiler-backend-bit-test-branch-tail
+                ctx
+                dst
+                mask
+                count
+                instrs
+                index)
+              (CompilerBackendMaybeBitTest.No)))]
+        [_ (CompilerBackendMaybeBitTest.No)])]
+    [_ (CompilerBackendMaybeBitTest.No)]))
+
+(define (compiler-backend-emit-bit-test-branch
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [ty : compiler_ast_types.AstType]
+  [mask : CompilerBackendBitTestMask]
+  [count : i64]
+  [true-label : i64]
+  [false-label : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
+  (let
+    [count-reg : String (compiler-backend-bit-test-count-reg ctx count)]
+    [mask-reg : String
+      (compiler-backend-bit-test-base-reg ctx mask dst count-reg)]
+    [load-mask : String
+      (match mask
+        [(CompilerBackendBitTestMask.Literal literal)
+          (compiler-backend-emit-load-i64-absolute literal mask-reg)]
+        [_ ""])]
+    [head : String
+      (str_cat.str-cat
+        (compiler-backend-shift-guard-asm
+          ctx.type-segment-bases
+          ty
+          (compiler_ir_types.compiler-ir-binop-rhs-type op ty)
+          count-reg
+          ctx.backend-state)
+        load-mask
+        (str_cat.str-cat "    btq " count-reg ", " mask-reg "\n")
+        (compiler-backend-emit-compare-branch-jumps
+          ctx.function
+          true-label
+          false-label
+          (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
+          "jb"
+          "jae"
+          ctx.backend-state))]
+    (begin
+      (compiler-backend-asm-append
+        out
+        (compiler-backend-emergency-wrap head ctx.backend-state))
+      (compiler-backend-emit-instrs ctx fallthrough instrs index out))))
+
 (define (compiler-backend-emit-binop-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
+  (match (compiler-backend-bit-test-branch-match
+    ctx
+    dst
+    op
+    lhs
+    rhs
+    instrs
+    index)
+    [(CompilerBackendMaybeBitTest.Some
+        mask
+        count
+        true-label
+        false-label
+        after-branch)
+      (compiler-backend-emit-bit-test-branch
+        ctx
+        fallthrough
+        dst
+        op
+        ty
+        mask
+        count
+        true-label
+        false-label
+        instrs
+        after-branch
+        out)]
+    [(CompilerBackendMaybeBitTest.No)
+      (compiler-backend-emit-binop-step-general
+        ctx
+        fallthrough
+        instr
+        dst
+        op
+        lhs
+        rhs
+        ty
+        instrs
+        index
+        out)]))
+
+(define (compiler-backend-emit-binop-step-general
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : compiler_ir_types.CompilerIrInstr]

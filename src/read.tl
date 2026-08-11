@@ -907,7 +907,7 @@
 ;; A grammar violation returns a recoverable `ErrSexpr String`; the public
 ;; `read` wrapper below still panics for callers that have not moved to
 ;; `result`.
-(define (form-spanned-primary-result
+(define (form-spanned-result
   [toks : (__tl_dyn-array token.SpannedToken)]
   [cur : (__tl_dyn-array i64)]) : ResultSpannedSexpr
   (let
@@ -950,11 +950,17 @@
       [(= t (token.tag-lparen))
         (begin
           (advance cur)
-          (list-spanned-result toks cur span))]
+          (form-spanned-compound-result
+            toks
+            cur
+            (list-spanned-result toks cur span)))]
       [(= t (token.tag-lbracket))
         (begin
           (advance cur)
-          (bracket-list-spanned-result toks cur span))]
+          (form-spanned-compound-result
+            toks
+            cur
+            (bracket-list-spanned-result toks cur span)))]
       [(prefix-tag? t)
         (let
           [name : i64 (prefix-symbol t)]
@@ -962,7 +968,10 @@
             (advance cur)
             (match (form-spanned-result toks cur)
               [(ResultSpannedSexpr.Ok form)
-                (ResultSpannedSexpr.Ok (prefix-spanned-form name span form))]
+                (form-spanned-suffix-result
+                  toks
+                  cur
+                  (prefix-spanned-form name span form))]
               [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])))]
       [(= t (token.tag-rparen))
         (ResultSpannedSexpr.Err
@@ -1044,12 +1053,15 @@
     [st : token.SpannedToken (peek-spanned-token toks cur)]
     [tok : token.Token (token.spanned-token-token st)]
     [span : token.SourceSpan (token.spanned-token-span st)]
-    (if (= (token.tag tok) (token.tag-sym))
+    ;; Most forms are followed by whitespace or a delimiter. Reject those
+    ;; before materializing the interned symbol text; only lexically adjacent
+    ;; symbols can be projection suffixes.
+    (if (and
+      (= (token.tag tok) (token.tag-sym))
+      (spanned-sexpr-adjacent? base span))
       (let
         [text : String (ci.intern-str (token.sym-id tok))]
-        (if (and
-          (spanned-sexpr-adjacent? base span)
-          (projection-suffix-symbol? text))
+        (if (projection-suffix-symbol? text)
           (begin
             (advance cur)
             (match (spanned-projection-suffix-at base text span 1)
@@ -1059,10 +1071,11 @@
           (ResultSpannedSexpr.Ok base)))
       (ResultSpannedSexpr.Ok base))))
 
-(define (form-spanned-result
+(define (form-spanned-compound-result
   [toks : (__tl_dyn-array token.SpannedToken)]
-  [cur : (__tl_dyn-array i64)]) : ResultSpannedSexpr
-  (match (form-spanned-primary-result toks cur)
+  [cur : (__tl_dyn-array i64)]
+  [result : ResultSpannedSexpr]) : ResultSpannedSexpr
+  (match result
     [(ResultSpannedSexpr.Ok form) (form-spanned-suffix-result toks cur form)]
     [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)]))
 

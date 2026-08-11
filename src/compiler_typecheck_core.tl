@@ -20056,21 +20056,28 @@
       (<= (string.string-ref field 0) '9'))))
 
 (define (tc-dotted-name-source-id [name-id : i64]) : i64
-  (cond
-    [(ci.intern-structural-local-id? name-id)
-      (ci.intern-structural-local-source-name-id name-id)]
-    [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
-      (macro-hygiene-structural-source-name-id name-id)]
-    [(ci.intern-template-source-id? name-id)
-      (ci.intern-template-source-name-id name-id)]
-    [else name-id]))
+  ;; Parsed names in the ordinary intern pool dominate this path. Structural
+  ;; families all live above that range, so reject the common case before
+  ;; evaluating their range predicates.
+  (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
+    name-id
+    (cond
+      [(ci.intern-structural-local-id? name-id)
+        (ci.intern-structural-local-source-name-id name-id)]
+      [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
+        (macro-hygiene-structural-source-name-id name-id)]
+      [(ci.intern-template-source-id? name-id)
+        (ci.intern-template-source-name-id name-id)]
+      [else name-id])))
 
 (define (tc-dotted-name-first-dot-id [name-id : i64]) : i64
-  (let
-    [source-id : i64 (tc-dotted-name-source-id name-id)]
-    (if (or (< source-id 0) (>= source-id (ci.intern-capacity)))
-      -1
-      (tc-name-first-dot-id source-id))))
+  (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
+    (tc-name-first-dot-id name-id)
+    (let
+      [source-id : i64 (tc-dotted-name-source-id name-id)]
+      (if (or (< source-id 0) (>= source-id (ci.intern-capacity)))
+        -1
+        (tc-name-first-dot-id source-id)))))
 
 ;; Structural syntax identities place the source spelling in their low lane.
 ;; Replacing only that lane keeps the macro/ordinal namespace and depth intact.
@@ -20102,6 +20109,37 @@
   [env : TcTypeEnv]
   [name-id : i64]) : bool
   (cond
+    ;; Ordinary parsed names never belong to a structural hygiene family. Keep
+    ;; their local/module disambiguation off those substantially wider range
+    ;; checks and use their intern metadata directly.
+    [(and (>= name-id 0) (< name-id (ci.intern-capacity)))
+      (let
+        [first-dot : i64 (tc-name-first-dot-id name-id)]
+        (if (< first-dot 0)
+          false
+          (if (tc-source-leading-segment-wins-over-exact-id-from-dot?
+            env
+            name-id
+            first-dot)
+            true
+            (let
+              [root-id : i64 (ci.intern-leading-dot-id name-id)]
+              (if (< root-id 0)
+                false
+                (match (tc-var-expr-after-local-field-check
+                  ctx
+                  env
+                  name-id
+                  (tc-hygiene-name-text-id name-id))
+                  [(ResultTcType.Ok _) false]
+                  [(ResultTcType.Err _)
+                    (match (tc-var-expr-after-local-field-check
+                      ctx
+                      env
+                      root-id
+                      (tc-hygiene-name-text-id root-id))
+                      [(ResultTcType.Ok _) true]
+                      [(ResultTcType.Err _) false])]))))))]
     [(tc-structural-local-name-id? name-id)
       (let
         [source-id : i64 (tc-dotted-name-source-id name-id)]
@@ -20118,7 +20156,6 @@
                 (tc-dotted-name-with-source-id name-id root-source-id))
                 [(ResultTcType.Ok _) true]
                 [(ResultTcType.Err _) false])))))]
-    [(tc-dotted-local-field-name-id? env name-id) true]
     [(or
         (< name-id 0)
         (>= name-id (ci.intern-capacity))

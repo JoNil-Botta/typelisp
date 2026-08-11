@@ -1134,9 +1134,9 @@
     [span : CompilerSemanticSpan
       (match maybe-span
         [(CompilerSemanticMaybeSpan.Some origin)
-          (if (string.eq (struct-get state source) "")
+          (if (string.eq state.source "")
             (CompilerSemanticSpan
-              (string.copy (& (struct-get state path)))
+              (string.copy (& state.path))
               -1
               -1
               origin
@@ -2825,7 +2825,7 @@
       (if (and site-editable (not (string.eq source "")))
         (compiler-semantic-use-span-from-origin path source source-span)
         (CompilerSemanticSpan (string.copy (& path)) -1 -1 source-span -1 -1))]
-    [editable : bool (and site-editable (>= (struct-get span start-byte) 0))]
+    [editable : bool (and site-editable (>= span.start-byte 0))]
     [generator : String
       (tc.tc-macro-call-site-generator-for-state sites site-index)]
     [item : String (tc.tc-macro-call-site-item-for-state sites site-index)]
@@ -3310,7 +3310,7 @@
                 [_ false])
               (>= byte-position start)
               (< byte-position end)
-              (string.eq (& (struct-get span path)) wanted-path)
+              (string.eq (& span.path) wanted-path)
               (< width found-width))
               (begin
                 (set! found record-index)

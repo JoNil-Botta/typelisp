@@ -1130,24 +1130,23 @@
 (define (lsp-semantic-record-exact-editable?
   [record : compiler_semantic_index.CompilerSemanticRecord]) : bool
   (let
-    [span : compiler_semantic_index.CompilerSemanticSpan
-      (struct-get record span)]
-    [source-span : ast.AstSourceSpan (struct-get span source)]
+    [span : compiler_semantic_index.CompilerSemanticSpan record.span]
+    [source-span : ast.AstSourceSpan span.source]
     (and
-      (struct-get record editable)
-      (match (struct-get record provenance)
+      record.editable
+      (match record.provenance
         [(compiler_semantic_index.CompilerSemanticProvenance.EditableSource)
           true]
         [_ false])
-      (not (string.eq (struct-get span path) ""))
-      (>= (struct-get span start-byte) 0)
-      (> (struct-get span end-byte) (struct-get span start-byte))
+      (not (string.eq span.path ""))
+      (>= span.start-byte 0)
+      (> span.end-byte span.start-byte)
       (> (ast.ast-source-span-start-line source-span) 0)
       (> (ast.ast-source-span-start-col source-span) 0)
       (> (ast.ast-source-span-end-line source-span) 0)
       (> (ast.ast-source-span-end-col source-span) 0)
-      (> (struct-get span utf16-start-col) 0)
-      (> (struct-get span utf16-end-col) 0))))
+      (> span.utf16-start-col 0)
+      (> span.utf16-end-col 0))))
 
 (define (lsp-document-semantic-symbol-query
   [doc : (& doc lsp_vector_families.LspDocument)]
@@ -1156,30 +1155,28 @@
     [(LspSemanticSnapshotStatus.Current _ _)
       (let
         [index : compiler_semantic_index.CompilerSemanticSourceIndex
-          (struct-get (struct-get doc semantic) index)]
+          doc.semantic.index]
         [cursor-index : i64
           (compiler_semantic_index.compiler-semantic-source-index-find-editable-record-at
             (& index)
-            (& (struct-get doc path))
+            (& doc.path)
             byte-position)]
+        [cursor-record : compiler_semantic_index.CompilerSemanticRecord
+          (compiler_semantic_index.compiler-semantic-source-index-get
+            (& index)
+            cursor-index)]
         [definition-index : i64
           (if (< cursor-index 0)
             -1
             (compiler_semantic_index.compiler-semantic-source-index-find-symbol-role
               (& index)
-              (struct-get
-                (compiler_semantic_index.compiler-semantic-source-index-get
-                  (& index)
-                  cursor-index)
-                symbol)
+              cursor-record.symbol
               compiler_semantic_index.CompilerSemanticRecordRole.Definition))]
         (if (or (< cursor-index 0) (< definition-index 0))
           LspSemanticSymbolQuery.Missing
           (let
             [cursor : compiler_semantic_index.CompilerSemanticRecord
-              (compiler_semantic_index.compiler-semantic-source-index-get
-                (& index)
-                cursor-index)]
+              cursor-record]
             [definition : compiler_semantic_index.CompilerSemanticRecord
               (compiler_semantic_index.compiler-semantic-source-index-get
                 (& index)
@@ -1689,7 +1686,7 @@
             (compiler_semantic_index.compiler-semantic-source-index-get
               (& index)
               use-index)]
-          [use-byte : i64 (struct-get (struct-get use-record span) start-byte)]
+          [use-byte : i64 use-record.span.start-byte]
           [query-ok : bool true]
           [iteration : i64 0]
           (begin
@@ -1703,14 +1700,11 @@
                     (unless
                       (and
                         (compiler_semantic_index.compiler-semantic-symbol-id-eq?
-                          (struct-get cursor symbol)
-                          (struct-get definition symbol))
+                          cursor.symbol
+                          definition.symbol)
                         (lsp-semantic-record-exact-editable? cursor)
                         (lsp-semantic-record-exact-editable? definition)
-                        (not
-                          (string.eq
-                            (struct-get (struct-get definition span) path)
-                            path)))
+                        (not (string.eq definition.span.path path)))
                       (set! query-ok false))]
                   [(LspSemanticSymbolQuery.Missing) (set! query-ok false)])
                 (set! iteration (+ iteration 1))))
@@ -5037,7 +5031,7 @@
   [span : compiler_semantic_index.CompilerSemanticSpan]
   [start : bool]) : json.Json
   (let
-    [source : ast.AstSourceSpan (struct-get span source)]
+    [source : ast.AstSourceSpan span.source]
     [line : i64
       (if start
         (ast.ast-source-span-start-line source)
@@ -5048,8 +5042,8 @@
         (ast.ast-source-span-end-col source))]
     [utf16-col : i64
       (if start
-        (struct-get span utf16-start-col)
-        (struct-get span utf16-end-col))]
+        span.utf16-start-col
+        span.utf16-end-col)]
     (lsp-position
       line
       (if lsp-position-encoding-utf8
@@ -5059,11 +5053,10 @@
 (define (lsp-semantic-definition-location
   [record : compiler_semantic_index.CompilerSemanticRecord]) : json.Json
   (let
-    [span : compiler_semantic_index.CompilerSemanticSpan
-      (struct-get record span)]
+    [span : compiler_semantic_index.CompilerSemanticSpan record.span]
     (lsp-json-object2
       "uri"
-      (json.JsonString (lsp-resolved-path-to-file-uri (struct-get span path)))
+      (json.JsonString (lsp-resolved-path-to-file-uri span.path))
       "range"
       (lsp-json-object2
         "start"
@@ -5084,8 +5077,8 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-        [path : String (struct-get doc path)]
-        [text : String (struct-get doc text)]
+        [path : String doc.path]
+        [text : String doc.text]
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
         [off : i64 (lsp-offset-at-position text line0 char0)]
@@ -5877,9 +5870,9 @@
 (define (lsp-semantic-hover-body
   [record : compiler_semantic_index.CompilerSemanticRecord]) : String
   (let
-    [name : String (struct-get record display-name)]
-    [resolved-type : String (struct-get record resolved-type)]
-    (match (struct-get record kind)
+    [name : String record.display-name]
+    [resolved-type : String record.resolved-type]
+    (match record.kind
       [(compiler_semantic_index.CompilerSemanticSymbolKind.Struct)
         (if (string.eq resolved-type "")
           (str_cat.str-cat "struct " name)
@@ -6108,7 +6101,7 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-        [text : String (struct-get doc text)]
+        [text : String doc.text]
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
         [off : i64 (lsp-offset-at-position text line0 char0)]
@@ -6116,16 +6109,16 @@
           [(LspSemanticSymbolQuery.Found cursor definition)
             (let
               [cursor-span : compiler_semantic_index.CompilerSemanticSpan
-                (struct-get cursor span)]
+                cursor.span]
               (lsp-write-response
                 id
                 (lsp-hover-result
                   (lsp-hover-markdown
                     (lsp-semantic-hover-body definition)
-                    (struct-get definition documentation))
+                    definition.documentation)
                   text
-                  (struct-get cursor-span start-byte)
-                  (struct-get cursor-span end-byte))))]
+                  cursor-span.start-byte
+                  cursor-span.end-byte)))]
           [(LspSemanticSymbolQuery.Missing)
             ;; Builtins intentionally have no semantic identity. Keep curated
             ;; hover only for a current snapshot and a real, unquoted code

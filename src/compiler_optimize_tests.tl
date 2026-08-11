@@ -3682,6 +3682,100 @@
           1)]
       [(compiler_optimize.ResultCompilerOptimizeVerify.Ok) 2])))
 
+(define (opt-indirect-call-def-is?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [want : i64]) : bool
+  (match (compiler_optimize.opt-instr-def-var instr)
+    [(option_i64.Some found) (= found want)]
+    [(option_i64.None) false]))
+
+(define (opt-indirect-call-nondef? [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match (compiler_optimize.opt-instr-def-var instr)
+    [(option_i64.Some _) false]
+    [(option_i64.None) true]))
+
+(define (opt-indirect-call-def-function
+  [name : i64]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    (+ dst 1)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-instr-cons
+          instr
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var dst)))
+            compiler_ir_types.CompilerIrInstrList.Nil)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; Value-returning indirect calls define their first payload field. Aggregate
+;; C-ABI store-result calls only write through an existing base, and an indirect
+;; tail call transfers control, so neither of those forms defines an SSA value.
+(define (compiler-optimize-indirect-call-def-self-test) : i64
+  (let
+    [indirect : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.CallIndirect
+        7
+        (compiler_ir_types.CompilerIrValue.Function (opt-test-symbol "callee"))
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))]
+    [indirect-c : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.CallIndirectC
+        8
+        (compiler_ir_types.CompilerIrValue.Function
+          (opt-test-symbol "extern_callee"))
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))]
+    [direct-store : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.ir-instr-call-cabi-store-result
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (opt-test-symbol "aggregate_callee")
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil)]
+    [indirect-store : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.ir-instr-call-indirect-cabi-store-result
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.CompilerIrValue.Function
+          (opt-test-symbol "aggregate_indirect_callee"))
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        compiler_ir_types.CompilerIrCAbiReturnSlotList.Nil)]
+    [tail : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.TailCallIndirect
+        (compiler_ir_types.CompilerIrValue.Function
+          (opt-test-symbol "tail_callee"))
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))]
+    (cond
+      [(not (opt-indirect-call-def-is? indirect 7)) 1]
+      [(not (opt-indirect-call-def-is? indirect-c 8)) 2]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-indirect-call-def-function
+                (opt-test-symbol "indirect_def")
+                indirect
+                7))))
+        3]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-indirect-call-def-function
+                (opt-test-symbol "indirect_c_def")
+                indirect-c
+                8))))
+        4]
+      [(not (opt-indirect-call-nondef? direct-store)) 5]
+      [(not (opt-indirect-call-nondef? indirect-store)) 6]
+      [(not (opt-indirect-call-nondef? tail)) 7]
+      [else 42])))
+
 (define (opt-loop-bce-argc-summary-test-function [has-entry : bool]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (if has-entry
@@ -3804,6 +3898,10 @@
           (compiler-optimize-self-test-require-i64!
             "vector/mask folding and copy propagation"
             (compiler-optimize-vector-mask-self-test)
+            42)
+          (compiler-optimize-self-test-require-i64!
+            "indirect call definition bookkeeping"
+            (compiler-optimize-indirect-call-def-self-test)
             42)
           (compiler-optimize-self-test-require!
             "loop-BCE argc summary prescan"

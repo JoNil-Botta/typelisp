@@ -10328,10 +10328,10 @@
 ;; comparisons to reach the same answer. Variant patterns
 ;; over one enum are disjoint, so reordering them cannot change which arm
 ;; matches; the explicit `None` arms return exactly what the catch-all returned
-;; for those tags. Rare vector/mask/SPMD forms stay at the back, and the shapes
-;; deliberately left in the catch-all (indirect and C-ABI calls, vector and
-;; predicated stores, TailCallIndirect) keep answering `None` exactly as
-;; before.
+;; for those tags. Rare vector/mask/SPMD forms and the two value-returning
+;; indirect-call definition arms stay at the back. The shapes left in the
+;; catch-all (aggregate C-ABI store-result calls, vector and predicated stores,
+;; TailCallIndirect) keep answering `None` exactly as before.
 (define (opt-instr-def-var [instr : ir.CompilerIrInstr]) : option_i64.Option
   (match instr
     [(ir.CompilerIrInstr.Alloc dst _) (option_i64.Some dst)]
@@ -10409,6 +10409,8 @@
     [(ir.CompilerIrInstr.CpuId dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Xgetbv dst _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Syscall dst _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.CallIndirect dst _ _ _) (option_i64.Some dst)]
+    [(ir.CompilerIrInstr.CallIndirectC dst _ _ _) (option_i64.Some dst)]
     [_ (option_i64.None)]))
 
 (define (opt-instr-def-position [instr : ir.CompilerIrInstr] [pos : i64]) : i64

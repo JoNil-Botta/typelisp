@@ -93417,10 +93417,12 @@
                       call-expr)]
                   [(ResultMacroEnv.Err diag) (ResultMacroEnv.Err diag)]))))])]))
 
-;; Capture checked operands directly into the fixed native ABI array. This
+;; Capture checked operands directly into an exact native ABI array. This
 ;; walker deliberately mirrors `macro-bind-params-at`; the shared capture
 ;; helpers above own all validation and value construction, while this layer
-;; owns only arity, mixed-prefix traversal, and syntax-pool selection.
+;; owns only arity, mixed-prefix traversal, and syntax-pool selection. The
+;; caller has already enforced the eight-operand ABI limit, so the declared
+;; parameter count is both the required live prefix and the exact capacity.
 (define (macro-capture-params-direct
   [ctx : TcContext]
   [decls : ast.AstDeclList]
@@ -93433,22 +93435,24 @@
   [env : ctfe_support.CtfeEnv]
   [capture-expr-types : bool]
   [call-expr : ast.AstExpr]) : ResultMacroCapturedOperands
-  (macro-capture-params-direct-at
-    ctx
-    decls
-    fallback-module
-    fallback-module-id
-    type-env
-    macro-name
-    (& params)
-    (& args)
-    0
-    0
-    env
-    (ctfe_support.ctfe-env-syntax-pools env)
-    (array.make-array ctfe_support.CompilerCtfeValue 8)
-    capture-expr-types
-    call-expr))
+  (let
+    [operand-count : i64 (struct-get (& params) len)]
+    (macro-capture-params-direct-at
+      ctx
+      decls
+      fallback-module
+      fallback-module-id
+      type-env
+      macro-name
+      (& params)
+      (& args)
+      0
+      0
+      env
+      (ctfe_support.ctfe-env-syntax-pools env)
+      (array.make-array ctfe_support.CompilerCtfeValue operand-count)
+      capture-expr-types
+      call-expr)))
 
 (define (macro-capture-params-direct-at
   [ctx : TcContext]

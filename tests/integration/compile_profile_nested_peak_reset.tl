@@ -6,7 +6,7 @@
   (let
     [items : (__tl_dyn-array i64) (array.make-array i64 4096)]
     (begin
-      (array-set! items 0 37)
+      (set! (array-ref items 0) 37)
       (array-ref items 0))))
 
 (cfg

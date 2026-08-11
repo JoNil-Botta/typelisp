@@ -2,7 +2,7 @@
 (import stdlib.array)
 
 (define (heavy-store [out : (__tl_dyn-array i64)] [i : i64]) : unit
-  (array-set! out i (+ (+ (+ (+ (+ (+ (+ i 1) 2) 3) 4) 5) 6) 7)))
+  (set! (array-ref out i) (+ (+ (+ (+ (+ (+ (+ i 1) 2) 3) 4) 5) 6) 7)))
 
 (define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach

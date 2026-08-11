@@ -58,7 +58,7 @@
 (import (serialize.serialize toy Person) as person_ser_again)
 
 (define (serialize-address-eq? [home : Address] [zip : i64] [city : String]) : bool
-  (and (= (struct-get home zip) zip) (string.eq (struct-get home city) city)))
+  (and (= home.zip zip) (string.eq home.city city)))
 
 (define (serialize-address-ok? [home : Address]) : bool
   (serialize-address-eq? home 12345 "London"))
@@ -94,22 +94,22 @@
 
 (define (serialize-person-ok? [person : Person]) : bool
   (and
-    (string.eq (struct-get person name) "Ada")
-    (= (struct-get person age) (cast 36 : i32))
-    (struct-get person active)
-    (= (struct-get person score) 9.5)
-    (serialize-address-ok? (struct-get person home))
-    (serialize-scores-ok? (struct-get person scores))
-    (serialize-previous-ok? (struct-get person previous))
-    (serialize-samples-ok? (struct-get person samples))
-    (serialize-combo-ok? (struct-get person combo))))
+    (string.eq person.name "Ada")
+    (= person.age (cast 36 : i32))
+    person.active
+    (= person.score 9.5)
+    (serialize-address-ok? person.home)
+    (serialize-scores-ok? person.scores)
+    (serialize-previous-ok? person.previous)
+    (serialize-samples-ok? person.samples)
+    (serialize-combo-ok? person.combo)))
 
 (define (serialize-address-value-city-ok?
   [value : toy.Value]
   [expected-city : String]) : bool
   (match value
     [(toy.Object fields)
-      (match (toy.field-list-get (box-get fields) "city")
+      (match (toy.field-list-get (__tl-box-place fields) "city")
         [(toy.Found city-value)
           (match city-value
             [(toy.Text found) (string.eq found expected-city)]
@@ -124,8 +124,8 @@
   (match value
     [(toy.Sequence items)
       (and
-        (= (toy.value-list-count (box-get items)) 3)
-        (match (toy.value-list-get (box-get items) 2)
+        (= (toy.value-list-count (__tl-box-place items)) 3)
+        (match (toy.value-list-get (__tl-box-place items) 2)
           [(toy.Found item)
             (match item
               [(toy.Int found) (= found 6)]
@@ -137,8 +137,8 @@
   (match value
     [(toy.Sequence items)
       (and
-        (= (toy.value-list-count (box-get items)) 2)
-        (match (toy.value-list-get (box-get items) 1)
+        (= (toy.value-list-count (__tl-box-place items)) 2)
+        (match (toy.value-list-get (__tl-box-place items) 1)
           [(toy.Found item)
             (match item
               [(toy.Int found) (= found 8)]
@@ -150,8 +150,8 @@
   (match value
     [(toy.Sequence items)
       (and
-        (= (toy.value-list-count (box-get items)) 2)
-        (match (toy.value-list-get (box-get items) 1)
+        (= (toy.value-list-count (__tl-box-place items)) 2)
+        (match (toy.value-list-get (__tl-box-place items) 1)
           [(toy.Found item) (serialize-address-value-city-ok? item "Paris")]
           [(toy.Missing) false]))]
     [_ false]))
@@ -160,8 +160,8 @@
   (match value
     [(toy.Sequence items)
       (and
-        (= (toy.value-list-count (box-get items)) 2)
-        (match (toy.value-list-get (box-get items) 1)
+        (= (toy.value-list-count (__tl-box-place items)) 2)
+        (match (toy.value-list-get (__tl-box-place items) 1)
           [(toy.Found item)
             (match item
               [(toy.Int found) (= found 10)]
@@ -173,14 +173,14 @@
   (match value
     [(toy.Sequence items)
       (and
-        (= (toy.value-list-count (box-get items)) 2)
-        (match (toy.value-list-get (box-get items) 0)
+        (= (toy.value-list-count (__tl-box-place items)) 2)
+        (match (toy.value-list-get (__tl-box-place items) 0)
           [(toy.Found item)
             (match item
               [(toy.Text found) (string.eq found "inner")]
               [_ false])]
           [(toy.Missing) false])
-        (match (toy.value-list-get (box-get items) 1)
+        (match (toy.value-list-get (__tl-box-place items) 1)
           [(toy.Found item)
             (match item
               [(toy.Bool found) found]
@@ -192,23 +192,23 @@
   (match value
     [(toy.Sequence items)
       (and
-        (= (toy.value-list-count (box-get items)) 5)
-        (match (toy.value-list-get (box-get items) 0)
+        (= (toy.value-list-count (__tl-box-place items)) 5)
+        (match (toy.value-list-get (__tl-box-place items) 0)
           [(toy.Found item)
             (match item
               [(toy.Int found) (= found 99)]
               [_ false])]
           [(toy.Missing) false])
-        (match (toy.value-list-get (box-get items) 1)
+        (match (toy.value-list-get (__tl-box-place items) 1)
           [(toy.Found item) (serialize-address-value-city-ok? item "Rome")]
           [(toy.Missing) false])
-        (match (toy.value-list-get (box-get items) 2)
+        (match (toy.value-list-get (__tl-box-place items) 2)
           [(toy.Found item) (serialize-combo-fixed-array-value-ok? item)]
           [(toy.Missing) false])
-        (match (toy.value-list-get (box-get items) 3)
+        (match (toy.value-list-get (__tl-box-place items) 3)
           [(toy.Found item) (serialize-samples-value-ok? item)]
           [(toy.Missing) false])
-        (match (toy.value-list-get (box-get items) 4)
+        (match (toy.value-list-get (__tl-box-place items) 4)
           [(toy.Found item) (serialize-combo-inner-tuple-value-ok? item)]
           [(toy.Missing) false]))]
     [_ false]))
@@ -244,17 +244,17 @@
   (match value
     [(toy.Object fields)
       (and
-        (match (toy.field-list-get (box-get fields) "tag")
+        (match (toy.field-list-get (__tl-box-place fields) "tag")
           [(toy.Found tag-value)
             (match tag-value
               [(toy.Text found) (string.eq found expected-tag)]
               [_ false])]
           [(toy.Missing) false])
-        (match (toy.field-list-get (box-get fields) "payload")
+        (match (toy.field-list-get (__tl-box-place fields) "payload")
           [(toy.Found payload-value)
             (match payload-value
               [(toy.Sequence items)
-                (= (toy.value-list-count (box-get items)) expected-count)]
+                (= (toy.value-list-count (__tl-box-place items)) expected-count)]
               [_ false])]
           [(toy.Missing) false]))]
     [_ false]))
@@ -263,14 +263,14 @@
   (match value
     [(toy.Sequence items)
       (and
-        (= (toy.value-list-count (box-get items)) 2)
-        (match (toy.value-list-get (box-get items) 0)
+        (= (toy.value-list-count (__tl-box-place items)) 2)
+        (match (toy.value-list-get (__tl-box-place items) 0)
           [(toy.Found item)
             (match item
               [(toy.Int found) (= found 9)]
               [_ false])]
           [(toy.Missing) false])
-        (match (toy.value-list-get (box-get items) 1)
+        (match (toy.value-list-get (__tl-box-place items) 1)
           [(toy.Found item)
             (match item
               [(toy.Int found) (= found 10)]
@@ -282,14 +282,14 @@
   (match value
     [(toy.Sequence items)
       (and
-        (= (toy.value-list-count (box-get items)) 2)
-        (match (toy.value-list-get (box-get items) 0)
+        (= (toy.value-list-count (__tl-box-place items)) 2)
+        (match (toy.value-list-get (__tl-box-place items) 0)
           [(toy.Found item)
             (match item
               [(toy.Int found) (= found 123)]
               [_ false])]
           [(toy.Missing) false])
-        (match (toy.value-list-get (box-get items) 1)
+        (match (toy.value-list-get (__tl-box-place items) 1)
           [(toy.Found item) (serialize-status-array-value-ok? item)]
           [(toy.Missing) false]))]
     [_ false]))
@@ -299,7 +299,7 @@
     [(toy.Object fields)
       (and
         (serialize-enum-object-tag-and-payload-count-ok? value "Moved" 2)
-        (match (toy.field-list-get (box-get fields) "payload")
+        (match (toy.field-list-get (__tl-box-place fields) "payload")
           [(toy.Found payload) (serialize-status-payload-value-ok? payload)]
           [(toy.Missing) false]))]
     [_ false]))
@@ -317,20 +317,20 @@
     [(toy.Object fields)
       (and
         (serialize-enum-object-tag-and-payload-count-ok? value "Wide" 9)
-        (match (toy.field-list-get (box-get fields) "payload")
+        (match (toy.field-list-get (__tl-box-place fields) "payload")
           [(toy.Found payload)
             (match payload
               [(toy.Sequence items)
                 (and
-                  (serialize-status-wide-item-ok? (box-get items) 0)
-                  (serialize-status-wide-item-ok? (box-get items) 1)
-                  (serialize-status-wide-item-ok? (box-get items) 2)
-                  (serialize-status-wide-item-ok? (box-get items) 3)
-                  (serialize-status-wide-item-ok? (box-get items) 4)
-                  (serialize-status-wide-item-ok? (box-get items) 5)
-                  (serialize-status-wide-item-ok? (box-get items) 6)
-                  (serialize-status-wide-item-ok? (box-get items) 7)
-                  (serialize-status-wide-item-ok? (box-get items) 8))]
+                  (serialize-status-wide-item-ok? (__tl-box-place items) 0)
+                  (serialize-status-wide-item-ok? (__tl-box-place items) 1)
+                  (serialize-status-wide-item-ok? (__tl-box-place items) 2)
+                  (serialize-status-wide-item-ok? (__tl-box-place items) 3)
+                  (serialize-status-wide-item-ok? (__tl-box-place items) 4)
+                  (serialize-status-wide-item-ok? (__tl-box-place items) 5)
+                  (serialize-status-wide-item-ok? (__tl-box-place items) 6)
+                  (serialize-status-wide-item-ok? (__tl-box-place items) 7)
+                  (serialize-status-wide-item-ok? (__tl-box-place items) 8))]
               [_ false])]
           [(toy.Missing) false]))]
     [_ false]))
@@ -339,19 +339,19 @@
   (match value
     [(toy.Object fields)
       (and
-        (match (toy.field-list-get (box-get fields) "home")
+        (match (toy.field-list-get (__tl-box-place fields) "home")
           [(toy.Found home) (serialize-home-value-ok? home)]
           [(toy.Missing) false])
-        (match (toy.field-list-get (box-get fields) "scores")
+        (match (toy.field-list-get (__tl-box-place fields) "scores")
           [(toy.Found scores) (serialize-scores-value-ok? scores)]
           [(toy.Missing) false])
-        (match (toy.field-list-get (box-get fields) "previous")
+        (match (toy.field-list-get (__tl-box-place fields) "previous")
           [(toy.Found previous) (serialize-previous-value-ok? previous)]
           [(toy.Missing) false])
-        (match (toy.field-list-get (box-get fields) "samples")
+        (match (toy.field-list-get (__tl-box-place fields) "samples")
           [(toy.Found samples) (serialize-samples-value-ok? samples)]
           [(toy.Missing) false])
-        (match (toy.field-list-get (box-get fields) "combo")
+        (match (toy.field-list-get (__tl-box-place fields) "combo")
           [(toy.Found combo) (serialize-combo-value-ok? combo)]
           [(toy.Missing) false]))]
     [_ false]))

@@ -83,14 +83,12 @@
       [(lint_core.LintMaybeRule.Found rule)
         (unless
           (and
+            (string.eq rule.rule-id (lint_core.lint-rule-nested-if-ladder-id))
             (string.eq
-              (struct-get rule rule-id)
-              (lint_core.lint-rule-nested-if-ladder-id))
-            (string.eq
-              (struct-get rule message)
+              rule.message
               (lint_core.lint-rule-nested-if-ladder-message))
             (string.eq
-              (struct-get rule suggestion)
+              rule.suggestion
               (lint_core.lint-rule-nested-if-ladder-suggestion)))
           (io.panic
             "lint: nested-if-ladder registry entry should match metadata"))]
@@ -205,7 +203,7 @@
     (lint-test-expect-registry-text
       (lint_core.lint-rule-suggestion
         (lint_core.lint-rule-prefer-dynamic-array-literal-id))
-      "replace the allocation and consecutive array-set! calls with a dynamic array literal"
+      "replace the allocation and consecutive array element assignments with a dynamic array literal"
       "lint: prefer-dynamic-array-literal suggestion should be registered")
     (lint-test-expect-registry-text
       (lint_core.lint-rule-message
@@ -526,12 +524,12 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (if (and
-            (= (struct-get finding depth) 3)
+            (= finding.depth 3)
             (string.eq
-              (struct-get finding rule-id)
+              finding.rule-id
               (lint_core.lint-rule-nested-if-ladder-id))
             (string.eq
-              (struct-get finding message)
+              finding.message
               (lint_core.lint-rule-nested-if-ladder-value-message)))
             unit
             (io.panic "lint: 3-deep value ladder finding metadata mismatch"))]
@@ -545,12 +543,12 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (if (and
-            (= (struct-get finding depth) 3)
+            (= finding.depth 3)
             (string.eq
-              (struct-get finding rule-id)
+              finding.rule-id
               (lint_core.lint-rule-nested-if-ladder-id))
             (string.eq
-              (struct-get finding message)
+              finding.message
               (lint_core.lint-rule-nested-if-ladder-guard-message)))
             unit
             (io.panic "lint: guard ladder finding metadata mismatch"))]
@@ -564,12 +562,12 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (if (and
-            (= (struct-get finding depth) 3)
+            (= finding.depth 3)
             (string.eq
-              (struct-get finding rule-id)
+              finding.rule-id
               (lint_core.lint-rule-nested-if-ladder-id))
             (string.eq
-              (struct-get finding message)
+              finding.message
               (lint_core.lint-rule-nested-if-ladder-message)))
             unit
             (io.panic "lint: ambiguous ladder should keep generic message"))]
@@ -638,7 +636,7 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (if (string.eq
-            (struct-get finding rule-id)
+            finding.rule-id
             (lint_core.lint-rule-return-path-chain-id))
             unit
             (io.panic "lint: return-path chain should report its rule id"))]
@@ -660,9 +658,7 @@
           (lint_core.lint-findings-empty))
         0)
         [(lint_core.LintMaybeFinding.Some finding)
-          (if (string.eq
-            (struct-get finding rule-id)
-            (lint_core.lint-rule-unit-if-guard-id))
+          (if (string.eq finding.rule-id (lint_core.lint-rule-unit-if-guard-id))
             unit
             (io.panic "lint: unit-if guard should report its rule id"))]
         [(lint_core.LintMaybeFinding.No)
@@ -729,12 +725,10 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (let
-            [fspan : ast.AstSourceSpan (struct-get finding span)]
+            [fspan : ast.AstSourceSpan finding.span]
             (if (and
               (= (ast.ast-source-span-start-line fspan) 51)
-              (string.eq
-                (struct-get finding rule-id)
-                (lint_core.lint-rule-single-begin-id)))
+              (string.eq finding.rule-id (lint_core.lint-rule-single-begin-id)))
               unit
               (io.panic
                 "lint: single-begin finding should carry rule id and span")))]
@@ -769,11 +763,11 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (let
-            [fspan : ast.AstSourceSpan (struct-get finding span)]
+            [fspan : ast.AstSourceSpan finding.span]
             (if (and
               (= (ast.ast-source-span-start-line fspan) 7)
               (string.eq
-                (struct-get finding rule-id)
+                finding.rule-id
                 (lint_core.lint-rule-nested-if-ladder-id)))
               unit
               (io.panic
@@ -815,12 +809,10 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (let
-            [fspan : ast.AstSourceSpan (struct-get finding span)]
+            [fspan : ast.AstSourceSpan finding.span]
             (if (and
               (= (ast.ast-source-span-start-line fspan) 11)
-              (string.eq
-                (struct-get finding rule-id)
-                (lint_core.lint-rule-nested-let-id)))
+              (string.eq finding.rule-id (lint_core.lint-rule-nested-let-id)))
               unit
               (io.panic
                 "lint: nested-let finding should carry rule id and span")))]
@@ -879,15 +871,15 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (let
-            [fspan : ast.AstSourceSpan (struct-get finding span)]
+            [fspan : ast.AstSourceSpan finding.span]
             (if (and
               (= (ast.ast-source-span-start-line fspan) 21)
-              (= (struct-get finding depth) 3)
+              (= finding.depth 3)
               (string.eq
-                (struct-get finding rule-id)
+                finding.rule-id
                 (lint_core.lint-rule-cascading-and-or-id))
               (string.eq
-                (struct-get finding message)
+                finding.message
                 "cascading and: prefer flat n-ary form (and x y z)"))
               unit
               (io.panic "lint: cascading-and-or finding metadata mismatch")))]
@@ -901,7 +893,7 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (if (string.eq
-            (struct-get finding message)
+            finding.message
             (str_cat.str-cat
               "cascading and: prefer flat n-ary form ("
               "core/and"
@@ -918,7 +910,7 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (let
-            [fspan : ast.AstSourceSpan (struct-get finding span)]
+            [fspan : ast.AstSourceSpan finding.span]
             (if (and
               (=
                 (lint_core.lint-findings-count
@@ -929,10 +921,10 @@
                 1)
               (= (ast.ast-source-span-start-line fspan) 22)
               (string.eq
-                (struct-get finding rule-id)
+                finding.rule-id
                 (lint_core.lint-rule-transitional-core-macro-qualifier-id))
               (string.eq
-                (struct-get finding message)
+                finding.message
                 "transitional core macro qualifier: use cond instead of core.cond"))
               unit
               (io.panic
@@ -957,12 +949,10 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (let
-            [fspan : ast.AstSourceSpan (struct-get finding span)]
+            [fspan : ast.AstSourceSpan finding.span]
             (if (and
               (= (ast.ast-source-span-start-line fspan) 31)
-              (string.eq
-                (struct-get finding rule-id)
-                (lint_core.lint-rule-no-effect-id)))
+              (string.eq finding.rule-id (lint_core.lint-rule-no-effect-id)))
               unit
               (io.panic "lint: no-effect finding should carry rule id and span")))]
         [(lint_core.LintMaybeFinding.No)
@@ -1049,11 +1039,11 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (let
-            [fspan : ast.AstSourceSpan (struct-get finding span)]
+            [fspan : ast.AstSourceSpan finding.span]
             (if (and
               (= (ast.ast-source-span-start-line fspan) 41)
               (string.eq
-                (struct-get finding rule-id)
+                finding.rule-id
                 (lint_core.lint-rule-unreachable-code-id)))
               unit
               (io.panic
@@ -1096,11 +1086,11 @@
         0)
         [(lint_core.LintMaybeFinding.Some finding)
           (let
-            [fspan : ast.AstSourceSpan (struct-get finding span)]
+            [fspan : ast.AstSourceSpan finding.span]
             (if (and
               (= (ast.ast-source-span-start-line fspan) 43)
               (string.eq
-                (struct-get finding rule-id)
+                finding.rule-id
                 (lint_core.lint-rule-redundant-divergence-padding-id)))
               unit
               (io.panic

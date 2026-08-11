@@ -83,7 +83,7 @@
   [items : (&mut items i64vec.Vec)]
   [index : i64]
   [value : i64]) : unit
-  (array-set! (i64vec.slots-mut items) index value))
+  (set! (array-ref (i64vec.slots-mut items) index) value))
 
 (defmacro (gvn-ref [items : Expr] [index : Expr]) : Expr
   `(gvn-vec-ref (& ,items) ,index))
@@ -343,7 +343,7 @@
     (begin
       (while (< i gvn-fact-cap)
         (begin
-          (array-set! state i 0)
+          (set! (array-ref state i) 0)
           (set! i (+ i 1))))
       (set! gvn-fact-cap 32)
       (set! gvn-fact-len 0)
@@ -417,15 +417,15 @@
           (when
             (= (array-ref state i) 2)
             (begin
-              (array-set! scratch-key live (array-ref key-slots i))
-              (array-set! scratch-val live (array-ref val-slots i))
+              (set! (array-ref scratch-key live) (array-ref key-slots i))
+              (set! (array-ref scratch-val live) (array-ref val-slots i))
               (set! live (+ live 1))))
           (set! i (+ i 1))))
       (set! gvn-fact-cap (* old-cap 2))
       (set! i 0)
       (while (< i gvn-fact-cap)
         (begin
-          (array-set! state i 0)
+          (set! (array-ref state i) 0)
           (set! i (+ i 1))))
       (set! gvn-fact-len 0)
       (set! gvn-fact-deleted 0)
@@ -438,9 +438,9 @@
           (begin
             (while (= (array-ref state index) 2)
               (set! index (bit-and (+ index 1) mask)))
-            (array-set! state index 2)
-            (array-set! key-slots index item-key)
-            (array-set! val-slots index (array-ref scratch-val i))
+            (set! (array-ref state index) 2)
+            (set! (array-ref key-slots index) item-key)
+            (set! (array-ref val-slots index) (array-ref scratch-val i))
             (set! gvn-fact-len (+ gvn-fact-len 1))
             (set! i (+ i 1))))))))
 

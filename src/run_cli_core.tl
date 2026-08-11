@@ -405,8 +405,8 @@
     [artifacts : build_cli_core.BuildPackageArtifactPaths
       (build_cli_core.build-package-artifact-paths
         manifest-dir
-        (struct-get manifest name)
-        (struct-get manifest kind)
+        manifest.name
+        manifest.kind
         profile
         target)]
     (build_cli_core.build-package-runtime-artifact-path artifacts)))
@@ -434,9 +434,7 @@
             (io.print-error (str_cat.str-cat "Error: " message))
             1)]
         [(build_cli_core.ResultBuildManifest.Ok manifest)
-          (if (not
-            (build_cli_core.build-package-kind-entry?
-              (struct-get manifest kind)))
+          (if (not (build_cli_core.build-package-kind-entry? manifest.kind))
             (begin
               (io.print-error
                 "run: package manifest kind must be bin to execute")

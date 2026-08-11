@@ -8,4 +8,4 @@
     sum
     ([i : i64 0 n] [prefix : i64 0])
     (array-ref xs i)
-    (foreach ([j : i64 0 n]) (array-set! out j prefix))))
+    (foreach ([j : i64 0 n]) (set! (array-ref out j) prefix))))

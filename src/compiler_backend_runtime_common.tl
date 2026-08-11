@@ -15,39 +15,39 @@
 
 (define (compiler-backend-runtime-features-alloc?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  (struct-get features alloc))
+  features.alloc)
 
 (define (compiler-backend-runtime-features-region-mark?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  (struct-get features region-mark))
+  features.region-mark)
 
 (define (compiler-backend-runtime-features-region-reset?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  (struct-get features region-reset))
+  features.region-reset)
 
 (define (compiler-backend-runtime-features-arena-debug?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  (struct-get features arena-debug))
+  features.arena-debug)
 
 (define (compiler-backend-runtime-features-profile?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  (struct-get features profile))
+  features.profile)
 
 (define (compiler-backend-runtime-features-tlci-macro-entry?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  (struct-get features tlci-macro-entry))
+  features.tlci-macro-entry)
 
 (define (compiler-backend-runtime-features-write-exit?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  (struct-get features write-exit))
+  features.write-exit)
 
 (define (compiler-backend-runtime-features-print-f64?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  (struct-get features print-f64))
+  features.print-f64)
 
 (define (compiler-backend-runtime-features-startup-profile?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  (struct-get features startup-profile))
+  features.startup-profile)
 
 (define (compiler-backend-runtime-fast-alloc-label [size : i64]) : String
   (str_cat.str-cat ".L_tl_alloc" (string.int->string size) "" ""))

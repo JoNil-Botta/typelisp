@@ -4,6 +4,6 @@
     [exclusive : (&mut values (Array i64 1)) (&mut values)]
     [bump : (-> unit)
       (lambda () : unit
-        (array-set! exclusive 0 1))]
+        (set! (array-ref exclusive 0) 1))]
     [alias : (-> unit) bump]
     (alias)))

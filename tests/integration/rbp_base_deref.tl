@@ -77,7 +77,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! v i (* i 3))
+          (set! (array-ref v i) (* i 3))
           ; v[i] = 3i
           (set! i (+ i 1))))
       (let

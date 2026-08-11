@@ -1,6 +1,6 @@
 ;; Regression guard for #4463: unsafe ptr-addr-of on register-resident
 ;; aggregate locals must expose the local's real storage, not a temporary copy.
-;; Writes through field pointers must be visible to later ordinary struct-get
+;; Writes through field pointers must be visible to later ordinary field
 ;; reads of the same local.
 (defstruct Tiny
   (a i32)
@@ -18,22 +18,22 @@
     [item : Tiny (Tiny (cast 10 : i32) (cast 20 : i32))]
     [field : (MutPtr i32)
       (unsafe
-        (ptr-addr-of (struct-get item b)))]
+        (ptr-addr-of item.b))]
     (begin
       (unsafe
         (ptr-write! field (cast 33 : i32)))
-      (+ (cast (struct-get item a) : i64) (cast (struct-get item b) : i64)))))
+      (+ (cast item.a : i64) (cast item.b : i64)))))
 
 (define (two-word-field-write-score) : i64
   (let
     [item : Pair (Pair 40 50)]
     [field : (MutPtr i64)
       (unsafe
-        (ptr-addr-of (struct-get item y)))]
+        (ptr-addr-of item.y))]
     (begin
       (unsafe
         (ptr-write! field 77))
-      (+ (struct-get item x) (struct-get item y)))))
+      (+ item.x item.y))))
 
 (define (whole-local-address-score) : i64
   (let
@@ -43,7 +43,7 @@
         (ptr-addr-of item))]
     [field : (MutPtr i64)
       (unsafe
-        (ptr-addr-of (struct-get item x)))]
+        (ptr-addr-of item.x))]
     (begin
       (unsafe
         (ptr-write! field 9))
@@ -52,7 +52,7 @@
           (ptr->int addr))
         (unsafe
           (ptr->int (ptr-addr-of item))))
-        (+ (struct-get item x) (struct-get item y))
+        (+ item.x item.y)
         1000))))
 
 (define (nested-field-write-score) : i64
@@ -60,13 +60,11 @@
     [wrap : Wrap (Wrap (Tiny (cast 11 : i32) (cast 12 : i32)))]
     [field : (MutPtr i32)
       (unsafe
-        (ptr-addr-of (struct-get (struct-get wrap tiny) b)))]
+        (ptr-addr-of wrap.tiny.b))]
     (begin
       (unsafe
         (ptr-write! field (cast 44 : i32)))
-      (+
-        (cast (struct-get (struct-get wrap tiny) a) : i64)
-        (cast (struct-get (struct-get wrap tiny) b) : i64)))))
+      (+ (cast wrap.tiny.a : i64) (cast wrap.tiny.b : i64)))))
 
 (define (main) : i64
   (let

@@ -15,7 +15,7 @@
 (define (eval [e : Expr]) : i64
   (match e
     [(ENum n) n]
-    [(EAdd l r) (+ (eval (box-get l)) (eval (box-get r)))]))
+    [(EAdd l r) (+ (eval (__tl-box-place l)) (eval (__tl-box-place r)))]))
 
 (define (main) : i64
   (eval (mk)))

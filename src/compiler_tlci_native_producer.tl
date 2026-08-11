@@ -79,15 +79,15 @@
 
 (define (embedded-native-locals-reset!) : unit
   (begin
-    (array-set! embedded-native-local-len 0 0)
-    (array-set! embedded-native-data-local-len 0 0)
-    (array-set! embedded-native-temp-seq 0 0)))
+    (set! (array-ref embedded-native-local-len 0) 0)
+    (set! (array-ref embedded-native-data-local-len 0) 0)
+    (set! (array-ref embedded-native-temp-seq 0) 0)))
 
 (define (embedded-native-temp-name!) : String
   (let
     [seq : i64 (array-ref embedded-native-temp-seq 0)]
     (begin
-      (array-set! embedded-native-temp-seq 0 (+ seq 1))
+      (set! (array-ref embedded-native-temp-seq 0) (+ seq 1))
       (str_cat.str-cat "k" (string.int->string seq)))))
 
 ;; The generated i64 variable of a compile-time data local, or "" when unbound.
@@ -114,9 +114,9 @@
     (if (>= slot embedded-native-data-locals-cap)
       false
       (begin
-        (array-set! embedded-native-data-local-names slot name)
-        (array-set! embedded-native-data-local-texts slot text)
-        (array-set! embedded-native-data-local-len 0 (+ slot 1))
+        (set! (array-ref embedded-native-data-local-names slot) name)
+        (set! (array-ref embedded-native-data-local-texts slot) text)
+        (set! (array-ref embedded-native-data-local-len 0) (+ slot 1))
         true))))
 
 ;; The session-slot index of a let-bound local, or -1 when unbound.
@@ -139,8 +139,8 @@
     (if (>= slot embedded-native-locals-cap)
       -1
       (begin
-        (array-set! embedded-native-local-names slot name)
-        (array-set! embedded-native-local-len 0 (+ slot 1))
+        (set! (array-ref embedded-native-local-names slot) name)
+        (set! (array-ref embedded-native-local-len 0) (+ slot 1))
         slot))))
 
 (defstruct TlciNativeMacroCaptures
@@ -158,13 +158,13 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (tlci-native-macro-captures-copy-range! dst src (+ index 1) count))))
 
 (define (tlci-native-macro-captures-grow!
   [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
   (let
-    [old-cap : i64 (array-length (struct-get captures slots))]
+    [old-cap : i64 (array-length captures.slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1
@@ -174,23 +174,23 @@
     (begin
       (tlci-native-macro-captures-copy-range!
         (&mut bigger)
-        (& (struct-get captures slots))
+        (& captures.slots)
         0
-        (struct-get captures len))
-      (set! (struct-get captures slots) bigger))))
+        captures.len)
+      (set! captures.slots bigger))))
 
 (define (tlci-native-macro-captures-push!
   [captures : (&mut captures TlciNativeMacroCaptures)]
   [capture : TlciNativeMacroCapture]) : unit
   (begin
     (when
-      (>= (struct-get captures len) (array-length (struct-get captures slots)))
+      (>= captures.len (array-length captures.slots))
       (tlci-native-macro-captures-grow! captures))
     (let
-      [index : i64 (struct-get captures len)]
+      [index : i64 captures.len]
       (begin
-        (array-set! (struct-get captures slots) index capture)
-        (set! (struct-get captures len) (+ index 1))))))
+        (set! (array-ref captures.slots index) capture)
+        (set! captures.len (+ index 1))))))
 
 (define (embedded-stdlib-tlci-unwrap-expr [node : i64]) : compiler_ast_types.AstExpr
   (match (compiler_ast_types.ast-node-get node)
@@ -222,9 +222,9 @@
     [index : i64 0]
     [found : i64 -1]
     (begin
-      (while (and (< found 0) (< index (struct-get params len)))
+      (while (and (< found 0) (< index params.len))
         (begin
-          (match (array-ref (struct-get params slots) index)
+          (match (array-ref params.slots index)
             [(compiler_ast_types.AstMacroParam.Param pname _ _ _)
               (if (= pname name-id)
                 (set! found index)
@@ -325,7 +325,7 @@
     (embedded-native-full-string-set-contains? (& items) len item))
     len
     (begin
-      (array-set! items len (string.copy (& item)))
+      (set! (array-ref items len) (string.copy (& item)))
       (+ len 1))))
 
 (define (embedded-native-full-blocker-reset!) : unit
@@ -357,7 +357,7 @@
           capability)))))
 
 (define (embedded-native-fallback-reason-reset!) : unit
-  (array-set! embedded-native-fallback-reason 0 ""))
+  (set! (array-ref embedded-native-fallback-reason 0) ""))
 
 ;; First writer wins: the outermost walker that gives up would otherwise
 ;; overwrite the specific inner construct that actually failed.
@@ -388,7 +388,7 @@
           (string.string-length
             (& (array-ref embedded-native-fallback-reason 0)))
           0)]
-      (when empty (array-set! embedded-native-fallback-reason 0 reason)))))
+      (when empty (set! (array-ref embedded-native-fallback-reason 0) reason)))))
 
 ;; Recovery helpers are used only at explicit give-up leaves. The normal pass
 ;; retains its load-bearing failure sentinels; diagnostic mode substitutes a
@@ -519,13 +519,13 @@
   [captures : (& captures TlciNativeMacroCaptures)]
   [identity : String]) : i64
   (let
-    [count : i64 (struct-get captures len)]
+    [count : i64 captures.len]
     [index : i64 0]
     [found : i64 -1]
     (begin
       (while (and (< found 0) (< index count))
         (if (string.eq
-          (struct-get (array-ref (struct-get captures slots) index) identity)
+          (__tl-project-field (array-ref captures.slots index) identity)
           identity)
           (set! found index)
           (set! index (+ index 1))))
@@ -553,8 +553,8 @@
     [slot : i64 (array-ref ops-count 0)]
     (when
       (< slot embedded-native-ops-cap)
-      (array-set! ops slot line)
-      (array-set! ops-count 0 (+ slot 1)))))
+      (set! (array-ref ops slot) line)
+      (set! (array-ref ops-count 0) (+ slot 1)))))
 
 (define (embedded-native-op-call
   [op : String]
@@ -923,7 +923,7 @@
     [else "="]))
 
 ;; Emit the op chain for a template node that wraps exactly one subexpression
-;; (`return`, `box`, `box-get`): the operand's chain followed by `op`. Returns
+;; (Return, Box, and BoxGet AST nodes): the operand's chain followed by `op`. Returns
 ;; the opened op-let count or -1 when the operand is outside the supported
 ;; subset. Refs #5605.
 (define (embedded-native-template-binary-node-ops
@@ -1252,7 +1252,7 @@
                   (+ place-opened 1)))]
             [_ -1])))]
     [(compiler_ast_types.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(compiler_ast_types.AstMatch.Match scrutinee arms)
           (let
             [scrut-opened : i64
@@ -1323,7 +1323,7 @@
                       "0")
                     (+ target-opened index-opened value-opened 1))))))))]
     [(compiler_ast_types.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(compiler_ast_types.AstLet.Let bindings body)
           (begin
             (embedded-native-template-push!
@@ -1418,6 +1418,14 @@
         inner-node
         (tlci_core.tlci-host-callback-name-shared-view
           tlci_core.tlci-host-callback-name-expr-box-get)
+        ops
+        ops-count)]
+    [(compiler_ast_types.AstExpr.BoxTake inner-node)
+      (embedded-native-template-unary-node-ops
+        params
+        inner-node
+        (tlci_core.tlci-host-callback-name-shared-view
+          tlci_core.tlci-host-callback-name-expr-box-take)
         ops
         ops-count)]
     ;; Raw-pointer and `unsafe` template nodes, the last shapes the
@@ -1528,8 +1536,8 @@
               "0"
               "0")
             (+ arg-opened 1))))]
-    ;; `(set! (struct-get target field) value)`. The parser folds the place into
-    ;; the node, so the field name travels as an immediate like struct-get's.
+    ;; an internal StructSet node. The parser folds the place into
+    ;; the node, so the field name travels as an immediate like StructGet's.
     ;; The sentinel field id marks `(set! ,place value)`, whose place shape is
     ;; only known once the unquoted operand is evaluated; that stays a fallback.
     [(compiler_ast_types.AstExpr.StructSet target-node field value-node)
@@ -1849,7 +1857,7 @@
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
   (let
-    [count : i64 (struct-get arms len)]
+    [count : i64 arms.len]
     [index : i64 0]
     [opened : i64 1]
     [ok : bool true]
@@ -1863,7 +1871,7 @@
         "0"
         "0")
       (while (and ok (< index count))
-        (match (array-ref (struct-get arms slots) index)
+        (match (array-ref arms.slots index)
           [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
             (let
               [pat-opened : i64
@@ -1915,7 +1923,7 @@
                     (let
                       [pat-name : String (ci.intern-str pat-name-id)]
                       [pat-args : compiler_ast_types.AstPatternList
-                        (box-get pat-args-box)]
+                        (__tl-box-place pat-args-box)]
                       [pat-arg-opened : i64
                         (embedded-native-pattern-list-ops
                           (& pat-args)
@@ -1933,7 +1941,7 @@
                               tlci_core.tlci-host-callback-name-pattern-variant)
                             (embedded-native-name-arg pat-name)
                             (string.int->string (string.string-length pat-name))
-                            (string.int->string (struct-get (& pat-args) len)))
+                            (string.int->string pat-args.len))
                           (+ pat-arg-opened 1))))]
                   [_
                     (embedded-native-fallback-opened
@@ -2025,7 +2033,7 @@
     [(compiler_ast_types.AstPattern.Variant name-id args-box)
       (let
         [name : String (ci.intern-str name-id)]
-        [args : compiler_ast_types.AstPatternList (box-get args-box)]
+        [args : compiler_ast_types.AstPatternList (__tl-box-place args-box)]
         [arg-opened : i64
           (embedded-native-pattern-list-ops (& args) 0 ops ops-count 0)]
         (if (< arg-opened 0)
@@ -2038,7 +2046,7 @@
                 tlci_core.tlci-host-callback-name-pattern-variant)
               (embedded-native-name-arg name)
               (string.int->string (string.string-length name))
-              (string.int->string (struct-get (& args) len)))
+              (string.int->string args.len))
             (+ arg-opened 1))))]
     [_ (embedded-native-fallback-opened "template-pattern:unsupported")]))
 
@@ -2048,7 +2056,7 @@
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]
   [opened : i64]) : i64
-  (if (>= index (struct-get args len))
+  (if (>= index args.len)
     opened
     (let
       [item-opened : i64
@@ -2239,7 +2247,8 @@
     ;; let-bound type value. Refs #5606.
     [(compiler_ast_types.AstType.VarArgs name lifetimes-box)
       (let
-        [lifetimes : compiler_ast_types.AstLifetimeList (box-get lifetimes-box)]
+        [lifetimes : compiler_ast_types.AstLifetimeList
+          (__tl-box-place lifetimes-box)]
         [valid : bool
           (and
             (= name cbi.compiler-builtin-id-fix-unquote)
@@ -2312,7 +2321,7 @@
   [index : i64]
   [ops : (__tl_dyn-array String)]
   [ops-count : (__tl_dyn-array i64)]) : i64
-  (if (>= index (struct-get bindings len))
+  (if (>= index bindings.len)
     0
     (match (compiler_ast_types.ast-let-binding-list-get
       bindings
@@ -3931,12 +3940,12 @@
             (let
               [inner : EmbeddedNativeDataValue
                 (embedded-native-data-value params inner-node)]
-              (if (string.eq (struct-get inner text) "")
+              (if (string.eq inner.text "")
                 (embedded-native-data-value-none)
                 (EmbeddedNativeDataValue
-                  (struct-get inner open)
-                  (str_cat.str-cat "(if (= " (struct-get inner text) " 0) 1 0)")
-                  (struct-get inner opens))))
+                  inner.open
+                  (str_cat.str-cat "(if (= " inner.text " 0) 1 0)")
+                  inner.opens)))
             (embedded-native-data-value-none))]
         [_ (embedded-native-data-call-value params node)]))))
 
@@ -3952,21 +3961,12 @@
         (embedded-native-data-value params left-node)]
       [right : EmbeddedNativeDataValue
         (embedded-native-data-value params right-node)]
-      (if (or
-        (string.eq (struct-get left text) "")
-        (string.eq (struct-get right text) ""))
+      (if (or (string.eq left.text "") (string.eq right.text ""))
         (embedded-native-data-value-none)
         (EmbeddedNativeDataValue
-          (str_cat.str-cat (struct-get left open) (struct-get right open))
-          (str_cat.str-cat
-            "("
-            spelling
-            " "
-            (struct-get left text)
-            " "
-            (struct-get right text)
-            ")")
-          (+ (struct-get left opens) (struct-get right opens)))))))
+          (str_cat.str-cat left.open right.open)
+          (str_cat.str-cat "(" spelling " " left.text " " right.text ")")
+          (+ left.opens right.opens))))))
 
 (define (embedded-native-data-comparison-value
   [params : (& params compiler_ast_types.AstMacroParamList)]
@@ -3978,21 +3978,12 @@
       (embedded-native-data-value params left-node)]
     [right : EmbeddedNativeDataValue
       (embedded-native-data-value params right-node)]
-    (if (or
-      (string.eq (struct-get left text) "")
-      (string.eq (struct-get right text) ""))
+    (if (or (string.eq left.text "") (string.eq right.text ""))
       (embedded-native-data-value-none)
       (EmbeddedNativeDataValue
-        (str_cat.str-cat (struct-get left open) (struct-get right open))
-        (str_cat.str-cat
-          "(if ("
-          spelling
-          " "
-          (struct-get left text)
-          " "
-          (struct-get right text)
-          ") 1 0)")
-        (+ (struct-get left opens) (struct-get right opens))))))
+        (str_cat.str-cat left.open right.open)
+        (str_cat.str-cat "(if (" spelling " " left.text " " right.text ") 1 0)")
+        (+ left.opens right.opens)))))
 
 ;; Select the operand- or local-slot form of one unary Expr shape probe.
 ;; The argument must be a plain macro parameter or a session-local Expr.
@@ -4054,15 +4045,15 @@
   [value : EmbeddedNativeDataValue]
   [target : String]) : String
   (str_cat.str-cat
-    (struct-get value open)
+    value.open
     "  (begin\n"
     "  (set! "
     target
     " "
-    (struct-get value text)
+    value.text
     ")\n"
     "  0)\n"
-    (embedded-native-closing-parens (* 2 (struct-get value opens)))))
+    (embedded-native-closing-parens (* 2 value.opens))))
 
 ;; A scalar `if` can itself initialize a data local. Its selected branch may
 ;; contain a host probe, so keep a separate status local and open a continuation
@@ -4080,16 +4071,16 @@
     [else-value : EmbeddedNativeDataValue
       (embedded-native-data-value params else-node)]
     (if (or
-      (string.eq (struct-get cond-value text) "")
-      (string.eq (struct-get then-value text) "")
-      (string.eq (struct-get else-value text) ""))
+      (string.eq cond-value.text "")
+      (string.eq then-value.text "")
+      (string.eq else-value.text ""))
       (embedded-native-data-value-none)
       (let
         [result : String (embedded-native-temp-name!)]
         [status : String (embedded-native-temp-name!)]
         (EmbeddedNativeDataValue
           (str_cat.str-cat
-            (struct-get cond-value open)
+            cond-value.open
             "  (let ["
             result
             " : i64 0]\n"
@@ -4097,7 +4088,7 @@
             status
             " : i64\n"
             "  (if (= "
-            (struct-get cond-value text)
+            cond-value.text
             " 1)\n"
             (embedded-native-data-store-status-code then-value result)
             (embedded-native-data-store-status-code else-value result)
@@ -4109,7 +4100,7 @@
             "\n"
             "  (begin\n")
           result
-          (+ (struct-get cond-value opens) 2))))))
+          (+ cond-value.opens 2))))))
 
 ;; The boolean Expr.Var match used by the scoped string concatenator is a pure
 ;; shape test. Lower it directly to the corresponding operand/local data probe
@@ -4117,24 +4108,24 @@
 (define (embedded-native-data-var-match-value
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [match-box : (Box compiler_ast_types.AstMatch)]) : EmbeddedNativeDataValue
-  (match (box-get match-box)
+  (match (__tl-box-place match-box)
     [(compiler_ast_types.AstMatch.Match scrutinee arms)
-      (if (not (= (struct-get arms len) 2))
+      (if (not (= arms.len 2))
         (embedded-native-data-value-none)
-        (match (array-ref (struct-get arms slots) 0)
+        (match (array-ref arms.slots 0)
           [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
-            (match (array-ref (struct-get arms slots) 1)
+            (match (array-ref arms.slots 1)
               [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
                 (match first-pattern
                   [(compiler_ast_types.AstPattern.Variant name-id args-box)
                     (let
                       [args : compiler_ast_types.AstPatternList
-                        (box-get args-box)]
+                        (__tl-box-place args-box)]
                       (if (and
                         (string.eq
                           (embedded-native-expr-variant-name name-id)
                           "Var")
-                        (= (struct-get args len) 1)
+                        (= args.len 1)
                         (match (compiler_ast_types.ast-pattern-list-get
                           (& args)
                           0
@@ -4362,22 +4353,22 @@
           tlci_core.tlci-host-callback-name-operand-expr-string?)
         (tlci_core.tlci-host-callback-name-shared-view
           tlci_core.tlci-host-callback-name-local-expr-string?))]
-    (if (not (string.eq (struct-get expr-string text) ""))
+    (if (not (string.eq expr-string.text ""))
       expr-string
       (let
         [string-eq : EmbeddedNativeDataValue
           (embedded-native-data-string-eq-value params node)]
-        (if (not (string.eq (struct-get string-eq text) ""))
+        (if (not (string.eq string-eq.text ""))
           string-eq
           (let
             [module-value : EmbeddedNativeDataValue
               (embedded-native-data-module-value-exists-value params node)]
-            (if (not (string.eq (struct-get module-value text) ""))
+            (if (not (string.eq module-value.text ""))
               module-value
               (let
                 [has-type : EmbeddedNativeDataValue
                   (embedded-native-binding-clause-has-type-value params node)]
-                (if (not (string.eq (struct-get has-type text) ""))
+                (if (not (string.eq has-type.text ""))
                   has-type
                   (let
                     [binding-operand : i64
@@ -4415,7 +4406,7 @@
                                   (embedded-native-reflection-count-value
                                     params
                                     node)]
-                                (if (string.eq (struct-get reflection text) "")
+                                (if (string.eq reflection.text "")
                                   (embedded-native-string-scan-value
                                     params
                                     node)
@@ -4462,7 +4453,7 @@
                     (embedded-native-data-value
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 1 0))]
-                  (if (string.eq (struct-get index text) "")
+                  (if (string.eq index.text "")
                     (embedded-native-data-value-none)
                     (let
                       [probe : EmbeddedNativeDataValue
@@ -4470,13 +4461,11 @@
                           (tlci_core.tlci-host-callback-name-shared-view
                             tlci_core.tlci-host-callback-name-local-string-ref)
                           (string.int->string slot)
-                          (struct-get index text))]
+                          index.text)]
                       (EmbeddedNativeDataValue
-                        (str_cat.str-cat
-                          (struct-get index open)
-                          (struct-get probe open))
-                        (struct-get probe text)
-                        (+ (struct-get index opens) 1)))))]
+                        (str_cat.str-cat index.open probe.open)
+                        probe.text
+                        (+ index.opens 1)))))]
               [else (embedded-native-data-value-none)]))]
         [_ (embedded-native-data-value-none)])]
     [_ (embedded-native-data-value-none)]))
@@ -4559,8 +4548,8 @@
             (if (or
               (< ordinal 5)
               (> ordinal 10)
-              (string.eq (struct-get left text) "")
-              (string.eq (struct-get right text) ""))
+              (string.eq left.text "")
+              (string.eq right.text ""))
               ""
               (let
                 [then-code : String
@@ -4570,20 +4559,20 @@
                 (if (or (string.eq then-code "") (string.eq else-code ""))
                   ""
                   (str_cat.str-cat
-                    (struct-get left open)
-                    (struct-get right open)
+                    left.open
+                    right.open
                     "  (if ("
                     (embedded-native-comparison-spelling ordinal)
                     " "
-                    (struct-get left text)
+                    left.text
                     " "
-                    (struct-get right text)
+                    right.text
                     ")\n"
                     then-code
                     else-code
                     ")\n"
                     (embedded-native-closing-parens
-                      (* 2 (+ (struct-get left opens) (struct-get right opens)))))))))]
+                      (* 2 (+ left.opens right.opens))))))))]
         [_ ""])]
     [_ ""]))
 
@@ -4924,20 +4913,19 @@
                     (embedded-native-data-value
                       params
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
-                  (if (string.eq (struct-get data text) "")
+                  (if (string.eq data.text "")
                     (embedded-native-computed-expr-code-linear
                       params
                       node
                       final)
                     (str_cat.str-cat
-                      (struct-get data open)
+                      data.open
                       "  (let [q0 : i64 (comptime-host-expr-int-from-data host session "
-                      (struct-get data text)
+                      data.text
                       " 0 0)] (if (not (= q0 0)) q0\n"
                       final
                       "))\n"
-                      (embedded-native-closing-parens
-                        (* 2 (struct-get data opens))))))]
+                      (embedded-native-closing-parens (* 2 data.opens)))))]
               ;; `(comptime.comptime-error msg)` / `(comptime.error msg)`:
               ;; the message flows to the session diagnostic with the
               ;; diagnostic status, ignoring `final`.
@@ -5093,20 +5081,20 @@
           (embedded-native-data-value params cond-node)]
         [body-code : String
           (embedded-native-computed-statement-code params body-node)]
-        (if (string.eq (struct-get condition text) "")
+        (if (string.eq condition.text "")
           (embedded-native-fallback-code "statement-while:condition")
           (if (string.eq body-code "")
             (embedded-native-fallback-code "statement-while:body")
             (let
               [status : String (embedded-native-temp-name!)]
               (str_cat.str-cat
-                (struct-get condition open)
+                condition.open
                 "  (let ["
                 status
                 " : i64 0]\n"
                 "  (begin\n"
                 "  (while (if (= "
-                (struct-get condition text)
+                condition.text
                 " 1) (= "
                 status
                 " 0) false)\n"
@@ -5117,8 +5105,7 @@
                 "))\n"
                 status
                 "))\n"
-                (embedded-native-closing-parens
-                  (* 2 (struct-get condition opens))))))))]
+                (embedded-native-closing-parens (* 2 condition.opens)))))))]
     [(compiler_ast_types.AstExpr.Set name-id value-node)
       (let
         [target : String
@@ -5127,16 +5114,16 @@
           (let
             [value : EmbeddedNativeDataValue
               (embedded-native-data-value params value-node)]
-            (if (string.eq (struct-get value text) "")
+            (if (string.eq value.text "")
               ""
               (str_cat.str-cat
-                (struct-get value open)
+                value.open
                 "  (begin\n  (set! "
                 target
                 " "
-                (struct-get value text)
+                value.text
                 ")\n  0)\n"
-                (embedded-native-closing-parens (* 2 (struct-get value opens))))))
+                (embedded-native-closing-parens (* 2 value.opens)))))
           (let
             [slot : i64 (embedded-native-local-index (ci.intern-str name-id))]
             (if (< slot 0)
@@ -5154,19 +5141,19 @@
         [else-code : String
           (embedded-native-computed-statement-code params else-node)]
         (if (or
-          (string.eq (struct-get condition text) "")
+          (string.eq condition.text "")
           (string.eq then-code "")
           (string.eq else-code ""))
           ""
           (str_cat.str-cat
-            (struct-get condition open)
+            condition.open
             "  (if (= "
-            (struct-get condition text)
+            condition.text
             " 1)\n"
             then-code
             else-code
             ")\n"
-            (embedded-native-closing-parens (* 2 (struct-get condition opens))))))]
+            (embedded-native-closing-parens (* 2 condition.opens)))))]
     ;; Diagnostic calls ignore this final and retain their interpreted status.
     [(compiler_ast_types.AstExpr.Call _ _)
       (embedded-native-computed-expr-code params node "  0\n")]
@@ -5205,7 +5192,7 @@
   [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
     [(compiler_ast_types.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(compiler_ast_types.AstLet.Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
@@ -5216,8 +5203,8 @@
             (if (string.eq open-code "\x01")
               (begin
                 (embedded-native-fallback-reason-note! "statement-let:bindings")
-                (array-set! embedded-native-local-len 0 saved)
-                (array-set! embedded-native-data-local-len 0 data-saved)
+                (set! (array-ref embedded-native-local-len 0) saved)
+                (set! (array-ref embedded-native-data-local-len 0) data-saved)
                 (if embedded-native-full-blocker-diagnostic-active
                   "  0\n"
                   ""))
@@ -5225,8 +5212,8 @@
                 [body-code : String
                   (embedded-native-computed-statement-code params body)]
                 (begin
-                  (array-set! embedded-native-local-len 0 saved)
-                  (array-set! embedded-native-data-local-len 0 data-saved)
+                  (set! (array-ref embedded-native-local-len 0) saved)
+                  (set! (array-ref embedded-native-data-local-len 0) data-saved)
                   (if (string.eq body-code "")
                     (embedded-native-fallback-code "statement-let:body")
                     (str_cat.str-cat
@@ -5245,17 +5232,17 @@
   (let
     [condition : EmbeddedNativeDataValue
       (embedded-native-data-value params cond-node)]
-    (if (string.eq (struct-get condition text) "")
+    (if (string.eq condition.text "")
       ""
       (str_cat.str-cat
-        (struct-get condition open)
+        condition.open
         "  (if (= "
-        (struct-get condition text)
+        condition.text
         " 1)\n"
         then-code
         else-code
         ")\n"
-        (embedded-native-closing-parens (* 2 (struct-get condition opens)))))))
+        (embedded-native-closing-parens (* 2 condition.opens))))))
 
 ;: The type-operand index of `(comptime.expr-int (array-length T))` given the
 ;: builder's argument list, or -1 when the argument is any other shape.
@@ -5437,7 +5424,7 @@
         ""
         (embedded-native-computed-expr-code params body-node final))]
     (begin
-      (array-set! embedded-native-local-len 0 saved)
+      (set! (array-ref embedded-native-local-len 0) saved)
       (let
         [rest-code : String
           (embedded-native-computed-var-match-arms-code
@@ -5498,17 +5485,18 @@
   [index : i64]
   [param : i64]
   [final : String]) : String
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     "  0\n"
-    (match (array-ref (struct-get arms slots) index)
+    (match (array-ref arms.slots index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Variant name-id args-box)
             (let
-              [pat-args : compiler_ast_types.AstPatternList (box-get args-box)]
+              [pat-args : compiler_ast_types.AstPatternList
+                (__tl-box-place args-box)]
               (if (and
                 (string.eq (embedded-native-expr-variant-name name-id) "Var")
-                (= (struct-get pat-args len) 1))
+                (= pat-args.len 1))
                 (embedded-native-computed-var-match-arm-code
                   params
                   arms
@@ -5529,7 +5517,7 @@
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [match-box : (Box compiler_ast_types.AstMatch)]
   [final : String]) : String
-  (match (box-get match-box)
+  (match (__tl-box-place match-box)
     [(compiler_ast_types.AstMatch.Match scrutinee arms)
       (let
         [param : i64 (embedded-native-var-param-index params scrutinee)]
@@ -5596,9 +5584,9 @@
   [index : i64]
   [slot : i64]
   [final : String]) : String
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     "  0\n"
-    (match (array-ref (struct-get arms slots) index)
+    (match (array-ref arms.slots index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Literal
@@ -5692,7 +5680,7 @@
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
     [(compiler_ast_types.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(compiler_ast_types.AstLet.Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
@@ -5702,14 +5690,14 @@
               (embedded-native-let-bindings-open params (& bindings) 0 opens)]
             (if (string.eq open-code "\x01")
               (begin
-                (array-set! embedded-native-local-len 0 saved)
-                (array-set! embedded-native-data-local-len 0 data-saved)
+                (set! (array-ref embedded-native-local-len 0) saved)
+                (set! (array-ref embedded-native-data-local-len 0) data-saved)
                 "")
               (let
                 [body-code : String (embedded-native-body-code params body)]
                 (begin
-                  (array-set! embedded-native-local-len 0 saved)
-                  (array-set! embedded-native-data-local-len 0 data-saved)
+                  (set! (array-ref embedded-native-local-len 0) saved)
+                  (set! (array-ref embedded-native-data-local-len 0) data-saved)
                   (if (string.eq body-code "")
                     ""
                     (str_cat.str-cat
@@ -5731,7 +5719,7 @@
   [bindings : (& bindings compiler_ast_types.AstLetBindingList)]
   [index : i64]
   [opens : (__tl_dyn-array i64)]) : String
-  (if (>= index (struct-get bindings len))
+  (if (>= index bindings.len)
     ""
     (match (compiler_ast_types.ast-let-binding-list-get
       bindings
@@ -5785,23 +5773,22 @@
   [opens : (__tl_dyn-array i64)]) : String
   (let
     [data : EmbeddedNativeDataValue (embedded-native-data-value params init)]
-    (if (not (string.eq (struct-get data text) ""))
+    (if (not (string.eq data.text ""))
       (let
         [generated : String (embedded-native-temp-name!)]
         (if (and
           (< (embedded-native-local-index (ci.intern-str name)) 0)
           (embedded-native-data-local-push! (ci.intern-str name) generated))
           (begin
-            (array-set!
-              opens
-              0
-              (+ (array-ref opens 0) (* 2 (struct-get data opens)) 1))
+            (set!
+              (array-ref opens 0)
+              (+ (array-ref opens 0) (* 2 data.opens) 1))
             (str_cat.str-cat
-              (struct-get data open)
+              data.open
               "  (let ["
               generated
               " : i64 "
-              (struct-get data text)
+              data.text
               "]\n"))
           "\x01"))
       (if (not
@@ -5827,7 +5814,7 @@
         (if (string.eq init-code "")
           "\x01"
           (begin
-            (array-set! opens 0 (+ (array-ref opens 0) 2))
+            (set! (array-ref opens 0) (+ (array-ref opens 0) 2))
             (str_cat.str-cat
               "  (let [s"
               (string.int->string slot)
@@ -5858,9 +5845,9 @@
   ;; is reached at run time whenever no arm's probe matched, which only happens
   ;; for a dispatch with no wildcard default. Mark it so the coverage report
   ;; counts it; a dispatch that does end in a wildcard never reaches here.
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     (embedded-native-global-shared-view embedded-native-interpreted-arm-code)
-    (match (array-ref (struct-get arms slots) index)
+    (match (array-ref arms.slots index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Literal
@@ -6008,7 +5995,7 @@
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
     [(compiler_ast_types.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(compiler_ast_types.AstMatch.Match scrutinee arms)
           (match (embedded-native-scrutinee-probe params scrutinee)
             [(EmbeddedNativeScrutineeProbe.ScrutineeProbe
@@ -6088,7 +6075,7 @@
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
     [(compiler_ast_types.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(compiler_ast_types.AstMatch.Match scrutinee arms)
           (let
             [param : i64
@@ -6127,7 +6114,7 @@
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
     [(compiler_ast_types.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(compiler_ast_types.AstMatch.Match scrutinee arms)
           (let
             [param : i64 (embedded-native-var-param-index params scrutinee)]
@@ -6176,7 +6163,7 @@
         (embedded-native-body-code params body-node)
         "")]
     (begin
-      (array-set! embedded-native-data-local-len 0 saved)
+      (set! (array-ref embedded-native-data-local-len 0) saved)
       (if (or (string.eq arm-code "") (string.eq rest ""))
         ""
         (str_cat.str-cat
@@ -6231,7 +6218,7 @@
         ""
         (embedded-native-body-code params body-node))]
     (begin
-      (array-set! embedded-native-local-len 0 saved)
+      (set! (array-ref embedded-native-local-len 0) saved)
       (if (or (string.eq arm-code "") (string.eq rest ""))
         ""
         (str_cat.str-cat
@@ -6289,15 +6276,16 @@
   [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [index : i64]
   [param : i64]) : String
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     "  0
 "
-    (match (array-ref (struct-get arms slots) index)
+    (match (array-ref arms.slots index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Variant name-id args-box)
             (let
-              [pat-args : compiler_ast_types.AstPatternList (box-get args-box)]
+              [pat-args : compiler_ast_types.AstPatternList
+                (__tl-box-place args-box)]
               (embedded-native-value-match-variant-arm
                 params
                 arms
@@ -6322,21 +6310,21 @@
   [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
   [body-node : i64]) : String
   (cond
-    [(and (string.eq variant "Var") (= (struct-get pat-args len) 1))
+    [(and (string.eq variant "Var") (= pat-args.len 1))
       (embedded-native-var-value-arm-code
         params
         pat-args
         body-node
         param
         (embedded-native-value-match-arms params arms (+ index 1) param))]
-    [(and (string.eq variant "Int") (= (struct-get pat-args len) 1))
+    [(and (string.eq variant "Int") (= pat-args.len 1))
       (embedded-native-int-value-arm-code
         params
         pat-args
         body-node
         param
         (embedded-native-value-match-arms params arms (+ index 1) param))]
-    [(and (string.eq variant "Call") (= (struct-get pat-args len) 2))
+    [(and (string.eq variant "Call") (= pat-args.len 2))
       (embedded-native-call-value-arm-code
         params
         arms
@@ -6365,7 +6353,7 @@
         (embedded-native-body-code params body-node))]
     [bound : i64 (embedded-native-pattern-binder-count pat-args 0)]
     (begin
-      (array-set! embedded-native-local-len 0 saved)
+      (set! (array-ref embedded-native-local-len 0) saved)
       (let
         [rest : String
           (embedded-native-value-match-arms params arms (+ index 1) param)]
@@ -6400,7 +6388,7 @@
 (define (embedded-native-pattern-binder-count
   [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
   [index : i64]) : i64
-  (if (>= index (struct-get pat-args len))
+  (if (>= index pat-args.len)
     0
     (+
       (match (compiler_ast_types.ast-pattern-list-get
@@ -6418,7 +6406,7 @@
   [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
   [index : i64]
   [param : i64]) : String
-  (if (>= index (struct-get pat-args len))
+  (if (>= index pat-args.len)
     ""
     (let
       [op : String
@@ -6471,9 +6459,9 @@
   [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [index : i64]
   [name : String]) : String
-  (if (>= index (struct-get arms len))
+  (if (>= index arms.len)
     "  0\n"
-    (match (array-ref (struct-get arms slots) index)
+    (match (array-ref arms.slots index)
       [(compiler_ast_types.AstMatchArm.Arm pattern body-node)
         (match pattern
           [(compiler_ast_types.AstPattern.Literal
@@ -6523,7 +6511,7 @@
         (embedded-native-body-code params body-node)
         "")]
     (begin
-      (array-set! embedded-native-data-local-len 0 saved)
+      (set! (array-ref embedded-native-data-local-len 0) saved)
       code)))
 
 ;; Compile a linear op-chain body (template, fold, or plain builder) into a
@@ -6660,9 +6648,8 @@
   [identity : String]
   [status : String]
   [capability : String]) : unit
-  (array-set!
-    embedded-stdlib-tlci-native-report-full-reasons
-    0
+  (set!
+    (array-ref embedded-stdlib-tlci-native-report-full-reasons 0)
     (str_cat.str-cat
       (string.copy
         (& (array-ref embedded-stdlib-tlci-native-report-full-reasons 0)))
@@ -6826,6 +6813,7 @@
     "(extern comptime-host-expr-return (:symbol \"_tl_comptime_host_expr-return\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-box (:symbol \"_tl_comptime_host_expr-box\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-box-get (:symbol \"_tl_comptime_host_expr-box-get\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-box-take (:symbol \"_tl_comptime_host_expr-box-take\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-ptr-read (:symbol \"_tl_comptime_host_expr-ptr-read\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-ptr-to-int (:symbol \"_tl_comptime_host_expr-ptr-to-int\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-string-data (:symbol \"_tl_comptime_host_expr-string-data\") : (-> i64 i64 i64 i64 i64 i64))\n"
@@ -6902,9 +6890,9 @@
     [partial-count : i64 0]
     [interpreted-arms : i64 0]
     [_reasons-reset : unit
-      (array-set! embedded-stdlib-tlci-native-report-reasons 0 "")]
+      (set! (array-ref embedded-stdlib-tlci-native-report-reasons 0) "")]
     [_full-reasons-reset : unit
-      (array-set! embedded-stdlib-tlci-native-report-full-reasons 0 "")]
+      (set! (array-ref embedded-stdlib-tlci-native-report-full-reasons 0) "")]
     (begin
       (while (< index count)
         (let
@@ -6917,10 +6905,8 @@
                 (embedded-native-fallback-reason-reset!)
                 (embedded-native-body-code
                   (&
-                    (struct-get
-                      (array-ref (struct-get captures slots) slot)
-                      params))
-                  (struct-get (array-ref (struct-get captures slots) slot) body)))
+                    (__tl-project-field (array-ref captures.slots slot) params))
+                  (__tl-project-field (array-ref captures.slots slot) body)))
               "")]
           (begin
             (set!
@@ -6933,9 +6919,8 @@
                 " [operands : i64] [count : i64] [result : i64]) : i64\n"))
             (if (string.eq body-text "")
               (begin
-                (array-set!
-                  embedded-stdlib-tlci-native-report-reasons
-                  0
+                (set!
+                  (array-ref embedded-stdlib-tlci-native-report-reasons 0)
                   (str_cat.str-cat
                     (string.copy
                       (&
@@ -6956,11 +6941,11 @@
                     (if (>= slot 0)
                       (embedded-native-full-blocker-diagnose!
                         (&
-                          (struct-get
-                            (array-ref (struct-get captures slots) slot)
+                          (__tl-project-field
+                            (array-ref captures.slots slot)
                             params))
-                        (struct-get
-                          (array-ref (struct-get captures slots) slot)
+                        (__tl-project-field
+                          (array-ref captures.slots slot)
                           body))
                       (embedded-native-full-blocker-reset!))
                     (embedded-native-full-blocker-render!
@@ -6991,14 +6976,12 @@
                       body-text
                       ")))\n")))))
             (set! index (+ index 1)))))
-      (array-set! embedded-stdlib-tlci-native-report-count 0 native-count)
-      (array-set!
-        embedded-stdlib-tlci-native-report-partial-count
-        0
+      (set! (array-ref embedded-stdlib-tlci-native-report-count 0) native-count)
+      (set!
+        (array-ref embedded-stdlib-tlci-native-report-partial-count 0)
         partial-count)
-      (array-set!
-        embedded-stdlib-tlci-native-report-interpreted-arms
-        0
+      (set!
+        (array-ref embedded-stdlib-tlci-native-report-interpreted-arms 0)
         interpreted-arms)
       out)))
 
@@ -7019,7 +7002,7 @@
           (if (< offset 0)
             (set! ok false)
             (begin
-              (array-set! out index offset)
+              (set! (array-ref out index) offset)
               (set! index (+ index 1))))))
       (if ok
         out
@@ -7048,7 +7031,8 @@
         (ResultProducerBytes.Err
           (str_cat.str-cat
             "generated source rejected: "
-            (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]
+            (compiler_diagnostic.compiler-diagnostic-render
+              (__tl-box-place diag))))]
       [(ResultCompilerLower.Ok program spans)
         (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
           program
@@ -7061,7 +7045,8 @@
             (ResultProducerBytes.Err
               (str_cat.str-cat
                 "object emission failed: "
-                (compiler_diagnostic.compiler-diagnostic-render (box-get diag))))]
+                (compiler_diagnostic.compiler-diagnostic-render
+                  (__tl-box-place diag))))]
           [(compiler_backend.ResultCompilerBackendObject.Ok image)
             (match (compiler_tlci_native_image.compiler-tlci-native-layout-image
               image)
@@ -7088,10 +7073,10 @@
                           metadata-text
                           build-hash
                           rodata
-                          (struct-get layout bytes)
+                          layout.bytes
                           imports
-                          (struct-get layout fixup-offsets)
-                          (struct-get layout fixup-count)
+                          layout.fixup-offsets
+                          layout.fixup-count
                           names
                           entry-offsets
                           (array-length names))

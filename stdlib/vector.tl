@@ -156,50 +156,41 @@
           (define (is-empty? [v : (& v Vec)]) : bool
             (<= (len v) 0))
           (define (iterator [v : (& source Vec)]) : (Iter source)
-            (Iter
-              (& (struct-get (struct-get v state) slots))
-              (struct-get v len)
-              0))
+            (Iter (& v.state.slots) v.len 0))
           (define (next [iter : (&mut state (Iter source))]) : (IterNext source)
             (let
-              [index : i64 (struct-get iter index)]
-              (if (>= index (struct-get iter len))
+              [index : i64 iter.index]
+              (if (>= index iter.len)
                 (IterNext.Done)
                 (begin
-                  (set! (struct-get iter index) (+ index 1))
-                  (IterNext.Item (& (array-ref (struct-get iter slots) index)))))))
+                  (set! iter.index (+ index 1))
+                  (IterNext.Item (& (array-ref iter.slots index)))))))
           (define (iterator-mut [v : (&mut source Vec)]) : (IterMut source)
-            (IterMut
-              (&mut (struct-get (struct-get v state) slots))
-              (struct-get v len)
-              0))
+            (IterMut (&mut v.state.slots) v.len 0))
           (define (next-mut [iter : (&mut state (IterMut source))]) : (IterMutNext
               source)
             (let
-              [index : i64 (struct-get iter index)]
-              (if (>= index (struct-get iter len))
+              [index : i64 iter.index]
+              (if (>= index iter.len)
                 (IterMutNext.Done)
                 (begin
-                  (set! (struct-get iter index) (+ index 1))
-                  (IterMutNext.Item
-                    (&mut (array-ref (struct-get iter slots) index)))))))
+                  (set! iter.index (+ index 1))
+                  (IterMutNext.Item (&mut (array-ref iter.slots index)))))))
           (define (into-iterator [v : Vec (:consume)]) : IntoIter
             (IntoIter v 0))
           (define (into-next [iter : (&mut state IntoIter)]) : IntoNext
             (let
-              [index : i64 (struct-get iter index)]
-              (if (>= index (struct-get (struct-get iter vec) len))
+              [index : i64 iter.index]
+              (if (>= index iter.vec.len)
                 (IntoNext.Done)
                 (let
                   [taken : (Tuple bool ,T)
                     (__tl_array-take!
-                      (struct-get
-                        (struct-get (struct-get iter vec) state)
-                        slots)
-                      (struct-get (struct-get (struct-get iter vec) state) live)
+                      iter.vec.state.slots
+                      iter.vec.state.live
                       index)]
                   (begin
-                    (set! (struct-get iter index) (+ index 1))
+                    (set! iter.index (+ index 1))
                     (if (tuple-ref taken 0)
                       (IntoNext.Item (tuple-ref taken 1))
                       (IntoNext.Done))))))))
@@ -216,15 +207,12 @@
         (define (cleanup-slot-state [state : SlotState]) : unit
           (let
             [index : i64 0]
-            [count : i64 (array-length (struct-get state live))]
+            [count : i64 (array-length state.live)]
             (begin
               (while (< index count)
                 (let
                   [taken : (Tuple bool ,T)
-                    (__tl_array-take!
-                      (struct-get state slots)
-                      (struct-get state live)
-                      index)]
+                    (__tl_array-take! state.slots state.live index)]
                   (begin
                     (if (tuple-ref taken 0)
                       (,cleanup-function-expr (tuple-ref taken 1))
@@ -237,11 +225,11 @@
           (len i64)
           (capacity i64))
         (define (slots [v : (& v Vec)]) : (& v (__tl_dyn-array ,T))
-          (& (struct-get (struct-get v state) slots)))
+          (& v.state.slots))
         (define (len [v : (& v Vec)]) : i64
-          (struct-get v len))
+          v.len)
         (define (capacity [v : (& v Vec)]) : i64
-          (struct-get v capacity))
+          v.capacity)
         ;; The published seed unsizes String elements while typing slice-view.
         ;; Omit this surface only for its one-generation bootstrap compile; the
         ;; resulting compiler carries the fix and emits the full API thereafter.
@@ -256,10 +244,7 @@
             (define (view-mut [v : (&mut source Vec)]) : (&mut
                 source
                 (Slice ,T))
-              (slice-mut-view
-                (&mut (struct-get (struct-get v state) slots))
-                0
-                (struct-get v len)))))
+              (slice-mut-view (&mut v.state.slots) 0 v.len))))
         (define (with-capacity [capacity : i64]) : Vec
           (let
             [cap : i64
@@ -271,35 +256,35 @@
           (with-capacity 4))
         (define (set [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
           (if (if (>= index 0)
-            (< index (struct-get v len))
+            (< index v.len)
             false)
             (let
               [taken : (Tuple bool ,T)
-                (__tl_array-take!
-                  (struct-get (struct-get v state) slots)
-                  (struct-get (struct-get v state) live)
-                  index)]
+                (__tl_array-take! v.state.slots v.state.live index)]
               (begin
                 (if (tuple-ref taken 0)
                   (,cleanup-function-expr (tuple-ref taken 1))
                   unit)
-                (array-set! (struct-get (struct-get v state) slots) index value)
-                (array-set! (struct-get (struct-get v state) live) index true)))
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset (array-data v.state.slots) index)
+                    value))
+                (set! (array-ref v.state.live index) true)))
             (,cleanup-function-expr value)))
         (define (push [v : (&mut v Vec)] [value : ,T]) : unit
           (let
-            [index : i64 (struct-get v len)]
+            [index : i64 v.len]
             (begin
-              (if (>= index (struct-get v capacity))
+              (if (>= index v.capacity)
                 (set!
-                  (struct-get v capacity)
-                  (if (< (struct-get v capacity) 1)
+                  v.capacity
+                  (if (< v.capacity 1)
                     1
-                    (* (struct-get v capacity) 2)))
+                    (* v.capacity 2)))
                 unit)
-              (array-push! (struct-get (struct-get v state) slots) value)
-              (array-push! (struct-get (struct-get v state) live) true)
-              (set! (struct-get v len) (+ index 1)))))
+              (array-push! v.state.slots value)
+              (array-push! v.state.live true)
+              (set! v.len (+ index 1)))))
         (define (push-owned [v : Vec (:consume)] [value : ,T]) : Vec
           (begin
             (push (&mut v) value)
@@ -313,9 +298,9 @@
           (slots (__tl_dyn-array ,T))
           (len i64))
         (define (slots [v : (& v Vec)]) : (& v (__tl_dyn-array ,T))
-          (& (struct-get v slots)))
+          (& v.slots))
         (define (len [v : (& v Vec)]) : i64
-          (struct-get v len))
+          v.len)
         (define (capacity [v : (& v Vec)]) : i64
           (array-length (slots v)))
         ;; See the cleanup-owning specialization above for the temporary seed
@@ -330,7 +315,7 @@
             (define (view-mut [v : (&mut source Vec)]) : (&mut
                 source
                 (Slice ,T))
-              (slice-mut-view (&mut (struct-get v slots)) 0 (struct-get v len)))))
+              (slice-mut-view (&mut v.slots) 0 v.len))))
         (define (with-capacity [capacity : i64]) : Vec
           (let
             [cap : i64
@@ -348,9 +333,9 @@
             fallback))
         (define (set [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
           (if (if (>= index 0)
-            (< index (struct-get v len))
+            (< index v.len)
             false)
-            (array-set! (struct-get v slots) index value)
+            (set! (array-ref v.slots index) value)
             unit))
         (define (copy-range!
           [dst : (&mut dst (__tl_dyn-array ,T))]
@@ -360,30 +345,30 @@
           (if (>= index count)
             unit
             (begin
-              (array-set! dst index (array-ref src index))
+              (set! (array-ref dst index) (array-ref src index))
               (copy-range! dst src (+ index 1) count))))
         (define (grow [v : (&mut v Vec)]) : unit
           (let
-            [n : i64 (struct-get v len)]
-            [old-cap : i64 (array-length (struct-get v slots))]
+            [n : i64 v.len]
+            [old-cap : i64 (array-length v.slots)]
             [new-cap : i64
               (if (< old-cap 1)
                 1
                 (* old-cap 2))]
             [bigger : (__tl_dyn-array ,T) (make-array ,T new-cap)]
             (begin
-              (copy-range! (&mut bigger) (& (struct-get v slots)) 0 n)
-              (set! (struct-get v slots) bigger))))
+              (copy-range! (&mut bigger) (& v.slots) 0 n)
+              (set! v.slots bigger))))
         (define (push [v : (&mut v Vec)] [value : ,T]) : unit
           (begin
-            (if (< (struct-get v len) (array-length (struct-get v slots)))
+            (if (< v.len (array-length v.slots))
               unit
               (grow v))
             (let
-              [index : i64 (struct-get v len)]
+              [index : i64 v.len]
               (begin
-                (array-set! (struct-get v slots) index value)
-                (set! (struct-get v len) (+ index 1)))))))]
+                (set! (array-ref v.slots index) value)
+                (set! v.len (+ index 1)))))))]
     (if cleanup-owning
       cleanup-module-decls
       (match core-decls
@@ -487,41 +472,36 @@
                 (define (slots-mut [v : (&mut v ,vec-name)]) : (&mut
                     v
                     (__tl_dyn-array ,T))
-                  (&mut (struct-get v slots)))
+                  (&mut v.slots))
                 (define (len-mut [v : (&mut v ,vec-name)]) : i64
-                  (struct-get v len))
+                  v.len)
                 (define (is-empty? [v : (& v ,vec-name)]) : bool
                   (<= (len v) 0))
                 (define (iterator [v : (& source ,vec-name)]) : (,iter-name
                     source)
-                  (,iter-name (& (struct-get v slots)) (struct-get v len) 0))
+                  (,iter-name (& v.slots) v.len 0))
                 (define (next [iter : (&mut state (,iter-name source))]) : (,iter-next-name
                     source)
                   (let
-                    [index : i64 (struct-get iter index)]
-                    (if (>= index (struct-get iter len))
+                    [index : i64 iter.index]
+                    (if (>= index iter.len)
                       (,iter-done-name)
                       (begin
-                        (set! (struct-get iter index) (+ index 1))
-                        (,iter-item-name
-                          (& (array-ref (struct-get iter slots) index)))))))
+                        (set! iter.index (+ index 1))
+                        (,iter-item-name (& (array-ref iter.slots index)))))))
                 (define (iterator-mut [v : (&mut source ,vec-name)]) : (,iter-mut-name
                     source)
-                  (,iter-mut-name
-                    (&mut (struct-get v slots))
-                    (struct-get v len)
-                    0))
+                  (,iter-mut-name (&mut v.slots) v.len 0))
                 (define (next-mut [iter : (&mut state (,iter-mut-name source))]) : (,iter-mut-next-name
                     source)
                   (let
-                    [index : i64 (struct-get iter index)]
-                    (if (>= index (struct-get iter len))
+                    [index : i64 iter.index]
+                    (if (>= index iter.len)
                       (,iter-mut-done-name)
                       (begin
-                        (set! (struct-get iter index) (+ index 1))
+                        (set! iter.index (+ index 1))
                         (,iter-mut-item-name
-                          (,iter-mut-borrow-name
-                            (array-ref (struct-get iter slots) index)))))))
+                          (,iter-mut-borrow-name (array-ref iter.slots index)))))))
                 (define (into-live-slots [len : i64]) : (__tl_dyn-array bool)
                   (let
                     [live : (__tl_dyn-array bool) (make-array bool len)]
@@ -529,42 +509,38 @@
                     (begin
                       (while (< index len)
                         (begin
-                          (array-set! live index true)
+                          (set! (array-ref live index) true)
                           (set! index (+ index 1))))
                       live)))
                 (define (into-iterator [v : ,vec-name (:consume)]) : ,into-iter-name
                   (let
-                    [len : i64 (struct-get v len)]
+                    [len : i64 v.len]
                     [live : (__tl_dyn-array bool) (into-live-slots len)]
-                    [slots : (__tl_dyn-array ,T) (struct-get v slots)]
+                    [slots : (__tl_dyn-array ,T) v.slots]
                     (,into-iter-name slots live len 0)))
                 (define (into-next [iter : (&mut state ,into-iter-name)]) : ,into-next-name
                   (let
-                    [index : i64 (struct-get iter index)]
-                    (if (>= index (struct-get iter len))
+                    [index : i64 iter.index]
+                    (if (>= index iter.len)
                       (,into-done-name)
                       (let
                         [taken : (Tuple bool ,T)
-                          (__tl_array-take!
-                            (struct-get iter slots)
-                            (struct-get iter live)
-                            index)]
+                          (__tl_array-take! iter.slots iter.live index)]
                         (begin
-                          (set! (struct-get iter index) (+ index 1))
+                          (set! iter.index (+ index 1))
                           (if (tuple-ref taken 0)
                             (,into-item-name (tuple-ref taken 1))
                             (,into-done-name)))))))
                 (define (last [v : (& v ,vec-name)] [fallback : ,T]) : ,T
                   (get v (- (len v) 1) fallback))
                 (define (pop [v : (&mut v ,vec-name)]) : ,pop-name
-                  (if (<= (struct-get v len) 0)
+                  (if (<= v.len 0)
                     (,pop-empty-name)
                     (let
-                      [last-index : i64 (- (struct-get v len) 1)]
-                      [value : ,T
-                        (clone (array-ref (struct-get v slots) last-index))]
+                      [last-index : i64 (- v.len 1)]
+                      [value : ,T (clone (array-ref v.slots last-index))]
                       (begin
-                        (set! (struct-get v len) last-index)
+                        (set! v.len last-index)
                         (,pop-ok-name value)))))
                 (define (reverse-range!
                   [items : (&mut items (__tl_dyn-array ,T))]
@@ -575,13 +551,13 @@
                     (let
                       [tmp : ,T (array-ref items lo)]
                       (begin
-                        (array-set! items lo (array-ref items hi))
-                        (array-set! items hi tmp)
+                        (set! (array-ref items lo) (array-ref items hi))
+                        (set! (array-ref items hi) tmp)
                         (reverse-range! items (+ lo 1) (- hi 1))))))
                 (define (reverse! [v : (&mut v ,vec-name)]) : unit
                   (let
-                    [last-index : i64 (- (struct-get v len) 1)]
-                    (reverse-range! (&mut (struct-get v slots)) 0 last-index)))
+                    [last-index : i64 (- v.len 1)]
+                    (reverse-range! (&mut v.slots) 0 last-index)))
                 (define (fold-from
                   [v : (& v ,vec-name)]
                   [index : i64]

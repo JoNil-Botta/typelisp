@@ -19,18 +19,24 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! left i (- i 6))
-          (array-set! right i (- (% (* i 5) 11) 5))
+          (set! (array-ref left i) (- i 6))
+          (set! (array-ref right i) (- (% (* i 5) 11) 5))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
         (begin
-          (array-set! eq-out j (= (array-ref left j) (array-ref right j)))
-          (array-set! ne-out j (!= (array-ref left j) (array-ref right j)))
-          (array-set! lt-out j (< (array-ref left j) (array-ref right j)))
-          (array-set! le-out j (<= (array-ref left j) (array-ref right j)))
-          (array-set! gt-out j (> (array-ref left j) (array-ref right j)))
-          (array-set! ge-out j (>= (array-ref left j) (array-ref right j)))))
+          (set! (array-ref eq-out j) (= (array-ref left j) (array-ref right j)))
+          (set!
+            (array-ref ne-out j)
+            (!= (array-ref left j) (array-ref right j)))
+          (set! (array-ref lt-out j) (< (array-ref left j) (array-ref right j)))
+          (set!
+            (array-ref le-out j)
+            (<= (array-ref left j) (array-ref right j)))
+          (set! (array-ref gt-out j) (> (array-ref left j) (array-ref right j)))
+          (set!
+            (array-ref ge-out j)
+            (>= (array-ref left j) (array-ref right j)))))
       (set! i 0)
       (while (and ok (< i n))
         (let
@@ -66,27 +72,27 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! u-left i (cast (+ (* i 17) 9) : u32))
-          (array-set! u-right i (cast (+ (* i 11) 31) : u32))
-          (array-set! f32-left i (cast (- i 9) : f32))
-          (array-set! f32-right i (cast (- (% (* i 3) 13) 6) : f32))
-          (array-set! f64-left i (cast (- i 9) : f64))
-          (array-set! f64-right i (cast (- (% (* i 5) 17) 8) : f64))
+          (set! (array-ref u-left i) (cast (+ (* i 17) 9) : u32))
+          (set! (array-ref u-right i) (cast (+ (* i 11) 31) : u32))
+          (set! (array-ref f32-left i) (cast (- i 9) : f32))
+          (set! (array-ref f32-right i) (cast (- (% (* i 3) 13) 6) : f32))
+          (set! (array-ref f64-left i) (cast (- i 9) : f64))
+          (set! (array-ref f64-right i) (cast (- (% (* i 5) 17) 8) : f64))
           (set! i (+ i 1))))
       (foreach
         ([j : i64 0 n])
-        (array-set! u-out j (>= (array-ref u-left j) (array-ref u-right j))))
+        (set!
+          (array-ref u-out j)
+          (>= (array-ref u-left j) (array-ref u-right j))))
       (foreach
         ([j : i64 0 n])
-        (array-set!
-          f32-out
-          j
+        (set!
+          (array-ref f32-out j)
           (<= (array-ref f32-left j) (array-ref f32-right j))))
       (foreach
         ([j : i64 0 n])
-        (array-set!
-          f64-out
-          j
+        (set!
+          (array-ref f64-out j)
           (> (array-ref f64-left j) (array-ref f64-right j))))
       (set! i 0)
       (while (and ok (< i n))

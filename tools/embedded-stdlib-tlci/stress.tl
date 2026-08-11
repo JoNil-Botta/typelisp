@@ -167,7 +167,7 @@
     [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
     [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
       (and
-        (= (struct-get dispatch status) tlci_core.tlci-host-callback-status-ok)
+        (= dispatch.status tlci_core.tlci-host-callback-status-ok)
         (not
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)))]))
 
@@ -183,8 +183,8 @@
     [i : i64 0]
     [outcome : i64 stress-status-ok]
     (begin
-      (array-set! canaries 0 stress-canary-a)
-      (array-set! canaries 1 stress-canary-b)
+      (set! (array-ref canaries 0) stress-canary-a)
+      (set! (array-ref canaries 1) stress-canary-b)
       (while (and (= outcome stress-status-ok) (< i iterations))
         (begin
           ;; Checkpoint before the crossing, so a crash inside the bridge is
@@ -208,7 +208,7 @@
               (set! outcome stress-status-dispatch-error)]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
               (let
-                [status : i64 (struct-get dispatch status)]
+                [status : i64 dispatch.status]
                 (cond
                   ;; This is #5460's signature: a shell reporting anything but
                   ;; ok means its `count` argument did not survive the bridge.
@@ -227,7 +227,9 @@
                   [(not (stress-canaries-ok? canaries))
                     (set! outcome stress-status-canary-clobbered)]
                   [else unit]))])
-          (when (not (= outcome stress-status-ok)) (array-set! failed-at 0 i))
+          (when
+            (not (= outcome stress-status-ok))
+            (set! (array-ref failed-at 0) i))
           (set! i (+ i 1))))
       (stress-progress-write!
         progress-path
@@ -282,7 +284,7 @@
     [(not
         (= compiler_embedded_stdlib_tlci.compiler-comptime-host-operand-count 1))
       (begin
-        (array-set! outcome 0 stress-status-tier2-count-clobbered)
+        (set! (array-ref outcome 0) stress-status-tier2-count-clobbered)
         false)]
     [(not
         (match (array-ref
@@ -293,18 +295,18 @@
             (= node expected-operand-node)]
           [_ false]))
       (begin
-        (array-set! outcome 0 stress-status-tier2-operand-clobbered)
+        (set! (array-ref outcome 0) stress-status-tier2-operand-clobbered)
         false)]
     [(not
         (=
           compiler_embedded_stdlib_tlci.compiler-comptime-host-session-cookie
           stress-cookie))
       (begin
-        (array-set! outcome 0 stress-status-tier2-cookie-clobbered)
+        (set! (array-ref outcome 0) stress-status-tier2-cookie-clobbered)
         false)]
     [(not (= compiler_embedded_stdlib_tlci.compiler-comptime-host-stack-len 0))
       (begin
-        (array-set! outcome 0 stress-status-tier2-stack-not-drained)
+        (set! (array-ref outcome 0) stress-status-tier2-stack-not-drained)
         false)]
     [else true]))
 
@@ -344,11 +346,10 @@
     [i : i64 0]
     [outcome : i64 stress-status-ok]
     (begin
-      (array-set! canaries 0 stress-canary-a)
-      (array-set! canaries 1 stress-canary-b)
-      (array-set!
-        operands
-        0
+      (set! (array-ref canaries 0) stress-canary-a)
+      (set! (array-ref canaries 1) stress-canary-b)
+      (set!
+        (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr
           operand-node
           (compiler_ast_types.AstType.Expr)))
@@ -383,15 +384,13 @@
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
               (cond
                 [(not
-                    (=
-                      (struct-get dispatch status)
-                      tlci_core.tlci-host-callback-status-ok))
+                    (= dispatch.status tlci_core.tlci-host-callback-status-ok))
                   (begin
                     (stress-progress-write!
                       progress-path
                       2
                       i
-                      (struct-get dispatch status)
+                      dispatch.status
                       (array-ref canaries 0)
                       (array-ref canaries 1))
                     (set! outcome stress-status-tier2-status))]
@@ -406,7 +405,9 @@
                   (set! outcome stress-status-canary-clobbered)]
                 [else unit])])
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
-          (when (not (= outcome stress-status-ok)) (array-set! failed-at 0 i))
+          (when
+            (not (= outcome stress-status-ok))
+            (set! (array-ref failed-at 0) i))
           (set! i (+ i 1))))
       (stress-progress-write!
         progress-path
@@ -431,8 +432,8 @@
     [i : i64 0]
     [outcome : i64 stress-status-ok]
     (begin
-      (array-set! canaries 0 stress-canary-a)
-      (array-set! canaries 1 stress-canary-b)
+      (set! (array-ref canaries 0) stress-canary-a)
+      (set! (array-ref canaries 1) stress-canary-b)
       (while (and (= outcome stress-status-ok) (< i iterations))
         (let
           [pools : compiler_ast_types.AstNodePoolContext
@@ -453,9 +454,8 @@
                 0
                 (array-ref canaries 0)
                 (array-ref canaries 1)))
-            (array-set!
-              operands
-              0
+            (set!
+              (array-ref operands 0)
               (compiler_ctfe.CompilerCtfeValue.Expr
                 operand-node
                 (compiler_ast_types.AstType.Expr)))
@@ -477,15 +477,13 @@
               [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
                 (cond
                   [(not
-                      (=
-                        (struct-get dispatch status)
-                        tlci_core.tlci-host-callback-status-ok))
+                      (= dispatch.status tlci_core.tlci-host-callback-status-ok))
                     (begin
                       (stress-progress-write!
                         progress-path
                         3
                         i
-                        (struct-get dispatch status)
+                        dispatch.status
                         (array-ref canaries 0)
                         (array-ref canaries 1))
                       (set! outcome stress-status-tier3-status))]
@@ -498,7 +496,9 @@
                     (set! outcome stress-status-canary-clobbered)]
                   [else unit])])
             (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
-            (when (not (= outcome stress-status-ok)) (array-set! failed-at 0 i))
+            (when
+              (not (= outcome stress-status-ok))
+              (set! (array-ref failed-at 0) i))
             (set! i (+ i 1)))))
       (stress-progress-write!
         progress-path

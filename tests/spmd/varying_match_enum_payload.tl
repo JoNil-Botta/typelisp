@@ -21,7 +21,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! items i (choice-at i))
+        (set! (array-ref items i) (choice-at i))
         (set! i (+ i 1))))))
 
 (define (fill-match
@@ -32,9 +32,8 @@
     ([i : i64 0 n])
     (let
       [choice : Choice (array-ref items i)]
-      (array-set!
-        out
-        i
+      (set!
+        (array-ref out i)
         (match choice
           [Zero 7]
           [(Add value) (+ value i)]
@@ -58,9 +57,8 @@
       (begin
         (let
           [choice : Choice (array-ref items i)]
-          (array-set!
-            out
-            i
+          (set!
+            (array-ref out i)
             (match choice
               [Zero 7]
               [(Add value) (+ value i)]

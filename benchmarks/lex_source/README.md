@@ -18,11 +18,11 @@ when it compiles itself:
 
 | bytes     | module                    |
 |-----------|---------------------------|
-| 58,401    | `src/lex.tl`              |
-| 88,542    | `src/compiler_liveness.tl` |
-| 221,849   | `src/compiler_symbols.tl` |
-| 2,101,534 | `src/compiler_lower.tl`   |
-| **2,470,330** | **total**             |
+| 69,079    | `src/lex.tl`              |
+| 108,355   | `src/compiler_liveness.tl` |
+| 229,084   | `src/compiler_symbols.tl` |
+| 2,472,778 | `src/compiler_lower.tl`   |
+| **2,879,300** | **total**             |
 
 Each module is followed by a newline if it does not already end in one, so a
 module's last token cannot fuse with the next module's first token.

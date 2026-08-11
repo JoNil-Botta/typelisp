@@ -137,11 +137,11 @@
       (let
         [items : (__tl_dyn-array String) (array.make-array String 5)]
         (begin
-          (array-set! items 0 "skip")
-          (array-set! items 1 "alpha")
-          (array-set! items 2 "")
-          (array-set! items 3 "-beta")
-          (array-set! items 4 "skip")
+          (set! (array-ref items 0) "skip")
+          (set! (array-ref items 1) "alpha")
+          (set! (array-ref items 2) "")
+          (set! (array-ref items 3) "-beta")
+          (set! (array-ref items 4) "skip")
           (stdlib.text_buf.text-buf-test-assert-owned-string-eq
             (stdlib.text_buf.chunks-render-array-range items 1 4)
             "alpha-beta"
@@ -198,7 +198,7 @@
             "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
             "dense chunk order crosses capacity boundary")
           (test.assert-i64-eq
-            (stdlib.text_buf.chunk-count (struct-get buf chunks) 0)
+            (stdlib.text_buf.chunk-count buf.chunks 0)
             40
             "dense chunk count crosses capacity boundary")))
       (let

@@ -28,7 +28,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! slots i (+ (* i 2654435761) 1013904223))
+        (set! (array-ref slots i) (+ (* i 2654435761) 1013904223))
         (set! i (+ i 1))))))
 
 (define (main) : i64
@@ -51,6 +51,6 @@
                   (begin
                     (set! acc (+ acc (array-ref slots i)))
                     (set! i (+ i 1)))))
-              (array-set! slots r acc)
+              (set! (array-ref slots r) acc)
               (set! r (+ r 1))))
           (bit-and acc 255))))))

@@ -15,7 +15,7 @@
 
 (define (push-value [stack : (__tl_dyn-array i64)] [sp : i64] [value : i64]) : i64
   (begin
-    (array-set! stack sp value)
+    (set! (array-ref stack sp) value)
     (+ sp 1)))
 
 (define (run-underflow
@@ -39,7 +39,7 @@
                 [right : i64 (array-ref stack (- sp 1))]
                 [left : i64 (array-ref stack (- sp 2))]
                 (begin
-                  (array-set! stack (- sp 2) (+ left right))
+                  (set! (array-ref stack (- sp 2)) (+ left right))
                   (set! sp (- sp 1))))])
           (set! pc (+ pc 1))))
       0)))

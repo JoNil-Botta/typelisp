@@ -22,9 +22,8 @@
     (begin
       (while (< i n)
         (begin
-          (array-set!
-            slots
-            i
+          (set!
+            (array-ref slots i)
             (unsafe
               (ptr-read (ptr-offset src i))))
           (set! i (+ i 1))))
@@ -37,18 +36,18 @@
   (u8vec.len items))
 
 (define (i64-get [items : (& items I64Buffer)] [index : i64]) : i64
-  (array-ref (i64vec.slots (& (struct-get items values))) index))
+  (array-ref (i64vec.slots (& items.values)) index))
 
 (define (i64-get-mut [items : (&mut items I64Buffer)] [index : i64]) : i64
-  (array-ref (i64vec.slots-mut (&mut (struct-get items values))) index))
+  (array-ref (i64vec.slots-mut (&mut items.values)) index))
 
 (define (i64-set! [items : (&mut items I64Buffer)] [index : i64] [value : i64]) : unit
-  (array-set! (i64vec.slots-mut (&mut (struct-get items values))) index value))
+  (set! (array-ref (i64vec.slots-mut (&mut items.values)) index) value))
 
 (define (i64-view-mut [items : (&mut source I64Buffer)]) : (&mut
     source
     (Slice i64))
-  (i64vec.view-mut (&mut (struct-get items values))))
+  (i64vec.view-mut (&mut items.values)))
 
 (define (u8-view-mut [items : (&mut source u8vec.Vec)]) : (&mut
     source
@@ -67,18 +66,18 @@
   [phi-out-buffer : (&mut phi-out I64Buffer)]
   [with-phi-out : bool]) : unit
   (let
-    [scratch (i64vec.slots-mut (&mut (struct-get scratch-buffer values)))]
-    [succ-start (i64vec.slots-mut (&mut (struct-get succ-start-buffer values)))]
-    [succ-items (i64vec.slots-mut (&mut (struct-get succ-items-buffer values)))]
-    [live-in (i64vec.slots-mut (&mut (struct-get live-in-buffer values)))]
-    [phi-out (i64vec.slots-mut (&mut (struct-get phi-out-buffer values)))]
+    [scratch (i64vec.slots-mut (&mut scratch-buffer.values))]
+    [succ-start (i64vec.slots-mut (&mut succ-start-buffer.values))]
+    [succ-items (i64vec.slots-mut (&mut succ-items-buffer.values))]
+    [live-in (i64vec.slots-mut (&mut live-in-buffer.values))]
+    [phi-out (i64vec.slots-mut (&mut phi-out-buffer.values))]
     [k : i64 0]
     [stop : i64 (array-ref succ-start (+ g 1))]
     [slot : i64 (array-ref succ-start g)]
     (begin
       (while (< k words)
         (begin
-          (array-set! scratch k 0)
+          (set! (array-ref scratch k) 0)
           (set! k (+ k 1))))
       (while (< slot stop)
         (let
@@ -88,9 +87,8 @@
           (begin
             (while (< i words)
               (begin
-                (array-set!
-                  scratch
-                  i
+                (set!
+                  (array-ref scratch i)
                   (bit-or
                     (array-ref scratch i)
                     (array-ref live-in (+ succ-base i))))
@@ -103,9 +101,8 @@
           [i : i64 0]
           (while (< i words)
             (begin
-              (array-set!
-                scratch
-                i
+              (set!
+                (array-ref scratch i)
                 (bit-or
                   (array-ref scratch i)
                   (array-ref phi-out (+ self-base i))))
@@ -144,20 +141,17 @@
         phi-out
         with-phi-out)
       (let
-        [uses (i64vec.slots-mut (&mut (struct-get uses-buffer values)))]
-        [defs (i64vec.slots-mut (&mut (struct-get defs-buffer values)))]
-        [live-in (i64vec.slots-mut (&mut (struct-get live-in-buffer values)))]
-        [live-out (i64vec.slots-mut (&mut (struct-get live-out-buffer values)))]
-        [scratch-out
-          (i64vec.slots-mut (&mut (struct-get scratch-out-buffer values)))]
-        [scratch-in
-          (i64vec.slots-mut (&mut (struct-get scratch-in-buffer values)))]
+        [uses (i64vec.slots-mut (&mut uses-buffer.values))]
+        [defs (i64vec.slots-mut (&mut defs-buffer.values))]
+        [live-in (i64vec.slots-mut (&mut live-in-buffer.values))]
+        [live-out (i64vec.slots-mut (&mut live-out-buffer.values))]
+        [scratch-out (i64vec.slots-mut (&mut scratch-out-buffer.values))]
+        [scratch-in (i64vec.slots-mut (&mut scratch-in-buffer.values))]
         (begin
           (while (< i words)
             (begin
-              (array-set!
-                scratch-in
-                i
+              (set!
+                (array-ref scratch-in i)
                 (bit-or
                   (array-ref uses (+ self-base i))
                   (bit-and
@@ -183,10 +177,11 @@
               [k : i64 0]
               (while (< k words)
                 (begin
-                  (array-set! live-in (+ self-base k) (array-ref scratch-in k))
-                  (array-set!
-                    live-out
-                    (+ self-base k)
+                  (set!
+                    (array-ref live-in (+ self-base k))
+                    (array-ref scratch-in k))
+                  (set!
+                    (array-ref live-out (+ self-base k))
                     (array-ref scratch-out k))
                   (set! k (+ k 1))))))
           changed)))))
@@ -214,20 +209,20 @@
     [done : bool false]
     (begin
       (let
-        [live-in (i64vec.slots-mut (&mut (struct-get live-in-buffer values)))]
-        [live-out (i64vec.slots-mut (&mut (struct-get live-out-buffer values)))]
-        [pending (i64vec.slots-mut (&mut (struct-get pending-buffer values)))]
+        [live-in (i64vec.slots-mut (&mut live-in-buffer.values))]
+        [live-out (i64vec.slots-mut (&mut live-out-buffer.values))]
+        [pending (i64vec.slots-mut (&mut pending-buffer.values))]
         (begin
           (while (< b blocks)
             (let
               [self-base : i64 (+ word-base (* b words))]
               [k : i64 0]
               (begin
-                (array-set! pending (+ block-base b) 1)
+                (set! (array-ref pending (+ block-base b)) 1)
                 (while (< k words)
                   (begin
-                    (array-set! live-in (+ self-base k) 0)
-                    (array-set! live-out (+ self-base k) 0)
+                    (set! (array-ref live-in (+ self-base k)) 0)
+                    (set! (array-ref live-out (+ self-base k)) 0)
                     (set! k (+ k 1))))
                 (set! b (+ b 1)))))
           0))
@@ -235,8 +230,7 @@
         (let
           [index : i64
             (let
-              [pending
-                (i64vec.slots-mut (&mut (struct-get pending-buffer values)))]
+              [pending (i64vec.slots-mut (&mut pending-buffer.values))]
               [found : i64 -1]
               [i : i64 (- blocks 1)]
               (begin
@@ -245,7 +239,7 @@
                     (when
                       (= (array-ref pending (+ block-base i)) 1)
                       (begin
-                        (array-set! pending (+ block-base i) 0)
+                        (set! (array-ref pending (+ block-base i)) 0)
                         (set! found i)))
                     (set! i (- i 1))))
                 found))]
@@ -268,21 +262,16 @@
                 scratch-in
                 with-phi-out)
               (let
-                [pred-start
-                  (i64vec.slots-mut
-                    (&mut (struct-get pred-start-buffer values)))]
-                [pred-items
-                  (i64vec.slots-mut
-                    (&mut (struct-get pred-items-buffer values)))]
-                [pending
-                  (i64vec.slots-mut (&mut (struct-get pending-buffer values)))]
+                [pred-start (i64vec.slots-mut (&mut pred-start-buffer.values))]
+                [pred-items (i64vec.slots-mut (&mut pred-items-buffer.values))]
+                [pending (i64vec.slots-mut (&mut pending-buffer.values))]
                 [g : i64 (+ block-base index)]
                 [slot : i64 (array-ref pred-start g)]
                 [stop : i64 (array-ref pred-start (+ g 1))]
                 (begin
                   (while (< slot stop)
                     (begin
-                      (array-set! pending (array-ref pred-items slot) 1)
+                      (set! (array-ref pending (array-ref pred-items slot)) 1)
                       (set! slot (+ slot 1))))
                   unit))))))
       unit)))

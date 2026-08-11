@@ -1,2 +1,2 @@
 (define (main) : unit
-  (set! (box-get (box 1)) 2))
+  (set! (deref (box 1)) 2))

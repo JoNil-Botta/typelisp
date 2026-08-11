@@ -37,23 +37,21 @@
   (let
     [p : Pair (make-pair n (+ n 1))]
     (if (<= n 0)
-      (+ (struct-get p x) (struct-get p y))
-      (+ (struct-get p x) (clobber-pair-stack (- n 1))))))
+      (+ p.x p.y)
+      (+ p.x (clobber-pair-stack (- n 1))))))
 
 (define (main) : i64
   (begin
     (reset-pair!)
     (clobber-pair-stack 24)
     (+
-      (+
-        (+ (string.string-length greeting) (length cells))
-        (+ (struct-get pair x) (struct-get pair y)))
+      (+ (+ (string.string-length greeting) (length cells)) (+ pair.x pair.y))
       (+
         (match choice
           [(option_i64.Some n) n]
           [(option_i64.None) 0])
         (+
-          (string.string-length (struct-get nested label))
-          (match (struct-get nested choice)
+          (string.string-length nested.label)
+          (match nested.choice
             [(option_i64.Some n) n]
             [(option_i64.None) 0]))))))

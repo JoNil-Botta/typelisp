@@ -9,4 +9,4 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (spmd-shuffle (array-ref xs i) true))))
+    (set! (array-ref out i) (spmd-shuffle (array-ref xs i) true))))

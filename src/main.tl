@@ -213,7 +213,7 @@ Options:
     --format <rich|flat>           Rich source diagnostics (default) or stable line output
     --deprecated-string-concat     Enable staged string concat deprecation lint
     --redundant-function-name      Enable staged redundant module-prefix lint
-    --prefer-dotted-field          Enable staged simple struct-get dotted field lint
+    --prefer-dotted-field          Deprecated compatibility flag; dotted fields are required
     --name-case                    Enable staged declaration/binder casing lints
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --target <target>              linux-x86_64 or windows-x86_64

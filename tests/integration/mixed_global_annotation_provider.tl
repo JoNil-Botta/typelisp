@@ -31,4 +31,4 @@
 
 (define (mixed-global-annotation-result-value) : i64
   (match (mixed-global-annotation-result 1)
-    [(MixedGlobalAnnotationResult.Ok node) (struct-get node value)]))
+    [(MixedGlobalAnnotationResult.Ok node) node.value]))

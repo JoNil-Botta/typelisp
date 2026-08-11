@@ -48,10 +48,8 @@
 (define (round-trip [value : Widths]) : i64
   (match (widths_json.decode (widths_json.encode value))
     [(widths_json.Ok decoded)
-      (if (and
-        (= (struct-get decoded small) (struct-get value small))
-        (= (struct-get decoded medium) (struct-get value medium)))
-        (struct-get decoded medium)
+      (if (and (= decoded.small value.small) (= decoded.medium value.medium))
+        decoded.medium
         -1)]
     [(widths_json.Err _) -2]))
 

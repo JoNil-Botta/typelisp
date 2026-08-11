@@ -41,7 +41,7 @@
   (if (>= index snapshot-count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (snapshot-grow-copy! dst src (+ index 1)))))
 
 (define (snapshot-ensure-capacity!) : unit
@@ -65,7 +65,9 @@
     (let
       [index : i64 snapshot-count]
       (begin
-        (array-set! snapshot-slots index (IndexedSnapshotSlot key value parent))
+        (set!
+          (array-ref snapshot-slots index)
+          (IndexedSnapshotSlot key value parent))
         (set! snapshot-count (+ snapshot-count 1))
         index))))
 
@@ -78,27 +80,27 @@
       (while (and (>= cursor 0) (not done))
         (let
           [slot : IndexedSnapshotSlot (array-ref snapshot-slots cursor)]
-          (if (= (struct-get slot key) key)
+          (if (= slot.key key)
             (begin
-              (set! out (struct-get slot value))
+              (set! out slot.value)
               (set! done true))
-            (set! cursor (struct-get slot parent)))))
+            (set! cursor slot.parent))))
       out)))
 
 (define (raw-snapshot-push [env : i64] [key : i64] [value : i64]) : i64
   (let
     [next : i64 (snapshot-push-head env key value)]
     (begin
-      (array-set! stored-raw-heads next next)
+      (set! (array-ref stored-raw-heads next) next)
       (array-ref stored-raw-heads next))))
 
 (define (struct-snapshot-push [env : ScalarSnapshot] [key : i64] [value : i64]) : ScalarSnapshot
   (let
     [next : ScalarSnapshot
-      (ScalarSnapshot (snapshot-push-head (struct-get env head) key value))]
+      (ScalarSnapshot (snapshot-push-head env.head key value))]
     (begin
-      (array-set! stored-struct-heads (struct-get next head) next)
-      (array-ref stored-struct-heads (struct-get next head)))))
+      (set! (array-ref stored-struct-heads next.head) next)
+      (array-ref stored-struct-heads next.head))))
 
 (define (enum-snapshot-head [env : EnumSnapshot]) : i64
   (match env
@@ -111,7 +113,7 @@
         (snapshot-push-head (enum-snapshot-head env) key value))]
     [head : i64 (enum-snapshot-head next)]
     (begin
-      (array-set! stored-enum-heads head head)
+      (set! (array-ref stored-enum-heads head) head)
       (EnumSnapshot.Snapshot (array-ref stored-enum-heads head)))))
 
 (define (raw-shadow-many [env : i64] [index : i64] [base : i64]) : i64
@@ -159,11 +161,11 @@
       [sibling : ScalarSnapshot (struct-snapshot-push env 5 (+ base 20))]
       [env : ScalarSnapshot (struct-shadow-many env 0 (+ base 2))]
       (and
-        (= (snapshot-lookup-head (struct-get env head) 7) (+ base 81))
-        (= (snapshot-lookup-head (struct-get env head) 3) (+ base 1))
-        (= (snapshot-lookup-head (struct-get env head) 5) -1)
-        (= (snapshot-lookup-head (struct-get sibling head) 5) (+ base 20))
-        (= (snapshot-lookup-head (struct-get sibling head) 7) -1)))))
+        (= (snapshot-lookup-head env.head 7) (+ base 81))
+        (= (snapshot-lookup-head env.head 3) (+ base 1))
+        (= (snapshot-lookup-head env.head 5) -1)
+        (= (snapshot-lookup-head sibling.head 5) (+ base 20))
+        (= (snapshot-lookup-head sibling.head 7) -1)))))
 
 (define (enum-snapshot-case [base : i64]) : i64
   (begin

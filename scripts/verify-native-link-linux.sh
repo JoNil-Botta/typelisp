@@ -748,8 +748,8 @@ verify_compiler_driver_arrays_and_traps() {
 (define (main) : i64
   (let [a : (Array i64) (make-array i64 2)]
     (begin
-      (array-set! a 0 40)
-      (array-set! a 1 2)
+      (set! (array-ref a 0) 40)
+      (set! (array-ref a 1) 2)
       (+ (array-ref a 0) (array-ref a 1)))))
 EOF
 
@@ -818,7 +818,7 @@ verify_compiler_driver_recursive_box_list() {
   (match xs
     [(Nil) 0]
     [(Cons head tail)
-      (+ head (sum (box-get tail)))]))
+      (+ head (sum (deref tail)))]))
 
 (define (main) : i64
   (sum (Cons 10 (box (Cons 30 (box (Cons 2 (box (Nil)))))))))

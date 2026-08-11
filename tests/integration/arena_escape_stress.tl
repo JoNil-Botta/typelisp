@@ -36,7 +36,7 @@
   (if (= index count)
     unit
     (begin
-      (array-set! items index (payload seed (- count index)))
+      (set! (array-ref items index) (payload seed (- count index)))
       (fill-items items (+ index 1) count seed))))
 
 (define (make-items [count : i64] [seed : i64]) : (__tl_dyn-array String)

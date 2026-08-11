@@ -278,7 +278,7 @@
           inline-test-status))]
     [(compiler_check_core.ResultCompilerCheck.Err diag)
       (begin
-        (selfhost-check-report-diagnostics (box-get diag))
+        (selfhost-check-report-diagnostics (__tl-box-place diag))
         1)]))
 
 (define (selfhost-check-package-kind-entry?
@@ -291,9 +291,7 @@
   [manifest-dir : String]
   [manifest : compiler_load.CompilerPkgManifest]) : String
   (compiler_load.compiler-load-normalize-path
-    (compiler_load.compiler-load-join-root-path
-      manifest-dir
-      (struct-get manifest entry))))
+    (compiler_load.compiler-load-join-root-path manifest-dir manifest.entry)))
 
 (define (selfhost-check-package-doctest-paths-snapshot
   [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
@@ -331,21 +329,19 @@
         1)]
     [(package_source_core.ResultPackageSourceSet.Ok source-set)
       (let
-        [manifest : compiler_load.CompilerPkgManifest
-          (struct-get source-set manifest)]
-        [manifest-dir : String (struct-get source-set manifest-dir)]
-        [name : String (struct-get manifest name)]
+        [manifest : compiler_load.CompilerPkgManifest source-set.manifest]
+        [manifest-dir : String source-set.manifest-dir]
+        [name : String manifest.name]
         [entry-path : String
           (selfhost-check-package-entry-path manifest-dir manifest)]
-        [emit-entry : bool
-          (selfhost-check-package-kind-entry? (struct-get manifest kind))]
+        [emit-entry : bool (selfhost-check-package-kind-entry? manifest.kind)]
         [_reset-file-state : unit
           (compiler_driver_core.compiler-driver-reset-file-state!)]
         (match (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
           entry-path
           stdlib-roots
           manifest-dir
-          (struct-get manifest deps)
+          manifest.deps
           emit-entry
           (target_cfg.compiler-target-cfgs-with-names target cfg-names))
           [(compiler_check_core.ResultCompilerCheckWithPaths.Ok _ paths)
@@ -363,11 +359,11 @@
                   (ci.intern-persistent-arena-reset!))]
               [inline-test-status : i64
                 (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
-                  (struct-get source-set sources)
+                  source-set.sources
                   stdlib-roots
                   manifest-dir
                   name
-                  (struct-get manifest deps)
+                  manifest.deps
                   (target_cfg.compiler-target-cfgs-with-names target cfg-names)
                   "typecheck-prefix-inline-check-package")]
               (if (= inline-test-status 0)
@@ -377,7 +373,7 @@
                       doctest-paths
                       stdlib-roots
                       manifest-dir
-                      (struct-get manifest deps)
+                      manifest.deps
                       (target_cfg.compiler-target-cfgs-with-names
                         target
                         cfg-names))]
@@ -387,7 +383,7 @@
                 inline-test-status))]
           [(compiler_check_core.ResultCompilerCheckWithPaths.Err diag)
             (begin
-              (selfhost-check-report-diagnostics (box-get diag))
+              (selfhost-check-report-diagnostics (__tl-box-place diag))
               1)]))]))
 
 ;; Run the `check` command over arguments starting at `start`.

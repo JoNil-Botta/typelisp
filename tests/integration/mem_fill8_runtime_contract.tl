@@ -27,7 +27,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! items i (+ 1000 i))
+        (set! (array-ref items i) (+ 1000 i))
         (set! i (+ i 1))))))
 
 (define (count-eq

@@ -414,8 +414,8 @@
   (y i64))
 (define (main [p : Point] [y : i64]) : i64
   (begin
-    (set! p (Point (struct-get p x) y))
-    (struct-get p y)))")
+    (set! p (Point p.x y))
+    p.y))")
 
 (define (lint-driver-smoke-dot-copy-on-update-struct-source) : String
   "(defstruct Point
@@ -433,8 +433,8 @@
 (define (main [p : Point] [y : i64]) : i64
   (begin
     ;; lint-allow: copy-on-update-struct
-    (set! p (Point (struct-get p x) y))
-    (struct-get p y)))")
+    (set! p (Point p.x y))
+    p.y))")
 
 (define (lint-driver-smoke-multiple-field-copy-on-update-source) : String
   "(defstruct Point
@@ -442,8 +442,8 @@
   (y i64))
 (define (main [p : Point] [x : i64] [y : i64]) : i64
   (begin
-    (set! p (Point (+ (struct-get p x) x) y))
-    (struct-get p y)))")
+    (set! p (Point (+ p.x x) y))
+    p.y))")
 
 (define (lint-driver-smoke-other-value-copy-on-update-source) : String
   "(defstruct Point
@@ -451,8 +451,8 @@
   (y i64))
 (define (main [p : Point] [q : Point] [y : i64]) : i64
   (begin
-    (set! p (Point (struct-get q x) y))
-    (struct-get p y)))")
+    (set! p (Point q.x y))
+    p.y))")
 
 (define (lint-driver-smoke-enum-copy-on-update-source) : String
   "(defenum State
@@ -468,7 +468,7 @@
   (x i64)
   (y i64))
 (define (main [p : Point]) : i64
-  (struct-get p x))")
+  p.x)")
 
 (define (lint-driver-smoke-prefer-dotted-field-set-source) : String
   "(defstruct Point
@@ -476,7 +476,7 @@
   (y i64))
 (define (main [p : Point] [y : i64]) : i64
   (begin
-    (set! (struct-get p x) y)
+    (set! p.x y)
     y))")
 
 (define (lint-driver-smoke-suppressed-prefer-dotted-field-source) : String
@@ -485,14 +485,14 @@
   (y i64))
 (define (main [p : Point]) : i64
   ;; lint-allow: prefer-dotted-field
-  (struct-get p x))")
+  p.x)")
 
 (define (lint-driver-smoke-complex-prefer-dotted-field-source) : String
   "(defstruct Point
   (x i64)
   (y i64))
 (define (main [items : (__tl_dyn-array Point)]) : i64
-  (struct-get (array-ref items 0) x))")
+  (__tl-project-field (array-ref items 0) x))")
 
 (define (lint-driver-smoke-nested-prefer-dotted-field-source) : String
   "(defstruct Point
@@ -501,18 +501,18 @@
 (defstruct Outer
   (inner Point))
 (define (main [p : Outer]) : i64
-  (struct-get (struct-get p inner) x))")
+  p.inner.x)")
 
 (define (lint-driver-smoke-quoted-prefer-dotted-field-source) : String
   "(defmacro (build [p : Expr]) : Expr
-  `(struct-get ,p x))")
+  `(__tl-project-field-name ,p \"x\"))")
 
 (define (lint-driver-smoke-unquoted-prefer-dotted-field-source) : String
   "(defstruct Point
   (x i64)
   (y i64))
 (defmacro (build [p : Point]) : Expr
-  `(field ,(struct-get p x)))")
+  `(field ,p.x))")
 
 (define (lint-driver-smoke-name-case-source) : String
   "(define badGlobal : i64 1)
@@ -651,14 +651,14 @@
     (let
       [finding : lint_core.LintFinding
         (lint_core.lint-findings-ref findings index)]
-      [rule : String (struct-get finding rule-id)]
+      [rule : String finding.rule-id]
       [is-name-case : bool
         (or
           (string.eq rule (lint_core.lint-rule-global-name-case-id))
           (string.eq rule (lint_core.lint-rule-function-name-case-id))
           (string.eq rule (lint_core.lint-rule-local-name-case-id))
           (string.eq rule (lint_core.lint-rule-type-name-case-id)))]
-      [span : ast.AstSourceSpan (struct-get finding span)]
+      [span : ast.AstSourceSpan finding.span]
       (and
         (if is-name-case
           (and
@@ -681,8 +681,8 @@
     (let
       [finding : lint_core.LintFinding
         (lint_core.lint-findings-ref findings index)]
-      (if (string.eq (struct-get finding rule-id) rule-id)
-        (= (ast.ast-source-span-start-line (struct-get finding span)) line)
+      (if (string.eq finding.rule-id rule-id)
+        (= (ast.ast-source-span-start-line finding.span) line)
         (lint-driver-smoke-name-case-rule-at-line?
           findings
           rule-id
@@ -710,12 +710,12 @@
   (match (lint_core.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan finding.span]
         (and
-          (= (struct-get finding depth) depth)
+          (= finding.depth depth)
           (> (ast.ast-source-span-start-line fspan) 0)
           (string.eq
-            (struct-get finding rule-id)
+            finding.rule-id
             (lint_core.lint-rule-deprecated-string-concat-id))))]
     [(lint_core.LintMaybeFinding.No) false]))
 
@@ -726,10 +726,10 @@
   (match (lint_core.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan finding.span]
         (and
           (> (ast.ast-source-span-start-line fspan) 0)
-          (string.eq (struct-get finding rule-id) rule-id)))]
+          (string.eq finding.rule-id rule-id)))]
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (lint-driver-smoke-finding-rule-line-ok?
@@ -740,10 +740,10 @@
   (match (lint_core.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan finding.span]
         (and
           (= (ast.ast-source-span-start-line fspan) line)
-          (string.eq (struct-get finding rule-id) rule-id)))]
+          (string.eq finding.rule-id rule-id)))]
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (lint-driver-smoke-finding-rule-depth-line-ok?
@@ -755,11 +755,11 @@
   (match (lint_core.lint-findings-get findings index)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
-        [fspan : ast.AstSourceSpan (struct-get finding span)]
+        [fspan : ast.AstSourceSpan finding.span]
         (and
-          (= (struct-get finding depth) depth)
+          (= finding.depth depth)
           (= (ast.ast-source-span-start-line fspan) line)
-          (string.eq (struct-get finding rule-id) rule-id)))]
+          (string.eq finding.rule-id rule-id)))]
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (lint-driver-smoke-deprecated-string-concat-self-test) : i64
@@ -1198,7 +1198,7 @@
           source
           stdlib-roots
           false)]
-      (struct-get findings len))))
+      findings.len)))
 
 (define (lint-driver-smoke-unsafe-surface-self-test) : i64
   (begin
@@ -1553,25 +1553,15 @@
             (lint_driver_core_tests.selfhost-lint-findings-rule-count
               reported
               rule)
-            1))
+            0))
         90]
-      [(not (lint-driver-smoke-finding-rule-depth-line-ok? reported 0 rule 0 5))
-        91]
       [(not
           (=
             (lint_driver_core_tests.selfhost-lint-findings-rule-count
               set-reported
               rule)
-            1))
+            0))
         92]
-      [(not
-          (lint-driver-smoke-finding-rule-depth-line-ok?
-            set-reported
-            0
-            rule
-            1
-            6))
-        93]
       [(not
           (=
             (lint_driver_core_tests.selfhost-lint-source-rule-count
@@ -1612,7 +1602,7 @@
             (lint-driver-smoke-source-rule-count-with-prefer-dotted-field
               (lint-driver-smoke-unquoted-prefer-dotted-field-source)
               rule)
-            1))
+            0))
         101]
       [(not
           (string.eq

@@ -7,7 +7,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! xs i (- (* i 3) 17))
+        (set! (array-ref xs i) (- (* i 3) 17))
         (set! i (+ i 1))))))
 
 (define (init-out [out : (__tl_dyn-array i64)] [n : i64]) : unit
@@ -15,7 +15,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i -99)
+        (set! (array-ref out i) -99)
         (set! i (+ i 1))))))
 
 (define (fill-masked
@@ -24,9 +24,8 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (if (< (array-ref xs i) 0)
         0
         (+ (array-ref xs i) 1)))))
@@ -39,9 +38,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
-          out
-          i
+        (set!
+          (array-ref out i)
           (if (< (array-ref xs i) 0)
             0
             (+ (array-ref xs i) 1)))

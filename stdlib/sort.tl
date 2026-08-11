@@ -155,9 +155,9 @@
                         ,insertion-less
                         false)
                         (begin
-                          (array-set! slots j ,insertion-shift-value)
+                          (set! (array-ref slots j) ,insertion-shift-value)
                           (set! j (- j 1))))
-                      (array-set! slots j value)
+                      (set! (array-ref slots j) value)
                       (set! i (+ i 1)))))
                 (set! chunk-start chunk-end))))
           (if (> n 16)
@@ -198,22 +198,22 @@
                                     (begin
                                       (if take-left
                                         (begin
-                                          (array-set!
-                                            scratch
-                                            out
+                                          (set!
+                                            (array-ref scratch out)
                                             ,left-merge-value)
                                           (set! left-index (+ left-index 1)))
                                         (begin
-                                          (array-set!
-                                            scratch
-                                            out
+                                          (set!
+                                            (array-ref scratch out)
                                             ,right-merge-value)
                                           (set! right-index (+ right-index 1))))
                                       (set! out (+ out 1)))))
                                 (set! out left)
                                 (while (< out right)
                                   (begin
-                                    (array-set! slots out ,copy-back-value)
+                                    (set!
+                                      (array-ref slots out)
+                                      ,copy-back-value)
                                     (set! out (+ out 1))))))
                             unit)
                           (set! left right))))
@@ -272,7 +272,7 @@
 (cfg
   test
   (define (sort-test-item-less? [left : SortTestItem] [right : SortTestItem]) : bool
-    (< (struct-get left key) (struct-get right key))))
+    (< left.key right.key)))
 
 (cfg
   test
@@ -667,12 +667,9 @@
             [expected-key : i64 (/ i 8)]
             [expected-order : i64 (+ expected-key (* (% i 8) 4))]
             (begin
+              (test.assert-i64-eq item.key expected-key "aggregate sort key")
               (test.assert-i64-eq
-                (struct-get item key)
-                expected-key
-                "aggregate sort key")
-              (test.assert-i64-eq
-                (struct-get item order)
+                item.order
                 expected-order
                 "aggregate sort stable order")
               (set! i (+ i 1)))))))))

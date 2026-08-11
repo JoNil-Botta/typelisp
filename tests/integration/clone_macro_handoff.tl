@@ -20,9 +20,9 @@
     [record-copy : CloneMacroUsed (clone record)]
     [choice : CloneMacroChoice (clone (CloneMacroChoice.Some "b" 20))]
     (+
-      (struct-get record-copy count)
+      record-copy.count
       (+
-        (__tl_string_length (struct-get record-copy name))
+        (__tl_string_length record-copy.name)
         (match choice
           [(CloneMacroChoice.None) 0]
           [(CloneMacroChoice.Some text value)

@@ -20,11 +20,11 @@
 
 ;: True when `result` carries the caller fallback borrow.
 (define (read-file-or-result-borrowed? [result : (ReadFileOrResult fallback)]) : bool
-  (not (struct-get result is-owned)))
+  (not result.is-owned))
 
 ;: True when `result` carries owned file contents from a successful read.
 (define (read-file-or-result-owned? [result : (ReadFileOrResult fallback)]) : bool
-  (struct-get result is-owned))
+  result.is-owned)
 
 ;: Construct a borrowed fallback result.
 (define (read-file-or-borrowed-result [fallback : (& fallback str)]) : (ReadFileOrResult
@@ -43,8 +43,8 @@
 ;: this explicit binary-to-text materialization boundary.
 (define (read-file-or-result-string [result : (ReadFileOrResult fallback)]) : String
   (if (read-file-or-result-owned? result)
-    (struct-get result owned)
-    (string.copy (struct-get result fallback))))
+    result.owned
+    (string.copy result.fallback)))
 
 ;: Read `path`, returning fresh active-arena contents on success or a borrow of
 ;: `fallback` on any structured read error.

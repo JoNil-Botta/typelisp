@@ -3,7 +3,7 @@
   [indexes : (& indexes (Slice i64))]
   [output : (&mut output (Slice i64))]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! output (array-ref indexes i) i)))
+  (foreach ([i : i64 0 n]) (set! (array-ref output (array-ref indexes i)) i)))
 
 (define (main) : i64
   42)

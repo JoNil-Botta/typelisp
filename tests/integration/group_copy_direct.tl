@@ -43,12 +43,7 @@
       (while (< i n)
         (begin
           (match (wrap (Triple (+ i 1) (* i 2) 7) i)
-            [(WrapSome t)
-              (set!
-                acc
-                (+
-                  acc
-                  (+ (struct-get t a) (+ (struct-get t b) (struct-get t c)))))]
+            [(WrapSome t) (set! acc (+ acc (+ t.a (+ t.b t.c))))]
             [(WrapNone) (set! acc (- 0 1000000))])
           (set! i (+ i 1))))
       acc)))

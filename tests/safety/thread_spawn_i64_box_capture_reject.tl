@@ -6,7 +6,7 @@
     [cell : (Box i64) (box 42)]
     (match (thread_i64.spawn
       (lambda () : i64
-        (box-get cell)))
+        (__tl-box-place cell)))
       [(thread_i64.I64SpawnErr _) 1]
       [(thread_i64.I64SpawnOk thread)
         (match (thread_i64.join thread)

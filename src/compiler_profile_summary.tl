@@ -144,14 +144,15 @@
       (compiler-profile-summary-exact-calls state)]
     (if fresh
       (begin
-        (array-set! elapsed-values offset elapsed)
-        (array-set! call-values offset 1))
+        (set! (array-ref elapsed-values offset) elapsed)
+        (set! (array-ref call-values offset) 1))
       (begin
-        (array-set!
-          elapsed-values
-          offset
+        (set!
+          (array-ref elapsed-values offset)
           (+ (array-ref elapsed-values offset) elapsed))
-        (array-set! call-values offset (+ (array-ref call-values offset) 1))))))
+        (set!
+          (array-ref call-values offset)
+          (+ (array-ref call-values offset) 1))))))
 
 (define (compiler-profile-summary-note-exact!
   [state : profile_state.CompilerProfileState]
@@ -188,10 +189,10 @@
                 (io.panic
                   "compile-profile summary exact scope capacity exceeded")
                 unit)
-              (array-set! names (+ dense-offset index) name)
-              (array-set! keys (+ dense-offset index) key)
-              (array-set! slots slot (+ index 1))
-              (array-set! counts scope-index (+ index 1))
+              (set! (array-ref names (+ dense-offset index)) name)
+              (set! (array-ref keys (+ dense-offset index)) key)
+              (set! (array-ref slots slot) (+ index 1))
+              (set! (array-ref counts scope-index) (+ index 1))
               (set! fresh true))
             (let
               [candidate : i64 (- marker 1)]
@@ -225,17 +226,17 @@
     (begin
       (while (< scope compiler-profile-summary-scope-count)
         (begin
-          (array-set! counts scope 0)
-          (array-set! total-elapsed scope 0)
-          (array-set! total-calls scope 0)
+          (set! (array-ref counts scope) 0)
+          (set! (array-ref total-elapsed scope) 0)
+          (set! (array-ref total-calls scope) 0)
           (set! scope (+ scope 1))))
       (while (< slot compiler-profile-summary-exact-table-capacity)
         (begin
-          (array-set! exact-slots slot 0)
+          (set! (array-ref exact-slots slot) 0)
           (set! slot (+ slot 1))))
-      (array-set! exact-counts 0 0)
-      (array-set! exact-counts 1 0)
-      (array-set! exact-counts 2 0))))
+      (set! (array-ref exact-counts 0) 0)
+      (set! (array-ref exact-counts 1) 0)
+      (set! (array-ref exact-counts 2) 0))))
 
 (define (compiler-profile-summary-offset [scope : i64] [rank : i64]) : i64
   (+ (* scope compiler-profile-summary-top-count) rank))
@@ -285,14 +286,14 @@
     [elapsed : i64 (array-ref elapsed-values li)]
     [calls : i64 (array-ref call-values li)]
     (begin
-      (array-set! keys li (array-ref keys ri))
-      (array-set! names li (array-ref names ri))
-      (array-set! elapsed-values li (array-ref elapsed-values ri))
-      (array-set! call-values li (array-ref call-values ri))
-      (array-set! keys ri key)
-      (array-set! names ri name)
-      (array-set! elapsed-values ri elapsed)
-      (array-set! call-values ri calls))))
+      (set! (array-ref keys li) (array-ref keys ri))
+      (set! (array-ref names li) (array-ref names ri))
+      (set! (array-ref elapsed-values li) (array-ref elapsed-values ri))
+      (set! (array-ref call-values li) (array-ref call-values ri))
+      (set! (array-ref keys ri) key)
+      (set! (array-ref names ri) name)
+      (set! (array-ref elapsed-values ri) elapsed)
+      (set! (array-ref call-values ri) calls))))
 
 (define (compiler-profile-summary-bubble!
   [state : profile_state.CompilerProfileState]
@@ -336,11 +337,12 @@
       (let
         [index : i64 (compiler-profile-summary-offset scope found)]
         (begin
-          (array-set!
-            elapsed-values
-            index
+          (set!
+            (array-ref elapsed-values index)
             (+ (array-ref elapsed-values index) elapsed))
-          (array-set! call-values index (+ (array-ref call-values index) calls))
+          (set!
+            (array-ref call-values index)
+            (+ (array-ref call-values index) calls))
           (compiler-profile-summary-bubble! state scope found)))
       (let
         [rank : i64
@@ -356,12 +358,12 @@
             (array-ref keys index)
             (array-ref elapsed-values index)))
           (begin
-            (array-set! keys index key)
-            (array-set! names index name)
-            (array-set! elapsed-values index elapsed)
-            (array-set! call-values index calls)
+            (set! (array-ref keys index) key)
+            (set! (array-ref names index) name)
+            (set! (array-ref elapsed-values index) elapsed)
+            (set! (array-ref call-values index) calls)
             (if (< count compiler-profile-summary-top-count)
-              (array-set! counts scope (+ count 1))
+              (set! (array-ref counts scope) (+ count 1))
               unit)
             (compiler-profile-summary-bubble! state scope rank))
           unit)))))
@@ -378,11 +380,10 @@
     [total-calls : (__tl_dyn-array i64)
       (compiler-profile-summary-total-calls state)]
     (begin
-      (array-set!
-        total-elapsed
-        scope
+      (set!
+        (array-ref total-elapsed scope)
         (+ (array-ref total-elapsed scope) elapsed))
-      (array-set! total-calls scope (+ (array-ref total-calls scope) 1))
+      (set! (array-ref total-calls scope) (+ (array-ref total-calls scope) 1))
       (if (compiler-profile-summary-exact-scope? scope)
         (compiler-profile-summary-note-exact! state scope key name elapsed)
         (compiler-profile-summary-consider! state scope key name elapsed 1)))))
@@ -487,18 +488,17 @@
                 (begin
                   (while (> shift rank)
                     (begin
-                      (array-set!
-                        top
-                        (+ top-offset shift)
+                      (set!
+                        (array-ref top (+ top-offset shift))
                         (array-ref top (+ top-offset (- shift 1))))
                       (set! shift (- shift 1))))
-                  (array-set! top (+ top-offset rank) index)
+                  (set! (array-ref top (+ top-offset rank)) index)
                   (if (< top-count compiler-profile-summary-top-count)
                     (set! top-count (+ top-count 1))
                     unit)))
               unit)
             (set! index (+ index 1)))))
-      (array-set! counts scope top-count))))
+      (set! (array-ref counts scope) top-count))))
 
 (define (compiler-profile-summary-line
   [scope-name : String]

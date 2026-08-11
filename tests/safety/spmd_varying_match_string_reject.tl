@@ -4,9 +4,8 @@
 (define (main [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
-      out
-      i
+    (set!
+      (array-ref out i)
       (match (if (= (% i 2) 0)
         "even"
         "odd")

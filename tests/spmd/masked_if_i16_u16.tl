@@ -5,7 +5,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! xs i (cast (- (* i 37) 500) : i16))
+        (set! (array-ref xs i) (cast (- (* i 37) 500) : i16))
         (set! i (+ i 1))))))
 
 (define (fill-i16-foreach
@@ -17,8 +17,8 @@
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs i) pivot)
-      (array-set! out i pivot)
-      (array-set! out i (+ (array-ref xs i) one)))))
+      (set! (array-ref out i) pivot)
+      (set! (array-ref out i) (+ (array-ref xs i) one)))))
 
 (define (fill-i16-scalar
   [xs : (__tl_dyn-array i16)]
@@ -31,8 +31,8 @@
     (while (< i n)
       (begin
         (if (< (array-ref xs i) pivot)
-          (array-set! out i pivot)
-          (array-set! out i (+ (array-ref xs i) one)))
+          (set! (array-ref out i) pivot)
+          (set! (array-ref out i) (+ (array-ref xs i) one)))
         (set! i (+ i 1))))))
 
 (define (eq-i16 [a : (__tl_dyn-array i16)] [b : (__tl_dyn-array i16)] [n : i64]) : bool
@@ -66,7 +66,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! xs i (cast (+ (* i 37) 10) : u16))
+        (set! (array-ref xs i) (cast (+ (* i 37) 10) : u16))
         (set! i (+ i 1))))))
 
 (define (fill-u16-foreach
@@ -78,8 +78,8 @@
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs i) limit)
-      (array-set! out i limit)
-      (array-set! out i (+ (array-ref xs i) one)))))
+      (set! (array-ref out i) limit)
+      (set! (array-ref out i) (+ (array-ref xs i) one)))))
 
 (define (fill-u16-scalar
   [xs : (__tl_dyn-array u16)]
@@ -92,8 +92,8 @@
     (while (< i n)
       (begin
         (if (< (array-ref xs i) limit)
-          (array-set! out i limit)
-          (array-set! out i (+ (array-ref xs i) one)))
+          (set! (array-ref out i) limit)
+          (set! (array-ref out i) (+ (array-ref xs i) one)))
         (set! i (+ i 1))))))
 
 (define (eq-u16 [a : (__tl_dyn-array u16)] [b : (__tl_dyn-array u16)] [n : i64]) : bool

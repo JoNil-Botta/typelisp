@@ -127,26 +127,25 @@
             [length : i64 (+ 2 (% (rt-draw state) 3))]
             [k : i64 0]
             (begin
-              (array-set! route-start r cursor)
-              (array-set! route-length r length)
+              (set! (array-ref route-start r) cursor)
+              (set! (array-ref route-length r) length)
               (while (< k length)
                 (begin
                   (set! state (rt-next-state state))
                   (if (= (% (rt-draw state) 5) 0)
                     (begin
-                      (array-set! segment-kind (+ cursor k) 1)
-                      (array-set! segment-word (+ cursor k) 0))
+                      (set! (array-ref segment-kind (+ cursor k)) 1)
+                      (set! (array-ref segment-word (+ cursor k)) 0))
                     (begin
-                      (array-set! segment-kind (+ cursor k) 0)
-                      (array-set!
-                        segment-word
-                        (+ cursor k)
+                      (set! (array-ref segment-kind (+ cursor k)) 0)
+                      (set!
+                        (array-ref segment-word (+ cursor k))
                         (% (rt-draw state) rt-vocabulary-count))))
                   (set! k (+ k 1))))
               (set! cursor (+ cursor length))))
           (set! state (rt-next-state state))
-          (array-set! route-mask r (+ 1 (% (rt-draw state) 15)))
-          (array-set! route-handler r (+ (* r 7) 13))
+          (set! (array-ref route-mask r) (+ 1 (% (rt-draw state) 15)))
+          (set! (array-ref route-handler r) (+ (* r 7) 13))
           (set! r (+ r 1))))
       unit)))
 
@@ -349,13 +348,11 @@
                       (if (= (array-ref segment-kind-slots (+ base k)) 1)
                         (begin
                           (set! state (rt-next-state state))
-                          (array-set!
-                            choice
-                            k
+                          (set!
+                            (array-ref choice k)
                             (+ rt-junk-base (% (rt-draw state) rt-junk-count))))
-                        (array-set!
-                          choice
-                          k
+                        (set!
+                          (array-ref choice k)
                           (array-ref segment-word-slots (+ base k))))
                       (set! k (+ k 1))))
                   (set! state (rt-next-state state))
@@ -373,7 +370,9 @@
                   (while (< k segments)
                     (begin
                       (set! state (rt-next-state state))
-                      (array-set! choice k (% (rt-draw state) rt-token-count))
+                      (set!
+                        (array-ref choice k)
+                        (% (rt-draw state) rt-token-count))
                       (set! k (+ k 1))))
                   (set! state (rt-next-state state))
                   (set! method (shl 1 (% (rt-draw state) 4)))))

@@ -442,16 +442,14 @@
         sections4
         (cobj.CompilerObjectSection.Section
           (cobj.CompilerObjectSectionKind.Pdata)
-          (cobj.compiler-object-data-record-builder-finish
-            (struct-get parts pdata))
+          (cobj.compiler-object-data-record-builder-finish parts.pdata)
           empty-instrs))]
     [sections6 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections5
         (cobj.CompilerObjectSection.Section
           (cobj.CompilerObjectSectionKind.Xdata)
-          (cobj.compiler-object-data-record-builder-finish
-            (struct-get parts xdata))
+          (cobj.compiler-object-data-record-builder-finish parts.xdata)
           empty-instrs))]
     (cobj.compiler-object-section-builder-finish
       (cobj.compiler-object-section-builder-push
@@ -469,7 +467,7 @@
   (cobj.compiler-object-symbol-builder-finish
     (if emit-manifest-resource
       (cobj.compiler-object-symbol-builder-push
-        (struct-get parts symbols)
+        parts.symbols
         (cobj.CompilerObjectSymbol.Symbol
           (compiler-backend-object-global-shared-view
             compiler-backend-object-manifest-label)
@@ -477,7 +475,7 @@
           (cobj.CompilerObjectSymbolKind.Data)
           (cobj.CompilerObjectMaybeSection.Some
             (cobj.CompilerObjectSectionKind.Rsrc))))
-      (struct-get parts symbols))))
+      parts.symbols)))
 
 (define (compiler-backend-object-image-relocations
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -485,7 +483,7 @@
   (cobj.compiler-object-relocation-builder-finish
     (if emit-manifest-resource
       (cobj.compiler-object-relocation-builder-push
-        (struct-get parts relocations)
+        parts.relocations
         (cobj.CompilerObjectRelocation.Relocation
           (cobj.CompilerObjectSectionKind.Rsrc)
           (compiler-backend-object-global-shared-view
@@ -493,7 +491,7 @@
           (cobj.CompilerObjectRelocationKind.Addr32Nb)
           (compiler-backend-object-global-shared-view
             compiler-backend-object-manifest-label)))
-      (struct-get parts relocations))))
+      parts.relocations)))
 
 (define (compiler-backend-object-target-windows-image
   [parts : object_target.CompilerBackendObjectTargetParts]

@@ -731,7 +731,8 @@
                   [(json.JsonFound encodings)
                     (match encodings
                       [(json.JsonArray items)
-                        (if (lsp-position-encodings-offer-utf8? (box-get items))
+                        (if (lsp-position-encodings-offer-utf8?
+                          (__tl-box-place items))
                           true
                           false)]
                       [_ false])]
@@ -768,13 +769,13 @@
             (match cfg-value
               [(json.JsonArray items-box)
                 (let
-                  [items : json.JsonSeq (box-get items-box)]
+                  [items : json.JsonSeq (__tl-box-place items-box)]
                   [index : i64 0]
                   (while (and
                     (= (string.string-length error) 0)
-                    (< index (struct-get items len)))
+                    (< index items.len))
                     (begin
-                      (match (array-ref (struct-get items slots) index)
+                      (match (array-ref items.slots index)
                         [(json.JsonString name)
                           (lsp_svec.push
                             (&mut cfg-names)
@@ -975,12 +976,12 @@
   (lsp-diagnostic-uris-add (lsp-diagnostic-uris-empty) uri))
 
 (define (lsp-diagnostic-uris-len [uris : lsp_vector_families.LspDiagnosticUris]) : i64
-  (struct-get uris len))
+  uris.len)
 
 (define (lsp-diagnostic-uris-get
   [uris : lsp_vector_families.LspDiagnosticUris]
   [index : i64]) : String
-  (array-ref (struct-get uris slots) index))
+  (array-ref uris.slots index))
 
 (define (lsp-diagnostic-uris-contains-from?
   [uris : lsp_vector_families.LspDiagnosticUris]
@@ -1004,7 +1005,7 @@
     uris
     (let
       [n : i64 (lsp-diagnostic-uris-len uris)]
-      [slots : (__tl_dyn-array String) (struct-get uris slots)]
+      [slots : (__tl_dyn-array String) uris.slots]
       (begin
         (if (< n (array-length slots))
           unit
@@ -1019,10 +1020,10 @@
             (begin
               (while (< index n)
                 (begin
-                  (array-set! bigger index (array-ref slots index))
+                  (set! (array-ref bigger index) (array-ref slots index))
                   (set! index (+ index 1))))
               (set! slots bigger))))
-        (array-set! slots n uri)
+        (set! (array-ref slots n) uri)
         (lsp_vector_families.LspDiagnosticUris slots (+ n 1))))))
 
 (define (lsp-diagnostic-uris-smoke-ok?) : bool
@@ -1061,35 +1062,34 @@
 
 (define (lsp-semantic-snapshot-release!
   [snapshot : (&mut snapshot lsp_vector_families.LspSemanticSnapshot)]) : unit
-  (if (struct-get snapshot present)
+  (if snapshot.present
     (begin
       (compiler_semantic_index.compiler-semantic-source-index-release!
-        (&mut (struct-get snapshot index)))
-      (set! (struct-get snapshot version) -1)
-      (set! (struct-get snapshot source-path) "")
-      (set! (struct-get snapshot source-text) "")
-      (set! (struct-get snapshot present) false))
+        (&mut snapshot.index))
+      (set! snapshot.version -1)
+      (set! snapshot.source-path "")
+      (set! snapshot.source-text "")
+      (set! snapshot.present false))
     unit))
 
 (define (lsp-document-semantic-snapshot-status
   [doc : (& doc lsp_vector_families.LspDocument)]) : LspSemanticSnapshotStatus
   (let
-    [snapshot : lsp_vector_families.LspSemanticSnapshot
-      (struct-get doc semantic)]
-    (if (not (struct-get snapshot present))
+    [snapshot : lsp_vector_families.LspSemanticSnapshot doc.semantic]
+    (if (not snapshot.present)
       LspSemanticSnapshotStatus.Missing
       (let
         [index : compiler_semantic_index.CompilerSemanticSourceIndex
-          (struct-get snapshot index)]
-        [version : i64 (struct-get snapshot version)]
+          snapshot.index]
+        [version : i64 snapshot.version]
         [complete : bool
           (compiler_semantic_index.compiler-semantic-source-index-complete?
             (& index))]
         [current : bool
           (and
-            (= version (struct-get doc version))
-            (string.eq (struct-get snapshot source-path) (struct-get doc path))
-            (string.eq (struct-get snapshot source-text) (struct-get doc text)))]
+            (= version doc.version)
+            (string.eq snapshot.source-path doc.path)
+            (string.eq snapshot.source-text doc.text))]
         (if current
           (LspSemanticSnapshotStatus.Current version complete)
           (LspSemanticSnapshotStatus.Stale version complete))))))
@@ -1100,8 +1100,8 @@
   (match (lsp-document-semantic-snapshot-status doc)
     [(LspSemanticSnapshotStatus.Current _ _)
       (compiler_semantic_index.compiler-semantic-source-index-find-editable-record-at
-        (& (struct-get (struct-get doc semantic) index))
-        (& (struct-get doc path))
+        (& doc.semantic.index)
+        (& doc.path)
         byte-position)]
     [_ -1]))
 
@@ -1113,7 +1113,7 @@
     [(LspSemanticSnapshotStatus.Current _ _)
       (let
         [index : compiler_semantic_index.CompilerSemanticSourceIndex
-          (struct-get (struct-get doc semantic) index)]
+          doc.semantic.index]
         (if (or
           (< record-index 0)
           (>=
@@ -1123,7 +1123,7 @@
           -1
           (compiler_semantic_index.compiler-semantic-source-index-find-symbol-role
             (& index)
-            (struct-get
+            (__tl-project-field
               (compiler_semantic_index.compiler-semantic-source-index-get
                 (& index)
                 record-index)
@@ -1161,7 +1161,7 @@
           (let
             [doc : lsp_vector_families.LspDocument
               (lsp_document_vec.get docs i (lsp-document-fallback))]
-            (if (string.eq (struct-get doc uri) uri)
+            (if (string.eq doc.uri uri)
               (begin
                 (set! found i)
                 (set! done true)
@@ -1187,11 +1187,11 @@
       (let
         [old-doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-        [old-text : String (struct-get old-doc text)]
-        [old-decls : lsp_decl_vec.Vec (struct-get old-doc decls)]
-        [old-decls-valid : bool (struct-get old-doc decls-valid)]
+        [old-text : String old-doc.text]
+        [old-decls : lsp_decl_vec.Vec old-doc.decls]
+        [old-decls-valid : bool old-doc.decls-valid]
         [old-check-cache : lsp_vector_families.LspCheckCache
-          (struct-get old-doc check-cache)]
+          old-doc.check-cache]
         [new-decls : lsp_decl_vec.Vec
           (if (string.eq old-text text)
             old-decls
@@ -1217,7 +1217,7 @@
               new-decls
               new-decls-valid
               new-check-cache
-              (struct-get old-doc semantic)))
+              old-doc.semantic))
           docs))
       (let
         [doc : lsp_vector_families.LspDocument
@@ -1257,7 +1257,7 @@
         (let
           [doc : lsp_vector_families.LspDocument
             (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-          (if (string.eq (struct-get doc uri) uri)
+          (if (string.eq doc.uri uri)
             (set! found index)
             (set! index (+ index 1)))))
       (if (>= found 0)
@@ -1268,15 +1268,15 @@
             (&mut docs)
             found
             (lsp_vector_families.LspDocument
-              (struct-get doc uri)
-              (struct-get doc path)
-              (struct-get doc text)
-              (struct-get doc version)
-              (struct-get doc diagnostic-uris)
-              (struct-get doc decls)
-              (struct-get doc decls-valid)
+              doc.uri
+              doc.path
+              doc.text
+              doc.version
+              doc.diagnostic-uris
+              doc.decls
+              doc.decls-valid
               check-cache
-              (struct-get doc semantic))))
+              doc.semantic)))
         unit))))
 
 (define (lsp-documents-set-check-cache
@@ -1300,10 +1300,10 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-        [source-path : String (struct-get doc path)]
-        [source-text : String (struct-get doc text)]
+        [source-path : String doc.path]
+        [source-text : String doc.text]
         [previous-arena : i64 (arena.tl_arena_current)]
-        [snapshot-owner : i64 (struct-get semantic-index owner-arena)]
+        [snapshot-owner : i64 semantic-index.owner-arena]
         [_install-owner : unit
           (unsafe
             (arena.tl_arena_set snapshot-owner))]
@@ -1313,9 +1313,9 @@
           (unsafe
             (arena.tl_arena_set previous-arena))]
         (begin
-          (lsp-semantic-snapshot-release! (&mut (struct-get doc semantic)))
+          (lsp-semantic-snapshot-release! (&mut doc.semantic))
           (set!
-            (struct-get doc semantic)
+            doc.semantic
             (lsp_vector_families.LspSemanticSnapshot
               semantic-index
               version
@@ -1337,7 +1337,7 @@
       [doc : lsp_vector_families.LspDocument
         (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
       (begin
-        (lsp-semantic-snapshot-release! (&mut (struct-get doc semantic)))
+        (lsp-semantic-snapshot-release! (&mut doc.semantic))
         (lsp_document_vec.set (&mut docs) index doc)))
     unit))
 
@@ -1388,10 +1388,7 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-        (LspDocumentLookup.Found
-          (struct-get doc path)
-          (struct-get doc text)
-          (struct-get doc diagnostic-uris)))
+        (LspDocumentLookup.Found doc.path doc.text doc.diagnostic-uris))
       LspDocumentLookup.Missing)))
 
 (define (lsp-document-refresh-from-disk
@@ -1400,35 +1397,33 @@
   (let
     [doc : lsp_vector_families.LspDocument
       (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-    [slots : (__tl_dyn-array lsp_vector_families.LspDocument)
-      (struct-get docs slots)]
-    [path : String (struct-get doc path)]
+    [slots : (__tl_dyn-array lsp_vector_families.LspDocument) docs.slots]
+    [path : String doc.path]
     ;; Versioned documents are client-owned open buffers. Only unversioned
     ;; entries loaded by tooling may be refreshed from disk.
-    (if (or (string.eq path "") (>= (struct-get doc version) 0))
+    (if (or (string.eq path "") (>= doc.version 0))
       doc
       (match (io.try-read-file (& path))
         [(io.OkIoBytes disk-contents)
           (let
             [disk-text : String (byte_buf.to-string disk-contents)]
-            (if (string.eq disk-text (struct-get doc text))
+            (if (string.eq disk-text doc.text)
               doc
               (let
                 [updated : lsp_vector_families.LspDocument
                   (lsp_vector_families.LspDocument
-                    (struct-get doc uri)
+                    doc.uri
                     path
                     disk-text
                     -1
-                    (struct-get doc diagnostic-uris)
+                    doc.diagnostic-uris
                     (lsp_decl_vec.new)
                     false
                     lsp_vector_families.LspCheckCacheInvalid
                     (lsp-semantic-snapshot-empty))]
                 (begin
-                  (lsp-semantic-snapshot-release!
-                    (&mut (struct-get doc semantic)))
-                  (array-set! slots index updated)
+                  (lsp-semantic-snapshot-release! (&mut doc.semantic))
+                  (set! (array-ref slots index) updated)
                   updated))))]
         [(io.ErrIoBytes _) doc]))))
 
@@ -1441,10 +1436,7 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp-document-refresh-from-disk docs index)]
-        (LspDocumentLookup.Found
-          (struct-get doc path)
-          (struct-get doc text)
-          (struct-get doc diagnostic-uris)))
+        (LspDocumentLookup.Found doc.path doc.text doc.diagnostic-uris))
       LspDocumentLookup.Missing)))
 
 (define (lsp-documents-smoke-add [docs : lsp_document_vec.Vec] [uri : String]) : lsp_document_vec.Vec
@@ -1475,7 +1467,7 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) idx (lsp-document-fallback))]
-        (match (struct-get doc check-cache)
+        (match doc.check-cache
           [(lsp_vector_families.LspCheckCacheOk) true]
           [_ false])))))
 
@@ -1489,7 +1481,7 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) idx (lsp-document-fallback))]
-        (match (struct-get doc check-cache)
+        (match doc.check-cache
           [(lsp_vector_families.LspCheckCacheInvalid) true]
           [_ false])))))
 
@@ -1587,8 +1579,8 @@
           (and
             (= (lsp_document_vec.len (& trimmed)) 16)
             (lsp-documents-smoke-missing? trimmed "file:///doc08.tl")
-            (string.eq (struct-get shifted uri) "file:///doc09.tl")
-            (string.eq (struct-get last uri) "file:///doc16.tl")))))))
+            (string.eq shifted.uri "file:///doc09.tl")
+            (string.eq last.uri "file:///doc16.tl")))))))
 
 (cfg
   test
@@ -1625,7 +1617,7 @@
           [doc : lsp_vector_families.LspDocument
             (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
           [index : compiler_semantic_index.CompilerSemanticSourceIndex
-            (struct-get (struct-get doc semantic) index)]
+            doc.semantic.index]
           [use-index : i64
             (compiler_semantic_index.compiler-semantic-source-index-find-record
               (& index)
@@ -1637,7 +1629,7 @@
             (compiler_semantic_index.compiler-semantic-source-index-get
               (& index)
               use-index)]
-          [use-byte : i64 (struct-get (struct-get use-record span) start-byte)]
+          [use-byte : i64 use-record.span.start-byte]
           [position-index : i64
             (lsp-document-semantic-record-at (& doc) use-byte)]
           [definition-index : i64
@@ -1655,12 +1647,9 @@
             (= position-index use-index)
             (>= definition-index 0)
             (compiler_semantic_index.compiler-semantic-symbol-id-eq?
-              (struct-get use-record symbol)
-              (struct-get definition-record symbol))
-            (not
-              (string.eq
-                (struct-get (struct-get definition-record span) path)
-                path))))))))
+              use-record.symbol
+              definition-record.symbol)
+            (not (string.eq definition-record.span.path path))))))))
 
 (cfg
   test
@@ -1706,8 +1695,7 @@
             false)]
         [(LspHandleResult.Continue first-state)
           (let
-            [first-docs : lsp_document_vec.Vec
-              (struct-get first-state documents)]
+            [first-docs : lsp_document_vec.Vec first-state.documents]
             [first-ok : bool
               (and
                 (=
@@ -1724,8 +1712,7 @@
                   false)]
               [(LspHandleResult.Continue second-state)
                 (let
-                  [second-docs : lsp_document_vec.Vec
-                    (struct-get second-state documents)]
+                  [second-docs : lsp_document_vec.Vec second-state.documents]
                   [second-ok : bool
                     (lsp-semantic-smoke-query-ok? second-docs uri path version)]
                   (begin
@@ -1918,13 +1905,13 @@
 
 (define (lsp-workspace-roots-len
   [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]) : i64
-  (struct-get roots len))
+  roots.len)
 
 (define (lsp-workspace-roots-get
   [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]
   [index : i64]) : lsp_vector_families.LspWorkspaceRoot
-  (if (and (>= index 0) (< index (struct-get roots len)))
-    (array-ref (struct-get roots slots) index)
+  (if (and (>= index 0) (< index roots.len))
+    (array-ref roots.slots index)
     (lsp-workspace-root-fallback)))
 
 (define (lsp-workspace-roots-copy-range!
@@ -1935,13 +1922,13 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (lsp-workspace-roots-grow!
   [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)]) : unit
   (let
-    [old-cap : i64 (array-length (struct-get roots slots))]
+    [old-cap : i64 (array-length roots.slots)]
     [new-cap : i64
       (if (< old-cap 4)
         4
@@ -1949,21 +1936,18 @@
     [bigger : (__tl_dyn-array lsp_vector_families.LspWorkspaceRoot)
       (make-array lsp_vector_families.LspWorkspaceRoot new-cap)]
     (begin
-      (lsp-workspace-roots-copy-range!
-        (&mut bigger)
-        (& (struct-get roots slots))
-        (struct-get roots len))
-      (set! (struct-get roots slots) bigger))))
+      (lsp-workspace-roots-copy-range! (&mut bigger) (& roots.slots) roots.len)
+      (set! roots.slots bigger))))
 
 (define (lsp-workspace-roots-push!
   [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)]
   [root : lsp_vector_families.LspWorkspaceRoot]) : unit
   (begin
-    (if (>= (struct-get roots len) (array-length (struct-get roots slots)))
+    (if (>= roots.len (array-length roots.slots))
       (lsp-workspace-roots-grow! roots)
       unit)
-    (array-set! (struct-get roots slots) (struct-get roots len) root)
-    (set! (struct-get roots len) (+ (struct-get roots len) 1))))
+    (set! (array-ref roots.slots roots.len) root)
+    (set! roots.len (+ roots.len 1))))
 
 (define (lsp-workspace-roots-find-uri
   [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]
@@ -1972,9 +1956,9 @@
     [index : i64 0]
     [found : i64 -1]
     (begin
-      (while (and (< index (struct-get roots len)) (< found 0))
+      (while (and (< index roots.len) (< found 0))
         (if (string.eq
-          (struct-get (array-ref (struct-get roots slots) index) uri)
+          (__tl-project-field (array-ref roots.slots index) uri)
           uri)
           (set! found index)
           (set! index (+ index 1))))
@@ -1983,20 +1967,19 @@
 (define (lsp-workspace-roots-remove-index!
   [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)]
   [index : i64]) : unit
-  (if (or (< index 0) (>= index (struct-get roots len)))
+  (if (or (< index 0) (>= index roots.len))
     unit
     (let
       [cursor : i64 index]
-      [last : i64 (- (struct-get roots len) 1)]
+      [last : i64 (- roots.len 1)]
       (begin
         (while (< cursor last)
           (begin
-            (array-set!
-              (struct-get roots slots)
-              cursor
-              (array-ref (struct-get roots slots) (+ cursor 1)))
+            (set!
+              (array-ref roots.slots cursor)
+              (array-ref roots.slots (+ cursor 1)))
             (set! cursor (+ cursor 1))))
-        (set! (struct-get roots len) last)))))
+        (set! roots.len last)))))
 
 (define (lsp-workspace-sources-new) : lsp_vector_families.LspWorkspaceSources
   (lsp_vector_families.LspWorkspaceSources
@@ -2005,13 +1988,13 @@
 
 (define (lsp-workspace-sources-len
   [sources : (& sources lsp_vector_families.LspWorkspaceSources)]) : i64
-  (struct-get sources len))
+  sources.len)
 
 (define (lsp-workspace-sources-get
   [sources : (& sources lsp_vector_families.LspWorkspaceSources)]
   [index : i64]) : lsp_vector_families.LspWorkspaceSource
-  (if (and (>= index 0) (< index (struct-get sources len)))
-    (array-ref (struct-get sources slots) index)
+  (if (and (>= index 0) (< index sources.len))
+    (array-ref sources.slots index)
     (lsp-workspace-source-fallback)))
 
 (define (lsp-workspace-sources-copy-range!
@@ -2022,13 +2005,13 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (array-set! dst index (array-ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (lsp-workspace-sources-grow!
   [sources : (&mut sources lsp_vector_families.LspWorkspaceSources)]) : unit
   (let
-    [old-cap : i64 (array-length (struct-get sources slots))]
+    [old-cap : i64 (array-length sources.slots)]
     [new-cap : i64
       (if (< old-cap 8)
         8
@@ -2038,26 +2021,26 @@
     (begin
       (lsp-workspace-sources-copy-range!
         (&mut bigger)
-        (& (struct-get sources slots))
-        (struct-get sources len))
-      (set! (struct-get sources slots) bigger))))
+        (& sources.slots)
+        sources.len)
+      (set! sources.slots bigger))))
 
 (define (lsp-workspace-sources-push!
   [sources : (&mut sources lsp_vector_families.LspWorkspaceSources)]
   [source : lsp_vector_families.LspWorkspaceSource]) : unit
   (begin
-    (if (>= (struct-get sources len) (array-length (struct-get sources slots)))
+    (if (>= sources.len (array-length sources.slots))
       (lsp-workspace-sources-grow! sources)
       unit)
-    (array-set! (struct-get sources slots) (struct-get sources len) source)
-    (set! (struct-get sources len) (+ (struct-get sources len) 1))))
+    (set! (array-ref sources.slots sources.len) source)
+    (set! sources.len (+ sources.len 1))))
 
 (define (lsp-workspace-sources-set!
   [sources : (&mut sources lsp_vector_families.LspWorkspaceSources)]
   [index : i64]
   [source : lsp_vector_families.LspWorkspaceSource]) : unit
-  (if (and (>= index 0) (< index (struct-get sources len)))
-    (array-set! (struct-get sources slots) index source)
+  (if (and (>= index 0) (< index sources.len))
+    (set! (array-ref sources.slots index) source)
     unit))
 
 (define (lsp-workspace-sources-find-uri
@@ -2067,9 +2050,9 @@
     [index : i64 0]
     [found : i64 -1]
     (begin
-      (while (and (< index (struct-get sources len)) (< found 0))
+      (while (and (< index sources.len) (< found 0))
         (if (string.eq
-          (struct-get (array-ref (struct-get sources slots) index) uri)
+          (__tl-project-field (array-ref sources.slots index) uri)
           uri)
           (set! found index)
           (set! index (+ index 1))))
@@ -2078,20 +2061,19 @@
 (define (lsp-workspace-sources-remove-index!
   [sources : (&mut sources lsp_vector_families.LspWorkspaceSources)]
   [index : i64]) : unit
-  (if (or (< index 0) (>= index (struct-get sources len)))
+  (if (or (< index 0) (>= index sources.len))
     unit
     (let
       [cursor : i64 index]
-      [last : i64 (- (struct-get sources len) 1)]
+      [last : i64 (- sources.len 1)]
       (begin
         (while (< cursor last)
           (begin
-            (array-set!
-              (struct-get sources slots)
-              cursor
-              (array-ref (struct-get sources slots) (+ cursor 1)))
+            (set!
+              (array-ref sources.slots cursor)
+              (array-ref sources.slots (+ cursor 1)))
             (set! cursor (+ cursor 1))))
-        (set! (struct-get sources len) last)))))
+        (set! sources.len last)))))
 
 (define (lsp-documents-find-path-index
   [docs : lsp_document_vec.Vec]
@@ -2106,7 +2088,7 @@
           [doc : lsp_vector_families.LspDocument
             (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
           (if (string.eq
-            (compiler_load.compiler-load-normalize-path (struct-get doc path))
+            (compiler_load.compiler-load-normalize-path doc.path)
             normalized)
             (set! found index)
             (set! index (+ index 1)))))
@@ -2264,7 +2246,7 @@
   (match (lsp-workspace-root-from-uri uri)
     [(lsp_vector_families.LspWorkspaceRootLookup.Missing) unit]
     [(lsp_vector_families.LspWorkspaceRootLookup.Found root)
-      (if (>= (lsp-workspace-roots-find-uri roots (struct-get root uri)) 0)
+      (if (>= (lsp-workspace-roots-find-uri roots root.uri) 0)
         unit
         (lsp-workspace-roots-push! roots root))]))
 
@@ -2302,7 +2284,7 @@
                     [(json.JsonArray items)
                       (lsp-workspace-roots-add-folder-items!
                         (&mut roots)
-                        (box-get items))]
+                        (__tl-box-place items))]
                     [_ unit])])
               (if (= (lsp-workspace-roots-len (& roots)) 0)
                 (match (lsp-json-string-field params "rootUri")
@@ -2352,7 +2334,7 @@
         (lsp-zero-based line)
         (lsp-zero-based col))]
     [lc : LspLineCol (lsp-line-col-at-offset text offset)]
-    (lsp-position (struct-get lc line) (struct-get lc col))))
+    (lsp-position lc.line lc.col)))
 
 (define (lsp-range-from-compiler-span
   [fallback-path : String]
@@ -2400,7 +2382,7 @@
   [fallback-text : String]
   [entry : cdiag.CompilerDiagnosticLabel]) : json.Json
   (let
-    [span : cdiag.CompilerDiagnosticSpan (struct-get entry span)]
+    [span : cdiag.CompilerDiagnosticSpan entry.span]
     (lsp-json-object2
       "location"
       (lsp-json-object2
@@ -2409,8 +2391,7 @@
         "range"
         (lsp-range-from-compiler-span fallback-path fallback-text span))
       "message"
-      (json.JsonString
-        (lsp-diagnostic-related-message (struct-get entry label))))))
+      (json.JsonString (lsp-diagnostic-related-message entry.label)))))
 
 (define (lsp-diagnostic-related-information-list
   [fallback-path : String]
@@ -2837,14 +2818,14 @@
   [index : i64]
   [finding : lint.LintFinding]) : json.Json
   (let
-    [span : ast.AstSourceSpan (struct-get finding span)]
+    [span : ast.AstSourceSpan finding.span]
     (lsp-lint-diagnostic
       (lsp-one-codepoint-range-from-byte-position
         text
         (ast.ast-source-span-start-line span)
         (ast.ast-source-span-start-col span))
-      (struct-get finding message)
-      (struct-get finding rule-id)
+      finding.message
+      finding.rule-id
       version
       index)))
 
@@ -2977,7 +2958,7 @@
         (lsp-language-cfgs))
         [(compiler_check_core.ResultCompilerCheck.Ok _) diagnostics]
         [(compiler_check_core.ResultCompilerCheck.Err recovered)
-          (box-get recovered)])
+          (__tl-box-place recovered)])
       diagnostics)))
 
 (define (lsp-analyze-document
@@ -3036,7 +3017,7 @@
                   path
                   text
                   stdlib-roots
-                  (box-get diag))]
+                  (__tl-box-place diag))]
               [first-diag : cdiag.CompilerDiagnostic
                 (cdiag.compiler-diagnostic-list-first diagnostics)]
               [check-cache : lsp_vector_families.LspCheckCache
@@ -3073,7 +3054,7 @@
       [(json.JsonFound value)
         (match value
           [(json.JsonArray items)
-            (match (json.list-get-index (box-get items) 0)
+            (match (json.list-get-index (__tl-box-place items) 0)
               [(json.JsonFound first) (lsp-json-string-field first "text")]
               [(json.JsonMissing) LspJsonText.Missing])]
           [_ LspJsonText.Missing])]
@@ -3101,7 +3082,7 @@
                       (lsp-clear-stale-diagnostics
                         docs
                         uri
-                        (struct-get analysis diagnostic-uris))
+                        analysis.diagnostic-uris)
                       (let
                         [updated-docs : lsp_document_vec.Vec
                           (lsp-documents-set-check-cache
@@ -3111,16 +3092,16 @@
                               path
                               text
                               version
-                              (struct-get analysis diagnostic-uris))
+                              analysis.diagnostic-uris)
                             uri
-                            (struct-get analysis check-cache))]
+                            analysis.check-cache)]
                         [semantic-docs : lsp_document_vec.Vec
-                          (if (struct-get analysis semantic-present)
+                          (if analysis.semantic-present
                             (lsp-documents-set-semantic-index
                               updated-docs
                               uri
                               version
-                              (struct-get analysis semantic-index))
+                              analysis.semantic-index)
                             updated-docs)]
                         (LspDocumentHandleResult.Continue semantic-docs))))]
                 [(LspUriPath.Err message)
@@ -3158,7 +3139,7 @@
                           (lsp-clear-stale-diagnostics
                             docs
                             uri
-                            (struct-get analysis diagnostic-uris))
+                            analysis.diagnostic-uris)
                           (let
                             [updated-docs : lsp_document_vec.Vec
                               (lsp-documents-set-check-cache
@@ -3168,16 +3149,16 @@
                                   path
                                   text
                                   version
-                                  (struct-get analysis diagnostic-uris))
+                                  analysis.diagnostic-uris)
                                 uri
-                                (struct-get analysis check-cache))]
+                                analysis.check-cache)]
                             [semantic-docs : lsp_document_vec.Vec
-                              (if (struct-get analysis semantic-present)
+                              (if analysis.semantic-present
                                 (lsp-documents-set-semantic-index
                                   updated-docs
                                   uri
                                   version
-                                  (struct-get analysis semantic-index))
+                                  analysis.semantic-index)
                                 updated-docs)]
                             (LspDocumentHandleResult.Continue semantic-docs))))]
                     [(LspUriPath.Err message)
@@ -3198,22 +3179,22 @@
                         [analysis : LspAnalyzeResult
                           (lsp-analyze-document
                             uri
-                            (struct-get doc path)
-                            (struct-get doc text)
-                            (struct-get doc version)
+                            doc.path
+                            doc.text
+                            doc.version
                             stdlib-roots)]
                         [updated-docs : lsp_document_vec.Vec
                           (lsp-documents-set-check-cache
                             docs
                             uri
-                            (struct-get analysis check-cache))]
+                            analysis.check-cache)]
                         [semantic-docs : lsp_document_vec.Vec
-                          (if (struct-get analysis semantic-present)
+                          (if analysis.semantic-present
                             (lsp-documents-set-semantic-index
                               updated-docs
                               uri
-                              (struct-get doc version)
-                              (struct-get analysis semantic-index))
+                              doc.version
+                              analysis.semantic-index)
                             updated-docs)]
                         (LspDocumentHandleResult.Continue semantic-docs))))]))]
           [(LspJsonText.Missing) (LspDocumentHandleResult.Continue docs)])]
@@ -3327,7 +3308,7 @@
       [(json.JsonFound only)
         (match only
           [(json.JsonArray items)
-            (lsp-code-action-array-has-quickfix? (box-get items) 0)]
+            (lsp-code-action-array-has-quickfix? (__tl-box-place items) 0)]
           [_ false])])))
 
 (define (lsp-code-action-data-matches?
@@ -3442,7 +3423,7 @@
     (match (json.object-get context (& key))
       [(json.JsonFound value)
         (match value
-          [(json.JsonArray items) (box-get items)]
+          [(json.JsonArray items) (__tl-box-place items)]
           [_ (json.list-empty)])]
       [(json.JsonMissing) (json.list-empty)])))
 
@@ -3474,15 +3455,12 @@
         (let
           [doc : lsp_vector_families.LspDocument
             (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-          [candidate : String (fs.path-normalize (& (struct-get doc path)))]
+          [candidate : String (fs.path-normalize (& doc.path))]
           (if (string.eq candidate wanted)
             (begin
               (set!
                 result
-                (LspCodeActionDocument.Found
-                  (struct-get doc uri)
-                  (struct-get doc text)
-                  (struct-get doc version)))
+                (LspCodeActionDocument.Found doc.uri doc.text doc.version))
               (set! done true))
             (set! index (+ index 1)))))
       result)))
@@ -3492,9 +3470,8 @@
   [fallback-path : String]
   [edits : cdiag.CompilerDiagnosticTextEditSeq]) : bool
   (let
-    [slots : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit)
-      (struct-get edits slots)]
-    [count : i64 (struct-get edits len)]
+    [slots : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit) edits.slots]
+    [count : i64 edits.len]
     [index : i64 0]
     [ok : bool (> count 0)]
     (begin
@@ -3544,11 +3521,10 @@
   [text : String]
   [index : i64]
   [acc : json.JsonSeq]) : json.JsonSeq
-  (if (>= index (struct-get edits len))
+  (if (>= index edits.len)
     acc
     (let
-      [edit : cdiag.CompilerDiagnosticTextEdit
-        (array-ref (struct-get edits slots) index)]
+      [edit : cdiag.CompilerDiagnosticTextEdit (array-ref edits.slots index)]
       [span : cdiag.CompilerDiagnosticSpan
         (cdiag.compiler-diagnostic-text-edit-span edit)]
       [edit-path : String
@@ -3592,22 +3568,19 @@
     (let
       [doc : lsp_vector_families.LspDocument
         (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-      [path : String (fs.path-normalize (& (struct-get doc path)))]
+      [path : String (fs.path-normalize (& doc.path))]
       [document-edits : json.JsonSeq
         (lsp-code-action-edits-for-path
           edits
           fallback-path
           path
-          (struct-get doc text)
+          doc.text
           0
           (json.list-empty))]
       [next : json.JsonSeq
         (if (> (json.list-count document-edits) 0)
           (lsp-json-list-cons
-            (lsp-code-action-document-edit
-              (struct-get doc uri)
-              (struct-get doc version)
-              document-edits)
+            (lsp-code-action-document-edit doc.uri doc.version document-edits)
             acc)
           acc)]
       (lsp-code-action-document-changes-from
@@ -3657,11 +3630,10 @@
   [fixes : cdiag.CompilerDiagnosticFixSeq]
   [index : i64]
   [acc : json.JsonSeq]) : json.JsonSeq
-  (if (>= index (struct-get fixes len))
+  (if (>= index fixes.len)
     acc
     (let
-      [fix : cdiag.CompilerDiagnosticFix
-        (array-ref (struct-get fixes slots) index)]
+      [fix : cdiag.CompilerDiagnosticFix (array-ref fixes.slots index)]
       [edits : cdiag.CompilerDiagnosticTextEditSeq
         (cdiag.compiler-diagnostic-fix-edits fix)]
       [machine-applicable : bool
@@ -3756,7 +3728,7 @@
         version
         request-range
         context-diagnostics
-        (box-get diagnostic-box)
+        (__tl-box-place diagnostic-box)
         0
         acc)]))
 
@@ -3786,19 +3758,19 @@
   [finding : lint.LintFinding]
   [index : i64]) : bool
   (let
-    [wanted-span : ast.AstSourceSpan (struct-get finding span)]
+    [wanted-span : ast.AstSourceSpan finding.span]
     [wanted-line : i64 (ast.ast-source-span-start-line wanted-span)]
-    [wanted-rule : String (struct-get finding rule-id)]
+    [wanted-rule : String finding.rule-id]
     [cursor : i64 0]
     [duplicate : bool false]
     (begin
       (while (and (not duplicate) (< cursor index))
         (let
           [earlier : lint.LintFinding (lint.lint-findings-ref findings cursor)]
-          [earlier-span : ast.AstSourceSpan (struct-get earlier span)]
+          [earlier-span : ast.AstSourceSpan earlier.span]
           (if (and
             (= (ast.ast-source-span-start-line earlier-span) wanted-line)
-            (string.eq (struct-get earlier rule-id) wanted-rule))
+            (string.eq earlier.rule-id wanted-rule))
             (set! duplicate true)
             (set! cursor (+ cursor 1)))))
       duplicate)))
@@ -3809,14 +3781,14 @@
   [text : String]
   [finding : lint.LintFinding]) : json.Json
   (let
-    [span : ast.AstSourceSpan (struct-get finding span)]
+    [span : ast.AstSourceSpan finding.span]
     [line : i64 (ast.ast-source-span-start-line span)]
     [indent : String (lsp-code-action-leading-indent text line)]
     [replacement : String
       (lsp-str4
         indent
         ";; lint-allow: "
-        (struct-get finding rule-id)
+        finding.rule-id
         (lsp-code-action-newline text))]
     [edit : json.Json
       (lsp-json-object2
@@ -3867,10 +3839,7 @@
             [(LspJsonValue.Found diagnostic)
               (lsp-json-list-cons
                 (lsp-code-action
-                  (lsp-str3
-                    "Suppress "
-                    (struct-get finding rule-id)
-                    " for this form")
+                  (lsp-str3 "Suppress " finding.rule-id " for this form")
                   diagnostic
                   (lsp-code-action-lint-edit uri version text finding))
                 acc)]))]
@@ -3920,7 +3889,7 @@
                               (& docs)
                               document-index
                               (lsp-document-fallback))]
-                          [version : i64 (struct-get doc version)]
+                          [version : i64 doc.version]
                           (if (or
                             (< version 0)
                             (not (lsp-code-action-kind-requested? context)))
@@ -3956,8 +3925,8 @@
                                   (lsp-code-action-compiler
                                     docs
                                     uri
-                                    (struct-get doc path)
-                                    (struct-get doc text)
+                                    doc.path
+                                    doc.text
                                     version
                                     request-range
                                     context-diagnostics
@@ -3967,15 +3936,15 @@
                               [findings : lint.LintFindings
                                 (if has-lint
                                   (lint_driver_core.selfhost-lint-source-with-roots-and-cfg
-                                    (struct-get doc path)
-                                    (struct-get doc text)
+                                    doc.path
+                                    doc.text
                                     stdlib-roots
                                     (lsp-language-cfgs))
                                   (lint.lint-findings-empty))]
                               [actions : json.JsonSeq
                                 (lsp-code-action-lint-from
                                   uri
-                                  (struct-get doc text)
+                                  doc.text
                                   version
                                   findings
                                   request-range
@@ -4292,37 +4261,33 @@
 ;; datum until its payload completes.
 (define (lsp-call-frame-start-datum!
   [frame : (&mut frame lsp_vector_families.LspCallFrame)]) : unit
-  (if (struct-get frame datum-active)
-    (if (struct-get frame datum-complete)
+  (if frame.datum-active
+    (if frame.datum-complete
       (begin
-        (set!
-          (struct-get frame argument-index)
-          (+ (struct-get frame argument-index) 1))
-        (set! (struct-get frame datum-complete) false))
+        (set! frame.argument-index (+ frame.argument-index 1))
+        (set! frame.datum-complete false))
       unit)
     (begin
-      (set! (struct-get frame datum-active) true)
-      (set! (struct-get frame datum-complete) false))))
+      (set! frame.datum-active true)
+      (set! frame.datum-complete false))))
 
 (define (lsp-call-frame-complete-datum!
   [frame : (&mut frame lsp_vector_families.LspCallFrame)]) : unit
   (begin
-    (if (not (struct-get frame datum-active))
+    (if (not frame.datum-active)
       (lsp-call-frame-start-datum! frame)
       unit)
-    (set! (struct-get frame datum-complete) true)))
+    (set! frame.datum-complete true)))
 
 ;; A separator after a completed argument moves the cursor to the next
 ;; zero-based argument. Separators after a quote prefix leave that datum open.
 (define (lsp-call-frame-separate!
   [frame : (&mut frame lsp_vector_families.LspCallFrame)]) : unit
-  (if (and (struct-get frame datum-active) (struct-get frame datum-complete))
+  (if (and frame.datum-active frame.datum-complete)
     (begin
-      (set!
-        (struct-get frame argument-index)
-        (+ (struct-get frame argument-index) 1))
-      (set! (struct-get frame datum-active) false)
-      (set! (struct-get frame datum-complete) false))
+      (set! frame.argument-index (+ frame.argument-index 1))
+      (set! frame.datum-active false)
+      (set! frame.datum-complete false))
     unit))
 
 (define (lsp-call-frames-update-top-datum!
@@ -4339,10 +4304,8 @@
             index
             (lsp-call-frame-fallback))]
         (begin
-          (if (and
-            (= (struct-get frame kind) 0)
-            (= (struct-get frame head-state) 0))
-            (set! (struct-get frame head-state) 2)
+          (if (and (= frame.kind 0) (= frame.head-state 0))
+            (set! frame.head-state 2)
             (begin
               (lsp-call-frame-start-datum! (&mut frame))
               (if complete
@@ -4363,10 +4326,7 @@
             index
             (lsp-call-frame-fallback))]
         (begin
-          (if (not
-            (and
-              (= (struct-get frame kind) 0)
-              (= (struct-get frame head-state) 0)))
+          (if (not (and (= frame.kind 0) (= frame.head-state 0)))
             (lsp-call-frame-complete-datum! (&mut frame))
             unit)
           (lsp_vector_families.lsp-call-frames-set! frames index frame))))))
@@ -4402,18 +4362,16 @@
               index
               (lsp-call-frame-fallback))]
           (begin
-            (if (and
-              (= (struct-get frame kind) 0)
-              (= (struct-get frame head-state) 1))
+            (if (and (= frame.kind 0) (= frame.head-state 1))
               (begin
                 (set!
                   result
                   (LspCallContextLookup.Found
                     (LspCallContext
-                      (struct-get frame form-start)
-                      (struct-get frame head-start)
-                      (struct-get frame head-end)
-                      (struct-get frame argument-index))))
+                      frame.form-start
+                      frame.head-start
+                      frame.head-end
+                      frame.argument-index)))
                 (set! found true))
               unit)
             (set! index (- index 1)))))
@@ -4513,7 +4471,7 @@
                             0
                             1)]
                         (begin
-                          (if (= (struct-get frame kind) close-kind)
+                          (if (= frame.kind close-kind)
                             (begin
                               (lsp_vector_families.lsp-call-frames-pop!
                                 (&mut frames))
@@ -4545,14 +4503,12 @@
                               top-index
                               (lsp-call-frame-fallback))]
                           (begin
-                            (if (and
-                              (= (struct-get frame kind) 0)
-                              (= (struct-get frame head-state) 0))
+                            (if (and (= frame.kind 0) (= frame.head-state 0))
                               (if exact
                                 (begin
-                                  (set! (struct-get frame head-start) start)
-                                  (set! (struct-get frame head-end) past)
-                                  (set! (struct-get frame head-state) 1))
+                                  (set! frame.head-start start)
+                                  (set! frame.head-end past)
+                                  (set! frame.head-state 1))
                                 unit)
                               (begin
                                 (lsp-call-frame-start-datum! (&mut frame))
@@ -4584,10 +4540,10 @@
   (match lookup
     [(LspCallContextLookup.Found context)
       (and
-        (= (struct-get context form-start) form-start)
-        (= (struct-get context head-start) head-start)
-        (= (struct-get context head-end) head-end)
-        (= (struct-get context active-argument) active-argument))]
+        (= context.form-start form-start)
+        (= context.head-start head-start)
+        (= context.head-end head-end)
+        (= context.active-argument active-argument))]
     [(LspCallContextLookup.Missing) false]))
 
 (define (lsp-call-context-missing? [lookup : LspCallContextLookup]) : bool
@@ -4639,7 +4595,7 @@
       6
       0)
     (lsp-call-context-is?
-      (lsp-call-context-at-offset "(outer (inner x)" 16)
+      (lsp-call-context-at-offset "(outer (inner x))" 16)
       0
       1
       6
@@ -4721,7 +4677,7 @@
       21
       1)
     (lsp-call-context-is? (lsp-call-context-at-offset ")))(safe x " 11) 3 4 8 1)
-    (lsp-call-context-missing? (lsp-call-context-at-offset "(outer [x )" 12))))
+    (lsp-call-context-missing? (lsp-call-context-at-offset "(outer [x ))" 12))))
 
 (test
   lsp-call-context-boundaries
@@ -4783,23 +4739,22 @@
   [cache : (&mut cache LspLineColCache)]
   [text : String]
   [off : i64]) : LspLineCol
-  (if (= off (struct-get cache offset))
-    (LspLineCol (struct-get cache line) (struct-get cache col))
+  (if (= off cache.offset)
+    (LspLineCol cache.line cache.col)
     (let
       [n : i64 (string.string-length text)]
-      [resume : bool
-        (and (>= (struct-get cache offset) 0) (< (struct-get cache offset) off))]
+      [resume : bool (and (>= cache.offset 0) (< cache.offset off))]
       [start : i64
         (if resume
-          (struct-get cache offset)
+          cache.offset
           0)]
       [line : i64
         (if resume
-          (struct-get cache line)
+          cache.line
           1)]
       [col : i64
         (if resume
-          (struct-get cache col)
+          cache.col
           1)]
       [i : i64 start]
       (begin
@@ -4813,9 +4768,9 @@
                 col
                 (+ col (lsp-position-units-for-byte (string.string-ref text i)))))
             (set! i (+ i 1))))
-        (set! (struct-get cache offset) off)
-        (set! (struct-get cache line) line)
-        (set! (struct-get cache col) col)
+        (set! cache.offset off)
+        (set! cache.line line)
+        (set! cache.col col)
         (LspLineCol line col)))))
 
 (define (lsp-def-keyword? [kw : String]) : bool
@@ -4954,11 +4909,7 @@
   [needle : String]) : LspDefLocation
   (let
     [lc : LspLineCol (lsp-line-col-at-offset text off)]
-    (LspDefLocation.Found
-      uri
-      (struct-get lc line)
-      (struct-get lc col)
-      (lsp-string-position-units needle))))
+    (LspDefLocation.Found uri lc.line lc.col (lsp-string-position-units needle))))
 
 (define (lsp-find-definition-in-docs
   [docs : lsp_document_vec.Vec]
@@ -4970,17 +4921,12 @@
     (let
       [doc : lsp_vector_families.LspDocument
         (lsp_document_vec.get (& docs) idx (lsp-document-fallback))]
-      (if (string.eq (struct-get doc uri) current-uri)
+      (if (string.eq doc.uri current-uri)
         (lsp-find-definition-in-docs docs current-uri needle (+ idx 1))
         (let
-          [off : i64
-            (lsp-find-def-or-variant-offset-in (struct-get doc text) needle)]
+          [off : i64 (lsp-find-def-or-variant-offset-in doc.text needle)]
           (if (>= off 0)
-            (lsp-def-loc-from
-              (struct-get doc uri)
-              (struct-get doc text)
-              off
-              needle)
+            (lsp-def-loc-from doc.uri doc.text off needle)
             (lsp-find-definition-in-docs docs current-uri needle (+ idx 1))))))))
 
 ;; Resolve `needle` to a definition: the current document first, then any other
@@ -5272,8 +5218,8 @@
 ;; Add a resolved module path (and its source) to the set if new and under cap.
 (define (lsp-module-set-add-path [set : LspModuleSet] [resolved : String]) : LspModuleSet
   (let
-    [paths : lsp_svec.Vec (struct-get set paths)]
-    [texts : lsp_svec.Vec (struct-get set texts)]
+    [paths : lsp_svec.Vec set.paths]
+    [texts : lsp_svec.Vec set.texts]
     (if (and
       (< (lsp_svec.len (& paths)) 512)
       (not (lsp-string-vec-contains? paths resolved)))
@@ -5323,16 +5269,16 @@
       (lsp-module-set-add-imports start-path start-text stdlib-roots seeded)]
     [i : i64 0]
     (begin
-      (while (< i (lsp_svec.len (& (struct-get set paths))))
+      (while (< i (lsp_svec.len (& set.paths)))
         (let
-          [src : String (lsp_svec.get (& (struct-get set texts)) i "")]
+          [src : String (lsp_svec.get (& set.texts) i "")]
           (begin
             (if (string.eq src "")
               unit
               (set!
                 set
                 (lsp-module-set-add-imports
-                  (lsp_svec.get (& (struct-get set paths)) i "")
+                  (lsp_svec.get (& set.paths) i "")
                   src
                   stdlib-roots
                   set)))
@@ -5344,15 +5290,14 @@
   [set : LspModuleSet]
   [needle : String]
   [idx : i64]) : LspDefLocation
-  (if (>= idx (lsp_svec.len (& (struct-get set paths))))
+  (if (>= idx (lsp_svec.len (& set.paths)))
     LspDefLocation.Missing
     (let
-      [src : String (lsp_svec.get (& (struct-get set texts)) idx "")]
+      [src : String (lsp_svec.get (& set.texts) idx "")]
       [off : i64 (lsp-find-def-or-variant-offset-in src needle)]
       (if (>= off 0)
         (lsp-def-loc-from
-          (lsp-resolved-path-to-file-uri
-            (lsp_svec.get (& (struct-get set paths)) idx ""))
+          (lsp-resolved-path-to-file-uri (lsp_svec.get (& set.paths) idx ""))
           src
           off
           needle)
@@ -5637,7 +5582,7 @@
   "define lambda let if begin while set! return match foreach cond when unless and or with-arena with-escape with-scratch try unsafe quote quasiquote unquote ann init cast type defstruct defenum defmacro defdispatch import export extern module comptime include-str include-bin test spmd-reduce spmd-scan spmd-broadcast spmd-shuffle program-index program-count")
 
 (define (lsp-completion-builtins) : String
-  "ptr-null ptr-read ptr-write! ptr-offset ptr-cast ptr->int int->ptr ptr-null? ptr-addr-of make-array array-ref array-set! array-push! array-data tuple-ref struct-get string-data string-from-bytes program-argc program-argv program-envp cpuid-eax cpuid-ebx cpuid-ecx cpuid-edx xgetbv syscall box box-get array tuple")
+  "ptr-null ptr-read ptr-write! ptr-offset ptr-cast ptr->int int->ptr ptr-null? ptr-addr-of make-array array-ref array-push! array-data tuple-ref deref string-data string-from-bytes program-argc program-argv program-envp cpuid-eax cpuid-ebx cpuid-ecx cpuid-edx xgetbv syscall box array tuple")
 
 (define (lsp-completion-types) : String
   "i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char String str unit never Array Tuple Box Ptr MutPtr")
@@ -5724,7 +5669,7 @@
       docs
       (+ idx 1)
       (lsp-collect-def-names
-        (struct-get
+        (__tl-project-field
           (lsp_document_vec.get (& docs) idx (lsp-document-fallback))
           text)
         acc))))
@@ -5813,7 +5758,7 @@
     [lc : LspLineCol (lsp-line-col-at-offset text offset)]
     (lsp-json-object4
       "position"
-      (lsp-position (struct-get lc line) (struct-get lc col))
+      (lsp-position lc.line lc.col)
       "label"
       (json.JsonString (str_cat.str-cat ": " ty))
       "kind"
@@ -5871,7 +5816,20 @@
         [end-line : i64 (lsp-inlay-range-line range "end" 1000000000)]
         [inlay-state : tc.TcInlayHintState
           (tc.tc-job-state-inlay-hints job-state)]
+        [load-state : compiler_load.CompilerLoadSessionState
+          (compiler_load.compiler-load-serial-test-session-state)]
+        [program-cache-enabled : bool
+          (compiler_load.compiler-load-session-state-program-cache-enabled?
+            load-state)]
         (begin
+          ;; Cached imported programs were typechecked before collection was
+          ;; enabled and can leave the entry document ahead of the only bodies
+          ;; visited by this pass. Bypass (but retain) the program cache for the
+          ;; collector pass so the requested document's spans are recorded.
+          (lsp-typecheck-tool-session-before!)
+          (compiler_load.compiler-load-session-state-program-cache-set-enabled-cell!
+            load-state
+            false)
           (tc.tc-inlay-hints-enable-for-state! inlay-state)
           (match (compiler_check_core.compiler-check-source-with-roots-and-cfg-and-job-state
             path
@@ -5886,7 +5844,11 @@
               (lsp-inlay-build inlay-state text start-line end-line)]
             (begin
               (tc.tc-inlay-hints-disable-for-state! inlay-state)
-              (lsp-write-response id (lsp-json-array hints))))))]
+              (lsp-write-response id (lsp-json-array hints))
+              (compiler_load.compiler-load-session-state-program-cache-set-enabled-cell!
+                load-state
+                program-cache-enabled)
+              (lsp-typecheck-tool-session-after!)))))]
     [(LspDocumentLookup.Missing)
       (lsp-write-response id (lsp-json-array (json.list-empty)))]))
 
@@ -5930,7 +5892,7 @@
         "start"
         (lsp-position 1 1)
         "end"
-        (lsp-position (struct-get end line) (struct-get end col)))
+        (lsp-position end.line end.col))
       "newText"
       (json.JsonString formatted))))
 
@@ -6183,7 +6145,7 @@
           [done : bool false]
           [result : LspValidationResult LspValidationResult.Valid]
           (begin
-            (array-set! cur 0 0)
+            (set! (array-ref cur 0) 0)
             (while (and
               (not done)
               (not (= (reader.peek-spanned-tag toks cur) (token.tag-end))))
@@ -6351,10 +6313,10 @@
     (let
       [doc : lsp_vector_families.LspDocument
         (lsp_document_vec.get (& docs) idx (lsp-document-fallback))]
-      (if (string.eq (struct-get doc uri) current-uri)
+      (if (string.eq doc.uri current-uri)
         (lsp-hover-resolve-in-docs docs current-uri needle (+ idx 1))
         (let
-          [doc-text : String (struct-get doc text)]
+          [doc-text : String doc.text]
           [off : i64 (lsp-find-def-form-in doc-text needle)]
           (if (>= off 0)
             (LspDefSource.Found doc-text off)
@@ -6364,10 +6326,10 @@
   [set : LspModuleSet]
   [needle : String]
   [idx : i64]) : LspDefSource
-  (if (>= idx (lsp_svec.len (& (struct-get set paths))))
+  (if (>= idx (lsp_svec.len (& set.paths)))
     LspDefSource.Missing
     (let
-      [src : String (lsp_svec.get (& (struct-get set texts)) idx "")]
+      [src : String (lsp_svec.get (& set.texts) idx "")]
       [off : i64 (lsp-find-def-form-in src needle)]
       (if (>= off 0)
         (LspDefSource.Found src off)
@@ -6628,9 +6590,9 @@
     (let
       [doc : lsp_vector_families.LspDocument
         (lsp_document_vec.get (& docs) idx (lsp-document-fallback))]
-      (if (string.eq (struct-get doc uri) current-uri)
+      (if (string.eq doc.uri current-uri)
         (lsp-resolve-variant-in-docs docs current-uri needle (+ idx 1))
-        (match (lsp-enum-of-variant (struct-get doc text) needle)
+        (match (lsp-enum-of-variant doc.text needle)
           [(LspVariantHit.Found enum-name variant-form)
             (LspVariantHit.Found enum-name variant-form)]
           [(LspVariantHit.Missing)
@@ -6640,11 +6602,9 @@
   [set : LspModuleSet]
   [needle : String]
   [idx : i64]) : LspVariantHit
-  (if (>= idx (lsp_svec.len (& (struct-get set paths))))
+  (if (>= idx (lsp_svec.len (& set.paths)))
     LspVariantHit.Missing
-    (match (lsp-enum-of-variant
-      (lsp_svec.get (& (struct-get set texts)) idx "")
-      needle)
+    (match (lsp-enum-of-variant (lsp_svec.get (& set.texts) idx "") needle)
       [(LspVariantHit.Found enum-name variant-form)
         (LspVariantHit.Found enum-name variant-form)]
       [(LspVariantHit.Missing)
@@ -6789,10 +6749,6 @@
       (lsp-hover-markdown
         "array-ref : (-> (Array T) i64 T)"
         "Read an array element (bounds-checked).")]
-    [(string.eq name "array-set!")
-      (lsp-hover-markdown
-        "array-set! : (-> (Array T) i64 T unit)"
-        "Write an array element (bounds-checked).")]
     [(string.eq name "array-push!")
       (lsp-hover-markdown
         "array-push! : (-> (Array T) T unit)"
@@ -6805,10 +6761,10 @@
       (lsp-hover-markdown
         "tuple-ref : (-> Tuple i64 T)"
         "Read a tuple element by constant index.")]
-    [(string.eq name "struct-get")
+    [(string.eq name "deref")
       (lsp-hover-markdown
-        "struct-get : (-> Struct field T)"
-        "Read a struct field by name.")]
+        "deref : (-> (Box T | &T | &mut T) T)"
+        "Project through a Box or safe reference place.")]
     [(string.eq name "ptr-null")
       (lsp-hover-markdown
         "ptr-null : (-> (Ptr T))"
@@ -7002,9 +6958,9 @@
       "range"
       (lsp-json-object2
         "start"
-        (lsp-position (struct-get start-lc line) (struct-get start-lc col))
+        (lsp-position start-lc.line start-lc.col)
         "end"
-        (lsp-position (struct-get end-lc line) (struct-get end-lc col)))
+        (lsp-position end-lc.line end-lc.col))
       "target"
       (json.JsonString (lsp-resolved-path-to-file-uri resolved)))))
 
@@ -7179,13 +7135,13 @@
                           (lsp_vector_families.LspDeclEntry
                             kind
                             name
-                            (struct-get name-lc line)
-                            (struct-get name-lc col)
+                            name-lc.line
+                            name-lc.col
                             (lsp-string-position-units name)
-                            (struct-get form-start-lc line)
-                            (struct-get form-start-lc col)
-                            (struct-get form-end-lc line)
-                            (struct-get form-end-lc col)
+                            form-start-lc.line
+                            form-start-lc.col
+                            form-end-lc.line
+                            form-end-lc.col
                             symbol-kind)))
                       unit))
                   unit)
@@ -7253,16 +7209,16 @@
 
 (define (lsp-decl-entry-copy [entry : lsp_vector_families.LspDeclEntry]) : lsp_vector_families.LspDeclEntry
   (lsp_vector_families.LspDeclEntry
-    (string.copy (& (struct-get entry kind)))
-    (string.copy (& (struct-get entry name)))
-    (struct-get entry name-line)
-    (struct-get entry name-col)
-    (struct-get entry name-len)
-    (struct-get entry form-start-line)
-    (struct-get entry form-start-col)
-    (struct-get entry form-end-line)
-    (struct-get entry form-end-col)
-    (struct-get entry symbol-kind)))
+    (string.copy (& entry.kind))
+    (string.copy (& entry.name))
+    entry.name-line
+    entry.name-col
+    entry.name-len
+    entry.form-start-line
+    entry.form-start-col
+    entry.form-end-line
+    entry.form-end-col
+    entry.symbol-kind))
 
 (define (lsp-decls-copy [decls : lsp_decl_vec.Vec]) : lsp_decl_vec.Vec
   (let
@@ -7289,17 +7245,17 @@
 
 (define (lsp-document-copy [doc : lsp_vector_families.LspDocument]) : lsp_vector_families.LspDocument
   (lsp_vector_families.LspDocument
-    (string.copy (& (struct-get doc uri)))
-    (string.copy (& (struct-get doc path)))
-    (string.copy (& (struct-get doc text)))
-    (struct-get doc version)
-    (lsp-diagnostic-uris-copy (struct-get doc diagnostic-uris))
-    (lsp-decls-copy (struct-get doc decls))
-    (struct-get doc decls-valid)
-    (lsp-check-cache-copy (struct-get doc check-cache))
+    (string.copy (& doc.uri))
+    (string.copy (& doc.path))
+    (string.copy (& doc.text))
+    doc.version
+    (lsp-diagnostic-uris-copy doc.diagnostic-uris)
+    (lsp-decls-copy doc.decls)
+    doc.decls-valid
+    (lsp-check-cache-copy doc.check-cache)
     ;; The semantic snapshot owns its index and source identity in the index
     ;; arena, so server-state arena swaps transfer this value without copying.
-    (struct-get doc semantic)))
+    doc.semantic))
 
 (define (lsp-documents-copy [docs : lsp_document_vec.Vec]) : lsp_document_vec.Vec
   (let
@@ -7318,8 +7274,8 @@
 
 (define (lsp-workspace-root-copy [root : lsp_vector_families.LspWorkspaceRoot]) : lsp_vector_families.LspWorkspaceRoot
   (lsp_vector_families.LspWorkspaceRoot
-    (string.copy (& (struct-get root uri)))
-    (string.copy (& (struct-get root path)))))
+    (string.copy (& root.uri))
+    (string.copy (& root.path))))
 
 (define (lsp-workspace-roots-copy
   [roots : lsp_vector_families.LspWorkspaceRoots]) : lsp_vector_families.LspWorkspaceRoots
@@ -7338,14 +7294,14 @@
 (define (lsp-workspace-source-copy
   [source : lsp_vector_families.LspWorkspaceSource]) : lsp_vector_families.LspWorkspaceSource
   (lsp_vector_families.LspWorkspaceSource
-    (string.copy (& (struct-get source root-uri)))
-    (string.copy (& (struct-get source root-path)))
-    (string.copy (& (struct-get source uri)))
-    (string.copy (& (struct-get source path)))
-    (string.copy (& (struct-get source module)))
-    (struct-get source explicit-module)
-    (struct-get source overlay)
-    (lsp-decls-copy (struct-get source decls))))
+    (string.copy (& source.root-uri))
+    (string.copy (& source.root-path))
+    (string.copy (& source.uri))
+    (string.copy (& source.path))
+    (string.copy (& source.module))
+    source.explicit-module
+    source.overlay
+    (lsp-decls-copy source.decls)))
 
 (define (lsp-workspace-sources-copy
   [sources : lsp_vector_families.LspWorkspaceSources]) : lsp_vector_families.LspWorkspaceSources
@@ -7365,8 +7321,8 @@
 (define (lsp-workspace-index-copy
   [index : lsp_vector_families.LspWorkspaceIndex]) : lsp_vector_families.LspWorkspaceIndex
   (lsp_vector_families.LspWorkspaceIndex
-    (lsp-workspace-roots-copy (struct-get index roots))
-    (lsp-workspace-sources-copy (struct-get index sources))))
+    (lsp-workspace-roots-copy index.roots)
+    (lsp-workspace-sources-copy index.sources)))
 
 (define (lsp-workspace-root-for-path
   [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]
@@ -7385,10 +7341,10 @@
           [eligible : bool
             (if require-file
               (package_source_core.package-source-path-eligible-for-root?
-                (struct-get root path)
+                root.path
                 path)
               (package_source_core.package-source-path-location-eligible-for-root?
-                (struct-get root path)
+                root.path
                 path))]
           (if eligible
             (begin
@@ -7423,13 +7379,11 @@
     [explicit : String (lsp-explicit-module-name text)]
     [root-uri : String
       (match root
-        [(lsp_vector_families.LspWorkspaceRootLookup.Found found)
-          (struct-get found uri)]
+        [(lsp_vector_families.LspWorkspaceRootLookup.Found found) found.uri]
         [(lsp_vector_families.LspWorkspaceRootLookup.Missing) ""])]
     [root-path : String
       (match root
-        [(lsp_vector_families.LspWorkspaceRootLookup.Found found)
-          (struct-get found path)]
+        [(lsp_vector_families.LspWorkspaceRootLookup.Found found) found.path]
         [(lsp_vector_families.LspWorkspaceRootLookup.Missing) ""])]
     [module : String
       (if (> (string.string-length explicit) 0)
@@ -7454,12 +7408,10 @@
   (let
     [source : lsp_vector_families.LspWorkspaceSource
       (lsp-workspace-source-from-text root path text overlay)]
-    [uri : String (struct-get source uri)]
-    (if (>=
-      (lsp-workspace-sources-find-uri (& (struct-get index sources)) uri)
-      0)
+    [uri : String source.uri]
+    (if (>= (lsp-workspace-sources-find-uri (& index.sources) uri) 0)
       unit
-      (lsp-workspace-sources-push! (&mut (struct-get index sources)) source))))
+      (lsp-workspace-sources-push! (&mut index.sources) source))))
 
 (define (lsp-workspace-index-set-text-source!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
@@ -7471,15 +7423,10 @@
     [source : lsp_vector_families.LspWorkspaceSource
       (lsp-workspace-source-from-text root path text overlay)]
     [existing : i64
-      (lsp-workspace-sources-find-uri
-        (& (struct-get index sources))
-        (struct-get source uri))]
+      (lsp-workspace-sources-find-uri (& index.sources) source.uri)]
     (if (>= existing 0)
-      (lsp-workspace-sources-set!
-        (&mut (struct-get index sources))
-        existing
-        source)
-      (lsp-workspace-sources-push! (&mut (struct-get index sources)) source))))
+      (lsp-workspace-sources-set! (&mut index.sources) existing source)
+      (lsp-workspace-sources-push! (&mut index.sources) source))))
 
 (define (lsp-workspace-index-add-path!
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
@@ -7492,12 +7439,7 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-        (lsp-workspace-index-add-text-source!
-          index
-          root
-          path
-          (struct-get doc text)
-          true))
+        (lsp-workspace-index-add-text-source! index root path doc.text true))
       (match (io.try-read-file (& path))
         [(io.OkIoBytes contents)
           (let
@@ -7509,9 +7451,7 @@
   [index : (&mut index lsp_vector_families.LspWorkspaceIndex)]
   [docs : lsp_document_vec.Vec]
   [root : lsp_vector_families.LspWorkspaceRoot]) : unit
-  (match (package_source_core.package-source-discover-root-for
-    "lsp"
-    (struct-get root path))
+  (match (package_source_core.package-source-discover-root-for "lsp" root.path)
     [(package_source_core.ResultPackageSourceList.Err _) unit]
     [(package_source_core.ResultPackageSourceList.Ok paths)
       (let
@@ -7534,7 +7474,7 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-        [path : String (struct-get doc path)]
+        [path : String doc.path]
         [uri : String
           (if (> (string.string-length path) 0)
             (lsp-resolved-path-to-file-uri path)
@@ -7542,16 +7482,12 @@
         (begin
           (if (and
             (> (string.string-length path) 0)
-            (<
-              (lsp-workspace-sources-find-uri
-                (& (struct-get index sources))
-                uri)
-              0))
+            (< (lsp-workspace-sources-find-uri (& index.sources) uri) 0))
             (lsp-workspace-index-add-text-source!
               index
               lsp_vector_families.LspWorkspaceRootLookup.Missing
               path
-              (struct-get doc text)
+              doc.text
               true)
             unit)
           (set! doc-index (+ doc-index 1)))))))
@@ -7562,14 +7498,12 @@
   (let
     [root-index : i64 0]
     (begin
-      (while (<
-        root-index
-        (lsp-workspace-roots-len (& (struct-get index roots))))
+      (while (< root-index (lsp-workspace-roots-len (& index.roots)))
         (begin
           (lsp-workspace-index-build-root!
             index
             docs
-            (lsp-workspace-roots-get (& (struct-get index roots)) root-index))
+            (lsp-workspace-roots-get (& index.roots) root-index))
           (set! root-index (+ root-index 1))))
       (lsp-workspace-index-add-rootless-overlays! index docs))))
 
@@ -7577,8 +7511,8 @@
   [state : lsp_vector_families.LspServerState]) : lsp_vector_families.LspServerState
   (lsp_vector_families.LspServerState
     0
-    (lsp-documents-copy (struct-get state documents))
-    (lsp-workspace-index-copy (struct-get state workspace))))
+    (lsp-documents-copy state.documents)
+    (lsp-workspace-index-copy state.workspace)))
 
 (define (lsp-server-state-finish-swap
   [old-state : lsp_vector_families.LspServerState]
@@ -7587,16 +7521,13 @@
   (let
     [owner : i64 (arena.tl_arena_current)]
     [next : lsp_vector_families.LspServerState
-      (lsp_vector_families.LspServerState
-        owner
-        (struct-get draft documents)
-        (struct-get draft workspace))]
+      (lsp_vector_families.LspServerState owner draft.documents draft.workspace)]
     (begin
       (unsafe
         (arena.tl_arena_set previous-arena))
-      (if (> (struct-get old-state owner-arena) 0)
+      (if (> old-state.owner-arena 0)
         (unsafe
-          (arena.tl_arena_destroy (struct-get old-state owner-arena)))
+          (arena.tl_arena_destroy old-state.owner-arena))
         unit)
       (set! lsp-document-cache-arena owner)
       next)))
@@ -7624,9 +7555,9 @@
 (define (lsp-server-state-destroy!
   [state : lsp_vector_families.LspServerState (:consume)]) : unit
   (let
-    [owner : i64 (struct-get state owner-arena)]
+    [owner : i64 state.owner-arena]
     (begin
-      (lsp-documents-release-all! (&mut (struct-get state documents)))
+      (lsp-documents-release-all! (&mut state.documents))
       (set! lsp-document-cache-arena 0)
       (if (> owner 0)
         (unsafe
@@ -7642,8 +7573,7 @@
     [_install : unit
       (unsafe
         (arena.tl_arena_set owner))]
-    [docs : lsp_document_vec.Vec
-      (lsp-documents-copy (struct-get state documents))]
+    [docs : lsp_document_vec.Vec (lsp-documents-copy state.documents)]
     [workspace : lsp_vector_families.LspWorkspaceIndex
       (lsp_vector_families.LspWorkspaceIndex
         (lsp-initialize-workspace-roots message)
@@ -7659,18 +7589,12 @@
     [source-index : i64 0]
     [count : i64 0]
     (begin
-      (while (<
-        source-index
-        (lsp-workspace-sources-len (& (struct-get index sources))))
+      (while (< source-index (lsp-workspace-sources-len (& index.sources)))
         (let
           [source : lsp_vector_families.LspWorkspaceSource
-            (lsp-workspace-sources-get
-              (& (struct-get index sources))
-              source-index)]
+            (lsp-workspace-sources-get (& index.sources) source-index)]
           (begin
-            (set!
-              count
-              (+ count (lsp_decl_vec.len (& (struct-get source decls)))))
+            (set! count (+ count (lsp_decl_vec.len (& source.decls))))
             (set! source-index (+ source-index 1)))))
       count)))
 
@@ -7687,16 +7611,12 @@
       [done : bool false]
       (begin
         (while (and
-          (<
-            source-index
-            (lsp-workspace-sources-len (& (struct-get index sources))))
+          (< source-index (lsp-workspace-sources-len (& index.sources)))
           (not done))
           (let
             [source : lsp_vector_families.LspWorkspaceSource
-              (lsp-workspace-sources-get
-                (& (struct-get index sources))
-                source-index)]
-            [decls : lsp_decl_vec.Vec (struct-get source decls)]
+              (lsp-workspace-sources-get (& index.sources) source-index)]
+            [decls : lsp_decl_vec.Vec source.decls]
             [count : i64 (lsp_decl_vec.len (& decls))]
             (if (< offset count)
               (begin
@@ -7704,13 +7624,13 @@
                   result
                   (lsp_vector_families.LspWorkspaceDeclLookup.Found
                     (lsp_vector_families.LspWorkspaceDeclRow
-                      (struct-get source root-uri)
-                      (struct-get source root-path)
-                      (struct-get source uri)
-                      (struct-get source path)
-                      (struct-get source module)
-                      (struct-get source explicit-module)
-                      (struct-get source overlay)
+                      source.root-uri
+                      source.root-path
+                      source.uri
+                      source.path
+                      source.module
+                      source.explicit-module
+                      source.overlay
                       (lsp_decl_vec.get
                         (& decls)
                         offset
@@ -7723,12 +7643,12 @@
 
 (define (lsp-server-state-declaration-count
   [state : (& state lsp_vector_families.LspServerState)]) : i64
-  (lsp-workspace-index-declaration-count (& (struct-get state workspace))))
+  (lsp-workspace-index-declaration-count (& state.workspace)))
 
 (define (lsp-server-state-declaration-at
   [state : (& state lsp_vector_families.LspServerState)]
   [index : i64]) : lsp_vector_families.LspWorkspaceDeclLookup
-  (lsp-workspace-index-declaration-at (& (struct-get state workspace)) index))
+  (lsp-workspace-index-declaration-at (& state.workspace) index))
 
 (define lsp-workspace-symbol-result-limit : i64
   256)
@@ -7754,13 +7674,13 @@
 
 (define (lsp-workspace-symbol-results-len
   [results : (& results LspWorkspaceSymbolResults)]) : i64
-  (struct-get results len))
+  results.len)
 
 (define (lsp-workspace-symbol-results-get
   [results : (& results LspWorkspaceSymbolResults)]
   [index : i64]) : LspWorkspaceSymbolCandidate
-  (if (and (>= index 0) (< index (struct-get results len)))
-    (array-ref (struct-get results slots) index)
+  (if (and (>= index 0) (< index results.len))
+    (array-ref results.slots index)
     (lsp-workspace-symbol-candidate-fallback)))
 
 (define (lsp-workspace-symbol-match-rank [name : String] [query : String]) : i64
@@ -7775,19 +7695,19 @@
   [left : LspWorkspaceSymbolCandidate]
   [right : LspWorkspaceSymbolCandidate]) : bool
   (let
-    [left-row : lsp_vector_families.LspWorkspaceDeclRow (struct-get left row)]
-    [right-row : lsp_vector_families.LspWorkspaceDeclRow (struct-get right row)]
-    [left-decl : lsp_vector_families.LspDeclEntry (struct-get left-row decl)]
-    [right-decl : lsp_vector_families.LspDeclEntry (struct-get right-row decl)]
-    [left-name : String (struct-get left-decl name)]
-    [right-name : String (struct-get right-decl name)]
-    [left-container : String (struct-get left-row module)]
-    [right-container : String (struct-get right-row module)]
-    [left-uri : String (struct-get left-row uri)]
-    [right-uri : String (struct-get right-row uri)]
+    [left-row : lsp_vector_families.LspWorkspaceDeclRow left.row]
+    [right-row : lsp_vector_families.LspWorkspaceDeclRow right.row]
+    [left-decl : lsp_vector_families.LspDeclEntry left-row.decl]
+    [right-decl : lsp_vector_families.LspDeclEntry right-row.decl]
+    [left-name : String left-decl.name]
+    [right-name : String right-decl.name]
+    [left-container : String left-row.module]
+    [right-container : String right-row.module]
+    [left-uri : String left-row.uri]
+    [right-uri : String right-row.uri]
     (cond
-      [(< (struct-get left rank) (struct-get right rank)) true]
-      [(> (struct-get left rank) (struct-get right rank)) false]
+      [(< left.rank right.rank) true]
+      [(> left.rank right.rank) false]
       [(not (string.eq left-name right-name))
         (package_source_core.package-source-string-less? left-name right-name)]
       [(not (string.eq left-container right-container))
@@ -7796,12 +7716,9 @@
           right-container)]
       [(not (string.eq left-uri right-uri))
         (package_source_core.package-source-string-less? left-uri right-uri)]
-      [(< (struct-get left-decl name-line) (struct-get right-decl name-line))
-        true]
-      [(> (struct-get left-decl name-line) (struct-get right-decl name-line))
-        false]
-      [else
-        (< (struct-get left-decl name-col) (struct-get right-decl name-col))])))
+      [(< left-decl.name-line right-decl.name-line) true]
+      [(> left-decl.name-line right-decl.name-line) false]
+      [else (< left-decl.name-col right-decl.name-col)])))
 
 ;; A source range is the stable editable identity. Overlapping workspace roots
 ;; are already URI-deduplicated by the index, and this final guard also keeps a
@@ -7810,15 +7727,15 @@
   [left : LspWorkspaceSymbolCandidate]
   [right : LspWorkspaceSymbolCandidate]) : bool
   (let
-    [left-row : lsp_vector_families.LspWorkspaceDeclRow (struct-get left row)]
-    [right-row : lsp_vector_families.LspWorkspaceDeclRow (struct-get right row)]
-    [left-decl : lsp_vector_families.LspDeclEntry (struct-get left-row decl)]
-    [right-decl : lsp_vector_families.LspDeclEntry (struct-get right-row decl)]
+    [left-row : lsp_vector_families.LspWorkspaceDeclRow left.row]
+    [right-row : lsp_vector_families.LspWorkspaceDeclRow right.row]
+    [left-decl : lsp_vector_families.LspDeclEntry left-row.decl]
+    [right-decl : lsp_vector_families.LspDeclEntry right-row.decl]
     (and
-      (string.eq (struct-get left-row uri) (struct-get right-row uri))
-      (string.eq (struct-get left-decl name) (struct-get right-decl name))
-      (= (struct-get left-decl name-line) (struct-get right-decl name-line))
-      (= (struct-get left-decl name-col) (struct-get right-decl name-col)))))
+      (string.eq left-row.uri right-row.uri)
+      (string.eq left-decl.name right-decl.name)
+      (= left-decl.name-line right-decl.name-line)
+      (= left-decl.name-col right-decl.name-col))))
 
 (define (lsp-workspace-symbol-results-contain?
   [results : (& results LspWorkspaceSymbolResults)]
@@ -7827,7 +7744,7 @@
     [index : i64 0]
     [found : bool false]
     (begin
-      (while (and (< index (struct-get results len)) (not found))
+      (while (and (< index results.len) (not found))
         (begin
           (if (lsp-workspace-symbol-candidate-same?
             candidate
@@ -7846,7 +7763,7 @@
   (if (lsp-workspace-symbol-results-contain? results candidate)
     unit
     (let
-      [len : i64 (struct-get results len)]
+      [len : i64 results.len]
       [position : i64 0]
       (begin
         (while (and
@@ -7866,14 +7783,13 @@
             (begin
               (while (> write position)
                 (begin
-                  (array-set!
-                    (struct-get results slots)
-                    write
-                    (array-ref (struct-get results slots) (- write 1)))
+                  (set!
+                    (array-ref results.slots write)
+                    (array-ref results.slots (- write 1)))
                   (set! write (- write 1))))
-              (array-set! (struct-get results slots) position candidate)
+              (set! (array-ref results.slots position) candidate)
               (if (< len lsp-workspace-symbol-result-limit)
-                (set! (struct-get results len) (+ len 1))
+                (set! results.len (+ len 1))
                 unit))))))))
 
 (define (lsp-workspace-symbol-query
@@ -7882,14 +7798,13 @@
   (let
     [results : LspWorkspaceSymbolResults (lsp-workspace-symbol-results-new)]
     [source-index : i64 0]
-    [sources : lsp_vector_families.LspWorkspaceSources
-      (struct-get index sources)]
+    [sources : lsp_vector_families.LspWorkspaceSources index.sources]
     (begin
       (while (< source-index (lsp-workspace-sources-len (& sources)))
         (let
           [source : lsp_vector_families.LspWorkspaceSource
             (lsp-workspace-sources-get (& sources) source-index)]
-          [decls : lsp_decl_vec.Vec (struct-get source decls)]
+          [decls : lsp_decl_vec.Vec source.decls]
           [decl-index : i64 0]
           (begin
             (while (< decl-index (lsp_decl_vec.len (& decls)))
@@ -7899,8 +7814,7 @@
                     (& decls)
                     decl-index
                     (lsp-decl-entry-fallback))]
-                [rank : i64
-                  (lsp-workspace-symbol-match-rank (struct-get decl name) query)]
+                [rank : i64 (lsp-workspace-symbol-match-rank decl.name query)]
                 (begin
                   (if (>= rank 0)
                     (lsp-workspace-symbol-results-insert!
@@ -7908,13 +7822,13 @@
                       (LspWorkspaceSymbolCandidate
                         rank
                         (lsp_vector_families.LspWorkspaceDeclRow
-                          (struct-get source root-uri)
-                          (struct-get source root-path)
-                          (struct-get source uri)
-                          (struct-get source path)
-                          (struct-get source module)
-                          (struct-get source explicit-module)
-                          (struct-get source overlay)
+                          source.root-uri
+                          source.root-path
+                          source.uri
+                          source.path
+                          source.module
+                          source.explicit-module
+                          source.overlay
                           decl)))
                     unit)
                   (set! decl-index (+ decl-index 1)))))
@@ -7929,38 +7843,29 @@
   (let
     [normalized : String (lsp-normalized-absolute-path path)]
     [uri : String (lsp-path-to-file-uri normalized)]
-    [existing : i64
-      (lsp-workspace-sources-find-uri (& (struct-get index sources)) uri)]
+    [existing : i64 (lsp-workspace-sources-find-uri (& index.sources) uri)]
     [doc-index : i64 (lsp-documents-find-path-index docs normalized)]
     (if (>= doc-index 0)
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
         [root : lsp_vector_families.LspWorkspaceRootLookup
-          (lsp-workspace-root-for-path
-            (& (struct-get index roots))
-            normalized
-            false)]
+          (lsp-workspace-root-for-path (& index.roots) normalized false)]
         (lsp-workspace-index-set-text-source!
           index
           root
           normalized
-          (struct-get doc text)
+          doc.text
           true))
       (if deleted
         (if (>= existing 0)
-          (lsp-workspace-sources-remove-index!
-            (&mut (struct-get index sources))
-            existing)
+          (lsp-workspace-sources-remove-index! (&mut index.sources) existing)
           unit)
-        (match (lsp-workspace-root-for-path
-          (& (struct-get index roots))
-          normalized
-          true)
+        (match (lsp-workspace-root-for-path (& index.roots) normalized true)
           [(lsp_vector_families.LspWorkspaceRootLookup.Missing)
             (if (>= existing 0)
               (lsp-workspace-sources-remove-index!
-                (&mut (struct-get index sources))
+                (&mut index.sources)
                 existing)
               unit)]
           [(lsp_vector_families.LspWorkspaceRootLookup.Found root)
@@ -7977,7 +7882,7 @@
               [(io.ErrIoBytes _)
                 (if (>= existing 0)
                   (lsp-workspace-sources-remove-index!
-                    (&mut (struct-get index sources))
+                    (&mut index.sources)
                     existing)
                   unit)])])))))
 
@@ -7991,12 +7896,8 @@
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
         (begin
-          (if (> (string.string-length (struct-get doc path)) 0)
-            (lsp-workspace-index-refresh-path!
-              index
-              docs
-              (struct-get doc path)
-              false)
+          (if (> (string.string-length doc.path) 0)
+            (lsp-workspace-index-refresh-path! index docs doc.path false)
             unit)
           (set! doc-index (+ doc-index 1)))))))
 
@@ -8018,7 +7919,7 @@
                 (arena.tl_arena_set owner))]
             [docs : lsp_document_vec.Vec (lsp-documents-copy next-documents)]
             [workspace : lsp_vector_families.LspWorkspaceIndex
-              (lsp-workspace-index-copy (struct-get state workspace))]
+              (lsp-workspace-index-copy state.workspace)]
             [_refresh : unit
               (lsp-workspace-index-refresh-path!
                 (&mut workspace)
@@ -8052,7 +7953,7 @@
             (arena.tl_arena_set owner))]
         [docs : lsp_document_vec.Vec (lsp-documents-copy next-documents)]
         [workspace : lsp_vector_families.LspWorkspaceIndex
-          (lsp-workspace-index-copy (struct-get state workspace))]
+          (lsp-workspace-index-copy state.workspace)]
         [_refresh : unit
           (if refresh-documents
             (lsp-workspace-index-refresh-documents! (&mut workspace) docs)
@@ -8115,9 +8016,9 @@
           (match changes
             [(json.JsonArray items)
               (lsp-watched-files-refresh-items!
-                (&mut (struct-get draft workspace))
-                (struct-get draft documents)
-                (box-get items))]
+                (&mut draft.workspace)
+                draft.documents
+                (__tl-box-place items))]
             [_ unit])])]
     (lsp-server-state-finish-swap state draft previous)))
 
@@ -8125,27 +8026,22 @@
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [uri : String]) : unit
   (let
-    [root-index : i64
-      (lsp-workspace-roots-find-uri (& (struct-get workspace roots)) uri)]
+    [root-index : i64 (lsp-workspace-roots-find-uri (& workspace.roots) uri)]
     (if (< root-index 0)
       unit
       (begin
-        (lsp-workspace-roots-remove-index!
-          (&mut (struct-get workspace roots))
-          root-index)
+        (lsp-workspace-roots-remove-index! (&mut workspace.roots) root-index)
         (let
           [source-index : i64 0]
           (while (<
             source-index
-            (lsp-workspace-sources-len (& (struct-get workspace sources))))
+            (lsp-workspace-sources-len (& workspace.sources)))
             (let
               [source : lsp_vector_families.LspWorkspaceSource
-                (lsp-workspace-sources-get
-                  (& (struct-get workspace sources))
-                  source-index)]
-              (if (string.eq (struct-get source root-uri) uri)
+                (lsp-workspace-sources-get (& workspace.sources) source-index)]
+              (if (string.eq source.root-uri uri)
                 (lsp-workspace-sources-remove-index!
-                  (&mut (struct-get workspace sources))
+                  (&mut workspace.sources)
                   source-index)
                 (set! source-index (+ source-index 1))))))))))
 
@@ -8172,22 +8068,16 @@
     [paths : lsp_svec.Vec (lsp_svec.new)]
     [source-index : i64 0]
     (begin
-      (while (<
-        source-index
-        (lsp-workspace-sources-len (& (struct-get workspace sources))))
+      (while (< source-index (lsp-workspace-sources-len (& workspace.sources)))
         (let
           [source : lsp_vector_families.LspWorkspaceSource
-            (lsp-workspace-sources-get
-              (& (struct-get workspace sources))
-              source-index)]
+            (lsp-workspace-sources-get (& workspace.sources) source-index)]
           (begin
-            (if (string.eq (struct-get source root-uri) (struct-get root uri))
-              (lsp_svec.push
-                (&mut paths)
-                (string.copy (& (struct-get source path))))
+            (if (string.eq source.root-uri root.uri)
+              (lsp_svec.push (&mut paths) (string.copy (& source.path)))
               unit)
             (set! source-index (+ source-index 1)))))
-      (lsp-workspace-index-remove-root-uri! workspace (struct-get root uri))
+      (lsp-workspace-index-remove-root-uri! workspace root.uri)
       ;; Only paths whose owning root disappeared are reconsidered. They may
       ;; transfer to an overlapping remaining root, remain as open rootless
       ;; overlays, or disappear.
@@ -8201,23 +8091,17 @@
     [paths : lsp_svec.Vec (lsp_svec.new)]
     [source-index : i64 0]
     (begin
-      (while (<
-        source-index
-        (lsp-workspace-sources-len (& (struct-get workspace sources))))
+      (while (< source-index (lsp-workspace-sources-len (& workspace.sources)))
         (let
           [source : lsp_vector_families.LspWorkspaceSource
-            (lsp-workspace-sources-get
-              (& (struct-get workspace sources))
-              source-index)]
+            (lsp-workspace-sources-get (& workspace.sources) source-index)]
           (begin
             (if (and
-              (string.eq (struct-get source root-uri) "")
+              (string.eq source.root-uri "")
               (package_source_core.package-source-path-location-eligible-for-root?
-                (struct-get root path)
-                (struct-get source path)))
-              (lsp_svec.push
-                (&mut paths)
-                (string.copy (& (struct-get source path))))
+                root.path
+                source.path))
+              (lsp_svec.push (&mut paths) (string.copy (& source.path)))
               unit)
             (set! source-index (+ source-index 1)))))
       (lsp-workspace-index-recover-live-paths! workspace docs paths))))
@@ -8226,14 +8110,10 @@
   [workspace : (&mut workspace lsp_vector_families.LspWorkspaceIndex)]
   [docs : lsp_document_vec.Vec]
   [root : lsp_vector_families.LspWorkspaceRoot]) : unit
-  (if (>=
-    (lsp-workspace-roots-find-uri
-      (& (struct-get workspace roots))
-      (struct-get root uri))
-    0)
+  (if (>= (lsp-workspace-roots-find-uri (& workspace.roots) root.uri) 0)
     unit
     (begin
-      (lsp-workspace-roots-push! (&mut (struct-get workspace roots)) root)
+      (lsp-workspace-roots-push! (&mut workspace.roots) root)
       (lsp-workspace-index-adopt-rootless-overlays! workspace docs root)
       ;; Discover only the added root. URI de-duplication preserves the first
       ;; root in client order when roots overlap.
@@ -8297,14 +8177,17 @@
               (lsp-workspace-folders-remove-items!
                 workspace
                 docs
-                (box-get items))]
+                (__tl-box-place items))]
             [_ unit])])
       (match (json.object-get event (& added-key))
         [(json.JsonMissing) unit]
         [(json.JsonFound added)
           (match added
             [(json.JsonArray items)
-              (lsp-workspace-folders-add-items! workspace docs (box-get items))]
+              (lsp-workspace-folders-add-items!
+                workspace
+                docs
+                (__tl-box-place items))]
             [_ unit])]))))
 
 (define (lsp-server-state-did-change-workspace-folders
@@ -8324,8 +8207,8 @@
         [(json.JsonMissing) unit]
         [(json.JsonFound event)
           (lsp-workspace-folders-apply-event!
-            (&mut (struct-get draft workspace))
-            (struct-get draft documents)
+            (&mut draft.workspace)
+            draft.documents
             event)])]
     (lsp-server-state-finish-swap state draft previous)))
 
@@ -8356,9 +8239,9 @@
                   [doc : lsp_vector_families.LspDocument
                     (lsp-document-refresh-from-disk docs idx)]
                   (LspDocumentDeclsLookup.Found
-                    (struct-get doc path)
-                    (struct-get doc text)
-                    (struct-get doc diagnostic-uris)
+                    doc.path
+                    doc.text
+                    doc.diagnostic-uris
                     (lsp-document-decls doc docs)))
                 LspDocumentDeclsLookup.Missing))]
           [(LspJsonText.Missing) LspDocumentDeclsLookup.Missing])]
@@ -8369,28 +8252,26 @@
   [doc : lsp_vector_families.LspDocument]
   [docs : lsp_document_vec.Vec]) : lsp_decl_vec.Vec
   (let
-    [text : String (struct-get doc text)]
-    [uri : String (struct-get doc uri)]
+    [text : String doc.text]
+    [uri : String doc.uri]
     [scanned : lsp_decl_vec.Vec (lsp-scan-decls text)]
-    [slots : (__tl_dyn-array lsp_vector_families.LspDocument)
-      (struct-get docs slots)]
+    [slots : (__tl_dyn-array lsp_vector_families.LspDocument) docs.slots]
     [idx : i64 (lsp-documents-find-index docs uri)]
     (begin
       (if (>= idx 0)
         (begin
-          (array-set!
-            slots
-            idx
+          (set!
+            (array-ref slots idx)
             (lsp_vector_families.LspDocument
               uri
-              (struct-get doc path)
+              doc.path
               text
-              (struct-get doc version)
-              (struct-get doc diagnostic-uris)
+              doc.version
+              doc.diagnostic-uris
               scanned
               true
-              (struct-get doc check-cache)
-              (struct-get doc semantic)))
+              doc.check-cache
+              doc.semantic))
           unit)
         unit)
       scanned)))
@@ -8399,8 +8280,8 @@
   [doc : lsp_vector_families.LspDocument]
   [docs : lsp_document_vec.Vec]) : lsp_decl_vec.Vec
   (let
-    [cached : lsp_decl_vec.Vec (struct-get doc decls)]
-    (if (struct-get doc decls-valid)
+    [cached : lsp_decl_vec.Vec doc.decls]
+    (if doc.decls-valid
       cached
       (if (> lsp-document-cache-arena 0)
         (in-arena
@@ -8415,7 +8296,7 @@
     (let
       [entry : lsp_vector_families.LspDeclEntry
         (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
-      [name : String (struct-get entry name)]
+      [name : String entry.name]
       (lsp-json-list-cons
         (json.JsonString name)
         (lsp-decls-to-name-list decls (+ idx 1))))))
@@ -8431,19 +8312,19 @@
         (lsp-json-object
           (lsp-json-member
             "kind"
-            (json.JsonString (struct-get entry kind))
+            (json.JsonString entry.kind)
             (lsp-json-member
               "name"
-              (json.JsonString (struct-get entry name))
+              (json.JsonString entry.name)
               (lsp-json-member
                 "line"
-                (lsp-json-number (struct-get entry name-line))
+                (lsp-json-number entry.name-line)
                 (lsp-json-member
                   "column"
-                  (lsp-json-number (struct-get entry name-col))
+                  (lsp-json-number entry.name-col)
                   (lsp-json-member
                     "length"
-                    (lsp-json-number (struct-get entry name-len))
+                    (lsp-json-number entry.name-len)
                     (json.member-list-empty)))))))]
       (lsp-json-list-cons obj (lsp-decls-to-json-list decls (+ idx 1))))))
 
@@ -8451,30 +8332,28 @@
   [entry : lsp_vector_families.LspDeclEntry]) : json.Json
   (lsp-json-object2
     "start"
-    (lsp-position (struct-get entry name-line) (struct-get entry name-col))
+    (lsp-position entry.name-line entry.name-col)
     "end"
-    (lsp-position
-      (struct-get entry name-line)
-      (+ (struct-get entry name-col) (struct-get entry name-len)))))
+    (lsp-position entry.name-line (+ entry.name-col entry.name-len))))
 
 (define (lsp-workspace-symbol-information-json
   [candidate : LspWorkspaceSymbolCandidate]) : json.Json
   (let
-    [row : lsp_vector_families.LspWorkspaceDeclRow (struct-get candidate row)]
-    [decl : lsp_vector_families.LspDeclEntry (struct-get row decl)]
+    [row : lsp_vector_families.LspWorkspaceDeclRow candidate.row]
+    [decl : lsp_vector_families.LspDeclEntry row.decl]
     (lsp-json-object4
       "name"
-      (json.JsonString (struct-get decl name))
+      (json.JsonString decl.name)
       "kind"
-      (lsp-json-number (struct-get decl symbol-kind))
+      (lsp-json-number decl.symbol-kind)
       "location"
       (lsp-json-object2
         "uri"
-        (json.JsonString (struct-get row uri))
+        (json.JsonString row.uri)
         "range"
         (lsp-decl-selection-range-json decl))
       "containerName"
-      (json.JsonString (struct-get row module)))))
+      (json.JsonString row.module))))
 
 (define (lsp-workspace-symbol-information-list
   [results : (& results LspWorkspaceSymbolResults)]
@@ -8502,18 +8381,17 @@
     (let
       [candidate : LspWorkspaceSymbolCandidate
         (lsp-workspace-symbol-results-get results index)]
-      (if (not (= (struct-get candidate rank) 0))
+      (if (not (= candidate.rank 0))
         (json.list-empty)
         (let
-          [row : lsp_vector_families.LspWorkspaceDeclRow
-            (struct-get candidate row)]
-          [decl : lsp_vector_families.LspDeclEntry (struct-get row decl)]
+          [row : lsp_vector_families.LspWorkspaceDeclRow candidate.row]
+          [decl : lsp_vector_families.LspDeclEntry row.decl]
           (lsp-json-list-cons
             (lsp-json-object2
               "uri"
-              (json.JsonString (struct-get row uri))
+              (json.JsonString row.uri)
               "name"
-              (json.JsonString (struct-get decl name)))
+              (json.JsonString decl.name))
             (lsp-project-search-result-list results (+ index 1))))))))
 
 (define (lsp-project-search-result-json
@@ -8532,9 +8410,9 @@
   [entry : lsp_vector_families.LspDeclEntry]) : json.Json
   (lsp-json-object4
     "name"
-    (json.JsonString (struct-get entry name))
+    (json.JsonString entry.name)
     "kind"
-    (lsp-json-number (struct-get entry symbol-kind))
+    (lsp-json-number entry.symbol-kind)
     "range"
     (lsp-decl-entry-form-range-json entry)
     "selectionRange"
@@ -8577,8 +8455,8 @@
       [entry : lsp_vector_families.LspDeclEntry
         (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
       (lsp-json-member
-        (struct-get entry name)
-        (lsp-position (struct-get entry name-line) (struct-get entry name-col))
+        entry.name
+        (lsp-position entry.name-line entry.name-col)
         (lsp-decls-to-position-map-members decls (+ idx 1))))))
 
 (define (lsp-position-map-for-text [text : String]) : json.Json
@@ -8590,7 +8468,7 @@
   [contains-filter : String]
   [prefix : String]) : bool
   (let
-    [name : String (struct-get entry name)]
+    [name : String entry.name]
     (and
       (or (= (string.string-length exact-name) 0) (string.eq name exact-name))
       (or
@@ -8603,21 +8481,19 @@
 (define (lsp-decl-query-kind-ok?
   [entry : lsp_vector_families.LspDeclEntry]
   [kind : String]) : bool
-  (or
-    (= (string.string-length kind) 0)
-    (string.eq (struct-get entry kind) kind)))
+  (or (= (string.string-length kind) 0) (string.eq entry.kind kind)))
 
 (define (lsp-decl-find-entry-json [entry : lsp_vector_families.LspDeclEntry]) : json.Json
   (let
-    [line : i64 (- (struct-get entry name-line) 1)]
-    [character : i64 (- (struct-get entry name-col) 1)]
+    [line : i64 (- entry.name-line 1)]
+    [character : i64 (- entry.name-col 1)]
     (lsp-json-object
       (lsp-json-member
         "name"
-        (json.JsonString (struct-get entry name))
+        (json.JsonString entry.name)
         (lsp-json-member
           "kind"
-          (json.JsonString (struct-get entry kind))
+          (json.JsonString entry.kind)
           (lsp-json-member
             "line"
             (lsp-json-number line)
@@ -8632,12 +8508,12 @@
                   (lsp-json-object2
                     "start"
                     (lsp-position
-                      (- (struct-get entry form-start-line) 1)
-                      (- (struct-get entry form-start-col) 1))
+                      (- entry.form-start-line 1)
+                      (- entry.form-start-col 1))
                     "end"
                     (lsp-position
-                      (- (struct-get entry form-end-line) 1)
-                      (- (struct-get entry form-end-col) 1)))
+                      (- entry.form-end-line 1)
+                      (- entry.form-end-col 1)))
                   (json.member-list-empty))))))))))
 
 (define (lsp-decls-to-find-list
@@ -8790,13 +8666,13 @@
                   [entry : lsp_vector_families.LspDeclEntry
                     (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
                   (if (and
-                    (string.eq (struct-get entry name) name)
+                    (string.eq entry.name name)
                     (or
                       (= (string.string-length kind-param) 0)
-                      (string.eq (struct-get entry kind) kind-param)))
+                      (string.eq entry.kind kind-param)))
                     (begin
-                      (set! result-line (struct-get entry name-line))
-                      (set! result-col (struct-get entry name-col))
+                      (set! result-line entry.name-line)
+                      (set! result-col entry.name-col)
                       (set! found true)
                       unit)
                     (begin
@@ -8832,8 +8708,8 @@
   [entry : lsp_vector_families.LspDeclEntry]) : i64
   (lsp-offset-at-position
     text
-    (- (struct-get entry form-start-line) 1)
-    (- (struct-get entry form-start-col) 1)))
+    (- entry.form-start-line 1)
+    (- entry.form-start-col 1)))
 
 ;; Helper: move a form after another form
 (define (lsp-move-form-after
@@ -8873,8 +8749,8 @@
   [entry : lsp_vector_families.LspDeclEntry]) : i64
   (lsp-offset-at-position
     text
-    (- (struct-get entry form-end-line) 1)
-    (- (struct-get entry form-end-col) 1)))
+    (- entry.form-end-line 1)
+    (- entry.form-end-col 1)))
 
 (define (lsp-decl-entry-contains-offset?
   [text : String]
@@ -8925,7 +8801,7 @@
           [idx : i64 (lsp-decl-index-at-position text decls line col)]
           (if (= idx -1)
             ""
-            (struct-get
+            (__tl-project-field
               (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))
               name)))]
       [(json.JsonMissing) ""])))
@@ -8956,7 +8832,7 @@
         (let
           [entry : lsp_vector_families.LspDeclEntry
             (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
-          (if (string.eq (struct-get entry name) name)
+          (if (string.eq entry.name name)
             (set! found i)
             (set! i (+ i 1)))))
       found)))
@@ -9023,13 +8899,9 @@
   [entry : lsp_vector_families.LspDeclEntry]) : json.Json
   (lsp-json-object2
     "start"
-    (lsp-position
-      (struct-get entry form-start-line)
-      (struct-get entry form-start-col))
+    (lsp-position entry.form-start-line entry.form-start-col)
     "end"
-    (lsp-position
-      (struct-get entry form-end-line)
-      (struct-get entry form-end-col))))
+    (lsp-position entry.form-end-line entry.form-end-col)))
 
 (define (lsp-position-context-json [text : String] [line : i64] [col : i64]) : json.Json
   (let
@@ -9050,10 +8922,10 @@
           [entry : lsp_vector_families.LspDeclEntry
             (lsp_decl_vec.get (& decls) nearest-index (lsp-decl-entry-fallback))]
           (begin
-            (set! nearest-line (- (struct-get entry form-start-line) 1))
-            (set! nearest-col (- (struct-get entry form-start-col) 1))
-            (set! nearest-name (struct-get entry name))
-            (set! nearest-kind (struct-get entry kind))
+            (set! nearest-line (- entry.form-start-line 1))
+            (set! nearest-col (- entry.form-start-col 1))
+            (set! nearest-name entry.name)
+            (set! nearest-kind entry.kind)
             (set! nearest-range (lsp-decl-entry-form-range-json entry))))
         unit)
       (lsp-json-object
@@ -9119,7 +8991,7 @@
     (let
       [entry : lsp_vector_families.LspDeclEntry
         (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
-      [name : String (struct-get entry name)]
+      [name : String entry.name]
       (lsp-json-list-cons
         (json.JsonString name)
         (lsp-decls-to-name-list-capped decls (+ idx 1) (- remaining 1))))))
@@ -9158,7 +9030,7 @@
     (let
       [entry : lsp_vector_families.LspDeclEntry
         (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
-      [name : String (struct-get entry name)]
+      [name : String entry.name]
       [rest : json.JsonSeq
         (lsp-decls-to-similar-name-list decls (+ idx 1) needle)]
       (if (lsp-decl-name-similar? needle name)
@@ -9248,7 +9120,7 @@
         (let
           [uri : String (lsp-diagnostic-uris-get uris index)]
           (begin
-            (array-set! slots index (string.copy (& uri)))
+            (set! (array-ref slots index) (string.copy (& uri)))
             (set! index (+ index 1)))))
       (lsp_vector_families.LspDiagnosticUris slots n))))
 
@@ -9596,7 +9468,7 @@
                 (let
                   [entry : lsp_vector_families.LspDeclEntry
                     (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
-                  (if (string.eq (struct-get entry name) name)
+                  (if (string.eq entry.name name)
                     (set! found-idx i)
                     (set! i (+ i 1)))))
               (if (= found-idx -1)
@@ -9612,13 +9484,13 @@
                   [start-off : i64
                     (lsp-offset-at-position
                       text
-                      (- (struct-get entry form-start-line) 1)
-                      (- (struct-get entry form-start-col) 1))]
+                      (- entry.form-start-line 1)
+                      (- entry.form-start-col 1))]
                   [end-off : i64
                     (lsp-offset-at-position
                       text
-                      (- (struct-get entry form-end-line) 1)
-                      (- (struct-get entry form-end-col) 1))]
+                      (- entry.form-end-line 1)
+                      (- entry.form-end-col 1))]
                   [result : String
                     (string.substring text start-off (- end-off start-off))]
                   (begin
@@ -9718,7 +9590,7 @@
         [(compiler_check_core.ResultCompilerCheck.Err diag)
           (lsp_vector_families.LspCheckCacheErr
             (cdiag.compiler-diagnostic-message
-              (cdiag.compiler-diagnostic-list-first (box-get diag))))])]
+              (cdiag.compiler-diagnostic-list-first (__tl-box-place diag))))])]
     [(LspValidationResult.Invalid line col msg ctx)
       (lsp_vector_families.LspCheckCacheErr
         (lsp-validation-error-message line col msg ctx))]))
@@ -9769,8 +9641,7 @@
           (let
             [doc : lsp_vector_families.LspDocument
               (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-            [check-cache : lsp_vector_families.LspCheckCache
-              (struct-get doc check-cache)]
+            [check-cache : lsp_vector_families.LspCheckCache doc.check-cache]
             (if (lsp-check-cache-valid? check-cache)
               (begin
                 (lsp-write-check-cache-response id check-cache)
@@ -9778,8 +9649,8 @@
               (lsp-run-check-and-respond
                 id
                 uri
-                (struct-get doc path)
-                (struct-get doc text)
+                doc.path
+                doc.text
                 docs
                 stdlib-roots)))
           (match (lsp-file-uri-to-path uri)
@@ -9870,8 +9741,8 @@
               [position-off : i64 (lsp-offset-at-position text line0 char0)]
               [byte-lc : LspLineCol
                 (lsp-byte-line-col-at-offset text position-off)]
-              [line1 : i64 (struct-get byte-lc line)]
-              [col1 : i64 (struct-get byte-lc col)]
+              [line1 : i64 byte-lc.line]
+              [col1 : i64 byte-lc.col]
               [inlay-state : tc.TcInlayHintState
                 (tc.tc-job-state-inlay-hints job-state)]
               (begin
@@ -9966,9 +9837,7 @@
             name
             (+ i 1)
             n
-            (lsp-json-list-cons
-              (lsp-position (struct-get lc line) (struct-get lc col))
-              acc)))
+            (lsp-json-list-cons (lsp-position lc.line lc.col) acc)))
         (lsp-find-references-in-text text name (+ i 1) n acc)))))
 
 ;; Maximal identifier token covering `off`, limited to source code. Comments,
@@ -10044,10 +9913,7 @@
                         [lc : LspLineCol
                           (lsp-line-col-cache-at-offset! (&mut lc-cache) text i)]
                         (lsp-json-list-cons
-                          (lsp-document-highlight
-                            (struct-get lc line)
-                            (struct-get lc col)
-                            name-units)
+                          (lsp-document-highlight lc.line lc.col name-units)
                           acc)))
                     unit)
                   (set! i end)))]
@@ -10143,16 +10009,14 @@
         (begin
           (if (= c '\n')
             (begin
-              (set! (struct-get cursor line) (+ (struct-get cursor line) 1))
-              (set! (struct-get cursor col) 1)
-              (set! (struct-get cursor code) false))
+              (set! cursor.line (+ cursor.line 1))
+              (set! cursor.col 1)
+              (set! cursor.code false))
             (begin
-              (set!
-                (struct-get cursor col)
-                (+ (struct-get cursor col) (lsp-position-units-for-byte c)))
+              (set! cursor.col (+ cursor.col (lsp-position-units-for-byte c)))
               (if (lsp-ws? c)
                 unit
-                (set! (struct-get cursor code) true))))
+                (set! cursor.code true))))
           (set! i (+ i 1)))))))
 
 (define (lsp-fold-clamp [value : i64] [limit : i64]) : i64
@@ -10180,8 +10044,8 @@
           folds
           slot
           (lsp_vector_families.LspFoldRange
-            (struct-get open start-line)
-            (struct-get open start-char)
+            open.start-line
+            open.start-char
             line
             end-col
             lsp-fold-kind-comment
@@ -10220,14 +10084,14 @@
           (cond
             [(= c '\n')
               (begin
-                (set! (struct-get cursor line) (+ (struct-get cursor line) 1))
-                (set! (struct-get cursor col) 1)
-                (set! (struct-get cursor code) false)
+                (set! cursor.line (+ cursor.line 1))
+                (set! cursor.col 1)
+                (set! cursor.code false)
                 (set! i (+ i 1)))]
             [(= c ';')
               (let
-                [own-line? : bool (not (struct-get cursor code))]
-                [line : i64 (struct-get cursor line)]
+                [own-line? : bool (not cursor.code)]
+                [line : i64 cursor.line]
                 [past : i64 (lsp-fold-clamp (lsp-skip-line text i n) n)]
                 [eol : i64
                   (if (and
@@ -10246,7 +10110,7 @@
                           comment-slot
                           comment-line
                           line
-                          (struct-get cursor col)))
+                          cursor.col))
                       (set! comment-line line))
                     unit)
                   (lsp-fold-cursor-advance! (&mut cursor) text eol past)
@@ -10256,7 +10120,7 @@
                 [past : i64 (lsp-fold-clamp (lsp-skip-string text i n) n)]
                 (begin
                   (lsp-fold-cursor-advance! (&mut cursor) text i past)
-                  (set! (struct-get cursor code) true)
+                  (set! cursor.code true)
                   (set! i past)))]
             [(= c '\'')
               (let
@@ -10264,15 +10128,15 @@
                   (lsp-fold-clamp (lsp-skip-apostrophe-char-literal text i n) n)]
                 (begin
                   (lsp-fold-cursor-advance! (&mut cursor) text i past)
-                  (set! (struct-get cursor code) true)
+                  (set! cursor.code true)
                   (set! i past)))]
             [(or (= c '(') (= c '['))
               (begin
                 (lsp_vector_families.lsp-fold-ranges-push!
                   (&mut folds)
                   (lsp_vector_families.LspFoldRange
-                    (struct-get cursor line)
-                    (+ (struct-get cursor col) 1)
+                    cursor.line
+                    (+ cursor.col 1)
                     0
                     0
                     lsp-fold-kind-region
@@ -10281,8 +10145,8 @@
                 (set!
                   top
                   (- (lsp_vector_families.lsp-fold-ranges-len (& folds)) 1))
-                (set! (struct-get cursor col) (+ (struct-get cursor col) 1))
-                (set! (struct-get cursor code) true)
+                (set! cursor.col (+ cursor.col 1))
+                (set! cursor.code true)
                 (set! i (+ i 1)))]
             [(or (= c ')') (= c ']'))
               (begin
@@ -10293,36 +10157,32 @@
                         (& folds)
                         top
                         (lsp-fold-range-fallback))]
-                    [parent : i64 (struct-get open parent)]
+                    [parent : i64 open.parent]
                     (begin
-                      (if (>
-                        (struct-get cursor line)
-                        (struct-get open start-line))
+                      (if (> cursor.line open.start-line)
                         (lsp_vector_families.lsp-fold-ranges-set!
                           (&mut folds)
                           top
                           (lsp_vector_families.LspFoldRange
-                            (struct-get open start-line)
-                            (struct-get open start-char)
-                            (struct-get cursor line)
-                            (struct-get cursor col)
+                            open.start-line
+                            open.start-char
+                            cursor.line
+                            cursor.col
                             lsp-fold-kind-region
                             -1
                             true))
                         unit)
                       (set! top parent)))
                   unit)
-                (set! (struct-get cursor col) (+ (struct-get cursor col) 1))
-                (set! (struct-get cursor code) true)
+                (set! cursor.col (+ cursor.col 1))
+                (set! cursor.code true)
                 (set! i (+ i 1)))]
             [else
               (begin
-                (set!
-                  (struct-get cursor col)
-                  (+ (struct-get cursor col) (lsp-position-units-for-byte c)))
+                (set! cursor.col (+ cursor.col (lsp-position-units-for-byte c)))
                 (if (lsp-ws? c)
                   unit
-                  (set! (struct-get cursor code) true))
+                  (set! cursor.code true))
                 (set! i (+ i 1)))])))
       folds)))
 
@@ -10330,17 +10190,17 @@
   (lsp-json-object
     (lsp-json-member
       "startLine"
-      (lsp-json-number (lsp-zero-based (struct-get fold start-line)))
+      (lsp-json-number (lsp-zero-based fold.start-line))
       (lsp-json-member
         "startCharacter"
-        (lsp-json-number (lsp-zero-based (struct-get fold start-char)))
+        (lsp-json-number (lsp-zero-based fold.start-char))
         (lsp-json-member
           "endLine"
-          (lsp-json-number (lsp-zero-based (struct-get fold end-line)))
+          (lsp-json-number (lsp-zero-based fold.end-line))
           (lsp-json-member
             "endCharacter"
-            (lsp-json-number (lsp-zero-based (struct-get fold end-char)))
-            (if (= (struct-get fold kind) lsp-fold-kind-comment)
+            (lsp-json-number (lsp-zero-based fold.end-char))
+            (if (= fold.kind lsp-fold-kind-comment)
               (lsp-json-member
                 "kind"
                 (json.JsonString "comment")
@@ -10364,7 +10224,7 @@
               i
               (lsp-fold-range-fallback))]
           (begin
-            (if (struct-get fold emit)
+            (if fold.emit
               (set! acc (lsp-json-list-cons (lsp-fold-range-json fold) acc))
               unit)
             (set! i (- i 1)))))
@@ -10523,10 +10383,10 @@
                       result
                       (lsp-edit-at-pos
                         text
-                        (struct-get last-entry form-end-line)
-                        (struct-get last-entry form-end-col)
-                        (struct-get last-entry form-end-line)
-                        (struct-get last-entry form-end-col)
+                        last-entry.form-end-line
+                        last-entry.form-end-col
+                        last-entry.form-end-line
+                        last-entry.form-end-col
                         (lsp-str2 "\n\n" new-text)))))
                 (lsp-write-structural-edit-success id params docs result))))]
         [(LspJsonText.Missing)
@@ -10902,13 +10762,13 @@
         [(string.eq method "textDocument/didOpen")
           (lsp-server-state-refresh-document-result
             state
-            (lsp-did-open params (struct-get state documents) stdlib-roots)
+            (lsp-did-open params state.documents stdlib-roots)
             uri
             false)]
         [(string.eq method "textDocument/didChange")
           (lsp-server-state-refresh-document-result
             state
-            (lsp-did-change params (struct-get state documents) stdlib-roots)
+            (lsp-did-change params state.documents stdlib-roots)
             uri
             false)]
         [else
@@ -10916,7 +10776,7 @@
           ;; eligible; a preceding watched delete therefore removes the row.
           (lsp-server-state-refresh-document-result
             state
-            (lsp-did-close params (struct-get state documents))
+            (lsp-did-close params state.documents)
             uri
             false)])]))
 
@@ -10953,9 +10813,7 @@
     [(LspJsonText.Ok query)
       (lsp-write-response
         id
-        (lsp-workspace-symbol-result-json
-          (& (struct-get state workspace))
-          query))]))
+        (lsp-workspace-symbol-result-json (& state.workspace) query))]))
 
 (define (lsp-handle-project-search-with-params!
   [id : json.Json]
@@ -10968,7 +10826,7 @@
         (lsp-write-error id -32600 "name cannot be empty")
         (lsp-write-response
           id
-          (lsp-project-search-result-json (& (struct-get state workspace)) name)))]))
+          (lsp-project-search-result-json (& state.workspace) name)))]))
 
 ;; Workspace queries are read-only and run in a request-local arena. Repeated
 ;; searches therefore retain neither candidate arrays nor JSON result graphs,
@@ -11041,7 +10899,7 @@
             [document-result : LspDocumentHandleResult
               (lsp-handle-document-message
                 message
-                (struct-get state documents)
+                state.documents
                 stdlib-roots
                 job-state)]
             (cond
@@ -11481,10 +11339,10 @@
                   (set! error message)]
                 [(ResultLspTranscriptBatchEntry.Ok entry)
                   (let
-                    [case-id : String (struct-get entry case-id)]
-                    [stdout-path : String (struct-get entry stdout-path)]
-                    [stderr-path : String (struct-get entry stderr-path)]
-                    [status-path : String (struct-get entry status-path)]
+                    [case-id : String entry.case-id]
+                    [stdout-path : String entry.stdout-path]
+                    [stderr-path : String entry.stderr-path]
+                    [status-path : String entry.status-path]
                     (cond
                       [(lsp-transcript-batch-id-seen? ids case-id)
                         (set!
@@ -11510,12 +11368,12 @@
                           (str_cat.str-cat
                             "lsp: duplicate transcript batch result path in case: "
                             case-id))]
-                      [(not (io.file-exists? (struct-get entry input-path)))
+                      [(not (io.file-exists? entry.input-path))
                         (set!
                           error
                           (str_cat.str-cat
                             "lsp: transcript batch input does not exist: "
-                            (struct-get entry input-path)))]
+                            entry.input-path))]
                       [else
                         (begin
                           (lsp_svec.push (&mut ids) case-id)
@@ -11558,29 +11416,24 @@
               [(ResultLspTranscriptBatchEntry.Ok entry)
                 (let
                   [input : String
-                    (byte_buf.to-string
-                      (io.read-file (struct-get entry input-path)))]
+                    (byte_buf.to-string (io.read-file entry.input-path))]
                   [result : LspTranscriptResult
                     (lsp-frame-run-transcript
                       (& input)
                       stdlib-roots
                       prefix-cache-stats)]
                   (begin
+                    (lsp-write-file-text entry.stdout-path result.stdout)
+                    (lsp-write-file-text entry.stderr-path result.stderr)
+                    (lsp-write-file-text entry.stdout-path result.stdout)
+                    (lsp-write-file-text entry.stderr-path result.stderr)
                     (lsp-write-file-text
-                      (struct-get entry stdout-path)
-                      (struct-get result stdout))
-                    (lsp-write-file-text
-                      (struct-get entry stderr-path)
-                      (struct-get result stderr))
-                    (lsp-write-file-text
-                      (struct-get entry status-path)
-                      (str_cat.str-cat
-                        (string.int->string (struct-get result status))
-                        "\n"))
+                      entry.status-path
+                      (str_cat.str-cat (string.int->string result.status) "\n"))
                     (io.print-string
                       (lsp-str3
                         "lsp-transcript-batch-result\t"
-                        (struct-get entry case-id)
+                        entry.case-id
                         "\n"))))])
             (set! cursor next)
             (set! line-number (+ line-number 1)))))
@@ -11738,19 +11591,19 @@
         (let
           [entry : lsp_vector_families.LspDeclEntry
             (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
-          (if (string.eq (struct-get entry name) name)
+          (if (string.eq entry.name name)
             (begin
               (set! found true)
               (let
-                [kind : String (struct-get entry kind)]
+                [kind : String entry.kind]
                 [n2 : i64 (string.string-length text)]
                 (if (or (string.eq kind "function") (string.eq kind "macro"))
                   (let
                     [form-start-off : i64
                       (lsp-offset-at-position
                         text
-                        (- (struct-get entry form-start-line) 1)
-                        (- (struct-get entry form-start-col) 1))]
+                        (- entry.form-start-line 1)
+                        (- entry.form-start-col 1))]
                     [after-kw : i64
                       (lsp-skip-space text (+ form-start-off 1) n2)]
                     [kw-end : i64 (lsp-scan-ident text after-kw n2)]
@@ -11765,8 +11618,8 @@
                           (-
                             (lsp-offset-at-position
                               text
-                              (- (struct-get entry form-end-line) 1)
-                              (- (struct-get entry form-end-col) 1))
+                              (- entry.form-end-line 1)
+                              (- entry.form-end-col 1))
                             1)]
                         [body-start-lc : LspLineCol
                           (lsp-line-col-at-offset text body-start-off)]
@@ -11784,10 +11637,10 @@
                             result
                             (lsp-edit-at-pos
                               text
-                              (struct-get body-start-lc line)
-                              (struct-get body-start-lc col)
-                              (struct-get body-end-lc line)
-                              (struct-get body-end-lc col)
+                              body-start-lc.line
+                              body-start-lc.col
+                              body-end-lc.line
+                              body-end-lc.col
                               new-body))))
                       (set!
                         err
@@ -11824,19 +11677,19 @@
           (let
             [entry : lsp_vector_families.LspDeclEntry
               (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
-            (if (string.eq (struct-get entry name) name)
+            (if (string.eq entry.name name)
               (begin
                 (set! found true)
                 (let
-                  [kind : String (struct-get entry kind)]
+                  [kind : String entry.kind]
                   [n2 : i64 (string.string-length text)]
                   (if (or (string.eq kind "function") (string.eq kind "macro"))
                     (let
                       [form-start-off : i64
                         (lsp-offset-at-position
                           text
-                          (- (struct-get entry form-start-line) 1)
-                          (- (struct-get entry form-start-col) 1))]
+                          (- entry.form-start-line 1)
+                          (- entry.form-start-col 1))]
                       [after-kw : i64
                         (lsp-skip-space text (+ form-start-off 1) n2)]
                       [kw-end : i64 (lsp-scan-ident text after-kw n2)]
@@ -11851,8 +11704,8 @@
                             (-
                               (lsp-offset-at-position
                                 text
-                                (- (struct-get entry form-end-line) 1)
-                                (- (struct-get entry form-end-col) 1))
+                                (- entry.form-end-line 1)
+                                (- entry.form-end-col 1))
                               1)]
                           [body-start-lc : LspLineCol
                             (lsp-line-col-at-offset text body-start-off)]
@@ -11880,10 +11733,10 @@
                               result
                               (lsp-edit-at-pos
                                 text
-                                (struct-get body-start-lc line)
-                                (struct-get body-start-lc col)
-                                (struct-get body-end-lc line)
-                                (struct-get body-end-lc col)
+                                body-start-lc.line
+                                body-start-lc.col
+                                body-end-lc.line
+                                body-end-lc.col
                                 replaced-body))))
                         (set!
                           err
@@ -11921,16 +11774,16 @@
           (let
             [entry : lsp_vector_families.LspDeclEntry
               (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
-            (if (string.eq (struct-get entry name) name)
+            (if (string.eq entry.name name)
               (begin
                 (set!
                   result
                   (lsp-edit-at-pos
                     text
-                    (struct-get entry form-start-line)
-                    (struct-get entry form-start-col)
-                    (struct-get entry form-end-line)
-                    (struct-get entry form-end-col)
+                    entry.form-start-line
+                    entry.form-start-col
+                    entry.form-end-line
+                    entry.form-end-col
                     new-text))
                 (set! found true)
                 unit)
@@ -12471,7 +12324,7 @@
         (match value
           [(json.JsonArray items)
             (let
-              [path-items : json.JsonSeq (box-get items)]
+              [path-items : json.JsonSeq (__tl-box-place items)]
               (if (= (json.list-count path-items) 0)
                 (LspPathParam.Err "path must not be empty")
                 (if (lsp-json-list-all-strings? path-items)
@@ -12537,9 +12390,9 @@
     [lc : LspLineCol (lsp-line-col-at-offset text off)]
     (lsp-json-object2
       "line"
-      (lsp-json-number (- (struct-get lc line) 1))
+      (lsp-json-number (- lc.line 1))
       "character"
-      (lsp-json-number (- (struct-get lc col) 1)))))
+      (lsp-json-number (- lc.col 1)))))
 
 (define (lsp-offset-range-json [text : String] [start : i64] [end : i64]) : json.Json
   (lsp-json-object2
@@ -12561,10 +12414,10 @@
           (json.JsonString (lsp-nested-kind-for-head name))
           (lsp-json-member
             "line"
-            (lsp-json-number (- (struct-get lc line) 1))
+            (lsp-json-number (- lc.line 1))
             (lsp-json-member
               "character"
-              (lsp-json-number (- (struct-get lc col) 1))
+              (lsp-json-number (- lc.col 1))
               (lsp-json-member
                 "type"
                 (json.JsonString "s-expression")
@@ -12596,10 +12449,10 @@
             (json.JsonString (lsp-nested-kind-for-head name))
             (lsp-json-member
               "line"
-              (lsp-json-number (- (struct-get lc line) 1))
+              (lsp-json-number (- lc.line 1))
               (lsp-json-member
                 "character"
-                (lsp-json-number (- (struct-get lc col) 1))
+                (lsp-json-number (- lc.col 1))
                 (lsp-json-member
                   "position"
                   (lsp-offset-position-json text start)
@@ -13730,7 +13583,10 @@
               [(json.JsonFound operations)
                 (match operations
                   [(json.JsonArray items)
-                    (match (lsp-batch-run-operations (box-get items) 0 text)
+                    (match (lsp-batch-run-operations
+                      (__tl-box-place items)
+                      0
+                      text)
                       [(LspBatchRunResult.Ok edited-text results)
                         (let
                           [formatted : String
@@ -13999,15 +13855,15 @@
   [index : i64]) : String
   (let
     [row : lsp_vector_families.LspWorkspaceDeclRow
-      (struct-get (lsp-workspace-symbol-results-get results index) row)]
-    [decl : lsp_vector_families.LspDeclEntry (struct-get row decl)]
-    (struct-get decl name)))
+      (__tl-project-field (lsp-workspace-symbol-results-get results index) row)]
+    [decl : lsp_vector_families.LspDeclEntry row.decl]
+    decl.name))
 
 (define (lsp-workspace-symbol-test-candidate-module
   [results : (& results LspWorkspaceSymbolResults)]
   [index : i64]) : String
-  (struct-get
-    (struct-get (lsp-workspace-symbol-results-get results index) row)
+  (__tl-project-field
+    (__tl-project-field (lsp-workspace-symbol-results-get results index) row)
     module))
 
 (define (lsp-workspace-symbol-test-candidate-line
@@ -14015,9 +13871,9 @@
   [index : i64]) : i64
   (let
     [row : lsp_vector_families.LspWorkspaceDeclRow
-      (struct-get (lsp-workspace-symbol-results-get results index) row)]
-    [decl : lsp_vector_families.LspDeclEntry (struct-get row decl)]
-    (struct-get decl name-line)))
+      (__tl-project-field (lsp-workspace-symbol-results-get results index) row)]
+    [decl : lsp_vector_families.LspDeclEntry row.decl]
+    decl.name-line))
 
 (define (lsp-workspace-symbol-ranking-smoke-ok?) : bool
   (let

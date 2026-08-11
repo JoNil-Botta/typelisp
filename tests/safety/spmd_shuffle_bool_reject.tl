@@ -7,4 +7,6 @@
   [xs : (__tl_dyn-array bool)]
   [out : (__tl_dyn-array bool)]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) 0))))
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (spmd-shuffle (array-ref xs i) 0))))

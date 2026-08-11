@@ -10,8 +10,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ i 1) : i32))
-        (array-set! b i (cast (* i 3) : i32))
+        (set! (array-ref a i) (cast (+ i 1) : i32))
+        (set! (array-ref b i) (cast (* i 3) : i32))
         (set! i (+ i 1))))))
 
 (define (fill
@@ -21,7 +21,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 
 (define (checksum [out : (__tl_dyn-array i32)] [n : i64]) : i64
   (let

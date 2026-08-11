@@ -632,7 +632,8 @@
     [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind path _ _ _))
       (typecheck-compiler-source-stdlib-import-kind? kind path)]
     [(ast.AstDecl.Unsafe inner-box)
-      (typecheck-compiler-source-decl-has-stdlib-import? (box-get inner-box))]
+      (typecheck-compiler-source-decl-has-stdlib-import?
+        (__tl-box-place inner-box))]
     [_ false]))
 
 (define (typecheck-compiler-source-decls-have-stdlib-import?
@@ -648,7 +649,8 @@
   [program : ast.AstProgram]) : bool
   (match program
     [(ast.AstProgram.Program decls-box)
-      (typecheck-compiler-source-decls-have-stdlib-import? (box-get decls-box))]))
+      (typecheck-compiler-source-decls-have-stdlib-import?
+        (__tl-box-place decls-box))]))
 
 (define (typecheck-compiler-repl-expr
   [decls : ast.AstDeclList]
@@ -694,14 +696,14 @@
                                 (tc_core.ResultTcType.Err
                                   (cdiag.compiler-diagnostic-message
                                     (cdiag.compiler-diagnostic-list-first
-                                      (box-get diag))))])]
+                                      (__tl-box-place diag))))])]
                           [(tc_core.ResultTcEnv.Err message)
                             (tc_core.ResultTcType.Err message)])]
                       [(tc_core.ResultTcUnit.Err message)
                         (tc_core.ResultTcType.Err message)])]
                   [(tc_core.ResultTcSourcePolicyDiagnostic.Err diag)
                     (tc_core.ResultTcType.Err
-                      (cdiag.compiler-diagnostic-message (box-get diag)))]))]
+                      (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))]
             [(csym.ResultCompilerRegistries.Err message)
               (tc_core.ResultTcType.Err message)])]
         [(csym.ResultCompilerSymbols.Err message)

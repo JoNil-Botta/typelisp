@@ -15,7 +15,7 @@
     [exclusive : (&mut values (Array i64 1)) (&mut values)]
     [bump : (-> unit)
       (lambda () : unit
-        (array-set! exclusive 0 (+ (array-ref exclusive 0) 1)))]
+        (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1)))]
     (begin
       (bump)
       (bump)
@@ -56,7 +56,7 @@
     [exclusive : (&mut values (Array i64 1)) (&mut values)]
     (begin
       ((lambda () : unit
-          (array-set! exclusive 0 (+ (array-ref exclusive 0) 1))))
+          (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1))))
       (= (array-ref values 0) 42))))
 
 (define (immediate-consuming-capture) : bool
@@ -76,7 +76,7 @@
         (let
           [bump : (-> unit)
             (lambda () : unit
-              (array-set! exclusive 0 (+ (array-ref exclusive 0) 1)))]
+              (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1)))]
           (begin
             (bump)
             (bump))))]
@@ -90,7 +90,7 @@
     [exclusive : (&mut values (Array i64 1)) (&mut values)]
     (begin
       (generated-bump-twice
-        (array-set! exclusive 0 (+ (array-ref exclusive 0) 1)))
+        (set! (array-ref exclusive 0) (+ (array-ref exclusive 0) 1)))
       (= (array-ref values 0) 42))))
 
 (define (main) : i64

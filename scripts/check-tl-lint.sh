@@ -92,8 +92,8 @@ compiler_supports_struct_field_set_lint() {
   (let
     [p : Pair (Pair 1 2)]
     (begin
-      (set! (struct-get p x) 3)
-      (struct-get p x))))
+      (set! p.x 3)
+      p.x)))
 EOF
     "$COMPILER" lint "$probe" > "$WORKDIR/struct-field-set-probe.stdout" 2> "$WORKDIR/struct-field-set-probe.stderr"
 }

@@ -24,8 +24,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (dispatch_seed_a i))
-        (array-set! b i (dispatch_seed_b i))
+        (set! (array-ref a i) (dispatch_seed_a i))
+        (set! (array-ref b i) (dispatch_seed_b i))
         (set! i (+ i 1))))))
 
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
@@ -51,7 +51,7 @@
       (dispatch_fill_inputs a b n)
       (foreach
         ([i : i64 0 n])
-        (array-set! out i (+ (array-ref a i) (array-ref b i))))
+        (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
       (set! acc (dispatch_checksum out n))
       (if (= (bit-and acc 0xff) 247)
         42
@@ -68,7 +68,7 @@
       (dispatch_fill_inputs a b n)
       (foreach
         ([i : i64 0 n])
-        (array-set! out i (+ (array-ref a i) (array-ref b i))))
+        (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
       (set! acc (dispatch_checksum out n))
       (if (= (bit-and acc 0xff) 247)
         106
@@ -85,7 +85,7 @@
       (dispatch_fill_inputs a b n)
       (foreach
         ([i : i64 0 n])
-        (array-set! out i (+ (array-ref a i) (array-ref b i))))
+        (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
       (set! acc (dispatch_checksum out n))
       (if (= (bit-and acc 0xff) 247)
         170

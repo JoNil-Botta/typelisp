@@ -26,28 +26,28 @@
       [x : f32 (array-ref x-values i)]
       [y : f32 (array-ref y-values i)]
       (begin
-        (array-set! z-re i x)
-        (array-set! z-im i y)
-        (array-set! iterations i 0)
-        (array-set! remaining i max-iterations)
+        (set! (array-ref z-re i) x)
+        (set! (array-ref z-im i) y)
+        (set! (array-ref iterations i) 0)
+        (set! (array-ref remaining i) max-iterations)
         (while (> (array-ref remaining i) 0)
           (if (>
             (+
               (* (array-ref z-re i) (array-ref z-re i))
               (* (array-ref z-im i) (array-ref z-im i)))
             escape-radius)
-            (array-set! remaining i 0)
+            (set! (array-ref remaining i) 0)
             (let
               [old-re : f32 (array-ref z-re i)]
               [old-im : f32 (array-ref z-im i)]
               [new-re : f32 (- (* old-re old-re) (* old-im old-im))]
               [new-im : f32 (* (+ old-re old-re) old-im)]
               (begin
-                (array-set! z-re i (+ x new-re))
-                (array-set! z-im i (+ y new-im))
-                (array-set! iterations i (+ (array-ref iterations i) 1))
-                (array-set! remaining i (+ (array-ref remaining i) -1))))))
-        (array-set! output i (array-ref iterations i))))))
+                (set! (array-ref z-re i) (+ x new-re))
+                (set! (array-ref z-im i) (+ y new-im))
+                (set! (array-ref iterations i) (+ (array-ref iterations i) 1))
+                (set! (array-ref remaining i) (+ (array-ref remaining i) -1))))))
+        (set! (array-ref output i) (array-ref iterations i))))))
 
 (define (mandelbrot
   [x0 : f32]
@@ -75,8 +75,8 @@
           [i : i64 0]
           (while (< i width)
             (begin
-              (array-set! x-values i (+ x0 (* (cast i : f32) dx)))
-              (array-set! y-values i (+ y0 (* (cast j : f32) dy)))
+              (set! (array-ref x-values i) (+ x0 (* (cast i : f32) dx)))
+              (set! (array-ref y-values i) (+ y0 (* (cast j : f32) dy)))
               (set! i (+ i 1)))))
         (let
           [kernel : (->
@@ -107,7 +107,9 @@
           [i : i64 0]
           (while (< i width)
             (begin
-              (array-set! output (+ i (* j width)) (array-ref row-output i))
+              (set!
+                (array-ref output (+ i (* j width)))
+                (array-ref row-output i))
               (set! i (+ i 1)))))
         (set! j (+ j 1))))))
 
@@ -147,7 +149,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! values i (expected-value case-id i))
+        (set! (array-ref values i) (expected-value case-id i))
         (set! i (+ i 1))))))
 
 (define (buffers-equal [left : (Array i32)] [right : (Array i32)] [count : i64]) : bool
@@ -198,8 +200,8 @@
     [iterations : (Array i32) (array.make-array i32 width)]
     [remaining : (Array i32) (array.make-array i32 width)]
     (begin
-      (array-set! got count sentinel)
-      (array-set! want count sentinel)
+      (set! (array-ref got count) sentinel)
+      (set! (array-ref want count) sentinel)
       (fill-expected! want case-id count)
       (mandelbrot
         x0

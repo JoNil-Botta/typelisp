@@ -13,7 +13,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! xs-slots i (+ (* i 3) 1))
+        (set! (array-ref xs-slots i) (+ (* i 3) 1))
         (set! i (+ i 1))))))
 
 (define (sum [xs : (& xs i64v.Vec)] [n : i64]) : i64
@@ -34,7 +34,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! xs-slots i (cast (+ (* i 5) 2) : i32))
+        (set! (array-ref xs-slots i) (cast (+ (* i 5) 2) : i32))
         (set! i (+ i 1))))))
 
 (define (sum32 [xs : (& xs i32v.Vec)] [n : i64]) : i64
@@ -90,15 +90,16 @@
         [dst (i64v.slots-mut (&mut out))]
         (foreach
           ([i : i64 0 n])
-          (array-set! dst i (spmd-shuffle (array-ref src i) (program-index)))))
+          (set!
+            (array-ref dst i)
+            (spmd-shuffle (array-ref src i) (program-index)))))
       (let
         [src (i64v.slots (& xs))]
         [dst (i64v.slots-mut (&mut rev1))]
         (foreach
           ([i : i64 0 full])
-          (array-set!
-            dst
-            i
+          (set!
+            (array-ref dst i)
             (spmd-shuffle
               (array-ref src i)
               (+ (* -1 (program-index)) (+ (program-count) -1))))))
@@ -107,9 +108,8 @@
         [dst (i64v.slots-mut (&mut rev2))]
         (foreach
           ([i : i64 0 full])
-          (array-set!
-            dst
-            i
+          (set!
+            (array-ref dst i)
             (spmd-shuffle
               (array-ref src i)
               (+ (* -1 (program-index)) (+ (program-count) -1))))))
@@ -118,9 +118,8 @@
         [dst (i32v.slots-mut (&mut out32))]
         (foreach
           ([i : i64 0 n])
-          (array-set!
-            dst
-            i
+          (set!
+            (array-ref dst i)
             (spmd-shuffle (array-ref src i) (+ (program-index) 0)))))
       ; Full-gang rotate followed by the inverse rotate. `program-count` is a
       ; power of two in both native modes, so bit-and implements lane modulo.
@@ -129,9 +128,8 @@
         [dst (i64v.slots-mut (&mut rot1))]
         (foreach
           ([i : i64 0 full])
-          (array-set!
-            dst
-            i
+          (set!
+            (array-ref dst i)
             (spmd-shuffle
               (array-ref src i)
               (bit-and (+ (program-index) 1) (+ (program-count) -1))))))
@@ -140,9 +138,8 @@
         [dst (i64v.slots-mut (&mut rot2))]
         (foreach
           ([i : i64 0 full])
-          (array-set!
-            dst
-            i
+          (set!
+            (array-ref dst i)
             (spmd-shuffle
               (array-ref src i)
               (bit-and
@@ -154,22 +151,23 @@
         [dst (i64v.slots-mut (&mut repeat))]
         (foreach
           ([i : i64 0 full])
-          (array-set!
-            dst
-            i
+          (set!
+            (array-ref dst i)
             (spmd-shuffle (program-index) (bit-and (program-index) 1)))))
       (let
         [dst (i64v.slots-mut (&mut uniform-selector))]
         (foreach
           ([i : i64 0 full])
-          (array-set! dst i (spmd-shuffle (program-index) 0))))
+          (set! (array-ref dst i) (spmd-shuffle (program-index) 0))))
       ; A uniform source must still evaluate and validate every varying
       ; selector, even though every valid permutation produces the same value.
       (let
         [dst (i64v.slots-mut (&mut uniform-source))]
         (foreach
           ([i : i64 0 full])
-          (array-set! dst i (spmd-shuffle (cast 77 : i64) (program-index)))))
+          (set!
+            (array-ref dst i)
+            (spmd-shuffle (cast 77 : i64) (program-index)))))
       (if (and
         (= (sum (& out) n) 532)
         (= (sum32 (& out32) n) 893)

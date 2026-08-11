@@ -16,7 +16,7 @@
   (MixUF (cast 7 : u32) 8.5))
 
 (define (vec-sum [v : Vec2]) : f32
-  (+ (struct-get v x) (struct-get v y)))
+  (+ v.x v.y))
 
 (define (make-vec [x : f32] [y : f32]) : Vec2
   (Vec2 x y))
@@ -27,10 +27,10 @@
     (Vec2 9.0 10.0)))
 
 (define (mix-tag [m : MixUF]) : u32
-  (struct-get m tag))
+  m.tag)
 
 (define (mix-value [m : MixUF]) : f32
-  (struct-get m value))
+  m.value)
 
 ;; Eight preceding f32 parameters exhaust SysV's xmm arg bank before `v`; they
 ;; also put `v` past Win64's four positional register slots.
@@ -76,10 +76,10 @@
   (let
     [items : (__tl_dyn-array Vec2) (array.make-array Vec2 2)]
     (begin
-      (array-set! items 0 (Vec2 3.0 4.0))
-      (array-set! items 1 (Vec2 5.0 6.0))
+      (set! (array-ref items 0) (Vec2 3.0 4.0))
+      (set! (array-ref items 1) (Vec2 5.0 6.0))
       (if (= (vec-sum (array-ref items 0)) 7.0)
-        (= (struct-get (array-ref items 1) y) 6.0)
+        (= (__tl-project-field (array-ref items 1) y) 6.0)
         false))))
 
 (define (case-capture) : bool

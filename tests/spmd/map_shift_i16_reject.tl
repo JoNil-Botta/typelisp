@@ -12,6 +12,6 @@
       (foreach
         ([i : i64 0 n])
         (begin
-          (array-set! out i (shl (array-ref xs i) 1))
-          (array-set! copy i (array-ref xs i))))
+          (set! (array-ref out i) (shl (array-ref xs i) 1))
+          (set! (array-ref copy i) (array-ref xs i))))
       42)))

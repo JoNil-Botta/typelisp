@@ -50,10 +50,7 @@
     (begin
       (while (< index count)
         (let
-          [path : String
-            (array-ref
-              (struct-get paths slots)
-              (+ (struct-get paths offset) index))]
+          [path : String (array-ref paths.slots (+ paths.offset index))]
           (begin
             (if (prelude-surface-path-present? (& items) path)
               unit
@@ -66,9 +63,8 @@
         (begin
           (while (< copy-index (surface_svec.len (& items)))
             (begin
-              (array-set!
-                out
-                copy-index
+              (set!
+                (array-ref out copy-index)
                 (surface_svec.get (& items) copy-index ""))
               (set! copy-index (+ copy-index 1))))
           (while (< sort-index (array-length out))
@@ -82,9 +78,9 @@
                     value
                     (array-ref out (- scan 1))))
                   (begin
-                    (array-set! out scan (array-ref out (- scan 1)))
+                    (set! (array-ref out scan) (array-ref out (- scan 1)))
                     (set! scan (- scan 1))))
-                (array-set! out scan value)
+                (set! (array-ref out scan) value)
                 (set! sort-index (+ sort-index 1)))))
           out)))))
 
@@ -151,7 +147,9 @@
   [prefix : String]
   [diag : (Box cdiag.CompilerDiagnostic)]) : ResultPreludeSurfaceFacts
   (ResultPreludeSurfaceFacts.Err
-    (str_cat.str-cat prefix (cdiag.compiler-diagnostic-render (box-get diag)))))
+    (str_cat.str-cat
+      prefix
+      (cdiag.compiler-diagnostic-render (__tl-box-place diag)))))
 
 (define (prelude-surface-typecheck-facts-specialized
   [load-state : load.CompilerLoadSessionState]
@@ -169,7 +167,7 @@
     [decl-count : i64
       (match program
         [(ast.AstProgram.Program decls-box)
-          (ast.ast-decl-list-len (& (box-get decls-box)))])]
+          (ast.ast-decl-list-len (& (__tl-box-place decls-box)))])]
     [_select-all-clone-roots : unit (tc.tc-clone-root-collection-use! program)]
     [_start-fact-recording : unit
       (surface_facts.surface-typecheck-facts-recording-start!
@@ -192,7 +190,7 @@
           (surface_facts.surface-typecheck-facts-recording-abort!)
           (prelude-surface-facts-error
             "prelude surface typecheck failed: "
-            (box (cdiag.compiler-diagnostic-list-first (box-get diag)))))]
+            (box (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))))]
       [(tc.ResultCompilerTypecheckChecked.Ok summary ctx _ _)
         (let
           [_finish-clone-roots : clone.CloneRootEntries
@@ -222,7 +220,7 @@
     [macro-decl-count : i64
       (match expanded
         [(ast.AstProgram.Program decls-box)
-          (ast.ast-decl-list-len (& (box-get decls-box)))])]
+          (ast.ast-decl-list-len (& (__tl-box-place decls-box)))])]
     (if (spec.compiler-specialize-needed-with-pools expanded pools)
       (match (spec.compiler-specialize-program-with-paths-and-pools
         expanded
@@ -314,16 +312,14 @@
     [sections : (__tl_dyn-array tlci.TlciAuxSection)
       (make-array tlci.TlciAuxSection 3)]
     (begin
-      (array-set!
-        sections
-        0
+      (set!
+        (array-ref sections 0)
         (tlci.TlciAuxSection
           tlci.tlci-aux-kind-package-identity
           surface_identity.surface-identity-schema-version
           identity-bytes))
-      (array-set!
-        sections
-        1
+      (set!
+        (array-ref sections 1)
         ;; The aux section's schema-version is what
         ;; `compiler_surface_hydrate.tl` compares against
         ;; `surface-ast-schema-version`; it must BE that constant, not a
@@ -333,9 +329,8 @@
           tlci.tlci-aux-kind-frontend-ast
           surface_ast.surface-ast-schema-version
           ast-bytes))
-      (array-set!
-        sections
-        2
+      (set!
+        (array-ref sections 2)
         (tlci.TlciAuxSection
           tlci.tlci-aux-kind-frontend-facts
           surface_facts.surface-typecheck-facts-schema-version
@@ -420,7 +415,7 @@
             (ResultPreludeSurface.Err
               (str_cat.str-cat
                 "prelude surface load failed: "
-                (cdiag.compiler-diagnostic-render (box-get diag)))))]
+                (cdiag.compiler-diagnostic-render (__tl-box-place diag)))))]
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules seen)
           (match (prelude-surface-typecheck-facts
             load-state
@@ -440,7 +435,8 @@
                   (prelude-surface-module-set paths)]
                 [surface-decls : ast.AstDeclList
                   (match surface-program
-                    [(ast.AstProgram.Program decls-box) (box-get decls-box)])]
+                    [(ast.AstProgram.Program decls-box)
+                      (__tl-box-place decls-box)])]
                 [key : surface_identity.SurfaceIdentityKey
                   (surface_identity.SurfaceIdentityKey
                     "stdlib.prelude"
@@ -453,11 +449,9 @@
                 [identity-payload : surface_identity.SurfaceIdentityPayload
                   (surface_identity.surface-identity-capture key)]
                 [source-count : i64
-                  (array-length (struct-get identity-payload source-names))]
+                  (array-length identity-payload.source-names)]
                 [identity-count : i64
-                  (+
-                    source-count
-                    (array-length (struct-get identity-payload generated)))]
+                  (+ source-count (array-length identity-payload.generated))]
                 (begin
                   (unsafe
                     (arena.tl_arena_set previous-arena))

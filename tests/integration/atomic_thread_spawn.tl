@@ -27,8 +27,8 @@
       (let
         [items : (__tl_dyn-array i64) (make-array i64 4096)]
         (begin
-          (array-set! items 0 21)
-          (array-set! items 1 21)
+          (set! (array-ref items 0) 21)
+          (set! (array-ref items 1) 21)
           (let
             [sum : i64 (+ (array-ref items 0) (array-ref items 1))]
             (begin

@@ -9,7 +9,7 @@
 (define (fill-indexes [ix : (&mut ix i64v.Vec)] [n : i64]) : unit
   (let
     [ix-slots (i64v.slots-mut ix)]
-    (foreach ([i : i64 0 n]) (array-set! ix-slots i (% i 4)))))
+    (foreach ([i : i64 0 n]) (set! (array-ref ix-slots i) (% i 4)))))
 
 (define (clear-buckets
   [out64 : (& out64 atomic.AtomicI64Buffer)]
@@ -49,14 +49,12 @@
       (let
         [bucket : i64 (array-ref ix-slots i)]
         (begin
-          (array-set!
-            old64-slots
-            i
+          (set!
+            (array-ref old64-slots i)
             (atomic.atomic-i64-fetch-add! out64 bucket (+ i 1)))
           (atomic.atomic-i32-add! out32 bucket (cast (+ i 1) : i32))
-          (array-set!
-            old32-slots
-            i
+          (set!
+            (array-ref old32-slots i)
             (atomic.atomic-i32-fetch-add! serial32 0 (cast 1 : i32))))))))
 
 (define (snapshot-loads
@@ -69,9 +67,8 @@
     [snapshot-slots (i64v.slots-mut snapshot)]
     (foreach
       ([i : i64 0 n])
-      (array-set!
-        snapshot-slots
-        i
+      (set!
+        (array-ref snapshot-slots i)
         (atomic.atomic-i64-load out64 (array-ref ix-slots i))))))
 
 (define (masked-even-add

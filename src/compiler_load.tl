@@ -329,24 +329,24 @@
 
 (define (compiler-load-surface-import-list-count
   [imports : CompilerLoadSurfaceImportList]) : i64
-  (struct-get imports len))
+  imports.len)
 
 (define (compiler-load-surface-import-list-at
   [imports : CompilerLoadSurfaceImportList]
   [index : i64]) : CompilerLoadSurfaceImport
-  (array-ref (struct-get imports slots) index))
+  (array-ref imports.slots index))
 
 (define (compiler-load-surface-decl-list-empty) : CompilerLoadSurfaceDeclList
   (CompilerLoadSurfaceDeclList (array.make-array CompilerLoadSurfaceDecl 0) 0))
 
 (define (compiler-load-surface-decl-list-count
   [decls : CompilerLoadSurfaceDeclList]) : i64
-  (struct-get decls len))
+  decls.len)
 
 (define (compiler-load-surface-decl-list-at
   [decls : CompilerLoadSurfaceDeclList]
   [index : i64]) : CompilerLoadSurfaceDecl
-  (array-ref (struct-get decls slots) index))
+  (array-ref decls.slots index))
 
 (define (compiler-load-surface-summary-list-empty) : CompilerLoadSurfaceSummaryList
   (CompilerLoadSurfaceSummaryList
@@ -355,14 +355,12 @@
 
 (define (compiler-load-surface-summary-list-count
   [summaries : CompilerLoadSurfaceSummaryList]) : i64
-  (struct-get summaries len))
+  summaries.len)
 
 (define (compiler-load-surface-summary-list-at
   [summaries : CompilerLoadSurfaceSummaryList]
   [index : i64]) : CompilerLoadSurfaceSummary
-  (array-ref
-    (struct-get summaries slots)
-    (- (- (struct-get summaries len) index) 1)))
+  (array-ref summaries.slots (- (- summaries.len index) 1)))
 
 (defenum ResultCompilerLoadSurfaceSummary
   (Ok CompilerLoadSurfaceSummary)
@@ -509,7 +507,7 @@
   (let
     [flags : (__tl_dyn-array bool) (array.make-array bool 3)]
     (begin
-      (array-set! flags 2 true)
+      (set! (array-ref flags 2) true)
       flags)))
 
 (define (compiler-load-session-state-i64-cell [value : i64]) : (__tl_dyn-array
@@ -523,15 +521,15 @@
 
 (define (compiler-load-lazy-qualified-observer-stack-count
   [stack : CompilerLoadLazyQualifiedObserverStack]) : i64
-  (struct-get stack len))
+  stack.len)
 
 (define (compiler-load-lazy-qualified-observer-stack-push
   [stack : CompilerLoadLazyQualifiedObserverStack]
   [frame : CompilerLoadLazyQualifiedObserverFrame]) : CompilerLoadLazyQualifiedObserverStack
   (let
-    [len : i64 (struct-get stack len)]
+    [len : i64 stack.len]
     [slots : (__tl_dyn-array CompilerLoadLazyQualifiedObserverFrame)
-      (struct-get stack slots)]
+      stack.slots]
     (begin
       (if (< len (array-length slots))
         unit
@@ -546,10 +544,10 @@
           (begin
             (while (< index len)
               (begin
-                (array-set! bigger index (array-ref slots index))
+                (set! (array-ref bigger index) (array-ref slots index))
                 (set! index (+ index 1))))
             (set! slots bigger))))
-      (array-set! slots len frame)
+      (set! (array-ref slots len) frame)
       (CompilerLoadLazyQualifiedObserverStack slots (+ len 1)))))
 
 (define (compiler-load-lazy-qualified-observer-state-new) : CompilerLoadLazyQualifiedObserverState
@@ -561,8 +559,8 @@
     [stack : (__tl_dyn-array CompilerLoadLazyQualifiedObserverStack)
       (make-array (compiler-load-lazy-qualified-observer-stack-empty))]
     (begin
-      (array-set! member-sets 0 (sym_i64_env.sym-i64-empty))
-      (array-set! member-sets 1 (sym_i64_env.sym-i64-empty))
+      (set! (array-ref member-sets 0) (sym_i64_env.sym-i64-empty))
+      (set! (array-ref member-sets 1) (sym_i64_env.sym-i64-empty))
       (CompilerLoadLazyQualifiedObserverState flags root-ids member-sets stack))))
 
 (define (compiler-load-session-state-bool-cell-get
@@ -572,7 +570,7 @@
 (define (compiler-load-session-state-bool-cell-set!
   [cell : (__tl_dyn-array bool)]
   [value : bool]) : unit
-  (array-set! cell 0 value))
+  (set! (array-ref cell 0) value))
 
 (define (compiler-load-session-state-new-with-standalone-reset-safety
   [standalone-reset-safe : bool]) : CompilerLoadSessionState
@@ -645,8 +643,7 @@
 
 (define (compiler-load-session-state-standalone-reset-safe?
   [state : CompilerLoadSessionState]) : bool
-  (compiler-load-session-state-bool-cell-get
-    (struct-get state standalone-reset-safe)))
+  (compiler-load-session-state-bool-cell-get state.standalone-reset-safe))
 
 ;; Resetting compiler entries own the compatibility default session. Running
 ;; one while a driver-owned session is selected would invalidate the driver's
@@ -668,14 +665,12 @@
 
 (define (compiler-load-session-state-cache-enabled?
   [state : CompilerLoadSessionState]) : bool
-  (compiler-load-session-state-bool-cell-get (struct-get state cache-enabled)))
+  (compiler-load-session-state-bool-cell-get state.cache-enabled))
 
 (define (compiler-load-session-state-cache-set-enabled!
   [state : CompilerLoadSessionState]
   [enabled : bool]) : unit
-  (compiler-load-session-state-bool-cell-set!
-    (struct-get state cache-enabled)
-    enabled))
+  (compiler-load-session-state-bool-cell-set! state.cache-enabled enabled))
 
 (define (compiler-load-session-state-cache-enable!
   [state : CompilerLoadSessionState]) : unit
@@ -685,7 +680,7 @@
   [state : CompilerLoadSessionState]
   [enabled : bool]) : unit
   (compiler-load-session-state-bool-cell-set!
-    (struct-get state program-cache-enabled)
+    state.program-cache-enabled
     enabled))
 
 (define (compiler-load-session-state-program-cache-fill!
@@ -694,24 +689,23 @@
   (if (>= index compiler-load-program-cache-capacity)
     unit
     (begin
-      (array-set!
-        (struct-get state program-cache)
-        index
+      (set!
+        (array-ref state.program-cache index)
         (CompilerLoadProgramCacheEmpty))
       (compiler-load-session-state-program-cache-fill! state (+ index 1)))))
 
 (define (compiler-load-session-state-program-cache-stats-reset!
   [state : CompilerLoadSessionState]) : unit
   (begin
-    (array-set! (struct-get state program-cache-hit-count) 0 0)
-    (array-set! (struct-get state program-cache-miss-count) 0 0)
-    (array-set! (struct-get state program-cache-store-count) 0 0)))
+    (set! (array-ref state.program-cache-hit-count 0) 0)
+    (set! (array-ref state.program-cache-miss-count 0) 0)
+    (set! (array-ref state.program-cache-store-count 0) 0)))
 
 (define (compiler-load-session-state-program-cache-clear!
   [state : CompilerLoadSessionState]) : unit
   (begin
     (compiler-load-session-state-program-cache-fill! state 0)
-    (array-set! (struct-get state program-cache-ready) 0 true)
+    (set! (array-ref state.program-cache-ready 0) true)
     (compiler-load-session-state-program-admission-clear! state)
     (compiler-load-session-state-program-cache-stats-reset! state)))
 
@@ -721,15 +715,14 @@
 
 (define (compiler-load-session-state-program-cache-ensure!
   [state : CompilerLoadSessionState]) : unit
-  (if (array-ref (struct-get state program-cache-ready) 0)
+  (if (array-ref state.program-cache-ready 0)
     unit
     (compiler-load-session-state-program-cache-clear! state)))
 
 (define (compiler-load-session-state-program-cache-note-hit!
   [state : CompilerLoadSessionState]) : unit
-  (array-set!
-    (struct-get state program-cache-hit-count)
-    0
+  (set!
+    (array-ref state.program-cache-hit-count 0)
     (+ (compiler-load-session-state-program-cache-hit-count-value state) 1)))
 
 (define (compiler-load-program-cache-note-hit!) : unit
@@ -738,9 +731,8 @@
 
 (define (compiler-load-session-state-program-cache-note-miss!
   [state : CompilerLoadSessionState]) : unit
-  (array-set!
-    (struct-get state program-cache-miss-count)
-    0
+  (set!
+    (array-ref state.program-cache-miss-count 0)
     (+ (compiler-load-session-state-program-cache-miss-count-value state) 1)))
 
 (define (compiler-load-program-cache-note-miss!) : unit
@@ -749,14 +741,13 @@
 
 (define (compiler-load-session-state-program-cache-note-store!
   [state : CompilerLoadSessionState]) : unit
-  (array-set!
-    (struct-get state program-cache-store-count)
-    0
+  (set!
+    (array-ref state.program-cache-store-count 0)
     (+ (compiler-load-session-state-program-cache-store-count-value state) 1)))
 
 (define (compiler-load-session-state-program-cache-hit-count-value
   [state : CompilerLoadSessionState]) : i64
-  (array-ref (struct-get state program-cache-hit-count) 0))
+  (array-ref state.program-cache-hit-count 0))
 
 (define (compiler-load-program-cache-hit-count-value) : i64
   (compiler-load-session-state-program-cache-hit-count-value
@@ -764,11 +755,11 @@
 
 (define (compiler-load-session-state-program-cache-miss-count-value
   [state : CompilerLoadSessionState]) : i64
-  (array-ref (struct-get state program-cache-miss-count) 0))
+  (array-ref state.program-cache-miss-count 0))
 
 (define (compiler-load-session-state-program-cache-store-count-value
   [state : CompilerLoadSessionState]) : i64
-  (array-ref (struct-get state program-cache-store-count) 0))
+  (array-ref state.program-cache-store-count 0))
 
 (define (compiler-load-program-cache-store-count-value) : i64
   (compiler-load-session-state-program-cache-store-count-value
@@ -808,13 +799,9 @@
   [left : CompilerLoadProgramCacheKey]
   [right : CompilerLoadProgramCacheKey]) : bool
   (and
-    (compiler-load-program-source-kind-equal?
-      (struct-get left kind)
-      (struct-get right kind))
-    (= (struct-get left path-id) (struct-get right path-id))
-    (compiler-load-cfg-key-equal?
-      (struct-get left cfgs)
-      (struct-get right cfgs))))
+    (compiler-load-program-source-kind-equal? left.kind right.kind)
+    (= left.path-id right.path-id)
+    (compiler-load-cfg-key-equal? left.cfgs right.cfgs)))
 
 (define (compiler-load-cfg-key-copy [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match (sym_i64_env.sym-i64-view cfgs)
@@ -825,9 +812,9 @@
 (define (compiler-load-program-cache-key-copy
   [key : CompilerLoadProgramCacheKey]) : CompilerLoadProgramCacheKey
   (CompilerLoadProgramCacheKey
-    (struct-get key kind)
-    (struct-get key path-id)
-    (compiler-load-cfg-key-copy (struct-get key cfgs))))
+    key.kind
+    key.path-id
+    (compiler-load-cfg-key-copy key.cfgs)))
 
 (define (compiler-load-session-state-program-cache-lookup-from
   [state : CompilerLoadSessionState]
@@ -835,7 +822,7 @@
   [index : i64]) : CompilerLoadProgramCacheLookup
   (if (>= index compiler-load-program-cache-capacity)
     (CompilerLoadProgramCacheMiss)
-    (match (array-ref (struct-get state program-cache) index)
+    (match (array-ref state.program-cache index)
       [(CompilerLoadProgramCacheEmpty) (CompilerLoadProgramCacheMiss)]
       [(CompilerLoadProgramCacheFull slot-key program)
         (if (compiler-load-program-cache-key-equal? slot-key key)
@@ -864,21 +851,19 @@
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref (struct-get state program-cache) index)
+    (match (array-ref state.program-cache index)
       [(CompilerLoadProgramCacheEmpty)
         (begin
-          (array-set!
-            (struct-get state program-cache)
-            index
+          (set!
+            (array-ref state.program-cache index)
             (CompilerLoadProgramCacheFull key program))
           (compiler-load-session-state-program-cache-note-store! state)
           true)]
       [(CompilerLoadProgramCacheFull slot-key _)
         (if (compiler-load-program-cache-key-equal? slot-key key)
           (begin
-            (array-set!
-              (struct-get state program-cache)
-              index
+            (set!
+              (array-ref state.program-cache index)
               (CompilerLoadProgramCacheFull key program))
             (compiler-load-session-state-program-cache-note-store! state)
             true)
@@ -910,7 +895,7 @@
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref (struct-get state program-cache) index)
+    (match (array-ref state.program-cache index)
       [(CompilerLoadProgramCacheEmpty) true]
       [(CompilerLoadProgramCacheFull slot-key _)
         (if (compiler-load-program-cache-key-equal? slot-key key)
@@ -939,9 +924,8 @@
   (if (>= index compiler-load-program-cache-capacity)
     unit
     (begin
-      (array-set!
-        (struct-get state program-admission)
-        index
+      (set!
+        (array-ref state.program-admission index)
         (CompilerLoadProgramAdmissionEmpty))
       (compiler-load-session-state-program-admission-fill! state (+ index 1)))))
 
@@ -949,11 +933,11 @@
   [state : CompilerLoadSessionState]) : unit
   (begin
     (compiler-load-session-state-program-admission-fill! state 0)
-    (array-set! (struct-get state program-admission-ready) 0 true)))
+    (set! (array-ref state.program-admission-ready 0) true)))
 
 (define (compiler-load-session-state-program-admission-ensure!
   [state : CompilerLoadSessionState]) : unit
-  (if (array-ref (struct-get state program-admission-ready) 0)
+  (if (array-ref state.program-admission-ready 0)
     unit
     (compiler-load-session-state-program-admission-clear! state)))
 
@@ -963,7 +947,7 @@
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref (struct-get state program-admission) index)
+    (match (array-ref state.program-admission index)
       [(CompilerLoadProgramAdmissionEmpty) false]
       [(CompilerLoadProgramAdmissionFull slot-key)
         (if (compiler-load-program-cache-key-equal? slot-key key)
@@ -992,12 +976,11 @@
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref (struct-get state program-admission) index)
+    (match (array-ref state.program-admission index)
       [(CompilerLoadProgramAdmissionEmpty)
         (begin
-          (array-set!
-            (struct-get state program-admission)
-            index
+          (set!
+            (array-ref state.program-admission index)
             (CompilerLoadProgramAdmissionFull key))
           true)]
       [(CompilerLoadProgramAdmissionFull slot-key)
@@ -1044,10 +1027,9 @@
 (define (compiler-load-session-state-intern-floor-refresh!
   [state : CompilerLoadSessionState]
   [old-intern-floor : i64]) : unit
-  (if (array-ref (struct-get state intern-state-ready) 0)
+  (if (array-ref state.intern-state-ready 0)
     (let
-      [interns : ci.InternCompatState
-        (array-ref (struct-get state intern-state) 0)]
+      [interns : ci.InternCompatState (array-ref state.intern-state 0)]
       [new-intern-floor : i64
         (if (=
           (ci.intern-active-table-id)
@@ -1057,14 +1039,14 @@
       (if (> new-intern-floor old-intern-floor)
         (begin
           (ci.intern-compat-state-persistent-arena-floor-refresh! interns)
-          (array-set! (struct-get state intern-floor) 0 new-intern-floor))
+          (set! (array-ref state.intern-floor 0) new-intern-floor))
         unit))
     (let
       [new-intern-floor : i64 (ci.intern-pool-len)]
       (if (> new-intern-floor old-intern-floor)
         (begin
           (ci.intern-persistent-arena-floor-refresh!)
-          (array-set! (struct-get state intern-floor) 0 new-intern-floor))
+          (set! (array-ref state.intern-floor 0) new-intern-floor))
         unit))))
 
 (define (compiler-load-session-state-note-persistent!
@@ -1073,12 +1055,12 @@
     (if (>
       (ast.ast-node-pool-len)
       (compiler-load-session-state-ast-floor-value state))
-      (array-set! (struct-get state ast-floor) 0 (ast.ast-node-pool-len))
+      (set! (array-ref state.ast-floor 0) (ast.ast-node-pool-len))
       unit)
     (if (>
       (ast.ty-node-pool-len)
       (compiler-load-session-state-ty-floor-value state))
-      (array-set! (struct-get state ty-floor) 0 (ast.ty-node-pool-len))
+      (set! (array-ref state.ty-floor 0) (ast.ty-node-pool-len))
       unit)
     (compiler-load-session-state-intern-floor-refresh!
       state
@@ -1101,17 +1083,15 @@
     (if (>
       (ast.ast-node-pool-context-expr-len pools)
       (compiler-load-session-state-ast-floor-value state))
-      (array-set!
-        (struct-get state ast-floor)
-        0
+      (set!
+        (array-ref state.ast-floor 0)
         (ast.ast-node-pool-context-expr-len pools))
       unit)
     (if (>
       (ast.ast-node-pool-context-type-len pools)
       (compiler-load-session-state-ty-floor-value state))
-      (array-set!
-        (struct-get state ty-floor)
-        0
+      (set!
+        (array-ref state.ty-floor 0)
         (ast.ast-node-pool-context-type-len pools))
       unit)
     (compiler-load-session-state-intern-floor-refresh!
@@ -1120,7 +1100,7 @@
 
 (define (compiler-load-session-state-ast-floor-value
   [state : CompilerLoadSessionState]) : i64
-  (array-ref (struct-get state ast-floor) 0))
+  (array-ref state.ast-floor 0))
 
 (define (compiler-load-session-ast-floor-value) : i64
   (compiler-load-session-state-ast-floor-value
@@ -1128,7 +1108,7 @@
 
 (define (compiler-load-session-state-ty-floor-value
   [state : CompilerLoadSessionState]) : i64
-  (array-ref (struct-get state ty-floor) 0))
+  (array-ref state.ty-floor 0))
 
 (define (compiler-load-session-ty-floor-value) : i64
   (compiler-load-session-state-ty-floor-value
@@ -1136,7 +1116,7 @@
 
 (define (compiler-load-session-state-intern-floor-value
   [state : CompilerLoadSessionState]) : i64
-  (array-ref (struct-get state intern-floor) 0))
+  (array-ref state.intern-floor 0))
 
 (define (compiler-load-session-intern-floor-value) : i64
   (compiler-load-session-state-intern-floor-value
@@ -1148,9 +1128,9 @@
   [ty-floor : i64]
   [intern-floor : i64]) : unit
   (begin
-    (array-set! (struct-get state ast-floor) 0 ast-floor)
-    (array-set! (struct-get state ty-floor) 0 ty-floor)
-    (array-set! (struct-get state intern-floor) 0 intern-floor)))
+    (set! (array-ref state.ast-floor 0) ast-floor)
+    (set! (array-ref state.ty-floor 0) ty-floor)
+    (set! (array-ref state.intern-floor 0) intern-floor)))
 
 (define (compiler-load-session-floors-set!
   [ast-floor : i64]
@@ -1164,50 +1144,57 @@
 
 (define (compiler-load-session-state-use! [state : CompilerLoadSessionState]) : unit
   (begin
-    (array-set! (struct-get state intern-state-ready) 0 false)
+    (set! (array-ref state.intern-state-ready 0) false)
     (set! compiler-load-active-session-state state)))
 
 (define (compiler-load-session-state-use-with-intern-state!
   [state : CompilerLoadSessionState]
   [intern-state : ci.InternCompatState]) : unit
   (begin
-    (array-set! (struct-get state intern-state) 0 intern-state)
-    (array-set! (struct-get state intern-state-ready) 0 true)
+    (set! (array-ref state.intern-state 0) intern-state)
+    (set! (array-ref state.intern-state-ready 0) true)
     (set! compiler-load-active-session-state state)))
 
 (define (compiler-load-session-cache-enable!) : unit
-  (array-set!
-    (struct-get compiler-load-active-session-state cache-enabled)
-    0
+  (set!
+    (array-ref
+      (__tl-project-field compiler-load-active-session-state cache-enabled)
+      0)
     true))
 
 (define (compiler-load-session-program-cache-enable!) : unit
-  (array-set!
-    (struct-get compiler-load-active-session-state program-cache-enabled)
-    0
+  (set!
+    (array-ref
+      (__tl-project-field
+        compiler-load-active-session-state
+        program-cache-enabled)
+      0)
     true))
 
 (define (compiler-load-session-state-program-cache-disable!
   [state : CompilerLoadSessionState]) : unit
   (begin
     (compiler-load-session-state-program-cache-set-enabled-cell! state false)
-    (array-set! (struct-get state program-cache-ready) 0 false)
-    (array-set! (struct-get state program-admission-ready) 0 false)
-    (array-set! (struct-get state program-cache-hit-count) 0 0)
-    (array-set! (struct-get state program-cache-miss-count) 0 0)
-    (array-set! (struct-get state program-cache-store-count) 0 0)))
+    (set! (array-ref state.program-cache-ready 0) false)
+    (set! (array-ref state.program-admission-ready 0) false)
+    (set! (array-ref state.program-cache-hit-count 0) 0)
+    (set! (array-ref state.program-cache-miss-count 0) 0)
+    (set! (array-ref state.program-cache-store-count 0) 0)))
 
 (define (compiler-load-session-program-cache-disable!) : unit
   (begin
-    (array-set!
-      (struct-get compiler-load-active-session-state program-cache-enabled)
-      0
+    (set!
+      (array-ref
+        (__tl-project-field
+          compiler-load-active-session-state
+          program-cache-enabled)
+        0)
       false)
     (compiler-load-program-cache-clear!)))
 
 (define (compiler-load-session-state-program-cache-enabled?
   [state : CompilerLoadSessionState]) : bool
-  (array-ref (struct-get state program-cache-enabled) 0))
+  (array-ref state.program-cache-enabled 0))
 
 (define (compiler-load-session-program-cache-enabled?) : bool
   (compiler-load-session-state-program-cache-enabled?
@@ -1218,13 +1205,17 @@
     (set!
       compiler-load-active-session-state
       (compiler-load-standalone-session-state-new))
-    (array-set!
-      (struct-get compiler-load-active-session-state cache-enabled)
-      0
+    (set!
+      (array-ref
+        (__tl-project-field compiler-load-active-session-state cache-enabled)
+        0)
       false)
-    (array-set!
-      (struct-get compiler-load-active-session-state program-cache-enabled)
-      0
+    (set!
+      (array-ref
+        (__tl-project-field
+          compiler-load-active-session-state
+          program-cache-enabled)
+        0)
       true)
     (compiler-load-session-floors-set! 0 0 0)
     (compiler-load-program-cache-clear!)
@@ -1247,15 +1238,17 @@
     (compiler-load-runtime-prelude-cache-clear!)))
 
 (define (compiler-load-session-cache-enabled?) : bool
-  (array-ref (struct-get compiler-load-active-session-state cache-enabled) 0))
+  (array-ref
+    (__tl-project-field compiler-load-active-session-state cache-enabled)
+    0))
 
 (define (compiler-load-session-state-embedded-stdlib-source-used?
   [state : CompilerLoadSessionState]) : bool
-  (array-ref (struct-get state cache-enabled) 1))
+  (array-ref state.cache-enabled 1))
 
 (define (compiler-load-session-state-note-embedded-stdlib-source!
   [state : CompilerLoadSessionState]) : unit
-  (array-set! (struct-get state cache-enabled) 1 true))
+  (set! (array-ref state.cache-enabled 1) true))
 
 ;; Canonical ids of modules whose source matches the embedded stdlib payload
 ;; in this process. The tlci macro route consults this per defining module:
@@ -1417,9 +1410,12 @@
     (ast.ast-node-pool-active-context-clear!)
     (compiler-load-surface-summaries-reset!)
     (compiler-load-lazy-qualified-observer-reset!)
-    (array-set!
-      (struct-get compiler-load-active-session-state surface-summary-load-depth)
-      0
+    (set!
+      (array-ref
+        (__tl-project-field
+          compiler-load-active-session-state
+          surface-summary-load-depth)
+        0)
       0)
     (if (compiler-load-session-cache-enabled?)
       (begin
@@ -1437,7 +1433,7 @@
     (reader.sexpr-node-pool-reset!)
     (compiler-load-session-state-surface-summaries-reset! state)
     (compiler-load-session-state-lazy-qualified-observer-reset! state)
-    (array-set! (struct-get state surface-summary-load-depth) 0 0)
+    (set! (array-ref state.surface-summary-load-depth 0) 0)
     (if (compiler-load-session-state-cache-enabled? state)
       (ast.ast-node-pool-context-reset-to!
         pools
@@ -1454,9 +1450,12 @@
     (set! compiler-load-embedded-provenance-noted false)
     (compiler-load-surface-summaries-reset!)
     (compiler-load-lazy-qualified-observer-reset!)
-    (array-set!
-      (struct-get compiler-load-active-session-state surface-summary-load-depth)
-      0
+    (set!
+      (array-ref
+        (__tl-project-field
+          compiler-load-active-session-state
+          surface-summary-load-depth)
+        0)
       0)
     (if (compiler-load-session-cache-enabled?)
       (begin
@@ -1470,7 +1469,7 @@
   (begin
     (compiler-load-session-state-surface-summaries-reset! load-state)
     (compiler-load-session-state-lazy-qualified-observer-reset! load-state)
-    (array-set! (struct-get load-state surface-summary-load-depth) 0 0)
+    (set! (array-ref load-state.surface-summary-load-depth 0) 0)
     (if (compiler-load-session-state-cache-enabled? load-state)
       (begin
         (ci.intern-compat-state-reset-to!
@@ -1485,9 +1484,8 @@
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     unit
     (begin
-      (array-set!
-        (struct-get state runtime-prelude-cache)
-        index
+      (set!
+        (array-ref state.runtime-prelude-cache index)
         (CompilerLoadPreludeCacheEmpty))
       (compiler-load-session-state-runtime-prelude-cache-fill!
         state
@@ -1497,7 +1495,7 @@
   [state : CompilerLoadSessionState]) : unit
   (begin
     (compiler-load-session-state-runtime-prelude-cache-fill! state 0)
-    (array-set! (struct-get state runtime-prelude-cache-ready) 0 true)))
+    (set! (array-ref state.runtime-prelude-cache-ready 0) true)))
 
 (define (compiler-load-runtime-prelude-cache-clear!) : unit
   (compiler-load-session-state-runtime-prelude-cache-clear!
@@ -1505,7 +1503,7 @@
 
 (define (compiler-load-session-state-runtime-prelude-cache-ensure!
   [state : CompilerLoadSessionState]) : unit
-  (if (array-ref (struct-get state runtime-prelude-cache-ready) 0)
+  (if (array-ref state.runtime-prelude-cache-ready 0)
     unit
     (compiler-load-session-state-runtime-prelude-cache-clear! state)))
 
@@ -1513,17 +1511,15 @@
   [left : CompilerLoadInternIdSeq]
   [right : CompilerLoadInternIdSeq]) : bool
   (let
-    [count : i64 (struct-get left len)]
-    [same : bool (= count (struct-get right len))]
+    [count : i64 left.len]
+    [same : bool (= count right.len)]
     [index : i64 0]
     (begin
       (while (and same (< index count))
         (begin
           (set!
             same
-            (=
-              (array-ref (struct-get left slots) index)
-              (array-ref (struct-get right slots) index)))
+            (= (array-ref left.slots index) (array-ref right.slots index)))
           (set! index (+ index 1))))
       same)))
 
@@ -1531,13 +1527,13 @@
 ;; key's ids land in the same long-lived arena the cons spine used to.
 (define (compiler-load-intern-id-seq-copy [ids : CompilerLoadInternIdSeq]) : CompilerLoadInternIdSeq
   (let
-    [count : i64 (struct-get ids len)]
+    [count : i64 ids.len]
     [slots : (__tl_dyn-array i64) (array.make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (array-ref (struct-get ids slots) index))
+          (set! (array-ref slots index) (array-ref ids.slots index))
           (set! index (+ index 1))))
       (CompilerLoadInternIdSeq slots count))))
 
@@ -1545,18 +1541,14 @@
   [left : CompilerLoadPreludeCacheKey]
   [right : CompilerLoadPreludeCacheKey]) : bool
   (and
-    (compiler-load-intern-id-seq-equal?
-      (struct-get left root-ids)
-      (struct-get right root-ids))
-    (compiler-load-cfg-key-equal?
-      (struct-get left cfgs)
-      (struct-get right cfgs))))
+    (compiler-load-intern-id-seq-equal? left.root-ids right.root-ids)
+    (compiler-load-cfg-key-equal? left.cfgs right.cfgs)))
 
 (define (compiler-load-prelude-cache-key-copy
   [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheKey
   (CompilerLoadPreludeCacheKey
-    (compiler-load-intern-id-seq-copy (struct-get key root-ids))
-    (compiler-load-cfg-key-copy (struct-get key cfgs))))
+    (compiler-load-intern-id-seq-copy key.root-ids)
+    (compiler-load-cfg-key-copy key.cfgs)))
 
 (define (compiler-load-session-state-runtime-prelude-cache-lookup-from
   [state : CompilerLoadSessionState]
@@ -1564,7 +1556,7 @@
   [index : i64]) : CompilerLoadPreludeCacheLookup
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     (CompilerLoadPreludeCacheMiss)
-    (match (array-ref (struct-get state runtime-prelude-cache) index)
+    (match (array-ref state.runtime-prelude-cache index)
       [(CompilerLoadPreludeCacheEmpty) (CompilerLoadPreludeCacheMiss)]
       [(CompilerLoadPreludeCacheFull slot-key decls paths modules seen)
         (if (compiler-load-prelude-cache-key-equal? slot-key key)
@@ -1591,17 +1583,15 @@
   [index : i64]) : unit
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     unit
-    (match (array-ref (struct-get state runtime-prelude-cache) index)
+    (match (array-ref state.runtime-prelude-cache index)
       [(CompilerLoadPreludeCacheEmpty)
-        (array-set!
-          (struct-get state runtime-prelude-cache)
-          index
+        (set!
+          (array-ref state.runtime-prelude-cache index)
           (CompilerLoadPreludeCacheFull key decls paths modules seen))]
       [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
         (if (compiler-load-prelude-cache-key-equal? slot-key key)
-          (array-set!
-            (struct-get state runtime-prelude-cache)
-            index
+          (set!
+            (array-ref state.runtime-prelude-cache index)
             (CompilerLoadPreludeCacheFull key decls paths modules seen))
           (compiler-load-session-state-runtime-prelude-cache-store-at
             state
@@ -1669,7 +1659,7 @@
             (compiler-load-normalize-path
               (svec.get (& roots) (+ index cursor) ""))]
           (begin
-            (array-set! slots cursor (compiler-load-source-path-id root))
+            (set! (array-ref slots cursor) (compiler-load-source-path-id root))
             (set! cursor (+ cursor 1)))))
       (CompilerLoadInternIdSeq slots len))))
 
@@ -1865,7 +1855,7 @@
 
 (define (compiler-load-session-state-lazy-import-mode-enabled?
   [state : CompilerLoadSessionState]) : bool
-  (array-ref (struct-get state cache-enabled) 2))
+  (array-ref state.cache-enabled 2))
 
 (define (compiler-load-session-lazy-import-mode-enabled?) : bool
   (compiler-load-session-state-lazy-import-mode-enabled?
@@ -1874,7 +1864,7 @@
 (define (compiler-load-session-state-lazy-import-mode-set-enabled!
   [state : CompilerLoadSessionState]
   [enabled : bool]) : unit
-  (array-set! (struct-get state cache-enabled) 2 enabled))
+  (set! (array-ref state.cache-enabled 2) enabled))
 
 (define (compiler-load-session-lazy-import-mode-set-enabled! [enabled : bool]) : unit
   (compiler-load-session-state-lazy-import-mode-set-enabled!
@@ -2100,7 +2090,7 @@
   (if (>= index compiler-load-dotted-path-cache-capacity)
     unit
     (begin
-      (array-set! (struct-get state dotted-path-cache-ready) index false)
+      (set! (array-ref state.dotted-path-cache-ready index) false)
       (compiler-load-session-state-dotted-path-cache-clear-ready!
         state
         (+ index 1)))))
@@ -2109,9 +2099,8 @@
   [state : CompilerLoadSessionState]) : unit
   (begin
     (compiler-load-session-state-dotted-path-cache-clear-ready! state 0)
-    (array-set!
-      (struct-get state dotted-path-cache-generation)
-      0
+    (set!
+      (array-ref state.dotted-path-cache-generation 0)
       (ci.intern-generation))))
 
 (define (compiler-load-dotted-path-cache-reset!) : unit
@@ -2121,7 +2110,7 @@
 (define (compiler-load-session-state-dotted-path-cache-ensure!
   [state : CompilerLoadSessionState]) : unit
   (if (=
-    (array-ref (struct-get state dotted-path-cache-generation) 0)
+    (array-ref state.dotted-path-cache-generation 0)
     (ci.intern-generation))
     unit
     (compiler-load-session-state-dotted-path-cache-reset! state)))
@@ -2134,11 +2123,10 @@
   [module-id : i64]) : CompilerLoadMaybeString
   (let
     [bucket : i64 (compiler-load-dotted-path-cache-bucket module-id)]
-    (if (if (array-ref (struct-get state dotted-path-cache-ready) bucket)
-      (= (array-ref (struct-get state dotted-path-cache-keys) bucket) module-id)
+    (if (if (array-ref state.dotted-path-cache-ready bucket)
+      (= (array-ref state.dotted-path-cache-keys bucket) module-id)
       false)
-      (CompilerLoadSomeString
-        (array-ref (struct-get state dotted-path-cache-values) bucket))
+      (CompilerLoadSomeString (array-ref state.dotted-path-cache-values bucket))
       (CompilerLoadNoString))))
 
 (define (compiler-load-dotted-path-cache-lookup [module-id : i64]) : CompilerLoadMaybeString
@@ -2153,9 +2141,9 @@
   (let
     [bucket : i64 (compiler-load-dotted-path-cache-bucket module-id)]
     (begin
-      (array-set! (struct-get state dotted-path-cache-ready) bucket true)
-      (array-set! (struct-get state dotted-path-cache-keys) bucket module-id)
-      (array-set! (struct-get state dotted-path-cache-values) bucket path))))
+      (set! (array-ref state.dotted-path-cache-ready bucket) true)
+      (set! (array-ref state.dotted-path-cache-keys bucket) module-id)
+      (set! (array-ref state.dotted-path-cache-values bucket) path))))
 
 (define (compiler-load-dotted-module-path-uncached [module-name : String]) : String
   (let
@@ -2367,9 +2355,7 @@
                 module-path
                 stdlib-roots)]
             [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
-              (match (compiler-load-pkg-dep-lookup
-                (struct-get manifest deps)
-                first)
+              (match (compiler-load-pkg-dep-lookup manifest.deps first)
                 [(CompilerLoadNoPath)
                   (compiler-load-resolve-module-path-with-roots
                     importer-path
@@ -2971,7 +2957,7 @@
           0
           1
           (parser.compiler-parse-decl-list-storage-key (& source))
-          (struct-get source offset)
+          source.offset
           false)
         unit)
       (if same-storage
@@ -3014,25 +3000,23 @@
     [left-len : i64 (ast.ast-decl-list-len (& left))]
     [right-len : i64 (ast.ast-decl-list-len (& right))]
     [right-key : i64 (parser.compiler-parse-decl-list-storage-key (& right))]
-    [right-slots : (__tl_dyn-array ast.AstDecl) (struct-get right slots)]
+    [right-slots : (__tl_dyn-array ast.AstDecl) right.slots]
     [out : ast.AstDeclList
       (if (and
-        (<= left-len (struct-get right offset))
-        (struct-get right prependable)
+        (<= left-len right.offset)
+        right.prependable
         (not
           (unsafe
             (=
-              (ptr->int
-                (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
-              (ptr->int
-                (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+              (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
+              (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
         (let
-          [new-offset : i64 (- (struct-get right offset) left-len)]
+          [new-offset : i64 (- right.offset left-len)]
           (begin
             (ast.ast-decl-list-copy-to
               (&mut right-slots)
-              (& (struct-get left slots))
-              (struct-get left offset)
+              (& left.slots)
+              left.offset
               new-offset
               0
               left-len)
@@ -3076,32 +3060,30 @@
   (let
     [left-len : i64 (ast.ast-decl-path-list-len (& left))]
     [right-len : i64 (ast.ast-decl-path-list-len (& right))]
-    [right-slots : (__tl_dyn-array String) (struct-get right slots)]
-    [right-owner-ids : (__tl_dyn-array i64) (struct-get right owner-ids)]
+    [right-slots : (__tl_dyn-array String) right.slots]
+    [right-owner-ids : (__tl_dyn-array i64) right.owner-ids]
     (if (and
-      (<= left-len (struct-get right offset))
-      (struct-get right prependable)
+      (<= left-len right.offset)
+      right.prependable
       (not
         (unsafe
           (=
-            (ptr->int
-              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
-            (ptr->int
-              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
       (let
-        [new-offset : i64 (- (struct-get right offset) left-len)]
+        [new-offset : i64 (- right.offset left-len)]
         (begin
           (ast.ast-decl-path-list-copy-to
             (&mut right-slots)
-            (& (struct-get left slots))
-            (struct-get left offset)
+            (& left.slots)
+            left.offset
             new-offset
             0
             left-len)
           (ast.ast-decl-module-list-copy-to
             (&mut right-owner-ids)
-            (& (struct-get left owner-ids))
-            (struct-get left offset)
+            (& left.owner-ids)
+            left.offset
             new-offset
             0
             left-len)
@@ -3139,24 +3121,22 @@
   (let
     [left-len : i64 (ast.ast-decl-module-list-len (& left))]
     [right-len : i64 (ast.ast-decl-module-list-len (& right))]
-    [right-slots : (__tl_dyn-array i64) (struct-get right slots)]
+    [right-slots : (__tl_dyn-array i64) right.slots]
     (if (and
-      (<= left-len (struct-get right offset))
-      (struct-get right prependable)
+      (<= left-len right.offset)
+      right.prependable
       (not
         (unsafe
           (=
-            (ptr->int
-              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
-            (ptr->int
-              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+            (ptr->int (ptr-cast (array-data left.slots) : (Ptr u8)))
+            (ptr->int (ptr-cast (array-data right.slots) : (Ptr u8)))))))
       (let
-        [new-offset : i64 (- (struct-get right offset) left-len)]
+        [new-offset : i64 (- right.offset left-len)]
         (begin
           (ast.ast-decl-module-list-copy-to
             (&mut right-slots)
-            (& (struct-get left slots))
-            (struct-get left offset)
+            (& left.slots)
+            left.offset
             new-offset
             0
             left-len)
@@ -3668,7 +3648,9 @@
             (if (= name want)
               true
               (or
-                (compiler-load-decl-list-has-module-id? (box-get body-box) want)
+                (compiler-load-decl-list-has-module-id?
+                  (__tl-box-place body-box)
+                  want)
                 (compiler-load-decl-list-has-module-id? rest want)))]
           [_ (compiler-load-decl-list-has-module-id? rest want)]))]))
 
@@ -3683,7 +3665,7 @@
         (match decl
           [(ast.AstDecl.Extern decl-meta _ _ metadata _)
             (if (string.eq
-              (ast.ast-extern-metadata-symbol (box-get metadata))
+              (ast.ast-extern-metadata-symbol (__tl-box-place metadata))
               want)
               true
               (compiler-load-decl-list-has-extern-symbol? rest want))]
@@ -3738,8 +3720,7 @@
         state
         source-path-id)
         [(CompilerLoadSomeSurfaceSummary summary)
-          (ast.AstMaybeModuleName.Some
-            (struct-get summary declaration-module-id))]
+          (ast.AstMaybeModuleName.Some summary.declaration-module-id)]
         [(CompilerLoadNoSurfaceSummary)
           (if (compiler-load-decl-list-has-module? imported-decls)
             (ast.AstMaybeModuleName.Some
@@ -3827,11 +3808,10 @@
 (define (compiler-load-session-state-surface-summaries-reset!
   [state : CompilerLoadSessionState]) : unit
   (begin
-    (array-set!
-      (struct-get state surface-summaries)
-      0
+    (set!
+      (array-ref state.surface-summaries 0)
       (compiler-load-surface-summary-list-empty))
-    (array-set! (struct-get state lazy-import-skip-record-count) 0 0)))
+    (set! (array-ref state.lazy-import-skip-record-count 0) 0)))
 
 (define (compiler-load-surface-summaries-reset!) : unit
   (compiler-load-session-state-surface-summaries-reset!
@@ -3840,12 +3820,12 @@
 (define (compiler-load-session-state-surface-summary-load-enter!
   [state : CompilerLoadSessionState]) : unit
   (let
-    [depth : i64 (array-ref (struct-get state surface-summary-load-depth) 0)]
+    [depth : i64 (array-ref state.surface-summary-load-depth 0)]
     (begin
       (if (= depth 0)
         (compiler-load-session-state-surface-summaries-reset! state)
         unit)
-      (array-set! (struct-get state surface-summary-load-depth) 0 (+ depth 1)))))
+      (set! (array-ref state.surface-summary-load-depth 0) (+ depth 1)))))
 
 (define (compiler-load-surface-summary-load-enter!) : unit
   (compiler-load-session-state-surface-summary-load-enter!
@@ -3853,10 +3833,9 @@
 
 (define (compiler-load-session-state-surface-summary-load-exit!
   [state : CompilerLoadSessionState]) : unit
-  (array-set!
-    (struct-get state surface-summary-load-depth)
-    0
-    (- (array-ref (struct-get state surface-summary-load-depth) 0) 1)))
+  (set!
+    (array-ref state.surface-summary-load-depth 0)
+    (- (array-ref state.surface-summary-load-depth 0) 1)))
 
 (define (compiler-load-surface-summary-load-exit!) : unit
   (compiler-load-session-state-surface-summary-load-exit!
@@ -3864,7 +3843,7 @@
 
 (define (compiler-load-session-state-surface-summaries
   [state : CompilerLoadSessionState]) : CompilerLoadSurfaceSummaryList
-  (array-ref (struct-get state surface-summaries) 0))
+  (array-ref state.surface-summaries 0))
 
 (define (compiler-load-surface-summaries) : CompilerLoadSurfaceSummaryList
   (compiler-load-session-state-surface-summaries
@@ -3872,7 +3851,7 @@
 
 (define (compiler-load-session-state-lazy-import-skip-count
   [state : CompilerLoadSessionState]) : i64
-  (array-ref (struct-get state lazy-import-skip-record-count) 0))
+  (array-ref state.lazy-import-skip-record-count 0))
 
 (define (compiler-load-lazy-import-skip-count) : i64
   (compiler-load-session-state-lazy-import-skip-count
@@ -3880,9 +3859,8 @@
 
 (define (compiler-load-session-state-lazy-import-record-skip!
   [state : CompilerLoadSessionState]) : unit
-  (array-set!
-    (struct-get state lazy-import-skip-record-count)
-    0
+  (set!
+    (array-ref state.lazy-import-skip-record-count 0)
     (+ (compiler-load-session-state-lazy-import-skip-count state) 1)))
 
 (define (compiler-load-lazy-import-record-skip!) : unit
@@ -3897,7 +3875,7 @@
     (begin
       (while (< index (compiler-load-surface-summary-list-count summaries))
         (if (=
-          (struct-get
+          (__tl-project-field
             (compiler-load-surface-summary-list-at summaries index)
             source-path-id)
           source-path-id)
@@ -3910,8 +3888,7 @@
   [summary : CompilerLoadSurfaceSummary]) : CompilerLoadSurfaceSummaryList
   (let
     [len : i64 (compiler-load-surface-summary-list-count summaries)]
-    [slots : (__tl_dyn-array CompilerLoadSurfaceSummary)
-      (struct-get summaries slots)]
+    [slots : (__tl_dyn-array CompilerLoadSurfaceSummary) summaries.slots]
     (begin
       (if (< len (array-length slots))
         unit
@@ -3926,10 +3903,10 @@
           (begin
             (while (< index len)
               (begin
-                (array-set! bigger index (array-ref slots index))
+                (set! (array-ref bigger index) (array-ref slots index))
                 (set! index (+ index 1))))
             (set! slots bigger))))
-      (array-set! slots len summary)
+      (set! (array-ref slots len) summary)
       (CompilerLoadSurfaceSummaryList slots (+ len 1)))))
 
 (define (compiler-load-session-state-record-surface-summary!
@@ -3937,11 +3914,10 @@
   [summary : CompilerLoadSurfaceSummary]) : unit
   (if (compiler-load-surface-summary-source-active?
     (compiler-load-session-state-surface-summaries state)
-    (struct-get summary source-path-id))
+    summary.source-path-id)
     unit
-    (array-set!
-      (struct-get state surface-summaries)
-      0
+    (set!
+      (array-ref state.surface-summaries 0)
       (compiler-load-surface-summary-list-record
         (compiler-load-session-state-surface-summaries state)
         summary))))
@@ -3962,7 +3938,7 @@
         (let
           [summary : CompilerLoadSurfaceSummary
             (compiler-load-surface-summary-list-at summaries index)]
-          (if (= (struct-get summary source-path-id) source-path-id)
+          (if (= summary.source-path-id source-path-id)
             (return (CompilerLoadSomeSurfaceSummary summary))
             (set! index (+ index 1)))))
       (CompilerLoadNoSurfaceSummary))))
@@ -3984,7 +3960,7 @@
         (let
           [summary : CompilerLoadSurfaceSummary
             (compiler-load-surface-summary-list-at summaries index)]
-          (if (= (struct-get summary module-id) module-id)
+          (if (= summary.module-id module-id)
             (return (CompilerLoadSomeSurfaceSummary summary))
             (set! index (+ index 1)))))
       (CompilerLoadNoSurfaceSummary))))
@@ -4017,13 +3993,10 @@
             ;; A qualified alias requires a concrete declaration module.
             (not
               (=
-                (struct-get summary declaration-module-id)
+                summary.declaration-module-id
                 cbi.compiler-builtin-id-fix-empty))]
-          [(ast.AstMaybeModuleName.No) (struct-get summary qualified-load)])
-        (compiler-load-seen-module-contains?
-          seen
-          ""
-          (struct-get summary module-id)))]))
+          [(ast.AstMaybeModuleName.No) summary.qualified-load])
+        (compiler-load-seen-module-contains? seen "" summary.module-id))]))
 
 (define (compiler-load-surface-summary-seen-expected-module?
   [source-path-id : i64]
@@ -4052,13 +4025,11 @@
         seen)]
     [(CompilerLoadSomeSurfaceSummary summary)
       (let
-        [module-id : i64 (struct-get summary module-id)]
+        [module-id : i64 summary.module-id]
         (match expected-module
           [(ast.AstMaybeModuleName.Some expected-id)
             (when
-              (and
-                (struct-get summary explicit-module)
-                (not (= module-id expected-id)))
+              (and summary.explicit-module (not (= module-id expected-id)))
               (return
                 (ResultCompilerLoadWithPaths.Err
                   (box
@@ -4105,9 +4076,9 @@
           (ci.intern-generated-canonical-name resolved)]
         [(CompilerLoadSomeSurfaceSummary summary)
           (if (string.eq
-            (struct-get summary source-path)
+            summary.source-path
             (compiler-load-normalize-path resolved))
-            (struct-get summary source-path-id)
+            summary.source-path-id
             (ci.intern-generated-canonical-name resolved))])]))
 
 ;; Serial/test compatibility adapter.
@@ -4123,8 +4094,8 @@
         (begin
           (if (not
             (=
-              (struct-get
-                (array-ref (struct-get summaries slots) physical-index)
+              (__tl-project-field
+                (array-ref summaries.slots physical-index)
                 source-path-id)
               source-path-id))
             (set! kept (+ kept 1))
@@ -4141,12 +4112,11 @@
             (while (< read-index len)
               (let
                 [summary : CompilerLoadSurfaceSummary
-                  (array-ref (struct-get summaries slots) read-index)]
+                  (array-ref summaries.slots read-index)]
                 (begin
-                  (if (not
-                    (= (struct-get summary source-path-id) source-path-id))
+                  (if (not (= summary.source-path-id source-path-id))
                     (begin
-                      (array-set! slots write-index summary)
+                      (set! (array-ref slots write-index) summary)
                       (set! write-index (+ write-index 1)))
                     unit)
                   (set! read-index (+ read-index 1)))))
@@ -4155,9 +4125,8 @@
 (define (compiler-load-session-state-surface-summary-remove-source!
   [state : CompilerLoadSessionState]
   [source-path-id : i64]) : unit
-  (array-set!
-    (struct-get state surface-summaries)
-    0
+  (set!
+    (array-ref state.surface-summaries 0)
     (compiler-load-surface-summary-remove-source-in
       (compiler-load-session-state-surface-summaries state)
       source-path-id)))
@@ -4178,8 +4147,8 @@
   [pools : ast.AstNodePoolContext]) : unit
   (let
     [parse-cfgs : sym_i64_env.SymI64Env cfgs]
-    [source-path-id : i64 (struct-get parse-identity source-path-id)]
-    [fallback-id : i64 (struct-get parse-identity module-fallback-id)]
+    [source-path-id : i64 parse-identity.source-path-id]
+    [fallback-id : i64 parse-identity.module-fallback-id]
     (match (if (io.file-exists? path)
       (compiler-load-parse-file-diagnostic-session-id-with-pools
         load-state
@@ -4237,7 +4206,7 @@
         cbi.compiler-builtin-id-fix-empty)]
     (match (compiler-load-session-state-surface-summary-find-source
       load-state
-      (struct-get parse-identity source-path-id))
+      parse-identity.source-path-id)
       [(CompilerLoadSomeSurfaceSummary _) unit]
       [(CompilerLoadNoSurfaceSummary)
         (compiler-load-surface-summary-load-with-pools
@@ -4269,7 +4238,7 @@
     (begin
       (compiler-load-session-state-surface-summary-remove-source!
         load-state
-        (struct-get parse-identity source-path-id))
+        parse-identity.source-path-id)
       (compiler-load-surface-summary-load-with-pools
         load-state
         path
@@ -4303,12 +4272,12 @@
 (define (compiler-load-surface-summary-decl-requires-eager?
   [decl : CompilerLoadSurfaceDecl]) : bool
   (or
-    (match (struct-get decl kind)
+    (match decl.kind
       [(CompilerLoadSurfaceExtern) true]
       [_ false])
-    (struct-get decl has-cleanup)
-    (struct-get decl has-export)
-    (struct-get decl has-generated-meta)))
+    decl.has-cleanup
+    decl.has-export
+    decl.has-generated-meta))
 
 (define (compiler-load-surface-summary-decls-require-eager?
   [decls : CompilerLoadSurfaceDeclList]) : bool
@@ -4325,12 +4294,11 @@
 (define (compiler-load-surface-summary-requires-eager?
   [summary : CompilerLoadSurfaceSummary]) : bool
   (or
-    (struct-get summary has-tests)
-    (struct-get summary has-export-metadata)
-    (struct-get summary has-generated-decls)
-    (struct-get summary has-decl-emitting-macro)
-    (compiler-load-surface-summary-decls-require-eager?
-      (struct-get summary decls))))
+    summary.has-tests
+    summary.has-export-metadata
+    summary.has-generated-decls
+    summary.has-decl-emitting-macro
+    (compiler-load-surface-summary-decls-require-eager? summary.decls)))
 
 (define (compiler-load-lazy-alias-demand-none) : CompilerLoadLazyAliasDemand
   (CompilerLoadLazyAliasDemand false false false (sym_i64_env.sym-i64-empty)))
@@ -4379,12 +4347,10 @@
   [left : CompilerLoadLazyAliasDemand]
   [right : CompilerLoadLazyAliasDemand]) : CompilerLoadLazyAliasDemand
   (CompilerLoadLazyAliasDemand
-    (or (struct-get left qualified) (struct-get right qualified))
-    (or (struct-get left direct) (struct-get right direct))
-    (or (struct-get left unknown) (struct-get right unknown))
-    (compiler-load-structural-member-set-union
-      (struct-get left members)
-      (struct-get right members))))
+    (or left.qualified right.qualified)
+    (or left.direct right.direct)
+    (or left.unknown right.unknown)
+    (compiler-load-structural-member-set-union left.members right.members)))
 
 (define (compiler-load-lazy-dotted-tail-after-prefix-id
   [name : i64]
@@ -4431,40 +4397,40 @@
 
 (define (compiler-load-session-state-lazy-qualified-observer
   [state : CompilerLoadSessionState]) : CompilerLoadLazyQualifiedObserverState
-  (struct-get state lazy-qualified-observer))
+  state.lazy-qualified-observer)
 
 (define (compiler-load-lazy-qualified-observer-flag
   [observer : CompilerLoadLazyQualifiedObserverState]
   [index : i64]) : bool
-  (array-ref (struct-get observer flags) index))
+  (array-ref observer.flags index))
 
 (define (compiler-load-lazy-qualified-observer-flag-set!
   [observer : CompilerLoadLazyQualifiedObserverState]
   [index : i64]
   [value : bool]) : unit
-  (array-set! (struct-get observer flags) index value))
+  (set! (array-ref observer.flags index) value))
 
 (define (compiler-load-lazy-qualified-observer-root-id
   [observer : CompilerLoadLazyQualifiedObserverState]
   [index : i64]) : i64
-  (array-ref (struct-get observer root-ids) index))
+  (array-ref observer.root-ids index))
 
 (define (compiler-load-lazy-qualified-observer-root-id-set!
   [observer : CompilerLoadLazyQualifiedObserverState]
   [index : i64]
   [value : i64]) : unit
-  (array-set! (struct-get observer root-ids) index value))
+  (set! (array-ref observer.root-ids index) value))
 
 (define (compiler-load-lazy-qualified-observer-members
   [observer : CompilerLoadLazyQualifiedObserverState]
   [index : i64]) : sym_i64_env.SymI64Env
-  (array-ref (struct-get observer member-sets) index))
+  (array-ref observer.member-sets index))
 
 (define (compiler-load-lazy-qualified-observer-members-set!
   [observer : CompilerLoadLazyQualifiedObserverState]
   [index : i64]
   [value : sym_i64_env.SymI64Env]) : unit
-  (array-set! (struct-get observer member-sets) index value))
+  (set! (array-ref observer.member-sets index) value))
 
 (define (compiler-load-session-state-lazy-qualified-observer-active?
   [state : CompilerLoadSessionState]) : bool
@@ -4517,9 +4483,8 @@
         (sym_i64_env.sym-i64-empty))
       (compiler-load-lazy-qualified-observer-flag-set! observer 2 false)
       (compiler-load-lazy-qualified-observer-flag-set! observer 3 false)
-      (array-set!
-        (struct-get observer stack)
-        0
+      (set!
+        (array-ref observer.stack 0)
         (compiler-load-lazy-qualified-observer-stack-empty)))))
 
 (define (compiler-load-lazy-qualified-observer-reset!) : unit
@@ -4540,11 +4505,10 @@
       (if (compiler-load-session-state-lazy-qualified-observer-active? state)
         unit
         (compiler-load-session-state-lazy-qualified-observer-reset! state))
-      (array-set!
-        (struct-get observer stack)
-        0
+      (set!
+        (array-ref observer.stack 0)
         (compiler-load-lazy-qualified-observer-stack-push
-          (array-ref (struct-get observer stack) 0)
+          (array-ref observer.stack 0)
           (CompilerLoadLazyQualifiedObserverFrame
             (compiler-load-lazy-qualified-observer-flag observer 0)
             (compiler-load-lazy-qualified-observer-flag observer 1)
@@ -4635,7 +4599,7 @@
         (compiler-load-lazy-qualified-observer-flag observer 2)
         (compiler-load-lazy-qualified-observer-flag observer 3))]
     [stack : CompilerLoadLazyQualifiedObserverStack
-      (array-ref (struct-get observer stack) 0)]
+      (array-ref observer.stack 0)]
     [len : i64 (compiler-load-lazy-qualified-observer-stack-count stack)]
     (begin
       (if (= len 0)
@@ -4644,46 +4608,43 @@
         (compiler-load-session-state-lazy-qualified-observer-reset! state)
         (let
           [frame : CompilerLoadLazyQualifiedObserverFrame
-            (array-ref (struct-get stack slots) (- len 1))]
+            (array-ref stack.slots (- len 1))]
           (begin
-            (array-set!
-              (struct-get observer stack)
-              0
-              (CompilerLoadLazyQualifiedObserverStack
-                (struct-get stack slots)
-                (- len 1)))
+            (set!
+              (array-ref observer.stack 0)
+              (CompilerLoadLazyQualifiedObserverStack stack.slots (- len 1)))
             (compiler-load-lazy-qualified-observer-flag-set!
               observer
               0
-              (struct-get frame active))
+              frame.active)
             (compiler-load-lazy-qualified-observer-flag-set!
               observer
               1
-              (struct-get frame exhaustive))
+              frame.exhaustive)
             (compiler-load-lazy-qualified-observer-root-id-set!
               observer
               0
-              (struct-get frame root-id))
+              frame.root-id)
             (compiler-load-lazy-qualified-observer-members-set!
               observer
               0
-              (struct-get frame members))
+              frame.members)
             (compiler-load-lazy-qualified-observer-root-id-set!
               observer
               1
-              (struct-get frame secondary-root-id))
+              frame.secondary-root-id)
             (compiler-load-lazy-qualified-observer-members-set!
               observer
               1
-              (struct-get frame secondary-members))
+              frame.secondary-members)
             (compiler-load-lazy-qualified-observer-flag-set!
               observer
               2
-              (struct-get frame secondary-qualified))
+              frame.secondary-qualified)
             (compiler-load-lazy-qualified-observer-flag-set!
               observer
               3
-              (struct-get frame secondary-direct)))))
+              frame.secondary-direct))))
       out)))
 
 (define (compiler-load-lazy-name-qualified-by-id? [name : i64] [alias : i64]) : bool
@@ -4723,8 +4684,8 @@
   [decl : CompilerLoadSurfaceDecl]
   [name : i64]) : bool
   (or
-    (= (struct-get decl name) name)
-    (match (struct-get decl signature)
+    (= decl.name name)
+    (match decl.signature
       [(CompilerLoadSurfaceEnumSignature _ _ variants)
         (compiler-load-lazy-surface-variant-direct-name? variants name)]
       [_ false])))
@@ -4774,19 +4735,17 @@
         (compiler-load-lazy-alias-demand-none)]
       [(or
           (= name alias)
-          (compiler-load-lazy-surface-decls-direct-name?
-            (struct-get summary decls)
-            name))
+          (compiler-load-lazy-surface-decls-direct-name? summary.decls name))
         (compiler-load-lazy-alias-demand-direct)]
       [else (compiler-load-lazy-alias-demand-none)])))
 
 (define (compiler-load-surface-decl-decl-emitting?
   [decl : CompilerLoadSurfaceDecl]) : bool
   (and
-    (match (struct-get decl kind)
+    (match decl.kind
       [(CompilerLoadSurfaceMacro) true]
       [_ false])
-    (match (struct-get decl macro-result)
+    (match decl.macro-result
       [(CompilerLoadSurfaceMacroModule) true]
       [(CompilerLoadSurfaceMacroDecls) true]
       [_ false])))
@@ -4829,13 +4788,9 @@
   [demand : CompilerLoadLazyAliasDemand]) : bool
   (match policy
     [(CompilerLoadLazyImportEager) true]
-    [(CompilerLoadLazyImportQualified)
-      (or (struct-get demand qualified) (struct-get demand unknown))]
+    [(CompilerLoadLazyImportQualified) (or demand.qualified demand.unknown)]
     [(CompilerLoadLazyImportDirect)
-      (or
-        (struct-get demand qualified)
-        (struct-get demand direct)
-        (struct-get demand unknown))]))
+      (or demand.qualified demand.direct demand.unknown)]))
 
 (define (compiler-load-session-state-lazy-type-id-demand
   [state : CompilerLoadSessionState]
@@ -4899,7 +4854,7 @@
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-type-list-demand
           state
-          (box-get args)
+          (__tl-box-place args)
           alias
           summary
           locals)
@@ -4912,7 +4867,7 @@
     [(ast.AstType.Tuple items)
       (compiler-load-session-state-lazy-type-list-demand
         state
-        (box-get items)
+        (__tl-box-place items)
         alias
         summary
         locals)]
@@ -5294,14 +5249,14 @@
     [(ast.AstPattern.Tuple patterns)
       (compiler-load-session-state-lazy-pattern-list-demand
         state
-        (box-get patterns)
+        (__tl-box-place patterns)
         alias
         summary
         locals)]
     [(ast.AstPattern.Array patterns)
       (compiler-load-session-state-lazy-pattern-list-demand
         state
-        (box-get patterns)
+        (__tl-box-place patterns)
         alias
         summary
         locals)]
@@ -5315,7 +5270,7 @@
           locals)
         (compiler-load-session-state-lazy-pattern-list-demand
           state
-          (box-get patterns)
+          (__tl-box-place patterns)
           alias
           summary
           locals))]
@@ -5330,7 +5285,7 @@
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     (compiler-load-lazy-alias-demand-none)
     (compiler-load-lazy-alias-demand-merge
       (compiler-load-session-state-lazy-pattern-demand
@@ -5385,17 +5340,17 @@
     [(ast.AstPattern.Tuple patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
-        (box-get patterns)
+        (__tl-box-place patterns)
         locals)]
     [(ast.AstPattern.Array patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
-        (box-get patterns)
+        (__tl-box-place patterns)
         locals)]
     [(ast.AstPattern.Variant _ patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
-        (box-get patterns)
+        (__tl-box-place patterns)
         locals)]
     [(ast.AstPattern.Wildcard) locals]
     [(ast.AstPattern.Literal _) locals]))
@@ -5405,7 +5360,7 @@
   [patterns : (& patterns ast.AstPatternList)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : sym_i64_env.SymI64Env
-  (if (>= index (struct-get patterns len))
+  (if (>= index patterns.len)
     locals
     (compiler-load-session-state-lazy-pattern-list-locals-at
       state
@@ -5659,7 +5614,7 @@
             summary
             locals)))]
     [(ast.AstExpr.Let let-box)
-      (match (box-get let-box)
+      (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-let-bindings-demand-at?
@@ -5680,7 +5635,7 @@
                 locals
                 0)))])]
     [(ast.AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
+      (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params ret body)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-param-list-demand
@@ -5888,7 +5843,7 @@
         summary
         locals)]
     [(ast.AstExpr.Match match-box)
-      (match (box-get match-box)
+      (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee arms)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-expr-demand
@@ -5904,7 +5859,7 @@
               summary
               locals))])]
     [(ast.AstExpr.Foreach foreach-box)
-      (match (box-get foreach-box)
+      (match (__tl-box-place foreach-box)
         [(ast.AstForeach.Foreach index ty start end body)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-type-demand
@@ -5940,7 +5895,7 @@
                       index)
                     (sym_i64_env.sym-i64-bind-id locals index 1))))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
+      (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ index ty start end init value)
           (compiler-load-lazy-alias-demand-merge
             (compiler-load-session-state-lazy-type-demand
@@ -5983,7 +5938,7 @@
                         index)
                       (sym_i64_env.sym-i64-bind-id locals index 1)))))))])]
     [(ast.AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
+      (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ index ty start end prefix _ init value body)
           (let
             [value-locals : sym_i64_env.SymI64Env
@@ -6294,7 +6249,7 @@
             summary
             locals)]
         [macro-demand : CompilerLoadLazyAliasDemand
-          (if (struct-get function-demand direct)
+          (if function-demand.direct
             (compiler-load-lazy-alias-demand-unknown)
             function-demand)]
         (compiler-load-lazy-alias-demand-merge
@@ -6315,10 +6270,8 @@
             summary
             locals)]
         (if (or
-          (struct-get name-demand direct)
-          (compiler-load-lazy-name-qualified-by-id?
-            name
-            (struct-get summary module-id)))
+          name-demand.direct
+          (compiler-load-lazy-name-qualified-by-id? name summary.module-id))
           (compiler-load-lazy-alias-demand-unknown)
           name-demand))]
     [_ (compiler-load-lazy-alias-demand-unknown)]))
@@ -6348,7 +6301,7 @@
   (match decl
     [(ast.AstDecl.ModuleBody _ body)
       (compiler-load-lazy-decl-list-module-macro-qualified-by?
-        (box-get body)
+        (__tl-box-place body)
         module-id)]
     [(ast.AstDecl.Import
         decl-meta
@@ -6358,7 +6311,7 @@
         module-id)]
     [(ast.AstDecl.Unsafe inner)
       (compiler-load-lazy-decl-module-macro-qualified-by?
-        (box-get inner)
+        (__tl-box-place inner)
         module-id)]
     [_ false]))
 
@@ -6399,7 +6352,7 @@
     [(ast.AstDecl.ModuleBody _ body)
       (compiler-load-session-state-lazy-decl-list-demand
         state
-        (box-get body)
+        (__tl-box-place body)
         alias
         summary
         locals)]
@@ -6544,7 +6497,7 @@
       ;; Unsafe, so the outer dispatcher has already accounted for metadata.
       (compiler-load-session-state-lazy-decl-demand-inner
         state
-        (box-get inner)
+        (__tl-box-place inner)
         alias
         summary
         locals)]
@@ -6604,7 +6557,7 @@
             alias
             summary
             locals)]
-        (if (struct-get head unknown)
+        (if head.unknown
           head
           (compiler-load-lazy-alias-demand-merge
             head
@@ -6637,10 +6590,10 @@
 
 (define (compiler-load-structural-member-demand-from-lazy
   [demand : CompilerLoadLazyAliasDemand]) : CompilerLoadStructuralMemberDemand
-  (if (or (struct-get demand direct) (struct-get demand unknown))
+  (if (or demand.direct demand.unknown)
     (CompilerLoadStructuralFullDemand)
-    (if (struct-get demand qualified)
-      (CompilerLoadStructuralExactMembers (struct-get demand members))
+    (if demand.qualified
+      (CompilerLoadStructuralExactMembers demand.members)
       (CompilerLoadStructuralNoDemand))))
 
 (define (compiler-load-session-state-structural-member-demand-with-pools
@@ -6814,8 +6767,8 @@
   [resolved : String]
   [stdlib-roots : svec.Vec]) : bool
   (and
-    (not (struct-get summary explicit-module))
-    (not (compiler-load-stdlib-import? (struct-get summary source-path)))
+    (not summary.explicit-module)
+    (not (compiler-load-stdlib-import? summary.source-path))
     (not
       (compiler-load-path-under-roots-from?
         (compiler-load-normalize-path resolved)
@@ -6852,16 +6805,14 @@
             stdlib-roots)
             false
             (let
-              [policy : CompilerLoadLazyImportPolicy
-                (struct-get summary lazy-policy)]
+              [policy : CompilerLoadLazyImportPolicy summary.lazy-policy]
               (match kind
                 [(ast.AstImportKind.Module)
                   (if (compiler-load-lazy-decl-list-module-macro-qualified-by?
                     rest
                     (match expected-module
                       [(ast.AstMaybeModuleName.Some module-id) module-id]
-                      [(ast.AstMaybeModuleName.No)
-                        (struct-get summary module-id)]))
+                      [(ast.AstMaybeModuleName.No) summary.module-id]))
                     false
                     (match alias
                       [(ast.AstMaybeImportAlias.Some alias-name)
@@ -6878,7 +6829,7 @@
                                   summary
                                   (sym_i64_env.sym-i64-empty))))]
                           [(CompilerLoadLazyImportDirect)
-                            (if (struct-get preload-demand direct)
+                            (if preload-demand.direct
                               false
                               (not
                                 (compiler-load-lazy-alias-demand-requires-load?
@@ -7046,16 +6997,16 @@
   [left : CompilerLoadSurfaceCounts]
   [right : CompilerLoadSurfaceCounts]) : CompilerLoadSurfaceCounts
   (CompilerLoadSurfaceCounts
-    (+ (struct-get left imports) (struct-get right imports))
-    (+ (struct-get left decls) (struct-get right decls))))
+    (+ left.imports right.imports)
+    (+ left.decls right.decls)))
 
 (define (compiler-load-surface-count-decl [decl : ast.AstDecl]) : CompilerLoadSurfaceCounts
   (match decl
     [(ast.AstDecl.Import _ _) (CompilerLoadSurfaceCounts 1 0)]
     [(ast.AstDecl.Unsafe inner-box)
-      (compiler-load-surface-count-decl (box-get inner-box))]
+      (compiler-load-surface-count-decl (__tl-box-place inner-box))]
     [(ast.AstDecl.ModuleBody _ body-box)
-      (compiler-load-surface-count-decls (box-get body-box))]
+      (compiler-load-surface-count-decls (__tl-box-place body-box))]
     [(ast.AstDecl.Module _) (CompilerLoadSurfaceCounts 0 0)]
     [_ (CompilerLoadSurfaceCounts 0 1)]))
 
@@ -7069,9 +7020,9 @@
 
 (define (compiler-load-surface-build-empty [counts : CompilerLoadSurfaceCounts]) : CompilerLoadSurfaceBuild
   (CompilerLoadSurfaceBuild
-    (array.make-array CompilerLoadSurfaceImport (struct-get counts imports))
+    (array.make-array CompilerLoadSurfaceImport counts.imports)
     0
-    (array.make-array CompilerLoadSurfaceDecl (struct-get counts decls))
+    (array.make-array CompilerLoadSurfaceDecl counts.decls)
     0
     false
     false
@@ -7083,18 +7034,18 @@
   [import-edge : CompilerLoadSurfaceImport]
   [decl-emitting : bool]) : CompilerLoadSurfaceBuild
   (let
-    [index : i64 (struct-get build import-len)]
+    [index : i64 build.import-len]
     (begin
-      (array-set! (struct-get build import-slots) index import-edge)
+      (set! (array-ref build.import-slots index) import-edge)
       (CompilerLoadSurfaceBuild
-        (struct-get build import-slots)
+        build.import-slots
         (+ index 1)
-        (struct-get build decl-slots)
-        (struct-get build decl-len)
-        (struct-get build has-tests)
-        (struct-get build has-export-metadata)
-        (struct-get build has-generated-decls)
-        (or (struct-get build has-decl-emitting-macro) decl-emitting)))))
+        build.decl-slots
+        build.decl-len
+        build.has-tests
+        build.has-export-metadata
+        build.has-generated-decls
+        (or build.has-decl-emitting-macro decl-emitting)))))
 
 (define (compiler-load-surface-build-add-decl
   [build : CompilerLoadSurfaceBuild]
@@ -7104,18 +7055,18 @@
   [has-generated : bool]
   [decl-emitting : bool]) : CompilerLoadSurfaceBuild
   (let
-    [index : i64 (struct-get build decl-len)]
+    [index : i64 build.decl-len]
     (begin
-      (array-set! (struct-get build decl-slots) index decl)
+      (set! (array-ref build.decl-slots index) decl)
       (CompilerLoadSurfaceBuild
-        (struct-get build import-slots)
-        (struct-get build import-len)
-        (struct-get build decl-slots)
+        build.import-slots
+        build.import-len
+        build.decl-slots
         (+ index 1)
-        (or (struct-get build has-tests) has-test)
-        (or (struct-get build has-export-metadata) has-export)
-        (or (struct-get build has-generated-decls) has-generated)
-        (or (struct-get build has-decl-emitting-macro) decl-emitting)))))
+        (or build.has-tests has-test)
+        (or build.has-export-metadata has-export)
+        (or build.has-generated-decls has-generated)
+        (or build.has-decl-emitting-macro decl-emitting)))))
 
 (define (compiler-load-surface-build-decl-inner
   [source-path : String]
@@ -7137,7 +7088,7 @@
           (compiler-load-surface-module-maybe module-name)
           (compiler-load-surface-alias-maybe alias)
           (compiler-load-surface-import-default-alias kind import-path)
-          (box-get span))
+          (__tl-box-place span))
         (compiler-load-surface-import-decl-emitting? kind))]
     [(ast.AstDecl.Def decl-meta name maybe-ty _)
       (compiler-load-surface-build-add-decl
@@ -7186,7 +7137,7 @@
           (CompilerLoadSurfaceExtern)
           name
           module-id
-          (CompilerLoadSurfaceExternSignature kind (box-get meta) ty)
+          (CompilerLoadSurfaceExternSignature kind (__tl-box-place meta) ty)
           (CompilerLoadSurfaceMacroOther)
           false
           false
@@ -7437,7 +7388,7 @@
       (compiler-load-surface-build-decl
         source-path
         module-id
-        (box-get inner-box)
+        (__tl-box-place inner-box)
         generated
         true
         build)]
@@ -7445,7 +7396,7 @@
       (compiler-load-surface-build-decls-into
         source-path
         nested-module
-        (box-get body-box)
+        (__tl-box-place body-box)
         build)]
     [(ast.AstDecl.Module _) build]
     [_ build]))
@@ -7492,7 +7443,7 @@
               (compiler-load-surface-build-decls-into
                 source-path
                 nested-module
-                (box-get body-box)
+                (__tl-box-place body-box)
                 build))]
           [_
             (compiler-load-surface-build-decls-into
@@ -7539,24 +7490,18 @@
       source-path-id
       source-path
       (compiler-load-normalize-path root-id)
-      (CompilerLoadSurfaceImportList
-        (struct-get build import-slots)
-        (struct-get build import-len))
-      (CompilerLoadSurfaceDeclList
-        (struct-get build decl-slots)
-        (struct-get build decl-len))
-      (struct-get build has-tests)
-      (struct-get build has-export-metadata)
-      (struct-get build has-generated-decls)
-      (struct-get build has-decl-emitting-macro)
+      (CompilerLoadSurfaceImportList build.import-slots build.import-len)
+      (CompilerLoadSurfaceDeclList build.decl-slots build.decl-len)
+      build.has-tests
+      build.has-export-metadata
+      build.has-generated-decls
+      build.has-decl-emitting-macro
       (compiler-load-surface-lazy-policy
-        (CompilerLoadSurfaceDeclList
-          (struct-get build decl-slots)
-          (struct-get build decl-len))
-        (struct-get build has-tests)
-        (struct-get build has-export-metadata)
-        (struct-get build has-generated-decls)
-        (struct-get build has-decl-emitting-macro)))))
+        (CompilerLoadSurfaceDeclList build.decl-slots build.decl-len)
+        build.has-tests
+        build.has-export-metadata
+        build.has-generated-decls
+        build.has-decl-emitting-macro))))
 
 (define (compiler-load-surface-summary-build
   [path : String]
@@ -7568,7 +7513,7 @@
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [source-module : String (compiler-load-decls-source-module decls)]
         (match (compiler-load-decls-module-id path decls fallback-id)
           [(ResultCompilerLoadModuleId.Ok _ module-id)
@@ -7720,7 +7665,7 @@
           [(ast.AstDecl.ModuleBody target-module-id body-box)
             (let
               [target-module : String (ci.intern-str target-module-id)]
-              [body : ast.AstDeclList (box-get body-box)]
+              [body : ast.AstDeclList (__tl-box-place body-box)]
               (if (or
                 (compiler-load-decl-list-has-module-id? body target-module-id)
                 (compiler-load-decl-list-has-module-id? rest target-module-id))
@@ -7731,8 +7676,8 @@
                       "compiler-load: duplicate module declaration")))
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                   (CompilerLoadTraversalContext
-                    (struct-get traversal load-state)
-                    (struct-get traversal importer-path-id)
+                    traversal.load-state
+                    traversal.importer-path-id
                     target-module-id)
                   body
                   importer-path
@@ -7784,7 +7729,7 @@
                               body-paths
                               (ast.ast-decl-path-list-prepend-builder-with-owner-id
                                 importer-path
-                                (struct-get traversal importer-decl-owner-id)
+                                traversal.importer-decl-owner-id
                                 rest-paths)))
                           (ast.ast-decl-module-list-prepend-builder-id
                             target-module-id
@@ -7832,7 +7777,7 @@
                       rest-decls)
                     (ast.ast-decl-path-list-prepend-builder-with-owner-id
                       importer-path
-                      (struct-get traversal importer-decl-owner-id)
+                      traversal.importer-decl-owner-id
                       rest-paths)
                     (ast.ast-decl-module-list-prepend-builder-id
                       importer-source-module-id
@@ -7852,13 +7797,13 @@
                     [resolved-id : i64 (compiler-load-source-path-id resolved)]
                     [preload-candidate : bool
                       (compiler-load-session-state-lazy-import-preload-candidate?
-                        (struct-get traversal load-state)
+                        traversal.load-state
                         importer-path
                         kind
                         alias)]
                     [preload-demand : CompilerLoadLazyAliasDemand
                       (compiler-load-session-state-lazy-import-preload-demand
-                        (struct-get traversal load-state)
+                        traversal.load-state
                         preload-candidate
                         alias
                         rest
@@ -7867,13 +7812,11 @@
                       (and
                         preload-candidate
                         (not
-                          (or
-                            (struct-get preload-demand qualified)
-                            (struct-get preload-demand unknown))))]
+                          (or preload-demand.qualified preload-demand.unknown)))]
                     [_preload-summary : unit
                       (if preload-summary-needed
                         (compiler-load-lazy-import-preload-summary-with-state-and-pools
-                          (struct-get traversal load-state)
+                          traversal.load-state
                           resolved
                           resolved-id
                           stdlib-roots
@@ -7885,7 +7828,7 @@
                     [preload-skip : bool
                       (if preload-summary-needed
                         (compiler-load-lazy-import-skip-with-state?
-                          (struct-get traversal load-state)
+                          traversal.load-state
                           importer-path
                           kind
                           resolved
@@ -7904,7 +7847,7 @@
                         (ast.ast-decl-module-list-new)
                         seen)
                       (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
-                        (struct-get traversal load-state)
+                        traversal.load-state
                         resolved
                         resolved-id
                         seen
@@ -7949,7 +7892,7 @@
                               (let
                                 [after-import-expected : ast.AstMaybeModuleName
                                   (compiler-load-after-import-expected-module
-                                    (struct-get traversal load-state)
+                                    traversal.load-state
                                     resolved-id
                                     kind
                                     expected-module
@@ -7957,7 +7900,7 @@
                                     imported-decls)]
                                 [after-import-alias : ast.AstMaybeImportAlias
                                   (compiler-load-after-import-alias
-                                    (struct-get traversal load-state)
+                                    traversal.load-state
                                     resolved-id
                                     kind
                                     expected-module
@@ -7966,7 +7909,7 @@
                                 (if lazy-skip
                                   (begin
                                     (compiler-load-session-state-lazy-import-record-skip!
-                                      (struct-get traversal load-state))
+                                      traversal.load-state)
                                     (ResultCompilerLoadWithPaths.Ok
                                       (compiler-load-decls-after-import
                                         kind
@@ -7979,9 +7922,7 @@
                                         rest-decls)
                                       (compiler-load-paths-after-import
                                         importer-path
-                                        (struct-get
-                                          traversal
-                                          importer-decl-owner-id)
+                                        traversal.importer-decl-owner-id
                                         after-import-alias
                                         (ast.ast-decl-list-new)
                                         rest-paths)
@@ -8007,9 +7948,7 @@
                                       imported-paths
                                       (compiler-load-paths-after-import
                                         importer-path
-                                        (struct-get
-                                          traversal
-                                          importer-decl-owner-id)
+                                        traversal.importer-decl-owner-id
                                         after-import-alias
                                         imported-decls
                                         rest-paths))
@@ -8062,7 +8001,7 @@
                         rest-decls)
                       (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        (struct-get traversal importer-decl-owner-id)
+                        traversal.importer-decl-owner-id
                         rest-paths)
                       (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -8105,7 +8044,7 @@
                         rest-decls)
                       (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        (struct-get traversal importer-decl-owner-id)
+                        traversal.importer-decl-owner-id
                         rest-paths)
                       (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -8145,7 +8084,7 @@
                       (ast.ast-decl-list-prepend-builder expanded rest-decls)
                       (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        (struct-get traversal importer-decl-owner-id)
+                        traversal.importer-decl-owner-id
                         rest-paths)
                       (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -8188,7 +8127,7 @@
                         rest-decls)
                       (ast.ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        (struct-get traversal importer-decl-owner-id)
+                        traversal.importer-decl-owner-id
                         rest-paths)
                       (ast.ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -8224,7 +8163,7 @@
                     rest-decls)
                   (ast.ast-decl-path-list-prepend-builder-with-owner-id
                     importer-path
-                    (struct-get traversal importer-decl-owner-id)
+                    traversal.importer-decl-owner-id
                     rest-paths)
                   (ast.ast-decl-module-list-prepend-builder-id
                     importer-source-module-id
@@ -8352,14 +8291,14 @@
   (let
     [_ : unit
       (compiler-load-session-state-surface-summary-load-enter! load-state)]
-    [source-path-id : i64 (struct-get parse-identity source-path-id)]
-    [module-id-fallback-id : i64 (struct-get parse-identity module-fallback-id)]
+    [source-path-id : i64 parse-identity.source-path-id]
+    [module-id-fallback-id : i64 parse-identity.module-fallback-id]
     [source-path : String (ci.intern-str source-path-id)]
     [loaded : ResultCompilerLoadWithPaths
       (match program
         [(ast.AstProgram.Program decls-box)
           (let
-            [decls : ast.AstDeclList (box-get decls-box)]
+            [decls : ast.AstDeclList (__tl-box-place decls-box)]
             [effective-source-module-fallback : String
               (if (> (string.string-length source-module-fallback) 0)
                 source-module-fallback
@@ -8437,7 +8376,7 @@
                               (CompilerLoadTraversalContext
                                 load-state
                                 source-path-id
-                                (struct-get parse-identity decl-owner-id))
+                                parse-identity.decl-owner-id)
                               load-decls
                               source-path
                               module-id
@@ -8607,10 +8546,10 @@
         (if (< source-count dest-count)
           source-count
           dest-count)]
-      [source-slots : (__tl_dyn-array ast.AstDecl) (struct-get source slots)]
-      [source-offset : i64 (struct-get source offset)]
-      [dest-slots : (__tl_dyn-array ast.AstDecl) (struct-get dest slots)]
-      [dest-offset : i64 (struct-get dest offset)]
+      [source-slots : (__tl_dyn-array ast.AstDecl) source.slots]
+      [source-offset : i64 source.offset]
+      [dest-slots : (__tl_dyn-array ast.AstDecl) dest.slots]
+      [dest-offset : i64 dest.offset]
       [index : i64 0]
       (while (< index count)
         (begin
@@ -8619,8 +8558,8 @@
               (match (array-ref dest-slots (+ dest-offset index))
                 [(ast.AstDecl.ModuleBody _ dest-body-box)
                   (compiler-load-propagate-compacted-decl-origins!
-                    (box-get source-body-box)
-                    (box-get dest-body-box)
+                    (__tl-box-place source-body-box)
+                    (__tl-box-place dest-body-box)
                     records-start
                     records-end)]
                 [_ unit])]
@@ -8637,8 +8576,8 @@
       (match dest
         [(ast.AstProgram.Program dest-decls-box)
           (compiler-load-propagate-compacted-decl-origins!
-            (box-get source-decls-box)
-            (box-get dest-decls-box)
+            (__tl-box-place source-decls-box)
+            (__tl-box-place dest-decls-box)
             records-start
             records-end)])]))
 
@@ -8719,7 +8658,7 @@
             (unsafe
               (arena.tl_arena_set caller-arena))]
           [stable-diag : (Box cdiag.CompilerDiagnostic)
-            (box (cdiag.compiler-diagnostic-copy (box-get diag)))]
+            (box (cdiag.compiler-diagnostic-copy (__tl-box-place diag)))]
           [out : parser.ResultAstProgramDiagnostic
             (parser.ResultAstProgramDiagnostic.Err stable-diag)]
           (begin
@@ -9536,8 +9475,7 @@
                 module-id-fallback
                 expected-module)
               decl-owner-id)]
-          [module-id-fallback-id : i64
-            (struct-get parse-identity module-fallback-id)]
+          [module-id-fallback-id : i64 parse-identity.module-fallback-id]
           [source-module-fallback-id : i64
             (cond
               [(>= source-module-fallback-id-hint 0)
@@ -10026,14 +9964,10 @@
                   message))]
             [(tlci.ResultTlciImage.Ok image)
               (let
-                [metadata : tlci.TlciMetadata (struct-get image metadata)]
+                [metadata : tlci.TlciMetadata image.metadata]
                 (if (or
-                  (not
-                    (string.eq (struct-get metadata package-name) package-name))
-                  (not
-                    (string.eq
-                      (struct-get metadata package-version)
-                      package-version)))
+                  (not (string.eq metadata.package-name package-name))
+                  (not (string.eq metadata.package-version package-version)))
                   (ResultCompilerLoadPackageSpmdInterface.Err
                     (str_cat.str-cat
                       "compiler-load: dependency tlci package identity mismatch for '"
@@ -10043,12 +9977,12 @@
                       "@"
                       package-version
                       ", found "
-                      (struct-get metadata package-name)
+                      metadata.package-name
                       "@"
-                      (struct-get metadata package-version)))
+                      metadata.package-version))
                   (ResultCompilerLoadPackageSpmdInterface.Ok
                     (CompilerLoadPackageSpmdInterface.Available
-                      (struct-get metadata spmd-callables)))))])]))))
+                      metadata.spmd-callables))))])]))))
 
 (define (compiler-load-imported-spmd-specializations
   [items : tlci.TlciSpmdSpecializations]) : ast.AstImportedSpmdSpecializationList
@@ -10066,13 +10000,13 @@
             (ast.ast-imported-spmd-specialization-list-push
               (&mut out)
               (ast.AstImportedSpmdSpecialization
-                (ci.intern-generated-canonical-name (struct-get item abi))
-                (ci.intern-generated-canonical-name (struct-get item backend))
-                (struct-get item lanes)
-                (ci.intern-generated-canonical-name (struct-get item args))
-                (ci.intern-generated-canonical-name (struct-get item result))
-                (struct-get item index-param)
-                (ci.intern-generated-canonical-name (struct-get item symbol))))
+                (ci.intern-generated-canonical-name item.abi)
+                (ci.intern-generated-canonical-name item.backend)
+                item.lanes
+                (ci.intern-generated-canonical-name item.args)
+                (ci.intern-generated-canonical-name item.result)
+                item.index-param
+                (ci.intern-generated-canonical-name item.symbol)))
             (set! index (+ index 1)))))
       out)))
 
@@ -10090,14 +10024,13 @@
           [item : tlci.TlciSpmdCallable
             (tlci.tlci-spmd-callables-ref items index)]
           (begin
-            (if (string.eq (struct-get item name) canonical-name)
+            (if (string.eq item.name canonical-name)
               (ast.ast-imported-spmd-callable-list-push
                 (&mut out)
                 (ast.AstImportedSpmdCallable
-                  (ci.intern-generated-canonical-name
-                    (struct-get item signature))
+                  (ci.intern-generated-canonical-name item.signature)
                   (compiler-load-imported-spmd-specializations
-                    (struct-get item specializations))))
+                    item.specializations)))
               unit)
             (set! index (+ index 1)))))
       out)))
@@ -10189,7 +10122,7 @@
     [(ast.AstDecl.Module _) (CompilerLoadSomeDecl decl)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
-        [inner : ast.AstDecl (box-get inner-box)]
+        [inner : ast.AstDecl (__tl-box-place inner-box)]
         (match (compiler-load-package-transform-decl
           package-owner
           package-root
@@ -10235,7 +10168,7 @@
         entry-path
         module
         decl-path
-        (box-get inner-box))]
+        (__tl-box-place inner-box))]
     [_ false]))
 
 (define (compiler-load-package-owned-paths-for-decls-in-module
@@ -10417,19 +10350,17 @@
               "compiler-load: invalid dependency package manifest '"
               manifest-path
               "': "
-              (cdiag.compiler-diagnostic-message (box-get diag))))]
+              (cdiag.compiler-diagnostic-message (__tl-box-place diag))))]
         [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
           (let
             [manifest-dir : String (compiler-load-dirname manifest-path)]
             (ResultCompilerLoadPackageEntry.Ok
               (CompilerLoadPackageEntry
                 (compiler-load-normalize-path
-                  (compiler-load-join-root-path
-                    manifest-dir
-                    (struct-get manifest entry)))
+                  (compiler-load-join-root-path manifest-dir manifest.entry))
                 manifest-dir
-                (struct-get manifest name)
-                (struct-get manifest version))))])]))
+                manifest.name
+                manifest.version)))])]))
 
 (define (compiler-load-package-externs-from-import
   [resolved : String]
@@ -10445,9 +10376,9 @@
         (box (cdiag.compiler-diagnostic-at-start resolved message)))]
     [(ResultCompilerLoadPackageEntry.Ok entry)
       (match (compiler-load-package-spmd-interface
-        (struct-get entry manifest-dir)
-        (struct-get entry owner)
-        (struct-get entry version))
+        entry.manifest-dir
+        entry.owner
+        entry.version)
         [(ResultCompilerLoadPackageSpmdInterface.Err message)
           (ResultCompilerLoadWithPaths.Err
             (box (cdiag.compiler-diagnostic-at-start resolved message)))]
@@ -10466,8 +10397,8 @@
                 _
                 import-seen)
               (compiler-load-package-extern-decls
-                (struct-get entry owner)
-                (struct-get entry manifest-dir)
+                entry.owner
+                entry.manifest-dir
                 stdlib-roots
                 imported-decls
                 imported-paths
@@ -10690,9 +10621,7 @@
                       (and
                         preload-candidate
                         (not
-                          (or
-                            (struct-get preload-demand qualified)
-                            (struct-get preload-demand unknown))))]
+                          (or preload-demand.qualified preload-demand.unknown)))]
                     [_preload-summary : unit
                       (if preload-summary-needed
                         (compiler-load-lazy-import-preload-summary-with-pools
@@ -11078,14 +11007,14 @@
   [source-module-fallback-id : i64]) : ResultCompilerLoadWithPaths
   (let
     [_ : unit (compiler-load-surface-summary-load-enter!)]
-    [source-path-id : i64 (struct-get parse-identity source-path-id)]
-    [module-id-fallback-id : i64 (struct-get parse-identity module-fallback-id)]
+    [source-path-id : i64 parse-identity.source-path-id]
+    [module-id-fallback-id : i64 parse-identity.module-fallback-id]
     [source-path : String (ci.intern-str source-path-id)]
     [loaded : ResultCompilerLoadWithPaths
       (match program
         [(ast.AstProgram.Program decls-box)
           (let
-            [decls : ast.AstDeclList (box-get decls-box)]
+            [decls : ast.AstDeclList (__tl-box-place decls-box)]
             [effective-source-module-fallback : String
               (if (> (string.string-length source-module-fallback) 0)
                 source-module-fallback
@@ -11229,7 +11158,7 @@
           module-id-fallback
           expected-module)
         cbi.compiler-builtin-id-fix-empty)]
-    [module-id-fallback-id : i64 (struct-get parse-identity module-fallback-id)]
+    [module-id-fallback-id : i64 parse-identity.module-fallback-id]
     [source-module-fallback-id : i64
       (cond
         [(>= source-module-fallback-id-hint 0) source-module-fallback-id-hint]
@@ -11713,12 +11642,12 @@
   (let
     [bytes : (__tl_dyn-array u8) (make-array u8 6)]
     (begin
-      (array-set! bytes 0 (cast 0 : u8))
-      (array-set! bytes 1 (cast 65 : u8))
-      (array-set! bytes 2 (cast 127 : u8))
-      (array-set! bytes 3 (cast 128 : u8))
-      (array-set! bytes 4 (cast 255 : u8))
-      (array-set! bytes 5 (cast 10 : u8))
+      (set! (array-ref bytes 0) (cast 0 : u8))
+      (set! (array-ref bytes 1) (cast 65 : u8))
+      (set! (array-ref bytes 2) (cast 127 : u8))
+      (set! (array-ref bytes 3) (cast 128 : u8))
+      (set! (array-ref bytes 4) (cast 255 : u8))
+      (set! (array-ref bytes 5) (cast 10 : u8))
       (unsafe
         (string-from-bytes (ptr-cast (array-data bytes) : (Ptr u8)) 6)))))
 
@@ -11885,7 +11814,7 @@
         (begin
           (if (=
             (compiler-load-surface-import-kind-code
-              (struct-get
+              (__tl-project-field
                 (compiler-load-surface-import-list-at imports index)
                 kind))
             kind-code)
@@ -11909,15 +11838,12 @@
             (compiler-load-surface-import-list-at imports index)]
           (if (and
             (=
-              (compiler-load-surface-import-kind-code
-                (struct-get import-edge kind))
+              (compiler-load-surface-import-kind-code import-edge.kind)
               kind-code)
-            (string.eq (struct-get import-edge import-path) import-path)
+            (string.eq import-edge.import-path import-path)
+            (compiler-load-surface-maybe-string-eq? import-edge.alias alias)
             (compiler-load-surface-maybe-string-eq?
-              (struct-get import-edge alias)
-              alias)
-            (compiler-load-surface-maybe-string-eq?
-              (struct-get import-edge default-alias)
+              import-edge.default-alias
               default-alias))
             (return true)
             (set! index (+ index 1)))))
@@ -11934,7 +11860,9 @@
         (begin
           (if (=
             (compiler-load-surface-decl-kind-code
-              (struct-get (compiler-load-surface-decl-list-at decls index) kind))
+              (__tl-project-field
+                (compiler-load-surface-decl-list-at decls index)
+                kind))
             kind-code)
             (set! count (+ count 1))
             unit)
@@ -11953,10 +11881,8 @@
           [decl : CompilerLoadSurfaceDecl
             (compiler-load-surface-decl-list-at decls index)]
           (if (and
-            (=
-              (compiler-load-surface-decl-kind-code (struct-get decl kind))
-              kind-code)
-            (string.eq (ci.intern-str (struct-get decl name)) name))
+            (= (compiler-load-surface-decl-kind-code decl.kind) kind-code)
+            (string.eq (ci.intern-str decl.name) name))
             (return true)
             (set! index (+ index 1)))))
       false)))
@@ -11973,8 +11899,8 @@
           [decl : CompilerLoadSurfaceDecl
             (compiler-load-surface-decl-list-at decls index)]
           (if (and
-            (string.eq (ci.intern-str (struct-get decl name)) name)
-            (string.eq (ci.intern-str (struct-get decl module)) module))
+            (string.eq (ci.intern-str decl.name) name)
+            (string.eq (ci.intern-str decl.module) module))
             (return true)
             (set! index (+ index 1)))))
       false)))
@@ -11990,8 +11916,8 @@
           [decl : CompilerLoadSurfaceDecl
             (compiler-load-surface-decl-list-at decls index)]
           (if (and
-            (string.eq (ci.intern-str (struct-get decl name)) name)
-            (struct-get decl has-generated-meta))
+            (string.eq (ci.intern-str decl.name) name)
+            decl.has-generated-meta)
             (return true)
             (set! index (+ index 1)))))
       false)))
@@ -12006,9 +11932,7 @@
         (let
           [decl : CompilerLoadSurfaceDecl
             (compiler-load-surface-decl-list-at decls index)]
-          (if (and
-            (string.eq (ci.intern-str (struct-get decl name)) name)
-            (struct-get decl was-unsafe))
+          (if (and (string.eq (ci.intern-str decl.name) name) decl.was-unsafe)
             (return true)
             (set! index (+ index 1)))))
       false)))
@@ -12023,9 +11947,7 @@
         (let
           [decl : CompilerLoadSurfaceDecl
             (compiler-load-surface-decl-list-at decls index)]
-          (if (and
-            (string.eq (ci.intern-str (struct-get decl name)) name)
-            (struct-get decl has-cleanup))
+          (if (and (string.eq (ci.intern-str decl.name) name) decl.has-cleanup)
             (return true)
             (set! index (+ index 1)))))
       false)))
@@ -12043,12 +11965,9 @@
             (compiler-load-surface-decl-list-at decls index)]
           (begin
             (if (and
+              (= (compiler-load-surface-decl-kind-code decl.kind) 6)
               (=
-                (compiler-load-surface-decl-kind-code (struct-get decl kind))
-                6)
-              (=
-                (compiler-load-surface-macro-result-kind-code
-                  (struct-get decl macro-result))
+                (compiler-load-surface-macro-result-kind-code decl.macro-result)
                 result-code))
               (set! count (+ count 1))
               unit)
@@ -12083,23 +12002,23 @@
 (define (compiler-load-surface-summary-shape-ok?
   [summary : CompilerLoadSurfaceSummary]) : bool
   (let
-    [imports : CompilerLoadSurfaceImportList (struct-get summary imports)]
-    [decls : CompilerLoadSurfaceDeclList (struct-get summary decls)]
+    [imports : CompilerLoadSurfaceImportList summary.imports]
+    [decls : CompilerLoadSurfaceDeclList summary.decls]
     (and
-      (string.eq (ci.intern-str (struct-get summary module-id)) "summary.mod")
-      (string.eq (struct-get summary source-path) "src/summary.tl")
-      (string.eq (struct-get summary root-id) "src")
+      (string.eq (ci.intern-str summary.module-id) "summary.mod")
+      (string.eq summary.source-path "src/summary.tl")
+      (string.eq summary.root-id "src")
       (= (compiler-load-surface-import-list-count imports) 5)
       (=
-        (array-length (struct-get imports slots))
+        (array-length imports.slots)
         (compiler-load-surface-import-list-count imports))
       (string.eq
-        (struct-get
+        (__tl-project-field
           (compiler-load-surface-import-list-at imports 0)
           import-path)
         "dep.mod")
       (string.eq
-        (struct-get
+        (__tl-project-field
           (compiler-load-surface-import-list-at imports 1)
           import-path)
         "stdlib.vector")
@@ -12115,15 +12034,15 @@
       (compiler-load-surface-import-has? imports 1 "feature.mod" "feat" "mod")
       (= (compiler-load-surface-decl-list-count decls) 14)
       (=
-        (array-length (struct-get decls slots))
+        (array-length decls.slots)
         (compiler-load-surface-decl-list-count decls))
       (string.eq
         (ci.intern-str
-          (struct-get (compiler-load-surface-decl-list-at decls 0) name))
+          (__tl-project-field (compiler-load-surface-decl-list-at decls 0) name))
         "value")
       (string.eq
         (ci.intern-str
-          (struct-get
+          (__tl-project-field
             (compiler-load-surface-decl-list-at
               decls
               (- (compiler-load-surface-decl-list-count decls) 1))
@@ -12144,17 +12063,17 @@
       (= (compiler-load-surface-macro-result-count decls 1) 1)
       (= (compiler-load-surface-macro-result-count decls 2) 1)
       (= (compiler-load-surface-macro-result-count decls 3) 1)
-      (struct-get summary has-tests)
-      (struct-get summary has-export-metadata)
-      (struct-get summary has-generated-decls)
-      (struct-get summary has-decl-emitting-macro)
+      summary.has-tests
+      summary.has-export-metadata
+      summary.has-generated-decls
+      summary.has-decl-emitting-macro
       (compiler-load-surface-summary-requires-eager? summary))))
 
 (define (compiler-load-surface-mark-generated-value! [program : ast.AstProgram]) : bool
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
-        [decls : ast.AstDeclList (box-get decls-box)]
+        [decls : ast.AstDeclList (__tl-box-place decls-box)]
         [index : i64 0]
         [found : bool false]
         (begin
@@ -12173,9 +12092,8 @@
                           (ast.ast-node-push
                             (ast.AstExpr.Literal
                               (ast.ast-lit-generated-string "i64"))))
-                        (array-set!
-                          (struct-get decls slots)
-                          (+ (struct-get decls offset) index)
+                        (set!
+                          (array-ref decls.slots (+ decls.offset index))
                           (ast.ast-decl-comptime-decl-with-meta
                             (ast.AstGeneratedDeclMeta.Some
                               "gen-family"
@@ -12199,8 +12117,8 @@
         path
         "src.summary"
         ast.AstMaybeModuleName.No)]
-    [source-path-id : i64 (struct-get parse-identity source-path-id)]
-    [fallback-id : i64 (struct-get parse-identity module-fallback-id)]
+    [source-path-id : i64 parse-identity.source-path-id]
+    [fallback-id : i64 parse-identity.module-fallback-id]
     (match (compiler-load-parse-source-diagnostic-escaping
       path
       (compiler-load-surface-summary-smoke-source)
@@ -12299,7 +12217,7 @@
     (ast.AstMaybeModuleName.Some (ci.intern-generated-name "lib.want")))
     [(ResultCompilerLoadWithPaths.Err diag)
       (string.eq
-        (cdiag.compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
         "compiler-load: import expected module lib.want but loaded lib.actual")]
     [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))
 
@@ -12312,7 +12230,7 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (cdiag.compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
         "compiler-load: duplicate module declaration")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
@@ -12369,7 +12287,7 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (cdiag.compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
         "compiler-load: duplicate module declaration")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
@@ -12486,7 +12404,7 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (cdiag.compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
         "compiler-load: duplicate module import alias one")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
@@ -13009,7 +12927,7 @@
       (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Err diag)
         (string.eq
-          (cdiag.compiler-diagnostic-message (box-get diag))
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
           "compiler-load: import expected module cl_canonical_source_explicit but loaded canonical.actual")]
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
@@ -13343,7 +13261,7 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (cdiag.compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
         "compiler-load: cannot read import src/no_such_module_xyz.tl")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
@@ -13426,7 +13344,7 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (cdiag.compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
         "compiler-load: cannot read include-str no_such_resource_xyz.txt from src/app.tl (resolved src/no_such_resource_xyz.txt)")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
@@ -13477,7 +13395,7 @@
     (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
-        (cdiag.compiler-diagnostic-message (box-get diag))
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
         "compiler-load: cannot read include-bin no_such_resource_xyz.bin from src/app.tl (resolved src/no_such_resource_xyz.bin)")]
     [(ResultCompilerLoad.Ok _ _) false]))
 
@@ -13525,10 +13443,10 @@
       [(ResultCompilerLoadWithPaths.Err diag)
         (and
           (string.eq
-            (cdiag.compiler-diagnostic-path (box-get diag))
+            (cdiag.compiler-diagnostic-path (__tl-box-place diag))
             "target/cl_ipe_dep.tl")
           (string.eq
-            (cdiag.compiler-diagnostic-message (box-get diag))
+            (cdiag.compiler-diagnostic-message (__tl-box-place diag))
             "parse: malformed value definition"))]
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
@@ -13552,10 +13470,10 @@
       [(ResultCompilerLoadWithPaths.Err diag)
         (and
           (string.eq
-            (cdiag.compiler-diagnostic-path (box-get diag))
+            (cdiag.compiler-diagnostic-path (__tl-box-place diag))
             "target/cl_idm_dep.tl")
           (string.eq
-            (cdiag.compiler-diagnostic-message (box-get diag))
+            (cdiag.compiler-diagnostic-message (__tl-box-place diag))
             "compiler-load: duplicate module declaration"))]
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
@@ -13698,7 +13616,7 @@
       (compiler-load-string-vec-one "target"))
       [(ResultCompilerLoadWithPaths.Err diag)
         (string.eq
-          (cdiag.compiler-diagnostic-message (box-get diag))
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
           "compiler-load: cannot read import stdlib/cl_sur_missing.tl")]
       [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
@@ -13788,10 +13706,10 @@
 
 ;: Count the dependencies in a parsed list.
 (define (compiler-pkg-dep-list-count [deps : CompilerPkgDepList]) : i64
-  (struct-get deps len))
+  deps.len)
 
 (define (compiler-pkg-dep-list-at [deps : CompilerPkgDepList] [index : i64]) : CompilerPkgDep
-  (array-ref (struct-get deps slots) index))
+  (array-ref deps.slots index))
 
 (define (compiler-pkg-dep-list-empty) : CompilerPkgDepList
   (CompilerPkgDepList (array.make-array CompilerPkgDep 0) 0))
@@ -13801,14 +13719,11 @@
   [src : CompilerPkgDepList]
   [dst-offset : i64]) : unit
   (let
-    [n : i64 (struct-get src len)]
+    [n : i64 src.len]
     [index : i64 0]
     (while (< index n)
       (begin
-        (array-set!
-          dst
-          (+ dst-offset index)
-          (array-ref (struct-get src slots) index))
+        (set! (array-ref dst (+ dst-offset index)) (array-ref src.slots index))
         (set! index (+ index 1))))))
 
 ;: Append `dep`. Every push right-sizes a fresh array, so callers that keep
@@ -13822,7 +13737,7 @@
       (array.make-array CompilerPkgDep (+ n 1))]
     (begin
       (compiler-pkg-dep-list-copy-into slots deps 0)
-      (array-set! slots n dep)
+      (set! (array-ref slots n) dep)
       (CompilerPkgDepList slots (+ n 1)))))
 
 ;: Prepend `dep`, right-sizing a fresh array like `compiler-pkg-dep-list-push`.
@@ -13834,7 +13749,7 @@
     [slots : (__tl_dyn-array CompilerPkgDep)
       (array.make-array CompilerPkgDep (+ n 1))]
     (begin
-      (array-set! slots 0 dep)
+      (set! (array-ref slots 0) dep)
       (compiler-pkg-dep-list-copy-into slots deps 1)
       (CompilerPkgDepList slots (+ n 1)))))
 
@@ -13842,7 +13757,7 @@
   (CompilerPkgDeps (compiler-pkg-dep-list-empty)))
 
 (define (compiler-pkg-deps-list [deps : CompilerPkgDeps]) : CompilerPkgDepList
-  (struct-get deps ordered))
+  deps.ordered)
 
 (define (compiler-pkg-deps-count [deps : CompilerPkgDeps]) : i64
   (compiler-pkg-dep-list-count (compiler-pkg-deps-list deps)))
@@ -13857,7 +13772,7 @@
       (while (< index (compiler-pkg-dep-list-count ordered))
         (let
           [dep : CompilerPkgDep (compiler-pkg-dep-list-at ordered index)]
-          (if (string.eq (struct-get dep alias) target-alias)
+          (if (string.eq dep.alias target-alias)
             (return true)
             (set! index (+ index 1)))))
       false)))
@@ -14297,10 +14212,10 @@
 ;: The link scope's set for a scope index.
 (define (compiler-pkg-link-scope-set [link : CompilerPkgLink] [scope : i64]) : CompilerPkgLinkSet
   (if (= scope 0)
-    (struct-get link all)
+    link.all
     (if (= scope 1)
-      (struct-get link linux)
-      (struct-get link windows))))
+      link.linux
+      link.windows)))
 
 ;: Return `link` with the given scope's set replaced.
 (define (compiler-pkg-link-replace-scope
@@ -14308,18 +14223,18 @@
   [scope : i64]
   [set : CompilerPkgLinkSet]) : CompilerPkgLink
   (if (= scope 0)
-    (CompilerPkgLink set (struct-get link linux) (struct-get link windows))
+    (CompilerPkgLink set link.linux link.windows)
     (if (= scope 1)
-      (CompilerPkgLink (struct-get link all) set (struct-get link windows))
-      (CompilerPkgLink (struct-get link all) (struct-get link linux) set))))
+      (CompilerPkgLink link.all set link.windows)
+      (CompilerPkgLink link.all link.linux set))))
 
 ;: The category's value list within a link scope set.
 (define (compiler-pkg-link-set-category [set : CompilerPkgLinkSet] [cat : i64]) : fs.FsStringVector
   (if (= cat 0)
-    (struct-get set libraries)
+    set.libraries
     (if (= cat 1)
-      (struct-get set search-paths)
-      (struct-get set args))))
+      set.search-paths
+      set.args)))
 
 ;: Return `set` with the given category's value list replaced.
 (define (compiler-pkg-link-set-replace-category
@@ -14327,13 +14242,10 @@
   [cat : i64]
   [vec : fs.FsStringVector]) : CompilerPkgLinkSet
   (if (= cat 0)
-    (CompilerPkgLinkSet vec (struct-get set search-paths) (struct-get set args))
+    (CompilerPkgLinkSet vec set.search-paths set.args)
     (if (= cat 1)
-      (CompilerPkgLinkSet (struct-get set libraries) vec (struct-get set args))
-      (CompilerPkgLinkSet
-        (struct-get set libraries)
-        (struct-get set search-paths)
-        vec))))
+      (CompilerPkgLinkSet set.libraries vec set.args)
+      (CompilerPkgLinkSet set.libraries set.search-paths vec))))
 
 ;: The value list for a (scope, category) pair.
 (define (compiler-pkg-link-get-vec
@@ -14466,12 +14378,12 @@
   [manifest : CompilerPkgManifest]
   [kind : CompilerPkgKind]) : CompilerPkgManifest
   (CompilerPkgManifest
-    (struct-get manifest name)
-    (struct-get manifest version)
+    manifest.name
+    manifest.version
     kind
     (compiler-load-manifest-default-entry kind)
-    (struct-get manifest deps)
-    (struct-get manifest link)))
+    manifest.deps
+    manifest.link))
 
 ;: Walk the package fields, accumulating name/version/kind/entry/deps, then
 ;: check required fields and synthesize convention defaults for omitted kind
@@ -14888,7 +14800,7 @@
       (ResultCompilerPkgManifest.Ok manifest)]
     [(ResultCompilerPkgManifestDiagnostic.Err diag)
       (ResultCompilerPkgManifest.Err
-        (cdiag.compiler-diagnostic-message (box-get diag)))]))
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
 
 ;: Self-test: a full manifest parses with the expected fields + dependency
 ;: count.
@@ -14897,13 +14809,13 @@
     "(package (name \"demo\") (version \"0.1.0\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math \"../math\") (util \"../util\")))")
     [(ResultCompilerPkgManifest.Ok m)
       (and
-        (string.eq (struct-get m name) "demo")
-        (string.eq (struct-get m version) "0.1.0")
-        (match (struct-get m kind)
+        (string.eq m.name "demo")
+        (string.eq m.version "0.1.0")
+        (match m.kind
           [(CompilerPkgKindBin)
             (and
-              (string.eq (struct-get m entry) "src/main.tl")
-              (= (compiler-pkg-deps-count (struct-get m deps)) 2))]
+              (string.eq m.entry "src/main.tl")
+              (= (compiler-pkg-deps-count m.deps) 2))]
           [(CompilerPkgKindLib) false]))]
     [(ResultCompilerPkgManifest.Err _) false]))
 
@@ -14912,11 +14824,11 @@
   (match (compiler-load-parse-manifest
     "(package (name \"x\") (version \"1\") (kind staticlib))")
     [(ResultCompilerPkgManifest.Ok m)
-      (match (struct-get m kind)
+      (match m.kind
         [(CompilerPkgKindLib)
           (and
-            (string.eq (struct-get m entry) "src/lib.tl")
-            (= (compiler-pkg-deps-count (struct-get m deps)) 0))]
+            (string.eq m.entry "src/lib.tl")
+            (= (compiler-pkg-deps-count m.deps) 0))]
         [(CompilerPkgKindBin) false])]
     [(ResultCompilerPkgManifest.Err _) false]))
 
@@ -14924,8 +14836,8 @@
   (match (compiler-load-parse-manifest
     "(package (name \"default_bin\") (version \"1\"))")
     [(ResultCompilerPkgManifest.Ok m)
-      (match (struct-get m kind)
-        [(CompilerPkgKindBin) (string.eq (struct-get m entry) "src/main.tl")]
+      (match m.kind
+        [(CompilerPkgKindBin) (string.eq m.entry "src/main.tl")]
         [(CompilerPkgKindLib) false])]
     [(ResultCompilerPkgManifest.Err _) false]))
 
@@ -14933,8 +14845,8 @@
   (match (compiler-load-parse-manifest
     "(package (name \"override\") (version \"1\") (kind \"staticlib\") (entry \"custom/lib.tl\"))")
     [(ResultCompilerPkgManifest.Ok m)
-      (match (struct-get m kind)
-        [(CompilerPkgKindLib) (string.eq (struct-get m entry) "custom/lib.tl")]
+      (match m.kind
+        [(CompilerPkgKindLib) (string.eq m.entry "custom/lib.tl")]
         [(CompilerPkgKindBin) false])]
     [(ResultCompilerPkgManifest.Err _) false]))
 
@@ -14956,13 +14868,13 @@
     (and
       (= (compiler-pkg-dep-list-count ordered) 3)
       (string.eq
-        (struct-get (compiler-pkg-dep-list-at ordered 0) alias)
+        (__tl-project-field (compiler-pkg-dep-list-at ordered 0) alias)
         first-alias)
       (string.eq
-        (struct-get (compiler-pkg-dep-list-at ordered 1) alias)
+        (__tl-project-field (compiler-pkg-dep-list-at ordered 1) alias)
         second-alias)
       (string.eq
-        (struct-get (compiler-pkg-dep-list-at ordered 2) alias)
+        (__tl-project-field (compiler-pkg-dep-list-at ordered 2) alias)
         third-alias))))
 
 (define (compiler-load-manifest-github-deps-ok?) : bool
@@ -14970,7 +14882,7 @@
     "(package (name \"github_demo\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math (github \"JoNil-Botta/math\" (rev \"abc123\"))) (util (github \"github.com/JoNil-Botta/util.repo\" (tag \"v1.0.0\"))) (core \"../core\")))")
     [(ResultCompilerPkgManifest.Ok m)
       (let
-        [deps : CompilerPkgDeps (struct-get m deps)]
+        [deps : CompilerPkgDeps m.deps]
         (and
           (= (compiler-pkg-deps-count deps) 3)
           (compiler-load-pkg-deps-three-alias-order? deps "math" "util" "core")
@@ -15014,11 +14926,13 @@
   (match (compiler-load-parse-manifest-diagnostic path source)
     [(ResultCompilerPkgManifestDiagnostic.Err diag)
       (and
-        (string.eq (cdiag.compiler-diagnostic-path (box-get diag)) path)
-        (= (cdiag.compiler-diagnostic-line (box-get diag)) line)
-        (= (cdiag.compiler-diagnostic-col (box-get diag)) col)
-        (compiler-load-manifest-diagnostic-span-forward? (box-get diag))
-        (string.eq (cdiag.compiler-diagnostic-message (box-get diag)) expected))]
+        (string.eq (cdiag.compiler-diagnostic-path (__tl-box-place diag)) path)
+        (= (cdiag.compiler-diagnostic-line (__tl-box-place diag)) line)
+        (= (cdiag.compiler-diagnostic-col (__tl-box-place diag)) col)
+        (compiler-load-manifest-diagnostic-span-forward? (__tl-box-place diag))
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          expected))]
     [(ResultCompilerPkgManifestDiagnostic.Ok _) false]))
 
 (define (compiler-load-pkg-manifest-diagnostic-ok?) : bool
@@ -15092,8 +15006,8 @@
     (compiler-load-read-file-text path))
     [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
       (and
-        (string.eq (struct-get manifest entry) expected-entry)
-        (match (struct-get manifest kind)
+        (string.eq manifest.entry expected-entry)
+        (match manifest.kind
           [(CompilerPkgKindBin)
             (match expected-kind
               [(CompilerPkgKindBin) true]
@@ -15111,7 +15025,9 @@
     path
     (compiler-load-read-file-text path))
     [(ResultCompilerPkgManifestDiagnostic.Err diag)
-      (string.eq (cdiag.compiler-diagnostic-message (box-get diag)) expected)]
+      (string.eq
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+        expected)]
     [(ResultCompilerPkgManifestDiagnostic.Ok _) false]))
 
 (define (compiler-load-manifest-infer-bin-only-ok?) : bool
@@ -15225,8 +15141,8 @@
       (match (compiler-load-package-entry-for-source source-path)
         [(ResultCompilerLoadPackageEntry.Ok entry)
           (and
-            (string.eq (struct-get entry owner) "entry_dep")
-            (string.eq (struct-get entry entry-path) expected-entry))]
+            (string.eq entry.owner "entry_dep")
+            (string.eq entry.entry-path expected-entry))]
         [(ResultCompilerLoadPackageEntry.Err _) false]))))
 
 (define (compiler-load-manifest-path-inference-ok?) : bool
@@ -15321,25 +15237,17 @@
     "(package (name \"p\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (link (libraries \"raylib\") (search-paths \"vendor/lib\") (linux-libraries \"GL\" \"m\") (linux-args \"-Wl,--as-needed\") (windows-libraries \"opengl32\")))")
     [(ResultCompilerPkgManifest.Ok m)
       (let
-        [link : CompilerPkgLink (struct-get m link)]
-        [all : CompilerPkgLinkSet (struct-get link all)]
-        [lin : CompilerPkgLinkSet (struct-get link linux)]
-        [win : CompilerPkgLinkSet (struct-get link windows)]
+        [link : CompilerPkgLink m.link]
+        [all : CompilerPkgLinkSet link.all]
+        [lin : CompilerPkgLinkSet link.linux]
+        [win : CompilerPkgLinkSet link.windows]
         (and
-          (compiler-load-link-vec-single?
-            (& (struct-get all libraries))
-            "raylib")
-          (compiler-load-link-vec-single?
-            (& (struct-get all search-paths))
-            "vendor/lib")
-          (compiler-load-link-vec-empty? (& (struct-get all args)))
-          (compiler-load-link-vec-pair? (& (struct-get lin libraries)) "GL" "m")
-          (compiler-load-link-vec-single?
-            (& (struct-get lin args))
-            "-Wl,--as-needed")
-          (compiler-load-link-vec-single?
-            (& (struct-get win libraries))
-            "opengl32")))]
+          (compiler-load-link-vec-single? (& all.libraries) "raylib")
+          (compiler-load-link-vec-single? (& all.search-paths) "vendor/lib")
+          (compiler-load-link-vec-empty? (& all.args))
+          (compiler-load-link-vec-pair? (& lin.libraries) "GL" "m")
+          (compiler-load-link-vec-single? (& lin.args) "-Wl,--as-needed")
+          (compiler-load-link-vec-single? (& win.libraries) "opengl32")))]
     [(ResultCompilerPkgManifest.Err _) false]))
 
 ;: Self-test: a manifest with no `link` section parses with empty link sets.
@@ -15348,14 +15256,11 @@
     "(package (name \"p\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\"))")
     [(ResultCompilerPkgManifest.Ok m)
       (let
-        [link : CompilerPkgLink (struct-get m link)]
+        [link : CompilerPkgLink m.link]
         (and
-          (compiler-load-link-vec-empty?
-            (& (struct-get (struct-get link all) libraries)))
-          (compiler-load-link-vec-empty?
-            (& (struct-get (struct-get link linux) libraries)))
-          (compiler-load-link-vec-empty?
-            (& (struct-get (struct-get link windows) libraries)))))]
+          (compiler-load-link-vec-empty? (& link.all.libraries))
+          (compiler-load-link-vec-empty? (& link.linux.libraries))
+          (compiler-load-link-vec-empty? (& link.windows.libraries))))]
     [(ResultCompilerPkgManifest.Err _) false]))
 
 ;: Self-test: invalid `(link ...)` sections produce the expected diagnostics.
@@ -15442,8 +15347,8 @@
       (while (< index (compiler-pkg-dep-list-count ordered))
         (let
           [dep : CompilerPkgDep (compiler-pkg-dep-list-at ordered index)]
-          (if (string.eq (struct-get dep alias) target-alias)
-            (return (CompilerLoadSomePath (struct-get dep path)))
+          (if (string.eq dep.alias target-alias)
+            (return (CompilerLoadSomePath dep.path))
             (set! index (+ index 1)))))
       (CompilerLoadNoPath))))
 
@@ -15559,7 +15464,7 @@
           (compiler-load-resolve-pkg-import
             import-path
             (compiler-load-dirname manifest-path)
-            (struct-get manifest deps))])]))
+            manifest.deps)])]))
 
 ;: Self-test fixture: local deps plus one GitHub dep that needs fetch support.
 (define (compiler-load-pkg-resolve-deps) : CompilerPkgDeps
@@ -15828,7 +15733,7 @@
     (match decl
       [(ast.AstDecl.Extern decl-meta _ _ metadata _)
         (string.eq
-          (ast.ast-extern-metadata-symbol (box-get metadata))
+          (ast.ast-extern-metadata-symbol (__tl-box-place metadata))
           "_tl_dep_src_lib_helper")]
       [_ false])))
 
@@ -15863,14 +15768,15 @@
       [(ast.AstImportedSpmdMetadata.No) false]
       [(ast.AstImportedSpmdMetadata.Package canonical-name callables-box)
         (let
-          [callables : ast.AstImportedSpmdCallableList (box-get callables-box)]
+          [callables : ast.AstImportedSpmdCallableList
+            (__tl-box-place callables-box)]
           [copied-callable : ast.AstImportedSpmdCallable
             (ast.ast-imported-spmd-callable-list-get
               (& callables)
               0
               (ast.ast-imported-spmd-callable-fallback))]
           [specializations : ast.AstImportedSpmdSpecializationList
-            (struct-get copied-callable specializations)]
+            copied-callable.specializations]
           [copied-specialization : ast.AstImportedSpmdSpecialization
             (ast.ast-imported-spmd-specialization-list-get
               (& specializations)
@@ -15880,22 +15786,20 @@
             (string.eq (ci.intern-str canonical-name) "spmd_fixture/helper")
             (= (ast.ast-imported-spmd-callable-list-len (& callables)) 1)
             (string.eq
-              (ci.intern-str (struct-get copied-callable signature))
+              (ci.intern-str copied-callable.signature)
               "(-> i64 i64 i64)")
             (=
               (ast.ast-imported-spmd-specialization-list-len
                 (& specializations))
               1)
             (string.eq
-              (ci.intern-str (struct-get copied-specialization symbol))
+              (ci.intern-str copied-specialization.symbol)
               "_tl___tl_spmd_fixture_helper")))])))
 
 (define (compiler-load-module-list-slots-address
   [items : ast.AstDeclModuleList]) : i64
   (unsafe
-    (cast
-      (ptr->int (ptr-cast (array-data (struct-get items slots)) : (Ptr u8)))
-      : i64)))
+    (cast (ptr->int (ptr-cast (array-data items.slots) : (Ptr u8))) : i64)))
 
 (define (compiler-load-append-onto-reuse-ok?) : bool
   (let
@@ -15923,10 +15827,10 @@
     [shared : (__tl_dyn-array i64) (array.make-array i64 8)]
     [_shared : unit
       (begin
-        (array-set! shared 1 alias-a-id)
-        (array-set! shared 2 alias-b-id)
-        (array-set! shared 4 tail-a-id)
-        (array-set! shared 5 tail-b-id))]
+        (set! (array-ref shared 1) alias-a-id)
+        (set! (array-ref shared 2) alias-b-id)
+        (set! (array-ref shared 4) tail-a-id)
+        (set! (array-ref shared 5) tail-b-id))]
     [alias-left : ast.AstDeclModuleList (ast.AstDeclModuleList shared 1 2 true)]
     [alias-right : ast.AstDeclModuleList
       (ast.AstDeclModuleList shared 4 2 true)]
@@ -16010,15 +15914,15 @@
           [(CompilerLoadPreludeCacheHit _ _ _ _) true]
           [_ false])
         (string.eq dotted "pkg/explicit.tl")
-        (not (array-ref (struct-get state-b program-cache-ready) 0))
+        (not (array-ref state-b.program-cache-ready 0))
         (=
           (compiler-load-session-state-program-cache-hit-count-value state-b)
           0)
         (=
           (compiler-load-session-state-program-cache-store-count-value state-b)
           0)
-        (not (array-ref (struct-get state-b program-admission-ready) 0))
-        (not (array-ref (struct-get state-b runtime-prelude-cache-ready) 0))
+        (not (array-ref state-b.program-admission-ready 0))
+        (not (array-ref state-b.runtime-prelude-cache-ready 0))
         (match (compiler-load-session-state-dotted-path-cache-lookup
           state-b
           702)
@@ -16075,11 +15979,11 @@
           [(parser.ResultAstProgramDiagnostic.Err diag)
             (and
               (string.eq
-                (cdiag.compiler-diagnostic-path (box-get diag))
+                (cdiag.compiler-diagnostic-path (__tl-box-place diag))
                 bad-path)
               (>
                 (string.string-length
-                  (cdiag.compiler-diagnostic-message (box-get diag)))
+                  (cdiag.compiler-diagnostic-message (__tl-box-place diag)))
                 0))]
           [_ false])
         (=
@@ -16137,8 +16041,8 @@
         (CompilerLoadLazyImportDirect))]
     [_seed-b-caches : unit
       (begin
-        (array-set! (struct-get state-b program-cache-hit-count) 0 7)
-        (array-set! (struct-get state-b runtime-prelude-cache-ready) 0 true))]
+        (set! (array-ref state-b.program-cache-hit-count 0) 7)
+        (set! (array-ref state-b.runtime-prelude-cache-ready 0) true))]
     [_clear-a-caches : unit
       (begin
         (compiler-load-session-state-program-cache-clear! state-a)
@@ -16194,20 +16098,16 @@
           (compiler-load-session-state-lazy-qualified-observer-active? state-b))
         (= (compiler-load-session-state-lazy-import-skip-count state-a) 2)
         (= (compiler-load-session-state-lazy-import-skip-count state-b) 1)
-        (sym_i64_env.sym-i64-contains-id
-          (struct-get observed-a primary-members)
-          member-a-id)
-        (sym_i64_env.sym-i64-contains-id
-          (struct-get observed-b primary-members)
-          member-b-id))]
+        (sym_i64_env.sym-i64-contains-id observed-a.primary-members member-a-id)
+        (sym_i64_env.sym-i64-contains-id observed-b.primary-members member-b-id))]
     [_reset-a : unit
       (compiler-load-session-state-surface-summaries-reset! state-a)]
     (cond
       [(not before-reset)
         (io.panic "compiler-load: traversal before-reset mismatch")]
-      [(not (= (array-ref (struct-get state-b program-cache-hit-count) 0) 7))
+      [(not (= (array-ref state-b.program-cache-hit-count 0) 7))
         (io.panic "compiler-load: traversal program cache mismatch")]
-      [(not (array-ref (struct-get state-b runtime-prelude-cache-ready) 0))
+      [(not (array-ref state-b.runtime-prelude-cache-ready 0))
         (io.panic "compiler-load: traversal prelude cache mismatch")]
       [(not
           (match (compiler-load-session-state-dotted-path-cache-lookup
@@ -16330,7 +16230,7 @@
       (not (compiler-load-lazy-qualified-observer-flag observer 3))
       (=
         (compiler-load-lazy-qualified-observer-stack-count
-          (array-ref (struct-get observer stack) 0))
+          (array-ref observer.stack 0))
         0))))
 
 (define (compiler-load-lazy-qualified-observer-test-stack-capacity-zero?
@@ -16339,8 +16239,8 @@
     [observer : CompilerLoadLazyQualifiedObserverState
       (compiler-load-session-state-lazy-qualified-observer state)]
     [stack : CompilerLoadLazyQualifiedObserverStack
-      (array-ref (struct-get observer stack) 0)]
-    (= (array-length (struct-get stack slots)) 0)))
+      (array-ref observer.stack 0)]
+    (= (array-length stack.slots) 0)))
 
 (define (compiler-load-lazy-qualified-observer-test-state-at?
   [state : CompilerLoadSessionState]
@@ -16381,7 +16281,7 @@
           (compiler-load-lazy-qualified-observer-test-secondary-direct? level))
         (=
           (compiler-load-lazy-qualified-observer-stack-count
-            (array-ref (struct-get observer stack) 0))
+            (array-ref observer.stack 0))
           (+ level 1))))))
 
 (define (compiler-load-lazy-qualified-observer-test-result-at?
@@ -16390,16 +16290,16 @@
   [level : i64]) : bool
   (and
     (sym_i64_env.sym-i64-contains-id
-      (struct-get result primary-members)
+      result.primary-members
       (compiler-load-lazy-qualified-observer-test-member offset level))
     (sym_i64_env.sym-i64-contains-id
-      (struct-get result secondary-members)
+      result.secondary-members
       (compiler-load-lazy-qualified-observer-test-secondary-member offset level))
     (=
-      (struct-get result secondary-qualified)
+      result.secondary-qualified
       (compiler-load-lazy-qualified-observer-test-secondary-qualified? level))
     (=
-      (struct-get result secondary-direct)
+      result.secondary-direct
       (compiler-load-lazy-qualified-observer-test-secondary-direct? level))))
 
 (define (compiler-load-lazy-qualified-observer-test-empty-result?
@@ -16408,14 +16308,14 @@
   (and
     (not
       (sym_i64_env.sym-i64-contains-id
-        (struct-get result primary-members)
+        result.primary-members
         (compiler-load-lazy-qualified-observer-test-member offset 0)))
     (not
       (sym_i64_env.sym-i64-contains-id
-        (struct-get result secondary-members)
+        result.secondary-members
         (compiler-load-lazy-qualified-observer-test-secondary-member offset 0)))
-    (not (struct-get result secondary-qualified))
-    (not (struct-get result secondary-direct))))
+    (not result.secondary-qualified)
+    (not result.secondary-direct)))
 
 (define (compiler-load-lazy-qualified-observer-test-push-depth!
   [state : CompilerLoadSessionState]
@@ -16662,15 +16562,15 @@
           (and
             (= (compiler-load-surface-summary-list-count before) 2)
             (>=
-              (array-length (struct-get before slots))
+              (array-length before.slots)
               (compiler-load-surface-summary-list-count before))
             (=
-              (struct-get
+              (__tl-project-field
                 (compiler-load-surface-summary-list-at before 0)
                 source-path-id)
               source-b)
             (=
-              (struct-get
+              (__tl-project-field
                 (compiler-load-surface-summary-list-at before 1)
                 source-path-id)
               source-a)
@@ -16678,13 +16578,13 @@
               state-a
               source-a)
               [(CompilerLoadSomeSurfaceSummary summary)
-                (= (struct-get summary module-id) module-a)]
+                (= summary.module-id module-a)]
               [_ false])
             (match (compiler-load-session-state-surface-summary-find-module
               state-a
               module-a)
               [(CompilerLoadSomeSurfaceSummary summary)
-                (= (struct-get summary source-path-id) source-b)]
+                (= summary.source-path-id source-b)]
               [_ false]))]
         [_remove : unit
           (compiler-load-session-state-surface-summary-remove-source!
@@ -16700,7 +16600,7 @@
               state-a
               module-a)
               [(CompilerLoadSomeSurfaceSummary summary)
-                (= (struct-get summary source-path-id) source-a)]
+                (= summary.source-path-id source-a)]
               [_ false]))]
         [_reload : unit
           (compiler-load-session-state-record-surface-summary! state-a reloaded)]
@@ -16714,7 +16614,7 @@
               state-a
               source-b)
               [(CompilerLoadSomeSurfaceSummary summary)
-                (= (struct-get summary module-id) module-b)]
+                (= summary.module-id module-b)]
               [_ false]))]
         [_reset-a : unit
           (compiler-load-session-state-surface-summaries-reset! state-a)]
@@ -16732,7 +16632,7 @@
               state-b
               source-peer)
               [(CompilerLoadSomeSurfaceSummary summary)
-                (= (struct-get summary module-id) module-peer)]
+                (= summary.module-id module-peer)]
               [_ false]))]
         (and before-ok after-remove-ok reload-ok isolation-ok)))))
 

@@ -8,7 +8,7 @@
         (let
           [cell : (Box i64) (box i)]
           (begin
-            (set! acc (+ acc (box-get cell)))
+            (set! acc (+ acc (__tl-box-place cell)))
             (set! i (+ i 1)))))
       acc)))
 

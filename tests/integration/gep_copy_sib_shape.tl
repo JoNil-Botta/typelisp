@@ -53,7 +53,7 @@
 (define (put [xs : (Array Quad)] [i : i64] [v : Quad]) : unit
   (if (> i 1000000)
     (put xs (- i 1000000) v)
-    (array-set! xs i v)))
+    (set! (array-ref xs i) v)))
 
 (define (take-const [xs : (Array Quad)] [i : i64]) : Quad
   (if (> i 1000000)
@@ -75,21 +75,12 @@
         (let
           [q : Quad (take xs i)]
           (begin
-            (set!
-              acc
-              (+
-                acc
-                (+
-                  (+ (struct-get q a) (struct-get q b))
-                  (+ (struct-get q c) (struct-get q d)))))
+            (set! acc (+ acc (+ (+ q.a q.b) (+ q.c q.d))))
             (set! i (+ i 1)))))
       ;; xs[3] is (4, 5, 6, 7), so the constant-index read sums to 22.
       (let
         [q3 : Quad (take-const xs 0)]
-        [const-acc : i64
-          (+
-            (+ (struct-get q3 a) (struct-get q3 b))
-            (+ (struct-get q3 c) (struct-get q3 d)))]
+        [const-acc : i64 (+ (+ q3.a q3.b) (+ q3.c q3.d))]
         ;; sum over i in 0..7 of (4i + 10) = 4*28 + 80 = 192
         (if (and (= acc 192) (= const-acc 22))
           42

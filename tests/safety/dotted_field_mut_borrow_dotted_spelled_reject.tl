@@ -1,4 +1,4 @@
-;: #2610: dotted and struct-get spellings of one mutable field borrow conflict.
+;: #2610: equivalent dotted projections of one mutable field borrow conflict.
 (defstruct Pair
   (left i64)
   (right i64))
@@ -9,4 +9,4 @@
 (define (main) : unit
   (let
     [pair : Pair (Pair 1 2)]
-    (write-two (&mut pair.left) (&mut (struct-get pair left)))))
+    (write-two (&mut pair.left) (&mut pair.left))))

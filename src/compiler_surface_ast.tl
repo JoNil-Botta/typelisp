@@ -98,11 +98,11 @@
     [params : ast.AstMacroParamList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get params len)]
+      [count : i64 params.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
-          (match (array-ref (struct-get params slots) index)
+          (match (array-ref params.slots index)
             [(ast.AstMacroParam.Param name ty variadic type-kinds)
               (begin
                 (codec.surface-ast-write-name! out context name)
@@ -123,9 +123,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            slots
-            index
+          (set!
+            (array-ref slots index)
             (ast.AstMacroParam.Param
               (codec.surface-ast-read-name! reader)
               (codec.surface-ast-read-type! reader)
@@ -170,11 +169,11 @@
     [fields : ast.AstFieldDefList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get fields len)]
+      [count : i64 fields.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
-          (match (array-ref (struct-get fields slots) index)
+          (match (array-ref fields.slots index)
             [(ast.AstFieldDef.Def name ty cleanup)
               (begin
                 (codec.surface-ast-write-name! out context name)
@@ -191,9 +190,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            slots
-            index
+          (set!
+            (array-ref slots index)
             (ast.AstFieldDef.Def
               (codec.surface-ast-read-name! reader)
               (codec.surface-ast-read-type! reader)
@@ -285,11 +283,11 @@
     [links : ast.AstExternLinkInputList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get links len)]
+      [count : i64 links.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
-          (match (array-ref (struct-get links slots) index)
+          (match (array-ref links.slots index)
             [(ast.AstExternLinkInput.Lib text)
               (begin
                 (codec.surface-ast-write-i64! out 0)
@@ -316,9 +314,8 @@
           [tag : i64 (codec.surface-ast-read-i64! reader)]
           [text : String (codec.surface-ast-read-string! reader)]
           (begin
-            (array-set!
-              slots
-              index
+            (set!
+              (array-ref slots index)
               (cond
                 [(= tag 0) (ast.AstExternLinkInput.Lib text)]
                 [(= tag 1) (ast.AstExternLinkInput.Search text)]
@@ -355,14 +352,14 @@
     [items : ast.AstSpmdParamClassList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get items len)]
+      [count : i64 items.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
           (begin
             (surface-ast-write-spmd-param-class!
               out
-              (array-ref (struct-get items slots) index))
+              (array-ref items.slots index))
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-spmd-param-class-list!
@@ -375,7 +372,9 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (surface-ast-read-spmd-param-class! reader))
+          (set!
+            (array-ref slots index)
+            (surface-ast-read-spmd-param-class! reader))
           (set! index (+ index 1))))
       (ast.AstSpmdParamClassList slots count))))
 
@@ -412,22 +411,19 @@
     [items : ast.AstSpmdSpecializationList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get items len)]
+      [count : i64 items.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
           (let
-            [item : ast.AstSpmdSpecialization
-              (array-ref (struct-get items slots) index)]
+            [item : ast.AstSpmdSpecialization (array-ref items.slots index)]
             (begin
-              (codec.surface-ast-write-i64! out (struct-get item lanes))
+              (codec.surface-ast-write-i64! out item.lanes)
               (surface-ast-write-spmd-param-class-list!
                 out
-                (box-get (struct-get item args)))
-              (surface-ast-write-spmd-result-class!
-                out
-                (struct-get item result))
-              (codec.surface-ast-write-i64! out (struct-get item index-param))
+                (__tl-box-place item.args))
+              (surface-ast-write-spmd-result-class! out item.result)
+              (codec.surface-ast-write-i64! out item.index-param)
               (set! index (+ index 1)))))
         unit))))
 
@@ -441,9 +437,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            slots
-            index
+          (set!
+            (array-ref slots index)
             (ast.AstSpmdSpecialization
               (codec.surface-ast-read-i64! reader)
               (box (surface-ast-read-spmd-param-class-list! reader))
@@ -467,7 +462,9 @@
       [(ast.AstFnMetadata.SpmdCallable items)
         (begin
           (codec.surface-ast-write-i64! out 2)
-          (surface-ast-write-spmd-specialization-list! out (box-get items)))])))
+          (surface-ast-write-spmd-specialization-list!
+            out
+            (__tl-box-place items)))])))
 
 (define (surface-ast-read-fn-metadata! [reader : codec.SurfaceAstReader]) : ast.AstFnMetadata
   (let
@@ -494,30 +491,21 @@
     [items : ast.AstImportedSpmdSpecializationList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get items len)]
+      [count : i64 items.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
           (let
             [item : ast.AstImportedSpmdSpecialization
-              (array-ref (struct-get items slots) index)]
+              (array-ref items.slots index)]
             (begin
-              (codec.surface-ast-write-name! out context (struct-get item abi))
-              (codec.surface-ast-write-name!
-                out
-                context
-                (struct-get item backend))
-              (codec.surface-ast-write-i64! out (struct-get item lanes))
-              (codec.surface-ast-write-name! out context (struct-get item args))
-              (codec.surface-ast-write-name!
-                out
-                context
-                (struct-get item result))
-              (codec.surface-ast-write-i64! out (struct-get item index-param))
-              (codec.surface-ast-write-name!
-                out
-                context
-                (struct-get item symbol))
+              (codec.surface-ast-write-name! out context item.abi)
+              (codec.surface-ast-write-name! out context item.backend)
+              (codec.surface-ast-write-i64! out item.lanes)
+              (codec.surface-ast-write-name! out context item.args)
+              (codec.surface-ast-write-name! out context item.result)
+              (codec.surface-ast-write-i64! out item.index-param)
+              (codec.surface-ast-write-name! out context item.symbol)
               (set! index (+ index 1)))))
         unit))))
 
@@ -531,9 +519,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            slots
-            index
+          (set!
+            (array-ref slots index)
             (ast.AstImportedSpmdSpecialization
               (codec.surface-ast-read-name! reader)
               (codec.surface-ast-read-name! reader)
@@ -553,22 +540,18 @@
     [items : ast.AstImportedSpmdCallableList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get items len)]
+      [count : i64 items.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
           (let
-            [item : ast.AstImportedSpmdCallable
-              (array-ref (struct-get items slots) index)]
+            [item : ast.AstImportedSpmdCallable (array-ref items.slots index)]
             (begin
-              (codec.surface-ast-write-name!
-                out
-                context
-                (struct-get item signature))
+              (codec.surface-ast-write-name! out context item.signature)
               (surface-ast-write-imported-spmd-specialization-list!
                 out
                 context
-                (struct-get item specializations))
+                item.specializations)
               (set! index (+ index 1)))))
         unit))))
 
@@ -582,9 +565,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            slots
-            index
+          (set!
+            (array-ref slots index)
             (ast.AstImportedSpmdCallable
               (codec.surface-ast-read-name! reader)
               (surface-ast-read-imported-spmd-specialization-list! reader)))
@@ -606,7 +588,7 @@
           (surface-ast-write-imported-spmd-callable-list!
             out
             context
-            (box-get callables)))])))
+            (__tl-box-place callables)))])))
 
 (define (surface-ast-read-imported-spmd-metadata!
   [reader : codec.SurfaceAstReader]) : ast.AstImportedSpmdMetadata
@@ -686,24 +668,24 @@
     [variants : ast.AstVariantDefList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get variants len)]
+      [count : i64 variants.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
-          (match (array-ref (struct-get variants slots) index)
+          (match (array-ref variants.slots index)
             [(ast.AstVariantDef.Def name fields cleanups)
               (let
                 [cleanup-index : i64 0]
                 (begin
                   (codec.surface-ast-write-name! out context name)
                   (codec.surface-ast-write-type-list! out fields)
-                  (codec.surface-ast-write-i64! out (struct-get cleanups len))
-                  (while (< cleanup-index (struct-get cleanups len))
+                  (codec.surface-ast-write-i64! out cleanups.len)
+                  (while (< cleanup-index cleanups.len)
                     (begin
                       (surface-ast-write-variant-cleanup!
                         out
                         context
-                        (array-ref (struct-get cleanups slots) cleanup-index))
+                        (array-ref cleanups.slots cleanup-index))
                       (set! cleanup-index (+ cleanup-index 1))))))])
           (set! index (+ index 1)))))))
 
@@ -725,14 +707,12 @@
           (begin
             (while (< cleanup-index cleanup-count)
               (begin
-                (array-set!
-                  cleanup-slots
-                  cleanup-index
+                (set!
+                  (array-ref cleanup-slots cleanup-index)
                   (surface-ast-read-variant-cleanup! reader))
                 (set! cleanup-index (+ cleanup-index 1))))
-            (array-set!
-              slots
-              index
+            (set!
+              (array-ref slots index)
               (ast.AstVariantDef.Def
                 name
                 fields
@@ -864,7 +844,7 @@
           (codec.surface-ast-write-string! out path)
           (surface-ast-write-maybe-module-name! out context module-name)
           (surface-ast-write-maybe-import-alias! out context alias)
-          (codec.surface-ast-write-span! out (box-get span)))])))
+          (codec.surface-ast-write-span! out (__tl-box-place span)))])))
 
 (define (surface-ast-read-import-spec! [reader : codec.SurfaceAstReader]) : ast.AstImportSpec
   (ast.AstImportSpec.Spec
@@ -882,11 +862,11 @@
     [variants : ast.AstDispatchVariantList]) : unit
     (let
       [index : i64 0]
-      [count : i64 (struct-get variants len)]
+      [count : i64 variants.len]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
-          (match (array-ref (struct-get variants slots) index)
+          (match (array-ref variants.slots index)
             [(ast.AstDispatchVariant.Variant isa name)
               (begin
                 (codec.surface-ast-write-i64!
@@ -921,9 +901,8 @@
                     "surface ast: invalid dispatch isa")
                   ast.AstDispatchIsa.Scalar)])]
           (begin
-            (array-set!
-              slots
-              index
+            (set!
+              (array-ref slots index)
               (ast.AstDispatchVariant.Variant
                 isa
                 (codec.surface-ast-read-name! reader)))
@@ -936,7 +915,7 @@
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [_context : codec.SurfaceAstWriteContext]
     [meta : ast.AstDeclMeta]) : unit
-    (match (box-get (struct-get meta value))
+    (match (__tl-box-place meta.value)
       [(ast.AstDeclMetaValue.Runtime) (codec.surface-ast-write-i64! out 0)]
       [(ast.AstDeclMetaValue.Comptime generated)
         (begin
@@ -995,7 +974,7 @@
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name! out context name)
-          (surface-ast-write-decl-list! out context (box-get body)))]
+          (surface-ast-write-decl-list! out context (__tl-box-place body)))]
       [(ast.AstDecl.Def meta name maybe-ty value)
         (begin
           (codec.surface-ast-write-i64! out 2)
@@ -1026,7 +1005,10 @@
           (surface-ast-write-decl-meta! out context meta)
           (codec.surface-ast-write-name! out context name)
           (surface-ast-write-extern-kind! out kind)
-          (surface-ast-write-extern-metadata! out context (box-get metadata))
+          (surface-ast-write-extern-metadata!
+            out
+            context
+            (__tl-box-place metadata))
           (codec.surface-ast-write-type! out context ty))]
       [(ast.AstDecl.DefEnum meta name cleanup variants)
         (begin
@@ -1100,7 +1082,7 @@
       [(ast.AstDecl.Unsafe inner)
         (begin
           (codec.surface-ast-write-i64! out 17)
-          (surface-ast-write-decl! out context (box-get inner)))])))
+          (surface-ast-write-decl! out context (__tl-box-place inner)))])))
 
 (cfg
   (any compiler-surface-producer compiler-surface-selftest)
@@ -1109,7 +1091,7 @@
     [context : codec.SurfaceAstWriteContext]
     [decls : ast.AstDeclList]) : unit
     (let
-      [count : i64 (struct-get decls len)]
+      [count : i64 decls.len]
       [index : i64 0]
       (begin
         (codec.surface-ast-write-i64! out count)
@@ -1118,9 +1100,7 @@
             (surface-ast-write-decl!
               out
               context
-              (array-ref
-                (struct-get decls slots)
-                (+ (struct-get decls offset) index)))
+              (array-ref decls.slots (+ decls.offset index)))
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-decl! [reader : codec.SurfaceAstReader]) : ast.AstDecl
@@ -1234,7 +1214,7 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (surface-ast-read-decl! reader))
+          (set! (array-ref slots index) (surface-ast-read-decl! reader))
           (set! index (+ index 1))))
       (ast.AstDeclList slots 0 count true))))
 
@@ -1269,15 +1249,11 @@
           (begin
             (codec.surface-ast-write-string!
               out
-              (array-ref
-                (struct-get paths slots)
-                (+ (struct-get paths offset) index)))
+              (array-ref paths.slots (+ paths.offset index)))
             (codec.surface-ast-write-name!
               out
               context
-              (array-ref
-                (struct-get paths owner-ids)
-                (+ (struct-get paths offset) index)))
+              (array-ref paths.owner-ids (+ paths.offset index)))
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-paths! [reader : codec.SurfaceAstReader]) : ast.AstDeclPathList
@@ -1289,8 +1265,8 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (codec.surface-ast-read-string! reader))
-          (array-set! owners index (codec.surface-ast-read-name! reader))
+          (set! (array-ref slots index) (codec.surface-ast-read-string! reader))
+          (set! (array-ref owners index) (codec.surface-ast-read-name! reader))
           (set! index (+ index 1))))
       (ast.AstDeclPathList slots owners 0 count true))))
 
@@ -1310,9 +1286,7 @@
             (codec.surface-ast-write-name!
               out
               context
-              (array-ref
-                (struct-get modules slots)
-                (+ (struct-get modules offset) index)))
+              (array-ref modules.slots (+ modules.offset index)))
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-modules! [reader : codec.SurfaceAstReader]) : ast.AstDeclModuleList
@@ -1323,7 +1297,7 @@
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (codec.surface-ast-read-name! reader))
+          (set! (array-ref slots index) (codec.surface-ast-read-name! reader))
           (set! index (+ index 1))))
       (ast.AstDeclModuleList slots 0 count true))))
 
@@ -1385,7 +1359,7 @@
       (begin
         (codec.surface-ast-write-i64! out surface-ast-magic)
         (codec.surface-ast-write-i64! out surface-ast-schema-version)
-        (codec.surface-ast-write-i64! out (struct-get context identity-count))
+        (codec.surface-ast-write-i64! out context.identity-count)
         (codec.surface-ast-write-i64! out type-count)
         (codec.surface-ast-write-i64! out expr-count)
         (while (< index type-count)
@@ -1405,7 +1379,7 @@
             (set! index (+ index 1))))
         (match program
           [(ast.AstProgram.Program decls)
-            (surface-ast-write-decl-list! out context (box-get decls))])
+            (surface-ast-write-decl-list! out context (__tl-box-place decls))])
         (surface-ast-write-paths! out context paths)
         (surface-ast-write-modules! out context modules)
         (surface-ast-write-seen! out context seen)))))
@@ -1664,6 +1638,18 @@
             (ast.ast-borrow-lifetime-to-id
               (ast.AstBorrowLifetime.Named borrow-lifetime-id))
             sum))]
+      [tuple-set : i64
+        (ast.ast-node-pool-context-expr-push
+          source-pools
+          (ast.AstExpr.StructSet
+            left
+            (ast.ast-tuple-set-field-id-from-index 3)
+            right))]
+      [body-items : (__tl_dyn-array i64) (make-array i64 2)]
+      [combined-body : i64
+        (ast.ast-node-pool-context-expr-push
+          source-pools
+          (ast.AstExpr.Begin (ast.AstExprList body-items 2)))]
       [macro-type-kinds : ast.AstMacroTypeKindList
         (ast.ast-macro-type-kind-list-with-length 3)]
       [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
@@ -1676,6 +1662,8 @@
       [module-slots : (__tl_dyn-array i64) (make-array i64 2)]
       [key-modules : (__tl_dyn-array String) (make-array String 1)]
       (begin
+        (set! (array-ref body-items 0) body)
+        (set! (array-ref body-items 1) tuple-set)
         (ast.ast-macro-type-kind-list-set!
           (&mut macro-type-kinds)
           0
@@ -1688,44 +1676,40 @@
           (&mut macro-type-kinds)
           2
           kind-type-var-id)
-        (array-set!
-          macro-param-slots
-          0
+        (set!
+          (array-ref macro-param-slots 0)
           (ast.AstMacroParam.Param
             macro-param-id
             (ast.AstType.Var macro-type-id)
             false
             macro-type-kinds))
-        (array-set!
-          view-param-slots
-          0
+        (set!
+          (array-ref view-param-slots 0)
           (ast.AstParam.Param view-param-id borrowed-slice false false))
-        (array-set!
-          decl-slots
-          0
+        (set!
+          (array-ref decl-slots 0)
           (ast.AstDecl.DefFn
             (ast.ast-decl-meta-runtime-shared-view)
             fn-id
             (ast.AstParamList view-param-slots 1)
             borrowed-slice
-            body
+            combined-body
             ast.AstFnMetadata.No))
-        (array-set!
-          decl-slots
-          1
+        (set!
+          (array-ref decl-slots 1)
           (ast.AstDecl.DefMacro
             (ast.ast-decl-meta-runtime-shared-view)
             macro-id
             (ast.AstMacroParamList macro-param-slots 1)
             ast.AstType.Unit
             sum))
-        (array-set! path-slots 0 "test.tl")
-        (array-set! path-slots 1 "test.tl")
-        (array-set! owner-slots 0 module-id)
-        (array-set! owner-slots 1 module-id)
-        (array-set! module-slots 0 module-id)
-        (array-set! module-slots 1 module-id)
-        (array-set! key-modules 0 "test.tl")
+        (set! (array-ref path-slots 0) "test.tl")
+        (set! (array-ref path-slots 1) "test.tl")
+        (set! (array-ref owner-slots 0) module-id)
+        (set! (array-ref owner-slots 1) module-id)
+        (set! (array-ref module-slots 0) module-id)
+        (set! (array-ref module-slots 1) module-id)
+        (set! (array-ref key-modules 0) "test.tl")
         (let
           [decls : ast.AstDeclList (ast.AstDeclList decl-slots 0 2 true)]
           [paths : ast.AstDeclPathList
@@ -1743,12 +1727,9 @@
               "host")]
           [identity-payload : surface_identity.SurfaceIdentityPayload
             (surface_identity.surface-identity-capture key)]
-          [source-count : i64
-            (array-length (struct-get identity-payload source-names))]
+          [source-count : i64 (array-length identity-payload.source-names)]
           [identity-count : i64
-            (+
-              source-count
-              (array-length (struct-get identity-payload generated)))]
+            (+ source-count (array-length identity-payload.generated))]
           (match (surface_identity.surface-identity-encode identity-payload)
             [(surface_identity.ResultSurfaceIdentityBytes.Err _) false]
             [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
@@ -1783,24 +1764,19 @@
                                 8)]
                             (match (surface-ast-decode
                               ast-bytes
-                              (struct-get identity-hydration remap)
+                              identity-hydration.remap
                               dest-pools)
                               [(ResultSurfaceAstHydration.Err _) false]
                               [(ResultSurfaceAstHydration.Ok hydration)
                                 (and
                                   (=
                                     (ast.ast-node-pool-context-expr-len
-                                      (struct-get hydration pools))
-                                    4)
+                                      hydration.pools)
+                                    6)
                                   (=
-                                    (ast.ast-decl-list-len
-                                      (& (struct-get hydration decls)))
+                                    (ast.ast-decl-list-len (& hydration.decls))
                                     2)
-                                  (match (array-ref
-                                    (struct-get
-                                      (struct-get hydration decls)
-                                      slots)
-                                    0)
+                                  (match (array-ref hydration.decls.slots 0)
                                     [(ast.AstDecl.DefFn
                                         _
                                         hydrated-name
@@ -1817,7 +1793,7 @@
                                             (& hydrated-params))
                                           1)
                                         (surface-ast-borrowed-slice-type-ok?
-                                          (struct-get hydration pools)
+                                          hydration.pools
                                           hydrated-ret)
                                         (match (ast.ast-param-list-get
                                           (& hydrated-params)
@@ -1834,41 +1810,46 @@
                                                   hydrated-param-name)
                                                 "view")
                                               (surface-ast-borrowed-slice-type-ok?
-                                                (struct-get hydration pools)
+                                                hydration.pools
                                                 hydrated-param-ty))]
                                           [_ false])
                                         (match (ast.ast-node-pool-context-expr-get
-                                          (struct-get hydration pools)
+                                          hydration.pools
                                           hydrated-body)
-                                          [(ast.AstExpr.Borrow
-                                              mutable
-                                              lifetime-id
-                                              hydrated-sum)
-                                            (and
-                                              (not mutable)
-                                              (match (ast.ast-borrow-lifetime-from-id
-                                                lifetime-id)
-                                                [(ast.AstBorrowLifetime.Named
-                                                    name)
-                                                  (surface_identity.surface-identity-string-eq?
-                                                    (ci.intern-str name)
-                                                    "borrow-region")]
-                                                [_ false])
-                                              (match (ast.ast-node-pool-context-expr-get
-                                                (struct-get hydration pools)
-                                                hydrated-sum)
-                                                [(ast.AstExpr.Binary op _ _)
-                                                  (match op
-                                                    [(ast.AstBinOp.Add) true]
-                                                    [_ false])]
-                                                [_ false]))]
+                                          [(ast.AstExpr.Begin hydrated-items)
+                                            (match (ast.ast-node-pool-context-expr-get
+                                              hydration.pools
+                                              (ast.ast-expr-list-get
+                                                hydrated-items
+                                                0
+                                                0))
+                                              [(ast.AstExpr.Borrow
+                                                  mutable
+                                                  lifetime-id
+                                                  hydrated-sum)
+                                                (and
+                                                  (not mutable)
+                                                  (match (ast.ast-borrow-lifetime-from-id
+                                                    lifetime-id)
+                                                    [(ast.AstBorrowLifetime.Named
+                                                        name)
+                                                      (surface_identity.surface-identity-string-eq?
+                                                        (ci.intern-str name)
+                                                        "borrow-region")]
+                                                    [_ false])
+                                                  (match (ast.ast-node-pool-context-expr-get
+                                                    hydration.pools
+                                                    hydrated-sum)
+                                                    [(ast.AstExpr.Binary op _ _)
+                                                      (match op
+                                                        [(ast.AstBinOp.Add)
+                                                          true]
+                                                        [_ false])]
+                                                    [_ false]))]
+                                              [_ false])]
                                           [_ false]))]
                                     [_ false])
-                                  (match (array-ref
-                                    (struct-get
-                                      (struct-get hydration decls)
-                                      slots)
-                                    1)
+                                  (match (array-ref hydration.decls.slots 1)
                                     [(ast.AstDecl.DefMacro
                                         _
                                         hydrated-macro-name
@@ -1928,6 +1909,23 @@
                                                     0))
                                                 "type-var"))]
                                           [_ false]))]
+                                    [_ false])
+                                  (match (ast.ast-node-pool-context-expr-get
+                                    hydration.pools
+                                    tuple-set)
+                                    [(ast.AstExpr.StructSet
+                                        hydrated-target
+                                        hydrated-field
+                                        hydrated-value)
+                                      (and
+                                        (= hydrated-target left)
+                                        (ast.ast-tuple-set-field-id?
+                                          hydrated-field)
+                                        (=
+                                          (ast.ast-tuple-set-index-from-field-id
+                                            hydrated-field)
+                                          3)
+                                        (= hydrated-value right))]
                                     [_ false]))]))])))])]))))))
 
 (cfg

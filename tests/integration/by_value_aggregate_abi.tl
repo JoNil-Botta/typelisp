@@ -31,7 +31,7 @@
 ;; mutation, so the caller's original remains unchanged.
 (define (abi-memory-array-roundtrip [value : (Array i64 3)]) : (Array i64 3)
   (begin
-    (array-set! value 1 99)
+    (set! (array-ref value 1) 99)
     value))
 
 ;; SysV mixed INTEGER/SSE register groups and recursive nested layout.
@@ -43,7 +43,7 @@
     (Tuple u8 i32)
     (Array u16 2))
   (begin
-    (array-set! (tuple-ref value 1) 1 77)
+    (set! (array-ref (tuple-ref value 1) 1) 77)
     value))
 
 ;; Five scalar arguments plus a structural argument force register/stack

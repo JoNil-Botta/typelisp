@@ -61,14 +61,14 @@
 ;: Return `items` with `head` prepended, copied into a right-sized array.
 (define (list-cons [head : Json] [items : JsonSeq]) : JsonSeq
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [slots : (__tl_dyn-array Json) (make-array Json (+ n 1))]
     [i : i64 0]
     (begin
-      (array-set! slots 0 head)
+      (set! (array-ref slots 0) head)
       (while (< i n)
         (begin
-          (array-set! slots (+ i 1) (array-ref (struct-get items slots) i))
+          (set! (array-ref slots (+ i 1)) (array-ref items.slots i))
           (set! i (+ i 1))))
       (JsonSeq slots (+ n 1)))))
 
@@ -79,14 +79,14 @@
 ;: Return `items` with `key`/`value` prepended into a right-sized array.
 (define (member-cons [key : String] [value : Json] [items : JsonMemberSeq]) : JsonMemberSeq
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [slots : (__tl_dyn-array JsonMember) (make-array JsonMember (+ n 1))]
     [i : i64 0]
     (begin
-      (array-set! slots 0 (JsonMember key value))
+      (set! (array-ref slots 0) (JsonMember key value))
       (while (< i n)
         (begin
-          (array-set! slots (+ i 1) (array-ref (struct-get items slots) i))
+          (set! (array-ref slots (+ i 1)) (array-ref items.slots i))
           (set! i (+ i 1))))
       (JsonMemberSeq slots (+ n 1)))))
 
@@ -99,7 +99,7 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! slots i (jvec.get (& items) i JsonNull))
+          (set! (array-ref slots i) (jvec.get (& items) i JsonNull))
           (set! i (+ i 1))))
       (JsonSeq slots n))))
 
@@ -112,7 +112,9 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! slots i (jmvec.get (& items) i (JsonMember "" JsonNull)))
+          (set!
+            (array-ref slots i)
+            (jmvec.get (& items) i (JsonMember "" JsonNull)))
           (set! i (+ i 1))))
       (JsonMemberSeq slots n))))
 
@@ -287,49 +289,43 @@
 ;: Return `items` in reverse order.
 (define (list-reverse [items : JsonSeq]) : JsonSeq
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [slots : (__tl_dyn-array Json) (make-array Json n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set!
-            slots
-            i
-            (array-ref (struct-get items slots) (- (- n 1) i)))
+          (set! (array-ref slots i) (array-ref items.slots (- (- n 1) i)))
           (set! i (+ i 1))))
       (JsonSeq slots n))))
 
 ;: Return object `items` in reverse order.
 (define (member-list-reverse [items : JsonMemberSeq]) : JsonMemberSeq
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [slots : (__tl_dyn-array JsonMember) (make-array JsonMember n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set!
-            slots
-            i
-            (array-ref (struct-get items slots) (- (- n 1) i)))
+          (set! (array-ref slots i) (array-ref items.slots (- (- n 1) i)))
           (set! i (+ i 1))))
       (JsonMemberSeq slots n))))
 
 ;: Return the number of elements in a JSON array sequence.
 (define (list-count [items : JsonSeq]) : i64
-  (struct-get items len))
+  items.len)
 
 ;: Look up an array element by zero-based index.
 (define (list-get-index [items : JsonSeq] [index : i64]) : JsonLookup
-  (if (or (< index 0) (>= index (struct-get items len)))
+  (if (or (< index 0) (>= index items.len))
     JsonMissing
-    (JsonFound (array-ref (struct-get items slots) index))))
+    (JsonFound (array-ref items.slots index))))
 
 ;: Return `items` without its first element.
 (define (list-rest [items : JsonSeq]) : JsonSeq
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [count : i64
       (if (< n 1)
         0
@@ -339,47 +335,47 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! slots i (array-ref (struct-get items slots) (+ i 1)))
+          (set! (array-ref slots i) (array-ref items.slots (+ i 1)))
           (set! i (+ i 1))))
       (JsonSeq slots count))))
 
 ;: Return the elements of `left` followed by the elements of `right`.
 (define (list-concat [left : JsonSeq] [right : JsonSeq]) : JsonSeq
   (let
-    [ln : i64 (struct-get left len)]
-    [rn : i64 (struct-get right len)]
+    [ln : i64 left.len]
+    [rn : i64 right.len]
     [slots : (__tl_dyn-array Json) (make-array Json (+ ln rn))]
     [i : i64 0]
     (begin
       (while (< i ln)
         (begin
-          (array-set! slots i (array-ref (struct-get left slots) i))
+          (set! (array-ref slots i) (array-ref left.slots i))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i rn)
         (begin
-          (array-set! slots (+ ln i) (array-ref (struct-get right slots) i))
+          (set! (array-ref slots (+ ln i)) (array-ref right.slots i))
           (set! i (+ i 1))))
       (JsonSeq slots (+ ln rn)))))
 
 ;: Return the number of key/value entries in a JSON object member sequence.
 (define (member-list-count [items : JsonMemberSeq]) : i64
-  (struct-get items len))
+  items.len)
 
 ;: Look up borrowed `key` in an object member sequence.
 (define (member-list-get [items : JsonMemberSeq] [key : (& key str)]) : JsonLookup
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [i : i64 0]
     [found : JsonLookup JsonMissing]
     (begin
       (while (< i n)
         (let
-          [member : JsonMember (array-ref (struct-get items slots) i)]
-          [item-key : String (struct-get member key)]
+          [member : JsonMember (array-ref items.slots i)]
+          [item-key : String member.key]
           (if (string.eq (& item-key) key)
             (begin
-              (set! found (JsonFound (struct-get member value)))
+              (set! found (JsonFound member.value))
               (set! i n))
             (set! i (+ i 1)))))
       found)))
@@ -406,16 +402,16 @@
 ;: Look up owned `key` in an object member sequence without unsafe helpers.
 (define (member-list-get-owned [items : JsonMemberSeq] [key : String]) : JsonLookup
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [i : i64 0]
     [found : JsonLookup JsonMissing]
     (begin
       (while (< i n)
         (let
-          [member : JsonMember (array-ref (struct-get items slots) i)]
-          (if (stdlib.json.string-eq-safe? (struct-get member key) key)
+          [member : JsonMember (array-ref items.slots i)]
+          (if (stdlib.json.string-eq-safe? member.key key)
             (begin
-              (set! found (JsonFound (struct-get member value)))
+              (set! found (JsonFound member.value))
               (set! i n))
             (set! i (+ i 1)))))
       found)))
@@ -440,7 +436,8 @@
 ;: ```
 (define (object-get [value : Json] [key : (& key str)]) : JsonLookup
   (match value
-    [(JsonObject members) (stdlib.json.member-list-get (box-get members) key)]
+    [(JsonObject members)
+      (stdlib.json.member-list-get (__tl-box-place members) key)]
     [_ JsonMissing]))
 
 ;: Look up owned `key` in `value` without unsafe helpers.
@@ -449,7 +446,7 @@
 (define (object-get-owned [value : Json] [key : String]) : JsonLookup
   (match value
     [(JsonObject members)
-      (stdlib.json.member-list-get-owned (box-get members) key)]
+      (stdlib.json.member-list-get-owned (__tl-box-place members) key)]
     [_ JsonMissing]))
 
 ;: Decode a hexadecimal digit char, or return -1 when it is not a hex digit.
@@ -538,7 +535,7 @@
 ;: Append serialized array elements to `buf`.
 (define (stringify-list-into [items : JsonSeq] [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [i : i64 0]
     [out : text_buf.TextBuf buf]
     (begin
@@ -551,7 +548,7 @@
             out
             (text_buf.append
               out
-              (stdlib.json.stringify (array-ref (struct-get items slots) i))))
+              (stdlib.json.stringify (array-ref items.slots i))))
           (set! i (+ i 1))))
       out)))
 
@@ -566,14 +563,14 @@
   [items : JsonMemberSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 items.len]
     [i : i64 0]
     [out : text_buf.TextBuf buf]
     (begin
       (while (< i n)
         (let
-          [member : JsonMember (array-ref (struct-get items slots) i)]
-          [text : String (struct-get member key)]
+          [member : JsonMember (array-ref items.slots i)]
+          [text : String member.key]
           (begin
             (if (> i 0)
               (set! out (text_buf.append out ","))
@@ -586,7 +583,7 @@
                     (text_buf.append out "\"")
                     (stdlib.json.escape-string (& text)))
                   "\":")
-                (stdlib.json.stringify (struct-get member value))))
+                (stdlib.json.stringify member.value)))
             (set! i (+ i 1)))))
       out)))
 
@@ -618,11 +615,14 @@
     [(JsonString text)
       (str_cat.str-cat "\"" (stdlib.json.escape-string (& text)) "\"")]
     [(JsonArray items)
-      (str_cat.str-cat "[" (stdlib.json.stringify-list (box-get items)) "]")]
+      (str_cat.str-cat
+        "["
+        (stdlib.json.stringify-list (__tl-box-place items))
+        "]")]
     [(JsonObject members)
       (str_cat.str-cat
         "{"
-        (stdlib.json.stringify-members (box-get members))
+        (stdlib.json.stringify-members (__tl-box-place members))
         "}")]))
 
 ;: Render an i64 as a JSON number value.
@@ -1308,7 +1308,8 @@
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
-        [(stdlib.json.JsonArray items) (stdlib.json.list-count (box-get items))]
+        [(stdlib.json.JsonArray items)
+          (stdlib.json.list-count (__tl-box-place items))]
         [_ (return (,err-ctor "json: expected array"))])]))
 
 ;: `stdlib.serialize` hook for reading one decoded sequence element.
@@ -1320,7 +1321,7 @@
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
         [(stdlib.json.JsonArray items)
-          (match (stdlib.json.list-get-index (box-get items) ,index)
+          (match (stdlib.json.list-get-index (__tl-box-place items) ,index)
             [(stdlib.json.JsonFound found) (stdlib.json.JsonValue found)]
             [(stdlib.json.JsonMissing)
               (return (,err-ctor "json: missing array element"))])]
@@ -1712,7 +1713,7 @@
         [(JsonArray items)
           (begin
             (stdlib.json.stdlib-inline-test-assert-i64-eq
-              (stdlib.json.list-count (box-get items))
+              (stdlib.json.list-count (__tl-box-place items))
               expected-count
               message)
             (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
@@ -1731,7 +1732,7 @@
         [(JsonObject members)
           (begin
             (stdlib.json.stdlib-inline-test-assert-i64-eq
-              (stdlib.json.member-list-count (box-get members))
+              (stdlib.json.member-list-count (__tl-box-place members))
               expected-count
               message)
             (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
@@ -1851,11 +1852,11 @@
           [(JsonArray items)
             (begin
               (stdlib.json.stdlib-inline-test-assert-i64-eq
-                (stdlib.json.list-count (box-get items))
+                (stdlib.json.list-count (__tl-box-place items))
                 5
                 "json array count")
               (stdlib.json.stdlib-inline-test-assert-owned-string-eq
-                (stdlib.json.stringify-list (box-get items))
+                (stdlib.json.stringify-list (__tl-box-place items))
                 "1,-2.5e3,true,false,null"
                 "json array stringify"))]
           [_ (io.panic "json array lookup")])]
@@ -1871,12 +1872,14 @@
           [(JsonObject members)
             (begin
               (stdlib.json.stdlib-inline-test-assert-i64-eq
-                (stdlib.json.member-list-count (box-get members))
+                (stdlib.json.member-list-count (__tl-box-place members))
                 2
                 "json nested object count")
               (let
                 [key : String "ok"]
-                (match (stdlib.json.member-list-get (box-get members) (& key))
+                (match (stdlib.json.member-list-get
+                  (__tl-box-place members)
+                  (& key))
                   [(JsonFound ok-value)
                     (match ok-value
                       [(JsonBool ok)

@@ -12,7 +12,7 @@
     (define (consume-length [text : String (:consume)]) : i64
       (string-length text))
     (define (consume-payload [payload : GeneratedPayload (:consume)]) : i64
-      (struct-get payload value))))
+      payload.value)))
 
 (import (generated-consumer-module) as generated)
 
@@ -29,10 +29,10 @@
   (+ value 1))
 
 (define (consume-payload [payload : LocalPayload (:consume)]) : i64
-  (struct-get payload value))
+  payload.value)
 
 (define (ordinary-payload [payload : LocalPayload]) : i64
-  (struct-get payload value))
+  payload.value)
 
 (define (call-consumer
   [f : (-> (:consume String) i64)]
@@ -84,7 +84,7 @@
                               (generated.consume-payload generated-payload)
                               (+
                                 (ordinary-payload ordinary-struct)
-                                (struct-get ordinary-struct value))))))))))))))]
+                                ordinary-struct.value)))))))))))))]
     (if (= score 98)
       0
       1)))

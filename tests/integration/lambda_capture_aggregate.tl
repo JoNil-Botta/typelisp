@@ -20,7 +20,7 @@
   (let
     [a : (__tl_dyn-array i64) (array.make-array i64 4)]
     (begin
-      (array-set! a 2 9)
+      (set! (array-ref a 2) 9)
       (=
         ((lambda () : i64
             (array-ref a 2)))

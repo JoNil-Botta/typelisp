@@ -93,13 +93,13 @@
       (CompilerWindowsCoffLinkability.Unavailable "unsupported-coff-image")]
     [(not
         (compiler-windows-coff-relocations-linkable?
-          (struct-get image symbols)
-          (struct-get image relocations)))
+          image.symbols
+          image.relocations))
       (CompilerWindowsCoffLinkability.Unavailable
         "unsupported-external-relocation")]
     [(not
         (cobj.compiler-object-symbol-list-contains?
-          (struct-get image symbols)
+          image.symbols
           "_tl_start"
           (cobj.CompilerObjectSymbolBinding.Export)
           (cobj.CompilerObjectSymbolKind.Function)))
@@ -135,7 +135,7 @@
     compiler_diagnostic.CompilerDiagnostic)
   (box
     (compiler_diagnostic.compiler-diagnostic-with-path
-      (box-get diag)
+      (__tl-box-place diag)
       input-path)))
 
 (define (compiler-windows-batch-emit-assembly
@@ -407,7 +407,7 @@
               instrs)
             (compiler-windows-coff-object-blocks-supported?
               backend-state
-              (box-get rest)))])]
+              (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (let
         [index : i64 0]
@@ -435,7 +435,8 @@
         [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
           (and
             (compiler-windows-coff-object-value-supported? value)
-            (compiler-windows-coff-object-globals-supported? (box-get rest)))])]
+            (compiler-windows-coff-object-globals-supported?
+              (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrGlobalList.Array seq)
       (let
         [index : i64 0]
@@ -471,7 +472,7 @@
                 blocks))
             (compiler-windows-coff-object-functions-supported?
               backend-state
-              (box-get rest)))])]
+              (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrFunctionList.Array seq)
       (let
         [index : i64 0]

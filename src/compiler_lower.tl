@@ -1633,6 +1633,7 @@
           out)))))
 
 (define (lower-clear-macro-expanded-source-caches-into-pools!
+  [job-state : tc_core.TcJobState]
   [pools : ast.AstNodePoolContext]) : unit
   (let
     [base-arena : arena.Arena
@@ -1641,7 +1642,8 @@
       base-arena
       (begin
         (load.compiler-load-dotted-path-cache-reset!)
-        (tc_core.compiler-typecheck-clear-macro-expanded-source-caches!)
+        (tc_core.compiler-typecheck-clear-macro-expanded-source-caches-for-job!
+          job-state)
         (ast.ast-node-pool-context-sync-base-arena!
           pools
           (arena.tl_arena_current))))))
@@ -66206,6 +66208,7 @@
                         [_clear-source-derived-caches : unit
                           (if detach-source?
                             (lower-clear-macro-expanded-source-caches-into-pools!
+                              job-state
                               source-pools)
                             unit)]
                         [_commit-dest : unit
@@ -66393,6 +66396,7 @@
                 (if detach-before-macro?
                   (begin
                     (lower-clear-macro-expanded-source-caches-into-pools!
+                      job-state
                       macro-pools)
                     (load.compiler-load-session-state-program-cache-clear!
                       load-state)
@@ -66517,6 +66521,7 @@
                             [_clear-source-derived-caches : unit
                               (if checked-detach?
                                 (lower-clear-macro-expanded-source-caches-into-pools!
+                                  job-state
                                   detached-pools)
                                 unit)]
                             [_commit-detached-pools : unit

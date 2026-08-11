@@ -2476,6 +2476,44 @@ if ! cmp -s "$SCRUTINEE_EMBEDDED_ASM" "$SCRUTINEE_INTERPRETED_ASM"; then
     diff -u "$SCRUTINEE_INTERPRETED_ASM" "$SCRUTINEE_EMBEDDED_ASM" >&2 || true
     fail "native and interpreted computed scrutinees changed generated assembly"
 fi
+
+# #5648: definition-site aliases retained only in a lazy surface summary used
+# to disappear when another import loaded the shared dependency first. Compile
+# both orderings through the same embedded route and require identical output;
+# the json-first source is the historical failure ordering.
+echo "[compile-profile] verify lazy macro definition import order (#5648)"
+IMPORT_ORDER_JSON_SOURCE="$ROOT/tests/integration/macro_import_order_repro.tl"
+IMPORT_ORDER_FORMAT_SOURCE="$ROOT/tests/integration/macro_import_order_format_first.tl"
+IMPORT_ORDER_JSON_ASM="$STDLIB_TLCI_DIR/import-order-json-first.s"
+IMPORT_ORDER_JSON_STDOUT="$STDLIB_TLCI_DIR/import-order-json-first.stdout"
+IMPORT_ORDER_JSON_STDERR="$STDLIB_TLCI_DIR/import-order-json-first.stderr"
+IMPORT_ORDER_FORMAT_ASM="$STDLIB_TLCI_DIR/import-order-format-first.s"
+IMPORT_ORDER_FORMAT_STDOUT="$STDLIB_TLCI_DIR/import-order-format-first.stdout"
+IMPORT_ORDER_FORMAT_STDERR="$STDLIB_TLCI_DIR/import-order-format-first.stderr"
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$IMPORT_ORDER_JSON_SOURCE" \
+        -o "$IMPORT_ORDER_JSON_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args)
+) > "$IMPORT_ORDER_JSON_STDOUT" 2> "$IMPORT_ORDER_JSON_STDERR"; then
+    show_failure_logs "$IMPORT_ORDER_JSON_STDOUT" "$IMPORT_ORDER_JSON_STDERR"
+    fail "json-first lazy macro definition import-order fixture failed"
+fi
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$IMPORT_ORDER_FORMAT_SOURCE" \
+        -o "$IMPORT_ORDER_FORMAT_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args)
+) > "$IMPORT_ORDER_FORMAT_STDOUT" 2> "$IMPORT_ORDER_FORMAT_STDERR"; then
+    show_failure_logs "$IMPORT_ORDER_FORMAT_STDOUT" "$IMPORT_ORDER_FORMAT_STDERR"
+    fail "format-first lazy macro definition import-order fixture failed"
+fi
+if ! cmp -s "$IMPORT_ORDER_JSON_ASM" "$IMPORT_ORDER_FORMAT_ASM"; then
+    diff -u "$IMPORT_ORDER_FORMAT_ASM" "$IMPORT_ORDER_JSON_ASM" >&2 || true
+    fail "import order changed lazy macro definition-context assembly"
+fi
 # #5658: `stdlib.hash/hash` generates its module in the wildcard arm of a
 # type-kind match, so every type except `unit` goes through an arm that was
 # interpreted per invocation until that arm compiled. A wrong module name or a

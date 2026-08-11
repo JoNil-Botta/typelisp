@@ -72,6 +72,15 @@ else
     echo "[build-stage0] seed supports current CTFE macro builders; using iterative core macros"
 fi
 
+# A compatibility bridge is itself compiled by the published seed. Resolve
+# that seed's global-view capability against the prepared bridge sources before
+# selecting any cfg for the bridge compile. The compiler produced by the bridge
+# is probed again below before it builds the real stage1.
+bootstrap_resolve_seed_global_views_for_bridges \
+    "$ROOT" "$SEED" "$WORKDIR" \
+    "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" \
+    "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT"
+
 COMPILE_STDOUT="$WORKDIR/compile.stdout"
 COMPILE_STDERR="$WORKDIR/compile.stderr"
 VERSION_STDOUT="$WORKDIR/version.stdout"
@@ -97,9 +106,7 @@ stage_seed_bootstrap_cfg_args() {
     stage_number=$1
     if [ "$stage_number" -eq 1 ]; then
         printf '%s\n' --cfg stage0-seed-intern-abort
-        if [ "$SEED_REQUIRES_LEGACY_GLOBAL_VIEWS" -eq 1 ]; then
-            printf '%s\n' --cfg stage0-seed-bootstrap
-        fi
+        bootstrap_legacy_global_view_cfg_args
     fi
 }
 
@@ -126,7 +133,7 @@ if [ -n "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" ]; then
         -o "$DOTTED_BRIDGE_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
-        --cfg stage0-seed-bootstrap \
+        $(bootstrap_legacy_global_view_cfg_args) \
         --stdlib-root "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/stdlib" \
         --stdlib-root "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/src" \
         --opt-level 2; then
@@ -164,7 +171,7 @@ if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
                 -o "$BRIDGE_ASM" \
                 --target "$NL_BOOTSTRAP_TARGET" \
                 $(native_target_cfg_args) \
-                --cfg stage0-seed-bootstrap \
+                $(bootstrap_legacy_global_view_cfg_args) \
                 --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/bootstrap/stdlib" \
                 --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
                 --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
@@ -183,7 +190,7 @@ if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
                 -o "$BRIDGE_ASM" \
                 --target "$NL_BOOTSTRAP_TARGET" \
                 $(native_target_cfg_args) \
-                --cfg stage0-seed-bootstrap \
+                $(bootstrap_legacy_global_view_cfg_args) \
                 --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
                 --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
                 --opt-level 2
@@ -208,7 +215,7 @@ fi
 # Probe the compiler that actually builds stage1 -- the seed, or the last
 # compatibility bridge built from it -- so the legacy shared-view cfg is only
 # used by a seed that still needs it.
-bootstrap_resolve_seed_global_views "$PREV" "$WORKDIR"
+bootstrap_resolve_seed_global_views "$PREV" "$WORKDIR" "$ROOT"
 
 i=1
 while [ "$i" -le "$STAGES" ]; do

@@ -92,9 +92,7 @@ bootstrap_seed_global_view_cfg_args() {
     # always-linked runtime symbol. Keep that one-shot stage1 bootstrap on the
     # old interner abort path; converged stages compile the explicit diagnostic.
     printf '%s\n' --cfg stage0-seed-intern-abort
-    if [ "$SEED_REQUIRES_LEGACY_GLOBAL_VIEWS" -eq 1 ]; then
-        printf '%s\n' --cfg stage0-seed-bootstrap
-    fi
+    bootstrap_legacy_global_view_cfg_args
 }
 
 
@@ -209,15 +207,10 @@ fi
 # source tree used by any one-generation bridge. Bridge compiles must not
 # unconditionally select the legacy spelling: newer seeds reject moving the
 # selected value out of a global.
-SEED_GLOBAL_VIEW_PROBE_ROOT=$ROOT
-if [ -n "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" ]; then
-    SEED_GLOBAL_VIEW_PROBE_ROOT=$SEED_DOTTED_IMPORT_BRIDGE_ROOT
-fi
-if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
-    SEED_GLOBAL_VIEW_PROBE_ROOT=$SEED_COMPTIME_VARIANT_BRIDGE_ROOT
-fi
-bootstrap_resolve_seed_global_views \
-    "$COMPILER" "$WORKDIR" "$SEED_GLOBAL_VIEW_PROBE_ROOT"
+bootstrap_resolve_seed_global_views_for_bridges \
+    "$ROOT" "$COMPILER" "$WORKDIR" \
+    "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" \
+    "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT"
 
 STAGE1_ASM="$WORKDIR/stage1.s"
 STAGE1_OBJ="$WORKDIR/stage1.$OBJ_EXT"

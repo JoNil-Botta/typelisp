@@ -1494,8 +1494,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # the intentional exact selfhost allocation boundary.
     # The public-place migration removes the expanded legacy accessor calls;
     # the merged path-sensitive checker remains one segment above main alone.
+    # The seven-packet optimizer/backend series ported onto the unified place
+    # syntax crossed this boundary from 47 to 48 segments; the authoritative
+    # Windows CI probe measured 3,082,997 used nodes and 100,663,296 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Native result commit leaves the checked expression graph within the
     # 32-segment boundary; macro_expand owns the corresponding exact increase.

@@ -30394,6 +30394,359 @@
         11]
       [else 42])))
 
+;; --- cross-array check-domain fusion ------------------------------------------
+;;
+;; A counted multi-block loop walking THREE arrays through one opaque index.
+;; `body` (the header) loads `v = mem[i]` under the counter check and an
+;; ANCHOR check `v < lenA`; the dominated arm `then` uses the same `v` against
+;; `lenB` and `lenC`. Only the anchor bounds `v` -- it is a loaded value, so no
+;; trip-range derivation reaches it -- and the two dominated checks derive from
+;; it under the guard conjuncts `lenA <=u lenB` and `lenA <=u lenC`, which is
+;; exactly the fusion rule.
+;;
+;; Variants:
+;;   0 the arm READS through the covered index;
+;;   1 the arm indexes an ESCAPING value instead -- a second load nothing has
+;;     bounded -- so its checks have no anchor and must be kept;
+;;   2 the arm STORES through the covered index (the covered-store case: a
+;;     store's check constrains its INDEX, so it fuses exactly like a read).
+;;
+;; Vars: 0-4 params (n, lenA, lenB, lenC, mem), 5 the counter phi, 6-10 the
+;; header, 11-16 the arm, 17-18 the latch.
+(define opt-bce-fuse-test-frame : i64
+  20)
+
+(define (opt-bce-fuse-test-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "n"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "lena"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "lenb"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "lenc"
+            (compiler_ast_types.AstType.I64)
+            3)
+          (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.CompilerIrParam.Param
+              "mem"
+              (compiler_ast_types.AstType.U64)
+              4)
+            (compiler_ir_types.CompilerIrParamList.Nil)))))))
+
+(define (opt-bce-fuse-test-body-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "body")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Phi
+        5
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.CompilerIrValue.Var 17)
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.compiler-ir-label "fuse_ok0"))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            6
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              7
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 7)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "fuse_ok1"))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  8
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.Var 7)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Load
+                    9
+                    (compiler_ir_types.CompilerIrValue.Var 8)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.BinOp
+                      10
+                      (compiler_ir_types.CompilerIrBinOp.Lt)
+                      (compiler_ir_types.CompilerIrValue.Var 9)
+                      (compiler_ir_types.CompilerIrValue.Var 0)
+                      (compiler_ast_types.AstType.Bool))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Branch
+                        (compiler_ir_types.CompilerIrValue.Var 10)
+                        (compiler_ir_types.compiler-ir-label "then")
+                        (compiler_ir_types.compiler-ir-label "latch"))
+                      (compiler_ir_types.CompilerIrInstrList.Nil))))))))))))
+
+;; The index each arm check uses. Variant 1 gives them two different ESCAPING
+;; loads -- values no check has bounded and no anchor dominates -- so neither
+;; may be admitted; every other variant uses the covered `v`.
+(define (opt-bce-fuse-test-arm-index [variant : i64]) : i64
+  (if (= variant 1)
+    12
+    7))
+
+(define (opt-bce-fuse-test-arm-index2 [variant : i64]) : i64
+  (if (= variant 1)
+    14
+    7))
+
+(define (opt-bce-fuse-test-then-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "then")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Gep
+        11
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Load
+          12
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var
+              (opt-bce-fuse-test-arm-index variant))
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "fuse_ok2"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Gep
+              13
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.Var
+                (opt-bce-fuse-test-arm-index variant))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Load
+                14
+                (compiler_ir_types.CompilerIrValue.Var 13)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var
+                    (opt-bce-fuse-test-arm-index2 variant))
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.compiler-ir-label "fuse_ok3"))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Gep
+                    15
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ir_types.CompilerIrValue.Var
+                      (opt-bce-fuse-test-arm-index2 variant))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (if (= variant 2)
+                      (compiler_ir_types.CompilerIrInstr.StorePtr
+                        (compiler_ir_types.CompilerIrValue.Var 15)
+                        (compiler_ir_types.CompilerIrValue.Var 14)
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.CompilerIrInstr.Load
+                        16
+                        (compiler_ir_types.CompilerIrValue.Var 15)
+                        (compiler_ast_types.AstType.I64)))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Jump
+                        (compiler_ir_types.compiler-ir-label "latch"))
+                      (compiler_ir_types.CompilerIrInstrList.Nil))))))))))))
+
+(define (opt-bce-fuse-test-latch-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.compiler-ir-label "latch")
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        17
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          18
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 17)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 18)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))
+          (compiler_ir_types.CompilerIrInstrList.Nil))))))
+
+(define (opt-bce-fuse-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-bce-mb-test-jump-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-label "body"))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bce-fuse-test-body-block)
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bce-fuse-test-then-block variant)
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-bce-fuse-test-latch-block)
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.compiler-ir-block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 0)))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-bce-fuse-test-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_fuse_fixture")
+    (opt-bce-fuse-test-params)
+    (compiler_ast_types.AstType.I64)
+    opt-bce-fuse-test-frame
+    blocks))
+
+(define (opt-bce-fuse-test-versioned [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-bce-version-function
+    (opt-bce-fuse-test-function (opt-bce-fuse-test-blocks variant))))
+
+(define (opt-bce-fuse-test-has-block?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [name : String]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label name))
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some _) true]))
+
+(define (opt-bce-fuse-test-verify-ok?
+  [func : compiler_ir_types.CompilerIrFunction]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function func)))
+
+;; (a) three arrays, ONE region guard, a fast clone whose only surviving check
+;;     is the anchor the other two derive from;
+;; (b) the covered STORE reaches the same shape;
+;; (c) an escaping index refuses fusion and keeps both dominated checks;
+;; (d) the slow region is byte-for-byte the original, so a guard-failing or
+;;     zero-trip run still reaches every check at its own abort site;
+;; (f) re-running the pass on the rewrite changes nothing.
+(define (compiler-optimize-bce-fuse-self-test) : i64
+  (let
+    [read-only-fn : compiler_ir_types.CompilerIrFunction
+      (opt-bce-fuse-test-versioned 0)]
+    [read-only : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks read-only-fn)]
+    [escaping-fn : compiler_ir_types.CompilerIrFunction
+      (opt-bce-fuse-test-versioned 1)]
+    [escaping : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks escaping-fn)]
+    [stored-fn : compiler_ir_types.CompilerIrFunction
+      (opt-bce-fuse-test-versioned 2)]
+    [stored : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks stored-fn)]
+    [again-fn : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function read-only-fn)]
+    [again : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks again-fn)]
+    (cond
+      [(not (opt-bce-fuse-test-verify-ok? read-only-fn)) 1]
+      ;; (a) one guard for the whole region, on the loop entry edge
+      [(not (opt-bce-fuse-test-has-block? read-only "body__bce_guard")) 2]
+      [(opt-bce-fuse-test-has-block? read-only "then__bce_guard") 3]
+      [(opt-bce-fuse-test-has-block? read-only "latch__bce_guard") 4]
+      ;; the counter check derives from the trip range and the two dominated
+      ;; checks derive from the anchor, which itself stays: nothing bounds an
+      ;; opaque load
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              read-only
+              (compiler_ir_types.compiler-ir-label "body__bce_fast"))
+            1))
+        5]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              read-only
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            0))
+        6]
+      ;; (d) the slow region keeps every check at its original site
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              read-only
+              (compiler_ir_types.compiler-ir-label "body"))
+            2))
+        7]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              read-only
+              (compiler_ir_types.compiler-ir-label "then"))
+            2))
+        8]
+      ;; (b) the covered store derives exactly like the covered read
+      [(not (opt-bce-fuse-test-verify-ok? stored-fn)) 9]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              stored
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            0))
+        10]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              stored
+              (compiler_ir_types.compiler-ir-label "then"))
+            2))
+        11]
+      ;; (c) an escaping index has no anchor: both dominated checks stay in the
+      ;; clone, exactly as any underivable index does
+      [(not (opt-bce-fuse-test-verify-ok? escaping-fn)) 12]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              escaping
+              (compiler_ir_types.compiler-ir-label "then__bce_fast"))
+            2))
+        13]
+      ;; (f) idempotence: a converted region is not offered a second time
+      [(not (opt-bce-fuse-test-verify-ok? again-fn)) 14]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count again)
+            (compiler_ir_types.compiler-ir-block-list-count read-only)))
+        15]
+      [else 42])))
+
 (define (opt-bce-mb-pair-test-guard-has-len-fact-from?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : bool

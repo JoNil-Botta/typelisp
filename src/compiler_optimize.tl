@@ -12016,7 +12016,7 @@
       (let
         [slot : i64 (array-ref by-var var)]
         (if (> slot 0)
-          (array-ref entries (- slot 1)).labels
+          (__tl-project-field (array-ref entries (- slot 1)) labels)
           (OptLabelSet.Nil))))))
 
 (define (opt-ssa-def-blocks-add-param

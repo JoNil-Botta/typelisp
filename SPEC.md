@@ -2202,12 +2202,12 @@ the closure's last direct use under section 3.10.3. Capturing region-tagged
 owner values such as `(in r String)` is governed by section 3.9.
 
 The source function type `(-> args ... ret)` does not encode captured
-lifetimes. TypeLisp therefore uses checker-only escape classification rather
-than a source-visible type-level capture marker. The checker may attach
-internal capture-lifetime facts to lambda expressions and local closure
-bindings while checking a lexical scope. If a flow would erase those facts, the
-flow is treated as escaping and is rejected. The runtime closure descriptor ABI
-is unchanged.
+lifetimes, call capability, or the Copy class of a concrete environment.
+TypeLisp therefore uses checker-only facts rather than a source-visible
+type-level capture marker. The checker attaches capture-lifetime, capability,
+and environment Copy facts to lambda expressions and fact-preserving local
+closure bindings. If a flow would erase a required fact, the flow is treated as
+escaping and is rejected. The runtime closure descriptor ABI is unchanged.
 
 A reference capture is allowed only when every use of the produced closure
 value is proven non-escaping relative to every captured reference lifetime:
@@ -2242,8 +2242,8 @@ reference-capturing closure:
 No public annotation marks a callee as non-escaping; unknown callees are
 therefore escaping by default.
 
-For lambda literals and their direct local bindings, the checker also retains
-a call-capability fact that is not present in `(-> ...)`:
+For lambda literals and their checker-known local bindings, the checker also
+retains a call-capability fact that is not present in `(-> ...)`:
 
 - **Shared/reusable** closures only inspect their captures and may be called
   repeatedly.
@@ -2260,13 +2260,27 @@ repeated loop reject when they could consume a closure captured from outside
 the loop. A move-only capture that is only inspected remains shared/reusable;
 the captured source is still moved at closure creation.
 
-Capability and lifetime facts survive an immediate literal call, a direct
-local binding, nested local closures whose complete use remains in the proven
-scope, control-flow joins, and macro expansion. Returning, aliasing, storing,
-or passing such a closure through a plain `(-> ...)` value would erase the
-checker fact and therefore fails closed. This includes returning a nested
-closure from an enclosing closure; bind and call it inside the enclosing body
-instead.
+Concrete environment Copy classification follows section 4.7.2. A closure
+whose captures are all Copy may be copied through a local alias, ordinary
+by-value call, return, or aggregate slot. When those captures include shared
+references, every fact-preserving local copy retains the same lifetime and NLL
+lending provenance; copying never lengthens the borrow or makes an escaping
+flow legal.
+
+A non-Copy closure may move once into a checker-known local alias or enclosing
+local closure, and the source is invalid afterward. Returning, storing, or
+passing it through a plain `(-> ...)` value would erase its concrete ownership
+fact and therefore fails closed. Mutable/reusable and consuming capability
+facts remain stricter: aliasing them would erase exclusive or one-shot call
+semantics and is rejected. Lifetime facts survive Copy local aliases and nested
+local closures whose complete use remains in the proven scope; all other
+fact-erasing flows reject. Macro expansion and control-flow checks apply the
+same rules deterministically.
+
+Checker-recognized ownership-transfer operations may consume a direct
+non-Copy lambda without widening it to a reusable plain function value. The
+safe thread-spawn surface is the current example: it separately validates the
+direct lambda and transfers each permitted capture exactly once.
 
 Nested arenas follow the same lifetime containment rule. A closure created in
 an inner arena may capture an outer reference when the closure cannot outlive
@@ -3496,7 +3510,8 @@ site. Invalid or unresolved types are conservatively `MoveOnly`.
 - `Expr` and `ExprList`, which are compile-time-only values.
 - Raw pointers `(Ptr T)` and `(MutPtr T)`; copying a pointer copies only the
   address and carries no ownership guarantee.
-- Named top-level function values and `AstType.Func` function values.
+- Named top-level and non-capturing function values. A plain `AstType.Func`
+  shape is Copy only when no checker-known concrete closure fact overrides it.
 - Shared references. A shared reference `(& r T)` is copyable regardless of
   the referent's class; the borrow and aliasing rules remain those in section
   3.10. Mutable references `(&mut r T)` are move-only.
@@ -3522,11 +3537,15 @@ all of its fields or payloads would otherwise be copyable.
 their element or referent types: `String`, `ByteBuf`, borrowed `str`/`bytes`
 values, compatibility dynamic arrays `(Array T)`, `Slice`, `(Box T)`, and
 mutable references. An aggregate containing any such value is move-only, as
-are unresolved/invalid type variables. A plain `AstType.Func` remains copyable
-for named/non-capturing function values. Concrete capturing lambda literals
-move each move-only capture into their environment at creation; checker-known
-local call capability is tracked separately from `AstType.Func` as described
-in section 3.10.4.
+are unresolved/invalid type variables. A concrete capturing closure is Copy
+iff every captured value is recursively Copy. Capturing `String`, `ByteBuf`,
+`Box`, a compatibility dynamic array, a mutable reference, a cleanup owner, or
+an aggregate containing any non-Copy part makes the closure non-Copy. Lambda
+creation moves each non-Copy capture into its environment and copies each Copy
+capture. Nested closure captures consult the captured closure's concrete fact,
+not merely its plain `AstType.Func` shape. Capture lifetime, Copy, and call
+capability facts remain checker-only as described in section 3.10.4; a flow
+that would erase a required non-Copy fact rejects.
 
 Region wrappers `(in r T)` and `Consume` wrappers preserve the underlying
 copy/move class; the region tag only constrains where the value may escape.
@@ -4265,7 +4284,7 @@ leaving a moved or uninitialized slot.
   and evaluate to static closure descriptor values.
 - Capturing lambdas snapshot their captures by value into heap-allocated
   closure environments. Capturable values are integer widths, `bool`, `char`,
-  `f64`, function values, `String`, compatibility dynamic arrays,
+  `f64`, raw pointers, function values, `String`, compatibility dynamic arrays,
   tuples/structs/enums (including ones with nested aggregate fields), and a
   directly-captured fixed `(Array T N)` of scalar elements.
 - `String` and compatibility dynamic-array captures snapshot their fat
@@ -4298,6 +4317,11 @@ leaving a moved or uninitialized slot.
   immutable references or move a mutable reference into its environment.
   Shared, mutable, and consuming call capabilities remain checker-only facts;
   escaping or fact-erasing closure flows reject.
+- A descriptor for an all-Copy environment may itself be copied; the current
+  immutable capture model permits copies to share that immutable environment
+  storage. A descriptor with any non-Copy capture is move-only. Copying never
+  performs a deep clone, allocates a replacement environment, duplicates
+  cleanup ownership, or changes the C-facing function-pointer ABI.
 
 ```lisp test=ignore name=lambda-lift-immediate reason="integration tests cover executable lambda lifting"
 ((lambda ([x : i64]) : i64 (+ x 1)) 41)
@@ -7106,7 +7130,7 @@ in documentation passes.
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
 | Narrow integer shifts | AVX2/AVX-512 direct-map and masked `i32`/`u32`/`i64`/`u64` shifts are implemented. `i8`/`u8`/`i16`/`u16` widening/packing expansions are deferred and rejected with stable operator/type/backend diagnostics. |
 | Public vector/mask/varying source value types | Deferred by design. |
-| Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. Local non-escaping immutable and mutable-reference captures, including checker-known mutable/consuming call capabilities, are implemented. |
+| Fact-erasing closure flows; mutation of captured names | Rejected by design: closure captures are by-value snapshots. All-Copy closures may copy while preserving reference provenance; non-Copy closures may move through checker-known local facts; mutable/consuming capabilities and required lifetime/ownership facts fail closed when erased. |
 | Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |

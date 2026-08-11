@@ -379,6 +379,9 @@ lambda_mut_capture_alias_reject|check-fail|tests/safety/lambda_mut_capture_alias
 lambda_mut_capture_moved_reference_reject|check-fail|tests/safety/lambda_mut_capture_moved_reference_reject.tl|-|use of moved value `exclusive`
 lambda_mut_capture_owner_read_live_reject|check-fail|tests/safety/lambda_mut_capture_owner_read_live_reject.tl|-|cannot read mutably borrowed place
 lambda_capture_source_reuse_reject|check-fail|tests/safety/lambda_capture_source_reuse_reject.tl|-|use of moved value `owned`
+lambda_noncopy_capture_alias_reuse_reject|check-fail|tests/safety/lambda_noncopy_capture_alias_reuse_reject.tl|-|use of moved value `f`
+lambda_noncopy_capture_pass_reject|check-fail|tests/safety/lambda_noncopy_capture_pass_reject.tl|-|non-Copy closure ownership would be erased
+lambda_noncopy_capture_return_reject|check-fail|tests/safety/lambda_noncopy_capture_return_reject.tl|-|non-Copy closure ownership would be erased
 lambda_fnonce_second_call_reject|check-fail|tests/safety/lambda_fnonce_second_call_reject.tl|-|use of moved value `take`
 lambda_fnonce_escape_reject|check-fail|tests/safety/lambda_fnonce_escape_reject.tl|-|closure capability would be erased
 lambda_fnonce_argument_escape_reject|check-fail|tests/safety/lambda_fnonce_argument_escape_reject.tl|-|closure capability would be erased

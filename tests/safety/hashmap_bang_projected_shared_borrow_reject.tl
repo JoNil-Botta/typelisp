@@ -11,8 +11,7 @@
     (begin
       (map_i64_i64.insert! holder.map 1 10)
       (let
-        [borrowed
-          (map_i64_i64.get-value-borrowed (& holder.map) 1)]
+        [borrowed (map_i64_i64.get-value-borrowed (& holder.map) 1)]
         (begin
           (map_i64_i64.insert! holder.map 2 20)
           (if (map_i64_i64.borrowed-value-found? borrowed)

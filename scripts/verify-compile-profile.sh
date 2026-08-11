@@ -673,7 +673,6 @@ if ! "$COMPILER" compile src/main.tl \
     --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route \
     --cfg tlci-native-route-stress \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
@@ -797,7 +796,6 @@ set +e
     --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
 status=$?
 set -e
@@ -848,7 +846,6 @@ set +e
     --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
 status=$?
 set -e
@@ -1737,30 +1734,12 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_mar
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_calls|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_alloc_kb|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_live_kb|"
-# The repo's own stdlib is content-identical to the embedded payload, so
-# the catalog dispatches here too; shell entries keep the counted
-# interpreted fallback (and their per-identity profile rows above). On
-# Windows the route is gated off until #5460 closes, so the stand-down
-# shape is asserted instead.
-if [ "$NL_HOST_OS" = windows ]; then
-    assert_profile_counter_eq_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_tlci_catalog_hits" \
-        0 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-    assert_profile_counter_at_least_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_source_interpreted" \
-        1 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-else
-    # #5634: the macro-detail fixture's last interpreted shells are going
-    # native (#5596's zero-shell end state), so a non-zero fallback count can
-    # no longer be required here. Assert the catalog route is live and exact
-    # instead (same shape as the routing fixture below); the row-exists
-    # assertion above keeps the fallback counter's plumbing covered.
+# The repo's own stdlib is content-identical to the embedded payload, so the
+# catalog dispatches on both hosts. #5634 is moving the macro-detail fixture's
+# last interpreted shells native (#5596's zero-shell end state), so a non-zero
+# fallback count can no longer be required here. Assert the catalog route is
+# live and exact instead; the row-exists assertion above keeps fallback
+# counter plumbing covered.
     assert_profile_counter_at_least_in \
         "$CHECK_STDERR" \
         "typecheck.macro.stdlib_tlci_catalog_hits" \
@@ -1813,7 +1792,6 @@ else
         0 \
         "$CHECK_STDOUT" \
         "$CHECK_STDERR"
-fi
 # The multi-pass fixed-point loop and its follow-up worklist are deleted: macro
 # expansion is a single demand-driven pass, so the fixed_point_* counters no
 # longer exist.
@@ -1825,9 +1803,6 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_f
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.misses|"
 
-if [ "$NL_HOST_OS" = windows ]; then
-    echo "[compile-profile] skip routing differential on windows (route gated, #5460)"
-else
 echo "[compile-profile] verify embedded stdlib tlci routing and differential output"
 mkdir -p "$STDLIB_TLCI_DIR"
 if ! (
@@ -2678,7 +2653,6 @@ for FMT_DIAG_CASE in unmatched-open too-few-arguments too-many-arguments \
         fail "format scanner diagnostics differ by route for $FMT_DIAG_CASE"
     fi
 done
-fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_core.tl \

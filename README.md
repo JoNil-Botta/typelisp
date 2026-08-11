@@ -132,8 +132,9 @@ Some capabilities remain restricted or experimental:
 - Scalar `spmd-scan` is implemented. AVX2 and AVX-512 support covers only a
   restricted set of canonical scan forms. General scan vectorization is not
   complete.
-- The TLCI native comptime route is an opt-in verification path, not the
-  default route in published stage0 builds.
+- Published compilers dispatch trusted embedded-stdlib comptime macros through
+  their TLCI native catalog on Linux and Windows. General dependency-package
+  TLCI selection and dispatch remain staged.
 - Public vector and mask value types, general vectorized SPMD support, a
   package registry, and workspaces are not complete.
 - General `free` and GC are intentionally not planned. TypeLisp uses arenas as

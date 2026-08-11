@@ -66,24 +66,20 @@ Self-host bootstrap builds the compiler's exact embedded stdlib source set into
 a source-bound `stdlib.tlci`, embeds it in the next compiler stage, and validates
 all registered macro identities through the production loader. A bootstrapped
 compiler exposes that payload as `typelisp inspect embedded:stdlib.tlci`.
-Dispatching stdlib macros through that image is **opt-in and not yet enabled in
-shipped builds**. It requires `--cfg tlci-native-route`, and even with that flag
-it stays off on Windows until the environmental sensitivity tracked by #5460 is
-closed; `scripts/build-stage0.sh` passes only `--cfg embedded-stdlib-tlci`, so
-the published stage0 never activates it. Today only
-`scripts/verify-compile-profile.sh` turns it on, to run the route differential.
+Published compilers use that trusted catalog by default on Linux and Windows.
+Macro expansion maps the image once per expansion pass and checks each stdlib
+macro whose source has exact embedded provenance against the native catalog. A
+byte-identical checked-in source root may retain that provenance; any modified,
+unavailable, or otherwise untrusted source stays on deterministic CTFE.
 
-When the route *is* active, and compilation consumes the embedded stdlib with no
-explicit `--stdlib-root`, macro expansion maps the image once per expansion pass
-and checks each stdlib macro against its native registration catalog. A
-cataloged macro with a compiled entry dispatches natively and commits the
-transformer's result directly; anything else — an uncataloged identity, a
-registration shell, or the route being off — falls back to CTFE, which is what a
-default build does for every stdlib macro. Compile-profile counters report
-catalog hits, catalog misses, load failures, native dispatches, and interpreted
-fallbacks separately. Supplying an explicit stdlib root skips the TLCI route
-regardless of the flag. The compile-profile gate compiles
-the same corpus through both routes and requires byte-identical assembly.
+A cataloged macro with a compiled entry dispatches natively and commits the
+transformer's result directly. Uncataloged identities and registration shells
+fall back to CTFE. Compile-profile counters report catalog hits, misses, load
+failures, native dispatches, native result kinds, and interpreted fallbacks
+separately. The two-host profile differential compiles the same corpus through
+trusted native and forced-source routes and requires byte-identical assembly
+and equivalent diagnostics; the sustained batch gate also crosses repeated
+pool reset and image release/remap cycles.
 `typelisp run [--manifest-path <typelisp.pkg>]` uses the same package
 resolution and build profile rules, then executes `bin` package artifacts;
 runtime arguments are passed after `--`.

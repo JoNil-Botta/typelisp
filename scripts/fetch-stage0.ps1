@@ -47,6 +47,22 @@ $OutputDirFull = $OutputDirItem.FullName
 $TempDir = Join-Path $OutputDirFull (".stage0-download." + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $TempDir -Force -Confirm:$false | Out-Null
 
+# Match the POSIX fetcher's bounded whole-generation retry. The prepared-draft
+# publication protocol keeps the stage0-latest gap short, but release/tag and
+# CDN propagation can still expose a transient 404 or mismatched checksum.
+$FetchAttempts = 6
+if ($env:TYPELISP_STAGE0_FETCH_ATTEMPTS) {
+    if (-not [int]::TryParse($env:TYPELISP_STAGE0_FETCH_ATTEMPTS, [ref] $FetchAttempts) -or $FetchAttempts -le 0) {
+        throw "TYPELISP_STAGE0_FETCH_ATTEMPTS must be a positive integer"
+    }
+}
+$FetchRetryDelay = 5
+if ($env:TYPELISP_STAGE0_FETCH_RETRY_DELAY) {
+    if (-not [int]::TryParse($env:TYPELISP_STAGE0_FETCH_RETRY_DELAY, [ref] $FetchRetryDelay) -or $FetchRetryDelay -lt 0) {
+        throw "TYPELISP_STAGE0_FETCH_RETRY_DELAY must be a non-negative integer"
+    }
+}
+
 try {
     $BaseUrl = "https://github.com/$Repo/releases/download/$Tag"
     $SumsTmp = Join-Path $TempDir "SHA256SUMS"
@@ -70,42 +86,65 @@ try {
         }
     }
 
-    if (-not $AssetTmp) {
-        Write-Host "[stage0] downloading $SingleAsset from $Repo@$Tag"
+    $FetchSucceeded = $false
+    for ($Attempt = 1; $Attempt -le $FetchAttempts; $Attempt++) {
+        $Asset = $SingleAsset
+        $AssetTmp = $null
+        Remove-Item -LiteralPath (Join-Path $TempDir $SingleAsset) -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $SumsTmp -Force -ErrorAction SilentlyContinue
         try {
+            Write-Host "[stage0] downloading $SingleAsset from $Repo@$Tag"
             $AssetTmp = Download-Stage0Asset -AssetName $SingleAsset
-            $Asset = $SingleAsset
+
+            $HaveSums = $false
+            try {
+                Invoke-WebRequest -Uri "$BaseUrl/SHA256SUMS" -OutFile $SumsTmp -UseBasicParsing
+                $HaveSums = $true
+            } catch {
+                if ($Tag -eq "stage0-latest") {
+                    throw "SHA256SUMS is not visible for stage0-latest yet"
+                }
+                Write-Warning "SHA256SUMS not found for $Tag; verified non-empty asset only"
+            }
+
+            if ($HaveSums) {
+                $AssetPattern = [regex]::Escape($Asset)
+                $Selected = Get-Content -LiteralPath $SumsTmp |
+                    Where-Object { $_ -match "^\s*[0-9A-Fa-f]{64}\s+$AssetPattern\s*$" } |
+                    Select-Object -First 1
+
+                if (-not $Selected) {
+                    throw "SHA256SUMS does not contain $Asset"
+                }
+                if ($Selected -notmatch "^\s*([0-9A-Fa-f]{64})\s+") {
+                    throw "invalid SHA256SUMS entry for $Asset"
+                }
+
+                $ExpectedHash = $Matches[1].ToLowerInvariant()
+                $ActualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $AssetTmp).Hash.ToLowerInvariant()
+                if ($ActualHash -ne $ExpectedHash) {
+                    throw "sha256 mismatch for $Asset`: expected $ExpectedHash, got $ActualHash"
+                }
+            }
+
+            $FetchSucceeded = $true
+            break
         } catch {
-            throw ("failed to download {0}/{1}: {2}" -f $BaseUrl, $SingleAsset, $_.Exception.Message)
+            $FetchError = $_.Exception.Message
+            Remove-Item -LiteralPath (Join-Path $TempDir $SingleAsset) -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $SumsTmp -Force -ErrorAction SilentlyContinue
+            if ($Attempt -ge $FetchAttempts) {
+                throw ("failed to fetch a consistent stage0 from {0}@{1} after {2} attempt(s): {3}" -f $Repo, $Tag, $Attempt, $FetchError)
+            }
+            Write-Warning ("stage0 fetch attempt {0}/{1} was inconsistent ({2}); retrying in {3}s" -f $Attempt, $FetchAttempts, $FetchError, $FetchRetryDelay)
+            if ($FetchRetryDelay -gt 0) {
+                Start-Sleep -Seconds $FetchRetryDelay
+            }
         }
     }
 
-    $HaveSums = $false
-    try {
-        Invoke-WebRequest -Uri "$BaseUrl/SHA256SUMS" -OutFile $SumsTmp -UseBasicParsing
-        $HaveSums = $true
-    } catch {
-        Write-Warning "SHA256SUMS not found for $Tag; verified non-empty asset only"
-    }
-
-    if ($HaveSums) {
-        $AssetPattern = [regex]::Escape($Asset)
-        $Selected = Get-Content -LiteralPath $SumsTmp |
-            Where-Object { $_ -match "^\s*[0-9A-Fa-f]{64}\s+$AssetPattern\s*$" } |
-            Select-Object -First 1
-
-        if (-not $Selected) {
-            throw "SHA256SUMS does not contain $Asset"
-        }
-        if ($Selected -notmatch "^\s*([0-9A-Fa-f]{64})\s+") {
-            throw "invalid SHA256SUMS entry for $Asset"
-        }
-
-        $ExpectedHash = $Matches[1].ToLowerInvariant()
-        $ActualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $AssetTmp).Hash.ToLowerInvariant()
-        if ($ActualHash -ne $ExpectedHash) {
-            throw "sha256 mismatch for $Asset`: expected $ExpectedHash, got $ActualHash"
-        }
+    if (-not $FetchSucceeded -or -not $AssetTmp) {
+        throw "stage0 fetch exhausted without a verified asset"
     }
 
     Move-Item -LiteralPath $AssetTmp -Destination $Dest -Force -Confirm:$false

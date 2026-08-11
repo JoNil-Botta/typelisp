@@ -108,13 +108,12 @@ download_asset() {
 # SHA256SUMS manifest, and verify them together. Returns non-zero on any
 # transient miss so the caller can retry the whole download+verify as one unit.
 #
-# The mutable stage0-latest release is republished by delete-then-recreate on
-# every push to main (see .github/workflows/bootstrap-stage0.yml). That swap is
-# not atomic, so a concurrent fetch can momentarily observe a 404 (the asset is
-# gone between delete and recreate, or a later asset has not finished uploading)
-# or a checksum mismatch (the asset and SHA256SUMS get read from different
-# republish generations). Re-fetching both together on a fresh attempt rides out
-# that window instead of failing the whole CI gate.
+# The mutable stage0-latest release is promoted from a fully uploaded draft on
+# every push to main (see .github/workflows/bootstrap-stage0.yml). GitHub cannot
+# atomically replace the old release/tag alias, so a concurrent fetch can still
+# observe a brief 404 during the two API mutations or CDN propagation. Fetching
+# the asset and SHA256SUMS together on every fresh attempt keeps that bounded
+# cutover safe instead of failing the whole CI gate.
 fetch_and_verify() {
     ASSET=
     ASSET_TMP=
@@ -151,6 +150,10 @@ fetch_and_verify() {
             return 1
         fi
     else
+        if [ "$TAG" = stage0-latest ]; then
+            echo "[stage0] SHA256SUMS is not visible for stage0-latest yet" >&2
+            return 1
+        fi
         echo "[stage0] warning: SHA256SUMS not found for $TAG; verified non-empty asset only" >&2
     fi
 

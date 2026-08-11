@@ -2,8 +2,8 @@ name: Bootstrap Stage0
 
 # On every merge to main, rebuild the self-hosted single-binary stage0 compiler
 # (cli.tl) and publish it as permanent GitHub releases. A lightweight
-# "stage0-latest" release is recreated with the same assets, giving CI a stable
-# download URL while permanent releases remain.
+# "stage0-latest" release is replaced from a fully uploaded draft candidate,
+# giving CI a stable download URL while permanent releases remain.
 #
 # The publish job also packages the VS Code extension (tools/vs-code-extension)
 # into typelisp.vsix and attaches it to the same releases under a stable asset
@@ -214,20 +214,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Multiple main pushes can publish concurrently; only the current
-          # origin/main commit may move the mutable stage0-latest release.
-          git fetch --no-tags --depth=1 origin main
-          latest_main="$(git rev-parse refs/remotes/origin/main)"
-          if [ "$latest_main" != "${{ github.sha }}" ]; then
-            echo "Skipping stage0-latest update for ${{ github.sha }} because origin/main is now $latest_main."
-            exit 0
-          fi
-
-          gh release delete stage0-latest --yes \
-            --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
-          git push origin :refs/tags/stage0-latest 2>/dev/null || true
-
-          notes="$(cat <<EOF
+          notes_file="$RUNNER_TEMP/stage0-latest-notes.md"
+          cat > "$notes_file" <<EOF
           Latest self-hosted cli.tl stage0 compiler built from commit ${{ github.sha }}.
 
           Permanent copy: $PERMANENT_TAG
@@ -238,17 +226,31 @@ jobs:
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp.vsix
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/SHA256SUMS
           EOF
-          )"
 
-          gh release create stage0-latest \
-            --title "Stage0 latest" \
-            --notes "$notes" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "${{ github.sha }}" \
+          # Upload the complete replacement as an explicit draft. The helper
+          # rechecks main immediately before a short release/tag cutover and
+          # promotes the prepared release with one authoritative REST PATCH.
+          # A stale publisher discards only its private candidate.
+          candidate_tag="stage0-candidate-${{ github.run_id }}-${{ github.run_attempt }}"
+          set +e
+          scripts/publish-stage0-latest.sh \
+            "$GITHUB_REPOSITORY" \
+            "${{ github.sha }}" \
+            "$candidate_tag" \
+            "$notes_file" \
             stage0-artifacts/typelisp-stage0-linux \
             stage0-artifacts/typelisp-stage0-windows.exe \
             stage0-artifacts/typelisp.vsix \
             stage0-artifacts/SHA256SUMS
+          publish_status=$?
+          set -e
+          if [ "$publish_status" -eq 3 ]; then
+            echo "Skipping stage0-latest verification because main advanced during candidate preparation."
+            exit 0
+          fi
+          if [ "$publish_status" -ne 0 ]; then
+            exit "$publish_status"
+          fi
 
           scripts/verify-stage0-release.sh \
             "$GITHUB_REPOSITORY" \

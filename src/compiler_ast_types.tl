@@ -51,6 +51,23 @@
 (import stdlib.hash)
 (import stdlib.string)
 
+;; Canonical nominal identity shared by symbols, type equality, backend ABI
+;; metadata, and regalloc. Qualified names retain their structural owner, while
+;; a root-qualified spelling collapses to the same key as its plain base. Opaque
+;; generated and IR-owned ids are non-renderable and therefore remain distinct
+;; even when their display text matches a qualified source name.
+(define (ast-nominal-name-id-key [name-id : i64]) : i64
+  (if (not (ci.intern-renderable-id? name-id))
+    name-id
+    (if (ci.intern-qualified? name-id)
+      (let
+        [module-id : i64 (ci.intern-qualified-module-id name-id)]
+        [base-id : i64 (ci.intern-qualified-base-id name-id)]
+        (if (or (< module-id 0) (= module-id cbi.compiler-builtin-id-fix-empty))
+          base-id
+          (ci.intern-composite-pair-id module-id base-id)))
+      name-id)))
+
 ;; Nominal AST nodes carry either a parser intern id or a structural module/name
 ;; id. Rendering must decode the latter instead of indexing the intern pool with
 ;; the composite value.
@@ -417,6 +434,10 @@
 (defenum AstMaybeType
   (No)
   (Some AstType))
+
+(defenum AstMaybeNominalKey
+  (None)
+  (Some i64))
 
 (defenum AstBorrowLifetime
   (Inferred)
@@ -3110,6 +3131,25 @@
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (Ptr AstType))))))
+
+;; Return the canonical nominal identity for aggregate metadata. Region is a
+;; transparent ownership wrapper; every non-aggregate shape stays explicit as
+;; None so callers never need an empty-string or integer sentinel.
+(define (ast-aggregate-type-key [type-segment-bases : i64] [ty : AstType]) : AstMaybeNominalKey
+  (match ty
+    [(AstType.Struct name)
+      (AstMaybeNominalKey.Some (ast-nominal-name-id-key name))]
+    [(AstType.StructArgs name _)
+      (AstMaybeNominalKey.Some (ast-nominal-name-id-key name))]
+    [(AstType.Enum name)
+      (AstMaybeNominalKey.Some (ast-nominal-name-id-key name))]
+    [(AstType.EnumArgs name _)
+      (AstMaybeNominalKey.Some (ast-nominal-name-id-key name))]
+    [(AstType.Region _ inner)
+      (ast-aggregate-type-key
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
+    [_ AstMaybeNominalKey.None]))
 
 ;; Segment-bases pointer of the context's live type-pool cell. The cell is
 ;; replaced on every push, so callers may only cache this across pure reads.

@@ -10207,6 +10207,309 @@
                         (compiler-reg-same-value-clobber-census-ok?)
                         (compiler-reg-sv-multi-ok?))])])])])]))
 
+;; ---------------------------------------------------------------------------
+;; Tail calls are not clobber points; clobber spanning is segment-precise.
+;; ---------------------------------------------------------------------------
+;; Two-arm dispatcher, every arm a TAIL call. `k` selects the arm; both
+;; parameters are marshalled (permuted) into the outgoing argument registers.
+(define (compiler-reg-tail-dispatch-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "tail_dispatch")
+    (ir.compiler-ir-param-cons
+      (ir.CompilerIrParam.Param "k" (compiler-reg-i64-ty) 0)
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "v" (compiler-reg-i64-ty) 1)
+        ir.CompilerIrParamList.Nil))
+    (compiler-reg-i64-ty)
+    3
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.BinOp
+            2
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 0)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var 2)
+              (ir.compiler-ir-label "arm_a")
+              (ir.compiler-ir-label "arm_b"))
+            ir.CompilerIrInstrList.Nil)))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "arm_a")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.TailCall
+              (ir.compiler-ir-test-symbol "step_a")
+              (ir.CompilerIrCallArgs.Two
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.Var 1))
+              (compiler-reg-i64-ty))
+            ir.CompilerIrInstrList.Nil))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "arm_b")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.TailCall
+                (ir.compiler-ir-test-symbol "step_b")
+                (ir.CompilerIrCallArgs.Two
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.CompilerIrValue.Var 0))
+                (compiler-reg-i64-ty))
+              ir.CompilerIrInstrList.Nil))
+          ir.CompilerIrBlockList.Nil)))))
+
+;; Same dispatcher with a REAL call in the arm that runs FIRST in block order,
+;; and both parameters live across it. Nothing may be un-pinned here.
+(define (compiler-reg-tail-dispatch-real-call-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "tail_dispatch_real")
+    (ir.compiler-ir-param-cons
+      (ir.CompilerIrParam.Param "k" (compiler-reg-i64-ty) 0)
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "v" (compiler-reg-i64-ty) 1)
+        ir.CompilerIrParamList.Nil))
+    (compiler-reg-i64-ty)
+    4
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.BinOp
+            2
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 0)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var 2)
+              (ir.compiler-ir-label "call_arm")
+              (ir.compiler-ir-label "tail_arm"))
+            ir.CompilerIrInstrList.Nil)))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "call_arm")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Call
+              3
+              (ir.compiler-ir-test-symbol "side_effect")
+              ir.CompilerIrCallArgs.Nil
+              (ast.AstType.Unit))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Store
+                (ir.compiler-ir-test-symbol "gk")
+                (ir.CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Store
+                  (ir.compiler-ir-test-symbol "gv")
+                  (ir.CompilerIrValue.Var 1)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
+                  ir.CompilerIrInstrList.Nil)))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "tail_arm")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.TailCall
+                (ir.compiler-ir-test-symbol "step_b")
+                (ir.CompilerIrCallArgs.Two
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.CompilerIrValue.Var 0))
+                (compiler-reg-i64-ty))
+              ir.CompilerIrInstrList.Nil))
+          ir.CompilerIrBlockList.Nil)))))
+
+;; MIXED. `call_arm` runs first in block order and holds a real call that only
+;; `v` is live across; `k` is referenced at entry and again in the LAST block,
+;; so the real call sits inside `k`'s coarse interval HULL and inside no live
+;; SEGMENT of it. `k` must therefore keep %rdi while `v` must not keep %rsi.
+(define (compiler-reg-tail-dispatch-mixed-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "tail_dispatch_mixed")
+    (ir.compiler-ir-param-cons
+      (ir.CompilerIrParam.Param "k" (compiler-reg-i64-ty) 0)
+      (ir.compiler-ir-param-cons
+        (ir.CompilerIrParam.Param "v" (compiler-reg-i64-ty) 1)
+        ir.CompilerIrParamList.Nil))
+    (compiler-reg-i64-ty)
+    4
+    (ir.compiler-ir-block-cons
+      (ir.compiler-ir-block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-cons
+          (ir.CompilerIrInstr.BinOp
+            2
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 0)
+            (compiler-reg-i64-ty))
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var 2)
+              (ir.compiler-ir-label "call_arm")
+              (ir.compiler-ir-label "tail_arm"))
+            ir.CompilerIrInstrList.Nil)))
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "call_arm")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Call
+              3
+              (ir.compiler-ir-test-symbol "side_effect")
+              ir.CompilerIrCallArgs.Nil
+              (ast.AstType.Unit))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Store
+                (ir.compiler-ir-test-symbol "gv")
+                (ir.CompilerIrValue.Var 1)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Return
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
+                ir.CompilerIrInstrList.Nil))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "tail_arm")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.TailCall
+                (ir.compiler-ir-test-symbol "step_b")
+                (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
+                (compiler-reg-i64-ty))
+              ir.CompilerIrInstrList.Nil))
+          ir.CompilerIrBlockList.Nil)))))
+
+;; Kind 0 counts the whole call-like family; kind 6 drops the tail calls and
+;; keeps every resuming call. The pure dispatcher has TWO kind-0 points and NO
+;; kind-6 point; the real-call shape has three kind-0 points and exactly one
+;; kind-6 point (the `call side_effect`).
+(define (compiler-reg-tail-call-kind-points-ok?) : bool
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [pure-fn : ir.CompilerIrFunction (compiler-reg-tail-dispatch-function)]
+    [real-fn : ir.CompilerIrFunction
+      (compiler-reg-tail-dispatch-real-call-function)]
+    (and
+      (=
+        (live.compiler-live-set-count
+          (reg.compiler-reg-clobber-kind-points bases pure-fn 0))
+        2)
+      (=
+        (live.compiler-live-set-count
+          (reg.compiler-reg-clobber-kind-points bases pure-fn 6))
+        0)
+      (=
+        (live.compiler-live-set-count
+          (reg.compiler-reg-clobber-kind-points bases real-fn 0))
+        2)
+      (=
+        (live.compiler-live-set-count
+          (reg.compiler-reg-clobber-kind-points bases real-fn 6))
+        1))))
+
+;; The segment walk itself: one clobber point in the HOLE between two segments
+;; is not spanned, the same point moved inside a segment is. The hull-start
+;; convention is exclusive for an ordinary value (its def) and inclusive for a
+;; parameter (its home is written by the prologue).
+(define (compiler-reg-segment-span-clobber-ok?) : bool
+  (let
+    [segments : reg.CompilerRegIntervalSeq
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 0 0 4)
+        (reg.compiler-reg-interval-seq-prepend
+          (reg.CompilerRegInterval 0 12 16)
+          (reg.compiler-reg-interval-seq-empty)))]
+    [in-hole : live.CompilerLiveI64Set
+      (live.compiler-live-set-insert (live.compiler-live-set-empty) 8)]
+    [in-segment : live.CompilerLiveI64Set
+      (live.compiler-live-set-insert (live.compiler-live-set-empty) 14)]
+    [at-hull-start : live.CompilerLiveI64Set
+      (live.compiler-live-set-insert (live.compiler-live-set-empty) 0)]
+    [at-later-segment-start : live.CompilerLiveI64Set
+      (live.compiler-live-set-insert (live.compiler-live-set-empty) 12)]
+    (and
+      (not (reg.compiler-reg-segments-span-clobber? segments in-hole 0 false))
+      (reg.compiler-reg-segments-span-clobber? segments in-segment 0 false)
+      ;; A clobber AT the hull start is the value's own defining instruction
+      ;; for an ordinary value, and already inside the live range of a param.
+      (not
+        (reg.compiler-reg-segments-span-clobber? segments at-hull-start 0 false))
+      (reg.compiler-reg-segments-span-clobber? segments at-hull-start 0 true)
+      ;; A later segment opens where the value flows IN from a predecessor, so
+      ;; its start is inclusive under BOTH conventions.
+      (reg.compiler-reg-segments-span-clobber?
+        segments
+        at-later-segment-start
+        0
+        false)
+      (reg.compiler-reg-segments-span-clobber?
+        segments
+        at-later-segment-start
+        0
+        true))))
+
+(define (compiler-reg-tail-dispatch-pins-ok?) : bool
+  (match (reg.compiler-reg-plan-function-scalar
+    (compiler-reg-tail-dispatch-function))
+    [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+      (and
+        (= (reg.compiler-reg-spill-count assignments) 0)
+        ;; Both params keep their incoming (caller-saved) ABI registers: no
+        ;; entry copy, and no callee-saved register enters the plan, so the
+        ;; prologue emits no push and each tail-jump tail no pop.
+        (reg.compiler-reg-location-register?
+          (reg.compiler-reg-assignment-lookup assignments 0)
+          cabi.compiler-reg-id-rdi)
+        (reg.compiler-reg-location-register?
+          (reg.compiler-reg-assignment-lookup assignments 1)
+          cabi.compiler-reg-id-rsi))]))
+
+(define (compiler-reg-tail-dispatch-real-call-pins-ok?) : bool
+  (match (reg.compiler-reg-plan-function-scalar
+    (compiler-reg-tail-dispatch-real-call-function))
+    [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+      ;; Both params are live across a resuming call, so neither may keep a
+      ;; caller-saved incoming register.
+      (and
+        (not
+          (reg.compiler-reg-location-register?
+            (reg.compiler-reg-assignment-lookup assignments 0)
+            cabi.compiler-reg-id-rdi))
+        (not
+          (reg.compiler-reg-location-register?
+            (reg.compiler-reg-assignment-lookup assignments 1)
+            cabi.compiler-reg-id-rsi)))]))
+
+(define (compiler-reg-tail-dispatch-mixed-pins-ok?) : bool
+  (match (reg.compiler-reg-plan-function-scalar
+    (compiler-reg-tail-dispatch-mixed-function))
+    [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
+      (and
+        ;; `k` is dead across the real call (it lives in the hole between its
+        ;; entry and tail-arm segments) -> keeps %rdi.
+        (reg.compiler-reg-location-register?
+          (reg.compiler-reg-assignment-lookup assignments 0)
+          cabi.compiler-reg-id-rdi)
+        ;; `v` really is live across the real call -> loses %rsi.
+        (not
+          (reg.compiler-reg-location-register?
+            (reg.compiler-reg-assignment-lookup assignments 1)
+            cabi.compiler-reg-id-rsi)))]))
+
+(define (compiler-reg-tail-call-clobber-ok?) : bool
+  (and
+    (compiler-reg-tail-call-kind-points-ok?)
+    (compiler-reg-segment-span-clobber-ok?)
+    (compiler-reg-tail-dispatch-pins-ok?)
+    (compiler-reg-tail-dispatch-real-call-pins-ok?)
+    (compiler-reg-tail-dispatch-mixed-pins-ok?)))
+
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (reg.compiler-reg-plan-function (compiler-reg-vector-home-function))
     [(reg.CompilerRegPlan.Plan vector-assignments _ _ _ _ _)
@@ -11383,6 +11686,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-hole-aware-register-reuse-ok?"
       (compiler-reg-hole-aware-register-reuse-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-tail-call-clobber-ok?"
+      (compiler-reg-tail-call-clobber-ok?))
     true))
 
 (define (compiler-regalloc-scalar-self-test?) : bool

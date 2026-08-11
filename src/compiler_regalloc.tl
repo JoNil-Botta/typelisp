@@ -5073,18 +5073,37 @@
     (if (and (>= var 0) (< var (array-length starts)))
       (if (< (array-ref starts var) 0)
         false
-        (compiler-reg-param-pin-set-in-range-words?
-          clobber-points
-          (array-ref starts var)
-          (array-ref ends var)
-          0))
+        ;; Hull first: it is the cheap superset test, and a param whose hull is
+        ;; clobber-free needs no segment walk at all. Only when the hull says
+        ;; "spanned" is it worth asking whether the point is actually inside a
+        ;; live segment or in a HOLE -- the dispatcher case, where a param used
+        ;; by one arm has the sibling arms' calls inside its hull and inside no
+        ;; segment of its own. Inclusive hull start: a param is defined by the
+        ;; prologue, before point 0, so a clobber AT its interval start is
+        ;; already inside its live range (see the GAP3c note above).
+        (and
+          (compiler-reg-param-pin-set-in-range-words?
+            clobber-points
+            (array-ref starts var)
+            (array-ref ends var)
+            0)
+          (if (compiler-reg-interval-index-var-has-segments? interval-index var)
+            (compiler-reg-segments-span-clobber?
+              (array-ref (struct-get interval-index segments) var)
+              clobber-points
+              (array-ref starts var)
+              true)
+            true)))
       true)))
 
 ;; GAP3c: per-interval pin clobber gate. A param may keep its incoming ABI
 ;; register iff no clobber/pressure point falls inside the pinned interval
 ;; (inclusive-start spanning test above), by the greedy's kind point sets:
-;;   * kind 0 (call-like: call/tailcall/syscall/cpuid/xgetbv) clobbers every
-;;     caller-saved register: bans any spanned pin;
+;;   * kind 6 (call-like MINUS the tail-call family: call/syscall/cpuid/xgetbv)
+;;     clobbers every caller-saved register and control RESUMES afterwards:
+;;     bans any spanned pin. Tail calls are deliberately absent -- control never
+;;     returns past one, so no pin has to survive it (compiler-reg-clobber-
+;;     instr-kind? kind 6);
 ;;   * kind 1 (div/mod, constant divisors included): bans any spanned pin.
 ;;     The register hazard alone is only %rax:%rdx, but the canned divmod
 ;;     expansion is SCRATCH-HUNGRY (magic reciprocal + rounding temps), and a
@@ -5360,7 +5379,17 @@
               true
               (if ignore-single-cold-call?
                 (live.compiler-live-set-empty)
-                (compiler-reg-clobber-kind-points type-segment-bases func 0))
+                ;; Kind 6, not kind 0: the tail-call family is excluded. An ABI
+                ;; pin asks "may this param stay in its incoming argument
+                ;; register for its whole interval?", i.e. must the value
+                ;; SURVIVE every point inside that interval. No value survives a
+                ;; tail call (control never returns), so a tail call inside the
+                ;; hull never invalidates a pin -- see kind 6 in
+                ;; compiler-reg-clobber-instr-kind?. The marshalling that
+                ;; overwrites the pinned register happens on the arm that jumps
+                ;; out, and it reads the pin before writing it (the sound arg
+                ;; parallel move).
+                (compiler-reg-clobber-kind-points type-segment-bases func 6))
               (compiler-reg-clobber-kind-points type-segment-bases func 1)
               (compiler-reg-clobber-kind-points type-segment-bases func 2)
               (cfg
@@ -5399,7 +5428,17 @@
               true
               (if ignore-single-cold-call?
                 (live.compiler-live-set-empty)
-                (compiler-reg-clobber-kind-points type-segment-bases func 0))
+                ;; Kind 6, not kind 0: the tail-call family is excluded. An ABI
+                ;; pin asks "may this param stay in its incoming argument
+                ;; register for its whole interval?", i.e. must the value
+                ;; SURVIVE every point inside that interval. No value survives a
+                ;; tail call (control never returns), so a tail call inside the
+                ;; hull never invalidates a pin -- see kind 6 in
+                ;; compiler-reg-clobber-instr-kind?. The marshalling that
+                ;; overwrites the pinned register happens on the arm that jumps
+                ;; out, and it reads the pin before writing it (the sound arg
+                ;; parallel move).
+                (compiler-reg-clobber-kind-points type-segment-bases func 6))
               (compiler-reg-clobber-kind-points type-segment-bases func 1)
               (compiler-reg-clobber-kind-points type-segment-bases func 2)
               (cfg
@@ -9095,6 +9134,23 @@
       (compiler-reg-backend-clobber-binop? op)]
     [_ false]))
 
+;; The tail-call family, exhaustively: the two IR instructions after which
+;; control NEVER returns to this function. `TailCall` (direct) and
+;; `TailCallIndirect` (computed callee) are the whole set -- there is no
+;; tail C-ABI form (CallCAbiStoreResult / CallIndirectCAbiStoreResult store a
+;; returned aggregate into a local buffer and are therefore resuming calls by
+;; construction), and `SpmdCall` likewise returns. Both carry
+;; CompilerIrEffect.ControlFlow in the IR effect model
+;; (compiler-ir-instr-effect) and both are block TERMINATORS: the backend
+;; emits them as "restore callee-saved regs; leave; jmp target"
+;; (compiler-backend-tail-jump-tail), and the cold-call region builder already
+;; classifies them as control flow (compiler-reg-call-region-control-flow-instr?).
+(define (compiler-reg-tail-call-instr? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) true]
+    [_ false]))
+
 ;; Clobber-POINT predicate for the register-search restriction + same-value
 ;; coalescing exclusion. Identical to caller-clobber-instr? EXCEPT bounds checks
 ;; are NOT clobber points: a bounds check's only register-clobbering effect is the
@@ -9211,6 +9267,7 @@
 ;; greedy forbid only the registers an op actually clobbers.
 ;;   kind 0 = call-like (all caller-saved)   kind 1 = idiv
 ;;   kind 2 = shift                          kind 4 = loop-split rdx use
+;;   kind 6 = call-like MINUS the tail-call family (see kind 6 below)
 (define (compiler-reg-clobber-binop-div? [op : ir.CompilerIrBinOp]) : bool
   (match op
     [(ir.CompilerIrBinOp.Div) true]
@@ -9311,6 +9368,44 @@
       (cond
         [(= kind 0)
           (compiler-reg-backend-clobber-point-instr? type-segment-bases instr)]
+        ;; kind 6 = kind 0 MINUS the tail-call family. A "clobber point" exists
+        ;; to force a value that must SURVIVE an instruction into a register the
+        ;; instruction preserves. After a tail call there is no survival to
+        ;; model: control never returns to this function -- the callee returns
+        ;; directly to OUR caller (the backend emits restore-CSRs + `leave` +
+        ;; `jmp`, compiler-backend-tail-jump-tail), and the instruction is a
+        ;; block terminator with no successor block, so NOTHING is live-out of
+        ;; it. The values live INTO a tail call are exactly its arguments, and
+        ;; they die AT it: the parallel-move marshalling into the argument
+        ;; registers runs BEFORE the jmp and reads every source before writing
+        ;; any destination (compiler-backend-emit-arg-move-list, which breaks
+        ;; true cycles with a scavenged temp), so it needs no callee-saved home
+        ;; either. This mirrors the BoundsCheck/Pack split above and the
+        ;; abort-interlock precedent: the clobber is real but unobservable,
+        ;; because no reachable instruction reads the clobbered register.
+        ;;
+        ;; Kind 0's coarse hull test (compiler-reg-greedy-var-spans-clobber? /
+        ;; compiler-reg-param-pin-spans-clobber?) is what makes this matter. In
+        ;; a multi-arm tail-call DISPATCHER -- a switch over N arms, each arm
+        ;; permuting the same parameters into argument registers and jumping out
+        ;; -- a parameter used only by arm 3 has an interval hull covering every
+        ;; sibling arm, so it "spans" their tail calls in linear point space
+        ;; even though no CFG path carries it across one. Under kind 0 the ABI
+        ;; pin is revoked and the greedy's csr-only rule homes it in
+        ;; %r12-%r15/%rbx/%rbp, and the prologue then pays 2n callee-saved
+        ;; push/mov pairs on every invocation of a function that contains no
+        ;; real call at all.
+        ;;
+        ;; Kind 6 is used by the ABI-pin gate and the scalar greedy only. The
+        ;; conservative kind-0 set stays in force for the consumers that model
+        ;; something OTHER than survival across the point (call-region
+        ;; boundaries, the leaf CSR-split gate, the caller-saved rescue), and
+        ;; compiler-reg-backend-caller-clobber-instr? -- remat's use-site
+        ;; conservatism and the Win64 ABI predicate -- still counts tail calls.
+        [(= kind 6)
+          (and
+            (compiler-reg-backend-clobber-point-instr? type-segment-bases instr)
+            (not (compiler-reg-tail-call-instr? instr)))]
         ;; kind 5 = vector lowering that may still use XMM0/XMM1 family
         ;; spellings internally. The scalar allocator treats only those two
         ;; physical homes as clobbered; the vector pool remains XMM2+.
@@ -9540,6 +9635,80 @@
             end
             first-word
             last-word))))))
+
+;; SEGMENT-AWARE clobber-span test.
+;;
+;; The coarse hull test above answers "does a clobber point lie between this
+;; value's first and last reference?". That is not the question the callers ask;
+;; they ask "must this value SURVIVE a clobber point?", and the hull over-answers
+;; whenever the value's live range has a HOLE. The canonical producer of holes is
+;; a multi-arm dispatch: a value referenced in the entry block and again in arm 3
+;; is dead in arms 0..2 and 4..n, yet its hull covers every one of them, so a
+;; real call in a SIBLING arm pins it into a callee-saved home and the prologue
+;; pays a push/pop for a register the value never needed.
+;;
+;; A hole is genuine deadness, not a gap in the model. If a value were live at a
+;; point between two of its segments, dataflow liveness would have marked it live
+;; there and the segment builder would have covered the point: the builder notes
+;; every def, every use, and every live-AFTER bit of every instruction
+;; (compiler-reg-extend-segment-touch! / the live-after bridge). So a point
+;; outside all of a value's segments is a point on no path that carries the value
+;; forward -- reaching it means the value is dead, and a clobber there destroys
+;; nothing. This is the same LLVM LiveInterval property the allocator ALREADY
+;; trusts for interference: compiler-reg-active-register-conflicts? lets two
+;; values share one physical register exactly when their segments do not overlap,
+;; on the merged-root index where "every segment hole is genuine deadness". If
+;; holes were unsound here they would already be unsound there.
+;;
+;; Boundary conventions, per segment [s, e]:
+;;   * `e` is exclusive, exactly as in the hull test. A segment ends at the
+;;     value's last reference in that run (a value live-OUT of an instruction is
+;;     in live-after and so keeps the segment open), so a clobber AT `e` is the
+;;     instruction that consumes the value, which reads its operands before the
+;;     clobber lands.
+;;   * `s` is INCLUSIVE for every segment except the one starting at the hull
+;;     start, which follows the caller's convention (`inclusive-hull-start?`).
+;;     The hull start is the value's definition -- a call result born AT a call
+;;     is not clobbered by it -- but a LATER segment opens where the value flows
+;;     IN from a predecessor block, and a clobber at that point would destroy a
+;;     value that is already live. (Parameters pass `true`: their home is written
+;;     by the prologue, before point 0.)
+;;
+;; Both callers gate this walk behind their existing hull test. Every segment
+;; lies inside the hull and every segment's accepted range lies inside the hull's
+;; accepted range, so "no clobber in the hull" implies "no clobber in any
+;; segment": the guard is exact, and a function without holes-that-matter pays
+;; exactly what it paid before.
+(define (compiler-reg-segments-span-clobber?
+  [segments : CompilerRegIntervalSeq]
+  [clobber-points : live.CompilerLiveI64Set]
+  [hull-start : i64]
+  [inclusive-hull-start? : bool]) : bool
+  (let
+    [count : i64 (compiler-reg-interval-seq-count segments)]
+    [index : i64 0]
+    [hit : bool false]
+    (begin
+      (while (and (< index count) (not hit))
+        (begin
+          (let
+            [segment : CompilerRegInterval
+              (compiler-reg-interval-seq-ref segments index)]
+            [segment-start : i64 (struct-get segment start)]
+            ;; compiler-reg-call-set-in-range? accepts `start < c < end`; passing
+            ;; `s - 1` turns that into the inclusive-start `s <= c < e`.
+            [low : i64
+              (if (and (= segment-start hull-start) (not inclusive-hull-start?))
+                segment-start
+                (- segment-start 1))]
+            (if (compiler-reg-call-set-in-range?
+              clobber-points
+              low
+              (struct-get segment end))
+              (set! hit true)
+              unit))
+          (set! index (+ index 1))))
+      hit)))
 
 (define (compiler-reg-direct-call-points-seq
   [instrs : ir.CompilerIrInstrSeq]
@@ -21081,10 +21250,22 @@
       ;; move this boundary.
       (cabi.compiler-abi-caller-saved-gp-register-count target-abi)]))
 
-;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
+;; Clobber-span test: must var's value SURVIVE any clobber-point?
 ;; (The clobber-span half of the old per-register zero-call gate, sans the
 ;; conflict check which the LiveIntervalUnion test already covers.)
 ;; Out-of-range -> conservative spanning (callee-saved only).
+;;
+;; The coarse [start,end] hull runs first: it is one masked word test and it is
+;; an exact superset of the segment answer, so a value with no clobber in its
+;; hull is decided without touching the segment table -- byte-identical work for
+;; every value the hull already cleared. A value the HULL rejects then gets the
+;; precise question: is the clobber inside one of its live SEGMENTS, or in a
+;; HOLE? A hole is genuine deadness (see compiler-reg-segments-span-clobber?),
+;; and pinning a value into a callee-saved home for a call it is provably dead
+;; across is what makes a multi-arm dispatcher save and restore registers it
+;; never needed. Indices without segment data (the hull-only
+;; compiler-reg-interval-index-build variant the SIMD/AVX plan uses) keep the
+;; coarse answer, so those paths are unchanged.
 (define (compiler-reg-greedy-var-spans-clobber?
   [interval-index : CompilerRegIntervalIndex]
   [clobber-points : live.CompilerLiveI64Set]
@@ -21093,10 +21274,18 @@
     [starts : (__tl_dyn-array i64) (struct-get interval-index starts)]
     [ends : (__tl_dyn-array i64) (struct-get interval-index ends)]
     (if (and (>= var 0) (< var (array-length starts)))
-      (compiler-reg-call-set-in-range?
-        clobber-points
-        (array-ref starts var)
-        (array-ref ends var))
+      (and
+        (compiler-reg-call-set-in-range?
+          clobber-points
+          (array-ref starts var)
+          (array-ref ends var))
+        (if (compiler-reg-interval-index-var-has-segments? interval-index var)
+          (compiler-reg-segments-span-clobber?
+            (array-ref (struct-get interval-index segments) var)
+            clobber-points
+            (array-ref starts var)
+            false)
+          true))
       true)))
 
 (define (compiler-reg-low-xmm-forbidden-registers) : CompilerRegIdSeq
@@ -23290,10 +23479,24 @@
     ;; clobber points, and out of storage-identity variables. Unlike a copy class,
     ;; a different-value destructive chain must not reshape itself across any of
     ;; those physical-register boundaries.
+    ;;
+    ;; This binding is the scalar plan's call-clobber model: it feeds the
+    ;; destructive-tie and same-value coalescing exclusions, the coalesce-hull
+    ;; pin re-validation (compiler-reg-param-pins-demote!) and, as `call-points`
+    ;; below, the greedy's csr-only restriction. Every one of those asks the same
+    ;; SURVIVAL question, so it uses kind 6 -- call-like MINUS the tail-call
+    ;; family -- rather than kind 0. Nothing is live across a tail call: it is a
+    ;; block terminator after which control never returns here, so a value whose
+    ;; coarse interval hull merely covers a sibling arm's tail call keeps the
+    ;; caller-saved registers instead of being pinned into a callee-saved home
+    ;; the prologue must then push. The conservative kind-0 set remains in force
+    ;; where the question is NOT survival: call-region boundaries
+    ;; (compiler-reg-call-region-boundary-instr?), the leaf CSR-split gate, and
+    ;; the caller-saved rescue all still compute kind 0 for themselves.
     [clobber-points : live.CompilerLiveI64Set
       (if ignore-single-cold-call?
         (live.compiler-live-set-empty)
-        (compiler-reg-clobber-kind-points type-segment-bases func 0))]
+        (compiler-reg-clobber-kind-points type-segment-bases func 6))]
     ;; Per-register clobber point sets (15c): kind 1 = idiv (rax:rdx), kind 2 =
     ;; variable shift (rcx). Bound once here and reused both for the destructive
     ;; tie exclusion below and for the GAP3c pin demotion / greedy further down;
@@ -23334,8 +23537,9 @@
         storage-identity-vars)]
     [group-vars : live.CompilerLiveI64Set
       (compiler-reg-function-group-vars type-segment-bases func type-info)]
-    ;; Same-value overlap-coalescing exclusion points. This is the KIND-0
-    ;; (call-like: call/syscall/cpuid/xgetbv) point set, NOT the coarse merged
+    ;; Same-value overlap-coalescing exclusion points. This is the KIND-6
+    ;; (call-like minus tail calls: call/syscall/cpuid/xgetbv) point set, NOT the
+    ;; coarse merged
     ;; caller-clobber set. A value that spans only a div/mod or shift is safely
     ;; handled by the greedy's per-register forbidden-regs (div -> {rax,rdx},
     ;; shift -> {rcx}): the coalesced root inherits the union interval and the
@@ -23347,7 +23551,13 @@
     ;; XMM-family ABI volatility is narrower than the GP clobber model above.
     ;; CpuId/Xgetbv/syscall have fixed GP effects but preserve XMM registers, so
     ;; only real call instructions restrict float/vector candidates to the ABI
-    ;; nonvolatile suffix.
+    ;; nonvolatile suffix. compiler-reg-call-points deliberately KEEPS the
+    ;; tail-call family: the same never-returns argument would license dropping
+    ;; them here too, but over-approximating a clobber set is always sound, this
+    ;; set is also the SIMD/AVX mask ineligibility input
+    ;; (compiler-reg-ineligible-vars-simd), and no measured row depends on
+    ;; XMM-homed values crossing a tail-call hull -- so it stays conservative and
+    ;; the vector paths stay byte-identical.
     [xmm-call-points : live.CompilerLiveI64Set (compiler-reg-call-points func)]
     ;; Compiler-emitted vector lowering still contains a bounded set of
     ;; XMM0/XMM1-family temporaries. Make that ownership explicit to the scalar
@@ -23657,7 +23867,8 @@
         early-scratch-count
         early-scratch-weights)]
     ;; The greedy's per-register clobber restriction (15c) reuses the kind
-    ;; point sets bound above: `clobber-points` IS the kind-0 set, and
+    ;; point sets bound above: `clobber-points` IS the kind-6 set (call-like
+    ;; minus the tail-call family; see its binding), and
     ;; div-points/shift-points let the greedy forbid only the registers each op
     ;; actually clobbers, so a div/shift-spanning value keeps the caller-saved
     ;; regs the op leaves alone instead of being forced callee-saved. On the

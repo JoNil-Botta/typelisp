@@ -11407,9 +11407,19 @@
 (defenum OptSsaFacts
   (Facts opt_i64_i64_map.Map opt_i64_i64_map.Map OptSsaVarTypes))
 
-(defenum OptSsaVarBlocks
-  (Nil)
-  (Cons i64 OptLabelSet (__tl_dyn-array bool) (Box OptSsaVarBlocks)))
+(defstruct OptSsaVarBlockEntry
+  (labels OptLabelSet)
+  (members (__tl_dyn-array bool)))
+
+;; Function-local vreg ids are dense. Zero in `by-var` is explicit absence;
+;; present values are one-based indexes into the compact entry prefix. Both
+;; arrays are sized from the function frame/type inventory in production, so
+;; lookup and updates are direct without generating another collection module
+;; or allocating the expensive label/member payload for absent vars (#5731).
+(defstruct OptSsaVarBlocks
+  (by-var (__tl_dyn-array i64))
+  (entries (__tl_dyn-array OptSsaVarBlockEntry))
+  (entry-count i64))
 
 (defenum OptSsaRenameEnv
   (Nil)
@@ -11842,44 +11852,76 @@
           [(option_i64.None) unit])
         (opt-ssa-label-mark-members! index members (opt-label-tail labels)))]))
 
+(define (opt-ssa-var-blocks-with-capacity
+  [var-capacity : i64]
+  [entry-capacity : i64]) : OptSsaVarBlocks
+  (OptSsaVarBlocks
+    (array.make-array i64 var-capacity)
+    (array.make-array OptSsaVarBlockEntry entry-capacity)
+    0))
+
 (define (opt-ssa-var-blocks-add
   [index : OptCfgIndex]
-  [blocks : OptSsaVarBlocks]
+  [blocks : OptSsaVarBlocks (:consume)]
   [var : i64]
   [label : i64]) : OptSsaVarBlocks
-  (match blocks
-    [(OptSsaVarBlocks.Nil)
-      (let
-        [members : (__tl_dyn-array bool) (opt-ssa-label-members-new index)]
-        [labels : OptLabelSet
-          (opt-ssa-label-add-with-members index members (OptLabelSet.Nil) label)]
-        (OptSsaVarBlocks.Cons var labels members (box (OptSsaVarBlocks.Nil))))]
-    [(OptSsaVarBlocks.Cons id labels members rest)
-      (if (= id var)
-        (OptSsaVarBlocks.Cons
-          id
-          (opt-ssa-label-add-with-members index members labels label)
-          members
-          rest)
-        (OptSsaVarBlocks.Cons
-          id
-          labels
-          members
-          (box (opt-ssa-var-blocks-add index (box-get rest) var label))))]))
+  (if (or (< var 0) (>= var (array-length (struct-get blocks by-var))))
+    (string.tl_oob_abort)
+    (let
+      [by-var : (__tl_dyn-array i64) (struct-get blocks by-var)]
+      [entries : (__tl_dyn-array OptSsaVarBlockEntry)
+        (struct-get blocks entries)]
+      [entry-count : i64 (struct-get blocks entry-count)]
+      [slot : i64 (clone (array-ref by-var var))]
+      (if (> slot 0)
+        (let
+          [entry-index : i64 (- slot 1)]
+          [entry : OptSsaVarBlockEntry (clone (array-ref entries entry-index))]
+          [members : (__tl_dyn-array bool) (struct-get entry members)]
+          [labels : OptLabelSet (struct-get entry labels)]
+          (begin
+            (array-set!
+              entries
+              entry-index
+              (OptSsaVarBlockEntry
+                (opt-ssa-label-add-with-members index members labels label)
+                members))
+            (OptSsaVarBlocks by-var entries entry-count)))
+        (if (>= entry-count (array-length entries))
+          (string.tl_oob_abort)
+          (let
+            [members : (__tl_dyn-array bool) (opt-ssa-label-members-new index)]
+            [labels : OptLabelSet
+              (opt-ssa-label-add-with-members
+                index
+                members
+                (OptLabelSet.Nil)
+                label)]
+            (begin
+              (array-set!
+                entries
+                entry-count
+                (OptSsaVarBlockEntry labels members))
+              (array-set! by-var var (+ entry-count 1))
+              (OptSsaVarBlocks by-var entries (+ entry-count 1)))))))))
 
 (define (opt-ssa-var-blocks-lookup [blocks : OptSsaVarBlocks] [var : i64]) : OptLabelSet
-  (match blocks
-    [(OptSsaVarBlocks.Nil) (OptLabelSet.Nil)]
-    [(OptSsaVarBlocks.Cons id labels _ rest)
-      (if (= id var)
-        labels
-        (opt-ssa-var-blocks-lookup (box-get rest) var))]))
+  (let
+    [by-var : (__tl_dyn-array i64) (struct-get blocks by-var)]
+    [entries : (__tl_dyn-array OptSsaVarBlockEntry) (struct-get blocks entries)]
+    (if (or (< var 0) (>= var (array-length by-var)))
+      (OptLabelSet.Nil)
+      (let
+        [slot : i64 (array-ref by-var var)]
+        (if (> slot 0)
+          (struct-get (array-ref entries (- slot 1)) labels)
+          (OptLabelSet.Nil))))))
 
 (define (opt-ssa-def-blocks-add-param
   [index : OptCfgIndex]
   [facts : OptSsaFacts]
   [label : i64]
-  [defs : OptSsaVarBlocks]
+  [defs : OptSsaVarBlocks (:consume)]
   [param : ir.CompilerIrParam]) : OptSsaVarBlocks
   (match param
     [(ir.CompilerIrParam.Param _ _ var)
@@ -11891,7 +11933,7 @@
   [index : OptCfgIndex]
   [facts : OptSsaFacts]
   [label : i64]
-  [defs : OptSsaVarBlocks]
+  [defs : OptSsaVarBlocks (:consume)]
   [params : ir.CompilerIrParamList]) : OptSsaVarBlocks
   (match (ir.compiler-ir-param-list-force-cons params)
     [(ir.CompilerIrParamList.Nil) defs]
@@ -11914,7 +11956,7 @@
   [index : OptCfgIndex]
   [facts : OptSsaFacts]
   [label : i64]
-  [defs : OptSsaVarBlocks]
+  [defs : OptSsaVarBlocks (:consume)]
   [instr : ir.CompilerIrInstr]) : OptSsaVarBlocks
   (match (opt-instr-def-var instr)
     [(option_i64.Some var)
@@ -11929,7 +11971,7 @@
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [instr-index : i64]
-  [defs : OptSsaVarBlocks]) : OptSsaVarBlocks
+  [defs : OptSsaVarBlocks (:consume)]) : OptSsaVarBlocks
   (if (>= instr-index (ir.compiler-ir-instr-seq-count instrs))
     defs
     (opt-ssa-def-blocks-add-instr-seq-from
@@ -11949,7 +11991,7 @@
   [cfg-index : OptCfgIndex]
   [facts : OptSsaFacts]
   [blocks : ir.CompilerIrBlockList]
-  [defs : OptSsaVarBlocks]) : OptSsaVarBlocks
+  [defs : OptSsaVarBlocks (:consume)]) : OptSsaVarBlocks
   (match blocks
     [(ir.CompilerIrBlockList.Nil) defs]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -11977,7 +12019,9 @@
   [index : OptCfgIndex]
   [facts : OptSsaFacts]
   [params : ir.CompilerIrParamList]
-  [blocks : ir.CompilerIrBlockList]) : OptSsaVarBlocks
+  [blocks : ir.CompilerIrBlockList]
+  [var-capacity : i64]
+  [entry-capacity : i64]) : OptSsaVarBlocks
   (opt-ssa-def-blocks-add-blocks
     index
     facts
@@ -11986,7 +12030,7 @@
       index
       facts
       (opt-cfg-entry-label blocks)
-      (OptSsaVarBlocks.Nil)
+      (opt-ssa-var-blocks-with-capacity var-capacity entry-capacity)
       params)))
 
 (define (opt-ssa-phi-add-site
@@ -12149,7 +12193,13 @@
           facts
           context
           blocks
-          (opt-ssa-def-blocks-from-function index facts params blocks)
+          (opt-ssa-def-blocks-from-function
+            index
+            facts
+            params
+            blocks
+            frame
+            (opt-ssa-var-types-count types))
           types
           (OptSsaPhiInsertState.State
             (opt-ssa-phi-sites-new)

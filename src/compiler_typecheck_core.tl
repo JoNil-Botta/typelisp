@@ -99097,10 +99097,51 @@
         [(ResultMacroExpr.Ok ninner)
           (ResultMacroExpr.Ok (ast.ast-expr-array-data ninner))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.PtrNullCheck ptr-box)
+      (match (macro-expand-node ctx env decls depth ptr-box)
+        [(ResultMacroExpr.Ok nptr)
+          (ResultMacroExpr.Ok (ast.ast-expr-ptr-null-check nptr))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.PtrAddrOf place-box)
       (match (macro-expand-node ctx env decls depth place-box)
         [(ResultMacroExpr.Ok nplace)
           (ResultMacroExpr.Ok (ast.ast-expr-ptr-addr-of-id nplace))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.PtrRead ptr-box)
+      (match (macro-expand-node ctx env decls depth ptr-box)
+        [(ResultMacroExpr.Ok nptr)
+          (ResultMacroExpr.Ok (ast.ast-expr-ptr-read nptr))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.PtrWrite ptr-box value-box)
+      (match (macro-expand-node ctx env decls depth ptr-box)
+        [(ResultMacroExpr.Ok nptr)
+          (match (macro-expand-node ctx env decls depth value-box)
+            [(ResultMacroExpr.Ok nvalue)
+              (ResultMacroExpr.Ok (ast.ast-expr-ptr-write nptr nvalue))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.PtrOffset ptr-box offset-box)
+      (match (macro-expand-node ctx env decls depth ptr-box)
+        [(ResultMacroExpr.Ok nptr)
+          (match (macro-expand-node ctx env decls depth offset-box)
+            [(ResultMacroExpr.Ok noffset)
+              (ResultMacroExpr.Ok (ast.ast-expr-ptr-offset nptr noffset))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.PtrCast ptr-box ty-id)
+      (match (macro-expand-node ctx env decls depth ptr-box)
+        [(ResultMacroExpr.Ok nptr)
+          (ResultMacroExpr.Ok (ast.ast-expr-ptr-cast-id nptr ty-id))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.PtrToInt ptr-box)
+      (match (macro-expand-node ctx env decls depth ptr-box)
+        [(ResultMacroExpr.Ok nptr)
+          (ResultMacroExpr.Ok (ast.ast-expr-ptr-to-int nptr))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.IntToPtr value-box ty-id)
+      (match (macro-expand-node ctx env decls depth value-box)
+        [(ResultMacroExpr.Ok nvalue)
+          (ResultMacroExpr.Ok (ast.ast-expr-int-to-ptr-id nvalue ty-id))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.BinaryData bytes)
       (ResultMacroExpr.Ok (ast.ast-node-push (ast.AstExpr.BinaryData bytes)))]

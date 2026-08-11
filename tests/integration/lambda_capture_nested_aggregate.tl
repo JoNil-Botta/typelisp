@@ -1,6 +1,5 @@
-; Capturing nested aggregate fields in closure environments (#584).
-; Returned closures read through copied nested handles after the creator frame
-; has returned. `main` yields 42 only if every case holds.
+; Capturing nested aggregate fields in local closure environments (#584).
+; `main` yields 42 only if every snapshot case holds.
 (import stdlib.array)
 
 ;; lint-allow: unused-import
@@ -10,60 +9,60 @@
   (id i64)
   (name String))
 
-(define (make-label-reader) : (-> i64)
+(define (case-struct-string) : bool
   (let
     [l : Label (Label 38 "abcd")]
-    (lambda () : i64
-      (+ (struct-get l id) (string.string-length (struct-get l name))))))
-
-(define (case-struct-string) : bool
-  (= ((make-label-reader)) 42))
+    [f : (-> i64)
+      (lambda () : i64
+        (+ (struct-get l id) (string.string-length (struct-get l name))))]
+    (= (f) 42)))
 
 (defstruct Bag
   (items (__tl_dyn-array i64)))
 
-(define (make-bag-reader) : (-> i64)
+(define (case-struct-dynarray) : bool
   (let
     [a : (__tl_dyn-array i64) (array.make-array i64 1)]
     (begin
       (array-set! a 0 42)
       (let
         [b : Bag (Bag a)]
-        (lambda () : i64
-          (array-ref (struct-get b items) 0))))))
-
-(define (case-struct-dynarray) : bool
-  (= ((make-bag-reader)) 42))
+        [f : (-> i64)
+          (lambda () : i64
+            (array-ref (struct-get b items) 0))]
+        (= (f) 42)))))
 
 (defenum Wrapped
   (WrappedLabel Label)
   (WrappedText String)
   (WrappedNumber i64))
 
-(define (make-wrapped-label-reader) : (-> i64)
+(define (case-wrapped-label) : bool
   (let
     [w : Wrapped (WrappedLabel (Label 39 "abc"))]
-    (lambda () : i64
-      (match w
-        [(WrappedLabel l)
-          (+ (struct-get l id) (string.string-length (struct-get l name)))]
-        [(WrappedText s) (string.string-length s)]
-        [(WrappedNumber n) n]))))
+    [f : (-> i64)
+      (lambda () : i64
+        (match w
+          [(WrappedLabel l)
+            (+ (struct-get l id) (string.string-length (struct-get l name)))]
+          [(WrappedText s) (string.string-length s)]
+          [(WrappedNumber n) n]))]
+    (= (f) 42)))
 
-(define (make-wrapped-text-reader) : (-> i64)
+(define (case-wrapped-text) : bool
   (let
     [w : Wrapped (WrappedText "abcdefghijklmnopqrstuvwxyzabcdefghijklmnop")]
-    (lambda () : i64
-      (match w
-        [(WrappedLabel l)
-          (+ (struct-get l id) (string.string-length (struct-get l name)))]
-        [(WrappedText s) (string.string-length s)]
-        [(WrappedNumber n) n]))))
+    [f : (-> i64)
+      (lambda () : i64
+        (match w
+          [(WrappedLabel l)
+            (+ (struct-get l id) (string.string-length (struct-get l name)))]
+          [(WrappedText s) (string.string-length s)]
+          [(WrappedNumber n) n]))]
+    (= (f) 42)))
 
 (define (case-enum-nested) : bool
-  (if (= ((make-wrapped-label-reader)) 42)
-    (= ((make-wrapped-text-reader)) 42)
-    false))
+  (and (case-wrapped-label) (case-wrapped-text)))
 
 (define (main) : i64
   (begin

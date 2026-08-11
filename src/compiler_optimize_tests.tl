@@ -43556,6 +43556,102 @@
         summary)
       map)))
 
+;; Two header-typed descriptor params, so a `gep var0, k` load keys as
+;; `Field 0 k*8 I64 header?=true` -- the class an element-only callee provably
+;; cannot reach.
+(define (opt-load-cse-descriptor-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "xs"
+      (compiler_ast_types.AstType.DynArray 0)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "ys"
+        (compiler_ast_types.AstType.DynArray 0)
+        1)
+      (compiler_ir_types.CompilerIrParamList.Nil))))
+
+;; Descriptor-field load, a call, then the same descriptor-field load. Only the
+;; callee's summary decides whether the second load survives.
+(define (opt-load-cse-descriptor-call-instrs [name : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          name
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var 1))
+          (compiler_ast_types.AstType.Unit))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Gep
+            5
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Load
+              6
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstrList.Nil)))))))
+
+;; The other side of the layer split: an ELEMENT load (through the descriptor's
+;; data slot) must NOT survive an element-only callee, because that is exactly
+;; the storage such a callee writes.
+(define (opt-load-cse-element-call-instrs [name : i64]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Load
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Gep
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Load
+            5
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Call
+              6
+              name
+              (compiler_ir_types.CompilerIrCallArgs.One
+                (compiler_ir_types.CompilerIrValue.Var 1))
+              (compiler_ast_types.AstType.Unit))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Gep
+                7
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 2)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Load
+                  8
+                  (compiler_ir_types.CompilerIrValue.Var 7)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstrList.Nil)))))))))
+
 (define (opt-call-memory-test-call-instrs
   [name : i64]
   [arg : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstrList
@@ -43738,6 +43834,36 @@
         (opt-call-memory-test-call-instrs
           call-touch
           (compiler_ir_types.CompilerIrValue.Var 1)))]
+    ;; An element-only callee keeps the DESCRIPTOR layer alive across the call
+    ;; (the header-typed Field entry) but not the ELEMENT layer it writes.
+    [call-element-only : opt_i64_i64_map.Map
+      (opt-call-memory-test-map
+        call-touch
+        (compiler_optimize.opt-call-memory-element-bit))]
+    [call-descriptor-element : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-descriptor-params)
+        call-element-only
+        (opt-load-cse-descriptor-call-instrs call-touch))]
+    [call-descriptor-unknown : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-descriptor-params)
+        (opt-call-memory-test-map
+          call-touch
+          (compiler_optimize.opt-call-memory-unknown-bit))
+        (opt-load-cse-descriptor-call-instrs call-touch))]
+    [call-descriptor-global : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-descriptor-params)
+        (opt-call-memory-test-map
+          call-touch
+          (compiler_optimize.opt-call-memory-global-bit))
+        (opt-load-cse-descriptor-call-instrs call-touch))]
+    [call-element-layer : compiler_ir_types.CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-descriptor-params)
+        call-element-only
+        (opt-load-cse-element-call-instrs call-touch))]
     [summary-wrapper : i64 (opt-test-symbol "call_memory_wrapper")]
     [summary-leaf : i64 (opt-test-symbol "call_memory_leaf")]
     [summary-global : i64 (opt-test-symbol "call_memory_global_writer")]
@@ -44066,6 +44192,22 @@
       [(not (= (opt-count-mov-dst-instrs call-same-root 5) 0)) 63]
       [(not (= (opt-count-load-instrs call-global) 2)) 64]
       [(not (= (opt-count-load-instrs call-unknown) 2)) 65]
+      ;; Element-only callee: the descriptor-field reload becomes a copy.
+      [(not (= (opt-count-load-instrs call-descriptor-element) 1)) 200]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src
+              call-descriptor-element
+              6
+              3
+              (compiler_ast_types.AstType.I64))
+            1))
+        201]
+      ;; Unknown and global-writing callees still clear the descriptor entry.
+      [(not (= (opt-count-load-instrs call-descriptor-unknown) 2)) 202]
+      [(not (= (opt-count-load-instrs call-descriptor-global) 2)) 203]
+      ;; ...and an element load is exactly what an element-only callee writes.
+      [(not (= (opt-count-load-instrs call-element-layer) 3)) 204]
       [(not (opt-call-memory-summary-is? call-summaries summary-leaf 1)) 66]
       [(not (opt-call-memory-summary-is? call-summaries summary-wrapper 2)) 67]
       [(not

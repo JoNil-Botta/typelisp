@@ -36,13 +36,13 @@ make_array_len_ok.2:
   %21 = gep %20, 0 : i64
   store_ptr %21, %3 : i64
   %22 = gep %0, 1 : i64
-  %23 = load %22 : i64
+  %23 = mov %2 : i64
   %24 = add %3, %23 : i64
   return %24
 }
 
 after gvn @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc
-function @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc(values=%0:(Array i64)) -> i64 vars 27 {
+function @optimizer_load_fresh_alloc.tl::load-across-fresh-alloc(values=%0:(Array i64)) -> i64 vars 26 {
 entry:
   %25 = gep %0, 1 : i64
   %2 = load %25 : i64
@@ -61,9 +61,7 @@ make_array_len_ok.2:
   store_ptr %13, 4 : i64
   %21 = gep %9, 0 : i64
   store_ptr %21, %2 : i64
-  %26 = gep %0, 1 : i64
-  %23 = mov %2 : i64
-  %24 = add %2, %23 : i64
+  %24 = add %2, %2 : i64
   return %24
 }
 

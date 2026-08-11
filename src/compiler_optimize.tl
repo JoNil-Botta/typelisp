@@ -78179,6 +78179,12 @@
             (OptCallMemoryCandidate.Unresolved)
             (match (ir.compiler-ir-direct-call-effect-id name)
               [(ir.CompilerIrEffect.MemoryRead) candidate]
+              ;; The runtime control-flow family is the nonreturning abort set;
+              ;; it writes no memory the caller can observe afterwards because
+              ;; there is no afterwards. The non-call arm below already gives
+              ;; ControlFlow this verdict, so a callee whose only "effect" is a
+              ;; bounds/divide abort no longer summarizes as unknown.
+              [(ir.CompilerIrEffect.ControlFlow) candidate]
               [_
                 (OptCallMemoryCandidate.Known
                   (opt-call-memory-summary-add-unknown summary))]))])]))
@@ -86561,6 +86567,40 @@
             summary
             (+ index 1))]))))
 
+;; An ELEMENT-ONLY callee's writes, as a table filter.
+;;
+;; The element bit means every write the callee performs (transitively) goes
+;; through a pointer classified as `buffer`: an address INSIDE the heap storage
+;; some descriptor's data slot names (see opt-call-memory-element-bit). That is
+;; exactly the class this pass already calls `OptLoadStoreElement` for an
+;; in-function store, so the callee's whole write set is summarized by ONE
+;; element store at an unknown root -- and the location rule already written for
+;; that class (opt-load-entry-survives-store-location?) is the whole verdict:
+;; only `Field` entries on a header-typed base survive, because a descriptor
+;; handle addresses a descriptor allocation and a descriptor allocation is
+;; provably outside every data buffer. `opt-load-classify-store` makes the same
+;; call for a scaled element store, and opt-load-table-filter-descriptor-stable
+;; carries exactly these entries across a loop body proven to write only element
+;; memory; this is the per-callee form of the same layer split.
+;;
+;; NoRoot is the right store root: the element bit deliberately does not name
+;; WHICH caller object owns the written buffer, so no root-disjointness or
+;; fresh-allocation-epoch claim may be made on its behalf, and
+;; opt-alias-store-root-disjoint? proves nothing against NoRoot. Raw addresses,
+;; ScaledField element addresses, non-header Field entries and every
+;; GlobalField entry are dropped: each of those can name storage a data buffer
+;; covers (a global's own storage can be the buffer of a slice built over it).
+(define (opt-load-table-filter-element-call
+  [type-segment-bases : i64]
+  [table : OptLoadTable]
+  [facts : OptAliasFacts]) : OptLoadTable
+  (opt-load-table-filter-store
+    type-segment-bases
+    table
+    facts
+    (OptAliasRoot.NoRoot)
+    (OptLoadStoreElement)))
+
 (define (opt-load-cse-state-direct-call
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
@@ -86591,21 +86631,25 @@
             (& call-memory)
             (ir.compiler-ir-symbol-id name))
             [(opt_i64_i64_map.LookupFound summary)
-              ;; The element bit clears exactly like `unknown`. It names a
-              ;; write into a descriptor's element storage without naming
-              ;; WHICH caller object owns that descriptor, and the filter below
-              ;; is root-keyed -- it has no root to key on, so there is nothing
-              ;; weaker than an empty table to say. (This is the same verdict
-              ;; those callees got before the bit existed, so no cached load
-              ;; survives a call today that did not survive one before.)
+              ;; Unknown effects and global writes still empty the table: an
+              ;; unknown write can land anywhere, and a global write can rewrite
+              ;; a descriptor-valued global cell, which is the base a descriptor
+              ;; entry was keyed on. The element bit is the one verdict that
+              ;; names a LAYER instead of an object, so it filters to the
+              ;; descriptor layer rather than clearing (the parameter bits, if
+              ;; any, then filter that result by root as before).
               (if (or
-                (opt-call-memory-summary-element? summary)
                 (opt-call-memory-summary-global? summary)
                 (opt-call-memory-summary-unknown? summary))
                 (OptLoadTable.Nil)
                 (opt-load-table-filter-call-writes
                   type-segment-bases
-                  table
+                  (if (opt-call-memory-summary-element? summary)
+                    (opt-load-table-filter-element-call
+                      type-segment-bases
+                      table
+                      facts)
+                    table)
                   facts
                   args
                   summary
@@ -86613,6 +86657,13 @@
             [(opt_i64_i64_map.LookupMissing)
               (match (ir.compiler-ir-direct-call-effect-id name)
                 [(ir.CompilerIrEffect.MemoryRead) table]
+                ;; The runtime control-flow family is the nonreturning abort
+                ;; set (tl_abort_label / tl_oob_abort / tl_div_abort /
+                ;; tl_shift_abort). No instruction after such a call ever runs,
+                ;; so no cached load it could invalidate is ever consulted;
+                ;; opt-call-memory-candidate-instr already gives ControlFlow
+                ;; this verdict for the non-call instruction forms.
+                [(ir.CompilerIrEffect.ControlFlow) table]
                 [_ (OptLoadTable.Nil)])])]
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
@@ -87344,6 +87395,21 @@
 
 ;; Scan one instruction for loop-carry safety: calls and clear-alls are out,
 ;; stores must be element-based.
+;;
+;; A CALL is rejected even when the per-callee summary proves it writes no
+;; descriptor field (element-only or write-free), which
+;; opt-load-table-filter-element-call is happy to act on at an ordinary call
+;; site. Measurement is why. Carrying a descriptor entry across a loop back edge
+;; does not DELETE the loop body's load, it rewrites it to a copy of a var
+;; defined outside the loop -- and that copy's source stays live around the back
+;; edge, so register allocation cannot coalesce the copy away. LICM already
+;; hoists the un-rewritten load into the preheader, where it runs once per loop
+;; ENTRY; the rewrite trades that for one move per ITERATION. Measured on
+;; benchmarks/gvn_table (gvn-scan-ints, whose outer loop's only call is the
+;; element-only vector setter): descriptor-field loads fell 5,369,431 ->
+;; 2,684,716 Ir per round and the function still grew 80,342,627 -> 82,683,001,
+;; because the digit-scan inner loop gained `mov %r12,%r9` at 2,064,917
+;; executions in exchange for a preheader load at 1,275,750.
 (define (opt-load-gvn-loop-safe-instr?
   [hs : OptLoadHeaderSet]
   [blocks : ir.CompilerIrBlockList]

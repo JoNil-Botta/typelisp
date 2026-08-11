@@ -3692,6 +3692,12 @@
     "a bounds-carrying body stays out of line at the same nested-loop sites: weighted evidence admits only the cheap class"))
 
 (test
+  inline-depth-multiple-latches
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-depth-multiple-latches-ok?)
+    "multiple backedges to one loop header contribute one depth level"))
+
+(test
   inline-branch-chain-site
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-branch-chain-site-ok?)

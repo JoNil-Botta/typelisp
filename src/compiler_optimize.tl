@@ -64741,10 +64741,12 @@
 ;; compiler lowers, and where they disagree the estimate is only a weight: a
 ;; wrong answer misprices a candidate, it cannot make an inline unsound.
 ;;
-;; The array holds a difference sequence while the back edges are marked -- +1
-;; at each header, -1 one past each latch -- and a prefix sum turns it into the
-;; depth of every block in one further pass, so the whole estimate is linear in
-;; blocks plus edges.
+;; While edges are marked, each header slot holds one past its furthest latch.
+;; Coalescing by header is load-bearing: a reducible loop may have several
+;; latches (for example, two `continue` paths), but those edges describe one
+;; loop level rather than nested loops. A descending pass turns the coalesced
+;; ranges into a difference sequence, and a prefix sum then produces every
+;; block's depth. The whole estimate stays linear in blocks plus edges.
 (define opt-inline-census-depth-slots : (__tl_dyn-array i64)
   (array.make-array i64 64))
 (define opt-inline-census-depth-count : i64
@@ -64811,7 +64813,8 @@
 
 ;; One edge. Only a target at or before the source opens a loop; a forward edge
 ;; (including the fall-through this walk never has to ask about, which always
-;; goes to the next block) contributes nothing.
+;; goes to the next block) contributes nothing. Keep the furthest latch for a
+;; header so multiple backedges into one loop do not manufacture extra nesting.
 (define (opt-inline-census-depth-edge!
   [target : i64]
   [generation : i64]
@@ -64819,16 +64822,14 @@
   (let
     [id : i64 (opt-cfg-label-table-get target generation)]
     (if (and (>= id 0) (<= id source))
-      (begin
-        (array-set!
-          opt-inline-census-depth-slots
-          id
-          (+ (array-ref opt-inline-census-depth-slots id) 1))
-        (array-set!
-          opt-inline-census-depth-slots
-          (+ source 1)
-          (- (array-ref opt-inline-census-depth-slots (+ source 1)) 1))
-        true)
+      (let
+        [end : i64 (+ source 1)]
+        [previous : i64 (array-ref opt-inline-census-depth-slots id)]
+        (begin
+          (if (> end previous)
+            (array-set! opt-inline-census-depth-slots id end)
+            unit)
+          true))
       false)))
 
 (define (opt-inline-census-depth-switch-cases!
@@ -64989,6 +64990,31 @@
             (array-ref opt-inline-census-depth-slots (- i 1))))
         (set! i (+ i 1))))))
 
+;; Convert the header -> furthest-latch records into range deltas. Descending
+;; order lets this reuse the same array: every interval end is after its header,
+;; so its header record has already been consumed before an earlier interval
+;; can write a closing delta into that slot.
+(define (opt-inline-census-depth-ranges! [count : i64]) : unit
+  (let
+    [i : i64 (- count 1)]
+    (while (>= i 0)
+      (let
+        [end : i64 (array-ref opt-inline-census-depth-slots i)]
+        (begin
+          (array-set! opt-inline-census-depth-slots i 0)
+          (if (> end i)
+            (begin
+              (array-set!
+                opt-inline-census-depth-slots
+                i
+                (+ (array-ref opt-inline-census-depth-slots i) 1))
+              (array-set!
+                opt-inline-census-depth-slots
+                end
+                (- (array-ref opt-inline-census-depth-slots end) 1)))
+            unit)
+          (set! i (- i 1)))))))
+
 ;; Install per-block depths for one function. A body with no back edge at all --
 ;; the common case -- leaves the estimate inactive and every site weighs 1, so
 ;; the prefix pass is skipped and the walk never reads the array.
@@ -65011,6 +65037,7 @@
               [(OptInlineDepthMark.Mark _ found)
                 (if found
                   (begin
+                    (opt-inline-census-depth-ranges! count)
                     (opt-inline-census-depth-prefix! count)
                     (set! opt-inline-census-depth-count count)
                     (set! opt-inline-census-depth-active? true))

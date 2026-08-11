@@ -14294,6 +14294,64 @@
         (opt-inline-depth-bounds-leaf callee-name))]
     (= (opt-inline-dominant-remaining-calls refused 0 2) 2)))
 
+;; Multiple latches targeting one header are alternative backedges of the same
+;; loop, not nested loops. The old difference marker added one level per edge,
+;; so the header/body below incorrectly received depth 2 and could admit an
+;; accessor at nested-loop weight solely because the loop had two `continue`
+;; paths.
+(define (opt-inline-depth-multi-latch-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "header"))
+        compiler_ir_types.CompilerIrInstrList.Nil))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.compiler-ir-block
+        (compiler_ir_types.compiler-ir-label "header")
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))
+          compiler_ir_types.CompilerIrInstrList.Nil))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "latch-a")
+              (compiler_ir_types.compiler-ir-label "latch-b"))
+            compiler_ir_types.CompilerIrInstrList.Nil))
+        (opt-inline-depth-relay-block
+          "latch-a"
+          "header"
+          (opt-inline-depth-relay-block
+            "latch-b"
+            "header"
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.compiler-ir-block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    compiler_ir_types.CompilerIrMaybeValue.No)
+                  compiler_ir_types.CompilerIrInstrList.Nil))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-optimize-inline-depth-multiple-latches-ok?) : bool
+  (begin
+    (compiler_optimize.opt-inline-census-depths-build!
+      (opt-inline-depth-multi-latch-blocks))
+    (and
+      (= (compiler_optimize.opt-inline-census-depth-at 0) 0)
+      (= (compiler_optimize.opt-inline-census-depth-at 1) 1)
+      (= (compiler_optimize.opt-inline-census-depth-at 2) 1)
+      (= (compiler_optimize.opt-inline-census-depth-at 3) 1)
+      (= (compiler_optimize.opt-inline-census-depth-at 4) 1)
+      (= (compiler_optimize.opt-inline-census-depth-at 5) 0))))
+
 ;; --- branch-chain classifiers ------------------------------------------------
 ;;
 ;; The callee under test is a bounds-free acyclic decision chain: five

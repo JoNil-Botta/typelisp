@@ -22934,40 +22934,49 @@
       reg
       "\n")))
 
-;; M-F: an imm32 divisor folds directly into the 3-operand imul
-;; (`imulq $d, q, scratch`), eliminating the constant materialisation mov
-;; entirely (clang's shape for `x % smallC`). Wider divisors keep the
-;; load+imul pair. Both compute scratch = q*d with identical 64-bit
-;; wraparound semantics.
+;; `dividend - quotient*divisor`, landing in the fixed %rax result register.
+;;
+;; M-N: the product is negated at compile time (`q * -d`) and accumulated with
+;; `addq dividend, %rax` instead of being subtracted from a restored dividend.
+;; `q * -d` is the two's-complement negation of `q * d` in the same 64 bits the
+;; old shape already relied on, so `dividend + (q * -d)` is bit-identical to
+;; `dividend - (q * d)` -- but it materialises the product straight into %rax
+;; (dead since the multiply) and the dividend feeds the final add from its own
+;; register. That retires the `movq dividend, %rax` restore this sequence used
+;; to pay at every constant-remainder site, matching clang's
+;; `imul $-d, q, %rax; add D, %rax` count.
+;;
+;; An imm32 divisor keeps folding into the 3-operand imul (negating an imm32
+;; magnitude stays imm32 because the divisor here is always positive). Wider
+;; divisors materialise `-d` once; when the quotient already occupies %rax the
+;; materialisation borrows `scratch-reg` and multiplies into %rax in place.
 (define (compiler-backend-divmod-remainder-from-quotient-reg
   [divisor : u64]
   [quotient-reg : String]
   [scratch-reg : String]
   [dividend-reg : String]) : String
   (let
+    [neg-divisor : i64 (- 0 (cast divisor : i64))]
     ;; Bound to a local (behavior-neutral) so the seed typechecker resolves the
     ;; enclosing append operands without a spurious mismatch.
     [mul-asm : String
       (if (compiler-backend-imm32? (cast divisor : i64))
         (str_cat.str-cat
           "    imulq $"
-          (string.int->string (cast divisor : i64))
+          (string.int->string neg-divisor)
           ", "
           quotient-reg
-          ", "
-          scratch-reg
-          "\n")
-        (str_cat.str-cat
-          (compiler-backend-emit-load-u64-absolute divisor scratch-reg)
-          (str_cat.str-cat "    imulq " quotient-reg ", " scratch-reg "\n")))]
+          ", %rax\n")
+        (if (string.eq quotient-reg "%rax")
+          (str_cat.str-cat
+            (compiler-backend-emit-load-i64-absolute neg-divisor scratch-reg)
+            (str_cat.str-cat "    imulq " scratch-reg ", %rax\n"))
+          (str_cat.str-cat
+            (compiler-backend-emit-load-i64-absolute neg-divisor "%rax")
+            (str_cat.str-cat "    imulq " quotient-reg ", %rax\n"))))]
     (str_cat.str-cat
       mul-asm
-      (str_cat.str-cat
-        "    movq "
-        dividend-reg
-        ", %rax\n    subq "
-        scratch-reg
-        ", %rax\n"))))
+      (str_cat.str-cat "    addq " dividend-reg ", %rax\n"))))
 
 (define (compiler-backend-divmod-remainder-from-quotient
   [divisor : u64]

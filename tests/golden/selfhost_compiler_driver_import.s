@@ -223,9 +223,8 @@ _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal:
     movabsq $-3689348814741910323, %r8
     mulq %r8
     shrq $3, %rdx
-    imulq $10, %rdx, %r8
-    movq %r10, %rax
-    subq %r8, %rax
+    imulq $-10, %rdx, %rax
+    addq %r10, %rax
     leaq .L_tl_str_l10_304307728_937500463(%rip), %r8
     movq (%r8), %r8
     movq %r8, 64(%rsp)

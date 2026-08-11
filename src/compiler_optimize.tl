@@ -49142,11 +49142,19 @@
 
 ;; One derived guard condition instruction; conds accumulate as (instr, value)
 ;; so the And chain can be assembled afterwards.
-(define (opt-bce-version-cond
+;; One guard conjunct with an explicit operand type. Every conjunct the
+;; trip-range derivations build is a SIGNED i64 comparison (that is the type
+;; their range arguments are stated in); the cross-array fusion needs an
+;; UNSIGNED one, because the fact a BoundsCheck leaves behind is the unsigned
+;; `index <u length` its lowering tests. The guard-fact folding below only
+;; reuses signed-i64 conjuncts (`opt-bce-fold-collect`), so an unsigned one
+;; decides only the check it was emitted for.
+(define (opt-bce-version-cond-typed
   [cell : (__tl_dyn-array i64)]
   [op : ir.CompilerIrBinOp]
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match acc
     [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
@@ -49155,10 +49163,18 @@
         [dst : i64 (opt-bce-version-alloc-var cell)]
         (OptBceVersionGuardAcc.Some
           (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.BinOp dst op lhs rhs (ast.AstType.I64))
+            (ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
             instrs)
           (ir.compiler-ir-value-cons (ir.CompilerIrValue.Var dst) values)
           counter-seen))]))
+
+(define (opt-bce-version-cond
+  [cell : (__tl_dyn-array i64)]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (opt-bce-version-cond-typed cell op lhs rhs (ast.AstType.I64) acc))
 
 (define (opt-bce-version-cond-counter-seen [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match acc
@@ -52129,7 +52145,15 @@
   ;; Loop blocks the counter compare does NOT dominate, so no trip-range
   ;; derivation covers their checks (see the entry guard chain below). Empty
   ;; for the do-while form, whose latch compare covers the whole body.
-  (uncovered OptLabelSet))
+  (uncovered OptLabelSet)
+  ;; Blocks of the natural loops nested INSIDE this candidate. Empty for a
+  ;; flat loop. A check removed from one of these runs per INNER iteration,
+  ;; which is what pays for a REGION-sized clone (see the region budget).
+  (inner OptLabelSet)
+  ;; This candidate was admitted on the REGION budget -- an outermost nest
+  ;; bigger than an ordinary nest may be -- so the derivation must show an
+  ;; inner-loop check among the ones it removes before the clone is emitted.
+  (region? bool))
 
 (defenum OptBceMbMaybeShape
   (No)
@@ -52170,6 +52194,20 @@
 
 (define (opt-bce-mb-nest-block-max) : i64
   16)
+
+;; A REGION is a nest whose preheader lies outside every loop of the function:
+;; its guard runs once per CALL, not once per enclosing iteration, so the
+;; guard's cost is amortized over the whole nest however many times the nest's
+;; own loops spin. That is the one shape where duplicating a big nest can pay,
+;; and only when the derivation actually removes a check from an INNER loop
+;; (`opt-bce-mb-derived-in-inner?`) -- an outer-body-only removal is the
+;; one-per-outer-iteration economics the ordinary nest budget is sized for.
+;; Both conditions are required; either alone falls back to the nest budget.
+(define (opt-bce-mb-region-instr-max) : i64
+  128)
+
+(define (opt-bce-mb-region-block-max) : i64
+  32)
 
 ;; The (SSA single-def) instruction defining var anywhere in the loop.
 (define (opt-bce-mb-find-def-instrs
@@ -52922,6 +52960,8 @@
   [pred : i64]
   [body-labels : OptLabelSet]
   [body-blocks : ir.CompilerIrBlockList]
+  [inner : OptLabelSet]
+  [region? : bool]
   [uncovered : OptLabelSet]
   [counter : OptBceMbMaybeCounter]) : OptBceMbMaybeShape
   (match counter
@@ -52951,7 +52991,9 @@
                     seed
                     bound
                     step
-                    uncovered))
+                    uncovered
+                    inner
+                    region?))
                 (OptBceMbMaybeShape.No))])])]))
 
 ;; Does another natural loop's header sit inside this candidate's body? A
@@ -52979,8 +53021,45 @@
               header
               body-labels))])]))
 
+;; The blocks of every natural loop nested inside this candidate.
+(define (opt-bce-mb-inner-labels
+  [loops : OptNaturalLoopList]
+  [header : i64]
+  [body-labels : OptLabelSet]
+  [acc : OptLabelSet]) : OptLabelSet
+  (match loops
+    [(OptNaturalLoopList.Nil) acc]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match loop
+        [(OptNaturalLoop.Loop other-header _ other-body _)
+          (opt-bce-mb-inner-labels
+            (__tl-box-place rest)
+            header
+            body-labels
+            (if (and
+              (not (= other-header header))
+              (opt-label-contains body-labels other-header))
+              (opt-bce-mb-labels-union other-body.labels acc)
+              acc))])]))
+
+;; Is this candidate preheader outside every natural loop of the function?
+;; Only then does its guard run once per CALL rather than once per enclosing
+;; iteration, which is what makes the region budget bigger clone pay.
+(define (opt-bce-mb-preheader-outside-loops?
+  [loops : OptNaturalLoopList]
+  [pred : i64]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) true]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match loop
+        [(OptNaturalLoop.Loop _ _ other-body _)
+          (if (opt-label-contains other-body.labels pred)
+            false
+            (opt-bce-mb-preheader-outside-loops? (__tl-box-place rest) pred))])]))
+
 (define (opt-bce-mb-loop-shape-with-preheader
   [blocks : ir.CompilerIrBlockList]
+  [loops : OptNaturalLoopList]
   [nested? : bool]
   [header : i64]
   [latch : i64]
@@ -52989,14 +53068,24 @@
   (let
     [body-labels : OptLabelSet body.labels]
     [body-blocks : ir.CompilerIrBlockList body.blocks]
+    [inner : OptLabelSet
+      (if nested?
+        (opt-bce-mb-inner-labels loops header body-labels (OptLabelSet.Nil))
+        (OptLabelSet.Nil))]
+    [region? : bool
+      (and nested? (opt-bce-mb-preheader-outside-loops? loops pred))]
     [block-max : i64
-      (if nested?
-        (opt-bce-mb-nest-block-max)
-        (opt-bce-mb-block-max))]
+      (if region?
+        (opt-bce-mb-region-block-max)
+        (if nested?
+          (opt-bce-mb-nest-block-max)
+          (opt-bce-mb-block-max)))]
     [instr-max : i64
-      (if nested?
-        (opt-bce-mb-nest-instr-max)
-        (opt-bce-mb-instr-max))]
+      (if region?
+        (opt-bce-mb-region-instr-max)
+        (if nested?
+          (opt-bce-mb-nest-instr-max)
+          (opt-bce-mb-instr-max)))]
     (if (or
       (< (opt-label-count body-labels) 2)
       (> (opt-label-count body-labels) block-max)
@@ -53027,7 +53116,9 @@
                   header
                   latch
                   pred
-                  body-labels)]
+                  body-labels
+                  inner
+                  region?)]
               [(OptBceMbMaybeLatch.Some cond-var _)
                 (match (opt-bce-mb-loop-shape-finish
                   blocks
@@ -53036,6 +53127,8 @@
                   pred
                   body-labels
                   body-blocks
+                  inner
+                  region?
                   ;; the latch compare covers the whole body: it bounds the
                   ;; NEXT iteration's counter and the guard bounds the first
                   (OptLabelSet.Nil)
@@ -53054,7 +53147,9 @@
                       header
                       latch
                       pred
-                      body-labels)])]))]))))
+                      body-labels
+                      inner
+                      region?)])]))]))))
 
 (define (opt-bce-mb-loop-shape-top
   [blocks : ir.CompilerIrBlockList]
@@ -53064,7 +53159,9 @@
   [header : i64]
   [latch : i64]
   [pred : i64]
-  [body-labels : OptLabelSet]) : OptBceMbMaybeShape
+  [body-labels : OptLabelSet]
+  [inner : OptLabelSet]
+  [region? : bool]) : OptBceMbMaybeShape
   (match (opt-bce-mb-top-test-chain
     blocks
     body-blocks
@@ -53083,6 +53180,8 @@
         pred
         body-labels
         body-blocks
+        inner
+        region?
         chain
         counter)]))
 
@@ -53114,6 +53213,7 @@
               (OptBceMbMaybeShape.No)
               (opt-bce-mb-loop-shape-with-preheader
                 blocks
+                loops
                 nested?
                 header
                 latch
@@ -55213,15 +55313,24 @@
   (match (opt-late-bounds-pair-function-rewrite type-segment-bases func)
     [(OptLateRewriteResult.Result rewritten _) rewritten]))
 
+;; Length-relation conjuncts the cross-array fusion derivation has already put
+;; in the guard, so a second fused check over the same pair of arrays reuses
+;; the conjunct instead of adding a duplicate compare.
+(defenum OptBceMbFused
+  (Nil)
+  (Pair ir.CompilerIrValue ir.CompilerIrValue (Box OptBceMbFused)))
+
 ;; Derivation fold state: the guard accumulator (conditions for REMOVED
 ;; checks), the kept-check set, how many checks derived -- partial
 ;; versioning requires at least one derivable check to make cloning pay --
-;; and the descriptor-length hoists already emitted into the guard.
+;; the descriptor-length hoists already emitted into the guard, and the
+;; fusion length-relation conjuncts already emitted.
 (defstruct OptBceMbDerive
   (guard OptBceVersionGuardAcc)
   (keep OptBceMbKeep)
   (derived i64)
-  (hoists OptBceMbHoists))
+  (hoists OptBceMbHoists)
+  (fused OptBceMbFused))
 
 ;; guard-conds output: the guard instructions + value, the kept-check set the
 ;; clone must preserve (remapped) instead of dropping, and the facts the guard
@@ -55754,12 +55863,278 @@
                   [_ (OptBceVersionGuardAcc.No)])])]))]
     [_ (OptBceVersionGuardAcc.No)]))
 
+;; --- cross-array check-domain fusion -----------------------------------------
+;;
+;; Every derivation above reasons about ONE array: it recovers the index from
+;; the loop's counter and asks the guard for a relation between the trip range
+;; and THAT array's length. A loop nest that walks several arrays through the
+;; same opaque index -- `id = rpo[slot]` used against `pred_off`, then against
+;; `idom`; `pred = pred_edge[e]` used against `reachable`, then against `idom`
+;; -- derives none of them: the index is a LOADED VALUE, not an affine function
+;; of any counter, and no amount of trip-range reasoning bounds it.
+;;
+;; It does not have to be bounded from the counter. The FIRST check on such an
+;; index is a trap-or-continue: every point it dominates is reached only when
+;; `0 <=u index <u anchor_length` held. That is a fact about the index, and it
+;; transfers to a SECOND array whenever the guard has taken the one invariant
+;; comparison relating the two lengths. So for a check K = `bounds_check i, Lk`
+;; the pass looks for an anchor J = `bounds_check i, Lj` in the same loop that
+;; DOMINATES K (an earlier instruction of K's own block, or a block that
+;; dominates K's), and removes K from the fast clone under
+;;
+;;     Lj <=u Lk
+;;
+;; which the guard evaluates once at loop entry. UNSIGNED, the order a
+;; BoundsCheck itself tests, so the transfer is exact and needs no companion
+;; sign condition: `i <u Lj <=u Lk` is the removed check's condition. The index
+;; operands are compared after the same Mov/reinterpret-cast resolution the
+;; other derivations use, so the anchor and the removed check are checks of the
+;; SAME runtime value; a bit-preserving 64-bit cast leaves the unsigned compare
+;; alone.
+;;
+;; WHY THE ANCHOR'S FACT REACHES THE CLONE. The clone is an edge-for-edge copy
+;; of the loop's blocks entered only at the cloned header, so dominance among
+;; loop blocks survives cloning: every path to K's twin runs through J's twin.
+;; There, either J was KEPT (it aborts unless the fact holds) or J was itself
+;; derived (the guard proves the fact). Both give the fact, and the anchor
+;; relation is a STRICT order -- earlier instruction, or strictly dominating
+;; block -- so two checks can never anchor on each other and lose it. A block
+;; the guard-fact folding drops from the clone takes every block it dominates
+;; with it, K's twin included.
+;;
+;; WHAT THE ANCHOR DOES NOT NEED TO BE. Nothing here cares whether the covered
+;; arrays are read or WRITTEN: the removed check may be the one guarding a
+;; store (`idom[id] := candidate` is the running example, and its check is the
+;; largest single consumer in the running benchmark), and the value stored is
+;; irrelevant to it -- a store's bounds check constrains the INDEX. Nor does a
+;; later read of that array inherit anything: it carries its own anchor. So the
+;; "closed set of values" the region has to track is just the set of index
+;; values a retained check has already proven in range, and dominance is what
+;; propagates it.
+;;
+;; TRAP PARITY. The slow region is the original instruction for instruction, so
+;; a guard-failing or unversioned run aborts exactly where it did. On the fast
+;; path the removed check provably cannot trap, and no earlier trap is skipped:
+;; the anchor stays ahead of it in the same order.
+(define (opt-bce-mb-fused-contains?
+  [fused : OptBceMbFused]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : bool
+  (match fused
+    [(OptBceMbFused.Nil) false]
+    [(OptBceMbFused.Pair a b rest)
+      (if (and (opt-value-eq a lhs) (opt-value-eq b rhs))
+        true
+        (opt-bce-mb-fused-contains? (__tl-box-place rest) lhs rhs))]))
+
+;; The one conjunct a fused check needs: `anchor_length <=u target_length`.
+;; UNSIGNED, exactly matching the order a BoundsCheck tests, so it needs no
+;; companion sign condition: `index <u anchor <=u target` is the removed
+;; check.
+(define (opt-bce-mb-fuse-cond
+  [cell : (__tl_dyn-array i64)]
+  [anchor-length : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (opt-bce-version-cond-typed
+    cell
+    (ir.CompilerIrBinOp.Le)
+    anchor-length
+    length-value
+    (ast.AstType.U64)
+    acc))
+
+;; A dominating check of the SAME index value whose length is loop-invariant
+;; and different from this check's: the anchor whose fact fusion transfers.
+;; `use-block` / `use-pos` identify the check being derived; `opt-global-fact-
+;; available?` is the same "an earlier instruction of my block, or a block that
+;; dominates mine" test the global copy facts use.
+(define (opt-bce-mb-fuse-anchor-instrs
+  [doms : OptDomInfo]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [block-id : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [use-block-id : i64]
+  [use-pos : i64]
+  [index-id : i64]
+  [length-value : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    (ir.CompilerIrMaybeValue.No)
+    (let
+      [found : ir.CompilerIrMaybeValue
+        (match (ir.compiler-ir-instr-seq-ref instrs pos)
+          [(ir.CompilerIrInstr.BoundsCheck other-index other-length _)
+            (if (or
+              (< block-id 0)
+              (not
+                (opt-global-fact-available?
+                  block-id
+                  pos
+                  use-block-id
+                  use-pos
+                  doms)))
+              (ir.CompilerIrMaybeValue.No)
+              (match other-index
+                [(ir.CompilerIrValue.Var other-raw)
+                  (if (not
+                    (= (opt-bce-mb-resolve body-blocks other-raw 16) index-id))
+                    (ir.CompilerIrMaybeValue.No)
+                    (match (opt-bce-mb-invariant-operand
+                      body-blocks
+                      defs
+                      other-length)
+                      [(ir.CompilerIrMaybeValue.No)
+                        (ir.CompilerIrMaybeValue.No)]
+                      [(ir.CompilerIrMaybeValue.Some anchor-length)
+                        (if (opt-value-eq anchor-length length-value)
+                          (ir.CompilerIrMaybeValue.No)
+                          (ir.CompilerIrMaybeValue.Some anchor-length))]))]
+                [_ (ir.CompilerIrMaybeValue.No)]))]
+          [_ (ir.CompilerIrMaybeValue.No)])]
+      (match found
+        [(ir.CompilerIrMaybeValue.Some anchor-length)
+          (ir.CompilerIrMaybeValue.Some anchor-length)]
+        [(ir.CompilerIrMaybeValue.No)
+          (opt-bce-mb-fuse-anchor-instrs
+            doms
+            body-blocks
+            defs
+            block-id
+            instrs
+            (+ pos 1)
+            use-block-id
+            use-pos
+            index-id
+            length-value)]))))
+
+(define (opt-bce-mb-fuse-anchor
+  [doms : OptDomInfo]
+  [body-blocks : ir.CompilerIrBlockList]
+  [remaining : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [use-block-id : i64]
+  [use-pos : i64]
+  [index-id : i64]
+  [length-value : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (match remaining
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrMaybeValue.No)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (match (opt-bce-mb-fuse-anchor-instrs
+            doms
+            body-blocks
+            defs
+            (opt-global-block-id doms label)
+            instrs
+            0
+            use-block-id
+            use-pos
+            index-id
+            length-value)
+            [(ir.CompilerIrMaybeValue.Some anchor-length)
+              (ir.CompilerIrMaybeValue.Some anchor-length)]
+            [(ir.CompilerIrMaybeValue.No)
+              (opt-bce-mb-fuse-anchor
+                doms
+                body-blocks
+                (__tl-box-place rest)
+                defs
+                use-block-id
+                use-pos
+                index-id
+                length-value)])])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-fuse-anchor
+        doms
+        body-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        defs
+        use-block-id
+        use-pos
+        index-id
+        length-value)]))
+
+;; The fusion fallback for a check no single-array derivation reached: on a
+;; dominating anchor the guard gains `Lj <=u Lk` (once per array pair, however
+;; many checks fuse across it) and the check is dropped from the clone;
+;; otherwise it is kept, exactly like any underivable index.
+(define (opt-bce-mb-derive-fused
+  [doms : OptDomInfo]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [cell : (__tl_dyn-array i64)]
+  [label : i64]
+  [index : i64]
+  [index-value : ir.CompilerIrValue]
+  [length-invariant : ir.CompilerIrValue]
+  [state : OptBceMbDerive]) : OptBceMbDerive
+  (let
+    [kept : OptBceMbDerive
+      (OptBceMbDerive
+        state.guard
+        (opt-bce-mb-keep-cons label index state.keep)
+        state.derived
+        state.hoists
+        state.fused)]
+    (match index-value
+      [(ir.CompilerIrValue.Var raw)
+        (let
+          [index-id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+          [use-block-id : i64 (opt-global-block-id doms label)]
+          (match (if (< use-block-id 0)
+            (ir.CompilerIrMaybeValue.No)
+            (opt-bce-mb-fuse-anchor
+              doms
+              body-blocks
+              body-blocks
+              defs
+              use-block-id
+              index
+              index-id
+              length-invariant))
+            [(ir.CompilerIrMaybeValue.No) kept]
+            [(ir.CompilerIrMaybeValue.Some anchor-length)
+              (let
+                [related? : bool
+                  (opt-bce-mb-fused-contains?
+                    state.fused
+                    anchor-length
+                    length-invariant)]
+                [with-relation : OptBceVersionGuardAcc
+                  (if related?
+                    state.guard
+                    (opt-bce-mb-fuse-cond
+                      cell
+                      anchor-length
+                      length-invariant
+                      state.guard))]
+                (match with-relation
+                  [(OptBceVersionGuardAcc.No) kept]
+                  [(OptBceVersionGuardAcc.Some _ _ _)
+                    (OptBceMbDerive
+                      with-relation
+                      state.keep
+                      (+ state.derived 1)
+                      state.hoists
+                      (if related?
+                        state.fused
+                        (OptBceMbFused.Pair
+                          anchor-length
+                          length-invariant
+                          (box state.fused))))]))]))]
+      [_ kept])))
+
 ;; Derive one check against a proven-invariant length value: on success the
 ;; guard gains the conditions and the derived count ticks; on failure the
-;; check joins the kept set instead. A failure reverts to the state's guard
+;; check falls back to cross-array fusion and, failing that too, joins the kept
+;; set instead. A failure reverts to the state's guard
 ;; AND hoist set, so a descriptor hoist emitted for a check that then fails
 ;; derivation is dropped along with its (unused) guard instructions.
 (define (opt-bce-mb-derive-check
+  [doms : OptDomInfo]
   [all-blocks : ir.CompilerIrBlockList]
   [body-blocks : ir.CompilerIrBlockList]
   [defs : opt_i64_i64_map.Map]
@@ -55795,21 +56170,28 @@
         acc)]
     (match derived-guard
       [(OptBceVersionGuardAcc.No)
-        ;; Underivable: the check STAYS (remapped) in the fast clone instead of
-        ;; rejecting the whole loop.
-        (OptBceMbDerive
-          state.guard
-          (opt-bce-mb-keep-cons label index state.keep)
-          state.derived
-          state.hoists)]
+        ;; No single-array derivation: try the cross-array fusion fallback,
+        ;; which keeps the check when it finds no dominating anchor either.
+        (opt-bce-mb-derive-fused
+          doms
+          body-blocks
+          defs
+          cell
+          label
+          index
+          index-value
+          length-invariant
+          state)]
       [(OptBceVersionGuardAcc.Some _ _ _)
         (OptBceMbDerive
           derived-guard
           state.keep
           (+ state.derived 1)
-          success-hoists)])))
+          success-hoists
+          state.fused)])))
 
 (define (opt-bce-mb-derive-block
+  [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
   [write-free? : bool]
   [label : i64]
@@ -55829,6 +56211,7 @@
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     state
     (opt-bce-mb-derive-block
+      doms
       descriptor
       write-free?
       label
@@ -55849,6 +56232,7 @@
           (match (opt-bce-mb-invariant-operand body-blocks defs length-value)
             [(ir.CompilerIrMaybeValue.Some length-invariant)
               (opt-bce-mb-derive-check
+                doms
                 all-blocks
                 body-blocks
                 defs
@@ -55882,12 +56266,14 @@
                     state.guard
                     (opt-bce-mb-keep-cons label index state.keep)
                     state.derived
-                    state.hoists)]
+                    state.hoists
+                    state.fused)]
                 [(OptBceMbMaybeLength.Some
                     hoisted-length
                     hoisted-hoists
                     hoisted-guard)
                   (opt-bce-mb-derive-check
+                    doms
                     all-blocks
                     body-blocks
                     defs
@@ -55929,6 +56315,7 @@
         [_ keep]))))
 
 (define (opt-bce-mb-derive-blocks
+  [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
   [write-free? : bool]
   [remaining : ir.CompilerIrBlockList]
@@ -55950,6 +56337,7 @@
       (match block
         [(ir.CompilerIrBlock.Block label instrs)
           (opt-bce-mb-derive-blocks
+            doms
             descriptor
             write-free?
             (__tl-box-place rest)
@@ -55969,8 +56357,10 @@
                 state.guard
                 (opt-bce-mb-keep-block-checks label instrs 0 state.keep)
                 state.derived
-                state.hoists)
+                state.hoists
+                state.fused)
               (opt-bce-mb-derive-block
+                doms
                 descriptor
                 write-free?
                 label
@@ -55989,6 +56379,7 @@
                 state)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-mb-derive-blocks
+        doms
         descriptor
         write-free?
         (ir.compiler-ir-block-seq-to-list seq)
@@ -56004,6 +56395,50 @@
         fan
         uncovered
         state)]))
+
+;; --- region profitability ------------------------------------------------------
+;;
+;; A REGION clone (a nest admitted on the enlarged budget) is worth its size
+;; only when the derivation removes a check that runs per INNER iteration. The
+;; ordinary nest budget assumes the opposite -- at most one removal per OUTER
+;; iteration against a duplicated inner loop of unbounded trip count -- and
+;; that assumption is exactly what the cross-array fusion breaks: its anchors
+;; and its removals sit in the innermost blocks of a walk. So the region gate
+;; runs AFTER derivation, on the kept set: a check of an inner-loop block that
+;; is not kept is a check the clone removed from an inner loop.
+(define (opt-bce-mb-derived-in-inner-instrs?
+  [keep : OptBceMbKeep]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (if (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.BoundsCheck _ _ _)
+        (not (opt-bce-mb-keep-contains? keep label index))]
+      [_ false])
+      true
+      (opt-bce-mb-derived-in-inner-instrs? keep label instrs (+ index 1)))))
+
+(define (opt-bce-mb-derived-in-inner?
+  [remaining : ir.CompilerIrBlockList]
+  [inner : OptLabelSet]
+  [keep : OptBceMbKeep]) : bool
+  (match remaining
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (if (and
+            (opt-label-contains inner label)
+            (opt-bce-mb-derived-in-inner-instrs? keep label instrs 0))
+            true
+            (opt-bce-mb-derived-in-inner? (__tl-box-place rest) inner keep))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-mb-derived-in-inner?
+        (ir.compiler-ir-block-seq-to-list seq)
+        inner
+        keep)]))
 
 ;; --- invariant upper bounds hoisted into the guard ---------------------------
 ;;
@@ -56203,7 +56638,13 @@
         (deref rest)
         (opt-bce-version-cond cell (ir.CompilerIrBinOp.Le) bound upper acc))]))
 
+;; `doms` is the dominator info of the function the shape was scanned in. The
+;; only queries made of it are between two LOOP BODY labels, and neither the
+;; far-use repair nor the exit wiring adds, removes, or re-targets a loop
+;; block -- both rewrite instructions of blocks OUTSIDE the loop -- so it stays
+;; exact for those queries on the repaired/wired blocks this runs against.
 (define (opt-bce-mb-guard-conds
+  [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
   [write-free? : bool]
   [all-blocks : ir.CompilerIrBlockList]
@@ -56214,6 +56655,7 @@
     [fan : OptBceVersionFan (opt-bce-version-fan-new)]
     [dr : OptBceMbDerive
       (opt-bce-mb-derive-blocks
+        doms
         descriptor
         write-free?
         shape.body-blocks
@@ -56235,9 +56677,20 @@
             false)
           (OptBceMbKeep.Nil)
           0
-          (OptBceMbHoists.Nil)))]
-    (if (= dr.derived 0)
-      ;; No removable check: cloning the loop would only duplicate it.
+          (OptBceMbHoists.Nil)
+          (OptBceMbFused.Nil)))]
+    (if (or
+      (= dr.derived 0)
+      ;; No removable check: cloning the loop would only duplicate it. A
+      ;; region-sized clone additionally needs one of them inside an inner
+      ;; loop, where the removal repeats per inner iteration.
+      (and
+        shape.region?
+        (>
+          (opt-bce-mb-body-instrs shape.body-blocks 0)
+          (opt-bce-mb-nest-instr-max))
+        (not
+          (opt-bce-mb-derived-in-inner? shape.body-blocks shape.inner dr.keep))))
       (OptBceMbGuardOut.No)
       (match (opt-bce-version-guard-finish
         shape.seed
@@ -56413,7 +56866,7 @@
           [(OptBceMbMaybeInstr.No) acc]
           [(OptBceMbMaybeInstr.Some instr)
             (match instr
-              [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+              [(ir.CompilerIrInstr.BinOp _ op lhs rhs cond-ty)
                 (match op
                   [(ir.CompilerIrBinOp.And)
                     (opt-bce-fold-collect
@@ -56422,7 +56875,13 @@
                       (- fuel 1)
                       (opt-bce-fold-collect instrs lhs (- fuel 1) acc))]
                   [_
-                    (if (opt-bce-fold-cond-op? op)
+                    ;; Only SIGNED i64 conjuncts become facts: the folding
+                    ;; rules below compare a loop compare against a conjunct by
+                    ;; operator and operands alone, and an unsigned conjunct
+                    ;; decides no signed comparison of the same two values.
+                    (if (and
+                      (opt-bce-fold-cond-op? op)
+                      (opt-bce-fold-i64-type? cond-ty))
                       (OptBceFoldCondList.Cons op lhs rhs (box acc))
                       acc)])]
               [_ acc])])]
@@ -57650,7 +58109,8 @@
   [check-pos : i64]
   [phi-var : i64]
   [fast-labels : OptLabelSet]
-  [check-blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  [check-blocks : ir.CompilerIrBlockList]
+  [gen : i64]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -57668,7 +58128,8 @@
                     check-pos
                     phi-var
                     fast-labels
-                    exit-label))
+                    exit-label
+                    gen))
                 (__tl-box-place rest)))
             (ir.compiler-ir-block-cons
               block
@@ -57678,7 +58139,8 @@
                 check-pos
                 phi-var
                 fast-labels
-                check-blocks)))])]
+                check-blocks
+                gen)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-mb-sink-exit-block-list
         (ir.compiler-ir-block-seq-to-list seq)
@@ -57686,7 +58148,8 @@
         check-pos
         phi-var
         fast-labels
-        check-blocks)]))
+        check-blocks
+        gen)]))
 
 ;; The exit block's instructions minus the check (and its now-unused
 ;; cast): every other instruction is preserved as-is.
@@ -57696,7 +58159,8 @@
   [check-pos : i64]
   [phi-var : i64]
   [fast-labels : OptLabelSet]
-  [exit-label : i64]) : ir.CompilerIrInstrList
+  [exit-label : i64]
+  [gen : i64]) : ir.CompilerIrInstrList
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     (ir.CompilerIrInstrList.Nil)
     (if (= index check-pos)
@@ -57706,7 +58170,8 @@
         check-pos
         phi-var
         fast-labels
-        exit-label)
+        exit-label
+        gen)
       (match (ir.compiler-ir-instr-seq-ref instrs index)
         [(ir.CompilerIrInstr.Phi dst inputs ty)
           (if (= dst phi-var)
@@ -57716,7 +58181,8 @@
                 (opt-bce-mb-sink-phi-relabel-inputs
                   inputs
                   fast-labels
-                  exit-label)
+                  exit-label
+                  gen)
                 ty)
               (opt-bce-mb-sink-exit-instrs
                 instrs
@@ -57724,7 +58190,8 @@
                 check-pos
                 phi-var
                 fast-labels
-                exit-label))
+                exit-label
+                gen))
             (ir.compiler-ir-instr-cons
               (ir.compiler-ir-instr-seq-ref instrs index)
               (opt-bce-mb-sink-exit-instrs
@@ -57733,7 +58200,8 @@
                 check-pos
                 phi-var
                 fast-labels
-                exit-label)))]
+                exit-label
+                gen)))]
         [(ir.CompilerIrInstr.Cast dst src _ _)
           (match src
             [(ir.CompilerIrValue.Var v)
@@ -57744,7 +58212,8 @@
                   check-pos
                   phi-var
                   fast-labels
-                  exit-label)
+                  exit-label
+                  gen)
                 (ir.compiler-ir-instr-cons
                   (ir.compiler-ir-instr-seq-ref instrs index)
                   (opt-bce-mb-sink-exit-instrs
@@ -57753,7 +58222,8 @@
                     check-pos
                     phi-var
                     fast-labels
-                    exit-label)))]
+                    exit-label
+                    gen)))]
             [_
               (ir.compiler-ir-instr-cons
                 (ir.compiler-ir-instr-seq-ref instrs index)
@@ -57763,7 +58233,8 @@
                   check-pos
                   phi-var
                   fast-labels
-                  exit-label))])]
+                  exit-label
+                  gen))])]
         [_
           (ir.compiler-ir-instr-cons
             (ir.compiler-ir-instr-seq-ref instrs index)
@@ -57773,34 +58244,113 @@
               check-pos
               phi-var
               fast-labels
-              exit-label))]))))
+              exit-label
+              gen))]))))
+
+;; The name of the check block the sink puts on the `exit-label <- pred-label`
+;; edge. Generation 0 is the historical spelling; the concatenation is not
+;; injective (a label text may itself contain the separator), so a split whose
+;; generation-0 names would land on an existing block moves to the next
+;; generation instead of emitting a duplicate assembly label.
+(define (opt-bce-mb-sink-check-label
+  [exit-label : i64]
+  [pred-label : i64]
+  [gen : i64]) : i64
+  (ir.compiler-ir-label
+    (if (= gen 0)
+      (str_cat.str-cat
+        (ir.compiler-ir-label-text exit-label)
+        "__xchk_"
+        (ir.compiler-ir-label-text pred-label))
+      (str_cat.str-cat
+        (ir.compiler-ir-label-text exit-label)
+        "__xchk"
+        (string.int->string gen)
+        "_"
+        (ir.compiler-ir-label-text pred-label)))))
+
+;; The in-range continuation the check block branches to.
+(define (opt-bce-mb-sink-check-ok-label [check-label : i64]) : i64
+  (ir.compiler-ir-label
+    (str_cat.str-cat (ir.compiler-ir-label-text check-label) ".0")))
+
+;; Does this generation name every check block (and its ok continuation) after
+;; a block that does not already exist in the function?
+(define (opt-bce-mb-sink-gen-free?
+  [blocks : ir.CompilerIrBlockList]
+  [inputs : ir.CompilerIrPhiInputList]
+  [fast-labels : OptLabelSet]
+  [exit-label : i64]
+  [gen : i64]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) true]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-sink-gen-free?
+        blocks
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        fast-labels
+        exit-label
+        gen)]
+    [(ir.CompilerIrPhiInputList.Cons _ label rest)
+      (if (opt-label-contains fast-labels label)
+        (opt-bce-mb-sink-gen-free?
+          blocks
+          (__tl-box-place rest)
+          fast-labels
+          exit-label
+          gen)
+        (let
+          [check-label : i64 (opt-bce-mb-sink-check-label exit-label label gen)]
+          (if (or
+            (opt-cfg-block-exists? blocks check-label)
+            (opt-cfg-block-exists?
+              blocks
+              (opt-bce-mb-sink-check-ok-label check-label)))
+            false
+            (opt-bce-mb-sink-gen-free?
+              blocks
+              (__tl-box-place rest)
+              fast-labels
+              exit-label
+              gen))))]))
+
+;; The lowest generation whose whole name set is free. Generation 0 answers on
+;; every shape the corpus produces today, so this costs one clean scan.
+(define (opt-bce-mb-sink-fresh-gen
+  [blocks : ir.CompilerIrBlockList]
+  [inputs : ir.CompilerIrPhiInputList]
+  [fast-labels : OptLabelSet]
+  [exit-label : i64]
+  [gen : i64]) : i64
+  (if (opt-bce-mb-sink-gen-free? blocks inputs fast-labels exit-label gen)
+    gen
+    (opt-bce-mb-sink-fresh-gen blocks inputs fast-labels exit-label (+ gen 1))))
 
 ;; Rewrite the exit phi's moved inputs to name their new check-block edges.
 (define (opt-bce-mb-sink-phi-relabel-inputs
   [inputs : ir.CompilerIrPhiInputList]
   [fast-labels : OptLabelSet]
-  [exit-label : i64]) : ir.CompilerIrPhiInputList
+  [exit-label : i64]
+  [gen : i64]) : ir.CompilerIrPhiInputList
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
     [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
     [(ir.CompilerIrPhiInputList.Array seq)
       (opt-bce-mb-sink-phi-relabel-inputs
         (ir.compiler-ir-phi-input-seq-to-list seq)
         fast-labels
-        exit-label)]
+        exit-label
+        gen)]
     [(ir.CompilerIrPhiInputList.Cons value label rest)
       (ir.compiler-ir-phi-input-cons
         value
         (if (opt-label-contains fast-labels label)
           label
-          (ir.compiler-ir-label
-            (str_cat.str-cat
-              (ir.compiler-ir-label-text exit-label)
-              "__xchk_"
-              (ir.compiler-ir-label-text label))))
+          (opt-bce-mb-sink-check-label exit-label label gen))
         (opt-bce-mb-sink-phi-relabel-inputs
           (__tl-box-place rest)
           fast-labels
-          exit-label))]))
+          exit-label
+          gen))]))
 
 ;; Retarget the terminators that land on the exit to the input's new check
 ;; block, walking every non-fast predecessor.
@@ -57808,7 +58358,8 @@
   [blocks : ir.CompilerIrBlockList]
   [inputs : ir.CompilerIrPhiInputList]
   [fast-labels : OptLabelSet]
-  [exit-label : i64]) : ir.CompilerIrBlockList
+  [exit-label : i64]
+  [gen : i64]) : ir.CompilerIrBlockList
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
     [(ir.CompilerIrPhiInputList.Nil) blocks]
     [(ir.CompilerIrPhiInputList.Array seq)
@@ -57816,27 +58367,26 @@
         blocks
         (ir.compiler-ir-phi-input-seq-to-list seq)
         fast-labels
-        exit-label)]
+        exit-label
+        gen)]
     [(ir.CompilerIrPhiInputList.Cons value label rest)
       (if (opt-label-contains fast-labels label)
         (opt-bce-mb-sink-retarget-all
           blocks
           (__tl-box-place rest)
           fast-labels
-          exit-label)
+          exit-label
+          gen)
         (opt-bce-mb-sink-retarget-all
           (opt-bce-mb-sink-retarget-preds
             blocks
             exit-label
-            (ir.compiler-ir-label
-              (str_cat.str-cat
-                (ir.compiler-ir-label-text exit-label)
-                "__xchk_"
-                (ir.compiler-ir-label-text label)))
+            (opt-bce-mb-sink-check-label exit-label label gen)
             label)
           (__tl-box-place rest)
           fast-labels
-          exit-label))]))
+          exit-label
+          gen))]))
 
 ;; The predecessor-block rewrite for the sink: retarget every terminator
 ;; that lands on `from-label` to `to-label`, but only in the block named
@@ -57877,13 +58427,18 @@
 
 ;; Build the tiny check blocks for the non-fast phi inputs and retarget the
 ;; predecessor edges. Each input gets: cast input to u64, check, jump exit.
+;; `emitted` carries the names already built for this split: one predecessor
+;; may hold two edges into the exit (a branch with both arms on it), and both
+;; phi inputs then relabel to the same check block, which must be emitted once.
 (define (opt-bce-mb-sink-check-blocks-from
   [inputs : ir.CompilerIrPhiInputList]
   [fast-labels : OptLabelSet]
   [exit-label : i64]
   [len : ir.CompilerIrValue]
   [blocks : ir.CompilerIrBlockList]
-  [cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  [cell : (__tl_dyn-array i64)]
+  [gen : i64]
+  [emitted : OptLabelSet]) : ir.CompilerIrBlockList
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
     [(ir.CompilerIrPhiInputList.Nil) blocks]
     [(ir.CompilerIrPhiInputList.Array seq)
@@ -57893,7 +58448,9 @@
         exit-label
         len
         blocks
-        cell)]
+        cell
+        gen
+        emitted)]
     [(ir.CompilerIrPhiInputList.Cons value label rest)
       (if (opt-label-contains fast-labels label)
         (opt-bce-mb-sink-check-blocks-from
@@ -57902,42 +58459,51 @@
           exit-label
           len
           blocks
-          cell)
+          cell
+          gen
+          emitted)
         (let
-          [check-label : i64
-            (ir.compiler-ir-label
-              (str_cat.str-cat
-                (ir.compiler-ir-label-text exit-label)
-                "__xchk_"
-                (ir.compiler-ir-label-text label)))]
-          [cast-var : i64 (opt-bce-version-alloc-var cell)]
-          [ok-label : i64
-            (ir.compiler-ir-label
-              (str_cat.str-cat (ir.compiler-ir-label-text check-label) ".0"))]
-          (ir.compiler-ir-block-cons
-            (ir.compiler-ir-block
-              check-label
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Cast
-                  cast-var
-                  value
-                  (ast.AstType.I64)
-                  (ast.AstType.U64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.BoundsCheck
-                    (ir.CompilerIrValue.Var cast-var)
-                    len
-                    ok-label)
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Jump exit-label)
-                    (ir.CompilerIrInstrList.Nil)))))
+          [check-label : i64 (opt-bce-mb-sink-check-label exit-label label gen)]
+          (if (opt-label-contains emitted check-label)
             (opt-bce-mb-sink-check-blocks-from
               (__tl-box-place rest)
               fast-labels
               exit-label
               len
               blocks
-              cell))))]))
+              cell
+              gen
+              emitted)
+            (let
+              [cast-var : i64 (opt-bce-version-alloc-var cell)]
+              [ok-label : i64 (opt-bce-mb-sink-check-ok-label check-label)]
+              [seen : OptLabelSet (opt-label-cons check-label emitted)]
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  check-label
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Cast
+                      cast-var
+                      value
+                      (ast.AstType.I64)
+                      (ast.AstType.U64))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.BoundsCheck
+                        (ir.CompilerIrValue.Var cast-var)
+                        len
+                        ok-label)
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Jump exit-label)
+                        (ir.CompilerIrInstrList.Nil)))))
+                (opt-bce-mb-sink-check-blocks-from
+                  (__tl-box-place rest)
+                  fast-labels
+                  exit-label
+                  len
+                  blocks
+                  cell
+                  gen
+                  seen))))))]))
 
 ;; Sink the check out of a qualifying exit block: the fast arrivals are
 ;; provably in range, so the check moves to fresh per-input check blocks on
@@ -57966,6 +58532,10 @@
             (opt-bce-mb-find-block-seq blocks label)
             phi-var)]
         [clen : ir.CompilerIrValue (opt-bce-mb-canon-value blocks len)]
+        ;; One generation for the whole split: the phi relabel, the predecessor
+        ;; retarget, and the check blocks themselves must all agree on the name.
+        [gen : i64
+          (opt-bce-mb-sink-fresh-gen blocks inputs fast-labels label 0)]
         ;; The check blocks land immediately before the exit block: behind
         ;; every predecessor edge, never before the function entry.
         [sunk : ir.CompilerIrBlockList
@@ -57981,9 +58551,12 @@
               label
               clen
               (ir.CompilerIrBlockList.Nil)
-              cell))]
+              cell
+              gen
+              (OptLabelSet.Nil))
+            gen)]
         [step : ir.CompilerIrBlockList
-          (opt-bce-mb-sink-retarget-all sunk inputs fast-labels label)]
+          (opt-bce-mb-sink-retarget-all sunk inputs fast-labels label gen)]
         step)]))
 
 ;; Guard derivation + fast-clone emission + rewrite over a fully wired
@@ -57991,6 +58564,7 @@
 ;; phi-on-edge form, and `shape` carries the clone group (the natural loop
 ;; plus any forwarding stubs) as its body.
 (define (opt-bce-mb-apply-wired
+  [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
   [write-free? : bool]
   [blocks : ir.CompilerIrBlockList]
@@ -58002,6 +58576,7 @@
     [body-labels : OptLabelSet shape.body-labels]
     [body-blocks : ir.CompilerIrBlockList shape.body-blocks]
     (match (opt-bce-mb-guard-conds
+      doms
       descriptor
       write-free?
       blocks
@@ -58079,6 +58654,7 @@
 ;; the caller keeps when the attempt fails, so a repair that the wiring then
 ;; refuses costs nothing.
 (define (opt-bce-mb-apply-repaired
+  [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
   [pred-map : OptPredMap]
   [original : ir.CompilerIrBlockList]
@@ -58099,6 +58675,7 @@
     (if (not (opt-bce-mb-defs-escape? body-blocks outside))
       ;; No direct outside use: the original exit-phi-only scheme, unchanged.
       (opt-bce-mb-apply-wired
+        doms
         descriptor
         (opt-bce-mb-write-free-blocks? body-blocks)
         blocks
@@ -58135,6 +58712,7 @@
             (if (opt-bce-mb-defs-escape? clone-blocks clone-outside)
               (OptUnrollResult.Result original frame false)
               (opt-bce-mb-apply-wired
+                doms
                 descriptor
                 (opt-bce-mb-write-free-blocks? body-blocks)
                 wired-blocks
@@ -58148,7 +58726,9 @@
                   shape.seed
                   shape.bound
                   shape.step
-                  shape.uncovered)
+                  shape.uncovered
+                  shape.inner
+                  shape.region?)
                 clone-defs
                 cell
                 frame)))]))))
@@ -58173,6 +58753,7 @@
       [(OptBceMbFarResult.No) (OptUnrollResult.Result blocks frame false)]
       [(OptBceMbFarResult.Same)
         (opt-bce-mb-apply-repaired
+          doms
           descriptor
           pred-map
           blocks
@@ -58182,6 +58763,7 @@
           frame)]
       [(OptBceMbFarResult.Some repaired)
         (opt-bce-mb-apply-repaired
+          doms
           descriptor
           pred-map
           blocks
@@ -70884,6 +71466,12 @@
 
 (define opt-inline-caller-has-bounds? : bool
   false)
+(define opt-inline-caller-name : i64
+  0)
+(define opt-inline-caller-recursion-known? : bool
+  false)
+(define opt-inline-caller-recursion? : bool
+  false)
 (define opt-inline-current-block-label : i64
   0)
 
@@ -70925,6 +71513,9 @@
     (set! opt-inline-caller-facts-ready? false)
     (set! (array-ref opt-inline-caller-loop-labels 0) (OptLabelSet.Nil))
     (set! opt-inline-caller-has-bounds? false)
+    (set! opt-inline-caller-name name)
+    (set! opt-inline-caller-recursion-known? false)
+    (set! opt-inline-caller-recursion? false)
     (set! opt-inline-caller-hot-loop-blocks 0)
     (set! opt-inline-caller-chain-blocks 0)
     (set! opt-inline-caller-accessor-blocks 0)
@@ -70951,6 +71542,23 @@
     (opt-label-contains
       (opt-inline-caller-loop-labels-shared-view)
       opt-inline-current-block-label)))
+
+;; Does the caller call itself? Memoized on its own flag rather than folded into
+;; opt-inline-caller-facts-ensure! -- the natural-loop build and the bounds scan
+;; are forced by every small loop-bearing candidate, and this scan is forced
+;; only by the recursive-site tier below, which is the last clause it asks.
+(define (opt-inline-caller-recursive?) : bool
+  (begin
+    (if opt-inline-caller-recursion-known?
+      unit
+      (begin
+        (set!
+          opt-inline-caller-recursion?
+          (opt-loop-bce-direct-call-self-recursive-blocks?
+            opt-inline-caller-name
+            (opt-inline-caller-facts-blocks-shared-view)))
+        (set! opt-inline-caller-recursion-known? true)))
+    opt-inline-caller-recursion?))
 
 ;; The one measured way a hot-site, small, absorbable import still loses.
 ;; opt_quicksort's `qs-bench` is itself a single-reference function carrying no
@@ -71041,15 +71649,92 @@
     (opt-inline-bounds-loop-absorb-ok? true callee-instrs blocks)
     (opt-inline-blocks-call-free? blocks)))
 
+;; --- absorbing a leaf into a RECURSIVE caller -------------------------------
+;;
+;; opt-inline-bounds-loop-absorb-ok? prices a bounds-carrying loop-bearing
+;; callee by one question: does its call site lie in a natural loop of the
+;; caller? That is what makes the retired boundary repay per iteration instead
+;; of once per program. A natural loop is not the only construction that
+;; repeats a site. opt_quicksort's `qs-sort` reaches `qs-partition` from a body
+;; with no CFG loop at all when the inliner looks at it -- the site repeats by
+;; RECURSION, once per pivot, 4.1M times on the measured row -- and the
+;; loop-label test cannot see that. The tail-recursion-to-loop rewrite that
+;; would make it visible runs after this decision.
+;;
+;; So this tier asks the same question in the currency the shape actually
+;; carries: the CALLER calls itself, so its whole body, this site included, is
+;; re-entered per recursion node. Everything else the loop tier asks is asked
+;; here unchanged in spirit, and two clauses are tightened rather than relaxed:
+;;
+;;   1. the callee has exactly ONE static reference. This is absorption in the
+;;      strict sense -- the body moves, the original is retired, the program
+;;      does not grow -- so the two-reference duplication the loop tier allows
+;;      is not offered here. A recursive caller is the worst place to pay for a
+;;      copy that is not free;
+;;   2. the body is call-free. A clone is bounded by the callee's own size only
+;;      while nothing inside it brings another body along, the multiblock clone
+;;      path miscompiles call-carrying clones (#6307), and a call-free callee
+;;      absorbed into a recursive caller cannot deepen the recursion;
+;;   3. the cascade clause is unchanged: an import that would hand a
+;;      bounds-free single-reference caller its first bounds check costs that
+;;      caller its own inline, and that trade loses wherever it is made.
+;;
+;; The cost model is NOT bypassed. This predicate only supplies the bounds-loop
+;; disjunct; `inline?` still requires opt-inline-cost-inline? (with the
+;; single-reference absorb bonus) to admit the site, so the growth budgets and
+;; the heavy gate are exactly the ones every absorption already answers to.
+;;
+;; The band is set from the measured shape and the structure that makes it
+;; safe. `qs-partition` presents here as 105 instructions in 7 blocks: one
+;; scan loop, two swaps, no calls. 128 and 8 sit above it with room for the
+;; same shape carrying one more block, and far below anything that would bring
+;; a second working set into a recursive frame.
+;;
+;; The admitted population is what the clauses above predict it to be. Across
+;; the whole benchmark corpus this tier claims exactly one callee --
+;; `qs-partition` -- and across a full opt2 self-compile exactly two:
+;; `compiler-ir-function-seq-var-count` and `opt-bit-test-plans-slot`.
+;; Measured: opt_quicksort -5.369% on top of the divmod change (436,307,717 ->
+;; 409,002,574 with both), every other instruction-count row byte identical,
+;; opt1 self-compile -2,230 instructions. The prologue question the recursive
+;; caller raises answers the right way on the measured shape: absorbing
+;; `qs-partition` takes `qs-sort` from four callee-saved pushes and a
+;; 72-byte frame to three and 64, because the absorbed leaf held no live
+;; range across a call and the retired argument setup freed a register.
+(define (opt-inline-recursive-site-max-body) : i64
+  128)
+
+(define (opt-inline-recursive-site-max-blocks) : i64
+  8)
+
+;; Ordered cheapest-first: the reference class is an integer already in hand,
+;; the size clauses are counts, and only then are the caller's lazy facts
+;; forced -- the self-call scan last of all.
+(define (opt-inline-recursive-site-absorb-ok?
+  [absorb-class : i64]
+  [callee-instrs : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    (= absorb-class 1)
+    (<= callee-instrs (opt-inline-recursive-site-max-body))
+    (<=
+      (ir.compiler-ir-block-list-count blocks)
+      (opt-inline-recursive-site-max-blocks))
+    (opt-inline-blocks-call-free? blocks)
+    (opt-inline-bounds-loop-cascade-safe?)
+    (opt-inline-caller-recursive?)))
+
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]
   [absorbable? : bool]
+  [absorb-class : i64]
   [callee-instrs : i64]
   [callee-name : i64]
   [blocks : ir.CompilerIrBlockList]) : bool
   (or
     (not has-bounds?)
     (opt-inline-bounds-loop-absorb-ok? absorbable? callee-instrs blocks)
+    (opt-inline-recursive-site-absorb-ok? absorb-class callee-instrs blocks)
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
     (opt-inline-vm-run-bounds-loop-exception? callee-name)))
 
@@ -72058,6 +72743,7 @@
                     (opt-inline-multiblock-bounds-loop-ok?
                       has-bounds?
                       absorbable-here?
+                      absorb-class
                       callee-instrs
                       callee-name
                       cblocks)
@@ -72777,6 +73463,7 @@
                     (opt-inline-multiblock-bounds-loop-ok?
                       has-bounds?
                       absorbable-here?
+                      absorb-class
                       callee-instrs
                       callee-name
                       cblocks)

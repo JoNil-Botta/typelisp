@@ -3471,6 +3471,10 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-fuse-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-fuse-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-second-exit-refusal-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
       42)
@@ -3553,6 +3557,10 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bit-test-runtime-self-test"
       (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-exit-split-label-freshness-self-test"
+      (compiler_optimize_tests.compiler-optimize-exit-split-label-freshness-self-test)
       42)
     42))
 
@@ -3824,6 +3832,13 @@
     "guard-chain admission keeps chain checks and refuses diamonds and unproven far uses"))
 
 (test
+  bce-version-cross-array-fusion
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-fuse-self-test)
+    42
+    "cross-array fusion removes dominated checks, covered stores included"))
+
+(test
   bce-version-multiblock-rejections
   (test.assert-i64-eq
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-negative-self-test)
@@ -3976,3 +3991,10 @@
     (compiler_optimize_tests.compiler-optimize-bit-test-runtime-self-test)
     42
     "The source-level classifier preserves hits, gaps, window edges and out-of-window values"))
+
+(test
+  exit-split-sink-label-freshness
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-exit-split-label-freshness-self-test)
+    42
+    "Sunk exit checks keep the legacy name when free, step generation when taken, and emit one block per predecessor"))

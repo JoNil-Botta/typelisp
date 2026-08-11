@@ -15765,9 +15765,40 @@
 ;; ---------------------------------------------------------------------------
 ;; Per-region statistics row from the enumeration walk: var, lo, hi, uses,
 ;; defs, first-def (1 = the region's first class ref is a def whose instr
-;; does not read the class -> no entry reload needed), loop depth.
+;; does not read the class -> no entry reload needed), loop depth, KIND.
+;;
+;; kind = compiler-reg-call-region-kind-block (0): one kind-0-clobber-free run
+;; inside ONE block. Its entry reload sits at `lo`, INSIDE the region, so both
+;; the reload and the uses it serves run the same number of times; the win is
+;; purely static (refs minus boundary movs) and the loop depth scales the whole
+;; net equally.
+;;
+;; kind = compiler-reg-call-region-kind-loop (1): a whole natural loop
+;; [h..loop-ends[h]], anchored at the LAST instruction of the layout
+;; predecessor h-1 (its preheader). The entry reload runs ONCE per loop entry
+;; while every use runs once per iteration, so the two sides sit at different
+;; frequencies and the score must weight them separately -- that asymmetry, not
+;; the extra span, is what makes a one-use-per-iteration loop invariant
+;; (liveness_storage's spilled bound, reloaded ~25M times) profitable at all.
 (defenum CompilerRegCallRegionStat
-  (CompilerRegCallRegionStat i64 i64 i64 i64 i64 i64 i64))
+  (CompilerRegCallRegionStat i64 i64 i64 i64 i64 i64 i64 i64))
+
+(define (compiler-reg-call-region-kind-block) : i64
+  0)
+
+(define (compiler-reg-call-region-kind-loop) : i64
+  1)
+
+;; Candidate grades; see compiler-reg-call-region-mark-candidates.
+(define (compiler-reg-call-region-cand-full) : i64
+  1)
+
+(define (compiler-reg-call-region-cand-loop) : i64
+  2)
+
+(define (compiler-reg-call-region-stat-kind [stat : CompilerRegCallRegionStat]) : i64
+  (match stat
+    [(CompilerRegCallRegionStat _ _ _ _ _ _ _ kind) kind]))
 
 ;; One bucket of candidate rows in FLUSH order; the picker walks it back to
 ;; front, which is the order the former prepend-built cons bucket presented.
@@ -15808,6 +15839,108 @@
         cabi.compiler-reg-id-rdi)]
     [(cabi.CompilerRegTargetAbi.Windows)
       (make-array (cast cabi.compiler-reg-id-r8 : i64) cabi.compiler-reg-id-r9)]))
+
+;; Loop-scoped shadow pool: CALLEE-saved registers only, and only the ones the
+;; plan already homes a value in.
+;;
+;; Two independent reasons, both load-bearing:
+;;
+;;   * FREE OF CHARGE. compiler-backend-callee-needs-save? saves a callee-saved
+;;     register iff the plan homes a value there, so a register already in that
+;;     set costs no extra push/pop when the shadow joins it. A register outside
+;;     it would add a prologue/epilogue pair for one loop, which is exactly the
+;;     trade the leaf-CSR-fuse path exists to undo. So the pool is intersected
+;;     with the plan's live register set at selection time.
+;;
+;;   * IMMUNE TO THE NON-CALL CLOBBERS. A loop region spans whole blocks, so it
+;;     can contain div/shift BinOps, CopyBytes (`rep movs` -- rsi/rdi/rcx) and
+;;     Pack/BoundsCheck scavenge picks, none of which the region-splitting
+;;     boundary predicate treats as a boundary. Every one of those touches only
+;;     caller-saved registers, so a callee-saved home needs no extra proof
+;;     beyond the occupancy scan. rsi/rdi/rbp are filtered out because rsi/rdi
+;;     ARE callee-saved on Win64 yet are exactly the registers `rep movs`
+;;     clobbers, and rbp can be a frame pointer.
+(define (compiler-reg-call-region-loop-pool-reg-ok? [reg : i64]) : bool
+  (not
+    (or
+      (= reg cabi.compiler-reg-id-rsi)
+      (= reg cabi.compiler-reg-id-rdi)
+      (= reg cabi.compiler-reg-id-rbp))))
+
+;; Is `reg` homed by the plan for some var? (the prologue-save proxy above)
+(define (compiler-reg-call-region-reg-in-plan?
+  [present : (__tl_dyn-array i64)]
+  [items : (__tl_dyn-array CompilerRegLocation)]
+  [n : i64]
+  [reg : i64]) : bool
+  (let
+    [v : i64 0]
+    (begin
+      (while (< v n)
+        (begin
+          (when
+            (= (array-ref present v) 1)
+            (match (array-ref items v)
+              [(CompilerRegLocation.Register r) (when (= r reg) (return true))]
+              [(CompilerRegLocation.RegisterPair r0 r1)
+                (when (or (= r0 reg) (= r1 reg)) (return true))]
+              [_ unit]))
+          (set! v (+ v 1))))
+      false)))
+
+;; The base pool followed by the loop-scoped tail. Loop rows search the whole
+;; array; block rows stop at the base count, so every block-only root picks
+;; bit-for-bit the register it always did. Keeping ONE array (rather than two
+;; pools) matters for the occupancy index: pool-index-of then covers the tail
+;; too, so a callee-saved occupant is seen by the conflict scan.
+(define (compiler-reg-call-region-pool-with-loop-tail
+  [base : (__tl_dyn-array i64)]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [present : (__tl_dyn-array i64)]
+  [items : (__tl_dyn-array CompilerRegLocation)]
+  [n : i64]) : (__tl_dyn-array i64)
+  (let
+    [csr-count : i64
+      (cabi.compiler-abi-callee-saved-gp-register-count target-abi)]
+    [keep : (__tl_dyn-array i64)
+      (array.make-array
+        i64
+        (if (< csr-count 1)
+          1
+          csr-count))]
+    [keep-n : i64 0]
+    [base-count : i64 (array-length base)]
+    [i : i64 0]
+    (begin
+      (while (< i csr-count)
+        (let
+          [r : i64 (cabi.compiler-abi-callee-saved-gp-register-id target-abi i)]
+          (begin
+            (if (and
+              (not (= r cabi.compiler-reg-id-invalid))
+              (compiler-reg-call-region-loop-pool-reg-ok? r)
+              (< (compiler-reg-call-region-pool-index-of base r) 0)
+              (compiler-reg-call-region-reg-in-plan? present items n r))
+              (begin
+                (set! (array-ref keep keep-n) r)
+                (set! keep-n (+ keep-n 1)))
+              unit)
+            (set! i (+ i 1)))))
+      (let
+        [out : (__tl_dyn-array i64)
+          (array.make-array i64 (+ base-count keep-n))]
+        [j : i64 0]
+        (begin
+          (while (< j base-count)
+            (begin
+              (set! (array-ref out j) (array-ref base j))
+              (set! j (+ j 1))))
+          (set! j 0)
+          (while (< j keep-n)
+            (begin
+              (set! (array-ref out (+ base-count j)) (array-ref keep j))
+              (set! j (+ j 1))))
+          out)))))
 
 ;; Size guards: at most 4 realized regions per root and 64 per function
 ;; (bounds the minted segment vars and the rewrite work).
@@ -16889,7 +17022,8 @@
             (array-ref cur-uses root)
             (array-ref cur-defs root)
             (array-ref cur-firstdef root)
-            (array-ref cur-depth root))))
+            (array-ref cur-depth root)
+            (compiler-reg-call-region-kind-block))))
       unit)
     (set! (array-ref cur-lo root) (- 0 1))))
 
@@ -17208,9 +17342,479 @@
               unit)
             (set! r (+ r 1))))))))
 
+;; ===========================================================================
+;; P11b: loop-scoped rescue rows.
+;;
+;; The enumeration walk above bumps its region id at every BLOCK start, so a
+;; loop invariant read once per iteration lands in a one-use row and is thrown
+;; away by the >= 2 uses floor. That is the whole liveness_storage flagship:
+;; `recompute!`'s spilled bound sits at one fixed slot and is reloaded at three
+;; loop checks for ~25.0M dynamic instructions, inside loops the versioner had
+;; ALREADY cloned -- the check-removal win handed straight back as spill
+;; traffic. No per-block region can fix it, because the reload and the use it
+;; feeds are the same instruction pair inside the same block: the load has to
+;; leave the loop entirely.
+;;
+;; So the region model gains a second shape. A LOOP row covers the natural loop
+;; [h..loop-ends[h]] and is anchored at the LAST instruction of block h-1 -- the
+;; loop's preheader -- which the rewrite already knows how to handle: the
+;; activation mov is emitted just before the anchor instruction, so it runs once
+;; per loop entry, and the remap then covers every use inside the loop.
+;;
+;; SOUNDNESS. The shadow is the block-scoped rescue's model at a wider span: a
+;; pure copy of a root whose slot stays authoritative, so the only obligations
+;; are (a) the anchor dominates every remapped reference and (b) nothing in the
+;; span rewrites either side of the copy.
+;;
+;;   (a) DOMINATION. Admission demands that every body block (h..e] has ALL of
+;;       its predecessors inside [h..e] (the single-entry witness the loop-phi
+;;       multi-block machinery already uses) AND that the header's predecessor
+;;       set is exactly {h-1} plus in-region back edges. Together those make
+;;       h-1 the sole way in, so the anchor -- the last instruction of h-1,
+;;       which every edge into h executes -- dominates the whole region. The
+;;       back edge stays INSIDE the point span, so the shadow survives across
+;;       iterations with no per-iteration copy; that is where the win comes
+;;       from.
+;;
+;;   (b) NO REWRITE OF EITHER SIDE. The root must not be DEFINED anywhere in
+;;       [h..e] (the loop-invariant class), which is also why phis are a
+;;       non-issue: a phi def disqualifies the var outright, so a loop row's
+;;       root never has a header phi to race, and the rewrite's standing
+;;       phi-exclusion rule is left exactly as it was. defs = 0 also means
+;;       exit = 0: a read-only invariant needs NO write-back, so the region has
+;;       no exit-edge obligation at all and the block-scoped exit-store path is
+;;       untouched. The span must contain no kind-0 boundary instruction, and
+;;       the shadow register comes from the callee-saved loop pool, which no
+;;       non-call clobber in the span can reach.
+;;
+;; Registers: see compiler-reg-call-region-loop-pool-reg-ok?. The caller-saved
+;; pool is the wrong bank here -- a hot loop's own address and index registers
+;; occupy r8/r9/rsi/rdi for its whole body, which is exactly why the greedy had
+;; to spill the invariant in the first place.
+;; ===========================================================================
+;; Predecessor index RANGE per block, packed two entries per block as in
+;; compiler-reg-loop-phi-mb-pred-ranges: ranges[2b] = lowest predecessor index
+;; (block count when b has none), ranges[2b+1] = highest (-1 when none). Built
+;; from the IR successor sets rather than from live blocks because the rescue
+;; runs without a liveness handle.
+(define (compiler-reg-call-region-record-pred-range!
+  [ids : reg_label_i64_map.Map]
+  [ranges : (__tl_dyn-array i64)]
+  [from : i64]
+  [succs : live.CompilerLiveLabelSet]) : unit
+  (match succs
+    [(live.CompilerLiveLabelSet.Nil) unit]
+    [(live.CompilerLiveLabelSet.Dense _ _)
+      (begin
+        (match (reg_label_i64_map.get
+          (& ids)
+          (live.compiler-live-label-set-ref succs 0))
+          [(reg_label_i64_map.LookupFound to)
+            (if (and (>= to 0) (< (+ (* 2 to) 1) (array-length ranges)))
+              (begin
+                (when
+                  (< from (array-ref ranges (* 2 to)))
+                  (set! (array-ref ranges (* 2 to)) from))
+                (when
+                  (> from (array-ref ranges (+ (* 2 to) 1)))
+                  (set! (array-ref ranges (+ (* 2 to) 1)) from)))
+              unit)]
+          [(reg_label_i64_map.LookupMissing) unit])
+        (compiler-reg-call-region-record-pred-range!
+          ids
+          ranges
+          from
+          (live.compiler-live-label-set-tail succs)))]))
+
+(define (compiler-reg-call-region-pred-ranges
+  [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
+  [nblocks : i64]
+  [ids : reg_label_i64_map.Map]) : (__tl_dyn-array i64)
+  (let
+    [ranges : (__tl_dyn-array i64)
+      (array.make-array
+        i64
+        (*
+          2
+          (if (< nblocks 1)
+            1
+            nblocks)))]
+    [b : i64 0]
+    (begin
+      (while (< b nblocks)
+        (begin
+          (set! (array-ref ranges (* 2 b)) nblocks)
+          (set! (array-ref ranges (+ (* 2 b) 1)) (- 0 1))
+          (set! b (+ b 1))))
+      (set! b 0)
+      (while (< b nblocks)
+        (begin
+          (compiler-reg-call-region-record-pred-range!
+            ids
+            ranges
+            b
+            (live.compiler-live-block-successors (array-ref bslots b)))
+          (set! b (+ b 1))))
+      ranges)))
+
+;; Region admission for header `h` with natural-loop end `e` (= loop-ends[h],
+;; so a back edge into h from e is already proven). e == h is the single-block
+;; self-loop, which is admitted: it is the flagship's inner shape, and its
+;; empty body range makes the single-entry scan trivially true.
+(define (compiler-reg-call-region-loop-admit?
+  [ranges : (__tl_dyn-array i64)]
+  [depths : (__tl_dyn-array i64)]
+  [nblocks : i64]
+  [h : i64]
+  [e : i64]) : bool
+  (and
+    (>= h 1)
+    (>= e h)
+    (< e nblocks)
+    (< h (array-length depths))
+    (> (array-ref depths h) 0)
+    (< (+ (* 2 h) 1) (array-length ranges))
+    ;; the header's lowest predecessor is the LAYOUT predecessor h-1 (so no
+    ;; earlier block jumps into the loop) and its highest is inside the region
+    ;; (so no later block does either): h-1 is the single preheader.
+    (= (array-ref ranges (* 2 h)) (- h 1))
+    (<= (array-ref ranges (+ (* 2 h) 1)) e)
+    (compiler-reg-loop-phi-mb-body-entered-inside? ranges (+ h 1) e h)))
+
+;; Per-var accumulator for one region scan. `stamp` carries the header id, so
+;; each region starts from zero counters without an O(vars) clear per header.
+(define (compiler-reg-call-region-loop-note-var!
+  [v : i64]
+  [is-def : bool]
+  [cand : (__tl_dyn-array i64)]
+  [n : i64]
+  [sid : i64]
+  [stamp : (__tl_dyn-array i64)]
+  [uses : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]) : unit
+  ;; both candidate grades: a loop row's cost is register pressure, not a call
+  (if (and (>= v 0) (< v n) (> (array-ref cand v) 0))
+    (begin
+      (if (not (= (array-ref stamp v) sid))
+        (begin
+          (set! (array-ref stamp v) sid)
+          (set! (array-ref uses v) 0)
+          (set! (array-ref defs v) 0))
+        unit)
+      (if is-def
+        (set! (array-ref defs v) (+ (array-ref defs v) 1))
+        (set! (array-ref uses v) (+ (array-ref uses v) 1))))
+    unit))
+
+(define (compiler-reg-call-region-loop-note-set!
+  [set : live.CompilerLiveI64Set]
+  [cand : (__tl_dyn-array i64)]
+  [n : i64]
+  [sid : i64]
+  [stamp : (__tl_dyn-array i64)]
+  [uses : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]) : unit
+  (let
+    [wi : i64 0]
+    [wc : i64 (live.compiler-live-set-word-count set)]
+    (while (< wi wc)
+      (let
+        [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
+        (begin
+          (while (not (= bits 0))
+            (let
+              [b : i64 (compiler-reg-low-bit-index32 bits)]
+              (begin
+                (compiler-reg-call-region-loop-note-var!
+                  (+ (* wi (live.compiler-live-set-word-bits)) b)
+                  false
+                  cand
+                  n
+                  sid
+                  stamp
+                  uses
+                  defs)
+                (set! bits (bit-and bits (- bits 1))))))
+          (set! wi (+ wi 1)))))))
+
+(define (compiler-reg-call-region-loop-note-ids!
+  [ids : (__tl_dyn-array i64)]
+  [id-count : i64]
+  [cand : (__tl_dyn-array i64)]
+  [n : i64]
+  [sid : i64]
+  [stamp : (__tl_dyn-array i64)]
+  [uses : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index id-count)
+      (begin
+        (compiler-reg-call-region-loop-note-var!
+          (array-ref ids index)
+          false
+          cand
+          n
+          sid
+          stamp
+          uses
+          defs)
+        (set! index (+ index 1))))))
+
+;; Accumulate one instruction's refs. Phis contribute their DEF only: their
+;; operands are read on predecessor edges and the rewrite never remaps a phi,
+;; but a phi def is precisely what disqualifies a var from the invariant class.
+(define (compiler-reg-call-region-loop-note-instr!
+  [instr : ir.CompilerIrInstr]
+  [cand : (__tl_dyn-array i64)]
+  [n : i64]
+  [sid : i64]
+  [stamp : (__tl_dyn-array i64)]
+  [uses : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.Phi _ _ _)
+      (compiler-reg-call-region-loop-note-var!
+        (live.compiler-live-instr-def-var instr)
+        true
+        cand
+        n
+        sid
+        stamp
+        uses
+        defs)]
+    [_
+      (let
+        [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+        [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+        (begin
+          (if (< id-count 0)
+            (compiler-reg-call-region-loop-note-set!
+              (live.compiler-live-instr-uses instr)
+              cand
+              n
+              sid
+              stamp
+              uses
+              defs)
+            (compiler-reg-call-region-loop-note-ids!
+              ids
+              id-count
+              cand
+              n
+              sid
+              stamp
+              uses
+              defs))
+          (compiler-reg-call-region-loop-note-var!
+            (live.compiler-live-instr-def-var instr)
+            true
+            cand
+            n
+            sid
+            stamp
+            uses
+            defs)))]))
+
+;; Scan region blocks [s..e], accumulating refs. False = the span holds a
+;; kind-0 boundary instruction, which kills the whole region (the shadow would
+;; not survive it).
+(define (compiler-reg-call-region-loop-scan-blocks!
+  [type-segment-bases : i64]
+  [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
+  [s : i64]
+  [e : i64]
+  [cand : (__tl_dyn-array i64)]
+  [n : i64]
+  [sid : i64]
+  [stamp : (__tl_dyn-array i64)]
+  [uses : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]) : bool
+  (let
+    [b : i64 s]
+    (begin
+      (while (<= b e)
+        (match (array-ref bslots b)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+              [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
+              [i : i64 0]
+              (begin
+                (while (< i ilen)
+                  (let
+                    [instr : ir.CompilerIrInstr (array-ref islots i)]
+                    (begin
+                      (when
+                        (compiler-reg-call-region-boundary-instr?
+                          type-segment-bases
+                          instr)
+                        (return false))
+                      (compiler-reg-call-region-loop-note-instr!
+                        instr
+                        cand
+                        n
+                        sid
+                        stamp
+                        uses
+                        defs)
+                      (set! i (+ i 1)))))
+                (set! b (+ b 1))))]))
+      true)))
+
+;; The anchor instruction (the preheader's last, at point `lo`) is inside the
+;; span, so it has to clear the same boundary bar as the loop body.
+(define (compiler-reg-call-region-loop-anchor-ok?
+  [type-segment-bases : i64]
+  [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (<= count 0)
+          false
+          (not
+            (compiler-reg-call-region-boundary-instr?
+              type-segment-bases
+              (ir.compiler-ir-instr-seq-ref instrs (- count 1))))))]))
+
+;; Push one loop row per candidate root that the region scan found used and
+;; never defined. Walks the candidate ORDER list rather than all vars, so the
+;; cost per header is the candidate count, not the var count.
+(define (compiler-reg-call-region-loop-push-rows!
+  [order : (__tl_dyn-array i64)]
+  [cand-count : i64]
+  [n : i64]
+  [sid : i64]
+  [stamp : (__tl_dyn-array i64)]
+  [uses : (__tl_dyn-array i64)]
+  [defs : (__tl_dyn-array i64)]
+  [lo : i64]
+  [hi : i64]
+  [depth : i64]
+  [buckets : (__tl_dyn-array CompilerRegCallRegionStatSeq)]) : unit
+  (let
+    [ci : i64 0]
+    (while (< ci cand-count)
+      (let
+        [v : i64 (array-ref order ci)]
+        (begin
+          (if (and
+            (>= v 0)
+            (< v n)
+            (= (array-ref stamp v) sid)
+            (>= (array-ref uses v) 1)
+            (= (array-ref defs v) 0))
+            (set!
+              (array-ref buckets v)
+              (compiler-reg-call-region-stat-seq-push
+                (array-ref buckets v)
+                (CompilerRegCallRegionStat
+                  v
+                  lo
+                  hi
+                  (array-ref uses v)
+                  0
+                  0
+                  depth
+                  (compiler-reg-call-region-kind-loop))))
+            unit)
+          (set! ci (+ ci 1)))))))
+
+(define (compiler-reg-call-region-loop-rows!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [depths : (__tl_dyn-array i64)]
+  [cand : (__tl_dyn-array i64)]
+  [order : (__tl_dyn-array i64)]
+  [cand-count : i64]
+  [n : i64]
+  [buckets : (__tl_dyn-array CompilerRegCallRegionStatSeq)]) : unit
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+    [nblocks : i64 seq.len]
+    [an : i64
+      (if (< n 1)
+        1
+        n)]
+    (if (< nblocks 2)
+      unit
+      (let
+        [points : (__tl_dyn-array i64)
+          (compiler-reg-loop-phi-mb-block-points bslots)]
+        [loop-ends : (__tl_dyn-array i64)
+          (compiler-reg-preheader-loop-ends-seq seq nblocks)]
+        [ranges : (__tl_dyn-array i64)
+          (compiler-reg-call-region-pred-ranges
+            bslots
+            nblocks
+            (compiler-reg-loop-depth-block-ids
+              blocks
+              (reg_label_i64_map.with-capacity
+                (compiler-reg-bits-map-capacity nblocks))
+              0))]
+        [stamp : (__tl_dyn-array i64) (array.make-array i64 an)]
+        [uses : (__tl_dyn-array i64) (array.make-array i64 an)]
+        [defs : (__tl_dyn-array i64) (array.make-array i64 an)]
+        [h : i64 1]
+        (begin
+          (compiler-reg-fill-i64-array stamp (- 0 1))
+          (while (< h nblocks)
+            (let
+              [e : i64
+                (if (< h (array-length loop-ends))
+                  (array-ref loop-ends h)
+                  (- 0 1))]
+              (begin
+                (when
+                  (compiler-reg-call-region-loop-admit?
+                    ranges
+                    depths
+                    nblocks
+                    h
+                    e)
+                  (let
+                    ;; anchor = last instruction of the preheader h-1;
+                    ;; hi = last instruction of the loop's final block e.
+                    [lo : i64 (- (array-ref points h) 2)]
+                    [hi : i64 (- (array-ref points (+ e 1)) 2)]
+                    (when
+                      (and
+                        (>= lo (array-ref points (- h 1)))
+                        (> hi lo)
+                        (compiler-reg-call-region-loop-anchor-ok?
+                          type-segment-bases
+                          (array-ref bslots (- h 1)))
+                        (compiler-reg-call-region-loop-scan-blocks!
+                          type-segment-bases
+                          bslots
+                          h
+                          e
+                          cand
+                          n
+                          h
+                          stamp
+                          uses
+                          defs))
+                      (compiler-reg-call-region-loop-push-rows!
+                        order
+                        cand-count
+                        n
+                        h
+                        stamp
+                        uses
+                        defs
+                        lo
+                        hi
+                        (array-ref depths h)
+                        buckets))))
+                (set! h (+ h 1))))))))))
+
 (define (compiler-reg-call-region-stat-entry [stat : CompilerRegCallRegionStat]) : i64
   (match stat
-    [(CompilerRegCallRegionStat _ _ _ _ _ firstdef _)
+    [(CompilerRegCallRegionStat _ _ _ _ _ firstdef _ _)
       (if (= firstdef 1)
         0
         1)]))
@@ -17223,7 +17827,7 @@
   [stat : CompilerRegCallRegionStat]
   [ends : (__tl_dyn-array i64)]) : i64
   (match stat
-    [(CompilerRegCallRegionStat var _ hi _ defs _ _)
+    [(CompilerRegCallRegionStat var _ hi _ defs _ _ _)
       (if (= defs 0)
         0
         (if (and
@@ -17237,53 +17841,112 @@
   [stat : CompilerRegCallRegionStat]
   [ends : (__tl_dyn-array i64)]) : i64
   (match stat
-    [(CompilerRegCallRegionStat _ _ _ uses defs _ _)
+    [(CompilerRegCallRegionStat _ _ _ uses defs _ _ _)
       (-
         (+ uses defs)
         (+
           (compiler-reg-call-region-stat-entry stat)
           (compiler-reg-call-region-stat-exit stat ends)))]))
 
+;; Block rows: every ref and every boundary mov runs at the same frequency, so
+;; the depth weight multiplies the whole net.
+;; Loop rows: the uses run once per ITERATION and the single entry reload runs
+;; once per loop ENTRY, so only the uses take the depth weight. That is the
+;; whole point of the preheader anchor -- a one-use-per-iteration invariant has
+;; net 0 under the block formula and is worth `weight - 1` reloads here.
 (define (compiler-reg-call-region-stat-score
   [stat : CompilerRegCallRegionStat]
   [ends : (__tl_dyn-array i64)]) : i64
   (match stat
-    [(CompilerRegCallRegionStat _ _ _ _ _ _ depth)
-      (*
-        (compiler-reg-call-region-stat-net stat ends)
-        (compiler-reg-loop-depth-weight depth))]))
+    [(CompilerRegCallRegionStat _ _ _ uses _ _ depth kind)
+      (if (= kind (compiler-reg-call-region-kind-loop))
+        (- (* uses (compiler-reg-loop-depth-weight depth)) 1)
+        (*
+          (compiler-reg-call-region-stat-net stat ends)
+          (compiler-reg-loop-depth-weight depth)))]))
 
-;; Profitability floor: >= 2 uses (the memo bound) AND net memory-op win
-;; >= 2 after charging the boundary movs.
+;; Profitability floor. Block rows: >= 2 uses (the memo bound) AND net
+;; memory-op win >= 2 after charging the boundary movs. Loop rows: one use
+;; inside a real loop already pays, because the reload it replaces leaves the
+;; loop entirely (static instruction count is unchanged -- one mov added to the
+;; preheader, one load removed from the body).
 (define (compiler-reg-call-region-stat-eligible?
   [stat : CompilerRegCallRegionStat]
   [ends : (__tl_dyn-array i64)]) : bool
   (match stat
-    [(CompilerRegCallRegionStat _ _ _ uses _ _ _)
-      (and (>= uses 2) (>= (compiler-reg-call-region-stat-net stat ends) 2))]))
+    [(CompilerRegCallRegionStat _ _ _ uses _ _ depth kind)
+      (if (= kind (compiler-reg-call-region-kind-loop))
+        (and (>= uses 1) (> depth 0))
+        (and (>= uses 2) (>= (compiler-reg-call-region-stat-net stat ends) 2)))]))
 
+;; Does [lo,hi] touch any already-picked range for this root? The walk's own
+;; rows never overlap (each is one rid run), so for a bucket of pure block rows
+;; this is exactly the old "same lo" identity test. A loop row, however, spans
+;; the block rows nested inside it: taking both would spend budget on a region
+;; the rewrite then declines (one shadow per root is active at a time) and
+;; would drag the shared register search over a range already covered.
 (define (compiler-reg-call-region-picked?
   [picked-lo : (__tl_dyn-array i64)]
+  [picked-hi : (__tl_dyn-array i64)]
   [k : i64]
-  [lo : i64]) : bool
+  [lo : i64]
+  [hi : i64]) : bool
   (let
     [j : i64 0]
     [found : bool false]
     (begin
       (while (< j k)
         (begin
-          (if (= (array-ref picked-lo j) lo)
+          (if (and
+            (<= (array-ref picked-lo j) hi)
+            (>= (array-ref picked-hi j) lo))
             (set! found true)
             unit)
           (set! j (+ j 1))))
       found)))
 
-;; Best not-yet-picked eligible row by score (region lo is unique per root,
-;; so it doubles as the picked-row key).
+;; Best eligible LOOP row by score that does not overlap an already-tried
+;; range. Used by the per-root fallback: when the joint search over the top
+;; rows finds no register, the widest loop -- which scores highest and is the
+;; hardest to home -- must not bury the tighter inner loop underneath it.
+(define (compiler-reg-call-region-best-loop-from
+  [rows : CompilerRegCallRegionStatSeq]
+  [ends : (__tl_dyn-array i64)]
+  [tried-lo : (__tl_dyn-array i64)]
+  [tried-hi : (__tl_dyn-array i64)]
+  [k : i64]) : CompilerRegCallRegionMaybeStat
+  (let
+    [slots : (__tl_dyn-array CompilerRegCallRegionStat) rows.slots]
+    [index : i64 (- rows.len 1)]
+    [top-score : i64 (- 0 1)]
+    [top : CompilerRegCallRegionMaybeStat (CompilerRegCallRegionNoStat)]
+    (begin
+      (while (>= index 0)
+        (let
+          [stat : CompilerRegCallRegionStat (array-ref slots index)]
+          [score : i64 (compiler-reg-call-region-stat-score stat ends)]
+          (begin
+            (match stat
+              [(CompilerRegCallRegionStat _ lo hi _ _ _ _ kind)
+                (if (and
+                  (= kind (compiler-reg-call-region-kind-loop))
+                  (compiler-reg-call-region-stat-eligible? stat ends)
+                  (not
+                    (compiler-reg-call-region-picked? tried-lo tried-hi k lo hi))
+                  (> score top-score))
+                  (begin
+                    (set! top-score score)
+                    (set! top (CompilerRegCallRegionSomeStat stat)))
+                  unit)])
+            (set! index (- index 1)))))
+      top)))
+
+;; Best eligible row by score that does not overlap an already-picked range.
 (define (compiler-reg-call-region-best-from
   [rows : CompilerRegCallRegionStatSeq]
   [ends : (__tl_dyn-array i64)]
   [picked-lo : (__tl_dyn-array i64)]
+  [picked-hi : (__tl_dyn-array i64)]
   [k : i64]
   [best-score : i64]
   [best : CompilerRegCallRegionMaybeStat]) : CompilerRegCallRegionMaybeStat
@@ -17299,10 +17962,16 @@
           [score : i64 (compiler-reg-call-region-stat-score stat ends)]
           (begin
             (match stat
-              [(CompilerRegCallRegionStat _ lo _ _ _ _ _)
+              [(CompilerRegCallRegionStat _ lo hi _ _ _ _ _)
                 (if (and
                   (compiler-reg-call-region-stat-eligible? stat ends)
-                  (not (compiler-reg-call-region-picked? picked-lo k lo))
+                  (not
+                    (compiler-reg-call-region-picked?
+                      picked-lo
+                      picked-hi
+                      k
+                      lo
+                      hi))
                   (> score top-score))
                   (begin
                     (set! top-score score)
@@ -17406,9 +18075,26 @@
       conflict)))
 
 ;; Mark candidate roots in `cand` (spilled + register-eligible scalar/handle
-;; type + hull spans a kind-0 clobber + no remat-candidate class member -- a
-;; remat'd value has no stable slot to reload from) and record their ids in
-;; walk order in `order`. Returns the candidate count.
+;; type + no remat-candidate class member -- a remat'd value has no stable slot
+;; to reload from) and record their ids in walk order in `order`. Returns the
+;; candidate count.
+;;
+;; TWO candidate grades, because the two region shapes want different
+;; populations:
+;;
+;;   cand = compiler-reg-call-region-cand-full (1): the hull ALSO spans a
+;;   kind-0 clobber. This is the block-region population and it is unchanged --
+;;   the enumeration walk and every block row test for exactly this value, so
+;;   block-scoped codegen is bit-for-bit what it was.
+;;
+;;   cand = compiler-reg-call-region-cand-loop (2): everything above EXCEPT the
+;;   kind-0 span. The block rescue exists to bridge calls, so a value that never
+;;   crosses one was rightly out of scope for it. Loop rows are a different
+;;   class entirely: their cost is pure register PRESSURE inside a call-free
+;;   loop, and measurement says that is where the flagship lives -- in
+;;   liveness_storage's `recompute!` ten of the spilled values covering the hot
+;;   versioned clone report k0 = 0, so the kind-0 gate alone was hiding the
+;;   whole target population. Loop rows therefore accept both grades.
 (define (compiler-reg-call-region-mark-candidates
   [candidates : CompilerRegIntervalSeq]
   [index : i64]
@@ -17435,7 +18121,6 @@
           (>= var 0)
           (< var n)
           (= (array-ref root-has-remat var) 0)
-          (compiler-reg-call-set-in-range? kind0 start end)
           (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
             [(CompilerRegMaybeType.Some _) true]
             [(CompilerRegMaybeType.No) false])
@@ -17446,7 +18131,11 @@
                 [_ false])]
             [(CompilerRegMaybeLocation.No) false]))
           (begin
-            (set! (array-ref cand var) 1)
+            (set!
+              (array-ref cand var)
+              (if (compiler-reg-call-set-in-range? kind0 start end)
+                (compiler-reg-call-region-cand-full)
+                (compiler-reg-call-region-cand-loop)))
             (set! (array-ref order count) var)
             (compiler-reg-call-region-mark-candidates
               candidates
@@ -17548,7 +18237,7 @@
                   (= (array-ref cand v) 0)
                   (let
                     [rr : i64 (compiler-reg-call-region-root parents n v)]
-                    (and (not (= rr v)) (= (array-ref cand rr) 1)))
+                    (and (not (= rr v)) (> (array-ref cand rr) 0)))
                   (match (compiler-reg-loop-split-type-ok?
                     type-info
                     group-vars
@@ -17556,7 +18245,13 @@
                     [(CompilerRegMaybeType.Some _) true]
                     [(CompilerRegMaybeType.No) false]))
                   (begin
-                    (set! (array-ref cand v) 1)
+                    ;; a member inherits its root's GRADE, so a loop-only class
+                    ;; stays out of the block walk exactly as its root does
+                    (set!
+                      (array-ref cand v)
+                      (array-ref
+                        cand
+                        (compiler-reg-call-region-root parents n v)))
                     (set! (array-ref order cand-count) v)
                     (set! cand-count (+ cand-count 1)))
                   unit)
@@ -17587,12 +18282,20 @@
                     (compiler-reg-function-loop-depths blocks)]
                   [buckets : (__tl_dyn-array CompilerRegCallRegionStatSeq)
                     (array.make-array CompilerRegCallRegionStatSeq an)]
-                  [pool : (__tl_dyn-array i64)
-                    (compiler-reg-call-region-pool target-abi)]
-                  [pool-count : i64 (array-length pool)]
                   [present : (__tl_dyn-array i64) assignments.present]
                   [items : (__tl_dyn-array CompilerRegLocation)
                     assignments.items]
+                  [base-pool : (__tl_dyn-array i64)
+                    (compiler-reg-call-region-pool target-abi)]
+                  [base-pool-count : i64 (array-length base-pool)]
+                  [pool : (__tl_dyn-array i64)
+                    (compiler-reg-call-region-pool-with-loop-tail
+                      base-pool
+                      target-abi
+                      present
+                      items
+                      n)]
+                  [pool-count : i64 (array-length pool)]
                   ;; occupants of the pool registers (var id + pool index); a
                   ;; register PAIR can contribute two entries and every accepted
                   ;; shadow root appends one, so size 3n bounds it.
@@ -17631,6 +18334,18 @@
                       blocks
                       depths
                       cand
+                      n
+                      buckets)
+                    ;; P11b: the same buckets also take the loop-scoped rows,
+                    ;; whose preheader anchor is the only way a once-per-
+                    ;; iteration invariant reload can leave its loop.
+                    (compiler-reg-call-region-loop-rows!
+                      type-segment-bases
+                      blocks
+                      depths
+                      cand
+                      order
+                      cand-count
                       n
                       buckets)
                     ;; index the pool-register occupants once
@@ -17689,24 +18404,43 @@
                             budget
                             root-cap)]
                         [more : bool true]
+                        ;; Does this root's picked set include a loop row? Only
+                        ;; then may the register search reach the callee-saved
+                        ;; tail, so a block-only root's choice is unchanged.
+                        [wants-loop-pool : bool false]
                         (begin
                           (compiler-reg-fill-i64-array picked-lo (- 0 1))
-                          ;; pick up to `cap` best rows by net*depth score
+                          (compiler-reg-fill-i64-array picked-hi (- 0 1))
+                          ;; pick up to `cap` best non-overlapping rows by score
                           (while (and more (< k cap))
                             (match (compiler-reg-call-region-best-from
                               rows
                               vend
                               picked-lo
+                              picked-hi
                               k
                               (- 0 1)
                               (CompilerRegCallRegionNoStat))
                               [(CompilerRegCallRegionNoStat) (set! more false)]
                               [(CompilerRegCallRegionSomeStat stat)
                                 (match stat
-                                  [(CompilerRegCallRegionStat _ lo hi _ _ _ _)
+                                  [(CompilerRegCallRegionStat
+                                      _
+                                      lo
+                                      hi
+                                      _
+                                      _
+                                      _
+                                      _
+                                      kind)
                                     (begin
                                       (set! (array-ref picked-lo k) lo)
                                       (set! (array-ref picked-hi k) hi)
+                                      (when
+                                        (=
+                                          kind
+                                          (compiler-reg-call-region-kind-loop))
+                                        (set! wants-loop-pool true))
                                       (set!
                                         (array-ref picked-entry k)
                                         (compiler-reg-call-region-stat-entry
@@ -17722,8 +18456,12 @@
                             (let
                               [pix : i64 0]
                               [chosen : i64 (- 0 1)]
+                              [search-count : i64
+                                (if wants-loop-pool
+                                  pool-count
+                                  base-pool-count)]
                               (begin
-                                (while (and (< pix pool-count) (< chosen 0))
+                                (while (and (< pix search-count) (< chosen 0))
                                   (let
                                     [j : i64 0]
                                     [free : bool true]
@@ -17745,6 +18483,96 @@
                                         (set! chosen pix)
                                         unit)
                                       (set! pix (+ pix 1)))))
+                                ;; FALLBACK. The joint search demands one
+                                ;; register free over every picked range at
+                                ;; once, which a wide outer-loop row makes
+                                ;; nearly impossible -- and its failure would
+                                ;; otherwise discard the tight inner-loop row
+                                ;; behind it, which is the profitable one. So
+                                ;; on failure retry LOOP rows one at a time,
+                                ;; widest first, and take the first that fits.
+                                ;; Block-row outcomes are untouched: this runs
+                                ;; only after `chosen` came back negative, and
+                                ;; only loop rows are offered.
+                                (when
+                                  (< chosen 0)
+                                  (let
+                                    [tries : i64 0]
+                                    [tmore : bool true]
+                                    [acc-lo : i64 (- 0 1)]
+                                    [acc-hi : i64 (- 0 1)]
+                                    (begin
+                                      (compiler-reg-fill-i64-array
+                                        picked-lo
+                                        (- 0 1))
+                                      (compiler-reg-fill-i64-array
+                                        picked-hi
+                                        (- 0 1))
+                                      (while (and
+                                        tmore
+                                        (< tries root-cap)
+                                        (< chosen 0))
+                                        (match (compiler-reg-call-region-best-loop-from
+                                          rows
+                                          vend
+                                          picked-lo
+                                          picked-hi
+                                          tries)
+                                          [(CompilerRegCallRegionNoStat)
+                                            (set! tmore false)]
+                                          [(CompilerRegCallRegionSomeStat stat)
+                                            (match stat
+                                              [(CompilerRegCallRegionStat
+                                                  _
+                                                  lo
+                                                  hi
+                                                  _
+                                                  _
+                                                  _
+                                                  _
+                                                  _)
+                                                (let
+                                                  [pix : i64 0]
+                                                  (begin
+                                                    (while (and
+                                                      (< pix pool-count)
+                                                      (< chosen 0))
+                                                      (begin
+                                                        (unless
+                                                          (compiler-reg-call-region-reg-conflicts?
+                                                            occ-var
+                                                            occ-reg
+                                                            occ-n
+                                                            interval-index
+                                                            pix
+                                                            lo
+                                                            hi)
+                                                          (set! chosen pix))
+                                                        (set! pix (+ pix 1))))
+                                                    (when
+                                                      (>= chosen 0)
+                                                      (begin
+                                                        (set! acc-lo lo)
+                                                        (set! acc-hi hi)))
+                                                    (set!
+                                                      (array-ref
+                                                        picked-lo
+                                                        tries)
+                                                      lo)
+                                                    (set!
+                                                      (array-ref
+                                                        picked-hi
+                                                        tries)
+                                                      hi)
+                                                    (set! tries (+ tries 1))))])]))
+                                      (if (>= chosen 0)
+                                        (begin
+                                          (set! (array-ref picked-lo 0) acc-lo)
+                                          (set! (array-ref picked-hi 0) acc-hi)
+                                          (set! (array-ref picked-entry 0) 1)
+                                          (set! (array-ref picked-exit 0) 0)
+                                          (set! k 1))
+                                        unit))))
                                 (if (>= chosen 0)
                                   (let
                                     [j : i64 0]
@@ -32837,13 +33665,22 @@
 ;; which this rewrite leaves untouched -- a class-wide remap homed on the
 ;; root's slot reads/writes the wrong storage once coloring de-aliases the
 ;; members).
-;; Regions are block-scoped, kind-0-clobber-free and non-overlapping per
-;; var by construction, so no mid-region call handling exists and the home
-;; slot is authoritative everywhere outside [lo,hi]. Phi instructions are
-;; never remapped (their inputs are read on predecessor EDGES; regions start
-;; after the leading phis). The minted W assignments join the plan, so the
+;; Regions are kind-0-clobber-free and non-overlapping per var by
+;; construction, so no mid-region call handling exists and the home slot is
+;; authoritative everywhere outside [lo,hi]. Phi instructions are never
+;; remapped (their inputs are read on predecessor EDGES; a block region
+;; starts after the leading phis, and a loop region's root is by admission
+;; never phi-defined). The minted W assignments join the plan, so the
 ;; downstream scavenge-interval rebuild sees W's register occupied over
 ;; exactly the region -- the same soundness net the loop-split rescue uses.
+;;
+;; SPAN. Block rows sit inside one block; loop rows (P11b) run from their
+;; preheader anchor through the loop's last block, so the walk must survive
+;; block boundaries: the untouched-block fast path is taken only when nothing
+;; is active, and the end-of-block drain drops only rows already past their
+;; hi. A loop row is read-only by admission (defs = 0 -> exit-flag = 0), so
+;; crossing a region EXIT edge needs no store: the shadow is simply dead
+;; there and the root's slot was never stale.
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-call-region-list-count
   [regions : CompilerRegCallRegionSeq]) : i64
@@ -33034,11 +33871,13 @@
                   (let
                     [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
                     [span : i64 (* 2 ilen)]
-                    (if (or
-                      (>= cursor count)
-                      (>= (array-ref r-lo cursor) (+ point span)))
-                      ;; no region starts here (none can be active across
-                      ;; blocks) -> keep the block untouched
+                    (if (and
+                      (= active-n 0)
+                      (or
+                        (>= cursor count)
+                        (>= (array-ref r-lo cursor) (+ point span))))
+                      ;; nothing active from an earlier block and no region
+                      ;; starts here -> keep the block untouched
                       (begin
                         (set!
                           out-rev
@@ -33190,14 +34029,28 @@
                                             (set! j (+ j 1))))))))
                                 (set! point (+ point 2))
                                 (set! i (+ i 1)))))
-                          ;; defensive drain: regions are block-scoped
-                          (while (> active-n 0)
-                            (let
-                              [root : i64 (array-ref active (- active-n 1))]
-                              (begin
-                                (set! (array-ref remap root) root)
-                                (set! (array-ref act-w root) (- 0 1))
-                                (set! active-n (- active-n 1)))))
+                          ;; Defensive drain. A loop row deliberately outlives
+                          ;; its first block -- the back edge is INSIDE the
+                          ;; span, which is where its win comes from -- so the
+                          ;; drain can no longer be unconditional. It now drops
+                          ;; only rows whose hi was walked past without the
+                          ;; per-instruction deactivation firing (must not
+                          ;; happen); a row with hi still ahead stays active
+                          ;; into the next block.
+                          (let
+                            [j : i64 0]
+                            (while (< j active-n)
+                              (let
+                                [root : i64 (array-ref active j)]
+                                (if (< (array-ref act-hi root) point)
+                                  (begin
+                                    (set! (array-ref remap root) root)
+                                    (set! (array-ref act-w root) (- 0 1))
+                                    (set! active-n (- active-n 1))
+                                    (set!
+                                      (array-ref active j)
+                                      (array-ref active active-n)))
+                                  (set! j (+ j 1))))))
                           (set!
                             out-rev
                             (ir.compiler-ir-block-cons
